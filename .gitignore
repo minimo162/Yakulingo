@@ -1,6 +1,9 @@
 # 実行時に生成される利用者設定（配布対象は settings.template.json のみ）
-app/config/settings.json
-*/app/config/settings.json
+app/config/user_settings.json
+*/app/config/user_settings.json
+
+# New-YakuPackage.ps1 が生成する配布物マニフェスト（派生物・タイムスタンプを含む）
+manifest.json
 
 # ローカル作業物
 *.log

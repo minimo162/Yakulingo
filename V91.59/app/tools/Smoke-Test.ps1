@@ -58,6 +58,9 @@ $singlePass = Expand-YakuTemplate -Template 'X={input_text}; ID={request_id}' -V
 Assert-Yaku -Condition ($singlePass -eq 'X={request_id}; ID=SAFE') -Message 'template replacement values must not be expanded recursively'
 
 $settingsTestRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('YakuLingo-settings-' + [guid]::NewGuid().ToString('N'))
+$settingsTestDataDir = Join-Path ([System.IO.Path]::GetTempPath()) ('YakuLingo-data-' + [guid]::NewGuid().ToString('N'))
+$settingsTestPreviousDataDir = $env:YAKULINGO_DATA_DIR
+$env:YAKULINGO_DATA_DIR = $settingsTestDataDir
 try {
     $settingsTestConfig = Join-Path $settingsTestRoot 'config'
     New-Item -ItemType Directory -Path $settingsTestConfig -Force | Out-Null
@@ -66,7 +69,12 @@ try {
     $legacySettingsPath = Join-Path $settingsTestConfig 'user_settings.json'
     [System.IO.File]::WriteAllText($legacySettingsPath, '{"max_chars_per_batch":1000}', (New-Object System.Text.UTF8Encoding($true)))
     $migratedSettings = Read-YakuSettings -Root $settingsTestRoot
-    $migratedDisk = Get-Content -LiteralPath $legacySettingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $userSettingsPath = Get-YakuUserSettingsPath
+    Assert-Yaku -Condition ($userSettingsPath.StartsWith($settingsTestDataDir, [System.StringComparison]::OrdinalIgnoreCase)) -Message 'user settings must be stored under the user data directory, not the app folder'
+    Assert-Yaku -Condition (Test-Path -LiteralPath $userSettingsPath -PathType Leaf) -Message 'legacy app-folder settings must be migrated to the user data directory'
+    $legacyDisk = Get-Content -LiteralPath $legacySettingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert-Yaku -Condition ([int]$legacyDisk.max_chars_per_batch -eq 1000) -Message 'migration must not write back into the app folder'
+    $migratedDisk = Get-Content -LiteralPath $userSettingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
     Assert-Yaku -Condition ([int]$migratedSettings.max_chars_per_batch -eq 3000 -and [int]$migratedDisk.max_chars_per_batch -eq 3000) -Message 'saved legacy text batch default 1000 must migrate once to 3000'
 
     $dictionarySource = [ordered]@{ outer = [ordered]@{ inner = 'preserved' } }
@@ -78,7 +86,7 @@ try {
     Assert-Yaku -Condition ($enabledItems.Count -eq 1) -Message 'settings save must return exactly one settings object'
     Assert-Yaku -Condition ($enabledItems[0].full_text_diagnostics_enabled -is [bool] -and [bool]$enabledItems[0].full_text_diagnostics_enabled) -Message 'diagnostic setting true must persist as Boolean true'
     Assert-Yaku -Condition ([int]$enabledItems[0].request_timeout -eq 600) -Message 'non-default numeric setting must persist'
-    $enabledDisk = Get-Content -LiteralPath (Join-Path $settingsTestConfig 'user_settings.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $enabledDisk = Get-Content -LiteralPath $userSettingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
     Assert-Yaku -Condition ($enabledDisk.full_text_diagnostics_enabled -is [bool] -and [bool]$enabledDisk.full_text_diagnostics_enabled) -Message 'diagnostic setting true must be written to disk as Boolean true'
     Assert-Yaku -Condition ([int]$enabledDisk.request_timeout -eq 600) -Message 'non-default numeric setting must be written to disk'
 
@@ -88,7 +96,7 @@ try {
     $disabledItems = @(Save-YakuUserSettings -Root $settingsTestRoot -Form @{ full_text_diagnostics_enabled = $false })
     Assert-Yaku -Condition ($disabledItems.Count -eq 1) -Message 'repeated settings save must return exactly one settings object'
     Assert-Yaku -Condition ($disabledItems[0].full_text_diagnostics_enabled -is [bool] -and -not [bool]$disabledItems[0].full_text_diagnostics_enabled) -Message 'diagnostic setting false must persist as Boolean false'
-    $disabledDisk = Get-Content -LiteralPath (Join-Path $settingsTestConfig 'user_settings.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $disabledDisk = Get-Content -LiteralPath $userSettingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
     Assert-Yaku -Condition ($disabledDisk.full_text_diagnostics_enabled -is [bool] -and -not [bool]$disabledDisk.full_text_diagnostics_enabled) -Message 'diagnostic setting false must be written to disk as Boolean false'
     Assert-Yaku -Condition ([int]$disabledDisk.request_timeout -eq 600) -Message 'saving one setting must not reset another saved setting to its default'
 
@@ -96,7 +104,13 @@ try {
     Assert-Yaku -Condition ($stringEnabled.full_text_diagnostics_enabled -is [bool] -and [bool]$stringEnabled.full_text_diagnostics_enabled) -Message 'legacy string true must normalize to Boolean true'
     Assert-YakuThrows -Action { Save-YakuUserSettings -Root $settingsTestRoot -Form @{ full_text_diagnostics_enabled = 'invalid' } } -Pattern 'true/false' -Message 'invalid diagnostic Boolean must fail instead of silently becoming false'
 } finally {
+    if ([string]::IsNullOrEmpty($settingsTestPreviousDataDir)) {
+        Remove-Item Env:YAKULINGO_DATA_DIR -ErrorAction SilentlyContinue
+    } else {
+        $env:YAKULINGO_DATA_DIR = $settingsTestPreviousDataDir
+    }
     if (Test-Path -LiteralPath $settingsTestRoot) { Remove-Item -LiteralPath $settingsTestRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    if (Test-Path -LiteralPath $settingsTestDataDir) { Remove-Item -LiteralPath $settingsTestDataDir -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 Assert-Yaku -Condition (Test-YakuCopilotUrl -Url 'https://m365.cloud.microsoft/chat/') -Message 'approved Copilot URL must pass'
@@ -283,6 +297,9 @@ Assert-Yaku -Condition ($server.Contains('fullTextDiagnosticsRequested=') -and $
 Assert-Yaku -Condition ($server.Contains('verificationSource=disk-readback') -and $server.Contains('SETTINGS_DIAGNOSTICS_VALUE_MISSING') -and $server.Contains('SETTINGS_SAVE_READBACK_FAILED')) -Message 'settings save must distinguish missing input and verify the disk readback'
 Assert-Yaku -Condition ($settingsSource.Contains('data-yaku-dirty=') -and $settingsSource.Contains('全文診断：有効（保存済み）')) -Message 'settings form must display the persisted diagnostic state'
 Assert-Yaku -Condition ($settingsSource.Contains('Read-YakuUserSettingsStrict') -and $settingsSource.Contains('SETTINGS_SAVE_RESULT_INVALID') -and $settingsSource.Contains('SETTINGS_SAVE_VERIFY_FAILED')) -Message 'settings save must enforce strict disk readback and a single verified result object'
+$pathsSource = Get-Content -LiteralPath (Join-Path $root 'src\Paths.ps1') -Raw -Encoding UTF8
+Assert-Yaku -Condition (-not $settingsSource.Contains('Join-Path $Root ''config\user_settings.json''')) -Message 'user settings must never be written inside the app folder'
+Assert-Yaku -Condition ($pathsSource.Contains('function Get-YakuUserSettingsPath') -and $settingsSource.Contains('Resolve-YakuUserSettingsPath')) -Message 'user settings path must resolve through the user data directory with one-time legacy migration'
 Assert-Yaku -Condition ($fileWorkerSource.Contains('File worker settings snapshot.') -and $fileWorkerSource.Contains('YakuFullTextDiagnosticsEnabled')) -Message 'file worker must apply the job diagnostic snapshot before extraction and audit logging'
 Assert-Yaku -Condition ($copilot -notmatch '--remote-allow-origins=\*') -Message 'CDP wildcard origin switch must be absent'
 Assert-Yaku -Condition ($copilot -match 'Get-NetTCPConnection' -and $copilot -match 'OwningProcess') -Message 'CDP port owner PID must be verified'
