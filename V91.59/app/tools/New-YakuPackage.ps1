@@ -1,10 +1,14 @@
 ﻿[CmdletBinding()]
 param(
  [Parameter(Mandatory=$true)][string]$SourceRoot,
- [Parameter(Mandatory=$true)][string]$OutputPath,
- [Parameter(Mandatory=$true)][string]$BuildId
+ [string]$OutputPath = '',
+ [Parameter(Mandatory=$true)][string]$BuildId,
+ [switch]$ManifestOnly
 )
 $ErrorActionPreference='Stop'
+if (-not $ManifestOnly -and [string]::IsNullOrWhiteSpace($OutputPath)) {
+    throw 'PACKAGE_OUTPUT_PATH_REQUIRED: -OutputPath を指定してください（-ManifestOnly の場合は不要）。'
+}
 $source=(Resolve-Path -LiteralPath $SourceRoot).Path
 $build=$BuildId.Trim()
 if ([string]::IsNullOrWhiteSpace($build)) { throw 'PACKAGE_BUILD_ID_EMPTY: BuildId を指定してください。' }
@@ -59,6 +63,8 @@ $manifest = [ordered]@{
 }
 [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 5), $utf8Bom)
 Write-Host ("manifest.json generated. build={0} files={1} bytes={2}" -f $build, $entries.Count, $totalBytes) -ForegroundColor Cyan
+
+if ($ManifestOnly) { return }
 
 if (Test-Path -LiteralPath $OutputPath) { Remove-Item -LiteralPath $OutputPath -Force }
 # Compress-Archive は隠しファイルの扱いがプラットフォームで異なる。manifest の一覧から
