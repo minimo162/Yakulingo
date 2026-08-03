@@ -2,6 +2,9 @@
 app/config/user_settings.json
 */app/config/user_settings.json
 
+# New-YakuPackage.ps1 が生成する配布物マニフェスト（派生物・タイムスタンプを含む）
+manifest.json
+
 # ローカル作業物
 *.log
 *.tmp

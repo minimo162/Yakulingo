@@ -15,10 +15,7 @@ Microsoft 365 Copilot の画面を Edge DevTools Protocol（CDP）で操作し�
 ├── V91.59/                # 現行版
 │   ├── YakuLingo起動.vbs
 │   └── app/
-├── V91.58/                # N-1（1世代前）
-│   ├── YakuLingo起動.vbs
-│   └── app/
-└── V91.57/                # N-2。共有フォルダへは配置しない（N-1運用のため）
+└── V91.58/                # N-1（1世代前）
     ├── YakuLingo起動.vbs
     └── app/
 ```
@@ -44,6 +41,7 @@ Microsoft 365 Copilot の画面を Edge DevTools Protocol（CDP）で操作し�
 - 新版は必ず別フォルダへ展開し、使用中のバージョンフォルダを上書きしません。
 - 切替は `current.txt` の1行を書き換えるだけです。ロールバックは1世代前のフォルダ名へ戻します。
 - パッケージ作成時は `current.txt` と `app/config/build.txt` の両方を新バージョンへ更新します。
+- `tools/New-YakuPackage.ps1` はバージョンフォルダ直下に `manifest.json`（全ファイルのサイズとSHA-256）を生成し、`tools/Test-YakuPackage.ps1` がZIPと突合して検証します。`manifest.json` は派生物のためリポジトリには含めません。
 - 共有フォルダには現行版と N-1 だけを保持します。詳細は `共有フォルダ配置手順.md` を参照してください。
 
 ## 起動

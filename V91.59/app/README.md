@@ -208,3 +208,6 @@ Japanese numeric units are converted deterministically before batching: 億円/�
 - Legacy settings inside the app folder are migrated once on first read. The legacy file is never modified or deleted, so users still on an older version are unaffected.
 - Added the `YAKULINGO_DATA_DIR` override so regression tests can redirect the data directory instead of touching real user data.
 - Added `tools\Test-YakuV9159SettingsPath.ps1` and extended `tools\Smoke-Test.ps1` to guard the new location.
+- `tools\New-YakuPackage.ps1` now emits a `manifest.json` next to `app/` listing every packaged file with its size and SHA-256, so a local copy of the package can be verified before it is used.
+- `tools\New-YakuPackage.ps1` refuses to package a tree containing `user_settings*`, `*.bak`, or `*.tmp`.
+- `tools\Test-YakuPackage.ps1` verifies the manifest against the archive: build ID agreement, per-file size and SHA-256, and that no packaged file is missing from or unlisted in the manifest.
