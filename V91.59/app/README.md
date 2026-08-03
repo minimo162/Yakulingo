@@ -49,7 +49,7 @@ V91.2では、M365 Copilotの新しい `loading-message` 思考表示と停止�
 
 ## 起動と停止
 
-1. トップ階層の `YakuLingo起動.vbs` をダブルクリックします。
+1. 共有ルートの `YakuLingo起動.cmd` をダブルクリックします（V91.59以降。`.vbs` も転送シムとして動作します）。
 2. EdgeでMicrosoft 365 Copilotへサインインします。
 3. 画面右上がReadyになったら翻訳できます。
 4. 停止は起動中のPowerShell画面で `Ctrl+C` を押します。
@@ -211,3 +211,8 @@ Japanese numeric units are converted deterministically before batching: 億円/�
 - `tools\New-YakuPackage.ps1` now emits a `manifest.json` next to `app/` listing every packaged file with its size and SHA-256, so a local copy of the package can be verified before it is used.
 - `tools\New-YakuPackage.ps1` refuses to package a tree containing `user_settings*`, `*.bak`, or `*.tmp`.
 - `tools\Test-YakuPackage.ps1` verifies the manifest against the archive: build ID agreement, per-file size and SHA-256, and that no packaged file is missing from or unlisted in the manifest.
+- Packages are now built directly from the manifest file list instead of `Compress-Archive`, so the archive and the manifest always agree (hidden files included).
+- Added `YakuLingo起動.cmd` next to `YakuLingo起動.vbs`. VBScript is being retired by Microsoft, so `.cmd` is the supported launcher; the `.vbs` remains only as a forwarding shim.
+- The shared root now carries `bootstrap.ps1`, which copies this package to `%LOCALAPPDATA%\YakuLingo\versions\<version>-<manifest hash>`, verifies every file against the manifest, and runs it locally. The shared folder can then be updated while users are working.
+- `tools\Create-Desktop-Shortcut.ps1` targets the shared `.cmd` (via `YAKULINGO_SHARED_ROOT` when available) and uses a local working directory to avoid the cmd.exe UNC warning.
+- Added `tools\Test-YakuBootstrap.ps1` covering install, reuse, update, tamper detection, offline fallback, legacy packages, and a bad `current.txt`.

@@ -15,7 +15,7 @@ $utf8Bom=New-Object Text.UTF8Encoding($true)
 # 配布物へ利用者データや作業ファイルを混入させない。V91.59以降 user_settings.json は
 # ユーザープロファイル配下だが、開発ツリーに旧版由来の残骸があると全利用者の初回起動で
 # 開発端末の設定が引き継がれてしまう。
-$forbidden = @(Get-ChildItem -LiteralPath $source -Recurse -File | Where-Object {
+$forbidden = @(Get-ChildItem -LiteralPath $source -Recurse -File -Force | Where-Object {
     $_.Name -like 'user_settings*' -or $_.Extension -in @('.bak','.tmp') -or $_.Name -like '~$*'
 })
 if ($forbidden.Count -gt 0) {
@@ -28,7 +28,7 @@ $manifestPath = Join-Path $source 'manifest.json'
 if (Test-Path -LiteralPath $manifestPath) { Remove-Item -LiteralPath $manifestPath -Force }
 
 $map = @{}
-foreach ($file in @(Get-ChildItem -LiteralPath $source -Recurse -File)) {
+foreach ($file in @(Get-ChildItem -LiteralPath $source -Recurse -File -Force)) {
     $relative = $file.FullName.Substring($source.Length).TrimStart([char[]]@('\','/')).Replace('\','/')
     $map[$relative] = $file.FullName
 }
@@ -61,5 +61,17 @@ $manifest = [ordered]@{
 Write-Host ("manifest.json generated. build={0} files={1} bytes={2}" -f $build, $entries.Count, $totalBytes) -ForegroundColor Cyan
 
 if (Test-Path -LiteralPath $OutputPath) { Remove-Item -LiteralPath $OutputPath -Force }
-Compress-Archive -LiteralPath $source -DestinationPath $OutputPath -CompressionLevel Optimal
+# Compress-Archive は隠しファイルの扱いがプラットフォームで異なる。manifest の一覧から
+# 直接ZIPを組み立て、ZIPの中身とmanifestが構造的に一致することを保証する。
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$rootName = Split-Path -Leaf $source
+$zip = [IO.Compression.ZipFile]::Open($OutputPath, [IO.Compression.ZipArchiveMode]::Create)
+try {
+    $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $manifestPath, "$rootName/manifest.json", [IO.Compression.CompressionLevel]::Optimal)
+    foreach ($entry in $entries) {
+        $relative = [string]$entry.path
+        $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, ([string]$map[$relative]), "$rootName/$relative", [IO.Compression.CompressionLevel]::Optimal)
+    }
+} finally { $zip.Dispose() }
+
 & (Join-Path $source 'app\tools\Test-YakuPackage.ps1') -PackagePath $OutputPath
