@@ -1,0 +1,6 @@
+# 配布物のバイト列（UTF-8 BOM / CRLF / UTF-16）を git が書き換えないようにする
+* -text
+
+# バイナリ・UTF-16 ファイルは差分表示の対象外にする
+*.xlsx binary
+*.vbs  binary

@@ -1,0 +1,8 @@
+# 実行時に生成される利用者設定（配布対象は settings.template.json のみ）
+app/config/settings.json
+*/app/config/settings.json
+
+# ローカル作業物
+*.log
+*.tmp
+~$*
