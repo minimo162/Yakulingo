@@ -12,10 +12,13 @@ Microsoft 365 Copilot の画面を Edge DevTools Protocol（CDP）で操作し�
 ├── current.txt            # 現行バージョン名（1行）。切替はこのファイルの書き換えのみ
 ├── 共有フォルダ配置手順.md  # 共有フォルダへの配置・更新・ロールバック手順
 ├── _docs/                 # 修正指示書・実装記録（バージョン横断で集約）
-├── V91.58/                # 現行版
+├── V91.59/                # 現行版
 │   ├── YakuLingo起動.vbs
 │   └── app/
-└── V91.57/                # N-1（1世代前）
+├── V91.58/                # N-1（1世代前）
+│   ├── YakuLingo起動.vbs
+│   └── app/
+└── V91.57/                # N-2。共有フォルダへは配置しない（N-1運用のため）
     ├── YakuLingo起動.vbs
     └── app/
 ```
@@ -33,6 +36,8 @@ Microsoft 365 Copilot の画面を Edge DevTools Protocol（CDP）で操作し�
 | `prompt_glossary.csv` | Copilotプロンプト注入用の用語集 |
 | `tools/` | エンコーディング検査・回帰テスト・パッケージ作成などの補助スクリプト |
 | `README.md` / `DESIGN.md` | 利用者・保守者向けドキュメント |
+
+利用者設定（`user_settings.json`）、出力、ログ、履歴はアプリフォルダではなく `%USERPROFILE%\.yakulingo-ps\` 配下に保存されます（V91.59以降）。
 
 ## バージョン運用
 
@@ -54,6 +59,6 @@ Windows + PowerShell 5.1 + Microsoft Edge が前提です。CSV 以外のファ�
 
 - `*.ps1`、`prompts/*.txt`、`www/` 配下の HTML/CSS/JS、`config/settings.template.json` は **UTF-8 BOM付き・CRLF** で保存します。
 - Markdown は UTF-8（BOMなし）です。`.vscode/settings.json` に既定を設定しています。
-- コミット・配布前に `powershell -ExecutionPolicy Bypass -File .\V91.58\app\tools\Check-Encoding.ps1` を実行します。
-- BOM違反は `V91.58\app\tools\Repair-YakuEncoding.ps1 -WhatIfOnly` で確認し、引数なし実行で一括修復できます。
+- コミット・配布前に `powershell -ExecutionPolicy Bypass -File .\V91.59\app\tools\Check-Encoding.ps1` を実行します。
+- BOM違反は `V91.59\app\tools\Repair-YakuEncoding.ps1 -WhatIfOnly` で確認し、引数なし実行で一括修復できます。
 - 本リポジトリの `.gitattributes` で改行コードの自動変換を無効化しています。配布物のバイト列をそのまま保持してください。
