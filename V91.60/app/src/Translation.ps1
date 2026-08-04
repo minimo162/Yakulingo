@@ -359,6 +359,241 @@ function Convert-YakuNumericUnits {
     return [pscustomobject]@{ Text=$result; Tokens=@($tokens.ToArray()); Warnings=@($warnings.ToArray()) }
 }
 
+# ---------------------------------------------------------------------------
+# V91.60 数値マスキング
+#
+# Copilot は外部サーバーであるため、機密性のある数値の「大きさ」だけを
+# プレースホルダー【N1】へ置き換えて送信し、受信後に復元する。
+# 符号(+ / ▲ / △ / 括弧)と単位(oku / k yen / % など)は外に残す。依頼元の許可により
+# 符号は保持してよく、単位を残すとモデルが金額・数量・比率を区別できるため。
+#
+# 適用位置は Convert-YakuNumericUnits の直後。単位変換は桁の換算(兆→oku)を伴うため、
+# 先にマスクすると換算できなくなる。
+# ---------------------------------------------------------------------------
+
+function Test-YakuNumericMaskingEnabled {
+    # 常時有効。機密要件は利用者が個別に無効化できるべきではない。
+    # 回帰テスト用の抜け道としてのみ環境変数を見る。設定画面には出さない。
+    return (-not ([string]$env:YAKULINGO_NUMERIC_MASKING -eq 'off'))
+}
+
+function ConvertTo-YakuMaskNormalizedText {
+    # 分類は全角を半角へ正規化した写像の上で行う。1文字→1文字の対応なので
+    # 位置は原文と一致し、求めた範囲をそのまま原文へ適用できる。
+    # 置換そのものは原文に対して行い、非マスク部分の字形は変えない。
+    param([AllowNull()][string]$Text)
+    $s = [string]$Text
+    if ([string]::IsNullOrEmpty($s)) { return '' }
+    $full = '０１２３４５６７８９，．／％＋－ｘＸ　ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ'
+    $half = "0123456789,./%+-xX ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+    $sb = New-Object System.Text.StringBuilder
+    foreach ($ch in $s.ToCharArray()) {
+        $i = $full.IndexOf($ch)
+        if ($i -ge 0) { $null = $sb.Append($half[$i]) } else { $null = $sb.Append($ch) }
+    }
+    return $sb.ToString()
+}
+
+function Get-YakuNumericMaskExemptPatterns {
+    # 非マスクにする形。§1-2 / §1-5 のとおり、実サンプルでは全角と半角が
+    # 混在するため、判定は正規化後のテキストに対して行う。
+    # 例外は狭く厳密に書く。広い例外は機密数値を素通しする。
+    return @(
+        # --- 決算期・年度・年月日・四半期 ---
+        '\d{2,4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日',
+        '\d{2,4}\s*年\s*\d{1,2}\s*月期',
+        '\d{2,4}\s*年\s*\d{1,2}\s*月',
+        '\d{2,4}\s*年度',
+        '(?:令和|平成|昭和)\s*\d{1,2}\s*年',
+        '\d{2,4}\s*年',
+        'FY\s?\d{2,4}(?:\s?/\s?\d{1,2})?',
+        '\d{2,4}\s?/\s?\d{1,2}\s?期',
+        '第\s*\d{1,3}\s*期',
+        '第\s*\d\s*四半期',
+        '(?<![0-9])\d\s?[Qq](?![0-9A-Za-z])',
+        '(?<![0-9A-Za-z])[Qq]\s?\d(?![0-9])',
+        '(?<![0-9])\d{1,2}\s*月(?!期)',
+        '第\s*\d{1,3}\s*(?:章|条|項|号)',
+        # --- 「1株当たり」型の定型句。直後の金額はマスクされる ---
+        '(?:\d|一)\s*株\s*(?:当たり|あたり)',
+        '(?:\d|一)\s*(?:台|人|件|名)\s*(?:当たり|あたり)',
+        # --- 電話番号 ---
+        '(?:\+\d{1,3}[-\s])?\d{2,4}-\d{2,4}-\d{4}',
+        # --- 証券コード。ラベルが付く形だけを除外する。
+        #     裸の (7261) は負数表記 (50) と区別できないためマスクする。 ---
+        '(?:コード番号|証券コード)\s*\d{4}',
+        # --- バージョン番号 ---
+        '(?<![0-9A-Za-z])[Vv]\d+(?:\.\d+)*'
+    )
+}
+
+function Test-YakuMaskSpanCovered {
+    param(
+        [Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Spans,
+        [int]$Start,
+        [int]$End
+    )
+    foreach ($sp in $Spans) {
+        # 数値の一部でも保護範囲に重なっていれば、その数値はマスクしない。
+        if ($Start -lt [int]$sp.End -and $End -gt [int]$sp.Start) { return $true }
+    }
+    return $false
+}
+
+function Get-YakuNumericMaskProtectedSpans {
+    param(
+        [AllowNull()][string]$Text,
+        [AllowNull()][string]$Root,
+        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en'
+    )
+    $spans = New-Object System.Collections.Generic.List[object]
+    $normalized = ConvertTo-YakuMaskNormalizedText -Text $Text
+    if ([string]::IsNullOrEmpty($normalized)) { return @() }
+
+    # ヘルパー関数へ List を渡すと、空のときにパラメータ束縛が失敗する。直接追加する。
+    foreach ($pattern in (Get-YakuNumericMaskExemptPatterns)) {
+        foreach ($m in [regex]::Matches($normalized, $pattern)) {
+            if ($m.Length -gt 0) { $spans.Add([pscustomobject]@{ Start = [int]$m.Index; End = [int]($m.Index + $m.Length) }) | Out-Null }
+        }
+    }
+
+    # 行頭の箇条書き番号。全角の「１．」も正規化後は「1.」になる。
+    # 直後が数字なら箇条書きではなく小数(0.7 など)。除外しない。
+    foreach ($m in [regex]::Matches($normalized, '(?m)^[ \t]*\(?\d{1,2}\)?[\.\)、](?!\d)')) {
+        if ($m.Length -gt 0) { $spans.Add([pscustomobject]@{ Start = [int]$m.Index; End = [int]($m.Index + $m.Length) }) | Out-Null }
+    }
+
+    # 利用者が手で書いた伏せ字。中身は既に非機密なので触らない。
+    foreach ($m in [regex]::Matches([string]$Text, '【[^【】]*】')) {
+        if ($m.Length -gt 0) { $spans.Add([pscustomobject]@{ Start = [int]$m.Index; End = [int]($m.Index + $m.Length) }) | Out-Null }
+    }
+
+    # 用語集に一致した範囲。数字を含む語(FY26/3 1Q、AAT 営業利益(50%)、
+    # MTMUS製(CX-50) 等)を壊さないため、マスク前のテキストから求める。
+    # 件数制限は掛けない。制限すると上限を超えた用語が保護されない。
+    if (-not [string]::IsNullOrWhiteSpace($Root) -and (Get-Command Get-YakuRelevantGlossaryMatches -ErrorAction SilentlyContinue)) {
+        foreach ($path in @((Get-YakuGlossaryPath -Root $Root), (Get-YakuPromptGlossaryPath -Root $Root))) {
+            if ([string]::IsNullOrWhiteSpace($path)) { continue }
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
+            try {
+                $matches = @(Get-YakuRelevantGlossaryMatches -Root $Root -InputText $Text -Direction $Direction -Limit ([int]::MaxValue) -Path $path)
+            } catch { $matches = @() }
+            foreach ($g in $matches) {
+                $len = [int]$g.MatchLength
+                if ($len -le 0) { continue }
+                foreach ($pos in @($g.Positions)) { $spans.Add([pscustomobject]@{ Start = [int]$pos; End = [int]$pos + $len }) | Out-Null }
+            }
+        }
+    }
+    return @($spans.ToArray())
+}
+
+function New-YakuNumericMaskMap {
+    <#
+      数値の「大きさ」だけを【N1】へ置き換える。符号と単位は外に残す。
+      戻り値: Text=マスク済み / Map=@{'【N1】'='72'} / MaskedCount / KeptCount
+    #>
+    param(
+        [AllowNull()][string]$Text,
+        [AllowNull()][string]$Root,
+        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
+        [string]$Location = 'unknown'
+    )
+    $source = [string]$Text
+    $map = @{}
+    if ([string]::IsNullOrEmpty($source) -or -not (Test-YakuNumericMaskingEnabled)) {
+        return [pscustomobject]@{ Text = $source; Map = $map; MaskedCount = 0; KeptCount = 0 }
+    }
+
+    $protected = @(Get-YakuNumericMaskProtectedSpans -Text $source -Root $Root -Direction $Direction)
+    $normalized = ConvertTo-YakuMaskNormalizedText -Text $source
+
+    $targets = New-Object System.Collections.Generic.List[object]
+    $kept = 0
+    foreach ($m in [regex]::Matches($normalized, '\d[\d,]*(?:\.\d+)?')) {
+        if (Test-YakuMaskSpanCovered -Spans $protected -Start $m.Index -End ($m.Index + $m.Length)) { $kept++; continue }
+        $targets.Add([pscustomobject]@{ Start = $m.Index; Length = $m.Length }) | Out-Null
+    }
+    if ($targets.Count -eq 0) {
+        try { Write-YakuLog "Numeric masking. location=$Location masked=0 kept=$kept" 'INFO' } catch {}
+        return [pscustomobject]@{ Text = $source; Map = $map; MaskedCount = 0; KeptCount = $kept }
+    }
+
+    # 番号は本文の出現順。置換は後ろから行い、前方の位置をずらさない。
+    $ordered = @($targets.ToArray() | Sort-Object Start)
+    for ($i = 0; $i -lt $ordered.Count; $i++) {
+        $map['【N' + ($i + 1) + '】'] = $source.Substring([int]$ordered[$i].Start, [int]$ordered[$i].Length)
+    }
+    $result = $source
+    for ($i = $ordered.Count - 1; $i -ge 0; $i--) {
+        $token = '【N' + ($i + 1) + '】'
+        $result = $result.Remove([int]$ordered[$i].Start, [int]$ordered[$i].Length).Insert([int]$ordered[$i].Start, $token)
+    }
+    try { Write-YakuLog "Numeric masking. location=$Location masked=$($ordered.Count) kept=$kept" 'INFO' } catch {}
+    return [pscustomobject]@{ Text = $result; Map = $map; MaskedCount = [int]$ordered.Count; KeptCount = [int]$kept }
+}
+
+function Get-YakuNumericMaskTokens {
+    param([AllowNull()][string]$Text)
+    return @([regex]::Matches([string]$Text, '【N\d+】') | ForEach-Object { [string]$_.Value })
+}
+
+function Restore-YakuNumericMask {
+    param(
+        [AllowNull()][string]$Text,
+        [AllowNull()][hashtable]$Map
+    )
+    $result = [string]$Text
+    if ([string]::IsNullOrEmpty($result) -or $null -eq $Map -or $Map.Count -eq 0) { return $result }
+    # 番号の大きい順に置換する。【N1】が【N10】の一部を壊さないため。
+    foreach ($token in @($Map.Keys | Sort-Object { [int]([regex]::Match([string]$_, '\d+').Value) } -Descending)) {
+        $result = $result.Replace([string]$token, [string]$Map[$token])
+    }
+    return $result
+}
+
+function Test-YakuNumericMaskIntegrity {
+    <#
+      復元の安全のため、プレースホルダーが過不足なく1対1であることを確認する。
+      数値整合監査は「必要数以上あるか」しか見ないため、これを別に通す。
+    #>
+    param(
+        [AllowNull()][string]$MaskedSource,
+        [AllowNull()][string]$Translated,
+        [string]$Location = 'unknown'
+    )
+    $sourceCounts = @{}
+    $targetCounts = @{}
+    foreach ($t in (Get-YakuNumericMaskTokens -Text $MaskedSource)) { if (-not $sourceCounts.ContainsKey($t)) { $sourceCounts[$t] = 0 }; $sourceCounts[$t]++ }
+    foreach ($t in (Get-YakuNumericMaskTokens -Text $Translated))   { if (-not $targetCounts.ContainsKey($t)) { $targetCounts[$t] = 0 }; $targetCounts[$t]++ }
+
+    $missing = New-Object System.Collections.Generic.List[string]
+    $duplicated = New-Object System.Collections.Generic.List[string]
+    $unexpected = New-Object System.Collections.Generic.List[string]
+    foreach ($key in @($sourceCounts.Keys)) {
+        $actual = if ($targetCounts.ContainsKey($key)) { [int]$targetCounts[$key] } else { 0 }
+        if ($actual -lt [int]$sourceCounts[$key]) { $missing.Add($key) | Out-Null }
+        elseif ($actual -gt [int]$sourceCounts[$key]) { $duplicated.Add($key) | Out-Null }
+    }
+    foreach ($key in @($targetCounts.Keys)) {
+        if (-not $sourceCounts.ContainsKey($key)) { $unexpected.Add($key) | Out-Null }
+    }
+    $ok = ($missing.Count -eq 0 -and $duplicated.Count -eq 0 -and $unexpected.Count -eq 0)
+    $detail = "placeholders source=$($sourceCounts.Count) missing=$($missing.Count) duplicated=$($duplicated.Count) unexpected=$($unexpected.Count)"
+    if (-not $ok) {
+        $parts = New-Object System.Collections.Generic.List[string]
+        if ($missing.Count -gt 0)    { $parts.Add('missing=' + (@($missing.ToArray()) -join ',')) | Out-Null }
+        if ($duplicated.Count -gt 0) { $parts.Add('duplicated=' + (@($duplicated.ToArray()) -join ',')) | Out-Null }
+        if ($unexpected.Count -gt 0) { $parts.Add('unexpected=' + (@($unexpected.ToArray()) -join ',')) | Out-Null }
+        $detail = $detail + ' [' + (@($parts.ToArray()) -join '; ') + ']'
+    }
+    try { Write-YakuLog "Numeric mask integrity. location=$Location $detail" $(if ($ok) { 'DEBUG' } else { 'WARN' }) } catch {}
+    return [pscustomobject]@{
+        Ok = [bool]$ok; Detail = $detail
+        Missing = @($missing.ToArray()); Duplicated = @($duplicated.ToArray()); Unexpected = @($unexpected.ToArray())
+    }
+}
+
 function Get-YakuNumericAuditExpectations {
     param([AllowNull()][string]$SourceText)
     $items = New-Object System.Collections.Generic.List[object]

@@ -201,6 +201,24 @@ function Write-YakuSettingsAtomic {
     } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue } }
 }
 
+function Resolve-YakuUserSettingsPath {
+    param([Parameter(Mandatory=$true)][string]$Root)
+    $path = Get-YakuUserSettingsPath
+    if (Test-Path -LiteralPath $path -PathType Leaf) { return $path }
+    $legacy = Get-YakuLegacyUserSettingsPath -Root $Root
+    if (Test-Path -LiteralPath $legacy -PathType Leaf) {
+        # アプリフォルダ内の旧設定を一度だけ引き継ぐ。旧ファイルは削除しない。
+        # 共有フォルダが読取専用の場合と、旧版を使い続ける利用者がいる場合の双方を壊さないため。
+        try {
+            Copy-Item -LiteralPath $legacy -Destination $path -Force
+            try { if (Get-Command Write-YakuLog -ErrorAction SilentlyContinue) { Write-YakuLog "Legacy user settings migrated to the user profile. to=$path" 'INFO' } } catch {}
+        } catch {
+            try { if (Get-Command Write-YakuLog -ErrorAction SilentlyContinue) { Write-YakuLog 'SETTINGS_MIGRATION_FAILED: 旧設定を引き継げませんでした。既定値で継続します。' 'WARN' } } catch {}
+        }
+    }
+    return $path
+}
+
 function Read-YakuSettings {
     param([Parameter(Mandatory=$true)][string]$Root)
     $templatePath = Join-Path $Root 'config\settings.template.json'
@@ -208,7 +226,7 @@ function Read-YakuSettings {
     try { $template = Get-Content -LiteralPath $templatePath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $template = $null }
     $merged = ConvertTo-YakuHashtable (Test-YakuSettingsData -Data $template)
 
-    $userPath = Join-Path $Root 'config\user_settings.json'
+    $userPath = Resolve-YakuUserSettingsPath -Root $Root
     if (Test-Path -LiteralPath $userPath -PathType Leaf) {
         try {
             $user = ConvertTo-YakuHashtable (Get-Content -LiteralPath $userPath -Raw -Encoding UTF8 | ConvertFrom-Json)
@@ -267,7 +285,7 @@ function Read-YakuSettings {
 
 function Read-YakuUserSettingsStrict {
     param([Parameter(Mandatory=$true)][string]$Root)
-    $path = Join-Path $Root 'config\user_settings.json'
+    $path = Get-YakuUserSettingsPath
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw 'SETTINGS_SAVE_READBACK_FAILED: 保存後の設定ファイルが見つかりません。'
     }
@@ -299,7 +317,7 @@ function Save-YakuUserSettings {
         }
     }
     $data = ConvertTo-YakuHashtable (Test-YakuSettingsData -Data $current -Strict)
-    $path = Join-Path $Root 'config\user_settings.json'
+    $path = Get-YakuUserSettingsPath
     $null = Write-YakuSettingsAtomic -Path $path -Data $data
     try {
         if (Get-Command Clear-YakuTranslationCache -ErrorAction SilentlyContinue) { $null = Clear-YakuTranslationCache }

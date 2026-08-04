@@ -49,7 +49,7 @@ V91.2では、M365 Copilotの新しい `loading-message` 思考表示と停止�
 
 ## 起動と停止
 
-1. トップ階層の `YakuLingo起動.vbs` をダブルクリックします。
+1. 共有ルートの `YakuLingo起動.cmd` をダブルクリックします（V91.59以降。`.vbs` も転送シムとして動作します）。
 2. EdgeでMicrosoft 365 Copilotへサインインします。
 3. 画面右上がReadyになったら翻訳できます。
 4. 停止は起動中のPowerShell画面で `Ctrl+C` を押します。
@@ -112,7 +112,7 @@ V73への更新前に保存された日英混在訳を残さないため、設�
 
 ## 設定
 
-設定は `config\user_settings.json` へ原子的に保存されます。型、範囲、列挙値はサーバー側でも検証します。不正JSONは日時付きバックアップへ移し、既定値へ復旧します。主な既定値は次のとおりです。
+設定は `%USERPROFILE%\.yakulingo-ps\config\user_settings.json` へ原子的に保存されます（V91.59以降。旧版の `<アプリ>\config\user_settings.json` は初回起動時に一度だけ引き継ぎ、旧ファイルは削除しません）。型、範囲、列挙値はサーバー側でも検証します。不正JSONは日時付きバックアップへ移し、既定値へ復旧します。主な既定値は次のとおりです。
 
 - ファイル上限: 50MB（1～200MB）
 - Copilot応答タイムアウト: 240秒
@@ -201,3 +201,18 @@ Japanese numeric units are converted deterministically before batching: 億円/�
 - Shortened file-translation exact-match table labels: `固定販促費` -> `Fixed Promo.`, subsidiary variants -> `Subs. Fixed Promo.`, and `販売奨励金/固定販促費` -> `VM / Fixed Promo.`.
 - Added `国内その他` -> `Dom. Oth.` and shortened `連結調整他` -> `Cons. Adj.`.
 - FULL/BRIEF prose terminology rules remain unchanged.
+
+
+## V91.59
+- Moved `user_settings.json` out of the app folder into `%USERPROFILE%\.yakulingo-ps\config\`, so settings are per user and survive version updates.
+- Legacy settings inside the app folder are migrated once on first read. The legacy file is never modified or deleted, so users still on an older version are unaffected.
+- Added the `YAKULINGO_DATA_DIR` override so regression tests can redirect the data directory instead of touching real user data.
+- Added `tools\Test-YakuV9159SettingsPath.ps1` and extended `tools\Smoke-Test.ps1` to guard the new location.
+- `tools\New-YakuPackage.ps1` now emits a `manifest.json` next to `app/` listing every packaged file with its size and SHA-256, so a local copy of the package can be verified before it is used.
+- `tools\New-YakuPackage.ps1` refuses to package a tree containing `user_settings*`, `*.bak`, or `*.tmp`.
+- `tools\Test-YakuPackage.ps1` verifies the manifest against the archive: build ID agreement, per-file size and SHA-256, and that no packaged file is missing from or unlisted in the manifest.
+- Packages are now built directly from the manifest file list instead of `Compress-Archive`, so the archive and the manifest always agree (hidden files included).
+- Added `YakuLingo起動.cmd` next to `YakuLingo起動.vbs`. VBScript is being retired by Microsoft, so `.cmd` is the supported launcher; the `.vbs` remains only as a forwarding shim.
+- The shared root now carries `bootstrap.ps1`, which copies this package to `%LOCALAPPDATA%\YakuLingo\versions\<version>-<manifest hash>`, verifies every file against the manifest, and runs it locally. The shared folder can then be updated while users are working.
+- `tools\Create-Desktop-Shortcut.ps1` targets the shared `.cmd` (via `YAKULINGO_SHARED_ROOT` when available) and uses a local working directory to avoid the cmd.exe UNC warning.
+- Added `tools\Test-YakuBootstrap.ps1` covering install, reuse, update, tamper detection, offline fallback, legacy packages, and a bad `current.txt`.
