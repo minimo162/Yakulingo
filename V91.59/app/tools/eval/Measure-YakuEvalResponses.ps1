@@ -130,6 +130,8 @@ foreach ($case in @($set.cases)) {
         $glossaryTotal++
         # 訳語が候補を | で並べる場合があるため、いずれか1つが出ていればよい。
         $variants = @($target -split '\|' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        # 単複のゆらぎは訳の誤りではない。fixed costs と fixed cost を同一視する。
+        $variants += @($variants | Where-Object { $_ -cmatch 's$' } | ForEach-Object { $_.Substring(0, $_.Length - 1) })
         if (Test-YakuEvalContains -Text ($full + ' ' + $brief) -Needles $variants) { $glossaryHit++ }
         else { $glossaryMiss.Add([string]$g.Source + '->' + $target) | Out-Null }
     }
@@ -224,9 +226,11 @@ if (-not [string]::IsNullOrWhiteSpace($CompareWith)) {
         }
         if ($identical.Count -gt 0) {
             Write-Host ''
-            Write-Host ("*** 比較無効: 応答が使い回されています ({0}/{1}件が同一) ***" -f $identical.Count, $scored.Count) -ForegroundColor Red
+            Write-Host ("*** 同一の応答があります ({0}/{1}件) ***" -f $identical.Count, $scored.Count) -ForegroundColor Red
             Write-Host ('    ' + (@($identical.ToArray()) -join ', ')) -ForegroundColor Red
-            Write-Host '    A/Bは必ず別々に翻訳し直してください。片方を複製すると効果を測れません。' -ForegroundColor Red
+            Write-Host '    多数が同一なら応答の使い回しを疑い、比較結果を捨てること。' -ForegroundColor Red
+            Write-Host '    A/Bを別々の実行単位に分けたうえで少数だけ同一なら、短文や用語集で' -ForegroundColor DarkYellow
+            Write-Host '    出力が固定される自然な一致の可能性がある。該当ケースを読んで判断すること。' -ForegroundColor DarkYellow
         }
 
         Write-Host ''
