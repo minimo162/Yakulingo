@@ -166,6 +166,10 @@ function New-YakuFilePrompt {
     $vars = @{
         source_list = $sourceList
         reference_section = Get-YakuReferenceSection -Root $Root -Settings $Settings -InputText $sourceList -Direction $Direction
+        # V91.60 段階5: テキスト経路と同じ数値規則を使う。
+        # ファイル用テンプレートは規則を直書きしていたため、方向差分と
+        # プレースホルダー保護が二重管理になっていた。1箇所へ寄せる。
+        numeric_rules = Get-YakuNumericRulesSection -InputText $sourceList -Direction $Direction
         request_id = $RequestId
     }
     return Expand-YakuTemplate -Template $template -Variables $vars
@@ -1727,7 +1731,11 @@ function Add-YakuFileTranslationsToCache {
     foreach ($item in @($Items)) {
         $idx = [int]$item.Index
         if (-not $Translations.ContainsKey($idx)) { continue }
-        $sourceForCache = Get-YakuFileItemOriginalText -Item $item
+        # V91.60: 読み出し側(Invoke-YakuFileTranslation)と Set-YakuFileFallbackCacheValue は
+        # $item.Text をキーにしている。ここだけ原文を使っていたため書き込みが
+        # 読み出しに当たらなかった。3箇所を $item.Text へ揃える。
+        # 単位変換・マスク後のテキストなので、値もマスク後で整合する(§7)。
+        $sourceForCache = [string]$item.Text
         $value = Convert-YakuFileTranslationBrackets -Text ([string]$Translations[$idx])
         if (Test-YakuFileTranslationInvalid -Source $sourceForCache -Translation $value -Direction $Direction) { continue }
         $cacheKey = Get-YakuTranslationCacheKey -Kind 'file' -Direction $Direction -Text $sourceForCache -Style 'concise' -Settings $Settings
@@ -1875,12 +1883,11 @@ function Invoke-YakuFileTranslation {
 
     $unique = New-YakuFileUniqueItems -Blocks $blocks
     $items = @($unique.Items)
-    if ($Direction -eq 'to_en') {
-        foreach ($item in $items) {
-            $item | Add-Member -NotePropertyName OriginalText -NotePropertyValue ([string]$item.Text) -Force
-            $numericPre = Convert-YakuNumericUnits -Text ([string]$item.Text) -Location ("file-ID-" + [string]$item.Index)
-            $item.Text = [string]$numericPre.Text
-        }
+    # V91.60 段階4/5: 方向によらず単位を正規化トークンへ揃える。
+    foreach ($item in $items) {
+        $item | Add-Member -NotePropertyName OriginalText -NotePropertyValue ([string]$item.Text) -Force
+        $numericPre = Convert-YakuNumericUnits -Text ([string]$item.Text) -Location ("file-ID-" + [string]$item.Index)
+        $item.Text = [string]$numericPre.Text
     }
     $translationByIndex = @{}
     $sourceListAll = New-YakuFileSourceList -Items $items
@@ -1890,6 +1897,23 @@ function Invoke-YakuFileTranslation {
     $glossaryExactHits = 0
     try { $glossaryExactHits = [int]$exactGlossary.Count } catch { $glossaryExactHits = 0 }
     $appliedGlossary = @(Join-YakuAppliedGlossaryEntries -Primary @($exactGlossary.AppliedGlossary) -Secondary @($promptAppliedGlossary))
+
+    # V91.60 段階5: ここで各項目をマスクする。用語集の解決より後に置くのは、
+    # 完全一致置換 (Resolve-YakuFileExactGlossaryTranslations) が原文の見出し語と
+    # 突き合わせるため。先にマスクすると一致しなくなる。
+    # 以降 $item.Text はマスク後になり、キャッシュキー・プロンプト・
+    # 各監査・補完再依頼がすべてマスク後で動く。復元は最後にまとめて行う。
+    $maskedItemCount = 0
+    $maskedTokenCount = 0
+    foreach ($item in $items) {
+        $maskResult = New-YakuNumericMaskMap -Text ([string]$item.Text) -Root $Root -Direction $Direction -Location ("file-ID-" + [string]$item.Index)
+        $item | Add-Member -NotePropertyName NumericMaskMap -NotePropertyValue $maskResult.Map -Force
+        $item | Add-Member -NotePropertyName MaskedText -NotePropertyValue ([string]$maskResult.Text) -Force
+        $item.Text = [string]$maskResult.Text
+        if ([int]$maskResult.MaskedCount -gt 0) { $maskedItemCount++; $maskedTokenCount += [int]$maskResult.MaskedCount }
+    }
+    try { Write-YakuLog "File numeric masking. jobId=$JobId items=$($items.Count) maskedItems=$maskedItemCount maskedTokens=$maskedTokenCount" 'INFO' } catch {}
+
     $pending = New-Object System.Collections.Generic.List[object]
     $cacheHits = 0
     foreach ($item in $items) {
@@ -1953,6 +1977,9 @@ function Invoke-YakuFileTranslation {
     }
 
     # V91.36 final numeric audit also covers cache/glossary/fallback routes.
+    # V91.60: to_jp では 【N1】 oku が 【N1】億円 へ訳されるため
+    # 「数値+単位」トークンの照合が成立しない(§6)。プレースホルダーの
+    # 過不足は下の復元ループで確認する。
     if ($Direction -eq 'to_en') {
         foreach ($item in $items) {
             $idx = [int]$item.Index
@@ -1982,6 +2009,39 @@ function Invoke-YakuFileTranslation {
                 } catch {}
             }
         }
+    }
+
+    # V91.60 段階5: プレースホルダーを実値へ戻す。
+    # ここより後ろは原文保持判定(訳文が原文と同一かの比較)と書き戻しに入るため、
+    # マスクを残したままにできない。復元前に1対1を確認し、崩れていれば
+    # 警告を立てる。無言で数値が消えるのを避けるのが目的。
+    $maskIntegrityFailures = 0
+    foreach ($item in $items) {
+        $idx = [int]$item.Index
+        if (-not $translationByIndex.ContainsKey($idx)) { continue }
+        $map = $null
+        try { $map = $item.NumericMaskMap } catch { $map = $null }
+        if ($null -eq $map -or $map.Count -eq 0) { continue }
+        $translated = [string]$translationByIndex[$idx]
+        # 原文保持になった項目は untranslated-retained で既に警告済み。
+        # プレースホルダーが無いのは当然なので、二重に警告しない。
+        if ($translated -eq (Get-YakuFileItemOriginalText -Item $item)) { continue }
+        $maskIntegrity = Test-YakuNumericMaskIntegrity -MaskedSource ([string]$item.MaskedText) -Translated $translated -Location ("file-ID-" + [string]$idx)
+        if (-not [bool]$maskIntegrity.Ok) {
+            $maskIntegrityFailures++
+            try {
+                Add-YakuWarning -Warnings $warnings -Category 'numeric-mask-integrity' -Location ("ID $idx") -Details @{ Detail=[string]$maskIntegrity.Detail; Missing=@($maskIntegrity.Missing); Duplicated=@($maskIntegrity.Duplicated); Unexpected=@($maskIntegrity.Unexpected) } -Message "数値プレースホルダーの個数が原文と一致しません。該当箇所の数値を必ずご確認ください。($([string]$maskIntegrity.Detail))"
+            } catch {}
+        }
+        $translationByIndex[$idx] = Restore-YakuNumericMask -Text $translated -Map $map
+    }
+    if ($maskIntegrityFailures -gt 0) {
+        try { Write-YakuLog "File numeric mask integrity. jobId=$JobId failures=$maskIntegrityFailures" 'WARN' } catch {}
+    }
+    # 原文保持判定・書き戻しはマスク前の原文と比較する必要があるため、
+    # $item.Text をここで戻す。
+    foreach ($item in $items) {
+        try { if ($item.PSObject.Properties.Name -contains 'MaskedText') { $item.Text = Restore-YakuNumericMask -Text ([string]$item.Text) -Map $item.NumericMaskMap } } catch {}
     }
 
     try {

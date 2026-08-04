@@ -27,11 +27,8 @@ Rules:
 {brief_rules}
 - Approved promotion-cost labels: 販促費 / 販売促進費 -> Promo. Costs; 固定販促費 -> Fixed Promo.; 子会社 固定販促費 / 子会社固定販促費 -> Subs. Fixed Promo.; 販売奨励金/固定販促費 -> VM / Fixed Promo.; 国内その他 -> Dom. Oth.; 連結調整他 -> Cons. Adj. Use these exact forms for matching table items. Never use MKT, Fixed MKT, or Fixed Marketing for sales promotion costs. Do not change marketing strategy, marketing expenses, sales promotion activities, promotional measures, promotion, or sales promotion campaign.
 - Keep already-English product names, account codes, URLs, email addresses, and obvious identifiers unchanged.
-- Positive/additive amounts marked +, ＋, or プラス keep +N.
-- ▲, negative minus signs, or マイナス: put parentheses around the numeric token only; keep units and % outside.
-- Numeric tokens already in English (oku, k units, k yen): reproduce number and unit verbatim; never rescale, reconvert, add yen after oku, or restore Japanese units. Never million, billion, trillion, bn, or tn.
-- Arrow (→) between two numbers: reproduce only when the source writes A→B; never create one. Otherwise use words. No tilde or greater-than/less-than signs. Keep YoY, QoQ, CAGR, 3Q, Jan. to Dec.
 - Do not output Korean/Hangul.
+{numeric_rules}
 {reference_section}
 
 ===INPUT_TEXT:{request_id}===

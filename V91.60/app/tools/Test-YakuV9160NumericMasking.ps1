@@ -24,7 +24,7 @@ function Assert-YakuMask {
     else { Write-Host ('  FAIL ' + $Message) -ForegroundColor Red; $script:Failures++ }
 }
 
-foreach ($name in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1')) {
+foreach ($name in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','FileTranslation.ps1')) {
     . (Join-Path (Join-Path $root 'src') $name)
 }
 
@@ -282,6 +282,51 @@ Assert-YakuMask ($jpSent -like '*FY2026/3*') 'to_jp でも会計期は伏せな�
 Assert-YakuMask ($jpSent -like '*oku -> 億円*') 'to_jp のプロンプトに単位表記の指示が入る'
 Assert-YakuMask (@($jpResult.Options).Count -eq 1) 'JAPANESE の1件が返る'
 Assert-YakuMask (([string]$jpResult.Options[0].Translation) -like '*115.77*') 'to_jp でも実値へ復元する'
+
+Write-Host 'CASE 17: ファイル翻訳経路（プロンプトと復元）'
+# 実ファイルを使わず、経路の構成要素を直接確認する。
+$fileItems = @(
+    [pscustomobject]@{ Index=1; Text='2026年3月期の売上高は115.77億円' }
+    [pscustomobject]@{ Index=2; Text='営業利益率は8.3%' }
+)
+foreach ($fi in $fileItems) {
+    $fi | Add-Member -NotePropertyName OriginalText -NotePropertyValue ([string]$fi.Text) -Force
+    $fi.Text = [string](Convert-YakuNumericUnits -Text ([string]$fi.Text) -Location 'test').Text
+    $fm = New-YakuNumericMaskMap -Text ([string]$fi.Text) -Root $root -Direction 'to_en' -Location 'test'
+    $fi | Add-Member -NotePropertyName NumericMaskMap -NotePropertyValue $fm.Map -Force
+    $fi | Add-Member -NotePropertyName MaskedText -NotePropertyValue ([string]$fm.Text) -Force
+    $fi.Text = [string]$fm.Text
+}
+$filePrompt = New-YakuFilePrompt -Root $root -Items $fileItems -Settings $settings -Direction 'to_en' -RequestId ([guid]::NewGuid().ToString('N'))
+Assert-YakuMask ($filePrompt -like '*【N1】*') 'ファイル用プロンプトにプレースホルダーが入る'
+Assert-YakuMask (-not ($filePrompt -like '*115.77*')) 'ファイル用プロンプトに実値が出ない'
+Assert-YakuMask (-not ($filePrompt -like '*8.3%*')) 'ファイル用プロンプトに比率の実値が出ない'
+Assert-YakuMask ($filePrompt -like '*2026年3月期*') 'ファイルでも会計期は伏せない'
+Assert-YakuMask ($filePrompt -like '*NUMBER PLACEHOLDERS*') 'ファイル用プロンプトに保護規則が入る'
+Assert-YakuMask ($filePrompt -like '*3Q*') '旧テンプレートにあった 3Q の保持指示が残る'
+Assert-YakuMask (-not ($filePrompt -like '*{numeric_rules}*')) 'テンプレート変数が残らない'
+
+# to_jp のファイル用テンプレートも同様に展開される
+$filePromptJp = New-YakuFilePrompt -Root $root -Items $fileItems -Settings $settings -Direction 'to_jp' -RequestId ([guid]::NewGuid().ToString('N'))
+Assert-YakuMask ($filePromptJp -like '*oku -> 億円*') 'to_jp のファイル用プロンプトに単位表記の指示が入る'
+Assert-YakuMask (-not ($filePromptJp -like '*{numeric_rules}*')) 'to_jp でもテンプレート変数が残らない'
+
+# 復元
+$fileTranslations = @{ 1 = 'Net sales for FY2026/3 were 【N1】 oku'; 2 = 'OPM 【N1】%' }
+foreach ($fi in $fileItems) {
+    $fileTranslations[[int]$fi.Index] = Restore-YakuNumericMask -Text ([string]$fileTranslations[[int]$fi.Index]) -Map $fi.NumericMaskMap
+}
+Assert-YakuMask ($fileTranslations[1] -eq 'Net sales for FY2026/3 were 115.77 oku') 'ファイル訳文を実値へ復元する'
+Assert-YakuMask ($fileTranslations[2] -eq 'OPM 8.3%') '項目ごとに別のマップで復元する'
+
+Write-Host 'CASE 18: 契約フィンガープリントがマスク状態を含む'
+$fpOn = Get-YakuTranslationContractFingerprint -Root $root -Settings $settings
+$env:YAKULINGO_NUMERIC_MASKING = 'off'
+try { $fpOff = Get-YakuTranslationContractFingerprint -Root $root -Settings $settings }
+finally { Remove-Item Env:\YAKULINGO_NUMERIC_MASKING -ErrorAction SilentlyContinue }
+$fpBack = Get-YakuTranslationContractFingerprint -Root $root -Settings $settings
+Assert-YakuMask ($fpOn -ne $fpOff) 'マスクの有無で指紋が変わる'
+Assert-YakuMask ($fpOn -eq $fpBack) '戻せば同じ指紋になる（メモ化が状態を無視しない）'
 
 if ($script:Failures -gt 0) {
     Write-Host "V91.60 numeric masking test failed. failures=$script:Failures" -ForegroundColor Red

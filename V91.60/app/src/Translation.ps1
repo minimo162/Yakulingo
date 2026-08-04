@@ -80,6 +80,11 @@ function Get-YakuTranslationContractFingerprint {
     foreach ($key in @('copilot_model','use_bundled_glossary','glossary_prompt_limit','max_chars_per_batch','max_chars_per_batch_file')) {
         try { $settingParts.Add($key + '=' + [string]$Settings.$key) | Out-Null } catch { $settingParts.Add($key + '=') | Out-Null }
     }
+    # V91.60 §7: マスキング仕様の識別子と有効・無効の状態を契約へ含める。
+    # マスクなしで作られた訳文をマスク経路で再利用すると復元が壊れる。
+    # メモ化の判定にも入れないと、状態が変わっても古い指紋を返してしまう。
+    $maskContract = 'numeric-mask-v9160=' + $(if (Test-YakuNumericMaskingEnabled) { 'on' } else { 'off' })
+    $settingParts.Add($maskContract) | Out-Null
     $settingsSignature = $Root + '|' + (($settingParts.ToArray()) -join '|')
     $fileSignatureParts = New-Object System.Collections.Generic.List[string]
     foreach ($name in $names) {
@@ -1188,10 +1193,9 @@ function Invoke-YakuSingleTranslationBatch {
     $promptSw.Stop()
     $styleReferenceHash = if ([string]::IsNullOrEmpty([string]$StyleReference)) { '' } else { Get-YakuTextSha256 -Text ([string]$StyleReference) }
     $cacheSw = [System.Diagnostics.Stopwatch]::StartNew()
-    # マスクの有無で保存される raw の形が変わる。契約をキーへ入れ、
-    # マスクなし時代のキャッシュを引いて復元に失敗するのを防ぐ。
-    $maskContract = 'mask' + $(if (Test-YakuNumericMaskingEnabled) { '1' } else { '0' })
-    $cacheKey = Get-YakuTranslationCacheKey -Kind 'text' -Direction $Direction -Text $sourceText -Style ('plain-v9160|' + $maskContract + '|' + $styleReferenceHash) -Root $Root -Settings $Settings
+    # マスク状態は Get-YakuTranslationContractFingerprint が持つ(§7)。
+    # ここは版だけ上げ、マスクなし時代のキーと衝突しないようにする。
+    $cacheKey = Get-YakuTranslationCacheKey -Kind 'text' -Direction $Direction -Text $sourceText -Style ('plain-v9160|' + $styleReferenceHash) -Root $Root -Settings $Settings
     $cachedRaw = Get-YakuTranslationCacheValue -Key $cacheKey -Settings $Settings
     $cacheSw.Stop()
     Write-YakuLog "Translation preparation timings. glossary-load elapsedMs=$($glossarySw.ElapsedMilliseconds) prompt-build elapsedMs=$($promptSw.ElapsedMilliseconds) cache-lookup elapsedMs=$($cacheSw.ElapsedMilliseconds)" 'INFO'
