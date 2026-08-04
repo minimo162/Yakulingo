@@ -9,7 +9,9 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Root = (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path))
+    [string]$Root = (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)),
+    # 改行コードを意図して変えたときだけ渡す。基準値を書き直して終了する。
+    [switch]$UpdateEolBaseline
 )
 
 $ErrorActionPreference = 'Stop'
@@ -27,6 +29,22 @@ function Get-YakuCheckRelativePath {
         }
     } catch {}
     return $Path
+}
+
+function Get-YakuFileEolStyle {
+    # 配布物はファイルごとに CRLF と LF が混在しており、その並びを保つ必要がある。
+    # 一括変換は差分を全行に広げ、レビューを不能にする。
+    param([Parameter(Mandatory=$true)][string]$Path)
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $lf = 0; $crlf = 0
+    for ($i = 0; $i -lt $bytes.Length; $i++) {
+        if ($bytes[$i] -ne 0x0A) { continue }
+        if ($i -gt 0 -and $bytes[$i - 1] -eq 0x0D) { $crlf++ } else { $lf++ }
+    }
+    if ($crlf -gt 0 -and $lf -gt 0) { return 'mixed' }
+    if ($crlf -gt 0) { return 'crlf' }
+    if ($lf -gt 0) { return 'lf' }
+    return 'none'
 }
 
 function Test-YakuUtf8BomBytes {
@@ -87,7 +105,56 @@ foreach ($rel in $extraBomTargets) {
 }
 
 
+# --- 改行コードの基準値 ---------------------------------------------------
+# BOM と構文だけを見ていた時期に、パッチ処理が LF のファイルを丸ごと CRLF へ
+# 変換して通過したことがある。基準値と突き合わせて機械的に止める。
+$eolBaselinePath = Join-Path (Join-Path $rootPath 'tools') 'eol-baseline.txt'
+$eolActual = [ordered]@{}
+foreach ($file in @($targets.ToArray())) {
+    $rel = (Get-YakuCheckRelativePath -Root $rootPath -Path ([string]$file.FullName)).Replace('\', '/')
+    $eolActual[$rel] = Get-YakuFileEolStyle -Path ([string]$file.FullName)
+}
+if ($UpdateEolBaseline) {
+    $lines = New-Object System.Collections.Generic.List[string]
+    foreach ($rel in @($eolActual.Keys | Sort-Object)) { $lines.Add($rel + "`t" + [string]$eolActual[$rel]) | Out-Null }
+    $text = (($lines.ToArray()) -join "`n") + "`n"
+    [System.IO.File]::WriteAllText($eolBaselinePath, $text, (New-Object System.Text.UTF8Encoding($true)))
+    Write-Host ("EOL baseline updated: {0} entry(ies)." -f $lines.Count) -ForegroundColor Yellow
+    return
+}
+
 $violations = New-Object System.Collections.Generic.List[string]
+
+$eolBaseline = @{}
+if (Test-Path -LiteralPath $eolBaselinePath -PathType Leaf) {
+    foreach ($line in @([System.IO.File]::ReadAllLines($eolBaselinePath))) {
+        $clean = ([string]$line).TrimStart([char]0xFEFF)
+        if ([string]::IsNullOrWhiteSpace($clean)) { continue }
+        $parts = $clean -split "`t", 2
+        if ($parts.Count -ne 2) { continue }
+        $eolBaseline[[string]$parts[0]] = [string]$parts[1]
+    }
+} else {
+    $violations.Add('EOL baseline missing: tools/eol-baseline.txt (regenerate with -UpdateEolBaseline)') | Out-Null
+}
+if ($eolBaseline.Count -gt 0) {
+    foreach ($rel in @($eolActual.Keys)) {
+        $actual = [string]$eolActual[$rel]
+        if ($actual -eq 'mixed') { $violations.Add("Mixed line endings: $rel") | Out-Null; continue }
+        if (-not $eolBaseline.ContainsKey($rel)) {
+            $violations.Add("EOL baseline entry missing: $rel (actual=$actual; regenerate with -UpdateEolBaseline)") | Out-Null
+            continue
+        }
+        $expected = [string]$eolBaseline[$rel]
+        if ($actual -ne $expected) {
+            $violations.Add("EOL changed: $rel expected=$expected actual=$actual (regenerate with -UpdateEolBaseline only if intended)") | Out-Null
+        }
+    }
+    foreach ($rel in @($eolBaseline.Keys)) {
+        if (-not $eolActual.Contains($rel)) { $violations.Add("EOL baseline entry stale: $rel (regenerate with -UpdateEolBaseline)") | Out-Null }
+    }
+}
+
 foreach ($file in @($targets.ToArray())) {
     $full = [string]$file.FullName
     if (-not (Test-YakuUtf8BomBytes -Path $full)) {
@@ -119,4 +186,4 @@ if ($violations.Count -gt 0) {
     throw ("Encoding/syntax check failed: {0} issue(s)." -f $violations.Count)
 }
 
-Write-Host ("Encoding/syntax check passed: {0} file(s) verified." -f $targets.Count) -ForegroundColor Green
+Write-Host ("Encoding/syntax check passed: {0} file(s) verified (BOM, syntax, line endings)." -f $targets.Count) -ForegroundColor Green
