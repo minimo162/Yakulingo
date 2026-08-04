@@ -594,6 +594,38 @@ function Test-YakuNumericMaskIntegrity {
     }
 }
 
+function Restore-YakuMaskedTranslationOptions {
+    <#
+      V91.60: 各訳文の【N1】を実値へ戻す。戻す前に1対1を確かめ、
+      崩れていれば警告を立てる。欠落した【N1】は復元しようがないため、
+      無言で数値が消えるのを避けるのがここの目的。
+      復元自体は失敗させない。一部が欠けても残りは戻す。
+    #>
+    param(
+        [AllowNull()][object[]]$Options,
+        [AllowNull()][string]$MaskedSource,
+        [AllowNull()][hashtable]$Map,
+        [AllowNull()]$Warnings,
+        [string]$Location = 'text'
+    )
+    if ($null -eq $Options) { return @() }
+    if ($null -eq $Map -or $Map.Count -eq 0) { return @($Options) }
+    foreach ($option in $Options) {
+        $style = [string]$option.Style
+        $translated = [string]$option.Translation
+        $integrity = Test-YakuNumericMaskIntegrity -MaskedSource $MaskedSource -Translated $translated -Location ($Location + '-' + $style)
+        if (-not [bool]$integrity.Ok) {
+            try {
+                if ($null -ne $Warnings -and (Get-Command Add-YakuWarning -ErrorAction SilentlyContinue)) {
+                    Add-YakuWarning -Warnings $Warnings -Category 'numeric-mask-integrity' -Location ([string]$option.Label) -Details @{ Detail=[string]$integrity.Detail; Missing=@($integrity.Missing); Duplicated=@($integrity.Duplicated); Unexpected=@($integrity.Unexpected) } -Message "数値プレースホルダーの個数が原文と一致しません。該当箇所の数値を必ずご確認ください。($([string]$integrity.Detail))"
+                }
+            } catch {}
+        }
+        $option.Translation = Restore-YakuNumericMask -Text $translated -Map $Map
+    }
+    return @($Options)
+}
+
 function Get-YakuNumericAuditExpectations {
     param([AllowNull()][string]$SourceText)
     $items = New-Object System.Collections.Generic.List[object]
@@ -1139,15 +1171,27 @@ function Invoke-YakuSingleTranslationBatch {
         [AllowNull()]$Warnings
     )
     $requestId = [guid]::NewGuid().ToString('N')
+    # V91.60 段階3: 外部へ送る前に数値をマスクする。
+    # バッチ分割の後にマスクするのは、分割が【N12】の途中を
+    # 切ることを構造的に防ぐため。Split-YakuHardChunk は文境界が
+    # 見つからなければ文字数で切るので、先にマスクすると壊れ得る。
+    # 以降この関数の中では $sourceText(マスク後) を原文として扱う。
+    # プロンプト・キャッシュキー・各監査を同じ土俵に乗せるため。
+    $maskResult = New-YakuNumericMaskMap -Text $InputText -Root $Root -Direction $Direction -Location 'text'
+    $sourceText = [string]$maskResult.Text
+    $maskMap = $maskResult.Map
     $glossarySw = [System.Diagnostics.Stopwatch]::StartNew()
     $null = @(Get-YakuGlossaryEntries -Root $Root)
     $glossarySw.Stop()
     $promptSw = [System.Diagnostics.Stopwatch]::StartNew()
-    $built = New-YakuTextPrompt -Root $Root -InputText $InputText -Settings $Settings -DirectionOverride $Direction -StyleReference $StyleReference -RequestId $requestId
+    $built = New-YakuTextPrompt -Root $Root -InputText $sourceText -Settings $Settings -DirectionOverride $Direction -StyleReference $StyleReference -RequestId $requestId
     $promptSw.Stop()
     $styleReferenceHash = if ([string]::IsNullOrEmpty([string]$StyleReference)) { '' } else { Get-YakuTextSha256 -Text ([string]$StyleReference) }
     $cacheSw = [System.Diagnostics.Stopwatch]::StartNew()
-    $cacheKey = Get-YakuTranslationCacheKey -Kind 'text' -Direction $Direction -Text $InputText -Style ('plain-v87|' + $styleReferenceHash) -Root $Root -Settings $Settings
+    # マスクの有無で保存される raw の形が変わる。契約をキーへ入れ、
+    # マスクなし時代のキャッシュを引いて復元に失敗するのを防ぐ。
+    $maskContract = 'mask' + $(if (Test-YakuNumericMaskingEnabled) { '1' } else { '0' })
+    $cacheKey = Get-YakuTranslationCacheKey -Kind 'text' -Direction $Direction -Text $sourceText -Style ('plain-v9160|' + $maskContract + '|' + $styleReferenceHash) -Root $Root -Settings $Settings
     $cachedRaw = Get-YakuTranslationCacheValue -Key $cacheKey -Settings $Settings
     $cacheSw.Stop()
     Write-YakuLog "Translation preparation timings. glossary-load elapsedMs=$($glossarySw.ElapsedMilliseconds) prompt-build elapsedMs=$($promptSw.ElapsedMilliseconds) cache-lookup elapsedMs=$($cacheSw.ElapsedMilliseconds)" 'INFO'
@@ -1156,10 +1200,10 @@ function Invoke-YakuSingleTranslationBatch {
             $cachedEnvelope = [string]$cachedRaw | ConvertFrom-Json
             $cachedRequestId = [string]$cachedEnvelope.request_id
             $optionsCached = @(Parse-YakuTextTranslationResponse -Raw ([string]$cachedEnvelope.raw) -Direction $Direction -RequestId $cachedRequestId -Warnings $Warnings)
-            $optionsCached = @(Repair-YakuTextResponsePostParse -SourceText $InputText -Options $optionsCached -Direction $Direction)
-            $cachedPlaceholderIntegrity = Test-YakuTextResponsePlaceholderIntegrity -SourceText $InputText -Options $optionsCached -Direction $Direction
+            $optionsCached = @(Repair-YakuTextResponsePostParse -SourceText $sourceText -Options $optionsCached -Direction $Direction)
+            $cachedPlaceholderIntegrity = Test-YakuTextResponsePlaceholderIntegrity -SourceText $sourceText -Options $optionsCached -Direction $Direction
             foreach ($cachedOption in $optionsCached) {
-                $cachedNumeric = Test-YakuNumericIntegrity -SourceText $InputText -TranslatedText ([string]$cachedOption.Translation) -Location ("text-cache-" + [string]$cachedOption.Style)
+                $cachedNumeric = Test-YakuNumericIntegrity -SourceText $sourceText -TranslatedText ([string]$cachedOption.Translation) -Location ("text-cache-" + [string]$cachedOption.Style)
                 if (-not [bool]$cachedNumeric.Ok -and [int]$cachedNumeric.ScaleErrors -gt 0) { throw "NUMERIC_SCALE_MISMATCH: $([string]$cachedNumeric.Detail)" }
             }
             if (-not [bool]$cachedPlaceholderIntegrity.Ok) {
@@ -1167,12 +1211,13 @@ function Invoke-YakuSingleTranslationBatch {
                 throw "RESPONSE_PLACEHOLDER_MISMATCH: $([string]$cachedPlaceholderIntegrity.Detail)"
             }
             if ($Direction -eq 'to_en') {
-                $cachedIntegrity = Test-YakuTextStructureIntegrity -SourceText $InputText -FullText ([string]$optionsCached[0].Translation) -BriefText ([string]$optionsCached[1].Translation)
+                $cachedIntegrity = Test-YakuTextStructureIntegrity -SourceText $sourceText -FullText ([string]$optionsCached[0].Translation) -BriefText ([string]$optionsCached[1].Translation)
                 if (-not [bool]$cachedIntegrity.Ok) {
                     try { Write-YakuLog "Text response structure mismatch. attempt=cache detail=$([string]$cachedIntegrity.Detail); cache=discard" 'WARN' } catch {}
                     throw "RESPONSE_STRUCTURE_MISMATCH: $([string]$cachedIntegrity.Detail)"
                 }
             }
+            $optionsCached = @(Restore-YakuMaskedTranslationOptions -Options $optionsCached -MaskedSource $sourceText -Map $maskMap -Warnings $Warnings -Location 'text-cache')
             return [pscustomobject]@{ Direction=$Direction; Options=$optionsCached; Raw=[string]$cachedEnvelope.raw; Prompt=$built.Prompt; CacheHit=$true; RequestId=$cachedRequestId }
         } catch {
             try { (Get-YakuTranslationCacheStore).Remove($cacheKey) } catch {}
@@ -1190,16 +1235,16 @@ function Invoke-YakuSingleTranslationBatch {
     for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
         if ($attempt -gt 1) {
             $requestId = [guid]::NewGuid().ToString('N')
-            $built = New-YakuTextPrompt -Root $Root -InputText $InputText -Settings $Settings -DirectionOverride $Direction -StyleReference $StyleReference -RequestId $requestId
+            $built = New-YakuTextPrompt -Root $Root -InputText $sourceText -Settings $Settings -DirectionOverride $Direction -StyleReference $StyleReference -RequestId $requestId
             if (-not [string]::IsNullOrWhiteSpace($numericCorrectionInstruction)) { $built.Prompt += "`n`n$numericCorrectionInstruction" }
         }
         try {
             $raw = Invoke-YakuCopilotPrompt -Prompt $built.Prompt -Settings $Settings -SkipFreshChatWait:($SkipFreshChatWait -or $attempt -gt 1) -PreserveEndMarker -ProgressState $ProgressState -Warnings $Warnings
             $options = @(Parse-YakuTextTranslationResponse -Raw $raw -Direction $Direction -RequestId $requestId -Warnings $Warnings)
-            $options = @(Repair-YakuTextResponsePostParse -SourceText $InputText -Options $options -Direction $Direction)
+            $options = @(Repair-YakuTextResponsePostParse -SourceText $sourceText -Options $options -Direction $Direction)
             $numericFailures = New-Object System.Collections.Generic.List[object]
             foreach ($option in $options) {
-                $numericAudit = Test-YakuNumericIntegrity -SourceText $InputText -TranslatedText ([string]$option.Translation) -Location ("text-" + [string]$option.Style)
+                $numericAudit = Test-YakuNumericIntegrity -SourceText $sourceText -TranslatedText ([string]$option.Translation) -Location ("text-" + [string]$option.Style)
                 if (-not [bool]$numericAudit.Ok) { $numericFailures.Add($numericAudit) | Out-Null }
             }
             if ($numericFailures.Count -gt 0) {
@@ -1218,7 +1263,7 @@ function Invoke-YakuSingleTranslationBatch {
                     }
                 } catch {}
             }
-            $placeholderIntegrity = Test-YakuTextResponsePlaceholderIntegrity -SourceText $InputText -Options $options -Direction $Direction
+            $placeholderIntegrity = Test-YakuTextResponsePlaceholderIntegrity -SourceText $sourceText -Options $options -Direction $Direction
             if (-not [bool]$placeholderIntegrity.Ok) {
                 $placeholderDetail = [string]$placeholderIntegrity.Detail
                 try { Write-YakuLog "Text masking placeholder mismatch. attempt=$attempt/$maxAttempts detail=$placeholderDetail" 'WARN' } catch {}
@@ -1238,7 +1283,7 @@ function Invoke-YakuSingleTranslationBatch {
                 } catch {}
             }
             if ($Direction -eq 'to_en') {
-                $integrity = Test-YakuTextStructureIntegrity -SourceText $InputText -FullText ([string]$options[0].Translation) -BriefText ([string]$options[1].Translation)
+                $integrity = Test-YakuTextStructureIntegrity -SourceText $sourceText -FullText ([string]$options[0].Translation) -BriefText ([string]$options[1].Translation)
                 if (-not [bool]$integrity.Ok) {
                     $integrityDetail = [string]$integrity.Detail
                     try { Write-YakuLog "Text response structure mismatch. attempt=$attempt/$maxAttempts detail=$integrityDetail" 'WARN' } catch {}
@@ -1284,6 +1329,9 @@ function Invoke-YakuSingleTranslationBatch {
         $cacheEnvelope = [ordered]@{ request_id=$requestId; raw=$raw } | ConvertTo-Json -Depth 4 -Compress
         Set-YakuTranslationCacheValue -Key $cacheKey -Value $cacheEnvelope -Settings $Settings
     }
+    # キャッシュへはマスク後の raw を保存する。ディスク上に実値を
+    # 残さないことにもなる。復元はその後のこの位置で行う。
+    $options = @(Restore-YakuMaskedTranslationOptions -Options $options -MaskedSource $sourceText -Map $maskMap -Warnings $Warnings -Location 'text')
     return [pscustomobject]@{
         Direction = $Direction
         Options = $options

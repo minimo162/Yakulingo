@@ -559,14 +559,24 @@ function Get-YakuReferenceSection {
 
 function Get-YakuNumericRulesSection {
     param([AllowNull()][string]$InputText)
-    if ([string]$InputText -notmatch '[0-9０-９▲△＋+%％〜~↑↓<>＜＞→]|oku|k units|k yen|YoY|QoQ|CAGR|前年|四半期') { return '' }
+    if ([string]$InputText -notmatch '【N\d+】|[0-9０-９▲△＋+%％〜~↑↓<>＜＞→]|oku|k units|k yen|YoY|QoQ|CAGR|前年|四半期') { return '' }
     $nl = [Environment]::NewLine
-    return (@(
+    # V91.60: 数値は外部送信前に【N1】へ置き換えている。指示は禁止事項の列挙ではなく
+    # 「左に一致したら右を出す」形の決定表で書く。想定外の形が来たときでも
+    # 行き先を類推できるようにするため。
+    $placeholderRules = @()
+    if ([string]$InputText -match '【N\d+】') {
+        $placeholderRules = @(
+            '- NUMBER PLACEHOLDERS (highest priority). 【N1】, 【N2】 ... stand for redacted numbers. Copy each token character-for-character. Never translate, renumber, reorder, merge, split, or drop one; never invent one; never replace one with a digit or a word (one, several, approximately, a few). Every token in SOURCE appears the same number of times in each output section. Signs, units, and % stay OUTSIDE the token. A number written WITHOUT a placeholder is not redacted: copy it verbatim as a number.'
+            '- Placeholder decision table, SOURCE -> OUTPUT: 【N1】 oku -> 【N1】 oku / +【N1】 oku -> +【N1】 oku / ▲【N1】 oku -> (【N1】) oku / △【N1】% -> (【N1】)% / 【N1】 k units -> 【N1】 k units / 【N1】 k yen -> 【N1】 k yen / 【N1】→【N2】 -> 【N1】→【N2】.'
+        )
+    }
+    return (@($placeholderRules + @(
         '- Positive/additive amounts marked +, ＋, or プラス keep +N.'
         '- ▲, negative minus signs, or マイナス: put parentheses around the numeric token only; keep units and % outside. Valid: (72) k units, (xxx) oku, (3) %.'
         '- Numeric tokens already in English (oku, k units, k yen): keep the number and unit verbatim; never rescale, re-convert, add yen after oku, or restore Japanese units. Signs and % follow the existing rules. Never million, billion, trillion, bn, or tn.'
         '- Arrow (→) between two numbers: reproduce ONLY when SOURCE writes A→B; never create one. No tilde or greater-than/less-than signs; use words. Keep YoY, QoQ, CAGR, Jan. to Dec.'
-    ) -join $nl)
+    )) -join $nl)
 }
 
 function Get-YakuStyleReferenceSection {

@@ -24,7 +24,7 @@ function Assert-YakuMask {
     else { Write-Host ('  FAIL ' + $Message) -ForegroundColor Red; $script:Failures++ }
 }
 
-foreach ($name in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','Translation.ps1')) {
+foreach ($name in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1')) {
     . (Join-Path (Join-Path $root 'src') $name)
 }
 
@@ -178,6 +178,82 @@ Assert-YakuMask (-not ($mixedInstruction -like '*72*')) '平文の数値は指�
 
 $allPlainAudit = Test-YakuNumericIntegrity -SourceText '前年は72 oku。' -TranslatedText 'Prior year oku.' -Location 'test'
 Assert-YakuMask ((New-YakuNumericCorrectionInstruction -Audit $allPlainAudit) -eq '') '平文だけなら指示文は空になる'
+
+Write-Host 'CASE 13: to_en プロンプトへプレースホルダー保護規則が入る'
+$rulesWith = Get-YakuNumericRulesSection -InputText '売上高は【N1】 oku。'
+Assert-YakuMask ($rulesWith -like '*NUMBER PLACEHOLDERS*') 'プレースホルダーがあれば保護規則を出す'
+Assert-YakuMask ($rulesWith -like '*decision table*') '決定表を出す'
+Assert-YakuMask ($rulesWith -like '*Positive/additive*') '既存の数値規則も残る'
+$rulesWithout = Get-YakuNumericRulesSection -InputText '前年比で増加しました。72 oku。'
+Assert-YakuMask (-not ($rulesWithout -like '*NUMBER PLACEHOLDERS*')) 'プレースホルダーが無ければ保護規則は出さない'
+Assert-YakuMask ($rulesWithout -like '*Positive/additive*') 'その場合も既存の数値規則は出す'
+Assert-YakuMask ((Get-YakuNumericRulesSection -InputText 'これは文章です。') -eq '') '数値関連が無ければ空'
+
+Write-Host 'CASE 14: 復元ヘルパー'
+$restoreOptions = @(
+    [pscustomobject]@{ Style='full'; Label='FULL'; Translation='Revenue was 【N1】 oku, up 【N2】%.'; Explanation='' }
+    [pscustomobject]@{ Style='brief'; Label='BRIEF'; Translation='Rev. 【N1】 oku (+【N2】%)'; Explanation='' }
+)
+$restoreMap = @{ '【N1】' = '11,577'; '【N2】' = '3.4' }
+$restored = @(Restore-YakuMaskedTranslationOptions -Options $restoreOptions -MaskedSource '売上高は【N1】 oku、【N2】％増。' -Map $restoreMap -Warnings $null -Location 'test')
+Assert-YakuMask ($restored[0].Translation -eq 'Revenue was 11,577 oku, up 3.4%.') 'FULL を復元する'
+Assert-YakuMask ($restored[1].Translation -eq 'Rev. 11,577 oku (+3.4%)') 'BRIEF を復元する'
+Assert-YakuMask (-not ($restored[0].Translation -match '【N\d+】')) '復元後にトークンが残らない'
+
+$lossOptions = @([pscustomobject]@{ Style='full'; Label='FULL'; Translation='Revenue was up.'; Explanation='' })
+$lossWarnings = New-Object System.Collections.Generic.List[object]
+$null = @(Restore-YakuMaskedTranslationOptions -Options $lossOptions -MaskedSource '売上高は【N1】 oku。' -Map @{ '【N1】' = '72' } -Warnings $lossWarnings -Location 'test')
+Assert-YakuMask (@($lossWarnings.ToArray() | Where-Object { [string]$_.Category -eq 'numeric-mask-integrity' }).Count -eq 1) '欠落したら警告を立てる'
+
+Write-Host 'CASE 15: 本文翻訳経路の結線（Copilot 呼び出しを差し替えて確認）'
+$script:SentPrompts = New-Object System.Collections.Generic.List[string]
+function Invoke-YakuCopilotPrompt {
+    # 実機の代わり。プロンプトを記録し、契約に合う応答をそのまま返す。
+    param([string]$Prompt, $Settings, [switch]$SkipFreshChatWait, [switch]$PreserveEndMarker, $ProgressState, $Warnings)
+    $script:SentPrompts.Add([string]$Prompt) | Out-Null
+    $id = [string]([regex]::Match([string]$Prompt, 'YAKULINGO_END:([0-9a-fA-F]{32})').Groups[1].Value)
+    $body = [string]([regex]::Match([string]$Prompt, '(?s)SOURCE_TEXT:\s*\n(.*?)\n\s*(?:GLOSSARY|OUTPUT|FORMAT|RULES)').Groups[1].Value)
+    $tokens = @(Get-YakuNumericMaskTokens -Text ([string]$Prompt) | Select-Object -Unique | Sort-Object { [int]([regex]::Match([string]$_, '\d+').Value) })
+    if (@($tokens).Count -eq 0) { $tokens = @('115.77', '8.32') }
+    $line = 'FY2026/3 net sales ' + ([string]$tokens[0]) + ' oku, operating profit ' + ([string]$tokens[-1]) + ' oku.'
+    return ("FULL_TEXT: $line" + "`n" + "BRIEF_TEXT: $line" + "`n" + "YAKULINGO_END:$id")
+}
+
+$settings = Read-YakuSettings -Root $root
+$wiredWarnings = New-Object System.Collections.Generic.List[object]
+# 億円は oku へ換算される。百万円はアプリの対象外なので使わない。
+$wiredInput = (Convert-YakuNumericUnits -Text '2026年3月期の売上高は115.77億円、営業利益は8.32億円でした。' -Location 'test').Text
+Assert-YakuMask ($wiredInput -like '*115.77 oku*') '単位変換が先に効く'
+$wired = Invoke-YakuSingleTranslationBatch -Root $root -InputText $wiredInput -Settings $settings -Direction 'to_en' -StyleReference '' -Warnings $wiredWarnings
+$sent = [string]$script:SentPrompts[$script:SentPrompts.Count - 1]
+
+Assert-YakuMask ($sent -like '*【N1】*') 'プロンプトにプレースホルダーが入る'
+Assert-YakuMask (-not ($sent -like '*115.77*')) 'プロンプトに換算後の売上高が出ない'
+Assert-YakuMask (-not ($sent -like '*8.32*')) 'プロンプトに換算後の営業利益が出ない'
+Assert-YakuMask ($sent -like '*2026年3月期*') '年度は伏せずに送る'
+Assert-YakuMask ($sent -like '*NUMBER PLACEHOLDERS*') 'プロンプトに保護規則が入る'
+Assert-YakuMask ($wired.Options.Count -eq 2) 'FULL/BRIEF が返る'
+Assert-YakuMask (([string]$wired.Options[0].Translation) -like '*115.77*') '訳文は実値へ復元されている'
+Assert-YakuMask (-not (([string]$wired.Options[0].Translation) -match '【N\d+】')) '訳文にトークンが残らない'
+
+# キャッシュ命中経路でも復元する。ここは別の呼び出し箇所なので個別に見る。
+$script:SentPrompts.Clear()
+$cached = Invoke-YakuSingleTranslationBatch -Root $root -InputText $wiredInput -Settings $settings -Direction 'to_en' -StyleReference '' -Warnings $wiredWarnings
+Assert-YakuMask ([bool]$cached.CacheHit) '2回目はキャッシュに命中する'
+Assert-YakuMask ($script:SentPrompts.Count -eq 0) 'キャッシュ命中時は送信しない'
+Assert-YakuMask ((@($cached.Options | Where-Object { ([string]$_.Translation) -match '【N\d+】' }).Count) -eq 0) 'キャッシュ命中でもトークンが残らない'
+Assert-YakuMask (([string]$cached.Options[0].Translation) -like '*115.77*') 'キャッシュ命中でも実値へ復元する'
+Assert-YakuMask (([string]$cached.Raw) -like '*【N1】*') 'キャッシュにはマスク後のまま保存する'
+
+# 無効化した場合は素通し。回帰テスト用の抜け道が効くことも確かめる。
+$env:YAKULINGO_NUMERIC_MASKING = 'off'
+try {
+    $script:SentPrompts.Clear()
+    $null = Invoke-YakuSingleTranslationBatch -Root $root -InputText $wiredInput -Settings $settings -Direction 'to_en' -StyleReference '' -Warnings $wiredWarnings
+    $sentOff = [string]$script:SentPrompts[$script:SentPrompts.Count - 1]
+    Assert-YakuMask (-not ($sentOff -like '*【N1】*')) '無効化するとマスクしない'
+    Assert-YakuMask ($sentOff -like '*115.77*') '無効化すると実値が入る'
+} finally { Remove-Item Env:\YAKULINGO_NUMERIC_MASKING -ErrorAction SilentlyContinue }
 
 if ($script:Failures -gt 0) {
     Write-Host "V91.60 numeric masking test failed. failures=$script:Failures" -ForegroundColor Red
