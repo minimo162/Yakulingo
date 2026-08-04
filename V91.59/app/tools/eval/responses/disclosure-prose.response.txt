@@ -1,5 +1,0 @@
-FULL_TEXT:
-Quarterly net profit attributable to owners of the parent was 296 oku, due to factors including tax expenses of 99 oku (a loss of 421 oku in the same period of the previous year).
-BRIEF_TEXT:
-Quarterly NP attributable to owners of parent 296 oku, due to tax expenses 99 oku & other factors (PY same period: 421 oku loss).
-YAKULINGO_END:EVALDISCLOSU08

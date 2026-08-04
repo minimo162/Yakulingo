@@ -1,5 +1,0 @@
-FULL_TEXT:
-Fixed costs decreased, while variable costs increased due to surging material prices. Variable profit decreased by 3 oku due to lower volume.
-BRIEF_TEXT:
-FC down; VC up on surging material prices. VP down 3 oku on lower vol.
-YAKULINGO_END:EVALFCVCVPAB05

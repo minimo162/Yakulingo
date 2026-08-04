@@ -1,9 +1,0 @@
-FULL_TEXT:
-＜Factors Behind Changes in Operating Profit＞
-・Volume increase: +120 oku
-・Foreign exchange: (30) oku
-BRIEF_TEXT:
-＜Factors Behind Changes in OP＞
-・Vol. increase: +120 oku
-・FX: (30) oku
-YAKULINGO_END:EVALHEADINGA10

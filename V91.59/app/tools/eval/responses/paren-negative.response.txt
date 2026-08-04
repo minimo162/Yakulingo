@@ -1,5 +1,0 @@
-FULL_TEXT:
-The difference from the previous year was (50) oku; the difference from the plan was (400) oku; the improvement amount was 60 oku.
-BRIEF_TEXT:
-Difference vs. PY (50) oku; difference vs. plan (400) oku; improvement amt. 60 oku.
-YAKULINGO_END:EVALPARENNEG02

@@ -1,5 +1,0 @@
-FULL_TEXT:
-44 companies including Sony participated.
-BRIEF_TEXT:
-44 companies incl. Sony participated.
-YAKULINGO_END:EVALHAJIMETO07
