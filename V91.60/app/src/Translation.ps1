@@ -601,10 +601,18 @@ function Test-YakuNumericMaskIntegrity {
 
 function Restore-YakuMaskedTranslationOptions {
     <#
-      V91.60: 各訳文の【N1】を実値へ戻す。戻す前に1対1を確かめ、
-      崩れていれば警告を立てる。欠落した【N1】は復元しようがないため、
-      無言で数値が消えるのを避けるのがここの目的。
+      V91.60: 各訳文の【N1】を実値へ戻す。戻す前に1対1を確かめ、崩れていれば
+      警告を立てる。無言で数値が消えるのを避けるのがここの目的。
       復元自体は失敗させない。一部が欠けても残りは戻す。
+
+      段階6(決定事項#3): BRIEF は原文の20〜30%へ圧縮するため、数値そのものが
+      落ちることがある。省略が正当か事故かを区別できないので、BRIEF の欠落は
+      再試行の理由にせず確認警告に留める(再試行の判断は呼び出し側)。
+      欠落した数値は訳文へ挿入しない。省略された文脈へ数値だけを戻すと
+      誤読を招くため。代わりに平文つきで警告表示する(決定事項#12)。
+
+      応答が原文に無い番号を作った場合は、対応する実値が存在しない。
+      【N9】のまま画面へ出すより取り除くほうが安全なので削除する。
     #>
     param(
         [AllowNull()][object[]]$Options,
@@ -617,16 +625,35 @@ function Restore-YakuMaskedTranslationOptions {
     if ($null -eq $Map -or $Map.Count -eq 0) { return @($Options) }
     foreach ($option in $Options) {
         $style = [string]$option.Style
+        $label = [string]$option.Label
         $translated = [string]$option.Translation
         $integrity = Test-YakuNumericMaskIntegrity -MaskedSource $MaskedSource -Translated $translated -Location ($Location + '-' + $style)
-        if (-not [bool]$integrity.Ok) {
-            try {
-                if ($null -ne $Warnings -and (Get-Command Add-YakuWarning -ErrorAction SilentlyContinue)) {
-                    Add-YakuWarning -Warnings $Warnings -Category 'numeric-mask-integrity' -Location ([string]$option.Label) -Details @{ Detail=[string]$integrity.Detail; Missing=@($integrity.Missing); Duplicated=@($integrity.Duplicated); Unexpected=@($integrity.Unexpected) } -Message "数値プレースホルダーの個数が原文と一致しません。該当箇所の数値を必ずご確認ください。($([string]$integrity.Detail))"
-                }
-            } catch {}
+        $restored = Restore-YakuNumericMask -Text $translated -Map $Map
+        # 原文に無い番号は実値が無い。残すと画面へ内部トークンが出る。
+        $leftover = @(Get-YakuNumericMaskTokens -Text $restored | Select-Object -Unique)
+        if ($leftover.Count -gt 0) {
+            foreach ($token in $leftover) { $restored = $restored.Replace([string]$token, '') }
+            $restored = [regex]::Replace($restored, '[ \t]{2,}', ' ')
         }
-        $option.Translation = Restore-YakuNumericMask -Text $translated -Map $Map
+        $option.Translation = $restored
+
+        if ([bool]$integrity.Ok) { continue }
+        try {
+            if ($null -eq $Warnings -or -not (Get-Command Add-YakuWarning -ErrorAction SilentlyContinue)) { continue }
+            $details = @{ Detail=[string]$integrity.Detail; Missing=@($integrity.Missing); Duplicated=@($integrity.Duplicated); Unexpected=@($integrity.Unexpected) }
+            if ($style -eq 'brief' -and @($integrity.Missing).Count -gt 0 -and @($integrity.Duplicated).Count -eq 0 -and @($integrity.Unexpected).Count -eq 0) {
+                # 平文つきで示す。どの数値が落ちたか分からないと確認しようがない。
+                # この平文は画面表示のみ。ログ・診断ファイルへは出さない(§8)。
+                $dropped = @(@($integrity.Missing) | ForEach-Object {
+                    $tok = [string]$_
+                    $value = if ($Map.ContainsKey($tok)) { [string]$Map[$tok] } else { '' }
+                    if ([string]::IsNullOrEmpty($value)) { $tok } else { "$tok（$value）" }
+                })
+                Add-YakuWarning -Warnings $Warnings -Category 'numeric-placeholder-dropped-brief' -Location $label -Details $details -Message ("BRIEF は要約のため、次の数値が省略されました: " + (@($dropped) -join '、') + "。意図した省略か確認してください。")
+            } else {
+                Add-YakuWarning -Warnings $Warnings -Category 'numeric-placeholder-unresolved' -Location $label -Details $details -Message "数値プレースホルダーの個数が原文と一致しません。該当箇所の数値を必ずご確認ください。($([string]$integrity.Detail))"
+            }
+        } catch {}
     }
     return @($Options)
 }
@@ -1275,6 +1302,20 @@ function Invoke-YakuSingleTranslationBatch {
                         Add-YakuWarning -Warnings $Warnings -Category 'numeric-integrity' -Location 'FULL/BRIEF' -Details @{ Attempt=[int]$attempt; Detail=$numericDetail } -Message "原文の数値トークンの一部が訳文中に見つかりません。表現の統合による可能性がありますが、該当数値をご確認ください。($numericDetail)"
                     }
                 } catch {}
+            }
+            # V91.60 段階6: FULL / JAPANESE のプレースホルダー欠落は再試行対象。
+            # BRIEF は圧縮で数値ごと落ちるのが正当な場合があり区別できないため
+            # 対象外とする(決定事項#3)。警告は復元時にまとめて出す。
+            if ($maskMap.Count -gt 0) {
+                $maskMismatchDetail = ''
+                foreach ($option in $options) {
+                    if ([string]$option.Style -eq 'brief') { continue }
+                    $optionMask = Test-YakuNumericMaskIntegrity -MaskedSource $sourceText -Translated ([string]$option.Translation) -Location ("text-mask-" + [string]$option.Style)
+                    if (-not [bool]$optionMask.Ok) { $maskMismatchDetail = ([string]$option.Label) + ': ' + [string]$optionMask.Detail; break }
+                }
+                if (-not [string]::IsNullOrWhiteSpace($maskMismatchDetail) -and $attempt -lt $maxAttempts) {
+                    throw "RESPONSE_PLACEHOLDER_MISMATCH: numeric placeholders: $maskMismatchDetail"
+                }
             }
             $placeholderIntegrity = Test-YakuTextResponsePlaceholderIntegrity -SourceText $sourceText -Options $options -Direction $Direction
             if (-not [bool]$placeholderIntegrity.Ok) {

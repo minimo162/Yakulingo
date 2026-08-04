@@ -203,7 +203,7 @@ Assert-YakuMask (-not ($restored[0].Translation -match '【N\d+】')) '復元後
 $lossOptions = @([pscustomobject]@{ Style='full'; Label='FULL'; Translation='Revenue was up.'; Explanation='' })
 $lossWarnings = New-Object System.Collections.Generic.List[object]
 $null = @(Restore-YakuMaskedTranslationOptions -Options $lossOptions -MaskedSource '売上高は【N1】 oku。' -Map @{ '【N1】' = '72' } -Warnings $lossWarnings -Location 'test')
-Assert-YakuMask (@($lossWarnings.ToArray() | Where-Object { [string]$_.Category -eq 'numeric-mask-integrity' }).Count -eq 1) '欠落したら警告を立てる'
+Assert-YakuMask (@($lossWarnings.ToArray() | Where-Object { [string]$_.Category -eq 'numeric-placeholder-unresolved' }).Count -eq 1) '欠落したら警告を立てる'
 
 Write-Host 'CASE 15: 本文翻訳経路の結線（Copilot 呼び出しを差し替えて確認）'
 $script:SentPrompts = New-Object System.Collections.Generic.List[string]
@@ -327,6 +327,93 @@ finally { Remove-Item Env:\YAKULINGO_NUMERIC_MASKING -ErrorAction SilentlyContin
 $fpBack = Get-YakuTranslationContractFingerprint -Root $root -Settings $settings
 Assert-YakuMask ($fpOn -ne $fpOff) 'マスクの有無で指紋が変わる'
 Assert-YakuMask ($fpOn -eq $fpBack) '戻せば同じ指紋になる（メモ化が状態を無視しない）'
+
+Write-Host 'CASE 19: BRIEF は警告のみ / FULL は再試行対象（決定事項#3・#12）'
+$briefMap = @{ '【N1】' = '115.77'; '【N2】' = '296' }
+$briefSource = '売上高は【N1】 oku、うち海外は【N2】 oku。'
+
+# BRIEF で数値が落ちた場合: 平文つきの専用警告を出し、訳文へ数値を挿入しない
+$briefOptions = @(
+    [pscustomobject]@{ Style='full'; Label='FULL'; Translation='Net sales 【N1】 oku, overseas 【N2】 oku.'; Explanation='' }
+    [pscustomobject]@{ Style='brief'; Label='BRIEF'; Translation='Net sales 【N1】 oku.'; Explanation='' }
+)
+$briefWarnings = New-Object System.Collections.Generic.List[object]
+$briefRestored = @(Restore-YakuMaskedTranslationOptions -Options $briefOptions -MaskedSource $briefSource -Map $briefMap -Warnings $briefWarnings -Location 'test')
+$briefWarn = @($briefWarnings.ToArray() | Where-Object { [string]$_.Category -eq 'numeric-placeholder-dropped-brief' })
+Assert-YakuMask ($briefWarn.Count -eq 1) 'BRIEF 専用の警告カテゴリで出す'
+Assert-YakuMask (([string]$briefWarn[0].Message) -like '*【N2】（296）*') '落ちた数値を平文つきで示す'
+Assert-YakuMask (([string]$briefRestored[1].Translation) -eq 'Net sales 115.77 oku.') '落ちた数値を訳文へ挿入しない'
+Assert-YakuMask (([string]$briefRestored[0].Translation) -eq 'Net sales 115.77 oku, overseas 296 oku.') 'FULL は通常どおり復元する'
+Assert-YakuMask (@($briefWarnings.ToArray() | Where-Object { [string]$_.Category -eq 'numeric-placeholder-unresolved' }).Count -eq 0) 'BRIEF の欠落は unresolved 扱いにしない'
+
+# FULL で落ちた場合は unresolved 警告
+$fullOptions = @([pscustomobject]@{ Style='full'; Label='FULL'; Translation='Net sales 【N1】 oku.'; Explanation='' })
+$fullWarnings = New-Object System.Collections.Generic.List[object]
+$null = @(Restore-YakuMaskedTranslationOptions -Options $fullOptions -MaskedSource $briefSource -Map $briefMap -Warnings $fullWarnings -Location 'test')
+Assert-YakuMask (@($fullWarnings.ToArray() | Where-Object { [string]$_.Category -eq 'numeric-placeholder-unresolved' }).Count -eq 1) 'FULL の欠落は unresolved 警告'
+
+# 原文に無い番号を作られた場合は取り除く
+$inventedOptions = @([pscustomobject]@{ Style='brief'; Label='BRIEF'; Translation='Net sales 【N1】 oku and 【N9】 oku.'; Explanation='' })
+$inventedWarnings = New-Object System.Collections.Generic.List[object]
+$inventedRestored = @(Restore-YakuMaskedTranslationOptions -Options $inventedOptions -MaskedSource $briefSource -Map $briefMap -Warnings $inventedWarnings -Location 'test')
+Assert-YakuMask (-not (([string]$inventedRestored[0].Translation) -match '【N\d+】')) '原文に無い番号は訳文から取り除く'
+Assert-YakuMask (@($inventedWarnings.ToArray() | Where-Object { [string]$_.Category -eq 'numeric-placeholder-unresolved' }).Count -eq 1) '混入は unresolved 警告'
+
+# 経路: BRIEF だけ落ちても再試行せず完走する
+$script:SentPrompts.Clear()
+function Invoke-YakuCopilotPrompt {
+    param([string]$Prompt, $Settings, [switch]$SkipFreshChatWait, [switch]$PreserveEndMarker, $ProgressState, $Warnings)
+    $script:SentPrompts.Add([string]$Prompt) | Out-Null
+    $id = [string]([regex]::Match([string]$Prompt, 'YAKULINGO_END:([0-9a-fA-F]{32})').Groups[1].Value)
+    $tokens = @(Get-YakuNumericMaskTokens -Text ([string]$Prompt) | Select-Object -Unique | Sort-Object { [int]([regex]::Match([string]$_, '\d+').Value) })
+    $full = 'Net sales ' + ([string]$tokens[0]) + ' oku, operating profit ' + ([string]$tokens[-1]) + ' oku.'
+    $brief = 'Net sales ' + ([string]$tokens[0]) + ' oku.'
+    return ("FULL_TEXT: $full" + "`n" + "BRIEF_TEXT: $brief" + "`n" + "YAKULINGO_END:$id")
+}
+$briefJobWarnings = New-Object System.Collections.Generic.List[object]
+$briefJobInput = (Convert-YakuNumericUnits -Text '売上高は115.77億円、営業利益は8.32億円でした。' -Location 'test').Text
+$briefJob = Invoke-YakuSingleTranslationBatch -Root $root -InputText $briefJobInput -Settings $settings -Direction 'to_en' -StyleReference '' -Warnings $briefJobWarnings
+Assert-YakuMask ($script:SentPrompts.Count -eq 1) 'BRIEF の欠落では再送しない'
+Assert-YakuMask (([string]$briefJob.Options[1].Translation) -eq 'Net sales 115.77 oku.') 'BRIEF はそのまま復元して返す'
+Assert-YakuMask (@($briefJobWarnings.ToArray() | Where-Object { [string]$_.Category -eq 'numeric-placeholder-dropped-brief' }).Count -eq 1) 'BRIEF 警告が結果に載る'
+
+# 経路: FULL が落ちたら再送する
+$script:SentPrompts.Clear()
+$script:FullAttempt = 0
+function Invoke-YakuCopilotPrompt {
+    param([string]$Prompt, $Settings, [switch]$SkipFreshChatWait, [switch]$PreserveEndMarker, $ProgressState, $Warnings)
+    $script:SentPrompts.Add([string]$Prompt) | Out-Null
+    $script:FullAttempt++
+    $id = [string]([regex]::Match([string]$Prompt, 'YAKULINGO_END:([0-9a-fA-F]{32})').Groups[1].Value)
+    $tokens = @(Get-YakuNumericMaskTokens -Text ([string]$Prompt) | Select-Object -Unique | Sort-Object { [int]([regex]::Match([string]$_, '\d+').Value) })
+    $complete = 'Net sales ' + ([string]$tokens[0]) + ' oku, operating profit ' + ([string]$tokens[-1]) + ' oku.'
+    # 1回目は FULL から2つ目のプレースホルダーを落とす
+    $full = if ($script:FullAttempt -eq 1) { 'Net sales ' + ([string]$tokens[0]) + ' oku.' } else { $complete }
+    return ("FULL_TEXT: $full" + "`n" + "BRIEF_TEXT: $complete" + "`n" + "YAKULINGO_END:$id")
+}
+$fullJobWarnings = New-Object System.Collections.Generic.List[object]
+# 上の節と同じ構造の文はキャッシュを共有する（下の CASE 20 で確認する）。
+# 再送そのものを見たいので、構造ごと違う文を使う。
+$fullJobInput = (Convert-YakuNumericUnits -Text '国内販売台数は223.4千台、輸出は9.9千台となりました。' -Location 'test').Text
+$fullJob = Invoke-YakuSingleTranslationBatch -Root $root -InputText $fullJobInput -Settings $settings -Direction 'to_en' -StyleReference '' -Warnings $fullJobWarnings
+Assert-YakuMask ($script:SentPrompts.Count -ge 2) 'FULL の欠落では再送する'
+Assert-YakuMask (([string]$fullJob.Options[0].Translation) -like '*223.4*9.9*') '再送後の FULL は数値が揃う'
+
+Write-Host 'CASE 20: 大きさだけが違う定型文はキャッシュを共有する（§7の副次効果）'
+# マスク後は「売上高は【N1】 oku、営業利益は【N2】 oku。」で一致するため、
+# 数値の異なる同型の文が同じキャッシュ項目に当たる。表項目の多い資料で効く。
+$script:SentPrompts.Clear()
+$shareA = (Convert-YakuNumericUnits -Text '売上高は500.5億円、営業利益は44.4億円でした。' -Location 'test').Text
+$shareB = (Convert-YakuNumericUnits -Text '売上高は777.7億円、営業利益は12.3億円でした。' -Location 'test').Text
+$resA = Invoke-YakuSingleTranslationBatch -Root $root -InputText $shareA -Settings $settings -Direction 'to_en' -StyleReference '' -Warnings $fullJobWarnings
+$sentAfterA = $script:SentPrompts.Count
+$resB = Invoke-YakuSingleTranslationBatch -Root $root -InputText $shareB -Settings $settings -Direction 'to_en' -StyleReference '' -Warnings $fullJobWarnings
+Assert-YakuMask ($script:SentPrompts.Count -eq $sentAfterA) '2文目は送信しない'
+Assert-YakuMask ([bool]$resB.CacheHit) '2文目はキャッシュに命中する'
+Assert-YakuMask (([string]$resA.Options[0].Translation) -like '*500.5*44.4*') '1文目は自分の数値へ復元する'
+Assert-YakuMask (([string]$resB.Options[0].Translation) -like '*777.7*12.3*') '2文目は自分の数値へ復元する'
+Assert-YakuMask (-not (([string]$resB.Options[0].Translation) -like '*500.5*')) '他の文の数値が混ざらない'
+Assert-YakuMask (@($fullJobWarnings.ToArray() | Where-Object { [string]$_.Category -eq 'numeric-placeholder-unresolved' }).Count -eq 0) '解消すれば警告は残らない'
 
 if ($script:Failures -gt 0) {
     Write-Host "V91.60 numeric masking test failed. failures=$script:Failures" -ForegroundColor Red
