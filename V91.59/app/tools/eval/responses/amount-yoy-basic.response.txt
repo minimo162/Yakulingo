@@ -1,0 +1,5 @@
+FULL_TEXT:
+Revenue increased by 789 oku year on year to 11,577 oku.
+BRIEF_TEXT:
+Rev. up 789 oku YoY to 11,577 oku.
+YAKULINGO_END:EVALAMOUNTYO01

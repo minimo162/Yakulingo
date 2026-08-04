@@ -57,6 +57,11 @@ $excludeFilePatterns = @(
     @{ Pattern = '.DS_Store';      Reason = 'macOSのゴミ' },
     @{ Pattern = 'manifest.json';  Reason = '複製後に作り直す' }
 )
+# 評価ハーネスの生成物。実行のたびに作り直されるため配布しない。
+$excludeRelativePrefixes = @(
+    @{ Prefix = 'app/tools/eval/prompts/';   Reason = '評価ハーネスの生成物' },
+    @{ Prefix = 'app/tools/eval/responses/'; Reason = '評価ハーネスの生成物' }
+)
 $excludeDirNames = @(
     @{ Name = '.git';         Reason = 'Git管理データ' },
     @{ Name = '.github';      Reason = 'Git管理データ' },
@@ -131,6 +136,10 @@ function Copy-YakuVersionFolder {
         }
         if ($inSkipped) { continue }
         $rule = $excludeFilePatterns | Where-Object { $file.Name -like $_.Pattern } | Select-Object -First 1
+        if (-not $rule) {
+            $forward = $relative.Replace([IO.Path]::DirectorySeparatorChar, '/')
+            $rule = $excludeRelativePrefixes | Where-Object { $forward -like ($_.Prefix + '*') } | Select-Object -First 1
+        }
         if ($rule) {
             Add-YakuSkip -Relative "$Label\$relative" -Reason ([string]$rule.Reason)
             continue

@@ -1,0 +1,5 @@
+FULL_TEXT:
+Wholesale volume was 659 k units, 20 k units.
+BRIEF_TEXT:
+W/S vol. 659 k units, 20 k units.
+YAKULINGO_END:EVALVOLUMEUN03

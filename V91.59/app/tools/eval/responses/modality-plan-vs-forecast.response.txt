@@ -1,0 +1,5 @@
+FULL_TEXT:
+We plan to implement additional measures. Full-year operating profit is expected to improve.
+BRIEF_TEXT:
+Plan to implement additional measures. FY OP improvement est.
+YAKULINGO_END:EVALMODALITY06

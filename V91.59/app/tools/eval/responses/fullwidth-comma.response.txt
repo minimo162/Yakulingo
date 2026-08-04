@@ -1,0 +1,5 @@
+FULL_TEXT:
+Revenue came to 5,602 oku. The improvement in fixed costs was 248 oku year on year in Q4.
+BRIEF_TEXT:
+Rev. 5,602 oku. FC improvement 248 oku YoY in Q4.
+YAKULINGO_END:EVALFULLWIDT04

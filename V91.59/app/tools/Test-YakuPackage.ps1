@@ -16,7 +16,8 @@ try {
     try { $build = $reader.ReadToEnd().Trim() } finally { $reader.Dispose() }
     if ([string]::IsNullOrWhiteSpace($build)) { throw 'PACKAGE_BUILD_EMPTY: config/build.txt が空です。' }
     foreach ($entry in @($zip.Entries)) {
-        $check = $entry.FullName -match '\.ps1$' -or $entry.FullName -match '/prompts/[^/]+\.txt$'
+        # 翻訳プロンプトは app/prompts/ 配下だけ。評価ハーネスの生成物(tools/eval/prompts/)を拾わない。
+        $check = $entry.FullName -match '\.ps1$' -or $entry.FullName -match '/app/prompts/[^/]+\.txt$'
         if (-not $check) { continue }
         $stream = $entry.Open()
         try { $b = New-Object byte[] 3; $n = $stream.Read($b,0,3) } finally { $stream.Dispose() }

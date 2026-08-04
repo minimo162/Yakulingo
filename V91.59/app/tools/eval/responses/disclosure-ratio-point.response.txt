@@ -1,0 +1,5 @@
+FULL_TEXT:
+The equity ratio was 43.3%, an increase of 0.7 points from the end of the previous consolidated fiscal year.
+BRIEF_TEXT:
+Equity ratio 43.3%, up 0.7 pts from end of prev. consol. FY.
+YAKULINGO_END:EVALDISCLOSU09

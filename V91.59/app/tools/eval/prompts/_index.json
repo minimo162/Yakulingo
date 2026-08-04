@@ -1,0 +1,75 @@
+{
+  "cases": [
+    {
+      "id": "amount-yoy-basic",
+      "request_id": "EVALAMOUNTYO01",
+      "direction": "to_en",
+      "prompt_chars": 13850,
+      "prompt_file": "amount-yoy-basic.prompt.txt"
+    },
+    {
+      "id": "paren-negative",
+      "request_id": "EVALPARENNEG02",
+      "direction": "to_en",
+      "prompt_chars": 13812,
+      "prompt_file": "paren-negative.prompt.txt"
+    },
+    {
+      "id": "volume-units",
+      "request_id": "EVALVOLUMEUN03",
+      "direction": "to_en",
+      "prompt_chars": 13825,
+      "prompt_file": "volume-units.prompt.txt"
+    },
+    {
+      "id": "fullwidth-comma",
+      "request_id": "EVALFULLWIDT04",
+      "direction": "to_en",
+      "prompt_chars": 13870,
+      "prompt_file": "fullwidth-comma.prompt.txt"
+    },
+    {
+      "id": "fc-vc-vp-abbrev",
+      "request_id": "EVALFCVCVPAB05",
+      "direction": "to_en",
+      "prompt_chars": 13873,
+      "prompt_file": "fc-vc-vp-abbrev.prompt.txt"
+    },
+    {
+      "id": "modality-plan-vs-forecast",
+      "request_id": "EVALMODALITY06",
+      "direction": "to_en",
+      "prompt_chars": 13196,
+      "prompt_file": "modality-plan-vs-forecast.prompt.txt"
+    },
+    {
+      "id": "hajime-to-suru",
+      "request_id": "EVALHAJIMETO07",
+      "direction": "to_en",
+      "prompt_chars": 13106,
+      "prompt_file": "hajime-to-suru.prompt.txt"
+    },
+    {
+      "id": "disclosure-prose",
+      "request_id": "EVALDISCLOSU08",
+      "direction": "to_en",
+      "prompt_chars": 13853,
+      "prompt_file": "disclosure-prose.prompt.txt"
+    },
+    {
+      "id": "disclosure-ratio-point",
+      "request_id": "EVALDISCLOSU09",
+      "direction": "to_en",
+      "prompt_chars": 13125,
+      "prompt_file": "disclosure-ratio-point.prompt.txt"
+    },
+    {
+      "id": "heading-angle",
+      "request_id": "EVALHEADINGA10",
+      "direction": "to_en",
+      "prompt_chars": 13865,
+      "prompt_file": "heading-angle.prompt.txt"
+    }
+  ],
+  "generated_for": "eval"
+}
