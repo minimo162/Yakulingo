@@ -1202,9 +1202,11 @@ function Invoke-YakuSingleTranslationBatch {
             $optionsCached = @(Parse-YakuTextTranslationResponse -Raw ([string]$cachedEnvelope.raw) -Direction $Direction -RequestId $cachedRequestId -Warnings $Warnings)
             $optionsCached = @(Repair-YakuTextResponsePostParse -SourceText $sourceText -Options $optionsCached -Direction $Direction)
             $cachedPlaceholderIntegrity = Test-YakuTextResponsePlaceholderIntegrity -SourceText $sourceText -Options $optionsCached -Direction $Direction
-            foreach ($cachedOption in $optionsCached) {
-                $cachedNumeric = Test-YakuNumericIntegrity -SourceText $sourceText -TranslatedText ([string]$cachedOption.Translation) -Location ("text-cache-" + [string]$cachedOption.Style)
-                if (-not [bool]$cachedNumeric.Ok -and [int]$cachedNumeric.ScaleErrors -gt 0) { throw "NUMERIC_SCALE_MISMATCH: $([string]$cachedNumeric.Detail)" }
+            if (-not ($Direction -eq 'to_jp' -and $maskMap.Count -gt 0)) {
+                foreach ($cachedOption in $optionsCached) {
+                    $cachedNumeric = Test-YakuNumericIntegrity -SourceText $sourceText -TranslatedText ([string]$cachedOption.Translation) -Location ("text-cache-" + [string]$cachedOption.Style)
+                    if (-not [bool]$cachedNumeric.Ok -and [int]$cachedNumeric.ScaleErrors -gt 0) { throw "NUMERIC_SCALE_MISMATCH: $([string]$cachedNumeric.Detail)" }
+                }
             }
             if (-not [bool]$cachedPlaceholderIntegrity.Ok) {
                 try { Write-YakuLog "Text masking placeholder mismatch. attempt=cache detail=$([string]$cachedPlaceholderIntegrity.Detail); cache=discard" 'WARN' } catch {}
@@ -1243,9 +1245,16 @@ function Invoke-YakuSingleTranslationBatch {
             $options = @(Parse-YakuTextTranslationResponse -Raw $raw -Direction $Direction -RequestId $requestId -Warnings $Warnings)
             $options = @(Repair-YakuTextResponsePostParse -SourceText $sourceText -Options $options -Direction $Direction)
             $numericFailures = New-Object System.Collections.Generic.List[object]
-            foreach ($option in $options) {
-                $numericAudit = Test-YakuNumericIntegrity -SourceText $sourceText -TranslatedText ([string]$option.Translation) -Location ("text-" + [string]$option.Style)
-                if (-not [bool]$numericAudit.Ok) { $numericFailures.Add($numericAudit) | Out-Null }
+            # V91.60 段階4: to_jp では 【N1】 oku が 【N1】億円 へ訳されるため、
+            # 「数値+単位」トークンの照合は成立しない。プレースホルダーの
+            # 過不足は Restore-YakuMaskedTranslationOptions 側で確認する。
+            # マスクが無い場合(検証用に無効化したときなど)は従来どおり照合する。
+            $skipNumericTokenAudit = ($Direction -eq 'to_jp' -and $maskMap.Count -gt 0)
+            if (-not $skipNumericTokenAudit) {
+                foreach ($option in $options) {
+                    $numericAudit = Test-YakuNumericIntegrity -SourceText $sourceText -TranslatedText ([string]$option.Translation) -Location ("text-" + [string]$option.Style)
+                    if (-not [bool]$numericAudit.Ok) { $numericFailures.Add($numericAudit) | Out-Null }
+                }
             }
             if ($numericFailures.Count -gt 0) {
                 $scaleErrTotal = 0
@@ -1576,7 +1585,10 @@ function Invoke-YakuTextTranslation {
     }
     $directionLabel = Get-YakuDirectionLabel -Direction $direction
     $processingInput = [string]$InputText
-    if ($direction -eq 'to_en') { $numericPre = Convert-YakuNumericUnits -Text $processingInput -Location 'text'; $processingInput = [string]$numericPre.Text }
+    # V91.60 段階4: 方向によらず単位を正規化トークン(oku / k yen / k units)へ揃える。
+    # 日英混在の資料では to_jp の入力にも日本語単位が現れるため、
+    # プレースホルダーと単位の並びが方向によらず一定になる。
+    $numericPre = Convert-YakuNumericUnits -Text $processingInput -Location ('text-' + $direction); $processingInput = [string]$numericPre.Text
     $maxChars = Get-YakuMaxCharsPerBatch -Settings $Settings
     $sectionSw.Stop(); $directionSettingsMs = $sectionSw.ElapsedMilliseconds
     $sectionSw.Restart()

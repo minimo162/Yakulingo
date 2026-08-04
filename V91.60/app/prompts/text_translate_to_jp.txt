@@ -12,6 +12,7 @@ Rules:
 - Translate only SOURCE. Preserve facts, intent, tone, structure, line breaks, order, qualifiers, numbers, units, signs, and placeholders. Add no facts.
 - Translate every title, heading, label, and standalone short line in its original position and order.
 - Keep product names, account codes, URLs, and obvious identifiers unchanged.
+{numeric_rules}
 {reference_section}
 {style_reference_section}
 

@@ -215,6 +215,10 @@ function Invoke-YakuCopilotPrompt {
     $body = [string]([regex]::Match([string]$Prompt, '(?s)SOURCE_TEXT:\s*\n(.*?)\n\s*(?:GLOSSARY|OUTPUT|FORMAT|RULES)').Groups[1].Value)
     $tokens = @(Get-YakuNumericMaskTokens -Text ([string]$Prompt) | Select-Object -Unique | Sort-Object { [int]([regex]::Match([string]$_, '\d+').Value) })
     if (@($tokens).Count -eq 0) { $tokens = @('115.77', '8.32') }
+    if ([string]$Prompt -match 'JAPANESE_TEXT:') {
+        $jp = 'FY2026/3の売上高は' + ([string]$tokens[0]) + '億円でした。'
+        return ("JAPANESE_TEXT: $jp" + "`n" + "YAKULINGO_END:$id")
+    }
     $line = 'FY2026/3 net sales ' + ([string]$tokens[0]) + ' oku, operating profit ' + ([string]$tokens[-1]) + ' oku.'
     return ("FULL_TEXT: $line" + "`n" + "BRIEF_TEXT: $line" + "`n" + "YAKULINGO_END:$id")
 }
@@ -254,6 +258,30 @@ try {
     Assert-YakuMask (-not ($sentOff -like '*【N1】*')) '無効化するとマスクしない'
     Assert-YakuMask ($sentOff -like '*115.77*') '無効化すると実値が入る'
 } finally { Remove-Item Env:\YAKULINGO_NUMERIC_MASKING -ErrorAction SilentlyContinue }
+
+Write-Host 'CASE 16: to_jp 方向（単位変換の有効化と専用の数値規則）'
+$jpRules = Get-YakuNumericRulesSection -InputText 'Net sales were 【N1】 oku.' -Direction 'to_jp'
+Assert-YakuMask ($jpRules -like '*NUMBER PLACEHOLDERS*') 'to_jp でも保護規則を出す'
+Assert-YakuMask ($jpRules -like '*oku -> 億円*') '単位の日本語表記を指示する'
+Assert-YakuMask ($jpRules -like '*never 1億2,340万円*') '桁の繰り上げを禁じる'
+Assert-YakuMask ($jpRules -like '*▲【N1】億円*') '括弧を▲へ写す指示がある'
+Assert-YakuMask (-not ($jpRules -like '*Never million, billion*')) 'to_en 専用の規則は混ぜない'
+
+# to_jp でも単位変換を通す（日英混在資料を想定）
+$jpPre = (Convert-YakuNumericUnits -Text 'Sales reached 115.77億円 in the period.' -Location 'test').Text
+Assert-YakuMask ($jpPre -like '*115.77 oku*') 'to_jp 入力の日本語単位も正規化される'
+
+$script:SentPrompts.Clear()
+$jpWarnings = New-Object System.Collections.Generic.List[object]
+$jpInput = (Convert-YakuNumericUnits -Text 'Net sales for FY2026/3 were 115.77億円.' -Location 'test').Text
+$jpResult = Invoke-YakuSingleTranslationBatch -Root $root -InputText $jpInput -Settings $settings -Direction 'to_jp' -StyleReference '' -Warnings $jpWarnings
+$jpSent = [string]$script:SentPrompts[$script:SentPrompts.Count - 1]
+Assert-YakuMask ($jpSent -like '*【N1】*') 'to_jp のプロンプトにもプレースホルダーが入る'
+Assert-YakuMask (-not ($jpSent -like '*115.77*')) 'to_jp のプロンプトに実値が出ない'
+Assert-YakuMask ($jpSent -like '*FY2026/3*') 'to_jp でも会計期は伏せない'
+Assert-YakuMask ($jpSent -like '*oku -> 億円*') 'to_jp のプロンプトに単位表記の指示が入る'
+Assert-YakuMask (@($jpResult.Options).Count -eq 1) 'JAPANESE の1件が返る'
+Assert-YakuMask (([string]$jpResult.Options[0].Translation) -like '*115.77*') 'to_jp でも実値へ復元する'
 
 if ($script:Failures -gt 0) {
     Write-Host "V91.60 numeric masking test failed. failures=$script:Failures" -ForegroundColor Red
