@@ -60,7 +60,7 @@ $rows = New-Object System.Collections.Generic.List[object]
 foreach ($case in @($set.cases)) {
     $id = [string]$case.id
     $responsePath = Join-Path $ResponseDir ($id + '.response.txt')
-    $row = [ordered]@{ id = $id; origin = [string]$case.origin; focus = [string]$case.focus }
+    $row = [ordered]@{ id = $id; group = [string]$case.group; origin = [string]$case.origin; focus = [string]$case.focus }
 
     if (-not (Test-Path -LiteralPath $responsePath -PathType Leaf)) {
         $row['status'] = 'missing-response'
@@ -179,6 +179,20 @@ foreach ($r in $all) {
         if (-not $r.numeric_ok_full)            { Write-Host '    数値整合(FULL) NG' -ForegroundColor Yellow }
         if (-not $r.structure_ok)               { Write-Host '    構造整合 NG' -ForegroundColor Yellow }
         if (@($r.glossary_miss).Count -gt 0)    { Write-Host ('    用語未反映: ' + (@($r.glossary_miss) -join ', ')) -ForegroundColor DarkYellow }
+    }
+}
+
+# グループ別のBRIEF圧縮率。用語集の内側と外側で安定しているかを見る。
+$byGroup = @($scored | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.group) } | Group-Object group)
+if ($byGroup.Count -gt 0) {
+    Write-Host ''
+    Write-Host '=== グループ別 BRIEF圧縮率 ===' -ForegroundColor Cyan
+    foreach ($g in ($byGroup | Sort-Object Name)) {
+        $ratios = @($g.Group | ForEach-Object { [double]$_.brief_ratio })
+        $avg = [Math]::Round((($ratios | Measure-Object -Average).Average), 3)
+        $min = [Math]::Round((($ratios | Measure-Object -Minimum).Minimum), 3)
+        $max = [Math]::Round((($ratios | Measure-Object -Maximum).Maximum), 3)
+        Write-Host ('  {0,-14} n={1}  平均={2}  最小={3}  最大={4}  幅={5}' -f $g.Name, $g.Count, $avg, $min, $max, [Math]::Round($max-$min,3))
     }
 }
 

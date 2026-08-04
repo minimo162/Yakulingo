@@ -142,6 +142,70 @@
       "must_contain_any": [
         "<"
       ]
+    },
+    {
+      "id": "on-glossary-op",
+      "group": "on-glossary",
+      "direction": "to_en",
+      "origin": "合成（用語集の内側）",
+      "source": "上期の営業利益は前年同期比で増加しました。売上高の増加と固定費の削減が寄与しています。通期の見通しは据え置きです。",
+      "focus": "用語集・略語リストが厚くカバーする語彙。圧縮率の基準"
+    },
+    {
+      "id": "on-glossary-fx-volume",
+      "group": "on-glossary",
+      "direction": "to_en",
+      "origin": "合成（用語集の内側）",
+      "source": "為替の影響は限定的でした。数量の増加により変動利益が改善し、販売奨励金の減少も寄与しました。",
+      "focus": "為替・数量・変動利益。略語リストの語が多い"
+    },
+    {
+      "id": "on-glossary-forecast",
+      "group": "on-glossary",
+      "direction": "to_en",
+      "origin": "合成（用語集の内側）",
+      "source": "下期の売上高は増加する見通しです。研究開発費は増加しますが、販売費及び一般管理費の削減で吸収する計画です。",
+      "focus": "R&D・SG&A・見通し。略語リストの語が多い"
+    },
+    {
+      "id": "on-glossary-cashflow",
+      "group": "on-glossary",
+      "direction": "to_en",
+      "origin": "合成（用語集の内側）",
+      "source": "営業キャッシュ・フローは改善しました。設備投資は計画どおりに実行し、フリーキャッシュ・フローは前年を上回りました。",
+      "focus": "C/F・capex・FCF。略語リストの語が多い"
+    },
+    {
+      "id": "off-glossary-quality",
+      "group": "off-glossary",
+      "direction": "to_en",
+      "origin": "合成（用語集の外側）",
+      "source": "特定の部品に不具合の可能性が判明したため、対象車両の点検を順次実施しています。原因の特定を進めており、判明し次第お知らせします。",
+      "focus": "品質問題。用語集・略語リストがほぼ効かない同種の業務文"
+    },
+    {
+      "id": "off-glossary-hr",
+      "group": "off-glossary",
+      "direction": "to_en",
+      "origin": "合成（用語集の外側）",
+      "source": "新しい人事制度の導入に向けて、管理職向けの説明会を各拠点で開催しました。今後は一般社員向けの研修を順次実施していきます。",
+      "focus": "人事。用語集・略語リストがほぼ効かない"
+    },
+    {
+      "id": "off-glossary-it",
+      "group": "off-glossary",
+      "direction": "to_en",
+      "origin": "合成（用語集の外側）",
+      "source": "基幹システムの更改に伴い、一部の業務手順を見直しました。移行期間中は旧システムと並行して運用し、問題がないことを確認します。",
+      "focus": "システム更改。用語集・略語リストがほぼ効かない"
+    },
+    {
+      "id": "off-glossary-supplier",
+      "group": "off-glossary",
+      "direction": "to_en",
+      "origin": "合成（用語集の外側）",
+      "source": "取引先の労働環境に関する調査を開始しました。基準を満たさない場合は改善を要請し、是正が確認できるまで継続して確認します。",
+      "focus": "サプライヤー監査。用語集・略語リストがほぼ効かない"
     }
   ]
 }
