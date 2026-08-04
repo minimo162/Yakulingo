@@ -1876,7 +1876,7 @@ function Invoke-YakuFileTranslation {
         $completionDetail = '翻訳対象テキストがなかったため、原本のコピーを出力しました。'
         Set-YakuFileTranslationProgress -ProgressState $ProgressState -Phase $completionStatus -Label 'Done' -Progress 100 -Detail $completionDetail -Fields @{ output_path=$publishedPath; output_name=[System.IO.Path]::GetFileName($publishedPath); completion_status=$completionStatus; blocks_total=0; blocks_translated=0; blocks_written=0; blocks_write_target=0 }
         return [pscustomobject]@{
-            Kind='file'; JobId=$JobId; Direction=$Direction; DirectionLabel=$directionLabel; InputName=[System.IO.Path]::GetFileName($InputPath); OutputPath=$publishedPath; OutputName=[System.IO.Path]::GetFileName($publishedPath); CompletionStatus=$completionStatus; CompletionDetail=$completionDetail; Validation=$writeResult.Validation;
+            Kind='file'; JobId=$JobId; Direction=$Direction; DirectionLabel=$directionLabel; InputName=[System.IO.Path]::GetFileName($InputPath); OutputPath=$publishedPath; OutputName=[System.IO.Path]::GetFileName($publishedPath); CompletionStatus=$completionStatus; CompletionDetail=$completionDetail; Validation=$writeResult.Validation; MaskedCount=0; MaskedItemCount=0;
             BlocksTotal=0; BlocksTranslated=0; BlocksWriteTarget=0; BlocksWritten=0; OriginalKept=0; BlocksRetained=0; BlocksRetainedOriginal=0; UniqueTextCount=0; CacheHits=0; GlossaryExactHits=0; AppliedGlossary=@(); BatchCount=0; BatchTotal=0; TruncatedBatches=0; TruncatedBatchRate=0; MaxRetryDepthReached=0; Stats=$stats; Warnings=@($warnings.ToArray()); ExtractSeconds=$extractSeconds; ApplySeconds=$applySeconds; DurationSeconds=[int]((Get-Date) - $started).TotalSeconds; Timestamp=(Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
         }
     }
@@ -2099,6 +2099,9 @@ function Invoke-YakuFileTranslation {
         JobId = $JobId
         Direction = $Direction
         DirectionLabel = $directionLabel
+        # V91.60 §9: 件数のみ。対応表(Map)は載せない(§8)。
+        MaskedCount = [int]$maskedTokenCount
+        MaskedItemCount = [int]$maskedItemCount
         InputName = [System.IO.Path]::GetFileName($InputPath)
         OutputPath = $publishedPath
         OutputName = [System.IO.Path]::GetFileName($publishedPath)

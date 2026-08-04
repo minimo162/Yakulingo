@@ -950,6 +950,45 @@ function Write-YakuTextResponseContractDiagnostic {
     return $path
 }
 
+function Set-YakuTranslationProgress {
+    param(
+        [AllowNull()]$ProgressState,
+        [string]$Mode = 'working',
+        [string]$Label = 'Translating',
+        [int]$Progress = 0,
+        [string]$Detail = '',
+        [AllowNull()][string]$Phase = $null
+    )
+    if ($null -eq $ProgressState) { return }
+    try {
+        $pct = [Math]::Max(0, [Math]::Min(100, $Progress))
+        $currentPct = 0
+        try { $currentPct = [int]$ProgressState['progress'] } catch { $currentPct = 0 }
+        $pct = [Math]::Max($currentPct, $pct)
+        $ProgressState['mode'] = $Mode
+        $ProgressState['label'] = $Label
+        $ProgressState['class'] = if ($Mode -eq 'done') { 'ok' } elseif ($Mode -eq 'error') { 'warn' } else { 'warn' }
+        $ProgressState['progress'] = [int]$pct
+        $ProgressState['detail'] = $Detail
+        if ($null -ne $Phase) { $ProgressState['phase'] = $Phase }
+        $ProgressState['updated_at'] = (Get-Date).ToString('s')
+    } catch {}
+}
+
+function Get-YakuDirectionLabel {
+    param([Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction)
+    if ($Direction -eq 'to_en') { return '日本語 → 英語' }
+    return '英語/その他 → 日本語'
+}
+
+function Get-YakuMaxCharsPerBatch {
+    param([Parameter(Mandatory=$true)]$Settings)
+    $max = 0
+    try { $max = [int]$Settings.max_chars_per_batch } catch { $max = 0 }
+    if ($max -lt 400) { return 0 }
+    return $max
+}
+
 function Split-YakuHardChunk {
     param(
         [Parameter(Mandatory=$true)][string]$Text,
@@ -1154,7 +1193,7 @@ function Invoke-YakuSingleTranslationBatch {
                 }
             }
             $optionsCached = @(Restore-YakuMaskedTranslationOptions -Options $optionsCached -MaskedSource $sourceText -Map $maskMap -Warnings $Warnings -Location 'text-cache')
-            return [pscustomobject]@{ Direction=$Direction; Options=$optionsCached; Raw=[string]$cachedEnvelope.raw; Prompt=$built.Prompt; CacheHit=$true; RequestId=$cachedRequestId }
+            return [pscustomobject]@{ Direction=$Direction; Options=$optionsCached; Raw=[string]$cachedEnvelope.raw; Prompt=$built.Prompt; CacheHit=$true; RequestId=$cachedRequestId; MaskedCount=[int]$maskResult.MaskedCount; KeptCount=[int]$maskResult.KeptCount }
         } catch {
             try { (Get-YakuTranslationCacheStore).Remove($cacheKey) } catch {}
         }
@@ -1276,6 +1315,10 @@ function Invoke-YakuSingleTranslationBatch {
         Prompt = $built.Prompt
         CacheHit = $false
         RequestId = $requestId
+        # V91.60 §9: 何件マスクして送ったかを画面へ出すため運ぶ。件数のみ。
+        # 対応表(Map)は結果オブジェクトへ載せない(§8)。
+        MaskedCount = [int]$maskResult.MaskedCount
+        KeptCount = [int]$maskResult.KeptCount
     }
 }
 
@@ -1577,6 +1620,8 @@ function Invoke-YakuTextTranslation {
                 Raw = $br.Raw
                 Prompt = $br.Prompt
                 RequestId = $br.RequestId
+                MaskedCount = $(try { [int]$br.MaskedCount } catch { 0 })
+                KeptCount = $(try { [int]$br.KeptCount } catch { 0 })
             }
             if ($ProgressState -and [int]$batch.CharCount -gt 0) {
                 $answerLength = ([string]$br.Raw).Length
@@ -1617,9 +1662,14 @@ function Invoke-YakuTextTranslation {
             try { Write-YakuLog "Text glossary diagnostic audit failed without affecting translation. jobId=$jobId error=$($_.Exception.Message)" 'WARN' } catch {}
         }
 
+        $maskedTotal = 0
+        $keptTotal = 0
+        foreach ($br2 in $batchResults) { $maskedTotal += [int]$br2.MaskedCount; $keptTotal += [int]$br2.KeptCount }
         $result = [pscustomobject]@{
             Direction = $direction
             DirectionLabel = $directionLabel
+            MaskedCount = [int]$maskedTotal
+            KeptCount = [int]$keptTotal
             InputLength = $InputText.Length
             Options = $options
             AppliedGlossary = $appliedGlossary

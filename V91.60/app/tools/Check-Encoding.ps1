@@ -180,10 +180,41 @@ if ($null -eq $parserType) {
     }
 }
 
+# --- 未定義の Yaku コマンド ------------------------------------------------
+# 関数をまとめて削除したとき、まだ呼ばれている関数まで巻き込むことがある。
+# 構文検査は通ってしまい、実行して初めて分かる。定義と呼び出しを突き合わせる。
+if ($null -ne $parserType) {
+    $definedCommands = @{}
+    $invokedCommands = @{}
+    foreach ($file in @($targets.ToArray() | Where-Object { $_.Name -like '*.ps1' })) {
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors)
+        if ($null -eq $ast) { continue }
+        foreach ($fn in @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true))) {
+            $definedCommands[([string]$fn.Name).ToLowerInvariant()] = $true
+        }
+        foreach ($cmd in @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true))) {
+            $name = ''
+            try { $name = [string]$cmd.GetCommandName() } catch { $name = '' }
+            # 変数経由の呼び出し(&$fn)は名前が取れない。静的に追えないので対象外。
+            if ([string]::IsNullOrWhiteSpace($name)) { continue }
+            if ($name -notmatch '-Yaku') { continue }
+            $key = $name.ToLowerInvariant()
+            if (-not $invokedCommands.ContainsKey($key)) { $invokedCommands[$key] = @() }
+            $invokedCommands[$key] += (Get-YakuCheckRelativePath -Root $rootPath -Path ([string]$file.FullName))
+        }
+    }
+    foreach ($key in @($invokedCommands.Keys | Sort-Object)) {
+        if ($definedCommands.ContainsKey($key)) { continue }
+        $where = (@($invokedCommands[$key] | Sort-Object -Unique) -join ', ')
+        $violations.Add("Undefined command: $key called from $where") | Out-Null
+    }
+}
+
 if ($violations.Count -gt 0) {
     Write-Host 'Encoding/syntax check failed:' -ForegroundColor Red
     foreach ($v in @($violations.ToArray())) { Write-Host ('- ' + $v) -ForegroundColor Red }
     throw ("Encoding/syntax check failed: {0} issue(s)." -f $violations.Count)
 }
 
-Write-Host ("Encoding/syntax check passed: {0} file(s) verified (BOM, syntax, line endings)." -f $targets.Count) -ForegroundColor Green
+Write-Host ("Encoding/syntax check passed: {0} file(s) verified (BOM, syntax, line endings, command definitions)." -f $targets.Count) -ForegroundColor Green

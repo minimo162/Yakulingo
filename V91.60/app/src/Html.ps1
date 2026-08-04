@@ -63,6 +63,10 @@ function Convert-YakuTextResultToHtml {
     try { $inputLength = [int]$Result.InputLength } catch { $inputLength = 0 }
     if ($inputLength -gt 0) { $html += "<div class='batch-note'>ユーザー入力: $(ConvertTo-YakuHtml $inputLength)字</div>" }
 
+    # V91.60 §9: 何件マスクして送ったかを示す。伏せた件数が見えないと、
+    # 利用者は「送信されたのか」を推測するしかない。
+    $html += New-YakuMaskingNoticeHtml -Result $Result
+
     $warnings = @()
     try { $warnings = @($Result.Warnings) } catch { $warnings = @() }
     foreach ($warning in $warnings) {
@@ -121,6 +125,21 @@ function Convert-YakuTextResultToHtml {
 
 
 
+function New-YakuMaskingNoticeHtml {
+    <#
+      V91.60 §9: 「数値 12 件をマスクして送信しました」を出す。
+      件数のみを扱う。対応表(Map)は画面の警告文以外へ出さない(§8)。
+    #>
+    param([AllowNull()]$Result)
+    $masked = 0
+    $kept = 0
+    try { $masked = [int]$Result.MaskedCount } catch { $masked = 0 }
+    try { $kept = [int]$Result.KeptCount } catch { $kept = 0 }
+    if ($masked -le 0) { return '' }
+    $suffix = if ($kept -gt 0) { "（年度・用語集の語など $kept 件はそのまま送信）" } else { '' }
+    return "<div class='batch-note masking-note'>数値 $masked 件をマスクして送信しました。符号と単位は送信しています。$suffix</div>"
+}
+
 function Get-YakuWarningCategoryLabel {
     param([AllowNull()][string]$Category)
     $cat = [string]$Category
@@ -144,6 +163,9 @@ function Get-YakuWarningCategoryLabel {
         'untranslated-retained' { return '原文保持' }
         'hangul-retry' { return 'Hangul再翻訳' }
         'glossary-compliance' { return '訳語の確認推奨' }
+        'numeric-placeholder-dropped-brief' { return 'BRIEFで省略された数値' }
+        'numeric-placeholder-unresolved' { return '数値プレースホルダー不一致' }
+        'numeric-mask-integrity' { return '数値プレースホルダー不一致' }
         'writeback-count' { return '書き込み件数不一致' }
         'writeback-rect' { return '矩形書き戻しスキップ' }
         'writeback-sheet' { return 'シート書き戻しスキップ' }
@@ -232,6 +254,7 @@ function Convert-YakuFileResultToHtml {
         $glossaryHtml += "</section>"
     }
 
+    $maskingHtml = New-YakuMaskingNoticeHtml -Result $Result
     $warningHtml = Convert-YakuFileWarningsToGroupedHtml -Warnings $warnings
     $completionStatus = 'done'
     try { if ($Result.PSObject.Properties.Name -contains 'CompletionStatus') { $completionStatus = [string]$Result.CompletionStatus } } catch {}
@@ -317,6 +340,7 @@ function Convert-YakuFileResultToHtml {
     <p class='hint'>元ファイルは変更していません。翻訳を書き込んだセル・図形・グラフタイトルだけに設定フォントを適用します（既定 Arial、CSVは対象外）。原文保持セルには触れません。Excel図形内の部分書式は、Excel COM の制約により先頭ランの書式に均される場合があります。文字溢れの自動調整は行いません。</p>
     <details class='output-path-details'><summary>出力先</summary><code>$(ConvertTo-YakuHtml $Result.OutputPath)</code></details>
     $glossaryHtml
+    $maskingHtml
     $warningHtml
   </article>
 </section>

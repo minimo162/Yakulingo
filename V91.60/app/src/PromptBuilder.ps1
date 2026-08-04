@@ -732,6 +732,7 @@ function Convert-YakuGlossaryManagerToHtml {
     $html = @"
 <div class='glossary-manager'>
   <div class='alert alert-info glossary-readonly-note'>編集は各CSVファイルを直接編集してください(UTF-8 BOM付き・カンマ区切り)。保存後は次回の翻訳から自動反映されます。</div>
+  <div class='alert alert-warning glossary-masking-note'>用語集に登録した語は、数字を含む部分もそのままCopilotへ送信されます（訳語が崩れるのを防ぐため、マスクの対象外にしています）。機密の数値を用語集に登録しないでください。</div>
   $machineHtml
   $promptHtml
 </div>

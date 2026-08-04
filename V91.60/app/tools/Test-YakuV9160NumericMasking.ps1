@@ -431,6 +431,39 @@ Assert-YakuMask (([string]$resB.Options[0].Translation) -like '*777.7*12.3*') '2
 Assert-YakuMask (-not (([string]$resB.Options[0].Translation) -like '*500.5*')) '他の文の数値が混ざらない'
 Assert-YakuMask (@($fullJobWarnings.ToArray() | Where-Object { [string]$_.Category -eq 'numeric-placeholder-unresolved' }).Count -eq 0) '解消すれば警告は残らない'
 
+Write-Host 'CASE 21: UI 表示（仕様書 §9）'
+# 件数の告知
+$noticeResult = [pscustomobject]@{ MaskedCount = 12; KeptCount = 3 }
+$notice = New-YakuMaskingNoticeHtml -Result $noticeResult
+Assert-YakuMask ($notice -like '*数値 12 件をマスクして送信しました*') 'マスク件数を表示する'
+Assert-YakuMask ($notice -like '*符号と単位は送信しています*') '何が送られるかを明示する'
+Assert-YakuMask ($notice -like '*3 件はそのまま送信*') '非マスク件数も示す'
+Assert-YakuMask ((New-YakuMaskingNoticeHtml -Result ([pscustomobject]@{ MaskedCount = 0; KeptCount = 0 })) -eq '') 'マスクが無ければ何も出さない'
+Assert-YakuMask ((New-YakuMaskingNoticeHtml -Result $null) -eq '') '結果が無くても落ちない'
+
+# 経路の戻り値に件数が載る
+$script:SentPrompts.Clear()
+$countWarnings = New-Object System.Collections.Generic.List[object]
+$countInput = (Convert-YakuNumericUnits -Text '2026年3月期の売上は318.2億円、営業利益は27.4億円、比率は8.6%でした。' -Location 'test').Text
+$countResult = Invoke-YakuTextTranslation -Root $root -InputText $countInput -Settings $settings -ProgressState $null -DirectionOverride 'to_en'
+Assert-YakuMask ([int]$countResult.MaskedCount -eq 3) ('マスク件数が結果に載る: ' + [string]$countResult.MaskedCount)
+Assert-YakuMask ([int]$countResult.KeptCount -ge 1) '非マスク件数も結果に載る（年度）'
+$resultHtml = Convert-YakuTextResultToHtml -Result $countResult
+Assert-YakuMask ($resultHtml -like '*数値 3 件をマスクして送信しました*') '結果画面へ告知が出る'
+
+# 警告カテゴリの表示名
+Assert-YakuMask ((Get-YakuWarningCategoryLabel -Category 'numeric-placeholder-dropped-brief') -eq 'BRIEFで省略された数値') 'BRIEF警告の表示名'
+Assert-YakuMask ((Get-YakuWarningCategoryLabel -Category 'numeric-placeholder-unresolved') -eq '数値プレースホルダー不一致') '不一致警告の表示名'
+
+# 用語集パネルの注意（§3-3）
+$glossaryHtml = Convert-YakuGlossaryManagerToHtml -Root $root
+Assert-YakuMask ($glossaryHtml -like '*機密の数値を用語集に登録しないでください*') '用語集パネルに注意を出す'
+
+# 設定パネルの説明（§9）
+$indexHtml = Get-Content -LiteralPath (Join-Path (Join-Path $root 'www') 'index.html') -Raw -Encoding UTF8
+Assert-YakuMask ($indexHtml -like '*数値の大きさは自動でプレースホルダーへ置き換えます*') '設定パネルにマスキングの説明がある'
+Assert-YakuMask ($indexHtml -like '*手で書く必要はありません*') '手動マスク廃止の案内がある'
+
 if ($script:Failures -gt 0) {
     Write-Host "V91.60 numeric masking test failed. failures=$script:Failures" -ForegroundColor Red
     exit 1
