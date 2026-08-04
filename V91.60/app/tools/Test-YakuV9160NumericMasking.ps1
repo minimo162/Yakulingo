@@ -152,6 +152,33 @@ try {
 $onAgain = New-YakuNumericMaskMap -Text '売上高は11,577 oku。' -Root $root -Direction 'to_en' -Location 'test'
 Assert-YakuMask ($onAgain.MaskedCount -gt 0) '既定では有効に戻る'
 
+# ---------------------------------------------------------------- 監査と補正指示
+Write-Host 'CASE 11: 数値整合監査がプレースホルダーを対象にする'
+$auditSource = '売上高は【N1】 oku、比率は【N2】％。'
+$expectations = @(Get-YakuNumericAuditExpectations -SourceText $auditSource)
+Assert-YakuMask (@($expectations | Where-Object { [string]$_.Expected -eq '【N1】 oku' }).Count -eq 1) '【N1】 oku を監査対象にする'
+Assert-YakuMask (@($expectations | Where-Object { [string]$_.Expected -eq '【N2】%' }).Count -eq 1) '【N2】% を監査対象にする'
+$okAudit = Test-YakuNumericIntegrity -SourceText $auditSource -TranslatedText 'Revenue 【N1】 oku, ratio 【N2】%.' -Location 'test'
+Assert-YakuMask ($okAudit.Ok) 'プレースホルダーが揃えば Ok'
+$ngAudit = Test-YakuNumericIntegrity -SourceText $auditSource -TranslatedText 'Revenue oku, ratio %.' -Location 'test'
+Assert-YakuMask (-not $ngAudit.Ok) '欠落を検出する'
+
+Write-Host 'CASE 12: 補正指示文に平文の数値を載せない'
+$instruction = New-YakuNumericCorrectionInstruction -Audit $ngAudit
+Assert-YakuMask ($instruction -like '*【N1】 oku*') 'プレースホルダーは指示に載る'
+Assert-YakuMask (-not ($instruction -match '(?<!N)\d')) ("指示文に素の数字が無い: " + $instruction)
+
+# マスクされなかった数値(年号など)が監査に入っても、指示文へは出さない
+$mixedSource = '売上高は【N1】 oku、前年は72 oku。'
+$mixedAudit = Test-YakuNumericIntegrity -SourceText $mixedSource -TranslatedText 'Revenue was oku, prior year oku.' -Location 'test'
+Assert-YakuMask ($mixedAudit.Checked -eq 2) '平文の数値も監査自体は拾う'
+$mixedInstruction = New-YakuNumericCorrectionInstruction -Audit $mixedAudit
+Assert-YakuMask ($mixedInstruction -like '*【N1】*') 'プレースホルダーは残る'
+Assert-YakuMask (-not ($mixedInstruction -like '*72*')) '平文の数値は指示文から落とす'
+
+$allPlainAudit = Test-YakuNumericIntegrity -SourceText '前年は72 oku。' -TranslatedText 'Prior year oku.' -Location 'test'
+Assert-YakuMask ((New-YakuNumericCorrectionInstruction -Audit $allPlainAudit) -eq '') '平文だけなら指示文は空になる'
+
 if ($script:Failures -gt 0) {
     Write-Host "V91.60 numeric masking test failed. failures=$script:Failures" -ForegroundColor Red
     exit 1

@@ -597,7 +597,9 @@ function Test-YakuNumericMaskIntegrity {
 function Get-YakuNumericAuditExpectations {
     param([AllowNull()][string]$SourceText)
     $items = New-Object System.Collections.Generic.List[object]
-    $pattern = '(?<![0-9])(?<num>[0-9][0-9,]*(?:\.[0-9]+)?|[xX]{2,})\s+(?<unit>oku|k units|k yen)'
+    # V91.60: マスク後は数値が【N1】に置き換わるため、監査対象へ加える。
+    # これにより既存の数値整合監査・補正・再試行の仕組みがそのまま使える。
+    $pattern = '(?<![0-9])(?<num>【N\d+】|[0-9][0-9,]*(?:\.[0-9]+)?|[xX]{2,})\s+(?<unit>oku|k units|k yen)'
     foreach ($m in [regex]::Matches([string]$SourceText, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
         $token = (([string]$m.Groups['num'].Value) + ' ' + ([string]$m.Groups['unit'].Value).ToLowerInvariant())
         $plain = ([string]$m.Groups['num'].Value).Replace(',','')
@@ -608,7 +610,7 @@ function Get-YakuNumericAuditExpectations {
         }
         $items.Add([pscustomobject]@{ Source=[string]$m.Value; Expected=$token; ScaleCandidate=$scaleToken }) | Out-Null
     }
-    foreach ($m in [regex]::Matches([string]$SourceText, '(?<![0-9])(?<num>[0-9][0-9,]*(?:\.[0-9]+)?)\s*[%％]')) {
+    foreach ($m in [regex]::Matches([string]$SourceText, '(?<![0-9])(?<num>【N\d+】|[0-9][0-9,]*(?:\.[0-9]+)?)\s*[%％]')) {
         $token=([string]$m.Groups['num'].Value)+'%'; $items.Add([pscustomobject]@{ Source=[string]$m.Value; Expected=$token; ScaleCandidate='' }) | Out-Null
     }
     return @($items.ToArray())
@@ -647,8 +649,20 @@ function Test-YakuNumericIntegrity {
 }
 
 function New-YakuNumericCorrectionInstruction {
+    <#
+      V91.60: 再送プロンプトへ平文の数値を載せない。
+      本文をマスクしても、この指示文から素の数値が出れば対策が無効になる。
+      プレースホルダーを含む項目だけを指示にし、それ以外は落とす。
+      落とすのは非マスク数値（年号・用語集の保護範囲など）であり、
+      いずれも機密ではないが、経路として平文を通さないことを優先する。
+    #>
     param([Parameter(Mandatory=$true)]$Audit)
-    $lines=@($Audit.Mismatches|ForEach-Object{
+    $all=@($Audit.Mismatches)
+    $items=@($all|Where-Object{ [string]$_.Expected -match '【N\d+】' })
+    $dropped=$all.Count-$items.Count
+    if($dropped -gt 0){ try{ Write-YakuLog "Numeric correction instruction. dropped=$dropped (plain numbers withheld from the prompt)" 'INFO' }catch{} }
+    if($items.Count -eq 0){ return '' }
+    $lines=@($items|ForEach-Object{
         if([bool]$_.ScaleError){"- $($_.Source): reproduce the token $($_.Expected) exactly; do not output $($_.Observed)."}
         else{"- $($_.Source): include the token $($_.Expected) exactly as written; it is currently missing from the translation."}
     })
