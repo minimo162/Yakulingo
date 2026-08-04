@@ -212,6 +212,23 @@ if (-not [string]::IsNullOrWhiteSpace($CompareWith)) {
         $base = [IO.File]::ReadAllText($basePath) | ConvertFrom-Json
         $baseRows = @{}
         foreach ($r in @($base.rows)) { $baseRows[[string]$r.id] = $r }
+        # 応答の使い回し検出。A/Bで同一バイトの応答があれば、規則変更の効果を測れていない。
+        $baseResponseDir = Join-Path (Join-Path (Get-YakuSubDir 'eval') $CompareWith) 'responses'
+        $identical = New-Object System.Collections.Generic.List[string]
+        foreach ($r in $scored) {
+            $a = Join-Path $baseResponseDir ([string]$r.id + '.response.txt')
+            $b = Join-Path $ResponseDir ([string]$r.id + '.response.txt')
+            if ((Test-Path -LiteralPath $a -PathType Leaf) -and (Test-Path -LiteralPath $b -PathType Leaf)) {
+                if ([IO.File]::ReadAllText($a) -eq [IO.File]::ReadAllText($b)) { $identical.Add([string]$r.id) | Out-Null }
+            }
+        }
+        if ($identical.Count -gt 0) {
+            Write-Host ''
+            Write-Host ("*** 比較無効: 応答が使い回されています ({0}/{1}件が同一) ***" -f $identical.Count, $scored.Count) -ForegroundColor Red
+            Write-Host ('    ' + (@($identical.ToArray()) -join ', ')) -ForegroundColor Red
+            Write-Host '    A/Bは必ず別々に翻訳し直してください。片方を複製すると効果を測れません。' -ForegroundColor Red
+        }
+
         Write-Host ''
         Write-Host ("=== {0} vs {1} ===" -f $Label, $CompareWith) -ForegroundColor Cyan
         Write-Host ('  {0,-26} {1,8} {2,8} {3,8}' -f 'case', $CompareWith, $Label, '差')
