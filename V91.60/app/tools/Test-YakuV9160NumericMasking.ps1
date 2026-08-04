@@ -124,11 +124,27 @@ Assert-YakuMask (-not (Test-YakuNumericMaskIntegrity -MaskedSource $maskedText -
 Assert-YakuMask (-not (Test-YakuNumericMaskIntegrity -MaskedSource $maskedText -Translated ($maskedText + '【N9】')).Ok) '混入を検出'
 Assert-YakuMask (-not (Test-YakuNumericMaskIntegrity -MaskedSource $maskedText -Translated ($maskedText -replace '【N1】','789')).Ok) '数字への置換を検出'
 
-# ---------------------------------------------------------------- 手動マスクとの共存
-Write-Host 'CASE 8: 利用者の手動マスクを壊さない'
+# ---------------------------------------------------------------- 【】の扱い
+Write-Host 'CASE 8: 手動マスクの廃止（決定事項#7）'
+# 【…非開示】は保護しない。数値は自動でマスクされるので手で伏せる必要がなく、
+# 二重の仕組みを残すと保護範囲の判断が分かれる。【】は強調・見出しの括弧として扱う。
 $manual = Invoke-YakuMaskPipeline -Text '営業利益は【営業利益額非開示】、売上高は11,577億円。'
-Assert-YakuMask ([string]$manual.Masked.Text -like '*【営業利益額非開示】*') '【…非開示】をそのまま残す'
+Assert-YakuMask ([string]$manual.Masked.Text -like '*【営業利益額非開示】*') '数字を含まない【…】はそのまま（訳す対象になる）'
 Assert-YakuMask (-not ([string]$manual.Masked.Text -like '*11,577*')) '同じ文の機密数値はマスクする'
+
+$bracketed = Invoke-YakuMaskPipeline -Text '【営業利益 296億円】は前年並みでした。'
+Assert-YakuMask (-not ([string]$bracketed.Masked.Text -like '*296*')) '【】の中の数値もマスクする'
+Assert-YakuMask ([string]$bracketed.Masked.Text -like '*【営業利益 【N1】 oku】*') '【】自体は残す'
+
+# 自分が入れた【N1】は二重マスクしない
+$twice = New-YakuNumericMaskMap -Text ([string]$bracketed.Masked.Text) -Root $root -Direction 'to_en' -Location 'test'
+Assert-YakuMask ([int]$twice.MaskedCount -eq 0) '【N1】を二重にマスクしない'
+Assert-YakuMask ([string]$twice.Text -eq [string]$bracketed.Masked.Text) '二度掛けても変わらない'
+
+# 廃止した関数が残っていないこと
+foreach ($gone in @('Get-YakuMaskingPlaceholderTokens','Test-YakuMaskingPlaceholderIntegrity','Test-YakuTextResponsePlaceholderIntegrity','Invoke-YakuBackTranslation','New-YakuBackTranslatePrompt','Parse-YakuBackTranslationResponse','Convert-YakuBackTranslationToHtml')) {
+    Assert-YakuMask ($null -eq (Get-Command $gone -ErrorAction SilentlyContinue)) ("廃止済み: " + $gone)
+}
 
 # ---------------------------------------------------------------- to_jp
 Write-Host 'CASE 9: to_jp 方向でもマスクする'

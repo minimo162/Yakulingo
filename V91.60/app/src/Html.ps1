@@ -324,19 +324,6 @@ function Convert-YakuFileResultToHtml {
     return $html
 }
 
-function Convert-YakuBackTranslationToHtml {
-    param([Parameter(Mandatory=$true)]$Result)
-    if ($Result -and ($Result.PSObject.Properties.Name -contains 'Error') -and $Result.Error) {
-        return New-YakuAlertHtml -Kind error -Message $Result.Error
-    }
-    return @"
-<div class='back-card'>
-  <div class='back-header'><strong>戻し訳</strong></div>
-  <pre class='translation'>$(ConvertTo-YakuHtml $Result.Translation)</pre>
-</div>
-"@
-}
-
 function Convert-YakuCopilotDiagnosticsToHtml {
     param([Parameter(Mandatory=$true)]$Diag)
     $kind = if ($Diag.InputReady) { 'success' } elseif ($Diag.LoginDetected -or $Diag.DevToolsReachable) { 'warning' } else { 'info' }

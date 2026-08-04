@@ -641,17 +641,6 @@ function New-YakuTextPrompt {
     }
 }
 
-function New-YakuBackTranslatePrompt {
-    param(
-        [Parameter(Mandatory=$true)][string]$Root,
-        [Parameter(Mandatory=$true)][string]$InputText,
-        [Parameter(Mandatory=$true)]$Settings,
-        [AllowNull()][string]$RequestId
-    )
-    $built = New-YakuTextPrompt -Root $Root -InputText $InputText -Settings $Settings -DirectionOverride 'to_jp' -RequestId $RequestId
-    return $built.Prompt
-}
-
 function Get-YakuGlossaryDuplicateSummaryHtml {
     param([Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Entries)
     $pairs = @{}

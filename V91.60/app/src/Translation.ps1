@@ -302,11 +302,6 @@ function Repair-YakuNumberedHeadingSequence {
     try { Write-YakuLog "Text numbered headings restored from source. style=$Style count=$($source.Count) sourceNumbers=$($sourceNumbers -join ',') targetNumbers=$($targetNumbers -join ',')" 'WARN' } catch {}
     return [pscustomobject]@{ Text=$restoredText; Restored=$true; Detail="numberedHeadings restored=$($source.Count)" }
 }
-function Get-YakuMaskingPlaceholderTokens {
-    param([AllowNull()][string]$Text)
-    return @([regex]::Matches([string]$Text, '【[^【】]*非開示】') | ForEach-Object { [string]$_.Value })
-}
-
 function ConvertTo-YakuInvariantNumberText {
     param([Parameter(Mandatory=$true)][decimal]$Value, [switch]$UseGrouping)
     if ($Value -eq [decimal]::Truncate($Value)) {
@@ -468,8 +463,11 @@ function Get-YakuNumericMaskProtectedSpans {
         if ($m.Length -gt 0) { $spans.Add([pscustomobject]@{ Start = [int]$m.Index; End = [int]($m.Index + $m.Length) }) | Out-Null }
     }
 
-    # 利用者が手で書いた伏せ字。中身は既に非機密なので触らない。
-    foreach ($m in [regex]::Matches([string]$Text, '【[^【】]*】')) {
+    # V91.60(決定事項#7): 手動マスク【…非開示】は廃止した。数値は自動でマスクされる
+    # ため手で伏せる必要がなく、二重の仕組みを残すと保護範囲の判断が分かれる。
+    # 【】は強調・見出しの括弧として扱い、中の数値は通常どおりマスクする。
+    # 自分が入れた【N1】だけは保護する。二重マスクを避けるため。
+    foreach ($m in [regex]::Matches([string]$Text, '【N\d+】')) {
         if ($m.Length -gt 0) { $spans.Add([pscustomobject]@{ Start = [int]$m.Index; End = [int]($m.Index + $m.Length) }) | Out-Null }
     }
 
@@ -733,34 +731,6 @@ function New-YakuNumericCorrectionInstruction {
     return ("NUMERIC CORRECTION (mandatory): Correct only the following numeric token mismatches while preserving all other wording:`n"+($lines-join "`n"))
 }
 
-function Test-YakuMaskingPlaceholderIntegrity {
-    param(
-        [Parameter(Mandatory=$true)][string]$SourceText,
-        [AllowNull()][string]$TranslatedText,
-        [Parameter(Mandatory=$true)][string]$Style
-    )
-    $source = @(Get-YakuMaskingPlaceholderTokens -Text $SourceText)
-    $target = @(Get-YakuMaskingPlaceholderTokens -Text $TranslatedText)
-    $sourceCounts = @{}
-    $targetCounts = @{}
-    foreach ($token in $source) { if (-not $sourceCounts.ContainsKey($token)) { $sourceCounts[$token]=0 }; $sourceCounts[$token]++ }
-    foreach ($token in $target) { if (-not $targetCounts.ContainsKey($token)) { $targetCounts[$token]=0 }; $targetCounts[$token]++ }
-    $missing = New-Object System.Collections.Generic.List[string]
-    $extra = New-Object System.Collections.Generic.List[string]
-    foreach ($key in $sourceCounts.Keys) {
-        $actual = if ($targetCounts.ContainsKey($key)) { [int]$targetCounts[$key] } else { 0 }
-        for ($i=$actual; $i -lt [int]$sourceCounts[$key]; $i++) { $missing.Add([string]$key) | Out-Null }
-    }
-    foreach ($key in $targetCounts.Keys) {
-        $expected = if ($sourceCounts.ContainsKey($key)) { [int]$sourceCounts[$key] } else { 0 }
-        for ($i=$expected; $i -lt [int]$targetCounts[$key]; $i++) { $extra.Add([string]$key) | Out-Null }
-    }
-    $ok = ($missing.Count -eq 0 -and $extra.Count -eq 0)
-    $detail = "placeholders style=$Style source=$($source.Count) target=$($target.Count) missing=$($missing.Count) extra=$($extra.Count)"
-    try { Write-YakuLog "Text masking placeholder validation. $detail" $(if ($ok) { 'DEBUG' } else { 'WARN' }) } catch {}
-    return [pscustomobject]@{ Ok=[bool]$ok; Detail=$detail; Missing=@($missing.ToArray()); Extra=@($extra.ToArray()); SourceCount=[int]$source.Count; TargetCount=[int]$target.Count }
-}
-
 function Repair-YakuTextResponsePostParse {
     param(
         [Parameter(Mandatory=$true)][string]$SourceText,
@@ -775,20 +745,6 @@ function Repair-YakuTextResponsePostParse {
 
     }
     return @($Options)
-}
-
-function Test-YakuTextResponsePlaceholderIntegrity {
-    param(
-        [Parameter(Mandatory=$true)][string]$SourceText,
-        [Parameter(Mandatory=$true)][object[]]$Options,
-        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction
-    )
-    $checks = New-Object System.Collections.Generic.List[object]
-    foreach ($option in $Options) {
-        $checks.Add((Test-YakuMaskingPlaceholderIntegrity -SourceText $SourceText -TranslatedText ([string]$option.Translation) -Style ([string]$option.Style))) | Out-Null
-    }
-    $failed = @($checks.ToArray() | Where-Object { -not [bool]$_.Ok })
-    return [pscustomobject]@{ Ok=($failed.Count -eq 0); Checks=@($checks.ToArray()); Detail=(($failed | ForEach-Object { [string]$_.Detail }) -join '; ') }
 }
 
 function Parse-YakuV25PlainTranslationResponse {
@@ -994,54 +950,6 @@ function Write-YakuTextResponseContractDiagnostic {
     return $path
 }
 
-function Parse-YakuBackTranslationResponse {
-    param([Parameter(Mandatory=$true)][string]$Raw, [Parameter(Mandatory=$true)][string]$RequestId)
-    $parsed = @(Parse-YakuTextTranslationResponse -Raw $Raw -Direction 'to_jp' -RequestId $RequestId)
-    if ($parsed.Count -gt 0) {
-        return [pscustomobject]@{ Translation=$parsed[0].Translation; Explanation=$parsed[0].Explanation }
-    }
-    throw 'RESPONSE_FIELDS_MISSING: JAPANESE_TEXTを取得できませんでした。'
-}
-
-function Set-YakuTranslationProgress {
-    param(
-        [AllowNull()]$ProgressState,
-        [string]$Mode = 'working',
-        [string]$Label = 'Translating',
-        [int]$Progress = 0,
-        [string]$Detail = '',
-        [AllowNull()][string]$Phase = $null
-    )
-    if ($null -eq $ProgressState) { return }
-    try {
-        $pct = [Math]::Max(0, [Math]::Min(100, $Progress))
-        $currentPct = 0
-        try { $currentPct = [int]$ProgressState['progress'] } catch { $currentPct = 0 }
-        $pct = [Math]::Max($currentPct, $pct)
-        $ProgressState['mode'] = $Mode
-        $ProgressState['label'] = $Label
-        $ProgressState['class'] = if ($Mode -eq 'done') { 'ok' } elseif ($Mode -eq 'error') { 'warn' } else { 'warn' }
-        $ProgressState['progress'] = [int]$pct
-        $ProgressState['detail'] = $Detail
-        if ($null -ne $Phase) { $ProgressState['phase'] = $Phase }
-        $ProgressState['updated_at'] = (Get-Date).ToString('s')
-    } catch {}
-}
-
-function Get-YakuDirectionLabel {
-    param([Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction)
-    if ($Direction -eq 'to_en') { return '日本語 → 英語' }
-    return '英語/その他 → 日本語'
-}
-
-function Get-YakuMaxCharsPerBatch {
-    param([Parameter(Mandatory=$true)]$Settings)
-    $max = 0
-    try { $max = [int]$Settings.max_chars_per_batch } catch { $max = 0 }
-    if ($max -lt 400) { return 0 }
-    return $max
-}
-
 function Split-YakuHardChunk {
     param(
         [Parameter(Mandatory=$true)][string]$Text,
@@ -1232,16 +1140,11 @@ function Invoke-YakuSingleTranslationBatch {
             $cachedRequestId = [string]$cachedEnvelope.request_id
             $optionsCached = @(Parse-YakuTextTranslationResponse -Raw ([string]$cachedEnvelope.raw) -Direction $Direction -RequestId $cachedRequestId -Warnings $Warnings)
             $optionsCached = @(Repair-YakuTextResponsePostParse -SourceText $sourceText -Options $optionsCached -Direction $Direction)
-            $cachedPlaceholderIntegrity = Test-YakuTextResponsePlaceholderIntegrity -SourceText $sourceText -Options $optionsCached -Direction $Direction
             if (-not ($Direction -eq 'to_jp' -and $maskMap.Count -gt 0)) {
                 foreach ($cachedOption in $optionsCached) {
                     $cachedNumeric = Test-YakuNumericIntegrity -SourceText $sourceText -TranslatedText ([string]$cachedOption.Translation) -Location ("text-cache-" + [string]$cachedOption.Style)
                     if (-not [bool]$cachedNumeric.Ok -and [int]$cachedNumeric.ScaleErrors -gt 0) { throw "NUMERIC_SCALE_MISMATCH: $([string]$cachedNumeric.Detail)" }
                 }
-            }
-            if (-not [bool]$cachedPlaceholderIntegrity.Ok) {
-                try { Write-YakuLog "Text masking placeholder mismatch. attempt=cache detail=$([string]$cachedPlaceholderIntegrity.Detail); cache=discard" 'WARN' } catch {}
-                throw "RESPONSE_PLACEHOLDER_MISMATCH: $([string]$cachedPlaceholderIntegrity.Detail)"
             }
             if ($Direction -eq 'to_en') {
                 $cachedIntegrity = Test-YakuTextStructureIntegrity -SourceText $sourceText -FullText ([string]$optionsCached[0].Translation) -BriefText ([string]$optionsCached[1].Translation)
@@ -1263,7 +1166,6 @@ function Invoke-YakuSingleTranslationBatch {
     $lastError = $null
     $silentStartFailures = 0
     $structureMismatchAccepted = $false
-    $placeholderMismatchAccepted = $false
     $numericCorrectionInstruction = ''
     for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
         if ($attempt -gt 1) {
@@ -1317,25 +1219,6 @@ function Invoke-YakuSingleTranslationBatch {
                     throw "RESPONSE_PLACEHOLDER_MISMATCH: numeric placeholders: $maskMismatchDetail"
                 }
             }
-            $placeholderIntegrity = Test-YakuTextResponsePlaceholderIntegrity -SourceText $sourceText -Options $options -Direction $Direction
-            if (-not [bool]$placeholderIntegrity.Ok) {
-                $placeholderDetail = [string]$placeholderIntegrity.Detail
-                try { Write-YakuLog "Text masking placeholder mismatch. attempt=$attempt/$maxAttempts detail=$placeholderDetail" 'WARN' } catch {}
-                if ($attempt -lt $maxAttempts) {
-                    try {
-                        if ($null -ne $Warnings -and (Get-Command Add-YakuWarning -ErrorAction SilentlyContinue)) {
-                            Add-YakuWarning -Warnings $Warnings -Category 'supplement-pass' -Location 'FULL/BRIEF placeholders' -Details @{ Attempt=[int]$attempt; MaxAttempts=[int]$maxAttempts; Detail=$placeholderDetail } -Message "マスキングトークンの欠落を検出したため補完再依頼します。$placeholderDetail"
-                        }
-                    } catch {}
-                    throw "RESPONSE_PLACEHOLDER_MISMATCH: $placeholderDetail"
-                }
-                $placeholderMismatchAccepted = $true
-                try {
-                    if ($null -ne $Warnings -and (Get-Command Add-YakuWarning -ErrorAction SilentlyContinue)) {
-                        Add-YakuWarning -Warnings $Warnings -Category 'placeholder-integrity' -Location 'FULL/BRIEF' -Details @{ Attempt=[int]$attempt; MaxAttempts=[int]$maxAttempts; Detail=$placeholderDetail } -Message "再依頼後も【…非開示】マスキングトークンの個数または内容が原文と一致しません。無言の欠落を避けるため、該当箇所を必ず確認してください。($placeholderDetail)"
-                    }
-                } catch {}
-            }
             if ($Direction -eq 'to_en') {
                 $integrity = Test-YakuTextStructureIntegrity -SourceText $sourceText -FullText ([string]$options[0].Translation) -BriefText ([string]$options[1].Translation)
                 if (-not [bool]$integrity.Ok) {
@@ -1379,7 +1262,7 @@ function Invoke-YakuSingleTranslationBatch {
         }
     }
     if ($lastError) { throw $lastError }
-    if (-not $structureMismatchAccepted -and -not $placeholderMismatchAccepted) {
+    if (-not $structureMismatchAccepted) {
         $cacheEnvelope = [ordered]@{ request_id=$requestId; raw=$raw } | ConvertTo-Json -Depth 4 -Compress
         Set-YakuTranslationCacheValue -Key $cacheKey -Value $cacheEnvelope -Settings $Settings
     }
@@ -1759,25 +1642,5 @@ function Invoke-YakuTextTranslation {
             DirectionLabel = $directionLabel
             AppliedGlossary = $appliedGlossary
         }
-    }
-}
-
-function Invoke-YakuBackTranslation {
-    param(
-        [Parameter(Mandatory=$true)][string]$Root,
-        [Parameter(Mandatory=$true)][string]$InputText,
-        [Parameter(Mandatory=$true)]$Settings
-    )
-    if ([string]::IsNullOrWhiteSpace($InputText)) {
-        return [pscustomobject]@{ Error='戻し訳するテキストがありません。' }
-    }
-    $requestId = [guid]::NewGuid().ToString('N')
-    $prompt = New-YakuBackTranslatePrompt -Root $Root -InputText $InputText -Settings $Settings -RequestId $requestId
-    try {
-        $raw = Invoke-YakuCopilotPrompt -Prompt $prompt -Settings $Settings -PreserveEndMarker
-        $parsed = Parse-YakuBackTranslationResponse -Raw $raw -RequestId $requestId
-        return [pscustomobject]@{ Translation=$parsed.Translation; Explanation=$parsed.Explanation; Raw=$raw }
-    } catch {
-        return [pscustomobject]@{ Error=$_.Exception.Message; Prompt=$prompt }
     }
 }
