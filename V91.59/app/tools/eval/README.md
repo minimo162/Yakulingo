@@ -89,6 +89,31 @@ powershell -ExecutionPolicy Bypass -File .\tools\eval\Measure-YakuEvalResponses.
 比較したい軸ごとに、**文長と文体を揃えた対のケース**を作ること。
 揃っていないと差が語彙のせいか長さのせいか分からない。
 
+## A/B比較（規則を変えたときの効果測定）
+
+`-AppRoot` でプロンプト・用語集の出所を差し替え、`-Label` で結果を分けて保存する。
+
+```
+# 1) 現行を baseline として測る
+Build-YakuEvalPrompts.ps1 -Label baseline
+（翻訳させて baseline/responses/ へ保存）
+Measure-YakuEvalResponses.ps1 -Label baseline
+
+# 2) app ツリーを複製し、prompts/ や用語集を変更する
+
+# 3) 変種を測り、baseline と比べる
+Build-YakuEvalPrompts.ps1 -Label 変種名 -AppRoot <複製したappのパス>
+（翻訳させて 変種名/responses/ へ保存）
+Measure-YakuEvalResponses.ps1 -Label 変種名 -CompareWith baseline
+```
+
+`-CompareWith` を付けると、ケース別の圧縮率の差とグループ別平均の変化が出る。
+
+**A/Bの翻訳は必ず両方とも実行し直すこと。** 片方を使い回すと、モデルの揺らぎと
+規則変更の効果が区別できない。
+
+**一度に1つだけ変える。** 複数の変更をまとめて入れると、どれが効いたか分からない。
+
 ## ケースを足すとき
 
 `evalset.json` へ追記する。**規則を消す前に、その規則が防いでいた失敗例を

@@ -15,7 +15,9 @@ param(
     [string]$EvalSet = '',
     [string]$ResponseDir = '',
     [string]$PromptDir = '',
-    [string]$ReportPath = ''
+    [string]$ReportPath = '',
+    [string]$Label = 'baseline',
+    [string]$CompareWith = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,9 +31,10 @@ foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuil
 }
 
 # 既定値の解決は dot-source の後（Build-YakuEvalPrompts.ps1 と同じ理由・同じ場所）。
-if ([string]::IsNullOrWhiteSpace($ResponseDir)) { $ResponseDir = Join-Path (Get-YakuSubDir 'eval') 'responses' }
-if ([string]::IsNullOrWhiteSpace($PromptDir))   { $PromptDir   = Join-Path (Get-YakuSubDir 'eval') 'prompts' }
-if ([string]::IsNullOrWhiteSpace($ReportPath))  { $ReportPath  = Join-Path (Get-YakuSubDir 'eval') 'report.json' }
+$labelRoot = Join-Path (Get-YakuSubDir 'eval') $Label
+if ([string]::IsNullOrWhiteSpace($ResponseDir)) { $ResponseDir = Join-Path $labelRoot 'responses' }
+if ([string]::IsNullOrWhiteSpace($PromptDir))   { $PromptDir   = Join-Path $labelRoot 'prompts' }
+if ([string]::IsNullOrWhiteSpace($ReportPath))  { $ReportPath  = Join-Path $labelRoot 'report.json' }
 
 $set = [IO.File]::ReadAllText($EvalSet) | ConvertFrom-Json
 $settings = Read-YakuSettings -Root $appRoot
@@ -200,6 +203,33 @@ Write-Host ''
 Write-Host '=== 集計 ===' -ForegroundColor Cyan
 foreach ($k in $summary.Keys) { Write-Host ('  {0,-16} {1}' -f $k, $summary[$k]) }
 
-[IO.File]::WriteAllText($ReportPath, (@{ summary = $summary; rows = $all } | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding($false)))
+[IO.File]::WriteAllText($ReportPath, (@{ label = $Label; summary = $summary; rows = $all } | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding($false)))
+
+# --- ベースラインとの差分 ---
+if (-not [string]::IsNullOrWhiteSpace($CompareWith)) {
+    $basePath = Join-Path (Join-Path (Get-YakuSubDir 'eval') $CompareWith) 'report.json'
+    if (Test-Path -LiteralPath $basePath -PathType Leaf) {
+        $base = [IO.File]::ReadAllText($basePath) | ConvertFrom-Json
+        $baseRows = @{}
+        foreach ($r in @($base.rows)) { $baseRows[[string]$r.id] = $r }
+        Write-Host ''
+        Write-Host ("=== {0} vs {1} ===" -f $Label, $CompareWith) -ForegroundColor Cyan
+        Write-Host ('  {0,-26} {1,8} {2,8} {3,8}' -f 'case', $CompareWith, $Label, '差')
+        foreach ($r in $scored) {
+            if (-not $baseRows.ContainsKey([string]$r.id)) { continue }
+            $b = [double]$baseRows[[string]$r.id].brief_ratio
+            $c = [double]$r.brief_ratio
+            $d = [Math]::Round($c - $b, 3)
+            $mark = if ($d -lt -0.03) { '改善' } elseif ($d -gt 0.03) { '悪化' } else { '' }
+            Write-Host ('  {0,-26} {1,8} {2,8} {3,8} {4}' -f $r.id, $b, $c, $d, $mark)
+        }
+        foreach ($g in ($byGroup | Sort-Object Name)) {
+            $ids = @($g.Group | ForEach-Object { [string]$_.id })
+            $baseAvg = [Math]::Round((@($ids | Where-Object { $baseRows.ContainsKey($_) } | ForEach-Object { [double]$baseRows[$_].brief_ratio } | Measure-Object -Average).Average), 3)
+            $curAvg  = [Math]::Round((@($g.Group | ForEach-Object { [double]$_.brief_ratio } | Measure-Object -Average).Average), 3)
+            Write-Host ('  [{0}] 平均 {1} -> {2}  差 {3}' -f $g.Name, $baseAvg, $curAvg, [Math]::Round($curAvg-$baseAvg,3)) -ForegroundColor Yellow
+        }
+    } else { Write-Host ("比較対象が見つかりません: " + $basePath) -ForegroundColor DarkYellow }
+}
 Write-Host ''
 Write-Host ("レポート: " + $ReportPath) -ForegroundColor Green

@@ -15,13 +15,16 @@
 [CmdletBinding()]
 param(
     [string]$EvalSet = '',
-    [string]$OutDir = ''
+    [string]$OutDir = '',
+    [string]$AppRoot = '',
+    [string]$Label = 'baseline'
 )
 
 $ErrorActionPreference = 'Stop'
 $evalRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $toolsRoot = Split-Path -Parent $evalRoot
-$appRoot = Split-Path -Parent $toolsRoot
+# -AppRoot でプロンプト・用語集の出所を差し替えられる。A/B比較のため。
+$appRoot = if ([string]::IsNullOrWhiteSpace($AppRoot)) { Split-Path -Parent $toolsRoot } else { (Resolve-Path -LiteralPath $AppRoot).Path }
 if ([string]::IsNullOrWhiteSpace($EvalSet)) { $EvalSet = Join-Path $evalRoot 'evalset.json' }
 
 foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','Translation.ps1')) {
@@ -31,7 +34,7 @@ foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuil
 # 既定値の解決は dot-source の後で行う。パラメータ既定値は関数の読込より先に
 # 評価されるため、param ブロックで Get-YakuSubDir を呼ぶことはできない。
 # 生成物はアプリツリーへ置かない。配布物に混ざり manifest と食い違うため。
-if ([string]::IsNullOrWhiteSpace($OutDir)) { $OutDir = Join-Path (Get-YakuSubDir 'eval') 'prompts' }
+if ([string]::IsNullOrWhiteSpace($OutDir)) { $OutDir = Join-Path (Join-Path (Get-YakuSubDir 'eval') $Label) 'prompts' }
 
 $set = [IO.File]::ReadAllText($EvalSet) | ConvertFrom-Json
 $settings = Read-YakuSettings -Root $appRoot
@@ -59,5 +62,6 @@ foreach ($case in @($set.cases)) {
 $indexPath = Join-Path $OutDir '_index.json'
 [IO.File]::WriteAllText($indexPath, (@{ generated_for = 'eval'; cases = @($index.ToArray()) } | ConvertTo-Json -Depth 6), (New-Object Text.UTF8Encoding($false)))
 Write-Host ''
-Write-Host ("プロンプト {0} 件を生成しました: {1}" -f $index.Count, $OutDir) -ForegroundColor Green
+Write-Host ("プロンプト {0} 件を生成しました (label={1}, appRoot={2})" -f $index.Count, $Label, $appRoot) -ForegroundColor Green
+Write-Host ("  " + $OutDir)
 Write-Host '応答は同じIDで <id>.response.txt として responses/ へ保存してください。'
