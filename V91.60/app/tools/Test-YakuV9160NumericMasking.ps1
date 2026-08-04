@@ -464,6 +464,70 @@ $indexHtml = Get-Content -LiteralPath (Join-Path (Join-Path $root 'www') 'index.
 Assert-YakuMask ($indexHtml -like '*数値の大きさは自動でプレースホルダーへ置き換えます*') '設定パネルにマスキングの説明がある'
 Assert-YakuMask ($indexHtml -like '*手で書く必要はありません*') '手動マスク廃止の案内がある'
 
+Write-Host 'CASE 22: 受容基準の残り（仕様書 §10）'
+
+# §10-3-b 決算期に似ているが別物の形はマスクする
+foreach ($c in @(@{ Text='取引先は151件です。'; Gone='151' }, @{ Text='売上3億円の案件。'; Gone='3' })) {
+    $r = Invoke-YakuMaskPipeline -Text ([string]$c.Text)
+    Assert-YakuMask (-not ([string]$r.Masked.Text -like ('*' + $c.Gone + '*'))) ("決算期に似た形はマスク: " + $c.Text + ' -> ' + $r.Masked.Text)
+}
+
+# §10-4 / §10-19-c 用語集に一致した範囲は数字ごと無傷
+# 仕様書は CX-90 を例示しているが、同梱用語集の実エントリは MTMUS製(CX-50)。
+$cx = Invoke-YakuMaskPipeline -Text 'MTMUS製(CX-50)の単価改善は120億円。'
+Assert-YakuMask ([string]$cx.Masked.Text -like '*MTMUS製(CX-50)*') ('用語の中の数字を壊さない: ' + $cx.Masked.Text)
+Assert-YakuMask (-not ([string]$cx.Masked.Text -like '*120*')) '同じ文の金額はマスクする'
+$cxMatches = @(Get-YakuRelevantGlossaryMatches -Root $root -InputText ([string]$cx.Masked.Text) -Direction 'to_en' -Limit 200 -Path (Get-YakuGlossaryPath -Root $root))
+Assert-YakuMask (@($cxMatches | Where-Object { [string]$_.Source -eq 'MTMUS製(CX-50)' }).Count -gt 0) 'マスク後も用語集が一致する'
+$fyq = Invoke-YakuMaskPipeline -Text 'FY26/3 1Q の AAT 営業利益(50%)は堅調。'
+Assert-YakuMask ([string]$fyq.Masked.Text -like '*FY26/3 1Q*') 'FY26/3 1Q が無傷'
+
+# §10-19-b 変換後の単位トークンがマスクされ、復元で戻る
+foreach ($t22 in @('出荷台数は659千台。', '生産は2万台。')) {
+    $r = Invoke-YakuMaskPipeline -Text $t22
+    Assert-YakuMask ([string]$r.Masked.Text -like '*k units*') ("k units が残る: " + $r.Masked.Text)
+    Assert-YakuMask ((Restore-YakuNumericMask -Text $r.Masked.Text -Map $r.Masked.Map) -eq $r.Pre) ("復元一致: $t22")
+}
+
+# §10-20 復元後は原文どおりの字形で戻る（全角のまま）
+$widthSource = '上位１０社と取引しています。'
+$width = New-YakuNumericMaskMap -Text $widthSource -Root $root -Direction 'to_en' -Location 'test'
+Assert-YakuMask ([int]$width.MaskedCount -eq 1) '全角数字もマスクする'
+Assert-YakuMask ((Restore-YakuNumericMask -Text ([string]$width.Text) -Map $width.Map) -eq $widthSource) '全角の字形のまま戻る'
+
+# §10-22 バッチ分割がプレースホルダーの内部で切れない
+# マスクは分割の後に掛かるので構造的に起こらない。経路の順序ごと確認する。
+$longRow = ((1..400 | ForEach-Object { "項目$_" + 'は' + (1000 + $_) + '億円' }) -join '、')
+$longPre = (Convert-YakuNumericUnits -Text $longRow -Location 'test').Text
+$longBatches = @(Split-YakuTextBatches -Text $longPre -MaxChars 400)
+Assert-YakuMask ($longBatches.Count -gt 1) ("複数バッチに分かれる: " + $longBatches.Count)
+$rejoined = ''
+$cutToken = 0
+foreach ($lb in $longBatches) {
+    $lm = New-YakuNumericMaskMap -Text ([string]$lb.Text) -Root $root -Direction 'to_en' -Location 'test'
+    $mt = [string]$lm.Text
+    # 途中で切れたトークンの痕跡（末尾の 【N…、先頭の …】）が無いこと
+    if ($mt -match '【N\d*$' -or $mt -match '^\d*】') { $cutToken++ }
+    $rejoined += (Restore-YakuNumericMask -Text $mt -Map $lm.Map)
+}
+Assert-YakuMask ($cutToken -eq 0) 'バッチ境界でプレースホルダーが切れない'
+Assert-YakuMask ($rejoined -eq $longPre) '全バッチを復元して結合すると元に戻る'
+
+# §10-21 Copilot 呼び出しが翻訳経路とその再試行だけになっている
+$callSites = @()
+foreach ($srcFile in @(Get-ChildItem -LiteralPath (Join-Path $root 'src') -Filter '*.ps1')) {
+    $lines = @(Get-Content -LiteralPath $srcFile.FullName -Encoding UTF8)
+    for ($li = 0; $li -lt $lines.Count; $li++) {
+        $line = [string]$lines[$li]
+        if ($line -notmatch 'Invoke-YakuCopilotPrompt') { continue }
+        if ($line -match 'function Invoke-YakuCopilotPrompt' -or $line -match 'Get-Command Invoke-YakuCopilotPrompt') { continue }
+        $callSites += ($srcFile.Name)
+    }
+}
+$outside = @($callSites | Where-Object { $_ -notin @('CopilotClient.ps1','Translation.ps1','FileTranslation.ps1') })
+Assert-YakuMask ($outside.Count -eq 0) ("翻訳経路の外から呼ばれていない: " + (@($outside | Select-Object -Unique) -join ','))
+Assert-YakuMask ((@($callSites | Where-Object { $_ -eq 'Translation.ps1' }).Count) -eq 1) 'テキスト経路の呼び出しは1箇所（逆翻訳の分が消えている）'
+
 if ($script:Failures -gt 0) {
     Write-Host "V91.60 numeric masking test failed. failures=$script:Failures" -ForegroundColor Red
     exit 1
