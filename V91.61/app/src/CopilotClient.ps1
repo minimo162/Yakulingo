@@ -588,6 +588,112 @@ function Get-YakuCopilotTargetRuntimeCachePath {
     return (Join-Path (Get-YakuSubDir 'runtime') $name)
 }
 
+function Get-YakuCdpBrowserWebSocketUrl {
+    # ブラウザ全体を操作する口。ページ用の口ではウィンドウを作れない。
+    param([Parameter(Mandatory=$true)][int]$Port)
+    try {
+        $v = Get-YakuDevToolsVersion -Port $Port -TimeoutSec 3
+        return [string]$v.webSocketDebuggerUrl
+    } catch {
+        try { Write-YakuLog "CDP browser endpoint unavailable. port=$Port reason=$($_.Exception.Message)" 'DEBUG' } catch {}
+        return ''
+    }
+}
+
+function New-YakuCopilotWindow {
+    <#
+      Copilot を「新しいウィンドウ」で開く。タブでは駄目。
+
+      裏に回ったタブはブラウザが処理を抑えるため、長いプロンプトの打ち込みが
+      届かない。実測（2026-08-06）では 5,194 字を送って入力欄へ入ったのは 70 字
+      だった。同じ時間帯に前面のタブは 8,604 字を取りこぼしなく受けている。
+      長さの問題ではなく、裏にあることの問題である。
+
+      作れなければ空文字を返す。呼び出し側は1枚のまま逐次で動く。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][int]$Port,
+        [Parameter(Mandatory=$true)][string]$Url
+    )
+    $ws = Get-YakuCdpBrowserWebSocketUrl -Port $Port
+    if ([string]::IsNullOrWhiteSpace($ws)) { return '' }
+    try {
+        $res = Invoke-YakuCdpMethod -WebSocketUrl $ws -Method 'Target.createTarget' -Params @{ url = $Url; newWindow = $true } -TimeoutSeconds 20
+        $targetId = ''
+        try { $targetId = [string]$res.result.targetId } catch { $targetId = '' }
+        if ([string]::IsNullOrWhiteSpace($targetId)) {
+            try { Write-YakuLog 'Copilot window creation returned no targetId.' 'WARN' } catch {}
+            return ''
+        }
+        Add-YakuCopilotOwnedWindow -Port $Port -TargetId $targetId
+        try { Write-YakuLog "Copilot window created. targetId=$targetId" 'INFO' } catch {}
+        return $targetId
+    } catch {
+        try { Write-YakuLog "Copilot window creation failed. reason=$($_.Exception.Message)" 'WARN' } catch {}
+        return ''
+    }
+}
+
+function Get-YakuCopilotOwnedWindowsPath {
+    return (Join-Path (Get-YakuSubDir 'runtime') 'cdp-copilot-windows.json')
+}
+
+function Add-YakuCopilotOwnedWindow {
+    # 自分で開いたウィンドウだけを記録する。利用者が自分で開いた画面は閉じない。
+    param([Parameter(Mandatory=$true)][int]$Port, [Parameter(Mandatory=$true)][string]$TargetId)
+    try {
+        $path = Get-YakuCopilotOwnedWindowsPath
+        $ids = @()
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            try { $ids = @((Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json).targetIds) } catch { $ids = @() }
+        }
+        if ($ids -notcontains $TargetId) { $ids += $TargetId }
+        $record = [ordered]@{ port = $Port; targetIds = @($ids); savedAt = (Get-Date).ToUniversalTime().ToString('o') }
+        [System.IO.File]::WriteAllText($path, ($record | ConvertTo-Json -Depth 4), (New-Object System.Text.UTF8Encoding($true)))
+    } catch {}
+}
+
+function Close-YakuCopilotOwnedWindows {
+    <#
+      自分で開いた Copilot ウィンドウを閉じる。
+
+      いつ閉じるか:
+        アプリの停止時に閉じる。ジョブごとに閉じると毎回作り直しになり、
+        ウィンドウの生成と読み込みで数秒かかるため、その間ずっと遅くなる。
+        利用中は開いたままにして使い回す。
+
+      落ちて閉じ損ねた場合に備え、記録は残す。次の起動時、記録にあって
+      まだ生きているウィンドウは作り直さずに使い回すので、溜まらない。
+    #>
+    param([AllowNull()][int]$Port = 0)
+    $path = Get-YakuCopilotOwnedWindowsPath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return 0 }
+    $ids = @()
+    $recordedPort = $Port
+    try {
+        $rec = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        $ids = @($rec.targetIds)
+        if ($recordedPort -le 0) { $recordedPort = [int]$rec.port }
+    } catch { return 0 }
+    if ($recordedPort -le 0 -or @($ids).Count -le 0) { return 0 }
+    $ws = Get-YakuCdpBrowserWebSocketUrl -Port $recordedPort
+    $closed = 0
+    if (-not [string]::IsNullOrWhiteSpace($ws)) {
+        foreach ($id in @($ids)) {
+            if ([string]::IsNullOrWhiteSpace([string]$id)) { continue }
+            try {
+                $null = Invoke-YakuCdpMethod -WebSocketUrl $ws -Method 'Target.closeTarget' -Params @{ targetId = [string]$id } -TimeoutSeconds 8
+                $closed++
+            } catch {
+                try { Write-YakuLog "Copilot window close failed. targetId=$id reason=$($_.Exception.Message)" 'DEBUG' } catch {}
+            }
+        }
+    }
+    try { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue } catch {}
+    if ($closed -gt 0) { try { Write-YakuLog "Copilot windows closed. count=$closed" 'INFO' } catch {} }
+    return $closed
+}
+
 function Initialize-YakuCopilotSlotTarget {
     <#
       このスロットが使うタブを決めて、対象キャッシュへ載せる。
@@ -620,7 +726,8 @@ function Initialize-YakuCopilotSlotTarget {
             }
         }
         if (-not $created) {
-            try { $null = New-YakuCdpPage -Port $Port -Url $Url } catch {}
+            # タブではなくウィンドウで開く。理由は New-YakuCopilotWindow の説明を参照。
+            try { $null = New-YakuCopilotWindow -Port $Port -Url $Url } catch {}
             $created = $true
         }
         if ((Get-Date) -ge $deadline) {

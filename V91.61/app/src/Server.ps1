@@ -2079,6 +2079,10 @@ function Invoke-YakuRoute {
         return
     }
     if ($method -eq 'POST' -and $path -eq '/shutdown') {
+        # 並列用に自分で開いた Copilot ウィンドウを閉じる。開けっ放しにすると溜まる。
+        # ジョブごとではなくここで閉じるのは、利用中は使い回したいため
+        # （作り直すとウィンドウの生成と読み込みで数秒かかる）。
+        try { if (Get-Command Close-YakuCopilotOwnedWindows -ErrorAction SilentlyContinue) { $null = Close-YakuCopilotOwnedWindows } } catch {}
         try { Clear-YakuCdpSocketCache } catch {}
         $script:ServerRunning = $false
         Send-YakuTextResponse -Context $Context -Text (New-YakuAlertHtml -Kind info -Message 'YakuLingoを停止しています。このブラウザタブを閉じてください。')
