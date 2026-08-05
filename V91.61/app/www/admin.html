@@ -40,6 +40,17 @@
       <div id="progress" aria-live="polite"></div>
     </section>
 
+    <section class="card" id="search-card">
+      <h2>引けるか試す</h2>
+      <p class="muted">取り込んだ英語の資料を、英語の語で引きます。索引は初回だけ自動で作られます。
+        <strong>まだ翻訳には使われません。</strong>ここは索引が実データで機能しているかを確かめる場所です。</p>
+      <label>検索語（英語）
+        <input id="search-query" type="text" placeholder="equity ratio" spellcheck="false">
+      </label>
+      <button id="search" type="button" class="secondary-button">引く</button>
+      <div id="search-result" aria-live="polite"></div>
+    </section>
+
     <section class="card" id="publish-card" hidden>
       <h2>配布用フォルダを作る</h2>
       <p class="muted">ローカルに <code>corpus</code> フォルダを作ります。中身は Markdown と台帳だけで、元の PDF は入りません。

@@ -179,6 +179,51 @@ async function ingestAll() {
   await scan();
 }
 
+async function search() {
+  const q = $('search-query').value.trim();
+  if (!q) { say($('search-result'), '英語の語を入れてください。', 'warning'); return; }
+  say($('search-result'), '引いています…（初回は索引を作るため少し待ちます）');
+  let data;
+  try {
+    const res = await api('/api/admin/corpus/search?q=' + encodeURIComponent(q) + '&top=5');
+    data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'unknown');
+  } catch (e) {
+    say($('search-result'), '引けませんでした: ' + e.message, 'error');
+    return;
+  }
+  if (!data.corpus_dir) { say($('search-result'), 'コーパスがまだありません。先に取り込んでください。', 'warning'); return; }
+  const hits = data.hits || [];
+  const box = $('search-result');
+  box.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'alert alert-info';
+  head.textContent = '索引: 資料 ' + data.documents + ' 件 / 一節 ' + data.passages + ' 件 / 索引語 ' + data.terms + ' 件'
+    + '\n該当 ' + hits.length + ' 件';
+  box.appendChild(head);
+  if (hits.length === 0) {
+    const none = document.createElement('p');
+    none.className = 'muted';
+    none.textContent = '当たりませんでした。別の語で試してください（英語側コーパスなので、日本語では引けません）。';
+    box.appendChild(none);
+    return;
+  }
+  hits.forEach(function (h) {
+    // 出典を必ず添える。どの資料の何ページから引いたか分からない文例は使えない。
+    const item = document.createElement('div');
+    item.className = 'result-card';
+    const title = document.createElement('p');
+    title.className = 'eyebrow';
+    title.textContent = h.database + ' / ' + h.source + '  p.' + h.page + '  （得点 ' + h.score.toFixed(2) + '）';
+    const body = document.createElement('pre');
+    body.className = 'translation';
+    body.textContent = h.text.length > 600 ? h.text.slice(0, 600) + '…' : h.text;
+    item.appendChild(title);
+    item.appendChild(body);
+    box.appendChild(item);
+  });
+}
+
 async function publish() {
   say($('publish-result'), '作成中…');
   try {
@@ -201,3 +246,5 @@ reportEnvironment();
 $('scan').addEventListener('click', scan);
 $('ingest').addEventListener('click', ingestAll);
 $('publish').addEventListener('click', publish);
+$('search').addEventListener('click', search);
+$('search-query').addEventListener('keydown', function (e) { if (e.key === 'Enter') search(); });

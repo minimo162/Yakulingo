@@ -19,6 +19,7 @@ $script:YakuRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyComman
 . (Join-Path $PSScriptRoot 'FileProcessors.ps1')
 . (Join-Path $PSScriptRoot 'FileTranslation.ps1')
 . (Join-Path $PSScriptRoot 'Corpus.ps1')
+. (Join-Path $PSScriptRoot 'CorpusSearch.ps1')
 
 $script:YakuBuildId = Assert-YakuBuildIdentity -Root $script:YakuRoot -ExpectedBuildId (Get-YakuBuildId)
 # V91.61: 管理画面。既定は無効で、無効なら管理用の経路を一切登録しない。
@@ -1918,6 +1919,41 @@ function Invoke-YakuRoute {
                     -Markdown ([string]$payload['markdown']) -Pages ([int]$payload['pages']) `
                     -Status $status -Note ([string]$payload['note'])
                 Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$true; id=[string]$payload['id']; status=$status } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+            } catch {
+                Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$false; error=[string]$_.Exception.Message } | ConvertTo-Json -Compress) -StatusCode 400 -ContentType 'application/json; charset=utf-8'
+            }
+            return
+        }
+        if ($method -eq 'GET' -and $path -eq '/api/admin/corpus/search') {
+            # 段階2 の確認用。索引が実データで引けるかを管理者が見るためだけの経路。
+            # 一般利用者の画面には出さない（修正指示書 §11「一般利用者の画面は触らない」）。
+            try {
+                $query = Get-YakuQueryValue -Request $req -Name 'q'
+                $dbRaw = Get-YakuQueryValue -Request $req -Name 'db'
+                $topRaw = Get-YakuQueryValue -Request $req -Name 'top'
+                $top = 5
+                if (-not [string]::IsNullOrWhiteSpace($topRaw)) { try { $top = [int]$topRaw } catch { $top = 5 } }
+                if ($top -lt 1) { $top = 1 }
+                if ($top -gt 20) { $top = 20 }
+                $databases = @()
+                if (-not [string]::IsNullOrWhiteSpace($dbRaw)) {
+                    $databases = @(($dbRaw -split ',') | ForEach-Object { ([string]$_).Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+                }
+                $corpusDir = Get-YakuCorpusSearchDir
+                if ([string]::IsNullOrWhiteSpace($corpusDir)) {
+                    Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$true; corpus_dir=''; hits=@() } | ConvertTo-Json -Depth 5 -Compress) -ContentType 'application/json; charset=utf-8'
+                    return
+                }
+                $hits = @(Search-YakuCorpus -Query $query -CorpusDir $corpusDir -Databases $databases -Top $top)
+                $meta = Read-YakuCorpusIndexMeta -IndexDir (Get-YakuCorpusIndexDir -CorpusDir $corpusDir)
+                Send-YakuTextResponse -Context $Context -Text ([ordered]@{
+                    ok         = $true
+                    corpus_dir = [string]$corpusDir
+                    passages   = [int]$meta['passages']
+                    documents  = [int]$meta['documents']
+                    terms      = [int]$meta['terms']
+                    hits       = @(@($hits) | ForEach-Object { [ordered]@{ score=[double]$_.Score; database=[string]$_.Database; source=[string]$_.Source; page=[int]$_.Page; text=[string]$_.Text } })
+                } | ConvertTo-Json -Depth 5 -Compress) -ContentType 'application/json; charset=utf-8'
             } catch {
                 Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$false; error=[string]$_.Exception.Message } | ConvertTo-Json -Compress) -StatusCode 400 -ContentType 'application/json; charset=utf-8'
             }
