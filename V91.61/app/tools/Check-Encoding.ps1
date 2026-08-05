@@ -217,6 +217,20 @@ if ($null -ne $parserType) {
             $invokedCommands[$key] += (Get-YakuCheckRelativePath -Root $rootPath -Path ([string]$file.FullName))
         }
     }
+    # bootstrap.ps1 は app/ の外にあるが製品の一部である。
+    # 回帰テストは共有フォルダ側の作法を検証するため、ここから関数本文を取り出して使う。
+    # 定義側を数えないと、実在する関数を「未定義」と誤って咎める。
+    # $rootPath は <版>/app。bootstrap.ps1 は版フォルダのさらに親（共有フォルダの直下）にある。
+    $bootstrapPath = Join-Path (Split-Path -Parent (Split-Path -Parent $rootPath)) 'bootstrap.ps1'
+    if (Test-Path -LiteralPath $bootstrapPath -PathType Leaf) {
+        $tokens = $null; $errors = $null
+        $bootAst = [System.Management.Automation.Language.Parser]::ParseFile($bootstrapPath, [ref]$tokens, [ref]$errors)
+        if ($null -ne $bootAst) {
+            foreach ($fn in @($bootAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true))) {
+                $definedCommands[([string]$fn.Name).ToLowerInvariant()] = $true
+            }
+        }
+    }
     foreach ($key in @($invokedCommands.Keys | Sort-Object)) {
         if ($definedCommands.ContainsKey($key)) { continue }
         $where = (@($invokedCommands[$key] | Sort-Object -Unique) -join ', ')

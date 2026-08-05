@@ -144,6 +144,36 @@ try {
     Assert-YakuBootstrap (-not [string]::IsNullOrWhiteSpace($offlineRun)) '共有が無くてもアプリは起動できる'
     Assert-YakuBootstrap ((Split-Path -Leaf ([string]$env:YAKULINGO_CORPUS_DIR)) -eq '2026-09-01') '共有が無くても手元のコーパスを使う'
     Remove-Item Env:\YAKULINGO_CORPUS_DIR -ErrorAction SilentlyContinue
+
+    Write-Host 'CASE 12: 括弧・角括弧・日本語を含むフォルダ名でも配布できる'
+    # 実機では原本フォルダ直下へ PDF を置くと (未分類) というデータベース名になる。
+    # 角括弧は PowerShell のワイルドカードなので、-LiteralPath を外すと壊れる。
+    $oddShared = Join-Path $sandbox 'shared-odd'
+    Copy-Item -LiteralPath $shared -Destination $oddShared -Recurse -Force
+    $oddVersion = Join-Path $oddShared 'corpus\2026-08-05'
+    $oddNames = @('(未分類)', '英文短信', '英文ｱﾆｭｱﾙ [2026]')
+    $oddEntries = @()
+    foreach ($name in $oddNames) {
+        New-Item -ItemType Directory -Path (Join-Path $oddVersion $name) -Force | Out-Null
+        [IO.File]::WriteAllText((Join-Path (Join-Path $oddVersion $name) 'a.md'), "<!--yaku-page:1-->`nEquity ratio increased.")
+        $oddEntries += @{ id = $name; markdown = ($name + '/a.md') }
+    }
+    [IO.File]::WriteAllText((Join-Path $oddVersion 'manifest.json'),
+        (@{ schema='yaku-corpus-1'; corpus_version='2026-08-05'; entries=$oddEntries } | ConvertTo-Json -Depth 5))
+    [IO.File]::WriteAllText((Join-Path $oddShared 'corpus\current.txt'), "2026-08-05`r`n")
+    $oddLocal = Join-Path $sandbox 'local-odd'
+    $null = & $BootstrapPath -SharedRoot $oddShared -LocalRoot $oddLocal -NoLaunch
+    $oddDir = [string]$env:YAKULINGO_CORPUS_DIR
+    Assert-YakuBootstrap (-not [string]::IsNullOrWhiteSpace($oddDir)) '特殊な名前を含んでも複製される'
+    foreach ($name in $oddNames) {
+        Assert-YakuBootstrap (Test-Path -LiteralPath (Join-Path (Join-Path $oddDir $name) 'a.md') -PathType Leaf) ('複製された: ' + $name)
+    }
+    # 2回目で再複製が起きない = 台帳との突き合わせが特殊文字で誤判定していない
+    $stamp = (Get-Item -LiteralPath (Join-Path (Join-Path $oddDir '英文ｱﾆｭｱﾙ [2026]') 'a.md')).LastWriteTimeUtc
+    Start-Sleep -Milliseconds 30
+    $null = & $BootstrapPath -SharedRoot $oddShared -LocalRoot $oddLocal -NoLaunch
+    Assert-YakuBootstrap ((Get-Item -LiteralPath (Join-Path (Join-Path $oddDir '英文ｱﾆｭｱﾙ [2026]') 'a.md')).LastWriteTimeUtc -eq $stamp) '2回目は再複製しない'
+    Remove-Item Env:\YAKULINGO_CORPUS_DIR -ErrorAction SilentlyContinue
 } finally {
     if (Test-Path -LiteralPath $sandbox) { Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue }
 }

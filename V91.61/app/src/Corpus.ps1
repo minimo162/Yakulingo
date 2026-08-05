@@ -139,34 +139,60 @@ function Get-YakuCorpusState {
     }
 
     $files = @(Get-YakuCorpusSourceFiles -SourceRoot $SourceRoot)
+    # 移動と重複を区別するため、いま存在する相対パスを先に集める。
+    $presentPaths = @{}
+    foreach ($f in $files) { $presentPaths[[string]$f.Relative] = $true }
+
     $pending = New-Object System.Collections.Generic.List[object]
     $byDb = [ordered]@{}
+    $seenIds = @{}
+    $relocated = 0
     foreach ($f in $files) {
         $ident = Get-YakuCorpusFileId -Path $f.FullName
+        $seenIds[$ident.Id] = $true
         $done = $known.ContainsKey($ident.Id)
+        # id は内容のハッシュなので、資料を別のフォルダへ移しても同じ id になる。
+        # そのままだと「取り込み済み」と判定され、データベース名が古いまま直せない。
+        #
+        # ただし「移動」と「重複」は分ける。台帳が指す原本がまだ在るなら、
+        # 同じ内容の別ファイルは複製であって移動ではない。取り込み直すと
+        # 台帳の指す先が行き来して落ち着かないため、対象にしない。
+        $moved = $false
+        if ($done) {
+            $recorded = [string]$known[$ident.Id].source
+            if ($recorded -ne [string]$f.Relative -and -not $presentPaths.ContainsKey($recorded)) {
+                $done = $false; $moved = $true; $relocated++
+            }
+        }
         if (-not $byDb.Contains($f.Database)) { $byDb[$f.Database] = [pscustomobject]@{ Database=$f.Database; Done=0; Pending=0 } }
         if ($done) { $byDb[$f.Database].Done++ }
         else {
             $byDb[$f.Database].Pending++
             $pending.Add([pscustomobject]@{
-                id       = $ident.Id
-                sha256   = $ident.Sha256
-                database = $f.Database
-                source   = $f.Relative
-                path     = $f.FullName
-                bytes    = $f.Length
+                id        = $ident.Id
+                sha256    = $ident.Sha256
+                database  = $f.Database
+                source    = $f.Relative
+                path      = $f.FullName
+                bytes     = $f.Length
+                relocated = $moved
+                previous  = $(if ($moved) { [string]$known[$ident.Id].source } else { '' })
             }) | Out-Null
         }
     }
+    # 原本が無くなった台帳の項目。消さずに数えるだけにする。判断は人がする。
+    $stale = @(@($manifest.entries) | Where-Object { -not $seenIds.ContainsKey([string]$_.id) })
     $databases = @()
     foreach ($k in $byDb.Keys) { $databases += $byDb[$k] }
     return [pscustomobject]@{
-        SourceRoot = [string]$SourceRoot
-        BuildDir   = [string]$BuildDir
-        Reachable  = (Test-Path -LiteralPath $SourceRoot -PathType Container)
-        Databases  = @($databases)
-        Pending    = @($pending.ToArray())
-        DoneCount  = @($manifest.entries).Count
+        SourceRoot     = [string]$SourceRoot
+        BuildDir       = [string]$BuildDir
+        Reachable      = (Test-Path -LiteralPath $SourceRoot -PathType Container)
+        Databases      = @($databases)
+        Pending        = @($pending.ToArray())
+        DoneCount      = @($manifest.entries).Count
+        RelocatedCount = [int]$relocated
+        StaleEntries   = @($stale)
     }
 }
 
@@ -196,6 +222,25 @@ function Save-YakuCorpusMarkdown {
     }
 
     $manifest = Read-YakuCorpusManifest -Dir $BuildDir
+    # 同じ資料が別のフォルダへ移っていたら、前の .md を消す。
+    # 残すと配布物へ古い置き場所のまま入り、データベースが二重になる。
+    foreach ($old in @(@($manifest.entries) | Where-Object { [string]$_.id -eq $Id })) {
+        $oldRel = [string]$old.markdown
+        if ([string]::IsNullOrWhiteSpace($oldRel) -or $oldRel -eq $relMd) { continue }
+        $oldPath = Join-Path $BuildDir ($oldRel -replace '/', [System.IO.Path]::DirectorySeparatorChar)
+        try {
+            if (Test-Path -LiteralPath $oldPath -PathType Leaf) {
+                Remove-Item -LiteralPath $oldPath -Force
+                try { Write-YakuLog "Corpus relocated. id=$Id from=$oldRel to=$relMd" 'INFO' } catch {}
+            }
+            # 空になったフォルダも片付ける。配布物に空の器を作らないため。
+            $oldDir = Split-Path -Parent $oldPath
+            if ((Test-Path -LiteralPath $oldDir -PathType Container) -and
+                (@(Get-ChildItem -LiteralPath $oldDir -Force -ErrorAction SilentlyContinue).Count -eq 0)) {
+                Remove-Item -LiteralPath $oldDir -Force -ErrorAction SilentlyContinue
+            }
+        } catch {}
+    }
     $entries = @(@($manifest.entries) | Where-Object { [string]$_.id -ne $Id })
     $entries += [ordered]@{
         id       = $Id
@@ -233,6 +278,18 @@ function New-YakuCorpusPublishFolder {
     <#
       配布用フォルダをローカルへ作る。共有フォルダへは人がコピーする。
       アプリが共有へ書かないのは意図的である（仕様書 §1）。
+
+      出来上がりは共有フォルダへそのまま置ける形にする。
+
+        <配布用>\<版>\corpus\current.txt      … 版の名前だけを書いたポインタ
+        <配布用>\<版>\corpus\<版>\manifest.json
+        <配布用>\<版>\corpus\<版>\<データベース>\*.md
+
+      corpus フォルダごと共有フォルダの直下へコピーすれば、
+      bootstrap.ps1 の Get-YakuCorpusSharedDir がそのまま読める。
+      以前は版フォルダだけを作り、corpus\ と current.txt は人が手で
+      用意する決まりだった。実機で「corpus フォルダが見当たらない」となったため、
+      器ごとこちらで作る。手順を覚えなくてよいほうが配布は事故らない。
     #>
     param(
         [AllowNull()][string]$BuildDir,
@@ -247,13 +304,15 @@ function New-YakuCorpusPublishFolder {
 
     $target = Join-Path (Get-YakuCorpusPublishDir) $Version
     if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
-    New-Item -ItemType Directory -Path $target -Force | Out-Null
+    $corpusDir = Join-Path $target 'corpus'
+    $versionDir = Join-Path $corpusDir $Version
+    New-Item -ItemType Directory -Path $versionDir -Force | Out-Null
 
     foreach ($e in $entries) {
         $rel = ([string]$e.markdown) -replace '/', [System.IO.Path]::DirectorySeparatorChar
         $src = Join-Path $BuildDir $rel
         if (!(Test-Path -LiteralPath $src -PathType Leaf)) { continue }
-        $dst = Join-Path $target $rel
+        $dst = Join-Path $versionDir $rel
         $dstDir = Split-Path -Parent $dst
         if (!(Test-Path -LiteralPath $dstDir)) { New-Item -ItemType Directory -Path $dstDir -Force | Out-Null }
         Copy-Item -LiteralPath $src -Destination $dst -Force
@@ -263,8 +322,18 @@ function New-YakuCorpusPublishFolder {
     $out = New-YakuCorpusManifest
     $out['corpus_version'] = $Version
     $out['entries'] = @($entries)
-    Write-YakuCorpusManifest -Dir $target -Manifest $out
+    Write-YakuCorpusManifest -Dir $versionDir -Manifest $out
+
+    # ポインタも一緒に作る。人に書き換えさせない。
+    # BOM は付けない（読み手は外しているが、付けない方が素直）。
+    [System.IO.File]::WriteAllText((Join-Path $corpusDir 'current.txt'), ($Version + "`r`n"),
+        (New-Object System.Text.UTF8Encoding($false)))
 
     try { Write-YakuLog "Corpus publish. version=$Version entries=$($entries.Count) path=$target" 'INFO' } catch {}
-    return [pscustomobject]@{ Version = $Version; Path = $target; Count = $entries.Count }
+    return [pscustomobject]@{
+        Version   = $Version
+        Path      = $target
+        CorpusDir = $corpusDir
+        Count     = $entries.Count
+    }
 }

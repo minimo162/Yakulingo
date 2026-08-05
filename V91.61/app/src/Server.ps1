@@ -1504,12 +1504,29 @@ function Get-YakuMimeType {
     }
 }
 
+function Get-YakuContentSecurityPolicy {
+    <#
+      既定は script-src 'self' のみ。一般利用者の画面はこれを維持する。
+
+      AllowWasm は管理画面（コーパス作成）専用。ブラウザは CSP に
+      script-src がある場合、WebAssembly のコンパイルに 'wasm-unsafe-eval' を要求する。
+      無いと WebAssembly.instantiateStreaming が
+      「Refused to compile or instantiate WebAssembly module」で失敗する。
+      'unsafe-eval' ではなく 'wasm-unsafe-eval' にするのは、
+      eval() を許さず WebAssembly だけを許すため。
+    #>
+    param([switch]$AllowWasm)
+    $scriptSrc = if ($AllowWasm) { "script-src 'self' 'wasm-unsafe-eval'" } else { "script-src 'self'" }
+    return ("default-src 'self'; " + $scriptSrc + "; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+}
+
 function Send-YakuResponse {
     param(
         [Parameter(Mandatory=$true)]$Context,
         [Parameter(Mandatory=$true)][byte[]]$Bytes,
         [string]$ContentType = 'text/html; charset=utf-8',
-        [int]$StatusCode = 200
+        [int]$StatusCode = 200,
+        [switch]$AllowWasm
     )
     $resp = $Context.Response
     $resp.StatusCode = $StatusCode
@@ -1519,7 +1536,7 @@ function Send-YakuResponse {
     $resp.Headers['X-Content-Type-Options'] = 'nosniff'
     $resp.Headers['X-Frame-Options'] = 'DENY'
     $resp.Headers['Referrer-Policy'] = 'no-referrer'
-    $resp.Headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+    $resp.Headers['Content-Security-Policy'] = Get-YakuContentSecurityPolicy -AllowWasm:$AllowWasm
     $resp.OutputStream.Write($Bytes, 0, $Bytes.Length)
     $resp.OutputStream.Close()
 }
@@ -1529,10 +1546,44 @@ function Send-YakuTextResponse {
         [Parameter(Mandatory=$true)]$Context,
         [Parameter(Mandatory=$true)][string]$Text,
         [string]$ContentType = 'text/html; charset=utf-8',
-        [int]$StatusCode = 200
+        [int]$StatusCode = 200,
+        [switch]$AllowWasm
     )
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
-    Send-YakuResponse -Context $Context -Bytes $bytes -ContentType $ContentType -StatusCode $StatusCode
+    Send-YakuResponse -Context $Context -Bytes $bytes -ContentType $ContentType -StatusCode $StatusCode -AllowWasm:$AllowWasm
+}
+
+function Get-YakuQueryValue {
+    <#
+      クエリ文字列の値を UTF-8 として取り出す。
+
+      HttpListenerRequest.QueryString は、パーセントエンコードの復号に
+      システムの ANSI コードページを使う。日本語 Windows では CP932 になるため、
+      encodeURIComponent が作った UTF-8 のバイト列が化ける。
+      例: 原本フォルダ -> 蜴滓悽繝輔か繝ｫ繝
+
+      そこで RawUrl（生の要求行）から自分で取り出し、
+      常に UTF-8 で復号する UnescapeDataString を使う。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Request,
+        [Parameter(Mandatory=$true)][string]$Name
+    )
+    $raw = [string]$Request.RawUrl
+    $mark = $raw.IndexOf('?')
+    if ($mark -lt 0) { return '' }
+    $query = $raw.Substring($mark + 1)
+    if ([string]::IsNullOrEmpty($query)) { return '' }
+    foreach ($pair in $query.Split('&')) {
+        if ([string]::IsNullOrEmpty($pair)) { continue }
+        $eq = $pair.IndexOf('=')
+        $key = if ($eq -ge 0) { $pair.Substring(0, $eq) } else { $pair }
+        try { $key = [System.Uri]::UnescapeDataString($key) } catch { continue }
+        if (-not [string]::Equals($key, $Name, [System.StringComparison]::Ordinal)) { continue }
+        if ($eq -lt 0) { return '' }
+        try { return [System.Uri]::UnescapeDataString($pair.Substring($eq + 1)) } catch { return '' }
+    }
+    return ''
 }
 
 function Read-YakuRequestBodyText {
@@ -1637,7 +1688,8 @@ function Serve-YakuAdminPage {
     $path = Join-Path $script:YakuRoot 'www\admin.html'
     $html = Get-Content -LiteralPath $path -Raw -Encoding UTF8
     $html = $html.Replace('__YAKU_SESSION_TOKEN__', (ConvertTo-YakuHtml $script:YakuSessionToken))
-    Send-YakuTextResponse -Context $Context -Text $html -ContentType 'text/html; charset=utf-8'
+    # 管理画面だけ WebAssembly を許す。一般利用者の画面は既定のまま。
+    Send-YakuTextResponse -Context $Context -Text $html -ContentType 'text/html; charset=utf-8' -AllowWasm
 }
 
 function Invoke-YakuRoute {
@@ -1700,7 +1752,7 @@ function Invoke-YakuRoute {
     }
     if ($method -eq 'GET' -and $path -eq '/api/download') {
         try {
-            $jobId = [string]$req.QueryString['job_id']
+            $jobId = Get-YakuQueryValue -Request $req -Name 'job_id'
             if ([string]::IsNullOrWhiteSpace($jobId)) { throw 'ジョブIDを指定してください。' }
             Update-YakuTranslationJobs
             if ([string]::IsNullOrWhiteSpace($jobId) -or -not $script:YakuTranslateJobs.ContainsKey($jobId)) { throw (Get-YakuTranslationJobMissingMessage -JobId $jobId) }
@@ -1824,22 +1876,24 @@ function Invoke-YakuRoute {
     # ---------------------------------------------------------------------
     if ($script:YakuAdminMode -and $path.StartsWith('/api/admin/corpus')) {
         if ($method -eq 'GET' -and $path -eq '/api/admin/corpus/status') {
-            $sourceRoot = [string]$req.QueryString['root']
+            $sourceRoot = Get-YakuQueryValue -Request $req -Name 'root'
             $state = Get-YakuCorpusState -SourceRoot $sourceRoot
             $payload = [ordered]@{
                 source_root = [string]$state.SourceRoot
                 reachable   = [bool]$state.Reachable
                 build_dir   = [string]$state.BuildDir
                 done_count  = [int]$state.DoneCount
+                relocated   = [int]$state.RelocatedCount
+                stale       = @(@($state.StaleEntries) | ForEach-Object { [string]$_.source })
                 databases   = @(@($state.Databases) | ForEach-Object { [ordered]@{ name=[string]$_.Database; done=[int]$_.Done; pending=[int]$_.Pending } })
-                pending     = @(@($state.Pending) | ForEach-Object { [ordered]@{ id=[string]$_.id; sha256=[string]$_.sha256; database=[string]$_.database; source=[string]$_.source; bytes=[int64]$_.bytes } })
+                pending     = @(@($state.Pending) | ForEach-Object { [ordered]@{ id=[string]$_.id; sha256=[string]$_.sha256; database=[string]$_.database; source=[string]$_.source; bytes=[int64]$_.bytes; relocated=[bool]$_.relocated; previous=[string]$_.previous } })
             }
             Send-YakuTextResponse -Context $Context -Text ($payload | ConvertTo-Json -Depth 6) -ContentType 'application/json; charset=utf-8'
             return
         }
         if ($method -eq 'GET' -and $path -eq '/api/admin/corpus/pdf') {
-            $sourceRoot = [string]$req.QueryString['root']
-            $id = [string]$req.QueryString['id']
+            $sourceRoot = Get-YakuQueryValue -Request $req -Name 'root'
+            $id = Get-YakuQueryValue -Request $req -Name 'id'
             # 原本フォルダを列挙し直して id を突き合わせる。パスを直接受け取らない。
             $match = @(Get-YakuCorpusSourceFiles -SourceRoot $sourceRoot | Where-Object { (Get-YakuCorpusFileId -Path $_.FullName).Id -eq $id } | Select-Object -First 1)
             if ($match.Count -eq 0) {
@@ -1872,7 +1926,7 @@ function Invoke-YakuRoute {
         if ($method -eq 'POST' -and $path -eq '/api/admin/corpus/publish') {
             try {
                 $result = New-YakuCorpusPublishFolder
-                Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$true; version=[string]$result.Version; path=[string]$result.Path; count=[int]$result.Count } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+                Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$true; version=[string]$result.Version; path=[string]$result.Path; corpus_dir=[string]$result.CorpusDir; count=[int]$result.Count } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
             } catch {
                 Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$false; error=[string]$_.Exception.Message } | ConvertTo-Json -Compress) -StatusCode 400 -ContentType 'application/json; charset=utf-8'
             }
