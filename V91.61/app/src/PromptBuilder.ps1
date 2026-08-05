@@ -587,11 +587,18 @@ function New-YakuTextPrompt {
         [AllowNull()][string]$RequestId,
         # V91.61 段階3: 参考資料コーパスから引いた文例。
         # 作るのは CorpusReference.ps1 で、ここは受け取って差し込むだけ。
-        [AllowNull()][string]$CorpusSection
+        [AllowNull()][string]$CorpusSection,
+        # V91.61（2026-08-06）: 完全訳と開示用の電文体は別々の依頼になった。
+        # full / brief でそれぞれの雛形を選ぶ。空なら 1依頼で2つ返す旧雛形。
+        [AllowNull()][string]$Mode
     )
     if ([string]::IsNullOrWhiteSpace($RequestId)) { $RequestId = [guid]::NewGuid().ToString('N') }
     $direction = if ([string]::IsNullOrWhiteSpace($DirectionOverride)) { Get-YakuDirection -Text $InputText } else { $DirectionOverride }
-    $templateName = if ($direction -eq 'to_en') { 'text_translate_to_en.txt' } else { 'text_translate_to_jp.txt' }
+    $templateName =
+        if ($direction -ne 'to_en') { 'text_translate_to_jp.txt' }
+        elseif ([string]$Mode -eq 'full') { 'text_translate_full_to_en.txt' }
+        elseif ([string]$Mode -eq 'brief') { 'text_translate_brief_to_en.txt' }
+        else { 'text_translate_to_en.txt' }
     $template = Get-YakuPromptTemplate -Root $Root -Name $templateName
     $vars = @{
         input_text = $InputText.Trim()

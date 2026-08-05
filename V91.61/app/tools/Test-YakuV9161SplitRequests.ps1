@@ -59,6 +59,24 @@ Chk ($b.Count -eq 1 -and [string]$b[0].Style -eq 'brief') ('電文体が1件だ�
 # 電文体の依頼では、後処理の略語が当たる側であること。
 Chk ([string]$b[0].Style -eq 'brief') '電文体は brief として扱われる（略語の後処理が当たる側）'
 
+# ---------------------------------------------------------------- 依頼ごとの雛形
+# 電文体の雛形は、完全訳を参照せずに単独で成立していなければならない。
+# 旧 BRIEF 規則は「BRIEF is telegraphic FULL」で始まり、係り受けも引用も長さも
+# 「FULL と比べて」で定義していたため、依頼を分けると成立しなかった（FULL への言及18か所）。
+Write-Host '依頼ごとの雛形'
+$src = '当第1四半期の営業利益は前年同期比20億円の増益となりました。'
+$pFull  = (New-YakuTextPrompt -Root $root -InputText $src -Settings (Read-YakuSettings -Root $root) -DirectionOverride 'to_en' -RequestId $rid -Mode 'full').Prompt
+$pBrief = (New-YakuTextPrompt -Root $root -InputText $src -Settings (Read-YakuSettings -Root $root) -DirectionOverride 'to_en' -RequestId $rid -Mode 'brief').Prompt
+Chk ($pFull -match 'FULL_TEXT:') '完全訳の雛形は FULL_TEXT を出させる'
+Chk ($pFull -notmatch 'BRIEF_TEXT') '完全訳の雛形は電文体に触れない'
+Chk ($pBrief -match 'BRIEF_TEXT:') '電文体の雛形は BRIEF_TEXT を出させる'
+Chk ($pBrief -notmatch 'FULL_TEXT') '電文体の雛形は完全訳に触れない'
+Chk ($pBrief -notmatch 'telegraphic FULL') '「FULL を電文体にしたもの」という定義が残っていない'
+Chk ($pBrief -match 'not a shortened version') '電文体は独立した成果物として定義されている'
+Chk ($pBrief -match 'attaches to in SOURCE') '係り受けの基準が FULL ではなく原文になっている'
+Chk ($pBrief -match $src) '原文が入る'
+Chk ($pFull -match $src) '原文が入る（完全訳）'
+
 # ---------------------------------------------------------------- 受け取り契約（JS）
 Write-Host '受け取り契約が片方だけを認める'
 $clientText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CopilotClient.ps1'))

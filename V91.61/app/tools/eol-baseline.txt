@@ -5,6 +5,8 @@ prompts/file_translate_to_en.txt	lf
 prompts/file_translate_to_jp.txt	crlf
 prompts/style_brief_rules.txt	lf
 prompts/text_translate.txt	lf
+prompts/text_translate_brief_to_en.txt	crlf
+prompts/text_translate_full_to_en.txt	crlf
 prompts/text_translate_to_en.txt	lf
 prompts/text_translate_to_jp.txt	crlf
 src/BriefStyle.ps1	lf
