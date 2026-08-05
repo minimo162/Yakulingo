@@ -16,6 +16,27 @@ function api(path, options) {
   return fetch(path, opt);
 }
 
+async function reportEnvironment() {
+  // この画面が実際に受け取った CSP と、動いているアプリの版を出す。
+  // 実機で「直したはずなのに直っていない」ときの切り分けに要る。
+  // 同一オリジンなので、自分自身を取り直せば応答ヘッダを読める。
+  const el = $('env');
+  let csp = '(取得できません)';
+  let build = '(不明)';
+  try {
+    const res = await fetch(location.pathname, { cache: 'no-store' });
+    csp = res.headers.get('Content-Security-Policy') || '(ヘッダなし)';
+  } catch (e) { csp = '(取得に失敗: ' + e.message + ')'; }
+  try {
+    const res = await api('/api/instance');
+    if (res.ok) { const d = await res.json(); build = d.build_id || '(不明)'; }
+  } catch (e) { /* 版が取れなくても画面は使える */ }
+  const wasmOk = /wasm-unsafe-eval/.test(csp);
+  el.textContent = 'アプリの版: ' + build + '  /  WebAssembly: ' + (wasmOk ? '許可' : '不許可') + '\nCSP: ' + csp;
+  el.className = wasmOk ? 'muted' : 'alert alert-warning';
+  return { csp: csp, build: build, wasmOk: wasmOk };
+}
+
 function ensureWasm() {
   // 初期化は実測 369ms。押されるまで走らせない（起動を遅くしないため）。
   //
@@ -36,7 +57,17 @@ function ensureWasm() {
         // CSP に 'wasm-unsafe-eval' が無いとここで落ちる。原因を名指しする。
         const msg = (e && e.message) ? e.message : String(e);
         if (/unsafe-eval|Content Security Policy/i.test(msg)) {
-          throw new Error('WebAssembly がブラウザの制限で実行できません。管理画面の CSP に wasm-unsafe-eval が必要です。(' + msg + ')');
+          // この画面が実際に受け取った CSP を添える。推測せずに切り分けられるようにする。
+          const env = await reportEnvironment();
+          throw new Error(
+            'WebAssembly がブラウザの制限で実行できません。\n' +
+            'この画面が受け取った CSP: ' + env.csp + '\n' +
+            'アプリの版: ' + env.build + '\n' +
+            (env.wasmOk
+              ? 'CSP には wasm-unsafe-eval が入っています。ブラウザが対応していない可能性があります（Edge 97 以降が必要）。'
+              : 'CSP に wasm-unsafe-eval がありません。古い版が動いているか、以前に開いた画面が残っています。'
+                + ' Ctrl+Shift+R で再読み込みするか、アプリを再起動してください。') +
+            '\n(' + msg + ')');
         }
         throw new Error('WASM を初期化できません: ' + msg);
       }
@@ -158,6 +189,7 @@ async function publish() {
   }
 }
 
+reportEnvironment();
 $('scan').addEventListener('click', scan);
 $('ingest').addEventListener('click', ingestAll);
 $('publish').addEventListener('click', publish);
