@@ -87,6 +87,30 @@ foreach ($t in $roundTrip) {
     Assert-YakuMask ($back -eq $r.Pre) ("往復一致: $t")
 }
 
+# ---------------------------------------------------------------- 単位の複合
+# 日本語の桁は重ねて書かれる（18万6千台）。複合を畳まないと上位の桁だけが
+# 日本語のまま英文へ残り、モデルが ten thousand と訳す（2026-08-05 実機）。
+# 兆+億 は元から畳んでいたので、万+千 と 億+万 も同じ扱いに揃える。
+Write-Host 'CASE 3b: 桁の複合を畳む'
+foreach ($u in @(
+    @{ In='販売台数は18万6千台。';     Want='186 k units' }
+    @{ In='販売台数は1万9千台。';      Want='19 k units' }
+    @{ In='販売台数は2万0千台。';      Want='20 k units' }
+    @{ In='販売台数は18万6,000台。';   Want='186 k units' }
+    @{ In='費用は3万5千円。';          Want='35 k yen' }
+    @{ In='売上高は1億2,000万円。';    Want='1.2 oku' }
+    @{ In='売上高は3億5千万円。';      Want='3.5 oku' }
+    # 単独の桁は従来どおり
+    @{ In='販売台数は18万台。';        Want='180 k units' }
+    @{ In='販売台数は6千台。';         Want='6 k units' }
+    @{ In='費用は500万円。';           Want='5,000 k yen' }
+    @{ In='売上高は1兆2,345億円。';    Want='12,345 oku' }
+)) {
+    $got = [string](Convert-YakuNumericUnits -Text ([string]$u.In) -Location 'test').Text
+    Assert-YakuMask ($got -match ([regex]::Escape([string]$u.Want))) ("{0} -> {1}" -f $u.In, $got)
+    Assert-YakuMask ($got -notmatch '[万千兆億]') ("日本語の桁が残らない: " + $got)
+}
+
 # ---------------------------------------------------------------- 符号・単位
 Write-Host 'CASE 4: 符号と単位はプレースホルダーの外に残る'
 $signCase = Invoke-YakuMaskPipeline -Text '前年差は▲72億円、計画差は+120億円、比率は△3.1％。'

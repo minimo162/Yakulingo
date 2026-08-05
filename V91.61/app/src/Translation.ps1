@@ -343,7 +343,36 @@ function Convert-YakuNumericUnits {
         $a=&$parse $m.Groups['n'].Value; if (-not $a[0]) { return $m.Value }
         $token=(ConvertTo-YakuInvariantNumberText -Value ([decimal]$a[1]*10000) -UseGrouping)+' oku'; return (&$addToken $token)
     })
+    # 億 + 万 の複合。兆+億 と同じ理由で、単独の規則より先に畳む必要がある。
+    # 畳まないと 億 が日本語のまま英文へ残り、モデルが "1 oku 20,000 k yen" のように訳す。
+    $result = [regex]::Replace($result, "(?<o>$num)\s*億\s*(?<m>$num)\s*千万円", { param($m)
+        if ((& $normalizeNumber $m.Groups['o'].Value) -match '^[xX]' -or (& $normalizeNumber $m.Groups['m'].Value) -match '^[xX]') { & $warn "masked compound oku amount left unchanged: $($m.Value)"; return $m.Value }
+        $a=&$parse $m.Groups['o'].Value; $b=&$parse $m.Groups['m'].Value
+        if (-not $a[0] -or -not $b[0]) { return $m.Value }
+        $token=(ConvertTo-YakuInvariantNumberText -Value ([decimal]$a[1]+([decimal]$b[1]*1000/10000)) -UseGrouping)+' oku'; return (&$addToken $token)
+    })
+    $result = [regex]::Replace($result, "(?<o>$num)\s*億\s*(?<m>$num)\s*万円", { param($m)
+        if ((& $normalizeNumber $m.Groups['o'].Value) -match '^[xX]' -or (& $normalizeNumber $m.Groups['m'].Value) -match '^[xX]') { & $warn "masked compound oku amount left unchanged: $($m.Value)"; return $m.Value }
+        $a=&$parse $m.Groups['o'].Value; $b=&$parse $m.Groups['m'].Value
+        if (-not $a[0] -or -not $b[0]) { return $m.Value }
+        $token=(ConvertTo-YakuInvariantNumberText -Value ([decimal]$a[1]+([decimal]$b[1]/10000)) -UseGrouping)+' oku'; return (&$addToken $token)
+    })
     $result = [regex]::Replace($result, "(?<n>$num)\s*億円", { param($m) $token=(& $normalizeNumber $m.Groups['n'].Value)+' oku'; return (&$addToken $token) })
+    # 万 + 千 の複合。18万6千台 が「18万6 k units」になり、残った 万 を
+    # モデルが ten thousand と訳していた（2026-08-05 実機）。
+    # 千を伴う形を先に、素の端数を後に当てる。順番を逆にすると端数側が先に食う。
+    foreach ($spec in @(@{Unit='台'; Out='k units'}, @{Unit='円'; Out='k yen'})) {
+        $unit=[string]$spec.Unit; $out=[string]$spec.Out
+        foreach ($tail in @(@{Sep='千'; Div=[decimal]1}, @{Sep=''; Div=[decimal]1000})) {
+            $sep=[string]$tail.Sep; $div=[decimal]$tail.Div
+            $result = [regex]::Replace($result, "(?<a>$num)\s*万\s*(?<b>$num)\s*$sep$unit", { param($m)
+                if ((& $normalizeNumber $m.Groups['a'].Value) -match '^[xX]' -or (& $normalizeNumber $m.Groups['b'].Value) -match '^[xX]') { & $warn "masked compound scaled unit left unchanged: $($m.Value)"; return $m.Value }
+                $a=&$parse $m.Groups['a'].Value; $b=&$parse $m.Groups['b'].Value
+                if (-not $a[0] -or -not $b[0]) { return $m.Value }
+                $token=(ConvertTo-YakuInvariantNumberText -Value (([decimal]$a[1]*10)+([decimal]$b[1]/$div)) -UseGrouping)+" $out"; return (&$addToken $token)
+            })
+        }
+    }
     foreach ($spec in @(@{Unit='万台'; Out='k units'; Factor=10}, @{Unit='千台'; Out='k units'; Factor=1}, @{Unit='万円'; Out='k yen'; Factor=10}, @{Unit='千円'; Out='k yen'; Factor=1})) {
         $unit=[string]$spec.Unit; $out=[string]$spec.Out; $factor=[decimal]$spec.Factor
         $result = [regex]::Replace($result, "(?<n>$num)\s*$unit", { param($m)
