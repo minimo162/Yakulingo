@@ -1702,6 +1702,9 @@ function Invoke-YakuTextTranslation {
             InputLength = $InputText.Length
             Options = $options
             AppliedGlossary = $appliedGlossary
+            # V91.61 段階3: 何を参照して訳したかを画面へ出すため。
+            CorpusExamples = @($corpusReference.Examples)
+            CorpusTerms = @($corpusReference.Terms)
             Raw = $raw
             Prompt = $prompt
             BatchCount = $batches.Count

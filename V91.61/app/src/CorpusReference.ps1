@@ -166,13 +166,13 @@ function Get-YakuCorpusReference {
     )
     $none = [pscustomobject]@{ Section = ''; Terms = @(); Count = 0; Reason = ''; Used = $false }
     if (-not (Test-YakuCorpusReferenceApplicable -Direction $Direction)) {
-        return [pscustomobject]@{ Section = ''; Terms = @(); Count = 0; Reason = 'direction'; Used = $false }
+        return [pscustomobject]@{ Section = ''; Terms = @(); Count = 0; Reason = 'direction'; Used = $false; Examples = @() }
     }
     $corpusDir = ''
     try { $corpusDir = Get-YakuCorpusSearchDir } catch { $corpusDir = '' }
     if ([string]::IsNullOrWhiteSpace($corpusDir)) {
         try { Write-YakuLog 'Corpus reference skipped. reason=no-corpus' 'INFO' } catch {}
-        return [pscustomobject]@{ Section = ''; Terms = @(); Count = 0; Reason = 'no-corpus'; Used = $false }
+        return [pscustomobject]@{ Section = ''; Terms = @(); Count = 0; Reason = 'no-corpus'; Used = $false; Examples = @() }
     }
 
     $used = $false
@@ -190,28 +190,38 @@ function Get-YakuCorpusReference {
         $terms = @(Get-YakuCorpusQueryTerms -Answer $answer)
         if ($terms.Count -le 0) {
             try { Write-YakuLog "Corpus reference skipped. reason=no-terms elapsedMs=$($sw.ElapsedMilliseconds)" 'INFO' } catch {}
-            return [pscustomobject]@{ Section = ''; Terms = @(); Count = 0; Reason = 'no-terms'; Used = $used }
+            return [pscustomobject]@{ Section = ''; Terms = @(); Count = 0; Reason = 'no-terms'; Used = $used; Examples = @() }
         }
         $searchSw = [System.Diagnostics.Stopwatch]::StartNew()
         $hits = @(Search-YakuCorpus -Query ($terms -join ' ') -CorpusDir $corpusDir -Top $script:YakuCorpusExampleCount)
         $searchSw.Stop()
         if ($hits.Count -le 0) {
             try { Write-YakuLog "Corpus reference skipped. reason=no-hits terms=$($terms -join ',') searchMs=$($searchSw.ElapsedMilliseconds)" 'INFO' } catch {}
-            return [pscustomobject]@{ Section = ''; Terms = @($terms); Count = 0; Reason = 'no-hits'; Used = $used }
+            return [pscustomobject]@{ Section = ''; Terms = @($terms); Count = 0; Reason = 'no-hits'; Used = $used; Examples = @() }
         }
         $section = Get-YakuCorpusExampleSection -Hits $hits
         if ([string]::IsNullOrWhiteSpace($section)) {
-            return [pscustomobject]@{ Section = ''; Terms = @($terms); Count = 0; Reason = 'empty-section'; Used = $used }
+            return [pscustomobject]@{ Section = ''; Terms = @($terms); Count = 0; Reason = 'empty-section'; Used = $used; Examples = @() }
         }
+        # 何を参照したかを画面へ出せるようにする。本文は伏せ字を掛けた後のもの。
+        # 送ったものと違うものを見せない（送信内容を確かめられなくなる）。
+        $examples = @(@($hits) | ForEach-Object {
+            [pscustomobject]@{
+                Database = [string]$_.Database
+                Source   = [string]$_.Source
+                Page     = [int]$_.Page
+                Text     = (ConvertTo-YakuCorpusExampleText -Text ([string]$_.Text))
+            }
+        })
         try {
             $sources = (@($hits) | ForEach-Object { [string]$_.Source + '#' + [string]$_.Page }) -join ', '
             Write-YakuLog "Corpus reference applied. terms=$($terms -join ',') hits=$($hits.Count) queryMs=$($sw.ElapsedMilliseconds) searchMs=$($searchSw.ElapsedMilliseconds) sources=$sources" 'INFO'
         } catch {}
-        return [pscustomobject]@{ Section = $section; Terms = @($terms); Count = $hits.Count; Reason = 'ok'; Used = $used }
+        return [pscustomobject]@{ Section = $section; Terms = @($terms); Count = $hits.Count; Reason = 'ok'; Used = $used; Examples = $examples }
     } catch {
         # 検索語生成の往復が失敗しても翻訳は続ける。警告も出さない。
         # 利用者はコーパスの存在を知らないため、知らない仕組みの失敗を見せない。
         try { Write-YakuLog "Corpus reference failed. error=$($_.Exception.Message)" 'WARN' } catch {}
-        return [pscustomobject]@{ Section = ''; Terms = @(); Count = 0; Reason = 'error'; Used = $used }
+        return [pscustomobject]@{ Section = ''; Terms = @(); Count = 0; Reason = 'error'; Used = $used; Examples = @() }
     }
 }

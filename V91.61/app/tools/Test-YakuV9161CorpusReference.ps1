@@ -162,6 +162,41 @@ Chk ($withoutCorpus.Prompt -notmatch '\{corpus_section\}') '枠が展開され�
 $jpPrompt = New-YakuTextPrompt -Root $root -InputText 'The equity ratio improved.' -Settings $settings -DirectionOverride 'to_jp' -RequestId 'aaaa' -CorpusSection $sec
 Chk ($jpPrompt.Prompt -notmatch 'CORPUS_EXAMPLES') 'to_jp のテンプレートには枠が無いので入らない'
 
+# ---------------------------------------------------------------- 画面への表示
+Write-Host '何を参照したかを画面へ出す'
+# 出典が見えないと、訳語がどこから来たのか確かめようがない。
+$resultWith = [pscustomobject]@{
+    CorpusExamples = @(
+        [pscustomobject]@{ Database='英文短信'; Source='英文短信/2027-1Q_en.pdf'; Page=3; Text='The equity ratio improved to #%.' }
+    )
+    CorpusTerms = @('equity','ratio')
+}
+$refHtml = New-YakuCorpusReferenceHtml -Result $resultWith
+Chk ($refHtml -match '参照した社内資料') '見出しが出る'
+Chk ($refHtml -match '2027-1Q_en\.pdf p\.3') '出典とページが出る'
+Chk ($refHtml -match 'equity ratio') '使った検索語も見える（入力と違うことがあるため）'
+Chk ($refHtml -match 'The equity ratio improved') '参照した本文を確かめられる'
+Chk ($refHtml -match '伏せて送っています') '数字を伏せたことを明示する'
+Chk ($refHtml -match "<details") '既定では畳んでおく（普段は視界に入れない）'
+Chk ($refHtml -notmatch '<script') 'HTML を素通ししない'
+$resultNone = [pscustomobject]@{ CorpusExamples = @(); CorpusTerms = @() }
+Chk ((New-YakuCorpusReferenceHtml -Result $resultNone) -eq '') '引けなければ何も出さない（利用者は仕組みを知らない）'
+Chk ((New-YakuCorpusReferenceHtml -Result ([pscustomobject]@{})) -eq '') '項目が無くても落ちない'
+$escaped = New-YakuCorpusReferenceHtml -Result ([pscustomobject]@{
+    CorpusExamples = @([pscustomobject]@{ Database='db'; Source='<img src=x>'; Page=1; Text='<b>bold</b>' }); CorpusTerms=@() })
+Chk ($escaped -notmatch '<img') '出典を逃がしている'
+Chk ($escaped -notmatch '<b>bold') '本文を逃がしている'
+
+Write-Host '引いた結果に参照した箇所が入る'
+$env:YAKULINGO_CORPUS_DIR = $corpus
+function Invoke-YakuCopilotPrompt { param([string]$Prompt, $Settings, [switch]$SkipFreshChatWait, [string]$AnswerFormat = 'labeled', [switch]$PreserveEndMarker, $Warnings, $ProgressState) return 'SEARCH_TERMS: equity ratio' }
+$refEx = Get-YakuCorpusReference -Root $root -InputText '自己資本比率' -Settings $settings -Direction 'to_en' -Warnings $null -ProgressState $null
+Chk (@($refEx.Examples).Count -gt 0) '参照した一節が戻る'
+Chk (@($refEx.Examples)[0].Text -notmatch '\d') '画面へ出す本文も数字が伏せてある（送ったものと同じ）'
+Chk (-not [string]::IsNullOrWhiteSpace([string]@($refEx.Examples)[0].Source)) '出典が入る'
+$refNoneEx = Get-YakuCorpusReference -Root $root -InputText 'x' -Settings $settings -Direction 'to_jp' -Warnings $null -ProgressState $null
+Chk (@($refNoneEx.Examples).Count -eq 0) '使わなかったときは空（呼び出し側で場合分けしない）'
+
 # ---------------------------------------------------------------- 触っていないこと
 Write-Host 'ファイル翻訳を触っていないこと'
 $fileText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'FileTranslation.ps1'))

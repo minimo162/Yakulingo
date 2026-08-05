@@ -87,6 +87,8 @@ function Convert-YakuTextResultToHtml {
         $html += "</section>"
     }
 
+    $html += New-YakuCorpusReferenceHtml -Result $Result
+
     $batchCount = 0
     try { $batchCount = [int]$Result.BatchCount } catch { $batchCount = 0 }
     if ($batchCount -gt 1) {
@@ -124,6 +126,52 @@ function Convert-YakuTextResultToHtml {
 }
 
 
+
+function New-YakuCorpusReferenceHtml {
+    <#
+      V91.61 段階3: 何を参照して訳したかを出す。
+
+      出典が見えないと、訳語がどこから来たのか確かめようがない。
+      用語集の pill 行と同じ形にして、行を増やさない。
+
+      **引けなかったときは何も出さない。** 利用者はコーパスの存在を知らないため、
+      「参照できませんでした」と言われても対処のしようがない。
+      理由は記録にだけ残す（Corpus reference skipped. reason=...）。
+
+      本文は伏せ字を掛けた後のものを出す。送ったものと違うものを見せない。
+    #>
+    param([Parameter(Mandatory=$true)]$Result)
+    $examples = @()
+    # 項目そのものが無い結果（エラー時・古い履歴）も来る。
+    # @($null) は要素1つの配列になるので、null を落としてから数える。
+    try { $examples = @(@($Result.CorpusExamples) | Where-Object { $null -ne $_ }) } catch { $examples = @() }
+    if ($examples.Count -le 0) { return '' }
+    $html = "<section class='glossary-preview' aria-label='参照した社内資料'><span class='glossary-preview-label'>参照した社内資料:</span>"
+    foreach ($ex in $examples) {
+        $label = [string]$ex.Source
+        $page = 0
+        try { $page = [int]$ex.Page } catch { $page = 0 }
+        if ($page -gt 0) { $label += ' p.' + [string]$page }
+        $html += "<span class='term-pill'>$(ConvertTo-YakuHtml $label)</span>"
+    }
+    $html += "</section>"
+    # 中身も確かめられるようにする。既定は閉じておき、普段は視界に入れない。
+    $detail = ''
+    foreach ($ex in $examples) {
+        $head = [string]$ex.Source
+        $page = 0
+        try { $page = [int]$ex.Page } catch { $page = 0 }
+        if ($page -gt 0) { $head += ' p.' + [string]$page }
+        $detail += "<div class='eyebrow'>$(ConvertTo-YakuHtml $head)</div><pre class='translation'>$(ConvertTo-YakuHtml ([string]$ex.Text))</pre>"
+    }
+    $terms = @()
+    try { $terms = @(@($Result.CorpusTerms) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }) } catch { $terms = @() }
+    $termNote = if ($terms.Count -gt 0) { '検索語: ' + ($terms -join ' ') } else { '' }
+    $html += "<details class='prompt-details'><summary>参照した箇所を見る</summary>"
+    if ($termNote) { $html += "<div class='batch-note'>$(ConvertTo-YakuHtml $termNote)</div>" }
+    $html += "<div class='batch-note'>数字は # に伏せて送っています。</div>$detail</details>"
+    return $html
+}
 
 function New-YakuMaskingNoticeHtml {
     <#
