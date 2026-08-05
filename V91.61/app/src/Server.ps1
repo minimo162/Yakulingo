@@ -1535,6 +1535,39 @@ function Send-YakuTextResponse {
     Send-YakuResponse -Context $Context -Bytes $bytes -ContentType $ContentType -StatusCode $StatusCode
 }
 
+function Get-YakuQueryValue {
+    <#
+      クエリ文字列の値を UTF-8 として取り出す。
+
+      HttpListenerRequest.QueryString は、パーセントエンコードの復号に
+      システムの ANSI コードページを使う。日本語 Windows では CP932 になるため、
+      encodeURIComponent が作った UTF-8 のバイト列が化ける。
+      例: 原本フォルダ -> 蜴滓悽繝輔か繝ｫ繝
+
+      そこで RawUrl（生の要求行）から自分で取り出し、
+      常に UTF-8 で復号する UnescapeDataString を使う。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Request,
+        [Parameter(Mandatory=$true)][string]$Name
+    )
+    $raw = [string]$Request.RawUrl
+    $mark = $raw.IndexOf('?')
+    if ($mark -lt 0) { return '' }
+    $query = $raw.Substring($mark + 1)
+    if ([string]::IsNullOrEmpty($query)) { return '' }
+    foreach ($pair in $query.Split('&')) {
+        if ([string]::IsNullOrEmpty($pair)) { continue }
+        $eq = $pair.IndexOf('=')
+        $key = if ($eq -ge 0) { $pair.Substring(0, $eq) } else { $pair }
+        try { $key = [System.Uri]::UnescapeDataString($key) } catch { continue }
+        if (-not [string]::Equals($key, $Name, [System.StringComparison]::Ordinal)) { continue }
+        if ($eq -lt 0) { return '' }
+        try { return [System.Uri]::UnescapeDataString($pair.Substring($eq + 1)) } catch { return '' }
+    }
+    return ''
+}
+
 function Read-YakuRequestBodyText {
     param(
         [Parameter(Mandatory=$true)]$Request,
@@ -1700,7 +1733,7 @@ function Invoke-YakuRoute {
     }
     if ($method -eq 'GET' -and $path -eq '/api/download') {
         try {
-            $jobId = [string]$req.QueryString['job_id']
+            $jobId = Get-YakuQueryValue -Request $req -Name 'job_id'
             if ([string]::IsNullOrWhiteSpace($jobId)) { throw 'ジョブIDを指定してください。' }
             Update-YakuTranslationJobs
             if ([string]::IsNullOrWhiteSpace($jobId) -or -not $script:YakuTranslateJobs.ContainsKey($jobId)) { throw (Get-YakuTranslationJobMissingMessage -JobId $jobId) }
@@ -1824,7 +1857,7 @@ function Invoke-YakuRoute {
     # ---------------------------------------------------------------------
     if ($script:YakuAdminMode -and $path.StartsWith('/api/admin/corpus')) {
         if ($method -eq 'GET' -and $path -eq '/api/admin/corpus/status') {
-            $sourceRoot = [string]$req.QueryString['root']
+            $sourceRoot = Get-YakuQueryValue -Request $req -Name 'root'
             $state = Get-YakuCorpusState -SourceRoot $sourceRoot
             $payload = [ordered]@{
                 source_root = [string]$state.SourceRoot
@@ -1838,8 +1871,8 @@ function Invoke-YakuRoute {
             return
         }
         if ($method -eq 'GET' -and $path -eq '/api/admin/corpus/pdf') {
-            $sourceRoot = [string]$req.QueryString['root']
-            $id = [string]$req.QueryString['id']
+            $sourceRoot = Get-YakuQueryValue -Request $req -Name 'root'
+            $id = Get-YakuQueryValue -Request $req -Name 'id'
             # 原本フォルダを列挙し直して id を突き合わせる。パスを直接受け取らない。
             $match = @(Get-YakuCorpusSourceFiles -SourceRoot $sourceRoot | Where-Object { (Get-YakuCorpusFileId -Path $_.FullName).Id -eq $id } | Select-Object -First 1)
             if ($match.Count -eq 0) {

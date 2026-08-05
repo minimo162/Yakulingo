@@ -84,6 +84,32 @@ Chk ($pm.corpus_version -eq '2026-08-04') 'コーパスの版が入る'
 Chk (@(Get-ChildItem -LiteralPath $pub.Path -Recurse -Filter '*.pdf').Count -eq 0) '配布物に元PDFを入れない'
 Chk (@(Get-ChildItem -LiteralPath $pub.Path -Recurse -Filter '*.md').Count -eq 2) 'Markdown が2件'
 
+Write-Host 'クエリ文字列の日本語（文字化けの回帰）'
+# HttpListener.QueryString は日本語 Windows で CP932 を使うため
+# 「原本フォルダ」が「蜴滓悽繝輔か繝ｫ繝」になる。RawUrl から UTF-8 で読む。
+$serverText = [IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Server.ps1'))
+Chk (-not ($serverText -match '\$req\.QueryString')) 'QueryString を使っていない'
+
+# Get-YakuQueryValue を Server.ps1 から取り出して単体で確かめる
+$fnStart = $serverText.IndexOf('function Get-YakuQueryValue {')
+$fnEnd = $serverText.IndexOf('function Read-YakuRequestBodyText {')
+Chk ($fnStart -ge 0 -and $fnEnd -gt $fnStart) 'Get-YakuQueryValue が定義されている'
+Invoke-Expression $serverText.Substring($fnStart, $fnEnd - $fnStart)
+
+$jp = 'C:\Users\m242054\Downloads\原本フォルダ'
+$encoded = [System.Uri]::EscapeDataString($jp)
+$fake = [pscustomobject]@{ RawUrl = '/api/admin/corpus/status?root=' + $encoded }
+Chk ((Get-YakuQueryValue -Request $fake -Name 'root') -eq $jp) '日本語を含むパスがそのまま取れる'
+
+$fake2 = [pscustomobject]@{ RawUrl = '/api/admin/corpus/pdf?root=' + $encoded + '&id=a1b2c3d4' }
+Chk ((Get-YakuQueryValue -Request $fake2 -Name 'id') -eq 'a1b2c3d4') '2つ目の値も取れる'
+Chk ((Get-YakuQueryValue -Request $fake2 -Name 'root') -eq $jp) '1つ目の値も壊れない'
+Chk ((Get-YakuQueryValue -Request $fake2 -Name 'none') -eq '') '無い名前は空'
+Chk ((Get-YakuQueryValue -Request ([pscustomobject]@{ RawUrl='/api/x' }) -Name 'root') -eq '') 'クエリ無しでも落ちない'
+# 前方一致の別名を取り違えない
+$fake3 = [pscustomobject]@{ RawUrl = '/x?rootdir=zzz&root=' + $encoded }
+Chk ((Get-YakuQueryValue -Request $fake3 -Name 'root') -eq $jp) '名前の前方一致で取り違えない'
+
 Write-Host '配布済みコーパスの解決'
 Chk ((Get-YakuCorpusDir) -eq '') '環境変数が無ければ空'
 $env:YAKULINGO_CORPUS_DIR = $pub.Path
