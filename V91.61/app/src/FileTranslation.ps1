@@ -1032,20 +1032,50 @@ function Resolve-YakuFileExactGlossaryTranslations {
     return [pscustomobject]@{ Count=[int]$hits; AppliedGlossary=@($applied.ToArray()) }
 }
 
+# 文であることを示す手がかり。ラベルにはまず現れない。
+#
+# 長さだけでは足りない。セルの中の短文は句点を持たないことが多く
+# （「為替影響により営業利益が減少」）、文字数の上限だけでは拾ってしまう。
+$script:YakuLabelSentenceMarkers = @(
+    'により', 'による', 'によって', 'に伴い', 'に伴う', 'のため', 'ものの',
+    'したが', 'ことで', 'ことにより', 'となり', 'となった', 'に対し'
+)
+
+# 述語で終わるもの。**末尾だけ**を見る。
+# 途中に現れる活用（「非支配株主に帰属する当期純利益」の「帰属する」）は
+# 正当なラベルの一部なので、途中一致で弾いてはいけない。
+$script:YakuLabelPredicateEndings = @(
+    'した', 'して', 'します', 'しました', 'される', 'された', 'できる', 'できない',
+    'ている', 'ており', 'であった', 'である', 'だった', 'ました', 'ます', 'です',
+    'ない', 'なった', 'なる'
+)
+
 function Test-YakuFileLabelLike {
     <#
       「列に収まることが求められる短いラベル」らしいか。
 
-      判定は粗くてよい。ここで拾うのは「用語集へ足す候補」であって、
+      拾いたいもの: 販売促進費 / 子会社 固定販促費 / 非支配株主に帰属する当期純利益
+      拾いたくないもの: 為替影響により営業利益が減少 / コストを削減した
+
+      判定は完全でなくてよい。ここで拾うのは「用語集へ足す候補」であり、
       間違って拾っても人が捨てるだけである。逆に取りこぼすと気づけない。
+      **残った誤りは、呼び出し側が短い順に並べることで下へ沈む。**
     #>
-    param([AllowNull()][string]$Text, [int]$MaxChars = 24)
+    param([AllowNull()][string]$Text, [int]$MaxChars = 16)
     $clean = ([string]$Text).Trim()
     if ([string]::IsNullOrWhiteSpace($clean)) { return $false }
     if ($clean.Length -gt $MaxChars) { return $false }
-    # 改行を含むもの、文末記号を持つものは文である。ラベルではない。
+    # 改行を含むもの、文末記号や読点を持つものは文である。
     if ($clean -match "[`r`n]") { return $false }
-    if ($clean -match '[。．！？]') { return $false }
+    if ($clean -match '[。．！？、，]') { return $false }
+    # 格助詞「を」「が」は文の印。ラベルにはまず現れない。
+    if ($clean -match '[をが]') { return $false }
+    foreach ($marker in $script:YakuLabelSentenceMarkers) {
+        if ($clean.Contains($marker)) { return $false }
+    }
+    foreach ($ending in $script:YakuLabelPredicateEndings) {
+        if ($clean.EndsWith($ending, [System.StringComparison]::Ordinal)) { return $false }
+    }
     # 訳す対象が無いもの（数字・記号だけ）は除く。
     if ($clean -notmatch '[ぁ-んァ-ヶ一-龯㐀-䶵々〆]') { return $false }
     return $true
@@ -1099,7 +1129,9 @@ function Get-YakuFileUnmatchedLabels {
         $seen[$key] = $true
         [void]$result.Add([pscustomobject]@{ Index = $idx; Text = ([string]$text).Trim() })
     }
-    return @($result.ToArray())
+    # 短い順に出す。判定が完全でない以上、誤って拾ったもの（長めの短文）が
+    # 上位を占めないようにしておく。上から見れば用が足りる並びにする。
+    return @(@($result.ToArray()) | Sort-Object -Property @{Expression={ ([string]$_.Text).Length }}, @{Expression='Index'})
 }
 
 function Write-YakuFileGlossaryComplianceLog {

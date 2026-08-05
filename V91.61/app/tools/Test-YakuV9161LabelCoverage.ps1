@@ -31,10 +31,26 @@ foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuil
 function Chk { param([bool]$c,[string]$m) if($c){Write-Host ('  ok   ' + $m) -ForegroundColor Green}else{Write-Host ('  FAIL ' + $m) -ForegroundColor Red;$script:fail++} }
 
 # ---------------------------------------------------------------- ラベルらしさ
-Write-Host 'ラベルらしさの判定'
+Write-Host 'ラベルらしさの判定 — 拾いたいもの'
 Chk (Test-YakuFileLabelLike -Text '販売促進費') '短い日本語はラベル'
 Chk (Test-YakuFileLabelLike -Text '子会社 固定販促費') '空白を含んでもラベル'
-Chk (-not (Test-YakuFileLabelLike -Text '為替影響により営業利益は減少した。')) '文末記号があれば文（ラベルではない）'
+Chk (Test-YakuFileLabelLike -Text 'のれん償却') 'ひらがなを含む名詞もラベル'
+Chk (Test-YakuFileLabelLike -Text '販売費及び一般管理費') '長めの勘定科目もラベル'
+# 途中の活用（帰属する）で弾いてはいけない。正当なラベルの一部である。
+Chk (Test-YakuFileLabelLike -Text '親会社株主に帰属する当期純利益') '途中に活用があってもラベル'
+Chk (Test-YakuFileLabelLike -Text 'その他の包括利益累計額') '長めでも名詞の連なりならラベル'
+Chk (Test-YakuFileLabelLike -Text '前年同期比') '比較語もラベル'
+
+Write-Host 'ラベルらしさの判定 — 拾いたくないもの'
+# 句点の無い短文が本題。文字数の上限だけでは拾ってしまう。
+Chk (-not (Test-YakuFileLabelLike -Text '為替影響により営業利益が減少')) '句点が無くても接続表現があれば文'
+Chk (-not (Test-YakuFileLabelLike -Text 'コストを削減')) '格助詞「を」があれば文'
+Chk (-not (Test-YakuFileLabelLike -Text '営業利益が増加')) '格助詞「が」があれば文'
+Chk (-not (Test-YakuFileLabelLike -Text '出荷台数が増加した')) '述語で終われば文'
+Chk (-not (Test-YakuFileLabelLike -Text '価格改定を実施しました')) '丁寧形で終わっても文'
+Chk (-not (Test-YakuFileLabelLike -Text '原材料価格の上昇、為替の影響')) '読点があれば文'
+Chk (-not (Test-YakuFileLabelLike -Text '為替影響により営業利益は減少した。')) '文末記号があれば文'
+Chk (-not (Test-YakuFileLabelLike -Text '半導体セグメントの出荷台数の増加が寄与')) '長さの上限も効く'
 Chk (-not (Test-YakuFileLabelLike -Text ('あ' * 40))) '長すぎるものはラベルではない'
 Chk (-not (Test-YakuFileLabelLike -Text "販促費`n固定費")) '複数行はラベルではない'
 Chk (-not (Test-YakuFileLabelLike -Text '1,234')) '数字だけは訳す対象が無い'
@@ -63,7 +79,17 @@ Chk ($texts -contains '新規項目B') '置換できなかったラベルを拾�
 Chk (-not ($texts -contains '販売促進費')) '置換できたものは出さない'
 Chk (-not ($texts -contains '為替影響により営業利益は減少した。')) '文は出さない（レイアウトは行高で吸収する領域）'
 Chk (-not ($texts -contains '1,234')) '数字だけは出さない'
-Chk (@($labels)[0].Index -eq 2) '項目の番号が分かる（どのセルか辿れる）'
+Chk (@($labels | ForEach-Object { [int]$_.Index }) -contains 2) '項目の番号が分かる（どのセルか辿れる）'
+
+Write-Host '並び'
+# 判定が完全でない以上、誤って拾ったもの（長めの短文）が上位を占めないようにする。
+$order = @(Get-YakuFileUnmatchedLabels -Direction 'to_en' -ExactApplied @() -Items @(
+    [pscustomobject]@{ Index=1; Text='その他の包括利益累計額'; OriginalText='その他の包括利益累計額' }
+    [pscustomobject]@{ Index=2; Text='販促費'; OriginalText='販促費' }
+    [pscustomobject]@{ Index=3; Text='固定販促費'; OriginalText='固定販促費' }
+))
+Chk (@($order)[0].Text -eq '販促費') '短い順に並ぶ'
+Chk (@($order)[-1].Text -eq 'その他の包括利益累計額') '長いものは下へ沈む'
 
 Write-Host '重複と方向'
 $dupItems = @(
