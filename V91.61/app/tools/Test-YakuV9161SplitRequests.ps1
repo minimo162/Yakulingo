@@ -77,6 +77,18 @@ Chk ($pBrief -match 'attaches to in SOURCE') '係り受けの基準が FULL で�
 Chk ($pBrief -match $src) '原文が入る'
 Chk ($pFull -match $src) '原文が入る（完全訳）'
 
+# ---------------------------------------------------------------- 並列の既定
+# 既定で並列にする（利用者の判断 2026-08-06）。止めるときだけ環境変数で切る。
+# 「1のときだけ有効」に戻ると、既定が黙って逐次へ落ちて遅くなるので見張る。
+Write-Host '並列の既定'
+$translationText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Translation.ps1'))
+Chk ($translationText.Contains("YAKULINGO_PARALLEL -eq '0'")) '環境変数は「止める」側（既定は並列）'
+Chk (-not $translationText.Contains("YAKULINGO_PARALLEL -ne '1'")) '「1のときだけ有効」に戻っていない'
+# タブではなくウィンドウで開くこと。裏のタブでは入力が届かない。
+$clientTextW = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CopilotClient.ps1'))
+Chk ($clientTextW -match 'newWindow = \$true') '並列用の Copilot は新規ウィンドウで開く'
+Chk ($clientTextW -match 'function Close-YakuCopilotOwnedWindows') '自分で開いたウィンドウを閉じる手段がある'
+
 # ---------------------------------------------------------------- 受け取り契約（JS）
 Write-Host '受け取り契約が片方だけを認める'
 $clientText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CopilotClient.ps1'))

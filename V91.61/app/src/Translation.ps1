@@ -1426,17 +1426,15 @@ function Invoke-YakuTextRequestsInParallel {
     if (@($Modes).Count -lt 2) { return $null }
     # モックのときは往復が無いので、並列にする意味も検証する意味も無い。
     if ($env:YAKULINGO_MOCK -eq '1') { return $null }
-    # 既定では使わない。実機で PROMPT_TRUNCATED_BY_INPUT_LIMIT が出た（2026-08-06）。
+    # 既定で並列にする（利用者の判断 2026-08-06）。実測 13.7 秒 対 19.3 秒。
     #
-    # 背景タブへ長い文字列を流し込むと、入力欄に入りきらずに欠ける。
-    # 実証（200字程度の依頼）では出なかったが、実際の依頼は1万字近くあり再現する。
-    # 前面のタブは1つしか作れないので、2枚を同時に埋めることはできない。
+    # 依頼ごとに Copilot を別の**ウィンドウ**で開く。タブでは駄目で、
+    # 裏に回ったタブへ打ち込むと入力がほとんど届かない
+    # （5,194 字送って 70 字。新規ウィンドウなら 10,886 字でも取りこぼさない）。
     #
-    # 次の手は「入力と送信だけを順番に行い、応答待ちだけを重ねる」こと。
-    # 記録では入力と送信は各1秒弱、応答待ちは10〜30秒なので、
-    # それでも短縮のほとんどは取れる。
-    # それまでは開発時だけ有効にする。
-    if ($env:YAKULINGO_PARALLEL -ne '1') { return $null }
+    # 止めたいときは環境変数で切れる。何かあったときにコードを直さずに
+    # 逐次へ戻せるようにしておく。失敗すれば自動でも逐次へ落ちる。
+    if ($env:YAKULINGO_PARALLEL -eq '0') { return $null }
 
     $work = {
         param($Root, $InputText, $SettingsJson, $Direction, $StyleReference, $CorpusSection, $Mode, $Slot, $DataDir)
