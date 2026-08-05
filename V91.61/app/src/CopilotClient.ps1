@@ -3968,10 +3968,19 @@ function Invoke-YakuMockCopilotPrompt {
         $out.Add($endMarker) | Out-Null
         return (ConvertTo-YakuMockMarkdownEscapedResponse -Text (($out.ToArray()) -join "`n"))
     }
-    if ($Prompt -match 'Task:\s*Japanese to English') {
-        return (ConvertTo-YakuMockMarkdownEscapedResponse -Text ("FULL_TEXT:`nHello.`nBRIEF_TEXT:`nHello.`n" + $endMarker))
+    # V91.61（2026-08-06）: 依頼が「完全訳」と「開示用の電文体」に分かれたので、
+    # 雛形の文言ではなく、そのプロンプトが出させようとしているラベルを見て返す。
+    # 文言で分岐していると、雛形を書き直すたびにモックが黙って壊れる。
+    $wantsFull = ($Prompt -match '(?m)^FULL_TEXT:')
+    $wantsBrief = ($Prompt -match '(?m)^BRIEF_TEXT:')
+    $wantsJp = ($Prompt -match '(?m)^JAPANESE_TEXT:')
+    if ($wantsFull -or $wantsBrief) {
+        $body = ''
+        if ($wantsFull) { $body += "FULL_TEXT:`nHello.`n" }
+        if ($wantsBrief) { $body += "BRIEF_TEXT:`nHello.`n" }
+        return (ConvertTo-YakuMockMarkdownEscapedResponse -Text ($body + $endMarker))
     }
-    if ($Prompt -match 'Task:\s*Non-Japanese to Japanese') {
+    if ($wantsJp -or ($Prompt -match 'Task:\s*Non-Japanese to Japanese')) {
         return (ConvertTo-YakuMockMarkdownEscapedResponse -Text ("JAPANESE_TEXT:`nこれはモック翻訳です。`n" + $endMarker))
     }
     return (ConvertTo-YakuMockMarkdownEscapedResponse -Text ("JAPANESE_TEXT:`nこれはモック応答です。`n" + $endMarker))

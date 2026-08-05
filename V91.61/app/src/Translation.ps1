@@ -1205,7 +1205,11 @@ function Invoke-YakuSingleTranslationBatch {
         [AllowNull()]$ProgressState,
         [AllowNull()]$Warnings,
         # V91.61 段階3: ジョブごとに1回だけ引いた文例。バッチ間で共通。
-        [AllowNull()][string]$CorpusSection
+        [AllowNull()][string]$CorpusSection,
+        # V91.61（2026-08-06）: 完全訳と開示用の電文体は別々の依頼になった。
+        # full / brief でこの1回が何を作る依頼かが決まる。
+        # 空なら 1依頼で2つ返す旧経路（EN→JA もこちら）。
+        [AllowNull()][string]$Mode
     )
     $requestId = [guid]::NewGuid().ToString('N')
     # V91.60 段階3: 外部へ送る前に数値をマスクする。
@@ -1221,7 +1225,7 @@ function Invoke-YakuSingleTranslationBatch {
     $null = @(Get-YakuGlossaryEntries -Root $Root)
     $glossarySw.Stop()
     $promptSw = [System.Diagnostics.Stopwatch]::StartNew()
-    $built = New-YakuTextPrompt -Root $Root -InputText $sourceText -Settings $Settings -DirectionOverride $Direction -StyleReference $StyleReference -RequestId $requestId -CorpusSection $CorpusSection
+    $built = New-YakuTextPrompt -Root $Root -InputText $sourceText -Settings $Settings -DirectionOverride $Direction -StyleReference $StyleReference -RequestId $requestId -CorpusSection $CorpusSection -Mode $Mode
     $promptSw.Stop()
     $styleReferenceHash = if ([string]::IsNullOrEmpty([string]$StyleReference)) { '' } else { Get-YakuTextSha256 -Text ([string]$StyleReference) }
     # 文例が変われば訳文も変わる。鍵に入れないと、文例なしで作った訳文を
@@ -1230,7 +1234,7 @@ function Invoke-YakuSingleTranslationBatch {
     $cacheSw = [System.Diagnostics.Stopwatch]::StartNew()
     # マスク状態は Get-YakuTranslationContractFingerprint が持つ(§7)。
     # ここは版だけ上げ、マスクなし時代のキーと衝突しないようにする。
-    $cacheKey = Get-YakuTranslationCacheKey -Kind 'text' -Direction $Direction -Text $sourceText -Style ('plain-v9160|' + $styleReferenceHash + '|corpus-v9161:' + $corpusHash) -Root $Root -Settings $Settings
+    $cacheKey = Get-YakuTranslationCacheKey -Kind 'text' -Direction $Direction -Text $sourceText -Style ('plain-v9160|' + $styleReferenceHash + '|corpus-v9161:' + $corpusHash + '|mode-v9161:' + [string]$Mode) -Root $Root -Settings $Settings
     $cachedRaw = Get-YakuTranslationCacheValue -Key $cacheKey -Settings $Settings
     $cacheSw.Stop()
     Write-YakuLog "Translation preparation timings. glossary-load elapsedMs=$($glossarySw.ElapsedMilliseconds) prompt-build elapsedMs=$($promptSw.ElapsedMilliseconds) cache-lookup elapsedMs=$($cacheSw.ElapsedMilliseconds)" 'INFO'
@@ -1238,7 +1242,7 @@ function Invoke-YakuSingleTranslationBatch {
         try {
             $cachedEnvelope = [string]$cachedRaw | ConvertFrom-Json
             $cachedRequestId = [string]$cachedEnvelope.request_id
-            $optionsCached = @(Parse-YakuTextTranslationResponse -Raw ([string]$cachedEnvelope.raw) -Direction $Direction -RequestId $cachedRequestId -Warnings $Warnings)
+            $optionsCached = @(Parse-YakuTextTranslationResponse -Raw ([string]$cachedEnvelope.raw) -Direction $Direction -RequestId $cachedRequestId -Warnings $Warnings -Mode $Mode)
             $optionsCached = @(Repair-YakuTextResponsePostParse -SourceText $sourceText -Options $optionsCached -Direction $Direction)
             if (-not ($Direction -eq 'to_jp' -and $maskMap.Count -gt 0)) {
                 foreach ($cachedOption in $optionsCached) {
@@ -1246,7 +1250,8 @@ function Invoke-YakuSingleTranslationBatch {
                     if (-not [bool]$cachedNumeric.Ok -and [int]$cachedNumeric.ScaleErrors -gt 0) { throw "NUMERIC_SCALE_MISMATCH: $([string]$cachedNumeric.Detail)" }
                 }
             }
-            if ($Direction -eq 'to_en') {
+            # 依頼を分けた場合、1回の応答には片方しか無い。突き合わせは2つ揃うときだけ。
+            if ($Direction -eq 'to_en' -and $optionsCached.Count -ge 2) {
                 $cachedIntegrity = Test-YakuTextStructureIntegrity -SourceText $sourceText -FullText ([string]$optionsCached[0].Translation) -BriefText ([string]$optionsCached[1].Translation)
                 if (-not [bool]$cachedIntegrity.Ok) {
                     try { Write-YakuLog "Text response structure mismatch. attempt=cache detail=$([string]$cachedIntegrity.Detail); cache=discard" 'WARN' } catch {}
@@ -1276,12 +1281,12 @@ function Invoke-YakuSingleTranslationBatch {
     for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
         if ($attempt -gt 1) {
             $requestId = [guid]::NewGuid().ToString('N')
-            $built = New-YakuTextPrompt -Root $Root -InputText $sourceText -Settings $Settings -DirectionOverride $Direction -StyleReference $StyleReference -RequestId $requestId -CorpusSection $CorpusSection
+            $built = New-YakuTextPrompt -Root $Root -InputText $sourceText -Settings $Settings -DirectionOverride $Direction -StyleReference $StyleReference -RequestId $requestId -CorpusSection $CorpusSection -Mode $Mode
             if (-not [string]::IsNullOrWhiteSpace($numericCorrectionInstruction)) { $built.Prompt += "`n`n$numericCorrectionInstruction" }
         }
         try {
             $raw = Invoke-YakuCopilotPrompt -Prompt $built.Prompt -Settings $Settings -SkipFreshChatWait:($SkipFreshChatWait -or $attempt -gt 1) -PreserveEndMarker -ProgressState $ProgressState -Warnings $Warnings
-            $options = @(Parse-YakuTextTranslationResponse -Raw $raw -Direction $Direction -RequestId $requestId -Warnings $Warnings)
+            $options = @(Parse-YakuTextTranslationResponse -Raw $raw -Direction $Direction -RequestId $requestId -Warnings $Warnings -Mode $Mode)
             $options = @(Repair-YakuTextResponsePostParse -SourceText $sourceText -Options $options -Direction $Direction)
             $numericFailures = New-Object System.Collections.Generic.List[object]
             # V91.60 段階4: to_jp では [[N1]] oku が [[N1]]億円 へ訳されるため、
@@ -1325,7 +1330,7 @@ function Invoke-YakuSingleTranslationBatch {
                     throw "RESPONSE_PLACEHOLDER_MISMATCH: numeric placeholders: $maskMismatchDetail"
                 }
             }
-            if ($Direction -eq 'to_en') {
+            if ($Direction -eq 'to_en' -and $options.Count -ge 2) {
                 $integrity = Test-YakuTextStructureIntegrity -SourceText $sourceText -FullText ([string]$options[0].Translation) -BriefText ([string]$options[1].Translation)
                 if (-not [bool]$integrity.Ok) {
                     $integrityDetail = [string]$integrity.Detail
@@ -1391,6 +1396,73 @@ function Invoke-YakuSingleTranslationBatch {
         # 対応表(Map)は結果オブジェクトへ載せない(§8)。
         MaskedCount = [int]$maskResult.MaskedCount
         KeptCount = [int]$maskResult.KeptCount
+    }
+}
+
+function Invoke-YakuTextTranslationRequests {
+    <#
+      1つの原文に対して、必要な依頼を出して訳文を揃える。
+
+      V91.61（2026-08-06）: JA→EN は「完全訳」と「開示用の電文体」を
+      別々の依頼にした。電文体は完全訳を短くしたものではなく、同じ原文に
+      対する別の成果物である。1つの応答から2つ取り出す作りをやめ、
+      依頼ごとに1つずつ受け取る。
+
+      いまは逐次で呼ぶ。段階②で Copilot のタブを2枚使って並列にする。
+      その差し替えがここだけで済むよう、依頼の並びをこの関数に閉じ込める。
+
+      EN→JA は成果物が1つなので、従来どおり1回で終わる。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Root,
+        [Parameter(Mandatory=$true)][string]$InputText,
+        [Parameter(Mandatory=$true)]$Settings,
+        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
+        [AllowNull()][string]$StyleReference,
+        [switch]$SkipFreshChatWait,
+        [AllowNull()]$ProgressState,
+        [AllowNull()]$Warnings,
+        [AllowNull()][string]$CorpusSection
+    )
+    if ($Direction -ne 'to_en') {
+        return (Invoke-YakuSingleTranslationBatch -Root $Root -InputText $InputText -Settings $Settings -Direction $Direction -StyleReference $StyleReference -SkipFreshChatWait:$SkipFreshChatWait -ProgressState $ProgressState -Warnings $Warnings -CorpusSection $CorpusSection)
+    }
+
+    $options = New-Object System.Collections.Generic.List[object]
+    $raws = New-Object System.Collections.Generic.List[string]
+    $prompts = New-Object System.Collections.Generic.List[string]
+    $requestIds = New-Object System.Collections.Generic.List[string]
+    $cacheHits = 0
+    $maskedCount = 0
+    $keptCount = 0
+    $index = 0
+    # 完全訳を先に出す。画面の並びが依頼の順と一致していたほうが追いやすい。
+    foreach ($mode in @('full','brief')) {
+        # 1本目のあとはチャットが温まっている。2本目で待ち直さない。
+        $skipWait = ($SkipFreshChatWait -or $index -gt 0)
+        $r = Invoke-YakuSingleTranslationBatch -Root $Root -InputText $InputText -Settings $Settings -Direction $Direction -StyleReference $StyleReference -SkipFreshChatWait:$skipWait -ProgressState $ProgressState -Warnings $Warnings -CorpusSection $CorpusSection -Mode $mode
+        foreach ($o in @($r.Options)) { [void]$options.Add($o) }
+        [void]$raws.Add([string]$r.Raw)
+        [void]$prompts.Add([string]$r.Prompt)
+        [void]$requestIds.Add([string]$r.RequestId)
+        if ([bool]$r.CacheHit) { $cacheHits++ }
+        # 原文もマスクも依頼で変わらないので、件数はどちらでも同じ。上書きでよい。
+        $maskedCount = [int]$r.MaskedCount
+        $keptCount = [int]$r.KeptCount
+        $index++
+    }
+    try { Write-YakuLog "Text translation requests completed. direction=$Direction requests=$index options=$($options.Count) cacheHits=$cacheHits" 'INFO' } catch {}
+    return [pscustomobject]@{
+        Direction = $Direction
+        Options = @($options.ToArray())
+        # 記録と診断のため、依頼ごとの生応答を区切って残す。
+        Raw = (@($raws.ToArray()) -join "`n---`n")
+        Prompt = (@($prompts.ToArray()) -join "`n---`n")
+        # 全ての依頼がキャッシュから返ったときだけ「命中」とする。
+        CacheHit = ($cacheHits -ge $index)
+        RequestId = (@($requestIds.ToArray()) -join ',')
+        MaskedCount = [int]$maskedCount
+        KeptCount = [int]$keptCount
     }
 }
 
@@ -1622,7 +1694,7 @@ function Invoke-YakuTextTranslation {
             $detail = "入力 $($batch.CharCount)字"
             Set-YakuTranslationProgress -ProgressState $ProgressState -Mode 'working' -Label ($batchPrefix + '準備中') -Progress $startPct -Detail $detail -Phase 'preparing'
             $batchStyleReference = [string]$styleReference
-            $br = Invoke-YakuSingleTranslationBatch -Root $Root -InputText ([string]$batch.Text) -Settings $Settings -Direction $direction -StyleReference $batchStyleReference -SkipFreshChatWait:($i -gt 0 -or $corpusQueryUsed) -ProgressState $ProgressState -Warnings $warnings -CorpusSection $corpusSection
+            $br = Invoke-YakuTextTranslationRequests -Root $Root -InputText ([string]$batch.Text) -Settings $Settings -Direction $direction -StyleReference $batchStyleReference -SkipFreshChatWait:($i -gt 0 -or $corpusQueryUsed) -ProgressState $ProgressState -Warnings $warnings -CorpusSection $corpusSection
             $batchResults += [pscustomobject]@{
                 Index = $batch.Index
                 Total = $batch.Total
