@@ -1147,7 +1147,9 @@ function Invoke-YakuSingleTranslationBatch {
         [AllowNull()][string]$StyleReference,
         [switch]$SkipFreshChatWait,
         [AllowNull()]$ProgressState,
-        [AllowNull()]$Warnings
+        [AllowNull()]$Warnings,
+        # V91.61 段階3: ジョブごとに1回だけ引いた文例。バッチ間で共通。
+        [AllowNull()][string]$CorpusSection
     )
     $requestId = [guid]::NewGuid().ToString('N')
     # V91.60 段階3: 外部へ送る前に数値をマスクする。
@@ -1163,13 +1165,16 @@ function Invoke-YakuSingleTranslationBatch {
     $null = @(Get-YakuGlossaryEntries -Root $Root)
     $glossarySw.Stop()
     $promptSw = [System.Diagnostics.Stopwatch]::StartNew()
-    $built = New-YakuTextPrompt -Root $Root -InputText $sourceText -Settings $Settings -DirectionOverride $Direction -StyleReference $StyleReference -RequestId $requestId
+    $built = New-YakuTextPrompt -Root $Root -InputText $sourceText -Settings $Settings -DirectionOverride $Direction -StyleReference $StyleReference -RequestId $requestId -CorpusSection $CorpusSection
     $promptSw.Stop()
     $styleReferenceHash = if ([string]::IsNullOrEmpty([string]$StyleReference)) { '' } else { Get-YakuTextSha256 -Text ([string]$StyleReference) }
+    # 文例が変われば訳文も変わる。鍵に入れないと、文例なしで作った訳文を
+    # 文例ありの依頼へ返してしまう。
+    $corpusHash = if ([string]::IsNullOrEmpty([string]$CorpusSection)) { '' } else { Get-YakuTextSha256 -Text ([string]$CorpusSection) }
     $cacheSw = [System.Diagnostics.Stopwatch]::StartNew()
     # マスク状態は Get-YakuTranslationContractFingerprint が持つ(§7)。
     # ここは版だけ上げ、マスクなし時代のキーと衝突しないようにする。
-    $cacheKey = Get-YakuTranslationCacheKey -Kind 'text' -Direction $Direction -Text $sourceText -Style ('plain-v9160|' + $styleReferenceHash) -Root $Root -Settings $Settings
+    $cacheKey = Get-YakuTranslationCacheKey -Kind 'text' -Direction $Direction -Text $sourceText -Style ('plain-v9160|' + $styleReferenceHash + '|corpus-v9161:' + $corpusHash) -Root $Root -Settings $Settings
     $cachedRaw = Get-YakuTranslationCacheValue -Key $cacheKey -Settings $Settings
     $cacheSw.Stop()
     Write-YakuLog "Translation preparation timings. glossary-load elapsedMs=$($glossarySw.ElapsedMilliseconds) prompt-build elapsedMs=$($promptSw.ElapsedMilliseconds) cache-lookup elapsedMs=$($cacheSw.ElapsedMilliseconds)" 'INFO'
@@ -1209,7 +1214,7 @@ function Invoke-YakuSingleTranslationBatch {
     for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
         if ($attempt -gt 1) {
             $requestId = [guid]::NewGuid().ToString('N')
-            $built = New-YakuTextPrompt -Root $Root -InputText $sourceText -Settings $Settings -DirectionOverride $Direction -StyleReference $StyleReference -RequestId $requestId
+            $built = New-YakuTextPrompt -Root $Root -InputText $sourceText -Settings $Settings -DirectionOverride $Direction -StyleReference $StyleReference -RequestId $requestId -CorpusSection $CorpusSection
             if (-not [string]::IsNullOrWhiteSpace($numericCorrectionInstruction)) { $built.Prompt += "`n`n$numericCorrectionInstruction" }
         }
         try {
@@ -1571,9 +1576,33 @@ function Invoke-YakuTextTranslation {
     $styleReferenceSw = [System.Diagnostics.Stopwatch]::StartNew()
     $initialStyleReference = ''
     $styleReferenceSw.Stop()
+    # V91.61 段階3: 参考資料コーパスの文例を引く。
+    #
+    # ジョブごとに1回だけ。バッチごとに引くと Copilot への往復がバッチ数だけ増え、
+    # 文例もバッチごとに変わって訳語が揃わなくなる。
+    # 分割の前に置くのは、原文全体を見て検索語を作らせるため。
+    #
+    # 失敗しても Get-YakuCorpusReference は投げない。引けなければ空が返り、
+    # 従来どおりの翻訳になる。コーパスは足しであって前提ではない。
+    #
+    # CorpusReference.ps1 が読み込まれていない経路（別ランスペース・ワーカー・
+    # 部分的に読み込む回帰テスト）でも翻訳が止まらないようにする。
+    # 「コーパスは足しであって前提ではない」を、依存関係の面でも守る。
+    $corpusSw = [System.Diagnostics.Stopwatch]::StartNew()
+    $corpusReference = $null
+    if (Get-Command Get-YakuCorpusReference -ErrorAction SilentlyContinue) {
+        $corpusReference = Get-YakuCorpusReference -Root $Root -InputText $processingInput -Settings $Settings -Direction $direction -Warnings $warnings -ProgressState $ProgressState
+    }
+    if ($null -eq $corpusReference) {
+        $corpusReference = [pscustomobject]@{ Section = ''; Terms = @(); Count = 0; Reason = 'not-loaded'; Used = $false }
+    }
+    $corpusSw.Stop()
+    $corpusSection = [string]$corpusReference.Section
+    # 検索語の生成で新規チャットを1度使っているなら、最初のバッチは短い待ちでよい。
+    $corpusQueryUsed = [bool]$corpusReference.Used
     $preBatchSw.Stop()
     $preBatchOtherMs = [Math]::Max(0, $preBatchSw.ElapsedMilliseconds - $directionSettingsMs - $batchingMs - $glossaryMatchMs - $styleReferenceSw.ElapsedMilliseconds)
-    Write-YakuLog "Translation pre-batch timings. direction-settings elapsedMs=$directionSettingsMs batching elapsedMs=$batchingMs glossary-match elapsedMs=$glossaryMatchMs style-reference elapsedMs=$($styleReferenceSw.ElapsedMilliseconds) other elapsedMs=$preBatchOtherMs total elapsedMs=$($preBatchSw.ElapsedMilliseconds)" 'INFO'
+    Write-YakuLog "Translation pre-batch timings. direction-settings elapsedMs=$directionSettingsMs batching elapsedMs=$batchingMs glossary-match elapsedMs=$glossaryMatchMs style-reference elapsedMs=$($styleReferenceSw.ElapsedMilliseconds) corpus-reference elapsedMs=$($corpusSw.ElapsedMilliseconds) reason=$([string]$corpusReference.Reason) examples=$([int]$corpusReference.Count) other elapsedMs=$preBatchOtherMs total elapsedMs=$($preBatchSw.ElapsedMilliseconds)" 'INFO'
 
     try {
         Set-YakuTranslationProgress -ProgressState $ProgressState -Mode 'working' -Label '準備中' -Progress 5 -Detail $directionLabel -Phase 'preparing'
@@ -1611,7 +1640,7 @@ function Invoke-YakuTextTranslation {
             $detail = "入力 $($batch.CharCount)字"
             Set-YakuTranslationProgress -ProgressState $ProgressState -Mode 'working' -Label ($batchPrefix + '準備中') -Progress $startPct -Detail $detail -Phase 'preparing'
             $batchStyleReference = [string]$styleReference
-            $br = Invoke-YakuSingleTranslationBatch -Root $Root -InputText ([string]$batch.Text) -Settings $Settings -Direction $direction -StyleReference $batchStyleReference -SkipFreshChatWait:($i -gt 0) -ProgressState $ProgressState -Warnings $warnings
+            $br = Invoke-YakuSingleTranslationBatch -Root $Root -InputText ([string]$batch.Text) -Settings $Settings -Direction $direction -StyleReference $batchStyleReference -SkipFreshChatWait:($i -gt 0 -or $corpusQueryUsed) -ProgressState $ProgressState -Warnings $warnings -CorpusSection $corpusSection
             $batchResults += [pscustomobject]@{
                 Index = $batch.Index
                 Total = $batch.Total

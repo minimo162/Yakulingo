@@ -524,8 +524,20 @@ foreach ($srcFile in @(Get-ChildItem -LiteralPath (Join-Path $root 'src') -Filte
         $callSites += ($srcFile.Name)
     }
 }
-$outside = @($callSites | Where-Object { $_ -notin @('CopilotClient.ps1','Translation.ps1','FileTranslation.ps1') })
+# V91.61 段階3: CorpusReference.ps1 が加わる。参考資料を引くための検索語を
+# Copilot に作らせる経路で、原文を外部へ送る点は翻訳と同じ。
+# 送る前にマスクしていることを下で確かめる。
+$outside = @($callSites | Where-Object { $_ -notin @('CopilotClient.ps1','Translation.ps1','FileTranslation.ps1','CorpusReference.ps1') })
 Assert-YakuMask ($outside.Count -eq 0) ("翻訳経路の外から呼ばれていない: " + (@($outside | Select-Object -Unique) -join ','))
+
+# 外部へ送る経路が増えたら、そこもマスクを通っていること。
+# 経路を足すたびに手で思い出す話にしない。
+$corpusRefText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CorpusReference.ps1'))
+$maskAt = $corpusRefText.IndexOf('New-YakuNumericMaskMap')
+$sendAt = $corpusRefText.IndexOf('Invoke-YakuCopilotPrompt')
+Assert-YakuMask ($maskAt -ge 0) 'コーパス検索語の経路もマスクを呼ぶ'
+Assert-YakuMask ($sendAt -ge 0 -and $maskAt -lt $sendAt) 'マスクしてから送っている'
+Assert-YakuMask ($corpusRefText -match "Location 'corpus-query'") '記録に経路名が残る（どこでマスクしたか分かる）'
 Assert-YakuMask ((@($callSites | Where-Object { $_ -eq 'Translation.ps1' }).Count) -eq 1) 'テキスト経路の呼び出しは1箇所（逆翻訳の分が消えている）'
 
 if ($script:Failures -gt 0) {

@@ -33,6 +33,7 @@ BRIEF_TEXT:
 {brief_rules}
 {numeric_rules}
 {reference_section}
+{corpus_section}
 {style_reference_section}
 
 SOURCE_BEGIN:{request_id}

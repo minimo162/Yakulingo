@@ -622,7 +622,10 @@ function New-YakuTextPrompt {
         [Parameter(Mandatory=$true)]$Settings,
         [ValidateSet('to_en','to_jp')][string]$DirectionOverride,
         [AllowNull()][string]$StyleReference,
-        [AllowNull()][string]$RequestId
+        [AllowNull()][string]$RequestId,
+        # V91.61 段階3: 参考資料コーパスから引いた文例。
+        # 作るのは CorpusReference.ps1 で、ここは受け取って差し込むだけ。
+        [AllowNull()][string]$CorpusSection
     )
     if ([string]::IsNullOrWhiteSpace($RequestId)) { $RequestId = [guid]::NewGuid().ToString('N') }
     $direction = if ([string]::IsNullOrWhiteSpace($DirectionOverride)) { Get-YakuDirection -Text $InputText } else { $DirectionOverride }
@@ -632,6 +635,9 @@ function New-YakuTextPrompt {
         input_text = $InputText.Trim()
         reference_section = Get-YakuReferenceSection -Root $Root -Settings $Settings -InputText $InputText -Direction $direction
         style_reference_section = Get-YakuStyleReferenceSection -StyleReference $StyleReference
+        # to_jp のテンプレートには枠が無い。渡ってきても差し込まれないが、
+        # 呼び出し側でも方向を見て空にしている（Test-YakuCorpusReferenceApplicable）。
+        corpus_section = [string]$CorpusSection
         numeric_rules = Get-YakuNumericRulesSection -InputText $InputText -Direction $direction
         request_id = $RequestId
     }

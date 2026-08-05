@@ -20,6 +20,7 @@ $script:YakuRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyComman
 . (Join-Path $PSScriptRoot 'FileTranslation.ps1')
 . (Join-Path $PSScriptRoot 'Corpus.ps1')
 . (Join-Path $PSScriptRoot 'CorpusSearch.ps1')
+. (Join-Path $PSScriptRoot 'CorpusReference.ps1')
 
 $script:YakuBuildId = Assert-YakuBuildIdentity -Root $script:YakuRoot -ExpectedBuildId (Get-YakuBuildId)
 # V91.61: 管理画面。既定は無効で、無効なら管理用の経路を一切登録しない。
@@ -443,6 +444,9 @@ function New-YakuWarmTranslationRunspace {
             . (Join-Path $Root 'src\Translation.ps1')
             . (Join-Path $Root 'src\FileProcessors.ps1')
             . (Join-Path $Root 'src\FileTranslation.ps1')
+            . (Join-Path $Root 'src\Corpus.ps1')
+            . (Join-Path $Root 'src\CorpusSearch.ps1')
+            . (Join-Path $Root 'src\CorpusReference.ps1')
             $null = Assert-YakuBuildIdentity -Root $Root -ExpectedBuildId $ExpectedBuildId
             $preloadSw = [System.Diagnostics.Stopwatch]::StartNew()
             $settings = Read-YakuSettings -Root $Root
@@ -550,6 +554,9 @@ function Start-YakuWarmTranslationRunspaceBuild {
                     . (Join-Path $Root 'src\Translation.ps1')
                     . (Join-Path $Root 'src\FileProcessors.ps1')
                     . (Join-Path $Root 'src\FileTranslation.ps1')
+                    . (Join-Path $Root 'src\Corpus.ps1')
+                    . (Join-Path $Root 'src\CorpusSearch.ps1')
+                    . (Join-Path $Root 'src\CorpusReference.ps1')
                     $null = Assert-YakuBuildIdentity -Root $Root -ExpectedBuildId $ExpectedBuildId
                     $preloadSw = [System.Diagnostics.Stopwatch]::StartNew()
                     $settings = Read-YakuSettings -Root $Root
@@ -1095,6 +1102,9 @@ function Start-YakuTranslationJob {
                 . (Join-Path $Root 'src\Translation.ps1')
                 . (Join-Path $Root 'src\FileProcessors.ps1')
                 . (Join-Path $Root 'src\FileTranslation.ps1')
+                . (Join-Path $Root 'src\Corpus.ps1')
+                . (Join-Path $Root 'src\CorpusSearch.ps1')
+                . (Join-Path $Root 'src\CorpusReference.ps1')
             }
             $sectionSw.Stop(); $moduleLoadMs = $sectionSw.ElapsedMilliseconds
             $sectionSw.Restart()
