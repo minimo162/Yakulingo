@@ -9,12 +9,19 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Root = (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)),
+    # 既定値の式では解決しない。[CmdletBinding()] を付けた .ps1 の param() 既定値の中では、
+    # Windows PowerShell 5.1 は $MyInvocation.MyCommand.Path を $null にする（本体では入る）。
+    # 既定値で解決すると -File 起動が Split-Path で落ち、この門自体が実機で動かなくなる。
+    [string]$Root = '',
     # 改行コードを意図して変えたときだけ渡す。基準値を書き直して終了する。
     [switch]$UpdateEolBaseline
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ([string]::IsNullOrWhiteSpace($Root)) {
+    $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+}
 
 function Get-YakuCheckRelativePath {
     param(

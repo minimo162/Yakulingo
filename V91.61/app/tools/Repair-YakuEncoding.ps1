@@ -8,10 +8,15 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Root = (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)),
+    # Check-Encoding.ps1 と同じ理由で既定値の式では解決しない。
+    # [CmdletBinding()] 付き .ps1 の param() 既定値では 5.1 が $MyInvocation.MyCommand.Path を $null にする。
+    [string]$Root = '',
     [switch]$WhatIfOnly
 )
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($Root)) {
+    $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+}
 $rootPath = (Resolve-Path -LiteralPath $Root).Path
 
 $targets = New-Object System.Collections.Generic.List[string]

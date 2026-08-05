@@ -69,6 +69,9 @@ if ($ManifestOnly) { return }
 if (Test-Path -LiteralPath $OutputPath) { Remove-Item -LiteralPath $OutputPath -Force }
 # Compress-Archive は隠しファイルの扱いがプラットフォームで異なる。manifest の一覧から
 # 直接ZIPを組み立て、ZIPの中身とmanifestが構造的に一致することを保証する。
+# ZipArchiveMode / CompressionLevel は System.IO.Compression にある。
+# .FileSystem だけでは Windows PowerShell 5.1 で型が見つからず落ちる。
+Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $rootName = Split-Path -Leaf $source
 $zip = [IO.Compression.ZipFile]::Open($OutputPath, [IO.Compression.ZipArchiveMode]::Create)
