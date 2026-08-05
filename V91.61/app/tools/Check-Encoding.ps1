@@ -107,7 +107,6 @@ if (Test-Path -LiteralPath $wwwDir -PathType Container) {
 }
 $extraBomTargets = @(
     'glossary.csv',
-    'prompt_glossary.csv',
     'config\settings.template.json',
     'docs\UI_REDESIGN_V33.md',
     'docs\WRITEBACK_FIX_V34.md',

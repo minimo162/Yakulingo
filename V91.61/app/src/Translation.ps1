@@ -75,7 +75,7 @@ function Get-YakuTranslationContractFingerprint {
     if ([string]::IsNullOrWhiteSpace($Root)) {
         try { $Root = Get-YakuRoot } catch { $Root = '' }
     }
-    $names = @('glossary.csv','prompt_glossary.csv','prompts\text_translate_to_en.txt','prompts\text_translate_to_jp.txt','prompts\file_translate_to_en.txt','prompts\file_translate_to_jp.txt','prompts\style_brief_rules.txt')
+    $names = @('glossary.csv','prompts\text_translate_to_en.txt','prompts\text_translate_to_jp.txt','prompts\file_translate_to_en.txt','prompts\file_translate_to_jp.txt','prompts\style_brief_rules.txt')
     $settingParts = New-Object System.Collections.Generic.List[string]
     foreach ($key in @('copilot_model','use_bundled_glossary','glossary_prompt_limit','max_chars_per_batch','max_chars_per_batch_file')) {
         try { $settingParts.Add($key + '=' + [string]$Settings.$key) | Out-Null } catch { $settingParts.Add($key + '=') | Out-Null }
@@ -504,7 +504,8 @@ function Get-YakuNumericMaskProtectedSpans {
     # MTMUS製(CX-50) 等)を壊さないため、マスク前のテキストから求める。
     # 件数制限は掛けない。制限すると上限を超えた用語が保護されない。
     if (-not [string]::IsNullOrWhiteSpace($Root) -and (Get-Command Get-YakuRelevantGlossaryMatches -ErrorAction SilentlyContinue)) {
-        foreach ($path in @((Get-YakuGlossaryPath -Root $Root), (Get-YakuPromptGlossaryPath -Root $Root))) {
+        # prompt_glossary.csv は廃止したので glossary.csv だけを見る。
+        foreach ($path in @((Get-YakuGlossaryPath -Root $Root))) {
             if ([string]::IsNullOrWhiteSpace($path)) { continue }
             if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
             try {
@@ -1492,90 +1493,6 @@ function Test-YakuTextGlossaryDiagnosticContains {
     return ($haystack.IndexOf($needle, [System.StringComparison]::Ordinal) -ge 0)
 }
 
-function Write-YakuTextGlossaryDiagnosticLog {
-    param(
-        [AllowNull()][object[]]$Matches,
-        [AllowNull()][object[]]$Options,
-        [AllowNull()][string]$InputText,
-        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
-        [AllowNull()][string]$JobId
-    )
-    if (@($Matches).Count -le 0 -or @($Options).Count -le 0) { return }
-    $violations = New-Object System.Collections.Generic.List[object]
-    $checked = 0
-    foreach ($option in @($Options)) {
-        if ($null -eq $option) { continue }
-        $style = [string]$option.Style
-        $translated = [string]$option.Translation
-        foreach ($match in @($Matches)) {
-            if ($null -eq $match) { continue }
-            $from = if ($match.PSObject.Properties.Name -contains 'From') { [string]$match.From } else { [string]$match.Source }
-            $to = if ($match.PSObject.Properties.Name -contains 'To') { [string]$match.To } else { [string]$match.Target }
-            if ([string]::IsNullOrWhiteSpace($from) -or [string]::IsNullOrWhiteSpace($to)) { continue }
-            if (-not (Test-YakuTextGlossaryDiagnosticContains -Text $InputText -Term $from)) { continue }
-            $checked++
-            $variantValues = if ($match.PSObject.Properties.Name -contains 'Variants') { @($match.Variants) } else { @($to) }
-            $variantHit = $false
-            foreach ($variant in $variantValues) {
-                if (Test-YakuTextGlossaryDiagnosticContains -Text $translated -Term ([string]$variant)) { $variantHit = $true; break }
-            }
-            if ($variantHit) { continue }
-            $row = 0
-            try { $row = [int]$match.Row } catch { $row = 0 }
-            $violations.Add([pscustomobject]@{ Style=$style; From=$from; To=$to; Row=$row; SourceText=[string]$InputText; TranslatedText=$translated }) | Out-Null
-        }
-    }
-
-    $diagnosticsEnabled = Test-YakuFullTextDiagnosticsEnabled
-    try { Write-YakuLog "Text glossary occurrence audit: jobId=$JobId direction=$Direction optionCount=$(@($Options).Count) checked=$checked violated=$($violations.Count) diagnosticEnabled=$diagnosticsEnabled" 'INFO' } catch {}
-    if ($violations.Count -le 0) { return }
-
-    $diagnosticPath = ''
-    if ($diagnosticsEnabled) {
-        try {
-            $dir = Get-YakuSubDir 'logs'
-            $diagnosticPath = Join-Path $dir ("copilot-glossary-diagnostic-" + (Get-Date).ToString('yyyyMMdd-HHmmss-fff') + '.jsonl')
-        } catch { $diagnosticPath = '' }
-    }
-    $ordinal = 0
-    foreach ($violation in @($violations.ToArray())) {
-        $ordinal++
-        $from = [string]$violation.From
-        $to = [string]$violation.To
-        $source = [string]$violation.SourceText
-        $translated = [string]$violation.TranslatedText
-        $fromHash = try { Get-YakuTextSha256 -Text $from } catch { '' }
-        $toHash = try { Get-YakuTextSha256 -Text $to } catch { '' }
-        $sourceHash = try { Get-YakuTextSha256 -Text $source } catch { '' }
-        $translationHash = try { Get-YakuTextSha256 -Text $translated } catch { '' }
-        try {
-            Write-YakuLog "Text glossary occurrence violation: jobId=$JobId direction=$Direction ordinal=$ordinal style=$($violation.Style) row=$($violation.Row) fromLength=$($from.Length) fromHash=$fromHash expectedLength=$($to.Length) expectedHash=$toHash sourceLength=$($source.Length) sourceHash=$sourceHash translationLength=$($translated.Length) translationHash=$translationHash" 'INFO'
-        } catch {}
-        if ($diagnosticPath) {
-            try {
-                $entry = [ordered]@{
-                    time = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss.fff')
-                    event = 'text-glossary-occurrence-violation'
-                    job_id = [string]$JobId
-                    direction = [string]$Direction
-                    ordinal = [int]$ordinal
-                    style = [string]$violation.Style
-                    glossary = [ordered]@{ from=$from; expected=$to; row=[int]$violation.Row }
-                    source_text = $source
-                    translated_text = $translated
-                    normalized = [ordered]@{ source=(ConvertTo-YakuGlossaryMatchKey -Value $source); translated=(ConvertTo-YakuGlossaryMatchKey -Value $translated); expected=(ConvertTo-YakuGlossaryMatchKey -Value $to) }
-                }
-                Add-Content -LiteralPath $diagnosticPath -Value ($entry | ConvertTo-Json -Depth 30 -Compress) -Encoding UTF8
-            } catch {
-                try { Write-YakuLog "Text glossary diagnostic event write failed. jobId=$JobId ordinal=$ordinal error=$($_.Exception.Message)" 'WARN' } catch {}
-            }
-        }
-    }
-    if ($diagnosticPath) {
-        try { Write-YakuLog "Text glossary occurrence diagnostic saved. jobId=$JobId records=$ordinal path=$diagnosticPath" 'INFO' } catch {}
-    }
-}
-
 function Invoke-YakuTextTranslation {
     param(
         [Parameter(Mandatory=$true)][string]$Root,
@@ -1611,7 +1528,6 @@ function Invoke-YakuTextTranslation {
     $batches = @(Split-YakuTextBatches -Text $processingInput.Trim() -MaxChars $maxChars)
     $sectionSw.Stop(); $batchingMs = $sectionSw.ElapsedMilliseconds
     $sectionSw.Restart()
-    $appliedGlossary = @(Get-YakuAppliedGlossaryEntries -Root $Root -InputText $processingInput -Direction $direction -Settings $Settings)
     $sectionSw.Stop(); $glossaryMatchMs = $sectionSw.ElapsedMilliseconds
     $styleReferenceSw = [System.Diagnostics.Stopwatch]::StartNew()
     $initialStyleReference = ''
@@ -1723,13 +1639,8 @@ function Invoke-YakuTextTranslation {
             $prompt = (($batchResults | ForEach-Object { [string]$_.Prompt }) -join "`n`n--- BATCH PROMPT ---`n`n")
         }
 
-        $jobId = ''
-        try { if ($ProgressState -and -not [string]::IsNullOrWhiteSpace([string]$ProgressState['id'])) { $jobId = [string]$ProgressState['id'] } } catch { $jobId = '' }
-        try {
-            Write-YakuTextGlossaryDiagnosticLog -Matches $appliedGlossary -Options $options -InputText $InputText -Direction $direction -JobId $jobId
-        } catch {
-            try { Write-YakuLog "Text glossary diagnostic audit failed without affecting translation. jobId=$jobId error=$($_.Exception.Message)" 'WARN' } catch {}
-        }
+        # 文中の用語監査は廃止した（利用者の判断 2026-08-06）。
+        # テキスト翻訳の文中は、用語集ではなくコーパスの文例で寄せる。
 
         $maskedTotal = 0
         $keptTotal = 0
@@ -1741,7 +1652,6 @@ function Invoke-YakuTextTranslation {
             KeptCount = [int]$keptTotal
             InputLength = $InputText.Length
             Options = $options
-            AppliedGlossary = $appliedGlossary
             # V91.61 段階3: 何を参照して訳したかを画面へ出すため。
             CorpusExamples = @($corpusReference.Examples)
             CorpusTerms = @($corpusReference.Terms)
@@ -1762,7 +1672,6 @@ function Invoke-YakuTextTranslation {
             Prompt = if ($prompt) { $prompt } else { '' }
             Direction = $direction
             DirectionLabel = $directionLabel
-            AppliedGlossary = $appliedGlossary
         }
     }
 }

@@ -32,7 +32,6 @@ FULL_TEXT: natural business English with all source information and tone; spell 
 BRIEF_TEXT:
 {brief_rules}
 {numeric_rules}
-{reference_section}
 {corpus_section}
 {style_reference_section}
 

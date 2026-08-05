@@ -27,7 +27,6 @@ Rules:
 - For ▲, negative minus signs, or マイナス, put parentheses around the numeric token only. Units, currency words, percent signs, and other words stay outside. Valid: (72) k units, (xxx) oku, (3) %. Invalid: (72 k units), (xxx oku), (3%).
 - Numeric tokens already in English (oku, k units, k yen) must remain verbatim. Never rescale, reconvert, add yen after oku, or restore Japanese units. Do not use billion, trillion, bn, or tn.
 - Keep YoY, QoQ, CAGR, 3Q, and Jan. to Dec. In English output, avoid greater-than/less-than signs, tilde, arrows, and up/down arrows; use words.
-{reference_section}
 {style_reference_section}
 
 SOURCE_BEGIN:{request_id}

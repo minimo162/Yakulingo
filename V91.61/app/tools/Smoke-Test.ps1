@@ -207,21 +207,8 @@ Assert-Yaku -Condition (-not (Test-YakuFileTranslationInvalid -Source '配当方
 Assert-Yaku -Condition (-not (Test-YakuFileTranslationInvalid -Source '123.4%' -Translation '123.4%' -Direction 'to_en')) -Message 'numeric-only text must remain unchanged without a false failure'
 Assert-Yaku -Condition (-not (Test-YakuFileTranslationInvalid -Source 'EBITDA' -Translation 'EBITDA' -Direction 'to_jp')) -Message 'protected abbreviation must remain unchanged without a false failure'
 
-$auditItems = @(
-    [pscustomobject]@{ Index=1; Text='営業利益率'; BlockIds=@('a') },
-    [pscustomobject]@{ Index=2; Text='売上高'; BlockIds=@('b') }
-)
-$auditTranslations = @{ 1='Operating margin'; 2='Sales' }
-$auditMatches = @(
-    [pscustomobject]@{ From='営業利益率'; To='Operating margin'; Row=1 },
-    [pscustomobject]@{ From='利益'; To='Profit'; Row=2 },
-    [pscustomobject]@{ From='売上高'; To='Revenue'; Row=3 }
-)
-$audit = Get-YakuFileGlossaryOccurrenceAudit -Matches $auditMatches -Items $auditItems -TranslationByIndex $auditTranslations -Blocks @()
-Assert-Yaku -Condition ($audit.Checked -eq 2 -and $audit.Violated -eq 1) -Message 'item occurrence glossary audit must use one canonical checked/violated result'
-Assert-Yaku -Condition ($audit.ExcludedContained -eq 1) -Message 'short glossary terms fully covered by a longer term must be excluded'
-Assert-Yaku -Condition ($audit.Violations[0].ItemIndex -eq 2 -and $audit.Violations[0].Reason -eq 'missing-expected-term') -Message 'glossary violation must identify the exact item and reason'
-
+# 文中の用語監査は廃止した（利用者の判断 2026-08-06）。
+# 用語集はレイアウトの保証のためのもので、文中の言い回しの統一には使わない。
 $scopeItems = @(
     [pscustomobject]@{ Index=1; Text='タイ'; BlockIds=@('thai') },
     [pscustomobject]@{ Index=2; Text='タイミング変更'; BlockIds=@('timing') },
@@ -235,19 +222,6 @@ $scopedMatches = @(ConvertTo-YakuFileItemScopedGlossaryMatches -Matches $scopeMa
 Assert-Yaku -Condition ($scopedMatches.Count -eq 1 -and $scopedMatches[0].ItemIndex -eq 1 -and $scopedMatches[0].From -eq 'タイ') -Message 'glossary audit matches must be scoped to the item where the exact term occurs'
 Assert-Yaku -Condition (@(Find-YakuExactTermIndexes -InputText '四半期推移' -Term '半期').Count -eq 0) -Message 'half-year must not match inside quarter'
 Assert-Yaku -Condition (@(Find-YakuExactTermIndexes -InputText '上半期実績' -Term '半期').Count -eq 1) -Message 'half-year must still match valid half-year compounds'
-
-$perfItems = New-Object System.Collections.Generic.List[object]
-$perfMatches = New-Object System.Collections.Generic.List[object]
-$perfTranslations = @{}
-for ($i = 1; $i -le 250; $i++) {
-    $perfItems.Add([pscustomobject]@{ Index=$i; Text=("テスト文書 $i"); BlockIds=@() }) | Out-Null
-    $perfTranslations[$i] = "Test document $i"
-}
-for ($i = 1; $i -le 130; $i++) { $perfMatches.Add([pscustomobject]@{ From=("未使用用語$i"); To=("Unused term $i"); Row=$i }) | Out-Null }
-$perfSw = [System.Diagnostics.Stopwatch]::StartNew()
-$null = Get-YakuFileGlossaryOccurrenceAudit -Matches @($perfMatches.ToArray()) -Items @($perfItems.ToArray()) -TranslationByIndex $perfTranslations -Blocks @()
-$perfSw.Stop()
-Assert-Yaku -Condition ($perfSw.ElapsedMilliseconds -lt 5000) -Message 'normalized glossary audit benchmark must complete within five seconds'
 
 $env:YAKULINGO_MOCK = '1'
 try {
@@ -335,12 +309,14 @@ Assert-Yaku -Condition (-not $copilot.Contains("reasons.push('outside-chat-input
 Assert-Yaku -Condition ($copilot.Contains('Clear-YakuCopilotInputVerified') -and $copilot.Contains('Reset-YakuCopilotChatByNavigation') -and $copilot.Contains("Page.navigate")) -Message 'send-not-confirmed retries must clear input and support navigation recovery'
 Assert-Yaku -Condition ($copilot.Contains('設定モデルを選択できず') -and $translationSource.Contains('Warnings = @($warnings.ToArray())')) -Message 'model mismatch must be visible in text and file job warnings'
 Assert-Yaku -Condition ($promptBuilder.Contains('YakuPromptFileCache') -and $promptBuilder.Contains('LastWriteTimeUtc.Ticks') -and $promptBuilder.Contains("Get-YakuPromptFileText -Path `$path")) -Message 'prompt files must use an mtime-and-length-aware in-memory cache'
-Assert-Yaku -Condition ($promptBuilder.Contains('Casing: keep all-caps acronyms and proper nouns') -and $promptBuilder.Contains('abbreviations of ordinary words (e.g. Vol., Act.)') -and $promptBuilder.Contains('capitalized as listed only when the term stands alone as a heading or label line') -and $promptBuilder.Contains('including signed breakdown lists')) -Message 'glossary injection must distinguish all-caps acronyms and ordinary-word abbreviations'
-Assert-Yaku -Condition ($promptBuilder.Contains('function Get-YakuPromptGlossaryPath') -and $promptBuilder.Contains("Join-Path `$Root 'prompt_glossary.csv'") -and $promptBuilder.Contains('return (Get-YakuGlossaryPath -Root $Root)')) -Message 'prompt glossary must have a backward-compatible glossary.csv fallback'
 Assert-Yaku -Condition ($promptBuilder.Contains('[AllowNull()][string]$Path') -and $promptBuilder.Contains('YakuGlossaryEntriesCache -is [hashtable]') -and $promptBuilder.Contains('YakuGlossaryEntriesCache[$cachePathKey]')) -Message 'two glossary files must use path-aware independent cache entries'
-Assert-Yaku -Condition ($translationSource.Contains("'prompt_glossary.csv'") -and $fileTranslationSource.Contains('-Path $promptGlossaryPath')) -Message 'translation fingerprint and file prompt audit must follow prompt_glossary.csv'
+# 文中の用語統一は追わない方針にした（利用者の判断 2026-08-06）。
+# プロンプトへの用語集注入・prompt_glossary.csv・文中の用語監査は廃止済み。
+# 戻っていないことと、レイアウトの保証（セル完全一致）が残っていることを見る。
+Assert-Yaku -Condition (-not $promptBuilder.Contains('GLOSSARY (mandatory)') -and -not $promptBuilder.Contains('function Get-YakuPromptGlossaryPath') -and -not $promptBuilder.Contains('function Get-YakuReferenceSection')) -Message 'prompt glossary injection must stay removed'
+Assert-Yaku -Condition (-not $fileTranslationSource.Contains('function Get-YakuFileGlossaryOccurrenceAudit') -and -not $translationSource.Contains('function Write-YakuTextGlossaryDiagnosticLog')) -Message 'in-sentence glossary audit must stay removed'
+Assert-Yaku -Condition ($promptBuilder.Contains('表ラベル置換用 — glossary.csv') -and $fileTranslationSource.Contains('function Resolve-YakuFileExactGlossaryTranslations')) -Message 'cell-exact replacement must remain as the layout guarantee'
 Assert-Yaku -Condition ($promptBuilder.Contains('2万台 = 20 k units') -and $promptBuilder.Contains('never "ten thousand units"')) -Message 'man-unit conversion rule must be injected for text translation'
-Assert-Yaku -Condition ($promptBuilder.Contains('表ラベル置換用 — glossary.csv') -and $promptBuilder.Contains('Copilot翻訳用 — prompt_glossary.csv') -and $promptBuilder.Contains('未作成(glossary.csv にフォールバック中)')) -Message 'read-only glossary panel must show both sources and fallback state'
 Assert-Yaku -Condition (-not $promptBuilder.Contains('function Add-YakuGlossaryEntry') -and -not $promptBuilder.Contains('function Remove-YakuGlossaryEntryByRow') -and -not $promptBuilder.Contains('glossary-add-form') -and -not $promptBuilder.Contains('glossary-delete')) -Message 'glossary write functions and edit controls must be removed'
 Assert-Yaku -Condition ($copilot.Contains('Wait-YakuCopilotInputCondition') -and $copilot.Contains("Condition focused") -and $copilot.Contains("Condition empty")) -Message 'fixed fill sleeps must be replaced by focused and empty input condition waits'
 Assert-Yaku -Condition ($copilot.Contains('modelSwitcherLabel') -and $copilot.Contains('already_selected_from_ready_state')) -Message 'ready state must allow already-selected model work to be skipped'

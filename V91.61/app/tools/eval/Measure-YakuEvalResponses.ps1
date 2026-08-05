@@ -121,23 +121,8 @@ foreach ($case in @($set.cases)) {
     if ($rawList.Count   -gt 0 -and -not (Test-YakuEvalContains -Text $raw   -Needles $rawList))                  { $missing.Add('RAW:' + ($rawList -join '|')) | Out-Null }
     $row['missing_required'] = @($missing.ToArray())
 
-    # --- 用語集遵守 ---
-    $applied = @(Get-YakuAppliedGlossaryEntries -Root $appRoot -InputText ([string]$case.source) -Direction ([string]$case.direction) -Settings $settings)
-    $glossaryTotal = 0; $glossaryHit = 0; $glossaryMiss = New-Object System.Collections.Generic.List[string]
-    foreach ($g in $applied) {
-        $target = [string]$g.Target
-        if ([string]::IsNullOrWhiteSpace($target)) { continue }
-        $glossaryTotal++
-        # 訳語が候補を | で並べる場合があるため、いずれか1つが出ていればよい。
-        $variants = @($target -split '\|' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-        # 単複のゆらぎは訳の誤りではない。fixed costs と fixed cost を同一視する。
-        $variants += @($variants | Where-Object { $_ -cmatch 's$' } | ForEach-Object { $_.Substring(0, $_.Length - 1) })
-        if (Test-YakuEvalContains -Text ($full + ' ' + $brief) -Needles $variants) { $glossaryHit++ }
-        else { $glossaryMiss.Add([string]$g.Source + '->' + $target) | Out-Null }
-    }
-    $row['glossary_total'] = $glossaryTotal
-    $row['glossary_hit'] = $glossaryHit
-    $row['glossary_miss'] = @($glossaryMiss.ToArray())
+    # 用語集遵守の測定は廃止した（利用者の判断 2026-08-06）。
+    # 文中の言い回しは用語集で統一しない方針にしたため、測る対象が無い。
 
     # --- BRIEF 圧縮率 ---
     $row['full_chars'] = $full.Length

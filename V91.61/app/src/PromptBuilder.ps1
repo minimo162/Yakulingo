@@ -133,13 +133,6 @@ function Get-YakuGlossaryPath {
     return (Join-Path $Root 'glossary.csv')
 }
 
-function Get-YakuPromptGlossaryPath {
-    param([Parameter(Mandatory=$true)][string]$Root)
-    $path = Join-Path $Root 'prompt_glossary.csv'
-    if (Test-Path -LiteralPath $path -PathType Leaf) { return $path }
-    return (Get-YakuGlossaryPath -Root $Root)
-}
-
 function Get-YakuGlossaryEntries {
     param(
         [Parameter(Mandatory=$true)][string]$Root,
@@ -509,53 +502,22 @@ function Get-YakuRelevantGlossaryMatches {
     return @($orderedSurvivors)
 }
 
-function Get-YakuRelevantGlossaryLines {
-    param(
-        [Parameter(Mandatory=$true)][string]$Root,
-        [AllowNull()][string]$InputText,
-        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
-        [int]$Limit = 48,
-        [AllowNull()][string]$Path
-    )
-    $matches = @(Get-YakuRelevantGlossaryMatches -Root $Root -InputText $InputText -Direction $Direction -Limit $Limit -Path $Path)
-    $lines = New-Object System.Collections.Generic.List[string]
-    foreach ($item in $matches) {
-        $lines.Add('- ' + [string]$item.From + ' = ' + [string]$item.To) | Out-Null
-    }
-    return @($lines.ToArray())
-}
-
-function Get-YakuAppliedGlossaryEntries {
-    param(
-        [Parameter(Mandatory=$true)][string]$Root,
-        [AllowNull()][string]$InputText,
-        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
-        [AllowNull()]$Settings,
-        [int]$Limit = 0
-    )
-    if ($Limit -le 0) { $Limit = Get-YakuGlossaryPromptLimit -Settings $Settings }
-    $path = Get-YakuPromptGlossaryPath -Root $Root
-    return @(Get-YakuRelevantGlossaryMatches -Root $Root -InputText $InputText -Direction $Direction -Limit $Limit -Path $path)
-}
-
-function Get-YakuReferenceSection {
-    param(
-        [Parameter(Mandatory=$true)][string]$Root,
-        [Parameter(Mandatory=$true)]$Settings,
-        [AllowNull()][string]$InputText,
-        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction
-    )
-    $useGlossary = $true
-    try { $useGlossary = [bool]$Settings.use_bundled_glossary } catch { $useGlossary = $true }
-    if (-not $useGlossary) { return '' }
-
-    $limit = Get-YakuGlossaryPromptLimit -Settings $Settings
-    $path = Get-YakuPromptGlossaryPath -Root $Root
-    $lines = @(Get-YakuRelevantGlossaryLines -Root $Root -InputText $InputText -Direction $Direction -Limit $limit -Path $path)
-    if ($lines.Count -le 0) { return '' }
-    $nl = [Environment]::NewLine
-    return ('GLOSSARY (mandatory). When a source term below appears, use the mapped target term exactly; never a synonym; never apply to items where the term does not occur. FULL uses the spelled-out mapped term; BRIEF may replace it with its standard abbreviation from the BRIEF rules (spelled-out form and its abbreviation count as the same rendering). Casing: keep all-caps acronyms and proper nouns (e.g. FX, OP, B/E) exactly as listed; abbreviations of ordinary words (e.g. Vol., Act.) and ordinary words follow the context - capitalized as listed only when the term stands alone as a heading or label line; inside a sentence, including signed breakdown lists, it is running text (lowercase):' + $nl + ($lines -join $nl))
-}
+# GLOSSARY 節は廃止した（利用者の判断 2026-08-06）。
+#
+# 用語集の目的はレイアウトの保証であって、文中の言い回しの統一ではない
+# （_docs/決定_用語集は用語の一貫性ではなくレイアウトの保証.md）。
+# はみ出すのはラベルであり、文はセルの中で折り返せば行高が吸収する。
+#
+# 実機で、GLOSSARY 節があるとコーパスの言い回しが通らず、切ると通ることを
+# 確認した（_docs/実機検証結果_2026-08-05.md §3-2）。文中では用語集が
+# コーパスの邪魔をしていた。
+#
+# 既存の翻訳製品も、文中の用語を機械的に置換していない。CAT/TMS は印を付けて
+# 人が直し、MT の用語集（DeepL / Google）はモデルの内側で寄せる仕組みで、
+# DeepL は「search-and-replace 方式ではない」と明記し、Google は用語集適用前と
+# 適用後の両方を返す（＝保証ではない）。活用と一致が壊れるためである。
+#
+# ラベルの保証は Resolve-YakuFileExactGlossaryTranslations のセル完全一致が担う。
 
 function Get-YakuNumericRulesSection {
     param(
@@ -633,7 +595,6 @@ function New-YakuTextPrompt {
     $template = Get-YakuPromptTemplate -Root $Root -Name $templateName
     $vars = @{
         input_text = $InputText.Trim()
-        reference_section = Get-YakuReferenceSection -Root $Root -Settings $Settings -InputText $InputText -Direction $direction
         style_reference_section = Get-YakuStyleReferenceSection -StyleReference $StyleReference
         # to_jp のテンプレートには枠が無い。渡ってきても差し込まれないが、
         # 呼び出し側でも方向を見て空にしている（Test-YakuCorpusReferenceApplicable）。
@@ -726,15 +687,10 @@ function Convert-YakuGlossaryManagerToHtml {
     $machineAllEntries = @(Get-YakuGlossaryEntries -Root $Root -Path $machinePath -IncludeDuplicates)
     $machineStatus = if (Test-Path -LiteralPath $machinePath -PathType Leaf) { '' } else { '未作成' }
 
-    $promptDisplayPath = Join-Path $Root 'prompt_glossary.csv'
-    $promptExists = Test-Path -LiteralPath $promptDisplayPath -PathType Leaf
-    $promptReadPath = Get-YakuPromptGlossaryPath -Root $Root
-    $promptEntries = @(Get-YakuGlossaryEntries -Root $Root -Path $promptReadPath)
-    $promptAllEntries = @(Get-YakuGlossaryEntries -Root $Root -Path $promptReadPath -IncludeDuplicates)
-    $promptStatus = if ($promptExists) { '' } else { "未作成(glossary.csv にフォールバック中): $promptReadPath" }
-
+    # prompt_glossary.csv は廃止した（利用者の判断 2026-08-06）。
+    # 用語集はレイアウトの保証のためのもので、文中の言い回しには使わない。
     $machineHtml = Convert-YakuGlossarySectionToHtml -Title '表ラベル置換用 — glossary.csv' -Description 'Excel/CSVのセルが完全一致したときCopilotを使わず直接置換。表の正式表記で登録。' -DisplayPath $machinePath -Entries $machineEntries -AllEntries $machineAllEntries -Status $machineStatus
-    $promptHtml = Convert-YakuGlossarySectionToHtml -Title 'Copilot翻訳用 — prompt_glossary.csv' -Description '翻訳プロンプトに参考訳語として注入。文中の形(一般語は小文字)で登録。' -DisplayPath $promptDisplayPath -Entries $promptEntries -AllEntries $promptAllEntries -Status $promptStatus
+    $promptHtml = ''
     $html = @"
 <div class='glossary-manager'>
   <div class='alert alert-info glossary-readonly-note'>編集は各CSVファイルを直接編集してください(UTF-8 BOM付き・カンマ区切り)。保存後は次回の翻訳から自動反映されます。</div>

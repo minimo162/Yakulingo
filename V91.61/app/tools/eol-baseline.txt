@@ -1,6 +1,5 @@
 ﻿config/settings.template.json	lf
 glossary.csv	crlf
-prompt_glossary.csv	crlf
 prompts/corpus_query_to_en.txt	lf
 prompts/file_translate_to_en.txt	lf
 prompts/file_translate_to_jp.txt	crlf
