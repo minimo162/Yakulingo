@@ -57,6 +57,43 @@ $t3 = @(Get-YakuCorpusQueryTerms -Answer 'SEARCH_TERMS: equity equity equity rat
 Chk ($t3.Count -eq 2) '同じ語は重ねない'
 $many = 'SEARCH_TERMS: ' + ((1..30 | ForEach-Object { 'term' + $_ }) -join ' ')
 Chk (@(Get-YakuCorpusQueryTerms -Answer $many).Count -le 12) '検索語には上限がある'
+# 実機の Copilot は検索語と終端マーカーを同じ行に返すことがある（2026-08-05 実測）。
+$sameLine = @(Get-YakuCorpusQueryTerms -Answer 'SEARCH_TERMS: full year outlook foreign exchange YAKULINGO_END:deadbeef')
+Chk ($sameLine -contains 'outlook') '終端マーカーが同じ行に来ても取れる'
+
+# ---------------------------------------------------------------- 応答の受け取り契約
+# ここが素通しになっていたため、段階3 は出荷状態で一度も成立していなかった。
+# Copilot は正しく答えていたのに、labeled 契約が SEARCH_TERMS を知らず、
+# 候補として認めないまま待ち続けて時間切れになっていた。
+# 往復を差し替える回帰では実際の契約を通らないので、契約そのものを読んで確かめる。
+Write-Host '応答の受け取り契約'
+$clientText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CopilotClient.ps1'))
+
+# プロンプトが Copilot に出させるラベルを、当てずっぽうではなく prompts から集める。
+# 入力側の枠と終端マーカーは出力ラベルではないので除く。
+$frameLabels = @('SOURCE_BEGIN','SOURCE_END','SOURCE_ITEMS_END','YAKULINGO_END','YAKULINGO_OK','YAKULINGO_DONE')
+$askedLabels = New-Object System.Collections.Generic.List[string]
+foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $root 'prompts') -Filter '*.txt')) {
+    $body = [System.IO.File]::ReadAllText($f.FullName)
+    foreach ($m in [regex]::Matches($body, '(?m)^\s*([A-Z][A-Z_]{3,})\s*:')) {
+        $name = [string]$m.Groups[1].Value
+        if ($frameLabels -contains $name) { continue }
+        if (-not $askedLabels.Contains($name)) { [void]$askedLabels.Add($name) }
+    }
+}
+Chk ($askedLabels.Count -ge 4) ('prompts が出させるラベルを集められた: ' + ($askedLabels -join ', '))
+Chk ($askedLabels -contains 'SEARCH_TERMS') 'コーパス検索語のラベルが含まれている'
+
+$labelReLine = [regex]::Match($clientText, '(?m)^const labelRe = .*$').Value
+$startLabelReLine = [regex]::Match($clientText, '(?m)^const startLabelRe = .*$').Value
+$usefulBlock = [regex]::Match($clientText, '(?s)const hasUsefulLabeledOutput = \(text\) => \{.*?\n\};').Value
+Chk (-not [string]::IsNullOrWhiteSpace($labelReLine)) 'labelRe を見つけられる'
+Chk (-not [string]::IsNullOrWhiteSpace($usefulBlock)) 'hasUsefulLabeledOutput を見つけられる'
+foreach ($name in $askedLabels) {
+    Chk ($labelReLine -match [regex]::Escape($name)) ('labelRe が ' + $name + ' を知っている')
+    Chk ($usefulBlock -match [regex]::Escape($name)) ('hasUsefulLabeledOutput が ' + $name + ' を扱う')
+}
+Chk ($startLabelReLine -match 'SEARCH_TERMS') 'startLabelRe が SEARCH_TERMS を知っている（答えの切り出しに要る）'
 
 # ---------------------------------------------------------------- 文例の伏せ字
 Write-Host '文例の数字を伏せる'
