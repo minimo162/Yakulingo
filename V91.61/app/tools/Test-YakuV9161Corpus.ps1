@@ -63,7 +63,8 @@ Chk (@($m.entries).Count -eq 2) ('2回取り込んでも件数が増えない: '
 Write-Host '別名の同一ファイル'
 Copy-Item (Join-Path $dbDir 'a_en.pdf') (Join-Path $dbDir 'copy.pdf')
 $st3 = Get-YakuCorpusState -SourceRoot $srcRoot
-Chk (@($st3.Pending).Count -eq 0) '別名でも同じ id なので未取込にならない'
+Chk (@($st3.Pending).Count -eq 0) '別名でも同じ id なので未取込にならない（原本が在るので移動ではなく重複）'
+Chk ([int]$st3.RelocatedCount -eq 0) '原本が在るうちは移動として数えない'
 Remove-Item (Join-Path $dbDir 'copy.pdf')
 
 Write-Host '低抽出の判定'

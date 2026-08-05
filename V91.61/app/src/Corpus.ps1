@@ -139,6 +139,10 @@ function Get-YakuCorpusState {
     }
 
     $files = @(Get-YakuCorpusSourceFiles -SourceRoot $SourceRoot)
+    # 移動と重複を区別するため、いま存在する相対パスを先に集める。
+    $presentPaths = @{}
+    foreach ($f in $files) { $presentPaths[[string]$f.Relative] = $true }
+
     $pending = New-Object System.Collections.Generic.List[object]
     $byDb = [ordered]@{}
     $seenIds = @{}
@@ -149,10 +153,16 @@ function Get-YakuCorpusState {
         $done = $known.ContainsKey($ident.Id)
         # id は内容のハッシュなので、資料を別のフォルダへ移しても同じ id になる。
         # そのままだと「取り込み済み」と判定され、データベース名が古いまま直せない。
-        # 置き場所が変わっていたら取り込み直す対象にする。
+        #
+        # ただし「移動」と「重複」は分ける。台帳が指す原本がまだ在るなら、
+        # 同じ内容の別ファイルは複製であって移動ではない。取り込み直すと
+        # 台帳の指す先が行き来して落ち着かないため、対象にしない。
         $moved = $false
-        if ($done -and ([string]$known[$ident.Id].source -ne [string]$f.Relative)) {
-            $done = $false; $moved = $true; $relocated++
+        if ($done) {
+            $recorded = [string]$known[$ident.Id].source
+            if ($recorded -ne [string]$f.Relative -and -not $presentPaths.ContainsKey($recorded)) {
+                $done = $false; $moved = $true; $relocated++
+            }
         }
         if (-not $byDb.Contains($f.Database)) { $byDb[$f.Database] = [pscustomobject]@{ Database=$f.Database; Done=0; Pending=0 } }
         if ($done) { $byDb[$f.Database].Done++ }
