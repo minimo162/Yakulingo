@@ -363,7 +363,7 @@ function Convert-YakuNumericUnits {
 # V91.60 数値マスキング
 #
 # Copilot は外部サーバーであるため、機密性のある数値の「大きさ」だけを
-# プレースホルダー【N1】へ置き換えて送信し、受信後に復元する。
+# プレースホルダー[[N1]]へ置き換えて送信し、受信後に復元する。
 # 符号(+ / ▲ / △ / 括弧)と単位(oku / k yen / % など)は外に残す。依頼元の許可により
 # 符号は保持してよく、単位を残すとモデルが金額・数量・比率を区別できるため。
 #
@@ -466,8 +466,8 @@ function Get-YakuNumericMaskProtectedSpans {
     # V91.60(決定事項#7): 手動マスク【…非開示】は廃止した。数値は自動でマスクされる
     # ため手で伏せる必要がなく、二重の仕組みを残すと保護範囲の判断が分かれる。
     # 【】は強調・見出しの括弧として扱い、中の数値は通常どおりマスクする。
-    # 自分が入れた【N1】だけは保護する。二重マスクを避けるため。
-    foreach ($m in [regex]::Matches([string]$Text, '【N\d+】')) {
+    # 自分が入れた[[N1]]だけは保護する。二重マスクを避けるため。
+    foreach ($m in [regex]::Matches([string]$Text, '\[\[N\d+\]\]')) {
         if ($m.Length -gt 0) { $spans.Add([pscustomobject]@{ Start = [int]$m.Index; End = [int]($m.Index + $m.Length) }) | Out-Null }
     }
 
@@ -493,8 +493,8 @@ function Get-YakuNumericMaskProtectedSpans {
 
 function New-YakuNumericMaskMap {
     <#
-      数値の「大きさ」だけを【N1】へ置き換える。符号と単位は外に残す。
-      戻り値: Text=マスク済み / Map=@{'【N1】'='72'} / MaskedCount / KeptCount
+      数値の「大きさ」だけを[[N1]]へ置き換える。符号と単位は外に残す。
+      戻り値: Text=マスク済み / Map=@{'[[N1]]'='72'} / MaskedCount / KeptCount
     #>
     param(
         [AllowNull()][string]$Text,
@@ -525,11 +525,11 @@ function New-YakuNumericMaskMap {
     # 番号は本文の出現順。置換は後ろから行い、前方の位置をずらさない。
     $ordered = @($targets.ToArray() | Sort-Object Start)
     for ($i = 0; $i -lt $ordered.Count; $i++) {
-        $map['【N' + ($i + 1) + '】'] = $source.Substring([int]$ordered[$i].Start, [int]$ordered[$i].Length)
+        $map['[[N' + ($i + 1) + ']]'] = $source.Substring([int]$ordered[$i].Start, [int]$ordered[$i].Length)
     }
     $result = $source
     for ($i = $ordered.Count - 1; $i -ge 0; $i--) {
-        $token = '【N' + ($i + 1) + '】'
+        $token = '[[N' + ($i + 1) + ']]'
         $result = $result.Remove([int]$ordered[$i].Start, [int]$ordered[$i].Length).Insert([int]$ordered[$i].Start, $token)
     }
     try { Write-YakuLog "Numeric masking. location=$Location masked=$($ordered.Count) kept=$kept" 'INFO' } catch {}
@@ -538,7 +538,7 @@ function New-YakuNumericMaskMap {
 
 function Get-YakuNumericMaskTokens {
     param([AllowNull()][string]$Text)
-    return @([regex]::Matches([string]$Text, '【N\d+】') | ForEach-Object { [string]$_.Value })
+    return @([regex]::Matches([string]$Text, '\[\[N\d+\]\]') | ForEach-Object { [string]$_.Value })
 }
 
 function Restore-YakuNumericMask {
@@ -548,7 +548,7 @@ function Restore-YakuNumericMask {
     )
     $result = [string]$Text
     if ([string]::IsNullOrEmpty($result) -or $null -eq $Map -or $Map.Count -eq 0) { return $result }
-    # 番号の大きい順に置換する。【N1】が【N10】の一部を壊さないため。
+    # 番号の大きい順に置換する。[[N1]]が[[N10]]の一部を壊さないため。
     foreach ($token in @($Map.Keys | Sort-Object { [int]([regex]::Match([string]$_, '\d+').Value) } -Descending)) {
         $result = $result.Replace([string]$token, [string]$Map[$token])
     }
@@ -599,7 +599,7 @@ function Test-YakuNumericMaskIntegrity {
 
 function Restore-YakuMaskedTranslationOptions {
     <#
-      V91.60: 各訳文の【N1】を実値へ戻す。戻す前に1対1を確かめ、崩れていれば
+      V91.60: 各訳文の[[N1]]を実値へ戻す。戻す前に1対1を確かめ、崩れていれば
       警告を立てる。無言で数値が消えるのを避けるのがここの目的。
       復元自体は失敗させない。一部が欠けても残りは戻す。
 
@@ -610,7 +610,7 @@ function Restore-YakuMaskedTranslationOptions {
       誤読を招くため。代わりに平文つきで警告表示する(決定事項#12)。
 
       応答が原文に無い番号を作った場合は、対応する実値が存在しない。
-      【N9】のまま画面へ出すより取り除くほうが安全なので削除する。
+      [[N9]]のまま画面へ出すより取り除くほうが安全なので削除する。
     #>
     param(
         [AllowNull()][object[]]$Options,
@@ -659,9 +659,9 @@ function Restore-YakuMaskedTranslationOptions {
 function Get-YakuNumericAuditExpectations {
     param([AllowNull()][string]$SourceText)
     $items = New-Object System.Collections.Generic.List[object]
-    # V91.60: マスク後は数値が【N1】に置き換わるため、監査対象へ加える。
+    # V91.60: マスク後は数値が[[N1]]に置き換わるため、監査対象へ加える。
     # これにより既存の数値整合監査・補正・再試行の仕組みがそのまま使える。
-    $pattern = '(?<![0-9])(?<num>【N\d+】|[0-9][0-9,]*(?:\.[0-9]+)?|[xX]{2,})\s+(?<unit>oku|k units|k yen)'
+    $pattern = '(?<![0-9])(?<num>\[\[N\d+\]\]|[0-9][0-9,]*(?:\.[0-9]+)?|[xX]{2,})\s+(?<unit>oku|k units|k yen)'
     foreach ($m in [regex]::Matches([string]$SourceText, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
         $token = (([string]$m.Groups['num'].Value) + ' ' + ([string]$m.Groups['unit'].Value).ToLowerInvariant())
         $plain = ([string]$m.Groups['num'].Value).Replace(',','')
@@ -672,7 +672,7 @@ function Get-YakuNumericAuditExpectations {
         }
         $items.Add([pscustomobject]@{ Source=[string]$m.Value; Expected=$token; ScaleCandidate=$scaleToken }) | Out-Null
     }
-    foreach ($m in [regex]::Matches([string]$SourceText, '(?<![0-9])(?<num>【N\d+】|[0-9][0-9,]*(?:\.[0-9]+)?)\s*[%％]')) {
+    foreach ($m in [regex]::Matches([string]$SourceText, '(?<![0-9])(?<num>\[\[N\d+\]\]|[0-9][0-9,]*(?:\.[0-9]+)?)\s*[%％]')) {
         $token=([string]$m.Groups['num'].Value)+'%'; $items.Add([pscustomobject]@{ Source=[string]$m.Value; Expected=$token; ScaleCandidate='' }) | Out-Null
     }
     return @($items.ToArray())
@@ -720,7 +720,7 @@ function New-YakuNumericCorrectionInstruction {
     #>
     param([Parameter(Mandatory=$true)]$Audit)
     $all=@($Audit.Mismatches)
-    $items=@($all|Where-Object{ [string]$_.Expected -match '【N\d+】' })
+    $items=@($all|Where-Object{ [string]$_.Expected -match '\[\[N\d+\]\]' })
     $dropped=$all.Count-$items.Count
     if($dropped -gt 0){ try{ Write-YakuLog "Numeric correction instruction. dropped=$dropped (plain numbers withheld from the prompt)" 'INFO' }catch{} }
     if($items.Count -eq 0){ return '' }
@@ -1153,7 +1153,7 @@ function Invoke-YakuSingleTranslationBatch {
     )
     $requestId = [guid]::NewGuid().ToString('N')
     # V91.60 段階3: 外部へ送る前に数値をマスクする。
-    # バッチ分割の後にマスクするのは、分割が【N12】の途中を
+    # バッチ分割の後にマスクするのは、分割が[[N12]]の途中を
     # 切ることを構造的に防ぐため。Split-YakuHardChunk は文境界が
     # 見つからなければ文字数で切るので、先にマスクすると壊れ得る。
     # 以降この関数の中では $sourceText(マスク後) を原文として扱う。
@@ -1228,7 +1228,7 @@ function Invoke-YakuSingleTranslationBatch {
             $options = @(Parse-YakuTextTranslationResponse -Raw $raw -Direction $Direction -RequestId $requestId -Warnings $Warnings)
             $options = @(Repair-YakuTextResponsePostParse -SourceText $sourceText -Options $options -Direction $Direction)
             $numericFailures = New-Object System.Collections.Generic.List[object]
-            # V91.60 段階4: to_jp では 【N1】 oku が 【N1】億円 へ訳されるため、
+            # V91.60 段階4: to_jp では [[N1]] oku が [[N1]]億円 へ訳されるため、
             # 「数値+単位」トークンの照合は成立しない。プレースホルダーの
             # 過不足は Restore-YakuMaskedTranslationOptions 側で確認する。
             # マスクが無い場合(検証用に無効化したときなど)は従来どおり照合する。

@@ -2106,7 +2106,7 @@ function Invoke-YakuFileTranslation {
     }
 
     # V91.36 final numeric audit also covers cache/glossary/fallback routes.
-    # V91.60: to_jp では 【N1】 oku が 【N1】億円 へ訳されるため
+    # V91.60: to_jp では [[N1]] oku が [[N1]]億円 へ訳されるため
     # 「数値+単位」トークンの照合が成立しない(§6)。プレースホルダーの
     # 過不足は下の復元ループで確認する。
     if ($Direction -eq 'to_en') {

@@ -100,7 +100,7 @@ Write-Host '文例の数字を伏せる'
 $red = ConvertTo-YakuCorpusExampleText -Text 'Operating income increased 12.3% to 45,600 million yen in 2026.'
 Chk ($red -notmatch '\d') '数字が残らない'
 Chk ($red -match 'Operating income increased') '言い回しは残る'
-Chk ($red -notmatch '【N\d') 'V91.60 のプレースホルダー形式は使わない（原文側と名前空間が衝突するため）'
+Chk (($red -notmatch '\[\[N\d') -and ($red -notmatch '【N\d')) 'V91.60 のプレースホルダー形式は使わない（原文側と名前空間が衝突するため。旧 【N1】 も新 [[N1]] も）'
 Chk ((ConvertTo-YakuCorpusExampleText -Text '') -eq '') '空文字でも落ちない'
 
 # ---------------------------------------------------------------- 文例の組み立て
@@ -161,7 +161,7 @@ Chk ($ref.Section -match 'CORPUS_EXAMPLES') '差し込む文字列ができる'
 Write-Host '検索語生成の依頼にも数値マスキングが効くこと'
 # ここを素通しにすると V91.60 の「数値を外部へ出さない」保証がこの経路だけ抜ける。
 Chk ($script:LastQueryPrompt -notmatch '45\.6') '原文の数値がそのまま送られていない'
-Chk ($script:LastQueryPrompt -match '【N\d+】') 'マスク済みの本文が送られている'
+Chk ($script:LastQueryPrompt -match '\[\[N\d+\]\]') 'マスク済みの本文が送られている'
 Chk ($script:LastQueryPrompt -match '自己資本比率') 'マスク以外の本文は送られている'
 
 Write-Host '使わない条件'

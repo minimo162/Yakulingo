@@ -107,8 +107,8 @@ Chk ((@(Convert-YakuBriefTranslationOptions -Options $jp)[0].Translation) -eq '�
 Chk (@(Convert-YakuBriefTranslationOptions -Options $null).Count -eq 0) 'null でも落ちない'
 
 Write-Host '数値プレースホルダーを壊さないこと'
-# 復元前に当てるので【N1】が残っている。ここを壊すと V91.60 の保証が崩れる。
-Chk ((Conv 'Operating profit up approximately 【N1】 oku vs. 【N2】 oku.') -eq 'OP up approx. 【N1】 oku vs. 【N2】 oku.') 'プレースホルダーはそのまま'
+# 復元前に当てるので[[N1]]が残っている。ここを壊すと V91.60 の保証が崩れる。
+Chk ((Conv 'Operating profit up approximately [[N1]] oku vs. [[N2]] oku.') -eq 'OP up approx. [[N1]] oku vs. [[N2]] oku.') 'プレースホルダーはそのまま'
 
 Write-Host '翻訳経路への組み込み'
 $translationText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Translation.ps1'))

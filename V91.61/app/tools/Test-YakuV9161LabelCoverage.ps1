@@ -117,7 +117,7 @@ Chk (@(Get-YakuFileUnmatchedLabels -Items $items -ExactApplied $null -Direction 
 
 Write-Host 'マスク後の本文に引きずられないこと'
 # 実際の経路では $item.Text は数値マスク後になる。原文で見ていることを確かめる。
-$maskedItems = @([pscustomobject]@{ Index=1; Text='【N1】期実績'; OriginalText='2026期実績' })
+$maskedItems = @([pscustomobject]@{ Index=1; Text='[[N1]]期実績'; OriginalText='2026期実績' })
 $maskedLabels = @(Get-YakuFileUnmatchedLabels -Items $maskedItems -ExactApplied @() -Direction 'to_en')
 Chk ($maskedLabels.Count -eq 1) 'マスク後でも拾える'
 Chk (@($maskedLabels)[0].Text -eq '2026期実績') '原文の字面で出す（用語集へ写せる形）'
