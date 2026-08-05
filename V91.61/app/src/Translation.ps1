@@ -178,11 +178,33 @@ function Get-YakuLabeledResponseField {
     return $value.Trim()
 }
 
+function Get-YakuTextRequiredLabels {
+    <#
+      その依頼が Copilot に出させるラベル。
+
+      V91.61（2026-08-06）: 完全訳と開示用の電文体を別々の依頼にした。
+      電文体は完全訳を短くしたものではなく、同じ原文に対する別の成果物である。
+      Mode を指定すると、その依頼のラベルだけを求める。
+      Mode が空なら従来どおり両方（1依頼で2つ返す旧経路との互換のため残す）。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
+        [AllowNull()][string]$Mode
+    )
+    if ($Direction -ne 'to_en') { return @('JAPANESE_TEXT') }
+    switch ([string]$Mode) {
+        'full'  { return @('FULL_TEXT') }
+        'brief' { return @('BRIEF_TEXT') }
+        default { return @('FULL_TEXT','BRIEF_TEXT') }
+    }
+}
+
 function Test-YakuTextResponseContract {
     param(
         [AllowNull()][string]$Text,
         [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
-        [Parameter(Mandatory=$true)][string]$RequestId
+        [Parameter(Mandatory=$true)][string]$RequestId,
+        [AllowNull()][string]$Mode
     )
     $rawText = [string]$Text
     if ($rawText -match '(?s)^\s*```[^\r\n]*\r?\n.*\r?\n```\s*$') {
@@ -209,7 +231,7 @@ function Test-YakuTextResponseContract {
     }
     # Wrap the complete if expression: PowerShell otherwise unwraps the
     # one-element to_jp result into a string, making $required[0] equal "J".
-    $required = @(if ($Direction -eq 'to_en') { 'FULL_TEXT','BRIEF_TEXT' } else { 'JAPANESE_TEXT' })
+    $required = @(Get-YakuTextRequiredLabels -Direction $Direction -Mode $Mode)
     if ($required -isnot [array]) { throw 'CONTRACT_INTERNAL: $required must be an array.' }
     $firstLabelPattern = '^\s*(?:\*\*)?' + [regex]::Escape(([string]$required[0])) + '(?:\*\*)?\s*:\s*'
     $warningCode = ''
@@ -782,9 +804,10 @@ function Parse-YakuV25PlainTranslationResponse {
         [Parameter(Mandatory=$true)][string]$Raw,
         [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
         [Parameter(Mandatory=$true)][string]$RequestId,
-        [AllowNull()]$Warnings
+        [AllowNull()]$Warnings,
+        [AllowNull()][string]$Mode
     )
-    $contract = Test-YakuTextResponseContract -Text $Raw -Direction $Direction -RequestId $RequestId
+    $contract = Test-YakuTextResponseContract -Text $Raw -Direction $Direction -RequestId $RequestId -Mode $Mode
     if (-not [bool]$contract.Valid) { throw "$($contract.ErrorCode): $($contract.Message)" }
     $clean = [string]$contract.NormalizedText
     if ([string]::IsNullOrWhiteSpace($clean)) { $clean = Normalize-YakuCopilotPlainResponse -Raw $Raw -RequestId $RequestId }
@@ -797,8 +820,9 @@ function Parse-YakuV25PlainTranslationResponse {
     }
     $items = @()
     if ($Direction -eq 'to_en') {
-        $fullText = Get-YakuLabeledResponseField -Text $clean -Label 'FULL_TEXT'
-        $briefText = Get-YakuLabeledResponseField -Text $clean -Label 'BRIEF_TEXT'
+        $wanted = @(Get-YakuTextRequiredLabels -Direction $Direction -Mode $Mode)
+        $fullText = if ($wanted -contains 'FULL_TEXT') { Get-YakuLabeledResponseField -Text $clean -Label 'FULL_TEXT' } else { '' }
+        $briefText = if ($wanted -contains 'BRIEF_TEXT') { Get-YakuLabeledResponseField -Text $clean -Label 'BRIEF_TEXT' } else { '' }
         $fullText = ConvertFrom-YakuTextFullWidthAngle -Text $fullText
         $briefText = ConvertFrom-YakuTextFullWidthAngle -Text $briefText
         if (![string]::IsNullOrWhiteSpace($fullText) -and $fullText.Trim() -ne '...') {
@@ -821,10 +845,12 @@ function Parse-YakuTextTranslationResponse {
         [Parameter(Mandatory=$true)][string]$Raw,
         [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
         [Parameter(Mandatory=$true)][string]$RequestId,
-        [AllowNull()]$Warnings
+        [AllowNull()]$Warnings,
+        [AllowNull()][string]$Mode
     )
-    $options = @(Parse-YakuV25PlainTranslationResponse -Raw $Raw -Direction $Direction -RequestId $RequestId -Warnings $Warnings)
-    $expected = if ($Direction -eq 'to_en') { 2 } else { 1 }
+    $options = @(Parse-YakuV25PlainTranslationResponse -Raw $Raw -Direction $Direction -RequestId $RequestId -Warnings $Warnings -Mode $Mode)
+    # 依頼を分けた場合は1件、1依頼で2つ返す旧経路では2件。求めたラベルの数で見る。
+    $expected = @(Get-YakuTextRequiredLabels -Direction $Direction -Mode $Mode).Count
     if ($options.Count -ne $expected) { throw 'RESPONSE_FIELDS_MISSING: 必須の翻訳フィールドが不足しています。' }
     return $options
 }

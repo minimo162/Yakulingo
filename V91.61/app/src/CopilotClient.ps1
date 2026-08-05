@@ -3289,9 +3289,15 @@ const labeledValue = (text, label) => {
 };
 const hasUsefulLabeledOutput = (text) => {
   const t = String(text || '');
-  if (/FULL_TEXT\s*:/i.test(t) || /BRIEF_TEXT\s*:/i.test(t)) {
+  // 完全訳と電文体は別々の依頼になったので、片方だけの応答が正しい形になる
+  // （利用者の判断 2026-08-06）。両方在るときだけ両方揃うことを求める。
+  const hasFull = /FULL_TEXT\s*:/i.test(t);
+  const hasBrief = /BRIEF_TEXT\s*:/i.test(t);
+  if (hasFull && hasBrief) {
     return labeledValue(t, 'FULL_TEXT').length > 0 && labeledValue(t, 'BRIEF_TEXT').length > 0;
   }
+  if (hasFull) { return labeledValue(t, 'FULL_TEXT').length > 0; }
+  if (hasBrief) { return labeledValue(t, 'BRIEF_TEXT').length > 0; }
   if (/JAPANESE_TEXT\s*:/i.test(t)) return labeledValue(t, 'JAPANESE_TEXT').length > 0;
   // コーパス検索語。中身が空でも「引く語が無い」という完結した答えなので、
   // ラベルが在ることをもって有効とする（完了判定は YAKULINGO_END が別に見る）。
