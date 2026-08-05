@@ -67,6 +67,15 @@ Chk (-not (Test-YakuFileLabelLike -Text 'Operating income')) '英語だけは対
 Chk (-not (Test-YakuFileLabelLike -Text '')) '空文字はラベルではない'
 Chk (-not (Test-YakuFileLabelLike -Text '   ')) '空白だけもラベルではない'
 Chk (-not (Test-YakuFileLabelLike -Text $null)) 'null でも落ちない'
+# 短すぎるものは表の見出しで、用語集へ足す候補ではない。
+# 短い順に並べる以上いちばん上へ来てしまうため下限で落とす（利用者の指示 2026-08-05）。
+# 実機で上位を占めたのがこの3つだった。
+Chk (-not (Test-YakuFileLabelLike -Text '科目')) '2文字の見出しは拾わない（科目）'
+Chk (-not (Test-YakuFileLabelLike -Text '当期')) '2文字の見出しは拾わない（当期）'
+Chk (-not (Test-YakuFileLabelLike -Text '前期')) '2文字の見出しは拾わない（前期）'
+# 下限を4にすると落ちてしまうもの。3で止める理由。
+Chk (Test-YakuFileLabelLike -Text '売上高') '3文字の勘定科目は拾う（下限を4にしてはいけない）'
+Chk (Test-YakuFileLabelLike -Text '営業利益') '4文字の勘定科目は拾う'
 
 # ---------------------------------------------------------------- 未一致ラベルの抽出
 Write-Host '用語集に無いラベルの抽出'

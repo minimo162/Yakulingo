@@ -25,10 +25,13 @@ foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuil
 function Chk { param([bool]$c,[string]$m) if($c){Write-Host ('  ok   ' + $m) -ForegroundColor Green}else{Write-Host ('  FAIL ' + $m) -ForegroundColor Red;$script:fail++} }
 function Conv { param([string]$t) return (Convert-YakuBriefAbbreviations -Text $t) }
 
-Write-Host '月名'
-Chk ((Conv 'Results for January and February.') -eq 'Results for Jan. and Feb.') '月名を略す'
-Chk ((Conv 'from April to September') -eq 'from Apr. to Sep.') '月名を略す（2）'
-Chk ((Conv 'in May') -eq 'in May') 'May は変えない（略語も May）'
+Write-Host '月名はアプリ側で当てない'
+# 実機で人名を潰した（April Smith -> Apr. Smith / June Tanaka -> Jun. Tanaka）。
+# 月名かどうかは文脈が要るので、判断はモデルへ返す（利用者の指示 2026-08-05）。
+foreach ($mon in @('January','February','March','April','June','July','August','September','October','November','December','May')) {
+    Chk ((Conv ("Results for $mon.")) -eq ("Results for $mon.")) ($mon + ' は後処理で変えない')
+}
+Chk ((Conv 'April Smith joined in June.') -eq 'April Smith joined in June.') '人名を潰さない'
 
 Write-Host '語句の置換'
 Chk ((Conv 'approximately 10 oku') -eq 'approx. 10 oku') 'approximately -> approx.'
@@ -129,7 +132,10 @@ Chk ($guards -eq 2) ('両方の呼び出しが守られている: ' + $guards)
 
 Write-Host 'プロンプトから外れていること'
 $briefRules = Get-YakuBriefRules -Root $root
-Chk ($briefRules -notmatch 'Months: Jan\., Feb\.') '月名の一覧が消えている'
+# 月名はアプリ側から外して指示へ戻したので、指示側に在ることを見る。
+Chk ($briefRules -match '(?m)^- Months:') '月名の指示がプロンプトに在る'
+Chk ($briefRules -match "person's name") '人名では略さないと書いてある'
+Chk ($briefRules -match 'May stays May') 'May の例外が書いてある'
 Chk ($briefRules -notmatch 'foreign exchange -> FX') 'FX の対応が消えている'
 Chk ($briefRules -notmatch 'operating profit=OP') 'OP の対応が消えている'
 Chk ($briefRules -notmatch 'fixed costs / fixed cost -> FC') 'FC の対応が消えている'

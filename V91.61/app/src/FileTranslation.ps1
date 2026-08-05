@@ -1073,11 +1073,19 @@ function Test-YakuFileLabelLike {
 
       判定は完全でなくてよい。ここで拾うのは「用語集へ足す候補」であり、
       間違って拾っても人が捨てるだけである。逆に取りこぼすと気づけない。
-      **残った誤りは、呼び出し側が短い順に並べることで下へ沈む。**
+
+      ただし短すぎるものは別で、**短い順に並べる以上いちばん上に来てしまう。**
+      実機では 科目・当期・前期 が上位を占めた（2026-08-05）。表の見出しであり
+      用語集へ足したいものではないので、下限で落とす（利用者の指示）。
+      下限は3文字。4にすると 売上高 が落ちる。
+
+      MaxChars の既定は呼び出し側（Get-YakuFileUnmatchedLabels）と揃える。
+      揃っていなかったため、引き継ぎ書が上限を 16 と誤って記録していた。
     #>
-    param([AllowNull()][string]$Text, [int]$MaxChars = 16)
+    param([AllowNull()][string]$Text, [int]$MaxChars = 24, [int]$MinChars = 3)
     $clean = ([string]$Text).Trim()
     if ([string]::IsNullOrWhiteSpace($clean)) { return $false }
+    if ($clean.Length -lt $MinChars) { return $false }
     if ($clean.Length -gt $MaxChars) { return $false }
     # 改行を含むもの、文末記号や読点を持つものは文である。
     if ($clean -match "[`r`n]") { return $false }
@@ -1117,7 +1125,10 @@ function Get-YakuFileUnmatchedLabels {
         [Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Items,
         [AllowNull()][object[]]$ExactApplied,
         [AllowNull()][string]$Direction,
-        [int]$MaxChars = 24
+        [int]$MaxChars = 24,
+        # 短すぎるものは表の見出し（科目・当期・前期）で、用語集へ足す候補ではない。
+        # 短い順に並べる以上いちばん上へ来てしまうので、ここで落とす。
+        [int]$MinChars = 3
     )
     $result = New-Object System.Collections.Generic.List[object]
     if ([string]$Direction -ne 'to_en') { return @($result.ToArray()) }
@@ -1136,7 +1147,7 @@ function Get-YakuFileUnmatchedLabels {
         $text = ''
         try { $text = [string]$item.OriginalText } catch { $text = '' }
         if ([string]::IsNullOrWhiteSpace($text)) { $text = [string]$item.Text }
-        if (-not (Test-YakuFileLabelLike -Text $text -MaxChars $MaxChars)) { continue }
+        if (-not (Test-YakuFileLabelLike -Text $text -MaxChars $MaxChars -MinChars $MinChars)) { continue }
         $key = ConvertTo-YakuGlossaryMatchKey -Value $text
         if ([string]::IsNullOrWhiteSpace($key)) { continue }
         if ($seen.ContainsKey($key)) { continue }

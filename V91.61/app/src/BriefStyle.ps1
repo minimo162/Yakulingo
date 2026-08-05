@@ -38,19 +38,13 @@
 # ここに載せてよいのは「文脈に依らないもの」だけである。迷ったら載せない。
 # 載せ忘れはモデルが従来どおり処理するだけだが、誤って載せると必ず壊す。
 $script:YakuBriefAbbreviationPairs = @(
-    # --- 月名。固有名詞で他の意味を持たない。
-    # May は略語も May なので入れない（変換の必要が無い）。
-    @{ From = 'January';   To = 'Jan.' }
-    @{ From = 'February';  To = 'Feb.' }
-    @{ From = 'March';     To = 'Mar.' }
-    @{ From = 'April';     To = 'Apr.' }
-    @{ From = 'June';      To = 'Jun.' }
-    @{ From = 'July';      To = 'Jul.' }
-    @{ From = 'August';    To = 'Aug.' }
-    @{ From = 'September'; To = 'Sep.' }
-    @{ From = 'October';   To = 'Oct.' }
-    @{ From = 'November';  To = 'Nov.' }
-    @{ From = 'December';  To = 'Dec.' }
+    # --- 月名はここに置かない（利用者の指示 2026-08-05。プロンプトで示す）。
+    #
+    # 月名は文脈に依らないつもりで載せていたが、実機で人名を潰すことが分かった。
+    #   April Smith -> Apr. Smith / June Tanaka -> Jun. Tanaka
+    #   March / August も姓名として現れうる。
+    # 機械的に当てると必ず壊すので、判断が要るものとしてモデルへ返す。
+    # 指示は prompts/style_brief_rules.txt の Months にある。
 
     # --- 語句の置換。規則の Phrase substitutions より。
     @{ From = 'approximately'; To = 'approx.' }
