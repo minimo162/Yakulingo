@@ -74,18 +74,9 @@ function Convert-YakuTextResultToHtml {
         if (-not [string]::IsNullOrWhiteSpace($message)) { $html += New-YakuAlertHtml -Kind warning -Message $message }
     }
 
-    $glossary = @()
-    try { $glossary = @($Result.AppliedGlossary) } catch { $glossary = @() }
-    if ($glossary.Count -gt 0) {
-        $html += "<section class='glossary-preview' aria-label='適用された用語'><span class='glossary-preview-label'>適用された用語:</span>"
-        foreach ($term in ($glossary | Select-Object -First 12)) {
-            $from = if ($term.From) { [string]$term.From } else { [string]$term.Source }
-            $to = if ($term.To) { [string]$term.To } else { [string]$term.Target }
-            $html += "<span class='term-pill'>$(ConvertTo-YakuHtml ($from + ' → ' + $to))</span>"
-        }
-        if ($glossary.Count -gt 12) { $html += "<span class='term-pill muted-pill'>+$(ConvertTo-YakuHtml ($glossary.Count - 12))</span>" }
-        $html += "</section>"
-    }
+    # 「適用された用語」の表示は廃止した（利用者の指示 2026-08-06）。
+    # 実際に適用された保証が無いのに適用されたように読めていた。
+    # use_bundled_glossary を切っても出るうえ、プロンプトへ渡しただけの語も並ぶ。
 
     $html += New-YakuCorpusReferenceHtml -Result $Result
 
@@ -249,7 +240,10 @@ function Convert-YakuFileWarningsToGroupedHtml {
     foreach ($category in $groups.Keys) {
         $items = @($groups[$category].ToArray())
         $label = Get-YakuWarningCategoryLabel -Category $category
-        $html += "<section class='file-warning-group'><h3>$(ConvertTo-YakuHtml $label) <span>$(ConvertTo-YakuHtml $items.Count)件</span></h3><ul>"
+        # 見出しの件数表示は廃止した（利用者の指示 2026-08-06）。
+        # ここは警告メッセージの数であって、中身の件数ではない。
+        # 「用語集に無いラベル 1件」の本文が「20 件ありました」となり読み違える。
+        $html += "<section class='file-warning-group'><h3>$(ConvertTo-YakuHtml $label)</h3><ul>"
         foreach ($item in ($items | Select-Object -First 80)) {
             $line = [string]$item.Message
             if (-not [string]::IsNullOrWhiteSpace([string]$item.Location) -and $line -notmatch [regex]::Escape([string]$item.Location)) {
@@ -287,21 +281,12 @@ function Convert-YakuFileResultToHtml {
     try { $smartart = [int]$stats.skipped_smartart } catch {}
     $warnings = @()
     try { $warnings = @($Result.Warnings) } catch { $warnings = @() }
-    $glossary = @()
-    try { $glossary = @($Result.AppliedGlossary) } catch { $glossary = @() }
     $glossaryExactHits = 0
     try { if ($Result.PSObject.Properties.Name -contains 'GlossaryExactHits') { $glossaryExactHits = [int]$Result.GlossaryExactHits } } catch {}
+    # 「適用された用語」の表示は廃止した（利用者の指示 2026-08-06）。
+    # 実際に置換したのは cell-exact だけで、occurrence は監査しかしていない。
+    # 並べると全て適用されたように読める。件数は下の「用語完全一致」で見る。
     $glossaryHtml = ''
-    if ($glossary.Count -gt 0) {
-        $glossaryHtml += "<section class='glossary-preview' aria-label='適用された用語'><span class='glossary-preview-label'>適用された用語:</span>"
-        foreach ($term in ($glossary | Select-Object -First 12)) {
-            $from = if ($term.From) { [string]$term.From } else { [string]$term.Source }
-            $to = if ($term.To) { [string]$term.To } else { [string]$term.Target }
-            $glossaryHtml += "<span class='term-pill'>$(ConvertTo-YakuHtml ($from + ' → ' + $to))</span>"
-        }
-        if ($glossary.Count -gt 12) { $glossaryHtml += "<span class='term-pill muted-pill'>+$(ConvertTo-YakuHtml ($glossary.Count - 12))</span>" }
-        $glossaryHtml += "</section>"
-    }
 
     $maskingHtml = New-YakuMaskingNoticeHtml -Result $Result
     $warningHtml = Convert-YakuFileWarningsToGroupedHtml -Warnings $warnings

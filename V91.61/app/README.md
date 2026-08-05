@@ -129,7 +129,6 @@ Windows PowerShellで次を実行します。
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\Smoke-Test.ps1
-powershell -ExecutionPolicy Bypass -File .\tools\Prompt-Regression-Test.ps1
 powershell -ExecutionPolicy Bypass -File .\tools\Wait-YakuCopilotResponse-Watcher-Test.ps1
 powershell -ExecutionPolicy Bypass -File .\tools\V64-HTTP-Boundary-Test.ps1
 powershell -ExecutionPolicy Bypass -File .\tools\V65-Saving-Validation-Test.ps1

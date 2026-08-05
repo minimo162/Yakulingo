@@ -5,9 +5,9 @@ prompts/corpus_query_to_en.txt	lf
 prompts/file_translate_to_en.txt	lf
 prompts/file_translate_to_jp.txt	crlf
 prompts/style_brief_rules.txt	lf
+prompts/text_translate.txt	lf
 prompts/text_translate_to_en.txt	lf
 prompts/text_translate_to_jp.txt	crlf
-prompts/text_translate.txt	lf
 src/BriefStyle.ps1	lf
 src/CopilotClient.ps1	lf
 src/Corpus.ps1	lf
@@ -37,7 +37,6 @@ tools/eval/Measure-YakuEvalResponses.ps1	crlf
 tools/New-YakuPackage.ps1	crlf
 tools/Open-Copilot-Login.ps1	crlf
 tools/Prepare-Copilot.ps1	lf
-tools/Prompt-Regression-Test.ps1	lf
 tools/Repair-YakuEncoding.ps1	crlf
 tools/Smoke-Test.ps1	crlf
 tools/Stop-YakuLingo.ps1	crlf
