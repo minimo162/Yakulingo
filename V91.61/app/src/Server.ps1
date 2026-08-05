@@ -1939,20 +1939,26 @@ function Invoke-YakuRoute {
                 if (-not [string]::IsNullOrWhiteSpace($dbRaw)) {
                     $databases = @(($dbRaw -split ',') | ForEach-Object { ([string]$_).Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
                 }
+                # 転置索引をやめる前の版が作ったフォルダを片付ける。
+                # 作れたのは検索した端末だけなので、検索の経路で始末するのが筋。
+                $null = Remove-YakuCorpusLegacyIndex
                 $corpusDir = Get-YakuCorpusSearchDir
                 if ([string]::IsNullOrWhiteSpace($corpusDir)) {
                     Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$true; corpus_dir=''; hits=@() } | ConvertTo-Json -Depth 5 -Compress) -ContentType 'application/json; charset=utf-8'
                     return
                 }
+                # 索引を持たないので、件数は台帳から数える。
+                $manifest = Read-YakuCorpusManifest -Dir $corpusDir
+                $swSearch = [System.Diagnostics.Stopwatch]::StartNew()
                 $hits = @(Search-YakuCorpus -Query $query -CorpusDir $corpusDir -Databases $databases -Top $top)
-                $meta = Read-YakuCorpusIndexMeta -IndexDir (Get-YakuCorpusIndexDir -CorpusDir $corpusDir)
+                $swSearch.Stop()
                 Send-YakuTextResponse -Context $Context -Text ([ordered]@{
-                    ok         = $true
-                    corpus_dir = [string]$corpusDir
-                    passages   = [int]$meta['passages']
-                    documents  = [int]$meta['documents']
-                    terms      = [int]$meta['terms']
-                    hits       = @(@($hits) | ForEach-Object { [ordered]@{ score=[double]$_.Score; database=[string]$_.Database; source=[string]$_.Source; page=[int]$_.Page; text=[string]$_.Text } })
+                    ok           = $true
+                    corpus_dir   = [string]$corpusDir
+                    documents    = @(@($manifest.entries) | Where-Object { [string]$_.status -ne 'failed' }).Count
+                    elapsed_ms   = [int]$swSearch.Elapsed.TotalMilliseconds
+                    search_terms = @(Get-YakuCorpusTokens -Text $query)
+                    hits         = @(@($hits) | ForEach-Object { [ordered]@{ score=[double]$_.Score; database=[string]$_.Database; source=[string]$_.Source; page=[int]$_.Page; text=[string]$_.Text } })
                 } | ConvertTo-Json -Depth 5 -Compress) -ContentType 'application/json; charset=utf-8'
             } catch {
                 Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$false; error=[string]$_.Exception.Message } | ConvertTo-Json -Compress) -StatusCode 400 -ContentType 'application/json; charset=utf-8'

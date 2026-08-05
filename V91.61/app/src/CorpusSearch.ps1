@@ -1,5 +1,5 @@
 ﻿<#
-  V91.61 段階2: 参考資料コーパスの索引と語彙検索。
+  V91.61 段階2: 参考資料コーパスの検索。
 
   段階1（Corpus.ps1）が作った英語 Markdown を、引ける形にする。
 
@@ -11,31 +11,50 @@
      財務文書は固有名詞・勘定科目・定型表現が多く字面が一致しやすいため、
      語彙検索で足りるという実測（§13-5 FinanceBench で語彙検索が +6pt）がある。
 
-  差し替え可能にしておくこと（§6-1-4）:
-   - 索引の作り方（New-YakuCorpusIndex）と、順位づけ（Get-YakuCorpusBm25Score）を分ける。
-   - 呼び出し側は Search-YakuCorpus の戻り値だけを見る。
-     後から埋め込み検索を差し込むときに、翻訳経路を触らずに済む。
+  なぜ転置索引を作らないのか（実測 2026-08-05。詳細は _docs/V91.61_段階2_コーパス検索.md）:
 
-  置き場所（修正指示書 §12）:
-   - 索引はローカルの corpus\<版>\ の隣ではなく、データディレクトリ配下へ置く。
-     corpus\ の中は bootstrap.ps1 が版ごと入れ替える領域であり、
-     派生物を混ぜると「古い版」として掃除されてしまうため。
-   - 索引は派生物なので、失われても作り直せばよい。
+    はじめは転置索引（TSV）を作って引いていた。しかし実測すると、
+    索引を使わず .md を直接読むほうが 2.4〜4.2 倍速かった。
+
+      資料100件: 索引あり 415ms / 直引き 173ms
+      資料600件: 索引あり 2,357ms / 直引き 557ms
+
+    遅かったのは読み込みではない（索引の読み込みは全体の 1〜8% だった）。
+    6,000〜36,000 行の転置を **PowerShell で解釈しながら回す**部分である。
+    直引きは String.IndexOf に丸投げするため、繰り返しが .NET の中で完結する。
+
+    **この環境では「賢いデータ構造を自前で回す」より
+    「素朴な処理を .NET へ投げる」ほうが速い。**
+    C# へ降ろしても速くならなかった（89ms 対 90ms）。残りの時間は
+    ファイル読み込みと小文字化そのものであり、そこが下限である。
+
+    索引をやめたことで、利用者側の索引作成（最大2分）・索引ファイル（10〜65MB）・
+    鮮度判定・書式の版管理が、まとめて消えた。
+
+  差し替え可能にしておくこと（§6-1-4）:
+   - 順位づけ（Get-YakuCorpusBm25Score）を独立させてある。
+   - 呼び出し側は Search-YakuCorpus の戻り値だけを見る。
+     後から別の検索方式を差し込むときに、翻訳経路を触らずに済む。
 #>
 
 # この module では、繰り返しの中の Add / Append を「| Out-Null」ではなく [void] で捨てる。
-# 実測（資料100件・一節6000件）で、List.Add へ | Out-Null を付けると 100 秒、
-# [void] なら 1.7 秒だった。パイプラインを1回組み立てる費用が呼び出しごとにかかるため。
+# 実測で、List.Add へ | Out-Null を付けると 72万回で 100 秒、[void] なら 1.7 秒だった。
+# パイプラインを1回組み立てる費用が呼び出しごとにかかるため。
 # 繰り返しの外では、既存コードに合わせて | Out-Null のままでよい。
-
-# 索引の書式。読み書きの両方で使う。合わなければ作り直す。
-$script:YakuCorpusIndexSchema = 'yaku-corpus-index-1'
 
 # 語彙検索の重みづけ。BM25 の一般的な既定値。
 $script:YakuCorpusBm25K1 = 1.2
 $script:YakuCorpusBm25B  = 0.75
 
-# 英語の機能語。索引語から外す。
+# 一節の長さの基準。Split-YakuCorpusPassages の目安と合わせる。
+# 標本から平均を出すと、絞り込んだ数件に引きずられて基準が動く。定数のほうが安定する。
+$script:YakuCorpusRefLength = 900.0
+
+# 一節へ切り分ける対象にする文書の数。
+# ここを増やしても、増えるのは切り分けの費用だけ（読み込みは全件で済んでいる）。
+$script:YakuCorpusDocCandidates = 8
+
+# 英語の機能語。検索語から外す。
 # 財務資料は定型表現が多く、これらを残すとどの一節も同じくらい当たってしまう。
 $script:YakuCorpusStopWords = @{}
 foreach ($w in @(
@@ -51,10 +70,6 @@ foreach ($w in @(
     'under','until','up','very','was','we','were','what','when','where','which','while',
     'who','whom','why','will','with','would','you','your','yours','yourself','yourselves'
 )) { $script:YakuCorpusStopWords[$w] = $true }
-
-function Get-YakuCorpusIndexRootDir {
-    return (Get-YakuSubDir 'corpus-index')
-}
 
 function Get-YakuCorpusSearchDir {
     <#
@@ -74,7 +89,7 @@ function Get-YakuCorpusSearchDir {
 
 function Get-YakuCorpusTokens {
     <#
-      英語の一節を索引語へ分ける。
+      英語の文を検索語へ分ける。
 
       コーパスは英語だけなので、日本語の形態素解析も文字 N-gram も要らない。
       小文字化し、英数字以外で切るだけでよい。
@@ -127,23 +142,24 @@ function Split-YakuCorpusPassages {
 
     $normalized = $Markdown.Replace("`r`n", "`n").Replace("`r", "`n")
     # ページ番号を保ったまま切る。境界の行そのものは本文ではないので捨てる。
-    $page = 0
+    #
+    # 行ごとに正規表現を当てると、資料8件（480一節）で 202ms かかっていた。
+    # 文書ごとに1回だけ分割する。Regex.Split は括弧で囲んだ部分（ページ番号）も
+    # 結果に含めるため、[本文, 番号, 本文, 番号, 本文, …] の並びで返る。
+    # \s ではなく [ \t]* にするのは、\s が改行を飲んで隣の行とつながらないようにするため。
     $pageTexts = New-Object System.Collections.Generic.List[object]
-    $buffer = New-Object System.Text.StringBuilder
-    foreach ($line in @($normalized -split "`n")) {
-        $m = [regex]::Match([string]$line, '^\s*<!--\s*yaku-page:(\d+)\s*-->\s*$')
-        if ($m.Success) {
-            if ($buffer.Length -gt 0) {
-                [void]$pageTexts.Add([pscustomobject]@{ Page = $page; Text = $buffer.ToString() })
-                $buffer = New-Object System.Text.StringBuilder
-            }
-            $page = [int]$m.Groups[1].Value
-            continue
-        }
-        [void]$buffer.AppendLine([string]$line)
+    $parts = @([regex]::Split($normalized, '(?m)^[ \t]*<!--[ \t]*yaku-page:(\d+)[ \t]*-->[ \t]*$'))
+    if ($parts.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$parts[0])) {
+        # 最初の境界より前にある本文。ページ番号は分からないので 0 にする。
+        [void]$pageTexts.Add([pscustomobject]@{ Page = 0; Text = [string]$parts[0] })
     }
-    if ($buffer.Length -gt 0) {
-        [void]$pageTexts.Add([pscustomobject]@{ Page = $page; Text = $buffer.ToString() })
+    for ($i = 1; $i -lt $parts.Count; $i += 2) {
+        $pageNo = 0
+        try { $pageNo = [int]$parts[$i] } catch { $pageNo = 0 }
+        $body = ''
+        if (($i + 1) -lt $parts.Count) { $body = [string]$parts[$i + 1] }
+        if ([string]::IsNullOrWhiteSpace($body)) { continue }
+        [void]$pageTexts.Add([pscustomobject]@{ Page = $pageNo; Text = $body })
     }
 
     foreach ($pt in $pageTexts) {
@@ -172,273 +188,140 @@ function Split-YakuCorpusPassages {
     return @($result.ToArray())
 }
 
-function ConvertTo-YakuCorpusIndexField {
-    # TSV の1項目へ入れられる形にする。復元できることが条件。
-    param([AllowNull()][string]$Text)
-    if ($null -eq $Text) { return '' }
-    return $Text.Replace('\', '\\').Replace("`r`n", '\n').Replace("`r", '\n').Replace("`n", '\n').Replace("`t", '\t')
-}
+function Measure-YakuCorpusTermHits {
+    <#
+      小文字化済みの文字列に、各検索語が何回出るかを数える。
 
-function ConvertFrom-YakuCorpusIndexField {
-    param([AllowNull()][string]$Text)
-    if ([string]::IsNullOrEmpty($Text)) { return '' }
-    # 逃がした文字が無ければ1文字ずつ見る必要はない。
-    # データベース名や出典はほぼここで返る。
-    if ($Text.IndexOf('\') -lt 0) { return $Text }
-    $sb = New-Object System.Text.StringBuilder
-    for ($i = 0; $i -lt $Text.Length; $i++) {
-        $c = $Text[$i]
-        if ($c -ne '\' -or $i -eq $Text.Length - 1) { [void]$sb.Append($c); continue }
-        $i++
-        switch ([string]$Text[$i]) {
-            'n'     { [void]$sb.Append("`n") }
-            't'     { [void]$sb.Append("`t") }
-            '\'     { [void]$sb.Append('\') }
-            default { [void]$sb.Append('\'); [void]$sb.Append($Text[$i]) }
+      数えるのは String.IndexOf だけにする。ここが全体の費用のほとんどを占めるため、
+      PowerShell 側の処理を増やさない（正規表現にすると目に見えて遅くなる）。
+
+      戻り値は $Terms と同じ並びの int[]。
+
+      部分一致で数えるので ratio は ratios にも当たる。
+      英語の資料ではこれは概ね利点になる（簡易な語幹処理として働く）。
+    #>
+    # 引数に [Parameter()] を付けない。一節ごとに呼ばれるため、
+    # 属性つきの引数束縛の費用が効く（480回で 66ms 対 39ms）。
+    #
+    # 戻り値は int[] だけにする。当たった語の数は呼び出し側で数えればよく、
+    # 一節ごとに PSCustomObject を作ると、それだけで無視できない時間になる。
+    param([string]$LowerText, [string[]]$Terms)
+    $counts = [int[]]::new($Terms.Count)
+    if ([string]::IsNullOrEmpty($LowerText)) { return $counts }
+    for ($t = 0; $t -lt $Terms.Count; $t++) {
+        $term = $Terms[$t]
+        $idx = 0
+        $c = 0
+        while (($idx = $LowerText.IndexOf($term, $idx, [System.StringComparison]::Ordinal)) -ge 0) {
+            $c++
+            $idx += $term.Length
         }
+        $counts[$t] = $c
     }
-    return $sb.ToString()
-}
-
-function Get-YakuCorpusIndexSignature {
-    <#
-      コーパスが変わったかどうかを表す短い文字列。
-      これが索引側と一致していれば、作り直さない。
-      内容そのものではなく台帳（版・更新時刻・件数）で見る。
-      台帳は取り込みのたびに書き換わるため、これで十分に検出できる。
-    #>
-    param([Parameter(Mandatory=$true)]$Manifest)
-    $version = [string]$Manifest.corpus_version
-    $updated = [string]$Manifest.updated
-    $count = @($Manifest.entries).Count
-    return ($version + '|' + $updated + '|' + $count)
-}
-
-function Get-YakuCorpusIndexDir {
-    <#
-      索引の置き場所。コーパスの版ごとに分ける。
-      版が無い（管理者の作業中のコーパス）ときは 'build' に落とす。
-    #>
-    param([Parameter(Mandatory=$true)][string]$CorpusDir)
-    $manifest = Read-YakuCorpusManifest -Dir $CorpusDir
-    $name = [string]$manifest.corpus_version
-    if ([string]::IsNullOrWhiteSpace($name)) { $name = 'build' }
-    if ($name -match '[\\/:*?"<>|]') { $name = 'build' }
-    return (Join-Path (Get-YakuCorpusIndexRootDir) $name)
-}
-
-function New-YakuCorpusIndex {
-    <#
-      コーパスの Markdown から索引を作る。
-
-      出力（すべて TSV。JSON にしないのは、PowerShell 5.1 の ConvertFrom-Json が
-      数MB で目に見えて遅く、検索のたびに読むには重いため）:
-
-        meta.tsv       schema / signature / passages / avgdl など
-        passages.tsv   id, database, source, page, length, text
-        postings.tsv   term, df, "id:tf id:tf ..."
-    #>
-    param(
-        [Parameter(Mandatory=$true)][string]$CorpusDir,
-        [AllowNull()][string]$IndexDir
-    )
-    if (!(Test-Path -LiteralPath $CorpusDir -PathType Container)) {
-        throw "CORPUS_INDEX_NO_SOURCE: コーパスが見つかりません: $CorpusDir"
-    }
-    $manifest = Read-YakuCorpusManifest -Dir $CorpusDir
-    if ([string]::IsNullOrWhiteSpace($IndexDir)) { $IndexDir = Get-YakuCorpusIndexDir -CorpusDir $CorpusDir }
-    if (!(Test-Path -LiteralPath $IndexDir)) { New-Item -ItemType Directory -Path $IndexDir -Force | Out-Null }
-
-    $passageLines = New-Object System.Collections.Generic.List[string]
-    # term -> 転置の行を組み立てる StringBuilder。
-    # 語ごとに List<string> へ入れて後で連結すると、60万回の文字列連結になり遅い。
-    $postings = @{}
-    $postingCounts = @{}
-    $totalLength = 0
-    $id = 0
-    $docCount = 0
-
-    foreach ($entry in @($manifest.entries)) {
-        if ([string]$entry.status -eq 'failed') { continue }
-        $rel = [string]$entry.markdown
-        if ([string]::IsNullOrWhiteSpace($rel)) { continue }
-        $path = Join-Path $CorpusDir ($rel -replace '/', [System.IO.Path]::DirectorySeparatorChar)
-        if (!(Test-Path -LiteralPath $path -PathType Leaf)) { continue }
-        try { $text = [System.IO.File]::ReadAllText($path) } catch { continue }
-        $docCount++
-        $database = [string]$entry.database
-        $source = [string]$entry.source
-        foreach ($passage in @(Split-YakuCorpusPassages -Markdown $text)) {
-            $tokens = @(Get-YakuCorpusTokens -Text ([string]$passage.Text))
-            if ($tokens.Count -le 0) { continue }
-            $tf = @{}
-            foreach ($tok in $tokens) {
-                if ($tf.ContainsKey($tok)) { $tf[$tok] = [int]$tf[$tok] + 1 } else { $tf[$tok] = 1 }
-            }
-            foreach ($tok in $tf.Keys) {
-                if ($postings.ContainsKey($tok)) {
-                    [void]$postings[$tok].Append(' ')
-                    $postingCounts[$tok] = [int]$postingCounts[$tok] + 1
-                } else {
-                    $postings[$tok] = New-Object System.Text.StringBuilder
-                    $postingCounts[$tok] = 1
-                }
-                [void]$postings[$tok].Append($id).Append(':').Append($tf[$tok])
-            }
-            [void]$passageLines.Add((@(
-                [string]$id
-                (ConvertTo-YakuCorpusIndexField $database)
-                (ConvertTo-YakuCorpusIndexField $source)
-                [string]$passage.Page
-                [string]$tokens.Count
-                (ConvertTo-YakuCorpusIndexField ([string]$passage.Text))
-            ) -join "`t"))
-            $totalLength += $tokens.Count
-            $id++
-        }
-    }
-
-    $avgdl = 0.0
-    if ($id -gt 0) { $avgdl = [double]$totalLength / [double]$id }
-
-    $postingLines = New-Object System.Collections.Generic.List[string]
-    foreach ($term in @($postings.Keys | Sort-Object)) {
-        [void]$postingLines.Add(($term + "`t" + [string]$postingCounts[$term] + "`t" + $postings[$term].ToString()))
-    }
-
-    $meta = @(
-        ('schema' + "`t" + $script:YakuCorpusIndexSchema)
-        ('signature' + "`t" + (Get-YakuCorpusIndexSignature -Manifest $manifest))
-        ('corpus_version' + "`t" + [string]$manifest.corpus_version)
-        ('corpus_dir' + "`t" + (ConvertTo-YakuCorpusIndexField $CorpusDir))
-        ('documents' + "`t" + [string]$docCount)
-        ('passages' + "`t" + [string]$id)
-        ('terms' + "`t" + [string]$postingLines.Count)
-        ('avgdl' + "`t" + $avgdl.ToString([System.Globalization.CultureInfo]::InvariantCulture))
-        ('built' + "`t" + (Get-Date).ToString('s'))
-    )
-
-    Write-YakuTextAtomic -Path (Join-Path $IndexDir 'passages.tsv') -Text (($passageLines.ToArray()) -join "`n")
-    Write-YakuTextAtomic -Path (Join-Path $IndexDir 'postings.tsv') -Text (($postingLines.ToArray()) -join "`n")
-    # meta は最後に書く。途中で落ちたときに「出来上がっている」と誤解させないため。
-    Write-YakuTextAtomic -Path (Join-Path $IndexDir 'meta.tsv') -Text (($meta) -join "`n")
-
-    try { Write-YakuLog "Corpus index built. dir=$IndexDir documents=$docCount passages=$id terms=$($postingLines.Count)" 'INFO' } catch {}
-    return [pscustomobject]@{
-        IndexDir  = [string]$IndexDir
-        CorpusDir = [string]$CorpusDir
-        Documents = [int]$docCount
-        Passages  = [int]$id
-        Terms     = [int]$postingLines.Count
-        AvgLength = [double]$avgdl
-    }
-}
-
-function Read-YakuCorpusIndexMeta {
-    param([Parameter(Mandatory=$true)][string]$IndexDir)
-    $path = Join-Path $IndexDir 'meta.tsv'
-    $meta = @{}
-    if (!(Test-Path -LiteralPath $path -PathType Leaf)) { return $meta }
-    try { $lines = @([System.IO.File]::ReadAllLines($path)) } catch { return $meta }
-    foreach ($line in $lines) {
-        $clean = ([string]$line).TrimStart([char]0xFEFF)
-        if ([string]::IsNullOrWhiteSpace($clean)) { continue }
-        $parts = $clean -split "`t", 2
-        if ($parts.Count -ne 2) { continue }
-        $meta[[string]$parts[0]] = [string]$parts[1]
-    }
-    return $meta
-}
-
-function Test-YakuCorpusIndexCurrent {
-    <#
-      索引がいまのコーパスに追いついているか。
-      書式が変わったとき（schema 不一致）も作り直す対象にする。
-    #>
-    param(
-        [Parameter(Mandatory=$true)][string]$CorpusDir,
-        [AllowNull()][string]$IndexDir
-    )
-    if ([string]::IsNullOrWhiteSpace($IndexDir)) { $IndexDir = Get-YakuCorpusIndexDir -CorpusDir $CorpusDir }
-    foreach ($name in @('meta.tsv','passages.tsv','postings.tsv')) {
-        if (!(Test-Path -LiteralPath (Join-Path $IndexDir $name) -PathType Leaf)) { return $false }
-    }
-    $meta = Read-YakuCorpusIndexMeta -IndexDir $IndexDir
-    if ([string]$meta['schema'] -ne $script:YakuCorpusIndexSchema) { return $false }
-    $manifest = Read-YakuCorpusManifest -Dir $CorpusDir
-    return ([string]$meta['signature'] -eq (Get-YakuCorpusIndexSignature -Manifest $manifest))
-}
-
-function Initialize-YakuCorpusIndex {
-    <#
-      索引が無い・古いときだけ作る。あれば何もしない。
-
-      一般利用者の起動経路からは呼ばない（修正指示書 §7-3）。
-      検索が要るときに初めて呼ぶこと。
-    #>
-    param(
-        [Parameter(Mandatory=$true)][string]$CorpusDir,
-        [AllowNull()][string]$IndexDir,
-        [switch]$Force
-    )
-    if ([string]::IsNullOrWhiteSpace($IndexDir)) { $IndexDir = Get-YakuCorpusIndexDir -CorpusDir $CorpusDir }
-    if (-not $Force -and (Test-YakuCorpusIndexCurrent -CorpusDir $CorpusDir -IndexDir $IndexDir)) {
-        return [pscustomobject]@{ IndexDir = [string]$IndexDir; Rebuilt = $false }
-    }
-    $built = New-YakuCorpusIndex -CorpusDir $CorpusDir -IndexDir $IndexDir
-    return [pscustomobject]@{ IndexDir = [string]$built.IndexDir; Rebuilt = $true }
+    return $counts
 }
 
 function Get-YakuCorpusBm25Score {
     <#
-      BM25。順位づけをここに閉じ込める。
-      埋め込み検索を後から差し込むときは、この関数の対になるものを足せばよい
+      一節1件の得点。順位づけをここに閉じ込める。
+      別の方式へ差し替えるときは、この関数の対になるものを足せばよい
       （要件整理 §6-1-4「検索層を差し替え可能にする」）。
 
-      $Postings は term -> @{ 'id' = tf } の形。
+      $DocFreq は「その語を含む**資料**の数」である。一節ではない。
+      一節ごとの文書頻度を数えるには全一節を走査する必要があり、それは索引を
+      作るのと同じ費用になる。資料単位の粗い値でも、
+      「どの資料にも出る語を軽くする」という IDF の役目は果たせる。
     #>
-    param(
-        [Parameter(Mandatory=$true)][string[]]$QueryTerms,
-        [Parameter(Mandatory=$true)]$Postings,
-        [Parameter(Mandatory=$true)]$Lengths,
-        [Parameter(Mandatory=$true)][int]$TotalPassages,
-        [Parameter(Mandatory=$true)][double]$AvgLength
-    )
-    $scores = @{}
-    if ($TotalPassages -le 0) { return $scores }
-    $avg = $AvgLength
-    if ($avg -le 0) { $avg = 1.0 }
+    # 引数に [Parameter()] を付けない理由は Measure-YakuCorpusTermHits と同じ。
+    param([int[]]$Counts, [int[]]$DocFreq, [int]$DocumentCount, [int]$Length)
+    $score = 0.0
+    if ($DocumentCount -le 0) { return $score }
     $k1 = $script:YakuCorpusBm25K1
     $b = $script:YakuCorpusBm25B
-    # 同じ語を2回書かれても重みが倍にならないようにする。
-    $seen = @{}
-    foreach ($term in $QueryTerms) {
-        if ($seen.ContainsKey($term)) { continue }
-        $seen[$term] = $true
-        if (-not $Postings.ContainsKey($term)) { continue }
-        $list = $Postings[$term]
-        $df = @($list.Keys).Count
+    $lenRatio = ([double]$Length) / $script:YakuCorpusRefLength
+    if ($lenRatio -le 0) { $lenRatio = 1.0 }
+    for ($t = 0; $t -lt $Counts.Count; $t++) {
+        $c = [double]$Counts[$t]
+        if ($c -le 0) { continue }
+        $df = [double]$DocFreq[$t]
         if ($df -le 0) { continue }
-        # 逆文書頻度。どの一節にも出る語は効かなくなる。
-        $idf = [Math]::Log(1.0 + (([double]$TotalPassages - [double]$df + 0.5) / ([double]$df + 0.5)))
-        foreach ($idKey in @($list.Keys)) {
-            $tf = [double]$list[$idKey]
-            $len = 1.0
-            if ($Lengths.ContainsKey($idKey)) { $len = [double]$Lengths[$idKey] }
-            if ($len -le 0) { $len = 1.0 }
-            $denom = $tf + $k1 * (1.0 - $b + $b * ($len / $avg))
-            if ($denom -le 0) { continue }
-            $add = $idf * (($tf * ($k1 + 1.0)) / $denom)
-            if ($scores.ContainsKey($idKey)) { $scores[$idKey] = [double]$scores[$idKey] + $add }
-            else { $scores[$idKey] = $add }
-        }
+        # 逆文書頻度。どの資料にも出る語は効かなくなる。
+        $idf = [Math]::Log(1.0 + (([double]$DocumentCount - $df + 0.5) / ($df + 0.5)))
+        $denom = $c + $k1 * (1.0 - $b + $b * $lenRatio)
+        if ($denom -le 0) { continue }
+        $score += $idf * (($c * ($k1 + 1.0)) / $denom)
     }
-    return $scores
+    return $score
+}
+
+function Get-YakuCorpusDocumentMatches {
+    <#
+      段階1: コーパスの .md を読み、検索語の出現数と文書頻度を出す。
+
+      読み込みは全件だが、繰り返しは資料の数ぶんで済む（一節の数ではない）。
+      実測では、ここと小文字化がほぼ全体の費用である。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$CorpusDir,
+        [Parameter(Mandatory=$true)][string[]]$Terms,
+        [AllowNull()][string[]]$Databases
+    )
+    $manifest = Read-YakuCorpusManifest -Dir $CorpusDir
+    $dbFilter = $null
+    if ($null -ne $Databases -and @($Databases).Count -gt 0) {
+        $dbFilter = @{}
+        foreach ($d in @($Databases)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$d)) { $dbFilter[[string]$d] = $true }
+        }
+        if ($dbFilter.Count -le 0) { $dbFilter = $null }
+    }
+    $docs = New-Object System.Collections.Generic.List[object]
+    $docFreq = New-Object 'int[]' $Terms.Count
+    $scanned = 0
+    foreach ($entry in @($manifest.entries)) {
+        if ([string]$entry.status -eq 'failed') { continue }
+        $rel = [string]$entry.markdown
+        if ([string]::IsNullOrWhiteSpace($rel)) { continue }
+        $database = [string]$entry.database
+        if ($null -ne $dbFilter -and -not $dbFilter.ContainsKey($database)) { continue }
+        $path = Join-Path $CorpusDir ($rel -replace '/', [System.IO.Path]::DirectorySeparatorChar)
+        if (!(Test-Path -LiteralPath $path -PathType Leaf)) { continue }
+        try { $text = [System.IO.File]::ReadAllText($path) } catch { continue }
+        $scanned++
+        $counts = Measure-YakuCorpusTermHits -LowerText $text.ToLowerInvariant() -Terms $Terms
+        # 絞り込みの並び。検索語をより多く含む資料を優先し、次に出現数で見る。
+        # ここは順位そのものではなく「一節へ切る候補」を選ぶだけなので粗くてよい。
+        $rank = 0.0
+        $matched = 0
+        for ($t = 0; $t -lt $Terms.Count; $t++) {
+            $c = $counts[$t]
+            if ($c -le 0) { continue }
+            $matched++
+            $docFreq[$t] = $docFreq[$t] + 1
+            $rank += 1.0 + [Math]::Log(1.0 + [double]$c) * 0.1
+        }
+        if ($matched -le 0) { continue }
+        [void]$docs.Add([pscustomobject]@{
+            Path     = [string]$path
+            Database = $database
+            Source   = [string]$entry.source
+            Rank     = $rank
+        })
+    }
+    return [pscustomobject]@{
+        Documents     = @($docs.ToArray())
+        DocFreq       = $docFreq
+        ScannedCount  = [int]$scanned
+    }
 }
 
 function Search-YakuCorpus {
     <#
       英語の検索語でコーパスを引く。
+
+      2段構え:
+        ① .md を読み、検索語の出現数を数えて資料を絞る（文書頻度もここで手に入る）
+        ② 残った資料だけを一節へ切り、BM25 で順位づけする
 
       戻り値は順位順の一節。呼び出し側はこの形だけを見ること。
       検索方式を差し替えても、ここの形が変わらなければ翻訳経路は無傷で済む。
@@ -450,117 +333,77 @@ function Search-YakuCorpus {
         [Parameter(Mandatory=$true)][AllowEmptyString()][string]$Query,
         [AllowNull()][string]$CorpusDir,
         [AllowNull()][string[]]$Databases,
-        [int]$Top = 5
+        [int]$Top = 5,
+        [int]$DocumentCandidates = 0
     )
     $empty = @()
     if ([string]::IsNullOrWhiteSpace($CorpusDir)) { $CorpusDir = Get-YakuCorpusDir }
     if ([string]::IsNullOrWhiteSpace($CorpusDir)) { return $empty }
+    if (!(Test-Path -LiteralPath $CorpusDir -PathType Container)) { return $empty }
     $terms = @(Get-YakuCorpusTokens -Text $Query)
     if ($terms.Count -le 0) { return $empty }
+    if ($Top -le 0) { $Top = 5 }
+    if ($DocumentCandidates -le 0) { $DocumentCandidates = $script:YakuCorpusDocCandidates }
 
-    $ready = $null
-    try { $ready = Initialize-YakuCorpusIndex -CorpusDir $CorpusDir } catch {
-        # 索引が作れなくても翻訳は続けられる。コーパス無しと同じ扱いにする。
-        try { Write-YakuLog "Corpus index unavailable. dir=$CorpusDir error=$($_.Exception.Message)" 'WARN' } catch {}
+    $phase1 = $null
+    try {
+        $phase1 = Get-YakuCorpusDocumentMatches -CorpusDir $CorpusDir -Terms $terms -Databases $Databases
+    } catch {
+        # 引けなくても翻訳は続けられる。コーパス無しと同じ扱いにする。
+        try { Write-YakuLog "Corpus search failed. dir=$CorpusDir error=$($_.Exception.Message)" 'WARN' } catch {}
         return $empty
     }
-    $indexDir = [string]$ready.IndexDir
-    $meta = Read-YakuCorpusIndexMeta -IndexDir $indexDir
-    $total = 0
-    try { $total = [int]$meta['passages'] } catch { $total = 0 }
-    if ($total -le 0) { return $empty }
-    $avgdl = 1.0
-    try { $avgdl = [double]::Parse([string]$meta['avgdl'], [System.Globalization.CultureInfo]::InvariantCulture) } catch { $avgdl = 1.0 }
-
-    # 検索語に当たる行だけを取り出す。全語の転置を組み立てると無駄が大きい。
-    $wanted = @{}
-    foreach ($t in $terms) { $wanted[$t] = $true }
-    $postings = @{}
-    try { $postingLines = @([System.IO.File]::ReadAllLines((Join-Path $indexDir 'postings.tsv'))) } catch { return $empty }
-    foreach ($line in $postingLines) {
-        $clean = ([string]$line).TrimStart([char]0xFEFF)
-        if ([string]::IsNullOrWhiteSpace($clean)) { continue }
-        $tab = $clean.IndexOf("`t")
-        if ($tab -lt 0) { continue }
-        $term = $clean.Substring(0, $tab)
-        if (-not $wanted.ContainsKey($term)) { continue }
-        $parts = $clean -split "`t", 3
-        if ($parts.Count -lt 3) { continue }
-        $map = @{}
-        foreach ($pair in @(([string]$parts[2]) -split ' ')) {
-            if ([string]::IsNullOrWhiteSpace($pair)) { continue }
-            $colon = $pair.IndexOf(':')
-            if ($colon -lt 0) { continue }
-            $map[$pair.Substring(0, $colon)] = [int]$pair.Substring($colon + 1)
-        }
-        if ($map.Count -gt 0) { $postings[$term] = $map }
-    }
-    if ($postings.Count -le 0) { return $empty }
-
-    # 一節の一覧。長さ（BM25 の正規化）と絞り込み（データベース）に要る。
-    #
-    # ここでは行を切り分けるだけで、本文の復元はしない。
-    # 当たった一節すべてを復元すると、一節6000件の実測で 7秒かかった。
-    # 復元するのは最後に残す数件だけでよい。
-    try { $passageLines = @([System.IO.File]::ReadAllLines((Join-Path $indexDir 'passages.tsv'))) } catch { return $empty }
-    $dbFilter = $null
-    if ($null -ne $Databases -and @($Databases).Count -gt 0) {
-        $dbFilter = @{}
-        # 比較は逃がしたままの値で行う。行ごとに復元しないため。
-        foreach ($d in @($Databases)) {
-            if ([string]::IsNullOrWhiteSpace([string]$d)) { continue }
-            $dbFilter[(ConvertTo-YakuCorpusIndexField ([string]$d))] = $true
-        }
-        if ($dbFilter.Count -le 0) { $dbFilter = $null }
-    }
-    # 検索語のどれかに当たった一節だけを候補にする。
-    # 全行を切り分けると、一節6000件で毎回その費用がかかる。
-    # 先頭の id だけを見て、候補でなければ切り分けない。
-    $candidates = @{}
-    foreach ($term in @($postings.Keys)) {
-        foreach ($k in @($postings[$term].Keys)) { $candidates[$k] = $true }
-    }
-    $rows = @{}
-    $lengths = @{}
-    foreach ($line in $passageLines) {
-        $clean = [string]$line
-        if ($clean.Length -le 0) { continue }
-        if ($clean[0] -eq [char]0xFEFF) { $clean = $clean.Substring(1) }
-        $tab = $clean.IndexOf("`t")
-        if ($tab -le 0) { continue }
-        $rowId = $clean.Substring(0, $tab)
-        if (-not $candidates.ContainsKey($rowId)) { continue }
-        $parts = $clean -split "`t", 6
-        if ($parts.Count -lt 6) { continue }
-        # データベースで絞るなら、得点を付ける前に落とす。無駄な計算をしない。
-        if ($null -ne $dbFilter -and -not $dbFilter.ContainsKey([string]$parts[1])) { continue }
-        $rows[$rowId] = $parts
-        $lengths[$rowId] = [int]$parts[4]
-    }
-    if ($lengths.Count -le 0) { return $empty }
-
-    $scores = Get-YakuCorpusBm25Score -QueryTerms $terms -Postings $postings -Lengths $lengths -TotalPassages $total -AvgLength $avgdl
-    if ($scores.Count -le 0) { return $empty }
-
-    if ($Top -le 0) { $Top = 5 }
-    # 同点のときは id で並びを決める。同じ問いで結果が入れ替わらないようにするため。
-    $order = @(@($scores.Keys) |
-        Where-Object { $rows.ContainsKey($_) } |
-        Sort-Object -Property @{Expression={[double]$scores[$_]};Descending=$true}, @{Expression={[int]$_};Descending=$false} |
-        Select-Object -First $Top)
-    if ($order.Count -le 0) { return $empty }
+    $candidates = @($phase1.Documents)
+    if ($candidates.Count -le 0) { return $empty }
+    $shortlist = @(@($candidates) |
+        Sort-Object -Property @{Expression='Rank';Descending=$true}, @{Expression='Source';Descending=$false} |
+        Select-Object -First $DocumentCandidates)
 
     $ranked = New-Object System.Collections.Generic.List[object]
-    foreach ($rowId in $order) {
-        $parts = $rows[$rowId]
-        [void]$ranked.Add([pscustomobject]@{
-            Id       = $rowId
-            Score    = [double]$scores[$rowId]
-            Database = (ConvertFrom-YakuCorpusIndexField ([string]$parts[1]))
-            Source   = (ConvertFrom-YakuCorpusIndexField ([string]$parts[2]))
-            Page     = [int]$parts[3]
-            Text     = (ConvertFrom-YakuCorpusIndexField ([string]$parts[5]))
-        })
+    foreach ($doc in $shortlist) {
+        # 一節の本文は元の大文字小文字のまま返す。文例として見せるため。
+        try { $text = [System.IO.File]::ReadAllText([string]$doc.Path) } catch { continue }
+        foreach ($passage in @(Split-YakuCorpusPassages -Markdown $text)) {
+            $body = [string]$passage.Text
+            $counts = Measure-YakuCorpusTermHits -LowerText $body.ToLowerInvariant() -Terms $terms
+            $score = Get-YakuCorpusBm25Score -Counts $counts -DocFreq $phase1.DocFreq `
+                -DocumentCount ([int]$phase1.ScannedCount) -Length $body.Length
+            if ($score -le 0) { continue }
+            [void]$ranked.Add([pscustomobject]@{
+                Score    = [double]$score
+                Database = [string]$doc.Database
+                Source   = [string]$doc.Source
+                Page     = [int]$passage.Page
+                Text     = $body
+            })
+        }
     }
-    return @($ranked.ToArray())
+    if ($ranked.Count -le 0) { return $empty }
+    # 同点のときは出典とページで並びを決める。同じ問いで結果が入れ替わらないようにするため。
+    return @(@($ranked.ToArray()) |
+        Sort-Object -Property @{Expression='Score';Descending=$true}, @{Expression='Source';Descending=$false}, @{Expression='Page';Descending=$false} |
+        Select-Object -First $Top)
+}
+
+function Remove-YakuCorpusLegacyIndex {
+    <#
+      転置索引をやめる前の版が作った corpus-index フォルダを片付ける。
+
+      作ったのはこのアプリ自身で、ファイル名も決めてある。
+      見覚えのあるものだけを消し、それ以外が混じっていたら触らない。
+      放っておくと 10〜65MB がデータディレクトリに残り続けるため。
+    #>
+    $dir = Join-Path (Get-YakuDataDir) 'corpus-index'
+    if (!(Test-Path -LiteralPath $dir -PathType Container)) { return $false }
+    $known = @{ 'meta.tsv' = $true; 'passages.tsv' = $true; 'postings.tsv' = $true }
+    try {
+        foreach ($file in @(Get-ChildItem -LiteralPath $dir -Recurse -File -Force -ErrorAction Stop)) {
+            if (-not $known.ContainsKey([string]$file.Name)) { return $false }
+        }
+        Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop
+        try { Write-YakuLog "Legacy corpus index removed. dir=$dir" 'INFO' } catch {}
+        return $true
+    } catch {
+        return $false
+    }
 }

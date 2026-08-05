@@ -1,11 +1,12 @@
 ﻿<#
 .SYNOPSIS
-  V91.61 段階2: 参考資料コーパスの索引と語彙検索の回帰テスト。
+  V91.61 段階2: 参考資料コーパスの語彙検索の回帰テスト。
 
 .DESCRIPTION
-  一節への切り分け・索引語の取り出し・BM25 の順位づけ・索引の作り直し判定を検証する。
+  一節への切り分け・検索語の取り出し・出現数の数え方・BM25 の順位づけを検証する。
   コーパスは英語のみで、日本語との対応づけは持たない
   （_docs/要件整理_汎用翻訳アプリとRAG翻訳.md §13-4）。
+  転置索引は作らない。理由と実測は _docs/V91.61_段階2_コーパス検索.md を参照。
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\tools\Test-YakuV9161CorpusSearch.ps1
@@ -31,7 +32,7 @@ foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuil
 function Chk { param([bool]$c,[string]$m) if($c){Write-Host ('  ok   ' + $m) -ForegroundColor Green}else{Write-Host ('  FAIL ' + $m) -ForegroundColor Red;$script:fail++} }
 
 # ---------------------------------------------------------------- 索引語
-Write-Host '索引語の取り出し'
+Write-Host '検索語の取り出し'
 $tk = @(Get-YakuCorpusTokens -Text 'Operating income increased by 12.3% to 45,600 million yen.')
 Chk ($tk -contains 'operating') '英単語を拾う'
 Chk ($tk -contains 'income') '英単語を拾う（2語目）'
@@ -63,15 +64,34 @@ foreach ($p in $ps) {
 Chk ($true) 'ページ境界を越えない'
 Chk (@(Split-YakuCorpusPassages -Markdown "<!--yaku-page:1-->`n短すぎ").Count -eq 0) '短すぎる一節は捨てる'
 
-# ---------------------------------------------------------------- 逃がし文字
-Write-Host 'TSV へ入れて復元する'
-$sample = "行1`t途中にタブ`r`n行2\末尾に円記号"
-Chk ((ConvertFrom-YakuCorpusIndexField (ConvertTo-YakuCorpusIndexField $sample)) -eq ($sample -replace "`r`n", "`n")) 'タブ・改行・逆スラッシュが復元できる'
-Chk ((ConvertTo-YakuCorpusIndexField $sample) -notmatch "`t") '逃がした後の値にタブが残らない'
-Chk ((ConvertTo-YakuCorpusIndexField $sample) -notmatch "`n") '逃がした後の値に改行が残らない'
+# ---------------------------------------------------------------- 出現数の数え方
+Write-Host '出現数の数え方'
+$h = Measure-YakuCorpusTermHits -LowerText 'the equity ratio rose. the equity ratio is disclosed.' -Terms @('equity','ratio','cash')
+Chk ($h[0] -eq 2) 'equity を2回数える'
+Chk ($h[1] -eq 2) 'ratio を2回数える'
+Chk ($h[2] -eq 0) '無い語は0回'
+Chk ($h.Count -eq 3) '検索語と同じ並びで返る'
+$h2 = Measure-YakuCorpusTermHits -LowerText 'ratios and ratio' -Terms @('ratio')
+Chk ($h2[0] -eq 2) '部分一致で数える（ratios も当たる。英語では簡易な語幹処理として働く）'
+$h3 = Measure-YakuCorpusTermHits -LowerText '' -Terms @('ratio')
+Chk ($h3[0] -eq 0) '空文字でも落ちない'
 
-# ---------------------------------------------------------------- 索引の作成
-Write-Host '索引の作成'
+Write-Host 'BM25 の順位づけ'
+# どの資料にも出る語は効かなくなること（IDF が効いていること）
+$rare = Get-YakuCorpusBm25Score -Counts @(1) -DocFreq @(1) -DocumentCount 100 -Length 900
+$common = Get-YakuCorpusBm25Score -Counts @(1) -DocFreq @(95) -DocumentCount 100 -Length 900
+Chk ($rare -gt $common) '珍しい語ほど重い'
+$many = Get-YakuCorpusBm25Score -Counts @(5) -DocFreq @(10) -DocumentCount 100 -Length 900
+$few = Get-YakuCorpusBm25Score -Counts @(1) -DocFreq @(10) -DocumentCount 100 -Length 900
+Chk ($many -gt $few) '出現数が多いほど重い'
+$short = Get-YakuCorpusBm25Score -Counts @(3) -DocFreq @(10) -DocumentCount 100 -Length 300
+$long = Get-YakuCorpusBm25Score -Counts @(3) -DocFreq @(10) -DocumentCount 100 -Length 3000
+Chk ($short -gt $long) '同じ出現数なら短い一節を優先する'
+Chk ((Get-YakuCorpusBm25Score -Counts @(0) -DocFreq @(10) -DocumentCount 100 -Length 900) -eq 0) '出現0なら0点'
+Chk ((Get-YakuCorpusBm25Score -Counts @(1) -DocFreq @(1) -DocumentCount 0 -Length 900) -eq 0) '資料0件なら0点（落ちない）'
+
+# ---------------------------------------------------------------- コーパスを用意する
+Write-Host 'コーパスを用意する'
 $corpus = Join-Path $work 'corpus'
 $dbA = Join-Path $corpus '英文短信'
 $dbB = Join-Path $corpus '英文ｱﾆｭｱﾙ [2026]'
@@ -93,20 +113,18 @@ $manifest['entries'] = @(
 )
 Write-YakuCorpusManifest -Dir $corpus -Manifest $manifest
 
-$built = New-YakuCorpusIndex -CorpusDir $corpus
-Chk ($built.Documents -eq 2) '2件の資料を読む'
-Chk ($built.Passages -ge 4) ('一節が4件以上できる: ' + $built.Passages)
-Chk ($built.Terms -gt 0) '索引語ができる'
-Chk ($built.AvgLength -gt 0) '平均の長さが出る'
-foreach ($n in @('meta.tsv','passages.tsv','postings.tsv')) {
-    Chk (Test-Path -LiteralPath (Join-Path $built.IndexDir $n) -PathType Leaf) ('出力される: ' + $n)
-}
-Chk (([string]$built.IndexDir) -like '*2026-08-05*') '索引はコーパスの版ごとに分ける'
-# 索引はコーパスの中へ書かない。bootstrap が版ごと入れ替える領域を汚さないため。
-Chk (@(Get-ChildItem -LiteralPath $corpus -Recurse -Filter '*.tsv' -ErrorAction SilentlyContinue).Count -eq 0) 'コーパスの中へは書かない'
+$phase1 = Get-YakuCorpusDocumentMatches -CorpusDir $corpus -Terms @('equity','ratio') -Databases $null
+Chk ($phase1.ScannedCount -eq 2) '2件の資料を読む'
+Chk (@($phase1.Documents).Count -eq 2) '2件とも検索語を含む'
+Chk ($phase1.DocFreq[0] -eq 2) '文書頻度が数えられる（equity は2資料に出る）'
+$phase1b = Get-YakuCorpusDocumentMatches -CorpusDir $corpus -Terms @('semiconductor') -Databases $null
+Chk (@($phase1b.Documents).Count -eq 0) '当たらない語では候補が0件'
+Chk ($phase1b.ScannedCount -eq 2) '当たらなくても走査件数は数える'
+$phase1c = Get-YakuCorpusDocumentMatches -CorpusDir $corpus -Terms @('equity') -Databases @('英文短信')
+Chk ($phase1c.ScannedCount -eq 1) 'データベースで絞ると読む資料も減る（無駄に読まない）'
 
 # ---------------------------------------------------------------- 検索
-Write-Host '語彙検索'
+Write-Host '語彙検索（2段構え）'
 $hits = @(Search-YakuCorpus -Query 'equity ratio' -CorpusDir $corpus -Top 5)
 Chk ($hits.Count -gt 0) ('引ける: ' + $hits.Count)
 Chk (([string]$hits[0].Text) -match 'equity ratio') '最上位に検索語が含まれる'
@@ -131,33 +149,43 @@ Chk (@(Search-YakuCorpus -Query 'zzzznotpresent' -CorpusDir $corpus).Count -eq 0
 Chk (@(Search-YakuCorpus -Query '' -CorpusDir $corpus).Count -eq 0) '空の検索語は0件'
 Chk (@(Search-YakuCorpus -Query '売上高' -CorpusDir $corpus).Count -eq 0) '日本語だけの検索語は0件（英語側コーパスなので当然）'
 Chk (@(Search-YakuCorpus -Query 'equity' -CorpusDir (Join-Path $work 'no-such')).Count -eq 0) 'コーパスが無ければ0件（落ちない）'
+Chk (@(Search-YakuCorpus -Query 'equity ratio' -CorpusDir $corpus -Databases @('存在しないDB')).Count -eq 0) '空振りするデータベース指定でも0件'
+Chk (@(Search-YakuCorpus -Query 'equity ratio' -CorpusDir $corpus -Top 5 -DocumentCandidates 1).Count -gt 0) '候補の資料数を絞っても引ける'
 
 Write-Host '機能語だけでは引かない'
 # 定型表現の多い資料で機能語を残すと、どの一節も同じくらい当たってしまう。
 Chk (@(Search-YakuCorpus -Query 'the of and to' -CorpusDir $corpus).Count -eq 0) '機能語だけの検索語は0件'
 
-# ---------------------------------------------------------------- 作り直しの判定
-Write-Host '索引の作り直し'
-Chk (Test-YakuCorpusIndexCurrent -CorpusDir $corpus) '作った直後は最新'
-$again = Initialize-YakuCorpusIndex -CorpusDir $corpus
-Chk (-not $again.Rebuilt) '最新なら作り直さない（起動を遅くしない）'
+# ---------------------------------------------------------------- 索引を持たないこと
+Write-Host '索引を作らない'
+# 索引をやめたので、鮮度の判定も作り直しも要らない。
+# コーパスを変えたら次の検索へ即座に反映される。
+$dataDir = Get-YakuDataDir
+Chk (-not (Test-Path -LiteralPath (Join-Path $dataDir 'corpus-index'))) '索引フォルダを作らない'
+Chk (@(Get-ChildItem -LiteralPath $corpus -Recurse -Filter '*.tsv' -ErrorAction SilentlyContinue).Count -eq 0) 'コーパスの中へも書かない'
 
-Start-Sleep -Milliseconds 1100   # updated は秒単位なので、変化を作るために待つ
 $manifest2 = Read-YakuCorpusManifest -Dir $corpus
 # 台帳は source で並べ替えて保存されるため、添字ではなく id で選ぶ。
 $manifest2['entries'] = @(@($manifest2.entries) | Where-Object { [string]$_.id -eq 'aaaaaaaa' })
 Write-YakuCorpusManifest -Dir $corpus -Manifest $manifest2
 Chk (@($manifest2.entries).Count -eq 1) '台帳から1件だけにする'
-Chk (-not (Test-YakuCorpusIndexCurrent -CorpusDir $corpus)) 'コーパスが変われば古いと判定する'
-$rebuilt = Initialize-YakuCorpusIndex -CorpusDir $corpus
-Chk ($rebuilt.Rebuilt) '古ければ作り直す'
-Chk (@(Search-YakuCorpus -Query 'consolidated balance sheet' -CorpusDir $corpus).Count -eq 0) '取り除いた資料は引けなくなる'
+Chk (@(Search-YakuCorpus -Query 'consolidated balance sheet' -CorpusDir $corpus).Count -eq 0) '取り除いた資料は即座に引けなくなる（作り直し不要）'
+Chk (@(Search-YakuCorpus -Query 'equity ratio' -CorpusDir $corpus).Count -gt 0) '残した資料は引ける'
 
-Write-Host '書式が変わったとき'
-$metaPath = Join-Path (Get-YakuCorpusIndexDir -CorpusDir $corpus) 'meta.tsv'
-$metaText = [System.IO.File]::ReadAllText($metaPath)
-[System.IO.File]::WriteAllText($metaPath, $metaText.Replace('yaku-corpus-index-1', 'yaku-corpus-index-0'))
-Chk (-not (Test-YakuCorpusIndexCurrent -CorpusDir $corpus)) '索引の書式が古ければ作り直す'
+Write-Host '前の版が作った索引フォルダの片付け'
+$legacy = Join-Path $dataDir 'corpus-index'
+New-Item -ItemType Directory -Path (Join-Path $legacy '2026-08-05') -Force | Out-Null
+foreach ($n in @('meta.tsv','passages.tsv','postings.tsv')) {
+    [System.IO.File]::WriteAllText((Join-Path (Join-Path $legacy '2026-08-05') $n), 'stale')
+}
+Chk (Remove-YakuCorpusLegacyIndex) '見覚えのある中身なら消す'
+Chk (-not (Test-Path -LiteralPath $legacy)) '消えている'
+New-Item -ItemType Directory -Path (Join-Path $legacy '2026-08-05') -Force | Out-Null
+[System.IO.File]::WriteAllText((Join-Path (Join-Path $legacy '2026-08-05') 'メモ.txt'), '利用者が置いた何か')
+Chk (-not (Remove-YakuCorpusLegacyIndex)) '見覚えのないものが混じっていたら触らない'
+Chk (Test-Path -LiteralPath $legacy) '残っている'
+Remove-Item -LiteralPath $legacy -Recurse -Force -ErrorAction SilentlyContinue
+Chk (-not (Remove-YakuCorpusLegacyIndex)) '無ければ何もしない'
 
 Write-Host '環境変数からの解決'
 $env:YAKULINGO_CORPUS_DIR = $corpus

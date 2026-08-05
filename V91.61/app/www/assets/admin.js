@@ -182,7 +182,7 @@ async function ingestAll() {
 async function search() {
   const q = $('search-query').value.trim();
   if (!q) { say($('search-result'), '英語の語を入れてください。', 'warning'); return; }
-  say($('search-result'), '引いています…（初回は索引を作るため少し待ちます）');
+  say($('search-result'), '引いています…');
   let data;
   try {
     const res = await api('/api/admin/corpus/search?q=' + encodeURIComponent(q) + '&top=5');
@@ -198,8 +198,9 @@ async function search() {
   box.innerHTML = '';
   const head = document.createElement('div');
   head.className = 'alert alert-info';
-  head.textContent = '索引: 資料 ' + data.documents + ' 件 / 一節 ' + data.passages + ' 件 / 索引語 ' + data.terms + ' 件'
-    + '\n該当 ' + hits.length + ' 件';
+  // 実際に使われた検索語を出す。機能語や数字が落ちるので、入れた語と違うことがある。
+  head.textContent = '資料 ' + data.documents + ' 件を ' + data.elapsed_ms + ' ミリ秒で走査 / 該当 ' + hits.length + ' 件'
+    + '\n検索語: ' + (data.search_terms || []).join(' ');
   box.appendChild(head);
   if (hits.length === 0) {
     const none = document.createElement('p');
