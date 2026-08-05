@@ -1,0 +1,47 @@
+﻿<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="yaku-session" content="__YAKU_SESSION_TOKEN__">
+  <title>YakuLingo コーパス作成（管理者用）</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script type="module" src="/assets/admin.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div class="brand-block">
+        <p class="brand">YakuLingo</p>
+        <span class="version-label">コーパス作成（管理者用）</span>
+      </div>
+    </header>
+
+    <section class="card">
+      <h2>原本フォルダ</h2>
+      <p class="muted">参考にしたい<strong>英語</strong>資料の PDF を入れたフォルダを指定します。
+        直下のフォルダ1つが1つのデータベースになります。</p>
+      <label>フォルダのパス
+        <input id="source-root" type="text" placeholder="C:\\work\\参考資料" spellcheck="false">
+      </label>
+      <button id="scan" type="button" class="secondary-button">読み込む</button>
+      <div id="status" aria-live="polite"></div>
+    </section>
+
+    <section class="card" id="ingest-card" hidden>
+      <h2>取り込み</h2>
+      <div id="databases"></div>
+      <button id="ingest" type="button">未取込を取り込む</button>
+      <div id="progress" aria-live="polite"></div>
+    </section>
+
+    <section class="card" id="publish-card" hidden>
+      <h2>配布用フォルダを作る</h2>
+      <p class="muted">ローカルに配布用フォルダを作ります。
+        <strong>アプリは共有フォルダへ書き込みません。</strong>できたフォルダは手作業でコピーしてください。</p>
+      <button id="publish" type="button" class="secondary-button">作成</button>
+      <div id="publish-result" aria-live="polite"></div>
+    </section>
+  </main>
+</body>
+</html>
