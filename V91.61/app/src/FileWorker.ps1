@@ -22,6 +22,7 @@ $script:YakuRoot = $Root
 . (Join-Path $Root 'src\Corpus.ps1')
 . (Join-Path $Root 'src\CorpusSearch.ps1')
 . (Join-Path $Root 'src\CorpusReference.ps1')
+. (Join-Path $Root 'src\BriefStyle.ps1')
 
 $spec = Read-YakuJsonFile -Path $JobSpecPath
 if ($null -eq $spec) { throw 'ファイル翻訳ワーカーのジョブ仕様を読み込めませんでした。' }

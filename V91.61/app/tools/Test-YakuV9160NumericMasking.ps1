@@ -24,7 +24,7 @@ function Assert-YakuMask {
     else { Write-Host ('  FAIL ' + $Message) -ForegroundColor Red; $script:Failures++ }
 }
 
-foreach ($name in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','FileTranslation.ps1')) {
+foreach ($name in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','FileTranslation.ps1','BriefStyle.ps1')) {
     . (Join-Path (Join-Path $root 'src') $name)
 }
 

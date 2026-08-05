@@ -1197,6 +1197,12 @@ function Invoke-YakuSingleTranslationBatch {
                     throw "RESPONSE_STRUCTURE_MISMATCH: $([string]$cachedIntegrity.Detail)"
                 }
             }
+            # V91.61: BRIEF の略語はアプリ側で当てる。プロンプトの指示は保証にならない。
+            # BriefStyle.ps1 を読み込んでいない経路でも止めない。当たらなければ
+            # 従来どおりモデルの出力のままになるだけで、翻訳は成立する。
+            if (Get-Command Convert-YakuBriefTranslationOptions -ErrorAction SilentlyContinue) {
+                $optionsCached = @(Convert-YakuBriefTranslationOptions -Options $optionsCached)
+            }
             $optionsCached = @(Restore-YakuMaskedTranslationOptions -Options $optionsCached -MaskedSource $sourceText -Map $maskMap -Warnings $Warnings -Location 'text-cache')
             return [pscustomobject]@{ Direction=$Direction; Options=$optionsCached; Raw=[string]$cachedEnvelope.raw; Prompt=$built.Prompt; CacheHit=$true; RequestId=$cachedRequestId; MaskedCount=[int]$maskResult.MaskedCount; KeptCount=[int]$maskResult.KeptCount }
         } catch {
@@ -1312,6 +1318,11 @@ function Invoke-YakuSingleTranslationBatch {
     }
     # キャッシュへはマスク後の raw を保存する。ディスク上に実値を
     # 残さないことにもなる。復元はその後のこの位置で行う。
+    # V91.61: BRIEF の略語はアプリ側で当てる。マスク復元の前に置くのは、
+    # 復元後の数字（12,340 など）を語として拾わせないため。
+    if (Get-Command Convert-YakuBriefTranslationOptions -ErrorAction SilentlyContinue) {
+        $options = @(Convert-YakuBriefTranslationOptions -Options $options)
+    }
     $options = @(Restore-YakuMaskedTranslationOptions -Options $options -MaskedSource $sourceText -Map $maskMap -Warnings $Warnings -Location 'text')
     return [pscustomobject]@{
         Direction = $Direction
