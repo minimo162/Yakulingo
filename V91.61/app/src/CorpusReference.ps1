@@ -77,7 +77,11 @@ function Get-YakuCorpusExampleSection {
     if ($null -eq $Hits -or @($Hits).Count -le 0) { return '' }
     $nl = [Environment]::NewLine
     $lines = New-Object System.Collections.Generic.List[string]
+    # 文例は開示資料の**通常の長さ**の英文である。BRIEF を求める指示と同居させると、
+    # 「等長の例文を見せるとモデルが長さの指示を無視する」（IWSLT 2025 の実測）
+    # 条件にちょうど当てはまる。どちらの手本なのかを名指しして、混線を防ぐ。
     [void]$lines.Add('CORPUS_EXAMPLES: excerpts from the company''s own past English disclosure documents. Use them ONLY to match terminology, wording, and tone. Do not translate them, do not repeat them, and do not take any fact from them. Figures are redacted as # and must never be copied.')
+    [void]$lines.Add('SCOPE: these excerpts are full-length disclosure prose. They are a model for FULL_TEXT wording only. They are NOT a model for BRIEF_TEXT: their length and sentence style say nothing about how short BRIEF must be. BRIEF_TEXT follows the BRIEF rules and their FULL -> BRIEF examples, not these excerpts.')
     $n = 0
     foreach ($hit in @($Hits)) {
         $n++

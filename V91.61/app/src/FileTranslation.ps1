@@ -1032,6 +1032,76 @@ function Resolve-YakuFileExactGlossaryTranslations {
     return [pscustomobject]@{ Count=[int]$hits; AppliedGlossary=@($applied.ToArray()) }
 }
 
+function Test-YakuFileLabelLike {
+    <#
+      「列に収まることが求められる短いラベル」らしいか。
+
+      判定は粗くてよい。ここで拾うのは「用語集へ足す候補」であって、
+      間違って拾っても人が捨てるだけである。逆に取りこぼすと気づけない。
+    #>
+    param([AllowNull()][string]$Text, [int]$MaxChars = 24)
+    $clean = ([string]$Text).Trim()
+    if ([string]::IsNullOrWhiteSpace($clean)) { return $false }
+    if ($clean.Length -gt $MaxChars) { return $false }
+    # 改行を含むもの、文末記号を持つものは文である。ラベルではない。
+    if ($clean -match "[`r`n]") { return $false }
+    if ($clean -match '[。．！？]') { return $false }
+    # 訳す対象が無いもの（数字・記号だけ）は除く。
+    if ($clean -notmatch '[ぁ-んァ-ヶ一-龯㐀-䶵々〆]') { return $false }
+    return $true
+}
+
+function Get-YakuFileUnmatchedLabels {
+    <#
+      完全一致の用語集に載っていなかった短いラベルを集める。
+
+      なぜこれを出すのか:
+        ファイル翻訳の完全一致置換（cell-exact）は、実運用では
+        **「はみ出さないことの保証」**として使われている。過去のラベルは
+        その列に収まっていたから採用されたので、同じ訳語なら必ず収まる。
+
+        したがって保証が効くのは「ラベルが変わらない限り」であり、
+        **新しいラベルが出た瞬間に保証が消える。しかもそれが見えない。**
+
+        用語集を網羅的に書こうとすると終わらないが、資料1本ごとに
+        新しく出るラベルは有限である。それを見せれば運用が閉じる。
+
+      JA→EN のときだけ出す。英語のほうが長くなりやすく、
+      はみ出しが問題になるのはその向きだから。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Items,
+        [AllowNull()][object[]]$ExactApplied,
+        [AllowNull()][string]$Direction,
+        [int]$MaxChars = 24
+    )
+    $result = New-Object System.Collections.Generic.List[object]
+    if ([string]$Direction -ne 'to_en') { return @($result.ToArray()) }
+    $matched = @{}
+    foreach ($applied in @($ExactApplied)) {
+        if ($null -eq $applied) { continue }
+        try { $matched[[int]$applied.ItemIndex] = $true } catch {}
+    }
+    $seen = @{}
+    foreach ($item in @($Items)) {
+        if ($null -eq $item) { continue }
+        $idx = 0
+        try { $idx = [int]$item.Index } catch { continue }
+        if ($matched.ContainsKey($idx)) { continue }
+        # マスク前の原文で見る。置換の突き合わせも原文で行っているため。
+        $text = ''
+        try { $text = [string]$item.OriginalText } catch { $text = '' }
+        if ([string]::IsNullOrWhiteSpace($text)) { $text = [string]$item.Text }
+        if (-not (Test-YakuFileLabelLike -Text $text -MaxChars $MaxChars)) { continue }
+        $key = ConvertTo-YakuGlossaryMatchKey -Value $text
+        if ([string]::IsNullOrWhiteSpace($key)) { continue }
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        [void]$result.Add([pscustomobject]@{ Index = $idx; Text = ([string]$text).Trim() })
+    }
+    return @($result.ToArray())
+}
+
 function Write-YakuFileGlossaryComplianceLog {
     param(
         [int]$Batch = 0,
@@ -1897,6 +1967,19 @@ function Invoke-YakuFileTranslation {
     $glossaryExactHits = 0
     try { $glossaryExactHits = [int]$exactGlossary.Count } catch { $glossaryExactHits = 0 }
     $appliedGlossary = @(Join-YakuAppliedGlossaryEntries -Primary @($exactGlossary.AppliedGlossary) -Secondary @($promptAppliedGlossary))
+
+    # 完全一致で置換できなかった短いラベルを知らせる。
+    # cell-exact は実運用では「はみ出さないことの保証」なので、
+    # 用語集に無いラベルは保証の外にある。見えないと気づけない。
+    $unmatchedLabels = @(Get-YakuFileUnmatchedLabels -Items $items -ExactApplied @($exactGlossary.AppliedGlossary) -Direction $Direction)
+    if ($unmatchedLabels.Count -gt 0) {
+        $preview = @(@($unmatchedLabels) | Select-Object -First 30 | ForEach-Object { [string]$_.Text })
+        $more = if ($unmatchedLabels.Count -gt 30) { ' ほか' + [string]($unmatchedLabels.Count - 30) + '件' } else { '' }
+        Add-YakuWarning -Warnings $warnings -Category 'label-not-in-glossary' -Location '用語集の網羅' `
+            -Detail @{ Count = [int]$unmatchedLabels.Count; Labels = @($preview); Items = @(@($unmatchedLabels) | Select-Object -First 30 | ForEach-Object { [ordered]@{ id = [int]$_.Index; text = [string]$_.Text } }) } `
+            -Message ("用語集に無い短いラベルが " + [string]$unmatchedLabels.Count + " 件ありました。列幅からはみ出す可能性があります。次回以降のために用語集への追加を検討してください: " + (($preview) -join '、') + $more)
+        try { Write-YakuLog ("File labels not in glossary. count=" + [string]$unmatchedLabels.Count) 'INFO' } catch {}
+    }
 
     # V91.60 段階5: ここで各項目をマスクする。用語集の解決より後に置くのは、
     # 完全一致置換 (Resolve-YakuFileExactGlossaryTranslations) が原文の見出し語と

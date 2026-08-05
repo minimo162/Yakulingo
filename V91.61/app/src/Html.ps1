@@ -211,6 +211,7 @@ function Get-YakuWarningCategoryLabel {
         'untranslated-retained' { return '原文保持' }
         'hangul-retry' { return 'Hangul再翻訳' }
         'glossary-compliance' { return '訳語の確認推奨' }
+        'label-not-in-glossary' { return '用語集に無いラベル' }
         'numeric-placeholder-dropped-brief' { return 'BRIEFで省略された数値' }
         'numeric-placeholder-unresolved' { return '数値プレースホルダー不一致' }
         'numeric-mask-integrity' { return '数値プレースホルダー不一致' }
