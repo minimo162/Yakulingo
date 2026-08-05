@@ -77,13 +77,52 @@ Chk (-not (Test-YakuPathInside -Base $srcRoot -Path (Join-Path $srcRoot '../data
 Chk (Test-YakuPathInside -Base $srcRoot -Path (Join-Path $dbDir 'a_en.pdf')) '配下は通す'
 
 Write-Host '配布用フォルダ'
+# 出来上がりは共有フォルダへそのまま置ける形にする。
+#   <配布用>\<版>\corpus\current.txt
+#   <配布用>\<版>\corpus\<版>\manifest.json ＋ <データベース>\*.md
 $pub = New-YakuCorpusPublishFolder -Version '2026-08-04'
-Chk (Test-Path (Join-Path $pub.Path 'manifest.json')) '台帳が出力される'
+$pubCorpus = [string]$pub.CorpusDir
+$pubVersion = Join-Path $pubCorpus '2026-08-04'
+Chk ($pubCorpus -eq (Join-Path $pub.Path 'corpus')) 'corpus フォルダを返す（実機で見当たらなかった箇所）'
+Chk (Test-Path -LiteralPath $pubCorpus -PathType Container) 'corpus フォルダが実在する'
+Chk (Test-Path -LiteralPath (Join-Path $pubCorpus 'current.txt') -PathType Leaf) 'current.txt も一緒に作る（人に書かせない）'
+Chk (([IO.File]::ReadAllText((Join-Path $pubCorpus 'current.txt'))).Trim() -eq '2026-08-04') 'current.txt の中身は版の名前だけ'
+Chk (Test-Path -LiteralPath (Join-Path $pubVersion 'manifest.json') -PathType Leaf) '台帳は版フォルダの中'
 Chk ($pub.Count -eq 2) '2件が配布対象'
-$pm = Read-YakuCorpusManifest -Dir $pub.Path
+$pm = Read-YakuCorpusManifest -Dir $pubVersion
 Chk ($pm.corpus_version -eq '2026-08-04') 'コーパスの版が入る'
 Chk (@(Get-ChildItem -LiteralPath $pub.Path -Recurse -Filter '*.pdf').Count -eq 0) '配布物に元PDFを入れない'
 Chk (@(Get-ChildItem -LiteralPath $pub.Path -Recurse -Filter '*.md').Count -eq 2) 'Markdown が2件'
+
+Write-Host '配布用フォルダを共有へ置いたとき、bootstrap が読めるか'
+# 判定は bootstrap.ps1 の実物で行う。期待する形をテストへ書き写すと、
+# 配る側と読む側がずれても気づけない。実機の「corpus が無い」はこの隙間で起きた。
+$bootPath = Join-Path (Split-Path -Parent (Split-Path -Parent $root)) 'bootstrap.ps1'
+if (Test-Path -LiteralPath $bootPath -PathType Leaf) {
+    $bootText = [IO.File]::ReadAllText($bootPath)
+    foreach ($fname in @('Join-YakuPath','Test-YakuCorpusTreeReady','Get-YakuCorpusSharedDir')) {
+        # bootstrap.ps1 をそのまま読み込むと導入処理が走ってしまう。関数の本文だけを切り出す。
+        $begin = $bootText.IndexOf('function ' + $fname + ' {')
+        Chk ($begin -ge 0) ('bootstrap から ' + $fname + ' を取り出せる')
+        if ($begin -lt 0) { continue }
+        $depth = 0; $end = -1
+        for ($i = $begin; $i -lt $bootText.Length; $i++) {
+            if ($bootText[$i] -eq '{') { $depth++ }
+            elseif ($bootText[$i] -eq '}') { $depth--; if ($depth -eq 0) { $end = $i; break } }
+        }
+        Invoke-Expression $bootText.Substring($begin, $end - $begin + 1)
+    }
+    # 共有フォルダを模して、作られた corpus フォルダをそのままコピーする（管理者の手順そのもの）。
+    $fakeShared = Join-Path $work 'shared'
+    New-Item -ItemType Directory -Path $fakeShared -Force | Out-Null
+    Copy-Item -LiteralPath $pubCorpus -Destination (Join-Path $fakeShared 'corpus') -Recurse -Force
+    $resolved = Get-YakuCorpusSharedDir -SharedRoot $fakeShared
+    Chk (-not [string]::IsNullOrWhiteSpace($resolved)) 'コピーしただけで bootstrap が版を見つける（書き換え不要）'
+    Chk ((Split-Path -Leaf ([string]$resolved)) -eq '2026-08-04') '見つかるのは publish した版'
+    Chk (Test-YakuCorpusTreeReady -Root ([string]$resolved)) '台帳の .md が揃っている'
+} else {
+    Chk $false ('bootstrap.ps1 が見つからない: ' + $bootPath)
+}
 
 Write-Host '資料を別のデータベースへ移したとき（実機で発生）'
 # id は内容のハッシュなので、フォルダを移しても同じ id になる。

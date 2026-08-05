@@ -185,9 +185,12 @@ async function publish() {
     const res = await api('/api/admin/corpus/publish', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || 'unknown');
+    // 手順は1つだけにする。版フォルダ名も current.txt も、こちらで用意済み。
     say($('publish-result'),
-      '作成しました（' + data.count + ' 件）: ' + data.path + '\n' +
-      'このフォルダを共有フォルダの corpus\\ 配下へコピーし、corpus\\current.txt を "' + data.version + '" に書き換えてください。',
+      '作成しました（' + data.count + ' 件）。\n' +
+      '次の corpus フォルダを、共有フォルダ（YakuLingo起動.cmd と同じ場所）へ丸ごとコピーしてください。\n' +
+      (data.corpus_dir || data.path) + '\n' +
+      '共有フォルダに既に corpus がある場合は、上書き（統合）してください。current.txt も入っているので書き換えは不要です。',
       'info');
   } catch (e) {
     say($('publish-result'), '作成に失敗しました: ' + e.message, 'error');

@@ -278,6 +278,18 @@ function New-YakuCorpusPublishFolder {
     <#
       配布用フォルダをローカルへ作る。共有フォルダへは人がコピーする。
       アプリが共有へ書かないのは意図的である（仕様書 §1）。
+
+      出来上がりは共有フォルダへそのまま置ける形にする。
+
+        <配布用>\<版>\corpus\current.txt      … 版の名前だけを書いたポインタ
+        <配布用>\<版>\corpus\<版>\manifest.json
+        <配布用>\<版>\corpus\<版>\<データベース>\*.md
+
+      corpus フォルダごと共有フォルダの直下へコピーすれば、
+      bootstrap.ps1 の Get-YakuCorpusSharedDir がそのまま読める。
+      以前は版フォルダだけを作り、corpus\ と current.txt は人が手で
+      用意する決まりだった。実機で「corpus フォルダが見当たらない」となったため、
+      器ごとこちらで作る。手順を覚えなくてよいほうが配布は事故らない。
     #>
     param(
         [AllowNull()][string]$BuildDir,
@@ -292,13 +304,15 @@ function New-YakuCorpusPublishFolder {
 
     $target = Join-Path (Get-YakuCorpusPublishDir) $Version
     if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
-    New-Item -ItemType Directory -Path $target -Force | Out-Null
+    $corpusDir = Join-Path $target 'corpus'
+    $versionDir = Join-Path $corpusDir $Version
+    New-Item -ItemType Directory -Path $versionDir -Force | Out-Null
 
     foreach ($e in $entries) {
         $rel = ([string]$e.markdown) -replace '/', [System.IO.Path]::DirectorySeparatorChar
         $src = Join-Path $BuildDir $rel
         if (!(Test-Path -LiteralPath $src -PathType Leaf)) { continue }
-        $dst = Join-Path $target $rel
+        $dst = Join-Path $versionDir $rel
         $dstDir = Split-Path -Parent $dst
         if (!(Test-Path -LiteralPath $dstDir)) { New-Item -ItemType Directory -Path $dstDir -Force | Out-Null }
         Copy-Item -LiteralPath $src -Destination $dst -Force
@@ -308,8 +322,18 @@ function New-YakuCorpusPublishFolder {
     $out = New-YakuCorpusManifest
     $out['corpus_version'] = $Version
     $out['entries'] = @($entries)
-    Write-YakuCorpusManifest -Dir $target -Manifest $out
+    Write-YakuCorpusManifest -Dir $versionDir -Manifest $out
+
+    # ポインタも一緒に作る。人に書き換えさせない。
+    # BOM は付けない（読み手は外しているが、付けない方が素直）。
+    [System.IO.File]::WriteAllText((Join-Path $corpusDir 'current.txt'), ($Version + "`r`n"),
+        (New-Object System.Text.UTF8Encoding($false)))
 
     try { Write-YakuLog "Corpus publish. version=$Version entries=$($entries.Count) path=$target" 'INFO' } catch {}
-    return [pscustomobject]@{ Version = $Version; Path = $target; Count = $entries.Count }
+    return [pscustomobject]@{
+        Version   = $Version
+        Path      = $target
+        CorpusDir = $corpusDir
+        Count     = $entries.Count
+    }
 }
