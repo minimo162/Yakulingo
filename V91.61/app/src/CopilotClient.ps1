@@ -563,8 +563,72 @@ function Get-YakuCdpPortRuntimeCachePath {
     return (Join-Path (Get-YakuSubDir 'runtime') 'cdp-port.json')
 }
 
+# V91.61 段階②（2026-08-06）: 完全訳と電文体を同時に流すため、Copilot のタブを
+# 複数使う。どのタブを使うかを「スロット」で表す。既定は 0 で、従来と同じ1枚。
+#
+# スロットはランスペースごとに持つ。$script: はランスペース間で共有されないので、
+# 並列に走る2つのランスペースがそれぞれ別のタブを掴む。
+$script:YakuCopilotSlot = 0
+
+function Set-YakuCopilotSlot {
+    param([int]$Slot)
+    $script:YakuCopilotSlot = [Math]::Max(0, [int]$Slot)
+}
+
+function Get-YakuCopilotSlot {
+    if ($null -eq $script:YakuCopilotSlot) { return 0 }
+    try { return [int]$script:YakuCopilotSlot } catch { return 0 }
+}
+
 function Get-YakuCopilotTargetRuntimeCachePath {
-    return (Join-Path (Get-YakuSubDir 'runtime') 'cdp-copilot-target.json')
+    # スロット0は従来のファイル名のまま。増やしたスロットだけ別ファイルにする。
+    # 1本のファイルを共有すると、並列時に互いの記録を上書きしてしまう。
+    $slot = Get-YakuCopilotSlot
+    $name = if ($slot -le 0) { 'cdp-copilot-target.json' } else { ('cdp-copilot-target-' + [string]$slot + '.json') }
+    return (Join-Path (Get-YakuSubDir 'runtime') $name)
+}
+
+function Initialize-YakuCopilotSlotTarget {
+    <#
+      このスロットが使うタブを決めて、対象キャッシュへ載せる。
+
+      並びは Copilot タブの id の昇順で固定する。どのランスペースから見ても
+      同じ順になるので、スロット0とスロット1が同じタブを掴むことがない。
+      足りなければ作る。作れなければ何もしない（呼び出し側が従来どおり1枚で動く）。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][int]$Port,
+        [Parameter(Mandatory=$true)][string]$Url,
+        [int]$WaitSeconds = 20
+    )
+    $slot = Get-YakuCopilotSlot
+    if ($slot -le 0) { return $null }
+    $needed = $slot + 1
+    $deadline = (Get-Date).AddSeconds($WaitSeconds)
+    $created = $false
+    while ($true) {
+        $targets = @()
+        try { $targets = @(Get-YakuCdpPages -Port $Port | Where-Object { Test-YakuCopilotUrl -Url ([string]$_.url) }) } catch { $targets = @() }
+        $targets = @($targets | Sort-Object { [string]$_.id })
+        if ($targets.Count -ge $needed) {
+            $chosen = $targets[$slot]
+            $chosenId = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $chosen -Name 'id' -Default '')
+            if (-not [string]::IsNullOrWhiteSpace($chosenId)) {
+                $script:YakuCopilotTargetCache = [pscustomobject]@{ Port = [int]$Port; TargetId = [string]$chosenId }
+                try { Write-YakuLog "Copilot slot bound. slot=$slot targetId=$chosenId tabs=$($targets.Count)" 'DEBUG' } catch {}
+                return $chosen
+            }
+        }
+        if (-not $created) {
+            try { $null = New-YakuCdpPage -Port $Port -Url $Url } catch {}
+            $created = $true
+        }
+        if ((Get-Date) -ge $deadline) {
+            try { Write-YakuLog "Copilot slot could not be bound; falling back to the default tab. slot=$slot tabs=$($targets.Count)" 'WARN' } catch {}
+            return $null
+        }
+        Start-Sleep -Milliseconds 700
+    }
 }
 
 function Save-YakuCopilotTargetRuntimeCache {
@@ -942,6 +1006,10 @@ function Get-YakuCopilotPage {
         [string]$Url = 'https://m365.cloud.microsoft/chat/',
         [int]$CreateGraceSeconds = 8
     )
+    # スロットを使う場合は、先にこのスロットのタブを対象キャッシュへ載せる。
+    # 以降の解決経路は従来のまま（キャッシュ済みの対象を拾う道を通る）。
+    if ((Get-YakuCopilotSlot) -gt 0) { $null = Initialize-YakuCopilotSlotTarget -Port $Port -Url $Url }
+
     $pages = @(Get-YakuCdpPages -Port $Port)
     Write-YakuLog "CDP targets found: $($pages.Count)." 'DEBUG'
 

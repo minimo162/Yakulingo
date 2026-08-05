@@ -1399,6 +1399,103 @@ function Invoke-YakuSingleTranslationBatch {
     }
 }
 
+function Invoke-YakuTextRequestsInParallel {
+    <#
+      依頼を Copilot のタブ2枚へ振り分けて同時に流す。
+
+      ランスペースごとに $script: が分かれるので、それぞれ別のスロット
+      （= 別のタブ）を掴む。応答が混ざらないことは実測で確認済み。
+
+      揃わなければ $null を返す。呼び出し側が逐次でやり直す。
+      速さのための仕組みなので、ここでの失敗を翻訳の失敗にしない。
+
+      進捗は先頭の依頼だけが報告する。2つのランスペースから同じ入れ物へ
+      書くと、どちらの数字か分からなくなるため。
+      警告は依頼ごとに別の入れ物へ集め、呼び出し側で1つへまとめる。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Root,
+        [Parameter(Mandatory=$true)][string]$InputText,
+        [Parameter(Mandatory=$true)]$Settings,
+        [Parameter(Mandatory=$true)][string]$Direction,
+        [AllowNull()][string]$StyleReference,
+        [AllowNull()][string]$CorpusSection,
+        [Parameter(Mandatory=$true)][string[]]$Modes,
+        [AllowNull()]$ProgressState
+    )
+    if (@($Modes).Count -lt 2) { return $null }
+    # モックのときは往復が無いので、並列にする意味も検証する意味も無い。
+    if ($env:YAKULINGO_MOCK -eq '1') { return $null }
+    # 既定では使わない。実機で PROMPT_TRUNCATED_BY_INPUT_LIMIT が出た（2026-08-06）。
+    #
+    # 背景タブへ長い文字列を流し込むと、入力欄に入りきらずに欠ける。
+    # 実証（200字程度の依頼）では出なかったが、実際の依頼は1万字近くあり再現する。
+    # 前面のタブは1つしか作れないので、2枚を同時に埋めることはできない。
+    #
+    # 次の手は「入力と送信だけを順番に行い、応答待ちだけを重ねる」こと。
+    # 記録では入力と送信は各1秒弱、応答待ちは10〜30秒なので、
+    # それでも短縮のほとんどは取れる。
+    # それまでは開発時だけ有効にする。
+    if ($env:YAKULINGO_PARALLEL -ne '1') { return $null }
+
+    $work = {
+        param($Root, $InputText, $SettingsJson, $Direction, $StyleReference, $CorpusSection, $Mode, $Slot, $DataDir)
+        $ErrorActionPreference = 'Stop'
+        if (-not [string]::IsNullOrWhiteSpace($DataDir)) { $env:YAKULINGO_DATA_DIR = $DataDir }
+        foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1','BriefStyle.ps1')) {
+            . (Join-Path $Root ('src\' + $n))
+        }
+        Set-YakuCopilotSlot -Slot $Slot
+        $settings = Read-YakuSettings -Root $Root
+        $warnings = New-Object System.Collections.Generic.List[object]
+        $r = Invoke-YakuSingleTranslationBatch -Root $Root -InputText $InputText -Settings $settings -Direction $Direction -StyleReference $StyleReference -Warnings $warnings -CorpusSection $CorpusSection -Mode $Mode
+        return [pscustomobject]@{
+            Options = @($r.Options); Raw = [string]$r.Raw; Prompt = [string]$r.Prompt
+            CacheHit = [bool]$r.CacheHit; RequestId = [string]$r.RequestId
+            MaskedCount = [int]$r.MaskedCount; KeptCount = [int]$r.KeptCount
+            Warnings = @($warnings.ToArray())
+        }
+    }
+
+    $pool = $null
+    $shells = @()
+    try {
+        $pool = [runspacefactory]::CreateRunspacePool(1, @($Modes).Count)
+        $pool.Open()
+        $slot = 0
+        foreach ($m in $Modes) {
+            $ps = [powershell]::Create()
+            $ps.RunspacePool = $pool
+            $null = $ps.AddScript($work).
+                AddArgument($Root).AddArgument($InputText).AddArgument('').AddArgument($Direction).
+                AddArgument([string]$StyleReference).AddArgument([string]$CorpusSection).
+                AddArgument([string]$m).AddArgument($slot).AddArgument([string]$env:YAKULINGO_DATA_DIR)
+            $shells += [pscustomobject]@{ Shell=$ps; Handle=$ps.BeginInvoke(); Mode=[string]$m }
+            $slot++
+        }
+        $out = New-Object System.Collections.Generic.List[object]
+        $failed = $false
+        foreach ($h in $shells) {
+            try {
+                $res = @($h.Shell.EndInvoke($h.Handle))
+                if (@($res).Count -lt 1 -or $null -eq $res[0]) { $failed = $true }
+                else { [void]$out.Add($res[0]) }
+            } catch {
+                try { Write-YakuLog "Parallel text request failed. mode=$($h.Mode) error=$($_.Exception.Message)" 'WARN' } catch {}
+                $failed = $true
+            }
+        }
+        if ($failed -or $out.Count -ne @($Modes).Count) { return $null }
+        return @($out.ToArray())
+    } catch {
+        try { Write-YakuLog "Parallel runspace setup failed. error=$($_.Exception.Message)" 'WARN' } catch {}
+        return $null
+    } finally {
+        foreach ($h in $shells) { try { $h.Shell.Dispose() } catch {} }
+        if ($null -ne $pool) { try { $pool.Close() } catch {}; try { $pool.Dispose() } catch {} }
+    }
+}
+
 function Invoke-YakuTextTranslationRequests {
     <#
       1つの原文に対して、必要な依頼を出して訳文を揃える。
@@ -1428,6 +1525,35 @@ function Invoke-YakuTextTranslationRequests {
         return (Invoke-YakuSingleTranslationBatch -Root $Root -InputText $InputText -Settings $Settings -Direction $Direction -StyleReference $StyleReference -SkipFreshChatWait:$SkipFreshChatWait -ProgressState $ProgressState -Warnings $Warnings -CorpusSection $CorpusSection)
     }
 
+    $modes = @('full','brief')
+    $results = $null
+    $mode2 = 'sequential'
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+
+    # 並列を先に試す。Copilot のタブを2枚使い、片方ずつ別のランスペースで流す。
+    # タブが用意できない・ランスペースが作れないなど、何かあれば逐次へ落とす。
+    # 逐次でも結果は同じで、遅くなるだけなので、失敗を翻訳の失敗にしない。
+    try {
+        $results = Invoke-YakuTextRequestsInParallel -Root $Root -InputText $InputText -Settings $Settings -Direction $Direction -StyleReference $StyleReference -CorpusSection $CorpusSection -Modes $modes -ProgressState $ProgressState
+        if ($null -ne $results) { $mode2 = 'parallel' }
+    } catch {
+        try { Write-YakuLog "Parallel text requests failed; falling back to sequential. error=$($_.Exception.Message)" 'WARN' } catch {}
+        $results = $null
+    }
+
+    if ($null -eq $results) {
+        $seq = New-Object System.Collections.Generic.List[object]
+        $index = 0
+        foreach ($m in $modes) {
+            # 1本目のあとはチャットが温まっている。2本目で待ち直さない。
+            $skipWait = ($SkipFreshChatWait -or $index -gt 0)
+            [void]$seq.Add((Invoke-YakuSingleTranslationBatch -Root $Root -InputText $InputText -Settings $Settings -Direction $Direction -StyleReference $StyleReference -SkipFreshChatWait:$skipWait -ProgressState $ProgressState -Warnings $Warnings -CorpusSection $CorpusSection -Mode $m))
+            $index++
+        }
+        $results = @($seq.ToArray())
+    }
+    $sw.Stop()
+
     $options = New-Object System.Collections.Generic.List[object]
     $raws = New-Object System.Collections.Generic.List[string]
     $prompts = New-Object System.Collections.Generic.List[string]
@@ -1435,12 +1561,9 @@ function Invoke-YakuTextTranslationRequests {
     $cacheHits = 0
     $maskedCount = 0
     $keptCount = 0
-    $index = 0
-    # 完全訳を先に出す。画面の並びが依頼の順と一致していたほうが追いやすい。
-    foreach ($mode in @('full','brief')) {
-        # 1本目のあとはチャットが温まっている。2本目で待ち直さない。
-        $skipWait = ($SkipFreshChatWait -or $index -gt 0)
-        $r = Invoke-YakuSingleTranslationBatch -Root $Root -InputText $InputText -Settings $Settings -Direction $Direction -StyleReference $StyleReference -SkipFreshChatWait:$skipWait -ProgressState $ProgressState -Warnings $Warnings -CorpusSection $CorpusSection -Mode $mode
+    # 完全訳を先に並べる。画面の並びが依頼の順と一致していたほうが追いやすい。
+    foreach ($r in @($results)) {
+        if ($null -eq $r) { continue }
         foreach ($o in @($r.Options)) { [void]$options.Add($o) }
         [void]$raws.Add([string]$r.Raw)
         [void]$prompts.Add([string]$r.Prompt)
@@ -1449,9 +1572,13 @@ function Invoke-YakuTextTranslationRequests {
         # 原文もマスクも依頼で変わらないので、件数はどちらでも同じ。上書きでよい。
         $maskedCount = [int]$r.MaskedCount
         $keptCount = [int]$r.KeptCount
-        $index++
+        # 並列側で集めた警告を、呼び出し元の一覧へ移す。
+        if ($null -ne $Warnings -and $null -ne $r.PSObject.Properties['Warnings']) {
+            foreach ($w in @($r.Warnings)) { if ($null -ne $w) { try { [void]$Warnings.Add($w) } catch {} } }
+        }
     }
-    try { Write-YakuLog "Text translation requests completed. direction=$Direction requests=$index options=$($options.Count) cacheHits=$cacheHits" 'INFO' } catch {}
+    $index = @($results).Count
+    try { Write-YakuLog "Text translation requests completed. direction=$Direction requests=$index options=$($options.Count) cacheHits=$cacheHits execution=$mode2 elapsedMs=$($sw.ElapsedMilliseconds)" 'INFO' } catch {}
     return [pscustomobject]@{
         Direction = $Direction
         Options = @($options.ToArray())
