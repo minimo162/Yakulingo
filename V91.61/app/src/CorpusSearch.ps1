@@ -124,6 +124,79 @@ function Get-YakuCorpusTokens {
     return @($tokens.ToArray())
 }
 
+function Split-YakuCorpusOversizedBlock {
+    <#
+      ページの本文を、一節へまとめられる大きさの塊へ分ける。
+
+      なぜ空行だけでは足りないか（2026-08-06 実データで確認）:
+        PDF から取り出したテキストには空行がほとんど無い。空行だけを切れ目に
+        すると切る場所が見つからず、**1ページが丸ごと1一節**になる。
+        本物の英文短信で平均 1,633 字・最大 2,716 字の一節ができていた。
+        文例は先頭から 600 字で切り詰めて送るので、送られるのは
+        ページの見出しと表のキャプションばかりになり、手本になる文が届かない。
+
+      切れ目は、粗いものから順に試す。
+        1. 空行            段落が分かっているならそれが最良
+        2. 文末（. ! ?）   散文はここで切れる
+        3. 改行            表には文末が無い。行で切るしかない
+      いずれも見つからなければ、そのまま返す（呼び出し側が目安で確定させる）。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$Text,
+        [int]$TargetChars = 900
+    )
+    $blocks = New-Object System.Collections.Generic.List[string]
+    foreach ($para in @([regex]::Split([string]$Text, "`n\s*`n"))) {
+        $clean = ([string]$para).Trim()
+        if ([string]::IsNullOrWhiteSpace($clean)) { continue }
+        if ($clean.Length -le $TargetChars) { [void]$blocks.Add($clean); continue }
+
+        # 文末で割る。ピリオドの後ろに空白か行末が続くところだけを切れ目にする。
+        # 「Y-o-Y」「No. 3」のような略語の中のピリオドで切らないため。
+        $sentences = @([regex]::Split($clean, '(?<=[.!?])(?=\s)'))
+        $acc = New-Object System.Text.StringBuilder
+        foreach ($s in $sentences) {
+            $piece = ([string]$s).Trim()
+            if ([string]::IsNullOrWhiteSpace($piece)) { continue }
+            if ($acc.Length -gt 0 -and ($acc.Length + $piece.Length) -gt $TargetChars) {
+                [void]$blocks.Add($acc.ToString()); $acc = New-Object System.Text.StringBuilder
+            }
+            if ($acc.Length -gt 0) { [void]$acc.Append(' ') }
+            [void]$acc.Append($piece)
+            # 1文だけで目安を超えるものは、表が1行に潰れた形である。行で割る。
+            if ($acc.Length -gt $TargetChars) {
+                foreach ($lineBlock in @(Split-YakuCorpusBlockByLine -Text $acc.ToString() -TargetChars $TargetChars)) {
+                    [void]$blocks.Add($lineBlock)
+                }
+                $acc = New-Object System.Text.StringBuilder
+            }
+        }
+        if ($acc.Length -gt 0) { [void]$blocks.Add($acc.ToString()) }
+    }
+    return @($blocks.ToArray())
+}
+
+function Split-YakuCorpusBlockByLine {
+    # 文末が無い塊（表）を行で割る。1行が目安を超えるときはその行を単独で返す。
+    param(
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$Text,
+        [int]$TargetChars = 900
+    )
+    $blocks = New-Object System.Collections.Generic.List[string]
+    $acc = New-Object System.Text.StringBuilder
+    foreach ($line in @(([string]$Text) -split "`n")) {
+        $l = ([string]$line).Trim()
+        if ([string]::IsNullOrWhiteSpace($l)) { continue }
+        if ($acc.Length -gt 0 -and ($acc.Length + $l.Length) -gt $TargetChars) {
+            [void]$blocks.Add($acc.ToString()); $acc = New-Object System.Text.StringBuilder
+        }
+        if ($acc.Length -gt 0) { [void]$acc.Append("`n") }
+        [void]$acc.Append($l)
+    }
+    if ($acc.Length -gt 0) { [void]$blocks.Add($acc.ToString()) }
+    return @($blocks.ToArray())
+}
+
 function Split-YakuCorpusPassages {
     <#
       1つの Markdown を、引ける単位（一節）へ切る。
@@ -166,7 +239,7 @@ function Split-YakuCorpusPassages {
 
     foreach ($pt in $pageTexts) {
         $chunk = New-Object System.Text.StringBuilder
-        foreach ($para in @([regex]::Split([string]$pt.Text, "`n\s*`n"))) {
+        foreach ($para in @(Split-YakuCorpusOversizedBlock -Text ([string]$pt.Text) -TargetChars $TargetChars)) {
             $clean = ([string]$para).Trim()
             if ([string]::IsNullOrWhiteSpace($clean)) { continue }
             # 先に足してから測ると、目安の倍近い一節ができてしまう。

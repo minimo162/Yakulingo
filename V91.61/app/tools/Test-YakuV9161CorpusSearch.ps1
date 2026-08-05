@@ -64,6 +64,26 @@ foreach ($p in $ps) {
 Chk ($true) 'ページ境界を越えない'
 Chk (@(Split-YakuCorpusPassages -Markdown "<!--yaku-page:1-->`n短すぎ").Count -eq 0) '短すぎる一節は捨てる'
 
+# ---------------------------------------------------------------- 空行が無い本文
+# PDF から取り出したテキストには空行がほとんど無い。空行だけを切れ目にしていた
+# ため、本物の英文短信で 1ページ＝1一節（平均1,633字・最大2,716字）になっていた。
+# 文例は先頭600字で切り詰めて送るので、届くのは見出しと表のキャプションだけで、
+# 手本になる文が切り捨てられていた（2026-08-06 実データで確認）。
+Write-Host '空行が無くても切れる'
+$noBlank = "<!--yaku-page:1-->`n" + (('Net sales decreased by a modest margin as shipment volumes fell in the period. ' * 30) -replace ' $', '')
+$nb = @(Split-YakuCorpusPassages -Markdown $noBlank)
+Chk ($nb.Count -ge 2) ('空行が無くても複数の一節へ切れる: ' + $nb.Count)
+Chk ((@($nb | ForEach-Object { $_.Text.Length }) | Measure-Object -Maximum).Maximum -le 1000) ('一節が目安を大きく超えない: ' + (@($nb | ForEach-Object { $_.Text.Length }) | Measure-Object -Maximum).Maximum)
+
+# 表は文末が無い。行で切れないと1一節へ潰れる。
+$tableMd = "<!--yaku-page:1-->`n" + ((1..60 | ForEach-Object { "Operating profit by segment $_ 1,234 5,678 9,012" }) -join "`n")
+$tb = @(Split-YakuCorpusPassages -Markdown $tableMd)
+Chk ($tb.Count -ge 2) ('文末が無い表も複数の一節へ切れる: ' + $tb.Count)
+Chk ((@($tb | ForEach-Object { $_.Text.Length }) | Measure-Object -Maximum).Maximum -le 1000) '表の一節も目安を大きく超えない'
+# 略語のピリオドで切ってはいけない。
+$abbrev = @(Split-YakuCorpusOversizedBlock -Text ('Sales rose approx. 5% vs. plan in the U.S. market. ' * 40) -TargetChars 900)
+Chk (@($abbrev | Where-Object { $_ -match '^\s*5% vs' }).Count -eq 0) '略語の途中では切らない'
+
 # ---------------------------------------------------------------- 出現数の数え方
 Write-Host '出現数の数え方'
 $h = Measure-YakuCorpusTermHits -LowerText 'the equity ratio rose. the equity ratio is disclosed.' -Terms @('equity','ratio','cash')
