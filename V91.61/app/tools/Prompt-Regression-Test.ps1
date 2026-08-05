@@ -152,9 +152,10 @@ $numberedEightExpected = ((1..8 | ForEach-Object { "$_. Heading $_" }) -join "`n
 Assert-YakuTrue -Condition ([bool]$numberedEightRepair.Restored -and ([string]$numberedEightRepair.Text -eq $numberedEightExpected) -and ([string]$numberedEightRepair.Text -notmatch '\$1[1-8]')) -Message 'V91.25 heading restoration must use braced regex groups and restore exact numbers 1 through 8'
 $numberedMismatch = Repair-YakuNumberedHeadingSequence -SourceText $numberedSource -TranslatedText "1. Funding`n1. Acctg." -Style 'brief'
 Assert-YakuTrue -Condition (-not [bool]$numberedMismatch.Restored) -Message 'V91.23 heading restoration must not run when heading counts differ'
-$placeholderOk = Test-YakuMaskingPlaceholderIntegrity -SourceText '対象は【非開示】および【第3四半期(3か月)】。' -TranslatedText 'Covered: 【非開示】 and 【Third Quarter (3 months)】.' -Style 'full'
-$placeholderMissing = Test-YakuMaskingPlaceholderIntegrity -SourceText '対象は【非開示】。' -TranslatedText 'The item covered is.' -Style 'brief'
-Assert-YakuTrue -Condition ([bool]$placeholderOk.Ok -and -not [bool]$placeholderMissing.Ok -and $placeholderMissing.Missing.Count -eq 1) -Message 'V91.23 masking placeholder validation must detect a bare-token omission'
+# V91.60: 手動マスク(【…非開示】)は廃止した。数値プレースホルダーの整合検証へ置き換える。
+$maskOk = Test-YakuNumericMaskIntegrity -MaskedSource '対象は【N1】 oku および【N2】 oku。' -Translated 'Covered: 【N1】 oku and 【N2】 oku.' -Location 'regression'
+$maskMissing = Test-YakuNumericMaskIntegrity -MaskedSource '対象は【N1】 oku。' -Translated 'The item covered is.' -Location 'regression'
+Assert-YakuTrue -Condition ([bool]$maskOk.Ok -and -not [bool]$maskMissing.Ok -and $maskMissing.Missing.Count -eq 1) -Message 'V91.60 numeric placeholder validation must detect an omission'
 
 
 $toEnTemplateV9124 = Get-Content -LiteralPath (Join-Path $root 'prompts\text_translate_to_en.txt') -Raw
@@ -239,7 +240,7 @@ $textTemplate = Get-YakuPromptTemplate -Root $root -Name 'text_translate_to_en.t
 $textTemplateJp = Get-YakuPromptTemplate -Root $root -Name 'text_translate_to_jp.txt'
 Assert-YakuTrue -Condition ($textTemplate.Contains('Priority: complete facts, telegraphic form, brevity') -and $textTemplate.Contains('Apply to every sentence, heading, and label') -and $textTemplate.Contains('1H OP up 2.0 oku YoY, mainly') -and $textTemplate.Contains('FULL_TEXT: natural business English')) -Message 'V91.19 compact BRIEF rules not injected into to_en text prompt'
 Assert-YakuTrue -Condition ($textTemplate.Contains('Shared rules (FULL_TEXT and BRIEF_TEXT)') -and $textTemplate.Contains('R4. Signed breakdowns') -and $textTemplate.Contains('term + one space + source sign and figure/unit') -and $textTemplate.Contains('decreased by X') -and $textTemplate.Contains('Join top-level items with semicolons')) -Message 'V91.19 shared signed-breakdown rules missing'
-Assert-YakuTrue -Condition ($textTemplate.Contains('Numbered headings: reproduce the exact source number') -and $textTemplate.Contains('never renumber, restart at 1.') -and $textTemplate.Contains('Reproduce every 【...非開示】 masking placeholder exactly') -and $textTemplate.Contains('Other 【...】 are emphasis/heading brackets')) -Message 'V91.23 numbered-heading or masking-placeholder prompt rules missing'
+Assert-YakuTrue -Condition ($textTemplate.Contains('Numbered headings: reproduce the exact source number') -and $textTemplate.Contains('never renumber, restart at 1.') -and $textTemplate.Contains('【...】 are emphasis/heading brackets') -and -not $textTemplate.Contains('非開示')) -Message 'V91.60 numbered-heading rule missing, or the abolished manual mask still referenced'
 Assert-YakuTrue -Condition ($textTemplate.Contains('R3. Use one English rendering') -and $textTemplate.Contains('R5. Semicolons may join clauses') -and $textTemplate.Contains('R10. Verify both outputs')) -Message 'V91.19 shared consistency, semicolon, or structure rules missing'
 Assert-YakuTrue -Condition ($textTemplate.Contains('R6. Intention vs. expectation') -and $textTemplate.Contains('plans to/intends to/is set to') -and $textTemplate.Contains('is expected to/is forecast to')) -Message 'V91.19 modality rule missing'
 Assert-YakuTrue -Condition ($textTemplate.Contains('R7. Attach “centered on X / led by X”') -and $textTemplate.Contains('〜を中心に -> “led by X”')) -Message 'V91.19 modifier-attachment rule missing'
@@ -385,8 +386,9 @@ Write-Host "V91.36 numeric-scale and window-recovery regression passed. Prompt w
 $numericOk = Test-YakuNumericIntegrity -SourceText '売上高11,577 oku、販売659 k units、比率12.2%。' -TranslatedText 'Revenue was 11,577 oku, sales were 659 k units, and the ratio was 12.2%.' -Location 'regression-ok'
 $numericBad = Test-YakuNumericIntegrity -SourceText '損失400 oku。' -TranslatedText 'A negative 40 oku.' -Location 'regression-bad'
 Assert-YakuTrue -Condition ([bool]$numericOk.Ok -and -not [bool]$numericBad.Ok -and [int]$numericBad.ScaleErrors -ge 1) -Message 'V91.36 numeric integrity audit missing or scale mismatch undetected'
-$emphasisScope = Test-YakuMaskingPlaceholderIntegrity -SourceText '【第3四半期(3か月)】と【金額非開示】' -TranslatedText '【Third Quarter (3 months)】 and 【金額非開示】' -Style 'full'
-Assert-YakuTrue -Condition ([bool]$emphasisScope.Ok -and [int]$emphasisScope.SourceCount -eq 1) -Message 'V91.36 masking placeholder scope is not limited to ...非開示'
+# V91.60: 【】は強調・見出しの括弧として扱い、中の数値も通常どおりマスクする。
+$emphasisMask = New-YakuNumericMaskMap -Text '【営業利益 296億円】' -Root $root -Direction 'to_en' -Location 'regression'
+Assert-YakuTrue -Condition ([int]$emphasisMask.MaskedCount -eq 1 -and ([string]$emphasisMask.Text) -notmatch '296') -Message 'V91.60 numbers inside 【】 must still be masked'
 
 # V91.37 deterministic numeric-unit preprocessing
 $u = Convert-YakuNumericUnits -Text '1兆1,577億円 / 2兆円 / 2.5億円 / 100万台 / 659千台 / 410万円 / 575千円 / 数億円 / xxx億円 / xxx万台 / ▲638億円 / 10〜20億円' -Location 'regression-v9137'

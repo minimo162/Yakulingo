@@ -24,8 +24,8 @@ R5. Semicolons may join clauses or top-level items, but a changed subject must b
 R6. Intention vs. expectation: 〜する予定だ/方針だ/計画だ/考えだ -> plans to/intends to/is set to; 〜が見込まれる/予想される/見通しだ -> is expected to/is forecast to. Never swap them.
 R7. Attach “centered on X / led by X” to its modifier. 〜を中心に -> “led by X”; 〜をはじめとする -> “including / such as,” never “led by” (ソニーをはじめとする44社 -> “44 companies including Sony”).
 R8. Numbered headings: reproduce the exact source number; never renumber, restart at 1., or rely on auto-numbered syntax.
-R9. Reproduce every 【...非開示】 masking placeholder exactly as written. Other 【...】 are emphasis/heading brackets: translate the content normally and keep the 【】 brackets.
-R10. Verify both outputs retain every source heading and bullet, and retain every 【...非開示】 masking placeholder in the same count and order.
+R9. 【...】 are emphasis/heading brackets: translate the content normally and keep the 【】 brackets. Number placeholders are covered by the placeholder rules below.
+R10. Verify both outputs retain every source heading and bullet.
 
 FULL_TEXT: natural business English with all source information and tone; spell out BRIEF-list abbreviations. A glossary entry fixes the term choice, not the compression level: if it offers a spelled-out variant, FULL uses it. Abbreviation-only glossary terms stay abbreviated in both outputs only when they are approved financial acronyms, formal metric names, proper nouns, or source-defined abbreviations (e.g. FCF or OP). Do not treat ordinary-word or internal shorthand abbreviations as FULL-safe merely because the glossary currently lists only the abbreviation.
 

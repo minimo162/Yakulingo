@@ -12,7 +12,10 @@
 param(
     [int]$Port = 8765,
     [switch]$NoBrowser,
-    [switch]$UseMockTranslator
+    [switch]$UseMockTranslator,
+    # V91.61: コーパス作成用の管理画面を開く。管理者用ランチャーからのみ渡す。
+    # 一般利用者の起動経路では常に無効であり、管理用の API も画面も登録されない。
+    [switch]$Admin
 )
 
 $ErrorActionPreference = 'Stop'
@@ -109,4 +112,4 @@ Write-Host "Stop          : Ctrl+C or close this console."
 if ($jobObjectEnabled) { Write-Host "Process guard : enabled (child processes stop with this console)." -ForegroundColor Green }
 Write-Host ''
 
-& (Join-Path $root 'src\Server.ps1') -Port $Port -OpenBrowser:$openBrowser
+& (Join-Path $root 'src\Server.ps1') -Port $Port -OpenBrowser:$openBrowser -Admin:$Admin

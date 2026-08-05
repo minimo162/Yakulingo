@@ -1,7 +1,8 @@
 ﻿[CmdletBinding()]
 param(
     [int]$Port = 8765,
-    [switch]$OpenBrowser
+    [switch]$OpenBrowser,
+    [switch]$Admin
 )
 
 $ErrorActionPreference = 'Stop'
@@ -17,8 +18,11 @@ $script:YakuRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyComman
 . (Join-Path $PSScriptRoot 'Translation.ps1')
 . (Join-Path $PSScriptRoot 'FileProcessors.ps1')
 . (Join-Path $PSScriptRoot 'FileTranslation.ps1')
+. (Join-Path $PSScriptRoot 'Corpus.ps1')
 
 $script:YakuBuildId = Assert-YakuBuildIdentity -Root $script:YakuRoot -ExpectedBuildId (Get-YakuBuildId)
+# V91.61: 管理画面。既定は無効で、無効なら管理用の経路を一切登録しない。
+$script:YakuAdminMode = [bool]$Admin
 $script:ServerRunning = $true
 $script:YakuTranslateJobs = [hashtable]::Synchronized(@{})
 $script:YakuTranslateJobHandles = [hashtable]::Synchronized(@{})
@@ -1493,6 +1497,8 @@ function Get-YakuMimeType {
         '.css' { 'text/css; charset=utf-8' }
         '.js' { 'application/javascript; charset=utf-8' }
         '.json' { 'application/json; charset=utf-8' }
+        # V91.61: WebAssembly.instantiateStreaming は正しい MIME を要求する。
+        '.wasm' { 'application/wasm' }
         '.txt' { 'text/plain; charset=utf-8' }
         default { 'application/octet-stream' }
     }
@@ -1621,6 +1627,16 @@ function Serve-YakuIndex {
     $maxBytes = Get-YakuFileUploadBodyLimitBytes -Settings $settings
     $html = $html.Replace('__YAKU_SESSION_TOKEN__', (ConvertTo-YakuHtml $script:YakuSessionToken))
     $html = $html.Replace('__YAKU_MAX_UPLOAD_BYTES__', [string]$maxBytes)
+    Send-YakuTextResponse -Context $Context -Text $html -ContentType 'text/html; charset=utf-8'
+}
+
+function Serve-YakuAdminPage {
+    # V91.61: 管理画面。/api/ はセッショントークンを要求するため、
+    # index.html と同じ差し込みを行う。差し込まないと画面から API を呼べない。
+    param([Parameter(Mandatory=$true)]$Context)
+    $path = Join-Path $script:YakuRoot 'www\admin.html'
+    $html = Get-Content -LiteralPath $path -Raw -Encoding UTF8
+    $html = $html.Replace('__YAKU_SESSION_TOKEN__', (ConvertTo-YakuHtml $script:YakuSessionToken))
     Send-YakuTextResponse -Context $Context -Text $html -ContentType 'text/html; charset=utf-8'
 }
 
@@ -1801,6 +1817,75 @@ function Invoke-YakuRoute {
         Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$true; count=$count; path=$dir } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
         return
     }
+    # ---------------------------------------------------------------------
+    # V91.61 参考資料コーパス（管理者用）。
+    # $script:YakuAdminMode が偽のときは、この塊ごと素通りする。
+    # 一般利用者の起動では経路が存在しないのと同じになる。
+    # ---------------------------------------------------------------------
+    if ($script:YakuAdminMode -and $path.StartsWith('/api/admin/corpus')) {
+        if ($method -eq 'GET' -and $path -eq '/api/admin/corpus/status') {
+            $sourceRoot = [string]$req.QueryString['root']
+            $state = Get-YakuCorpusState -SourceRoot $sourceRoot
+            $payload = [ordered]@{
+                source_root = [string]$state.SourceRoot
+                reachable   = [bool]$state.Reachable
+                build_dir   = [string]$state.BuildDir
+                done_count  = [int]$state.DoneCount
+                databases   = @(@($state.Databases) | ForEach-Object { [ordered]@{ name=[string]$_.Database; done=[int]$_.Done; pending=[int]$_.Pending } })
+                pending     = @(@($state.Pending) | ForEach-Object { [ordered]@{ id=[string]$_.id; sha256=[string]$_.sha256; database=[string]$_.database; source=[string]$_.source; bytes=[int64]$_.bytes } })
+            }
+            Send-YakuTextResponse -Context $Context -Text ($payload | ConvertTo-Json -Depth 6) -ContentType 'application/json; charset=utf-8'
+            return
+        }
+        if ($method -eq 'GET' -and $path -eq '/api/admin/corpus/pdf') {
+            $sourceRoot = [string]$req.QueryString['root']
+            $id = [string]$req.QueryString['id']
+            # 原本フォルダを列挙し直して id を突き合わせる。パスを直接受け取らない。
+            $match = @(Get-YakuCorpusSourceFiles -SourceRoot $sourceRoot | Where-Object { (Get-YakuCorpusFileId -Path $_.FullName).Id -eq $id } | Select-Object -First 1)
+            if ($match.Count -eq 0) {
+                Send-YakuTextResponse -Context $Context -Text 'Not found' -StatusCode 404 -ContentType 'text/plain; charset=utf-8'
+                return
+            }
+            $bytes = [System.IO.File]::ReadAllBytes([string]$match[0].FullName)
+            Send-YakuResponse -Context $Context -Bytes $bytes -ContentType 'application/pdf'
+            return
+        }
+        if ($method -eq 'POST' -and $path -eq '/api/admin/corpus/ingest') {
+            try {
+                $payload = Read-YakuRequestJson -Request $req -MaxBytes 33554432
+                $pageChars = @()
+                if ($payload.ContainsKey('page_chars')) { $pageChars = @($payload['page_chars']) }
+                $status = 'ok'
+                if ([string]$payload['status'] -eq 'failed') { $status = 'failed' }
+                elseif (Test-YakuCorpusLowText -PageChars $pageChars) { $status = 'low-text' }
+                $null = Save-YakuCorpusMarkdown -BuildDir (Get-YakuCorpusBuildDir) `
+                    -Id ([string]$payload['id']) -Sha256 ([string]$payload['sha256']) `
+                    -Database ([string]$payload['database']) -Source ([string]$payload['source']) `
+                    -Markdown ([string]$payload['markdown']) -Pages ([int]$payload['pages']) `
+                    -Status $status -Note ([string]$payload['note'])
+                Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$true; id=[string]$payload['id']; status=$status } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+            } catch {
+                Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$false; error=[string]$_.Exception.Message } | ConvertTo-Json -Compress) -StatusCode 400 -ContentType 'application/json; charset=utf-8'
+            }
+            return
+        }
+        if ($method -eq 'POST' -and $path -eq '/api/admin/corpus/publish') {
+            try {
+                $result = New-YakuCorpusPublishFolder
+                Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$true; version=[string]$result.Version; path=[string]$result.Path; count=[int]$result.Count } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+            } catch {
+                Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$false; error=[string]$_.Exception.Message } | ConvertTo-Json -Compress) -StatusCode 400 -ContentType 'application/json; charset=utf-8'
+            }
+            return
+        }
+        Send-YakuTextResponse -Context $Context -Text 'Not found' -StatusCode 404 -ContentType 'text/plain; charset=utf-8'
+        return
+    }
+    if ($script:YakuAdminMode -and $method -eq 'GET' -and $path -eq '/admin') {
+        Serve-YakuAdminPage -Context $Context
+        return
+    }
+
     if ($method -eq 'GET' -and $path -eq '/api/glossary') {
         Send-YakuTextResponse -Context $Context -Text (Convert-YakuGlossaryManagerToHtml -Root $script:YakuRoot)
         return

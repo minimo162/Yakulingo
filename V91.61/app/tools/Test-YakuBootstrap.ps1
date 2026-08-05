@@ -101,6 +101,49 @@ try {
     $badLocal = Join-Path $sandbox 'local-badptr'
     $run7 = & $BootstrapPath -SharedRoot $badPointer -LocalRoot $badLocal -NoLaunch
     Assert-YakuBootstrap ($run7 -like (Join-Path (Join-Path $badLocal 'versions') ($versionName + '-*'))) '実在する版へフォールバックする'
+
+    Write-Host 'CASE 8: コーパスが無くても起動し、環境変数を設定しない'
+    Remove-Item Env:\YAKULINGO_CORPUS_DIR -ErrorAction SilentlyContinue
+    $corpusLocal = Join-Path $sandbox 'local-corpus'
+    $null = & $BootstrapPath -SharedRoot $shared -LocalRoot $corpusLocal -NoLaunch
+    Assert-YakuBootstrap ([string]::IsNullOrWhiteSpace([string]$env:YAKULINGO_CORPUS_DIR)) 'コーパスが無ければ YAKULINGO_CORPUS_DIR は空のまま'
+
+    Write-Host 'CASE 9: コーパスをローカルへ複製し、場所を環境変数で渡す'
+    $corpusShared = Join-Path $shared 'corpus'
+    New-Item -ItemType Directory -Path (Join-Path $corpusShared '2026-08-04\英文短信') -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $corpusShared '2026-08-04\英文短信\a.md'), "<!--yaku-page:1-->`nEquity ratio increased.")
+    [IO.File]::WriteAllText((Join-Path $corpusShared '2026-08-04\manifest.json'),
+        (@{ schema='yaku-corpus-1'; corpus_version='2026-08-04'; entries=@(@{ id='aaaaaaaa'; markdown='英文短信/a.md' }) } | ConvertTo-Json -Depth 5))
+    [IO.File]::WriteAllText((Join-Path $corpusShared 'current.txt'), "2026-08-04`r`n")
+    $null = & $BootstrapPath -SharedRoot $shared -LocalRoot $corpusLocal -NoLaunch
+    $corpusDir = [string]$env:YAKULINGO_CORPUS_DIR
+    Assert-YakuBootstrap (-not [string]::IsNullOrWhiteSpace($corpusDir)) 'コーパスの場所が渡る'
+    Assert-YakuBootstrap ($corpusDir.StartsWith($corpusLocal, [StringComparison]::OrdinalIgnoreCase)) '共有ではなくローカルを指す'
+    Assert-YakuBootstrap (Test-Path -LiteralPath (Join-Path $corpusDir '英文短信\a.md') -PathType Leaf) 'Markdown が複製される'
+    Assert-YakuBootstrap ((Split-Path -Leaf $corpusDir) -eq '2026-08-04') 'フォルダ名はコーパスの版'
+    Assert-YakuBootstrap (-not (Test-Path -LiteralPath (Join-Path $corpusDir 'a.pdf'))) '元PDFは含まれない'
+
+    Write-Host 'CASE 10: コーパスの版だけを上げても、アプリの版は変わらない'
+    $appDirBefore = & $BootstrapPath -SharedRoot $shared -LocalRoot $corpusLocal -NoLaunch
+    New-Item -ItemType Directory -Path (Join-Path $corpusShared '2026-09-01\英文短信') -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $corpusShared '2026-09-01\英文短信\b.md'), 'newer')
+    [IO.File]::WriteAllText((Join-Path $corpusShared '2026-09-01\manifest.json'),
+        (@{ schema='yaku-corpus-1'; corpus_version='2026-09-01'; entries=@(@{ id='bbbbbbbb'; markdown='英文短信/b.md' }) } | ConvertTo-Json -Depth 5))
+    [IO.File]::WriteAllText((Join-Path $corpusShared 'current.txt'), "2026-09-01`r`n")
+    $appDirAfter = & $BootstrapPath -SharedRoot $shared -LocalRoot $corpusLocal -NoLaunch
+    Assert-YakuBootstrap ($appDirAfter -eq $appDirBefore) 'アプリの複製先は変わらない'
+    Assert-YakuBootstrap ((Split-Path -Leaf ([string]$env:YAKULINGO_CORPUS_DIR)) -eq '2026-09-01') 'コーパスだけ新しい版になる'
+    Assert-YakuBootstrap (-not (Test-Path -LiteralPath (Join-Path (Join-Path $corpusLocal 'corpus') '2026-08-04'))) '古いコーパスは掃除される'
+
+    Write-Host 'CASE 11: 不正な current.txt と共有断でも起動を妨げない'
+    [IO.File]::WriteAllText((Join-Path $corpusShared 'current.txt'), "..\..\etc`r`n")
+    $null = & $BootstrapPath -SharedRoot $shared -LocalRoot $corpusLocal -NoLaunch
+    Assert-YakuBootstrap ((Split-Path -Leaf ([string]$env:YAKULINGO_CORPUS_DIR)) -eq '2026-09-01') 'パス区切りを含む指定は拒み、手元の版を使う'
+    [IO.File]::WriteAllText((Join-Path $corpusShared 'current.txt'), "2026-09-01`r`n")
+    $offlineRun = & $BootstrapPath -SharedRoot (Join-Path $sandbox 'shared-gone') -LocalRoot $corpusLocal -NoLaunch
+    Assert-YakuBootstrap (-not [string]::IsNullOrWhiteSpace($offlineRun)) '共有が無くてもアプリは起動できる'
+    Assert-YakuBootstrap ((Split-Path -Leaf ([string]$env:YAKULINGO_CORPUS_DIR)) -eq '2026-09-01') '共有が無くても手元のコーパスを使う'
+    Remove-Item Env:\YAKULINGO_CORPUS_DIR -ErrorAction SilentlyContinue
 } finally {
     if (Test-Path -LiteralPath $sandbox) { Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue }
 }

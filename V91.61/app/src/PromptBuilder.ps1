@@ -558,15 +558,41 @@ function Get-YakuReferenceSection {
 }
 
 function Get-YakuNumericRulesSection {
-    param([AllowNull()][string]$InputText)
-    if ([string]$InputText -notmatch '[0-9０-９▲△＋+%％〜~↑↓<>＜＞→]|oku|k units|k yen|YoY|QoQ|CAGR|前年|四半期') { return '' }
+    param(
+        [AllowNull()][string]$InputText,
+        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en'
+    )
+    if ([string]$InputText -notmatch '【N\d+】|[0-9０-９▲△＋+%％〜~↑↓<>＜＞→]|oku|k units|k yen|YoY|QoQ|CAGR|前年|四半期') { return '' }
     $nl = [Environment]::NewLine
-    return (@(
+    # V91.60 段階4: to_jp は単位が訳されるため、逐語保持を前提にした to_en の
+    # 規則をそのまま流用できない。方向ごとに別の規則を返す。
+    # 指示の地の文は英語で揃える。テンプレート本体が英語であり、
+    # 途中で指示言語が切り替わるのは避ける。日本語の単位名だけを字義どおり置く。
+    if ($Direction -eq 'to_jp') {
+        $jpRules = @()
+        if ([string]$InputText -match '【N\d+】') {
+            $jpRules += '- NUMBER PLACEHOLDERS (highest priority). 【N1】, 【N2】 ... stand for redacted numbers. Copy each token character-for-character into the Japanese output. Never translate, renumber, reorder, merge, split, or drop one; never invent one; never replace one with a digit or with a word such as 一定額, 約, 数, or いくつか. Every token in SOURCE appears the same number of times in the output. A number written WITHOUT a placeholder is not redacted: copy it verbatim as a number.'
+        }
+        $jpRules += '- Render units in Japanese one for one, without regrouping digits: oku -> 億円 / k yen -> 千円 / k units -> 千台. Keep % as %. Never recompute the magnitude: 12,340 k yen is 12,340千円, never 1億2,340万円.'
+        $jpRules += '- Signs follow SOURCE. A value written in parentheses becomes ▲ in front of the value: (【N1】) oku -> ▲【N1】億円. Keep + as +.'
+        return (@($jpRules) -join $nl)
+    }
+    # V91.60: 数値は外部送信前に【N1】へ置き換えている。指示は禁止事項の列挙ではなく
+    # 「左に一致したら右を出す」形の決定表で書く。想定外の形が来たときでも
+    # 行き先を類推できるようにするため。
+    $placeholderRules = @()
+    if ([string]$InputText -match '【N\d+】') {
+        $placeholderRules = @(
+            '- NUMBER PLACEHOLDERS (highest priority). 【N1】, 【N2】 ... stand for redacted numbers. Copy each token character-for-character. Never translate, renumber, reorder, merge, split, or drop one; never invent one; never replace one with a digit or a word (one, several, approximately, a few). Every token in SOURCE appears the same number of times in each output section. Signs, units, and % stay OUTSIDE the token. A number written WITHOUT a placeholder is not redacted: copy it verbatim as a number.'
+            '- Placeholder decision table, SOURCE -> OUTPUT: 【N1】 oku -> 【N1】 oku / +【N1】 oku -> +【N1】 oku / ▲【N1】 oku -> (【N1】) oku / △【N1】% -> (【N1】)% / 【N1】 k units -> 【N1】 k units / 【N1】 k yen -> 【N1】 k yen / 【N1】→【N2】 -> 【N1】→【N2】.'
+        )
+    }
+    return (@($placeholderRules + @(
         '- Positive/additive amounts marked +, ＋, or プラス keep +N.'
         '- ▲, negative minus signs, or マイナス: put parentheses around the numeric token only; keep units and % outside. Valid: (72) k units, (xxx) oku, (3) %.'
         '- Numeric tokens already in English (oku, k units, k yen): keep the number and unit verbatim; never rescale, re-convert, add yen after oku, or restore Japanese units. Signs and % follow the existing rules. Never million, billion, trillion, bn, or tn.'
-        '- Arrow (→) between two numbers: reproduce ONLY when SOURCE writes A→B; never create one. No tilde or greater-than/less-than signs; use words. Keep YoY, QoQ, CAGR, Jan. to Dec.'
-    ) -join $nl)
+        '- Arrow (→) between two numbers: reproduce ONLY when SOURCE writes A→B; never create one. No tilde or greater-than/less-than signs; use words. Keep YoY, QoQ, CAGR, 3Q, Jan. to Dec.'
+    )) -join $nl)
 }
 
 function Get-YakuStyleReferenceSection {
@@ -606,24 +632,13 @@ function New-YakuTextPrompt {
         input_text = $InputText.Trim()
         reference_section = Get-YakuReferenceSection -Root $Root -Settings $Settings -InputText $InputText -Direction $direction
         style_reference_section = Get-YakuStyleReferenceSection -StyleReference $StyleReference
-        numeric_rules = if ($direction -eq 'to_en') { Get-YakuNumericRulesSection -InputText $InputText } else { '' }
+        numeric_rules = Get-YakuNumericRulesSection -InputText $InputText -Direction $direction
         request_id = $RequestId
     }
     return [pscustomobject]@{
         Direction = $direction
         Prompt = Expand-YakuTemplate -Template $template -Variables $vars
     }
-}
-
-function New-YakuBackTranslatePrompt {
-    param(
-        [Parameter(Mandatory=$true)][string]$Root,
-        [Parameter(Mandatory=$true)][string]$InputText,
-        [Parameter(Mandatory=$true)]$Settings,
-        [AllowNull()][string]$RequestId
-    )
-    $built = New-YakuTextPrompt -Root $Root -InputText $InputText -Settings $Settings -DirectionOverride 'to_jp' -RequestId $RequestId
-    return $built.Prompt
 }
 
 function Get-YakuGlossaryDuplicateSummaryHtml {
@@ -717,6 +732,7 @@ function Convert-YakuGlossaryManagerToHtml {
     $html = @"
 <div class='glossary-manager'>
   <div class='alert alert-info glossary-readonly-note'>編集は各CSVファイルを直接編集してください(UTF-8 BOM付き・カンマ区切り)。保存後は次回の翻訳から自動反映されます。</div>
+  <div class='alert alert-warning glossary-masking-note'>用語集に登録した語は、数字を含む部分もそのままCopilotへ送信されます（訳語が崩れるのを防ぐため、マスクの対象外にしています）。機密の数値を用語集に登録しないでください。</div>
   $machineHtml
   $promptHtml
 </div>

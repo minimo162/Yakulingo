@@ -122,6 +122,7 @@
         <div id="settings-panel" hx-get="/api/settings-form" hx-trigger="load" hx-swap="innerHTML"></div>
         <div class="privacy-actions">
           <p class="muted">通常ログには原文・翻訳文・プロンプト全文を保存しません。全文診断は明示的に有効化した場合だけ保存されます。</p>
+          <p class="muted">Copilotへ送信する前に、数値の大きさは自動でプレースホルダーへ置き換えます（符号と単位は送信します）。年度・会計期・用語集に登録された語はそのまま送信します。数値は自動でマスクされるため、<code>【…非開示】</code>を手で書く必要はありません。既存の資料に残っている<code>【…非開示】</code>は、通常の語として翻訳されます。</p>
           <button type="button" class="secondary-button" data-yaku-clear-data="history">履歴を消去</button>
           <button type="button" class="secondary-button" data-yaku-clear-data="diagnostics">診断データを消去</button>
           <div id="privacy-result" aria-live="polite"></div>
