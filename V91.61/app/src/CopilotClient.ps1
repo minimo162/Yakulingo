@@ -3171,8 +3171,11 @@ const timeoutMs = __TIMEOUT_MS__;
 const answerFormat = __ANSWER_FORMAT__;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const requestId = String(baseline.requestId || '');
-const labelRe = /(^|\n)\s*(FULL_TEXT|BRIEF_TEXT|JAPANESE_TEXT|FULL_NOTES|BRIEF_NOTES|JAPANESE_NOTES)\s*:/i;
-const startLabelRe = /(^|\n)\s*(FULL_TEXT|JAPANESE_TEXT)\s*:/i;
+// SEARCH_TERMS は V91.61 段階3 のコーパス検索語。翻訳とは別の依頼だが、
+// 同じ labeled 契約（ラベル + YAKULINGO_END）で答えさせている。
+// ここに載せないと候補として認識されず、答えが届いていても待ち続けて失敗する。
+const labelRe = /(^|\n)\s*(FULL_TEXT|BRIEF_TEXT|JAPANESE_TEXT|FULL_NOTES|BRIEF_NOTES|JAPANESE_NOTES|SEARCH_TERMS)\s*:/i;
+const startLabelRe = /(^|\n)\s*(FULL_TEXT|JAPANESE_TEXT|SEARCH_TERMS)\s*:/i;
 const endMarkerRe = requestId
   ? new RegExp('YAKULINGO_END:' + requestId, 'i')
   : /\bYAKULINGO\\?_(?:END|DONE)\b/i;
@@ -3290,6 +3293,9 @@ const hasUsefulLabeledOutput = (text) => {
     return labeledValue(t, 'FULL_TEXT').length > 0 && labeledValue(t, 'BRIEF_TEXT').length > 0;
   }
   if (/JAPANESE_TEXT\s*:/i.test(t)) return labeledValue(t, 'JAPANESE_TEXT').length > 0;
+  // コーパス検索語。中身が空でも「引く語が無い」という完結した答えなので、
+  // ラベルが在ることをもって有効とする（完了判定は YAKULINGO_END が別に見る）。
+  if (/SEARCH_TERMS\s*:/i.test(t)) return true;
   return false;
 };
 const hasUsableNumberedOutput = (text) => {
