@@ -709,29 +709,43 @@ function Initialize-YakuCopilotSlotTarget {
     )
     $slot = Get-YakuCopilotSlot
     if ($slot -le 0) { return $null }
-    $needed = $slot + 1
+
+    # 自分で開いたウィンドウの中から選ぶ。画面に出ている対象を id 順に並べて
+    # 選ぶ方式だと、利用者が開いた裏のタブを掴んでしまう。裏では入力が届かない
+    # ので、それでは並列にする意味が無い（2026-08-06 実測）。
+    $owned = @()
+    try {
+        $path = Get-YakuCopilotOwnedWindowsPath
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            $owned = @((Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json).targetIds)
+        }
+    } catch { $owned = @() }
+
     $deadline = (Get-Date).AddSeconds($WaitSeconds)
     $created = $false
     while ($true) {
-        $targets = @()
-        try { $targets = @(Get-YakuCdpPages -Port $Port | Where-Object { Test-YakuCopilotUrl -Url ([string]$_.url) }) } catch { $targets = @() }
-        $targets = @($targets | Sort-Object { [string]$_.id })
-        if ($targets.Count -ge $needed) {
-            $chosen = $targets[$slot]
-            $chosenId = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $chosen -Name 'id' -Default '')
-            if (-not [string]::IsNullOrWhiteSpace($chosenId)) {
-                $script:YakuCopilotTargetCache = [pscustomobject]@{ Port = [int]$Port; TargetId = [string]$chosenId }
-                try { Write-YakuLog "Copilot slot bound. slot=$slot targetId=$chosenId tabs=$($targets.Count)" 'DEBUG' } catch {}
-                return $chosen
-            }
+        $live = @()
+        try { $live = @(Get-YakuCdpPages -Port $Port | Where-Object { Test-YakuCopilotUrl -Url ([string]$_.url) }) } catch { $live = @() }
+        $liveIds = @{}
+        foreach ($t in $live) { $liveIds[[string]$t.id] = $t }
+        # 記録にあり、かつまだ生きているウィンドウだけを候補にする。
+        $usable = @($owned | Where-Object { $liveIds.ContainsKey([string]$_) })
+        # スロット0は利用者のもの。スロット1以降が自分で開いたウィンドウを順に使う。
+        if ($usable.Count -ge $slot) {
+            $chosenId = [string]$usable[$slot - 1]
+            $script:YakuCopilotTargetCache = [pscustomobject]@{ Port = [int]$Port; TargetId = $chosenId }
+            try { Write-YakuLog "Copilot slot bound to own window. slot=$slot targetId=$chosenId ownWindows=$($usable.Count)" 'DEBUG' } catch {}
+            return $liveIds[$chosenId]
         }
         if (-not $created) {
             # タブではなくウィンドウで開く。理由は New-YakuCopilotWindow の説明を参照。
-            try { $null = New-YakuCopilotWindow -Port $Port -Url $Url } catch {}
+            $newId = ''
+            try { $newId = [string](New-YakuCopilotWindow -Port $Port -Url $Url) } catch { $newId = '' }
+            if (-not [string]::IsNullOrWhiteSpace($newId)) { $owned += $newId }
             $created = $true
         }
         if ((Get-Date) -ge $deadline) {
-            try { Write-YakuLog "Copilot slot could not be bound; falling back to the default tab. slot=$slot tabs=$($targets.Count)" 'WARN' } catch {}
+            try { Write-YakuLog "Copilot slot could not be bound; running on the default window. slot=$slot ownWindows=$($usable.Count)" 'WARN' } catch {}
             return $null
         }
         Start-Sleep -Milliseconds 700
