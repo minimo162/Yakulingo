@@ -84,6 +84,55 @@ Chk ($pm.corpus_version -eq '2026-08-04') 'コーパスの版が入る'
 Chk (@(Get-ChildItem -LiteralPath $pub.Path -Recurse -Filter '*.pdf').Count -eq 0) '配布物に元PDFを入れない'
 Chk (@(Get-ChildItem -LiteralPath $pub.Path -Recurse -Filter '*.md').Count -eq 2) 'Markdown が2件'
 
+Write-Host '資料を別のデータベースへ移したとき（実機で発生）'
+# id は内容のハッシュなので、フォルダを移しても同じ id になる。
+# そのままだと「取り込み済み」と判定され、データベース名が古いまま直せない。
+$moveRoot = Join-Path $work 'move'
+$dbA = Join-Path $moveRoot '(未分類)'
+$dbB = Join-Path $moveRoot '英文短信'
+New-Item -ItemType Directory -Path $dbA -Force | Out-Null
+[IO.File]::WriteAllBytes((Join-Path $dbA 'tanshin.pdf'), [Text.Encoding]::ASCII.GetBytes('%PDF-1.4 moved sample'))
+$mvBuild = Join-Path $work 'move-build'
+
+$s1 = Get-YakuCorpusState -SourceRoot $moveRoot -BuildDir $mvBuild
+$p1 = @($s1.Pending)[0]
+Chk (@($s1.Pending).Count -eq 1) '最初は未取込 1 件'
+$null = Save-YakuCorpusMarkdown -BuildDir $mvBuild -Id $p1.id -Sha256 $p1.sha256 -Database $p1.database -Source $p1.source -Markdown 'body' -Pages 1 -Status 'ok'
+Chk (Test-Path -LiteralPath (Join-Path $mvBuild '(未分類)/tanshin.pdf'.Replace('.pdf','.md'))) '(未分類) の下に md ができる'
+
+# 別のフォルダへ移す（利用者がやった操作）
+New-Item -ItemType Directory -Path $dbB -Force | Out-Null
+Move-Item -LiteralPath (Join-Path $dbA 'tanshin.pdf') -Destination (Join-Path $dbB 'tanshin.pdf')
+Remove-Item -LiteralPath $dbA -Force -ErrorAction SilentlyContinue
+
+$s2 = Get-YakuCorpusState -SourceRoot $moveRoot -BuildDir $mvBuild
+Chk (@($s2.Pending).Count -eq 1) '移動を未取込として拾う（これが無いと取り込めない）'
+Chk ([int]$s2.RelocatedCount -eq 1) '移動として数える'
+$p2 = @($s2.Pending)[0]
+Chk ([bool]$p2.relocated) '移動の印が付く'
+Chk ([string]$p2.previous -eq '(未分類)/tanshin.pdf') '移動前の場所が分かる'
+Chk ([string]$p2.database -eq '英文短信') '新しいデータベース名になる'
+Chk ([string]$p2.id -eq [string]$p1.id) 'id は内容由来なので変わらない'
+
+$null = Save-YakuCorpusMarkdown -BuildDir $mvBuild -Id $p2.id -Sha256 $p2.sha256 -Database $p2.database -Source $p2.source -Markdown 'body' -Pages 1 -Status 'ok'
+$m2 = Read-YakuCorpusManifest -Dir $mvBuild
+Chk (@($m2.entries).Count -eq 1) '台帳の件数は増えない'
+Chk ([string]@($m2.entries)[0].database -eq '英文短信') '台帳のデータベース名が更新される'
+Chk (Test-Path -LiteralPath (Join-Path $mvBuild '英文短信/tanshin.md')) '新しい場所に md がある'
+Chk (-not (Test-Path -LiteralPath (Join-Path $mvBuild '(未分類)/tanshin.md'))) '古い md は消える'
+Chk (-not (Test-Path -LiteralPath (Join-Path $mvBuild '(未分類)'))) '空になったフォルダも消える'
+
+$s3 = Get-YakuCorpusState -SourceRoot $moveRoot -BuildDir $mvBuild
+Chk (@($s3.Pending).Count -eq 0) '取り込み直した後は未取込 0 件'
+Chk ([int]$s3.RelocatedCount -eq 0) '移動は解消している'
+
+Write-Host '原本が無くなった項目'
+Remove-Item -LiteralPath (Join-Path $dbB 'tanshin.pdf') -Force
+$s4 = Get-YakuCorpusState -SourceRoot $moveRoot -BuildDir $mvBuild
+Chk (@($s4.StaleEntries).Count -eq 1) '原本消失を数える'
+$m4 = Read-YakuCorpusManifest -Dir $mvBuild
+Chk (@($m4.entries).Count -eq 1) '勝手に消さない（判断は人がする）'
+
 Write-Host 'CSP（WASM が実行できるかの回帰）'
 # ブラウザは CSP に script-src があると、WebAssembly のコンパイルに
 # 'wasm-unsafe-eval' を要求する。無いと管理画面が「WASM を読み込んでいます…」で

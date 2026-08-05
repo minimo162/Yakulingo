@@ -105,7 +105,11 @@ async function scan() {
   }
   const dbs = state.databases || [];
   const pending = state.pending || [];
-  say($('status'), 'データベース ' + dbs.length + ' 件 / 取込済 ' + state.done_count + ' 件 / 未取込 ' + pending.length + ' 件');
+  let msg = 'データベース ' + dbs.length + ' 件 / 取込済 ' + state.done_count + ' 件 / 未取込 ' + pending.length + ' 件';
+  // 移動を黙って無視すると「取り込めない」ように見える。理由を書く。
+  if (state.relocated > 0) msg += '\n（うち ' + state.relocated + ' 件は別のフォルダへ移されています。取り込み直すとデータベース名が更新されます）';
+  if (state.stale && state.stale.length > 0) msg += '\n（原本が見当たらない項目が ' + state.stale.length + ' 件あります: ' + state.stale.slice(0, 3).join('、') + (state.stale.length > 3 ? ' ほか' : '') + '）';
+  say($('status'), msg, (state.relocated > 0 || (state.stale && state.stale.length > 0)) ? 'info' : null);
 
   const list = document.createElement('ul');
   dbs.forEach(function (d) {
@@ -166,7 +170,8 @@ async function ingestAll() {
   }
   const counts = { ok: 0, 'low-text': 0, failed: 0 };
   for (let i = 0; i < pending.length; i++) {
-    say($('progress'), (i + 1) + ' / ' + pending.length + '  ' + pending[i].source);
+    say($('progress'), (i + 1) + ' / ' + pending.length + '  ' + pending[i].source
+      + (pending[i].relocated ? '（' + pending[i].previous + ' から移動）' : ''));
     const st = await ingestOne(lp, pending[i], root);
     counts[st === 'failed' ? 'failed' : 'ok']++;
   }

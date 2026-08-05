@@ -141,32 +141,48 @@ function Get-YakuCorpusState {
     $files = @(Get-YakuCorpusSourceFiles -SourceRoot $SourceRoot)
     $pending = New-Object System.Collections.Generic.List[object]
     $byDb = [ordered]@{}
+    $seenIds = @{}
+    $relocated = 0
     foreach ($f in $files) {
         $ident = Get-YakuCorpusFileId -Path $f.FullName
+        $seenIds[$ident.Id] = $true
         $done = $known.ContainsKey($ident.Id)
+        # id は内容のハッシュなので、資料を別のフォルダへ移しても同じ id になる。
+        # そのままだと「取り込み済み」と判定され、データベース名が古いまま直せない。
+        # 置き場所が変わっていたら取り込み直す対象にする。
+        $moved = $false
+        if ($done -and ([string]$known[$ident.Id].source -ne [string]$f.Relative)) {
+            $done = $false; $moved = $true; $relocated++
+        }
         if (-not $byDb.Contains($f.Database)) { $byDb[$f.Database] = [pscustomobject]@{ Database=$f.Database; Done=0; Pending=0 } }
         if ($done) { $byDb[$f.Database].Done++ }
         else {
             $byDb[$f.Database].Pending++
             $pending.Add([pscustomobject]@{
-                id       = $ident.Id
-                sha256   = $ident.Sha256
-                database = $f.Database
-                source   = $f.Relative
-                path     = $f.FullName
-                bytes    = $f.Length
+                id        = $ident.Id
+                sha256    = $ident.Sha256
+                database  = $f.Database
+                source    = $f.Relative
+                path      = $f.FullName
+                bytes     = $f.Length
+                relocated = $moved
+                previous  = $(if ($moved) { [string]$known[$ident.Id].source } else { '' })
             }) | Out-Null
         }
     }
+    # 原本が無くなった台帳の項目。消さずに数えるだけにする。判断は人がする。
+    $stale = @(@($manifest.entries) | Where-Object { -not $seenIds.ContainsKey([string]$_.id) })
     $databases = @()
     foreach ($k in $byDb.Keys) { $databases += $byDb[$k] }
     return [pscustomobject]@{
-        SourceRoot = [string]$SourceRoot
-        BuildDir   = [string]$BuildDir
-        Reachable  = (Test-Path -LiteralPath $SourceRoot -PathType Container)
-        Databases  = @($databases)
-        Pending    = @($pending.ToArray())
-        DoneCount  = @($manifest.entries).Count
+        SourceRoot     = [string]$SourceRoot
+        BuildDir       = [string]$BuildDir
+        Reachable      = (Test-Path -LiteralPath $SourceRoot -PathType Container)
+        Databases      = @($databases)
+        Pending        = @($pending.ToArray())
+        DoneCount      = @($manifest.entries).Count
+        RelocatedCount = [int]$relocated
+        StaleEntries   = @($stale)
     }
 }
 
@@ -196,6 +212,25 @@ function Save-YakuCorpusMarkdown {
     }
 
     $manifest = Read-YakuCorpusManifest -Dir $BuildDir
+    # 同じ資料が別のフォルダへ移っていたら、前の .md を消す。
+    # 残すと配布物へ古い置き場所のまま入り、データベースが二重になる。
+    foreach ($old in @(@($manifest.entries) | Where-Object { [string]$_.id -eq $Id })) {
+        $oldRel = [string]$old.markdown
+        if ([string]::IsNullOrWhiteSpace($oldRel) -or $oldRel -eq $relMd) { continue }
+        $oldPath = Join-Path $BuildDir ($oldRel -replace '/', [System.IO.Path]::DirectorySeparatorChar)
+        try {
+            if (Test-Path -LiteralPath $oldPath -PathType Leaf) {
+                Remove-Item -LiteralPath $oldPath -Force
+                try { Write-YakuLog "Corpus relocated. id=$Id from=$oldRel to=$relMd" 'INFO' } catch {}
+            }
+            # 空になったフォルダも片付ける。配布物に空の器を作らないため。
+            $oldDir = Split-Path -Parent $oldPath
+            if ((Test-Path -LiteralPath $oldDir -PathType Container) -and
+                (@(Get-ChildItem -LiteralPath $oldDir -Force -ErrorAction SilentlyContinue).Count -eq 0)) {
+                Remove-Item -LiteralPath $oldDir -Force -ErrorAction SilentlyContinue
+            }
+        } catch {}
+    }
     $entries = @(@($manifest.entries) | Where-Object { [string]$_.id -ne $Id })
     $entries += [ordered]@{
         id       = $Id

@@ -1883,8 +1883,10 @@ function Invoke-YakuRoute {
                 reachable   = [bool]$state.Reachable
                 build_dir   = [string]$state.BuildDir
                 done_count  = [int]$state.DoneCount
+                relocated   = [int]$state.RelocatedCount
+                stale       = @(@($state.StaleEntries) | ForEach-Object { [string]$_.source })
                 databases   = @(@($state.Databases) | ForEach-Object { [ordered]@{ name=[string]$_.Database; done=[int]$_.Done; pending=[int]$_.Pending } })
-                pending     = @(@($state.Pending) | ForEach-Object { [ordered]@{ id=[string]$_.id; sha256=[string]$_.sha256; database=[string]$_.database; source=[string]$_.source; bytes=[int64]$_.bytes } })
+                pending     = @(@($state.Pending) | ForEach-Object { [ordered]@{ id=[string]$_.id; sha256=[string]$_.sha256; database=[string]$_.database; source=[string]$_.source; bytes=[int64]$_.bytes; relocated=[bool]$_.relocated; previous=[string]$_.previous } })
             }
             Send-YakuTextResponse -Context $Context -Text ($payload | ConvertTo-Json -Depth 6) -ContentType 'application/json; charset=utf-8'
             return
