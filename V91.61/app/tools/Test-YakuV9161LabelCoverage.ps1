@@ -78,7 +78,7 @@ $items = @(
     [pscustomobject]@{ Index=5; Text='1,234';         OriginalText='1,234' }
 )
 # 1 だけが完全一致で置換できた、という状況
-$applied = @([pscustomobject]@{ Source='販売促進費'; Target='Promo. Costs'; ItemIndex=1; Via='exact' })
+$applied = @([pscustomobject]@{ Source='販売促進費'; Target='VM'; ItemIndex=1; Via='exact' })
 
 $labels = @(Get-YakuFileUnmatchedLabels -Items $items -ExactApplied $applied -Direction 'to_en')
 $texts = @($labels | ForEach-Object { [string]$_.Text })

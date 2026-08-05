@@ -85,9 +85,13 @@ $script:YakuBriefAbbreviationPairs = @(
 
     # --- 社内で決めた形。規則が「必ずこの形を使う」と定めているもの。
     # 長いものから先に当てる必要がある（下の並べ替えで担保する）。
-    @{ From = 'fixed sales promotion costs'; To = 'Fixed Promo. Costs' }
-    @{ From = 'sales promotion costs';       To = 'Promo. Costs' }
-    @{ From = 'promotion costs';             To = 'Promo. Costs' }
+    # 販促費は 変動側 VM / 固定側 Fixed MKT の対で扱う（利用者の指示 2026-08-05）。
+    # 固定側を先に当てないと "fixed VM" になる。並べ替えで長い語句が先に来ることに依る。
+    @{ From = "subsidiaries' fixed sales promotion costs"; To = 'Subs. Fixed MKT' }
+    @{ From = 'fixed sales promotion costs'; To = 'Fixed MKT' }
+    @{ From = 'fixed promotion costs';       To = 'Fixed MKT' }
+    @{ From = 'sales promotion costs';       To = 'VM' }
+    @{ From = 'promotion costs';             To = 'VM' }
     @{ From = 'vehicle variable profit';     To = 'VP (Veh.)' }
     @{ From = 'variable profit';             To = 'VP' }
     @{ From = 'variable costs';              To = 'VC' }

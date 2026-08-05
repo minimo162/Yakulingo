@@ -48,9 +48,14 @@ Chk ((Conv 'year-on-year change') -eq 'YoY change') 'ハイフンを含む語も
 
 Write-Host '長いものから先に当てる'
 # 短いほうを先に当てると "sales promotion costs" が食われて
-# "fixed Promo. Costs" のような中途半端な形になる。
-Chk ((Conv 'fixed sales promotion costs increased') -eq 'Fixed Promo. Costs increased') '長い語句が優先される'
-Chk ((Conv 'sales promotion costs increased') -eq 'Promo. Costs increased') '短いほうも単独では当たる'
+# "fixed VM" のような、固定側と変動側が混ざった形になる。
+Chk ((Conv 'fixed sales promotion costs increased') -eq 'Fixed MKT increased') '長い語句が優先される'
+Chk ((Conv 'sales promotion costs increased') -eq 'VM increased') '短いほうも単独では当たる'
+# 販促費は 変動側 VM / 固定側 Fixed MKT。取り違えると別項目になる。
+Chk ((Conv 'fixed promotion costs increased') -eq 'Fixed MKT increased') '固定側は VM にならない'
+Chk ((Conv 'promotion costs rose') -eq 'VM rose') '販促費だけでも VM'
+Chk ((Conv "subsidiaries' fixed sales promotion costs") -eq 'Subs. Fixed MKT') '子会社の固定側も対で当たる'
+Chk ((Conv 'sales promotion costs and fixed sales promotion costs') -eq 'VM and Fixed MKT') '同じ文に両方あっても取り違えない'
 Chk ((Conv 'vehicle variable profit') -eq 'VP (Veh.)') '車両変動利益'
 Chk ((Conv 'variable profit') -eq 'VP') '変動利益'
 Chk ((Conv 'fixed costs and variable costs') -eq 'FC and VC') 'FC と VC'
