@@ -40,6 +40,15 @@ Chk (Test-YakuFileLabelLike -Text '販売費及び一般管理費') '長めの�
 Chk (Test-YakuFileLabelLike -Text '親会社株主に帰属する当期純利益') '途中に活用があってもラベル'
 Chk (Test-YakuFileLabelLike -Text 'その他の包括利益累計額') '長めでも名詞の連なりならラベル'
 Chk (Test-YakuFileLabelLike -Text '前年同期比') '比較語もラベル'
+# 「による」は連体修飾で、後ろに名詞が来る＝ラベルの一部。
+# 途中一致で弾いていたため、実機のファイル翻訳でこの5件を全て取りこぼした（2026-08-05）。
+# 英語にすると長くなる行なので、取りこぼすと はみ出しに気づけない。
+Chk (Test-YakuFileLabelLike -Text '営業活動によるキャッシュ・フロー') '「による」を含む勘定科目もラベル'
+Chk (Test-YakuFileLabelLike -Text '投資活動によるキャッシュ・フロー') '投資活動のキャッシュ・フローもラベル'
+Chk (Test-YakuFileLabelLike -Text '財務活動によるキャッシュ・フロー') '財務活動のキャッシュ・フローもラベル'
+Chk (Test-YakuFileLabelLike -Text '持分法による投資利益') '持分法による投資利益もラベル'
+Chk (Test-YakuFileLabelLike -Text '事業譲渡による損失') '事業譲渡による損失もラベル'
+Chk (Test-YakuFileLabelLike -Text '原価改善による増益') '増減要因表の体言止めもラベル'
 
 Write-Host 'ラベルらしさの判定 — 拾いたくないもの'
 # 句点の無い短文が本題。文字数の上限だけでは拾ってしまう。
