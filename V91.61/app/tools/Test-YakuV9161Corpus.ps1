@@ -84,6 +84,29 @@ Chk ($pm.corpus_version -eq '2026-08-04') 'コーパスの版が入る'
 Chk (@(Get-ChildItem -LiteralPath $pub.Path -Recurse -Filter '*.pdf').Count -eq 0) '配布物に元PDFを入れない'
 Chk (@(Get-ChildItem -LiteralPath $pub.Path -Recurse -Filter '*.md').Count -eq 2) 'Markdown が2件'
 
+Write-Host 'CSP（WASM が実行できるかの回帰）'
+# ブラウザは CSP に script-src があると、WebAssembly のコンパイルに
+# 'wasm-unsafe-eval' を要求する。無いと管理画面が「WASM を読み込んでいます…」で
+# 止まる（実機で発生）。Linux 上の検証では既定CSPのサーバーを使っておらず見逃した。
+$serverSrc = [IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Server.ps1'))
+$cspStart = $serverSrc.IndexOf('function Get-YakuContentSecurityPolicy {')
+$cspEnd = $serverSrc.IndexOf('function Send-YakuResponse {')
+Chk ($cspStart -ge 0 -and $cspEnd -gt $cspStart) 'Get-YakuContentSecurityPolicy が定義されている'
+Invoke-Expression $serverSrc.Substring($cspStart, $cspEnd - $cspStart)
+
+$cspDefault = Get-YakuContentSecurityPolicy
+$cspWasm = Get-YakuContentSecurityPolicy -AllowWasm
+Chk ($cspWasm -like "*script-src 'self' 'wasm-unsafe-eval'*") '管理画面の CSP は WebAssembly を許す'
+Chk (-not ($cspDefault -like '*wasm-unsafe-eval*')) '一般利用者の CSP は既定のまま'
+Chk (-not ($cspWasm -like "*'unsafe-eval'*" -and -not ($cspWasm -like "*'wasm-unsafe-eval'*"))) "eval() は許さない（wasm-unsafe-eval のみ）"
+foreach ($d in @("default-src 'self'", "frame-ancestors 'none'", "base-uri 'none'", "connect-src 'self'")) {
+    Chk ($cspWasm -like ('*' + $d + '*')) ('管理画面でも他の制限は維持: ' + $d)
+}
+# 管理画面の応答が -AllowWasm を渡していること
+Chk ($serverSrc -match 'Send-YakuTextResponse -Context \$Context -Text \$html -ContentType ''text/html; charset=utf-8'' -AllowWasm') '管理画面の応答が -AllowWasm を渡す'
+# .wasm の MIME
+Chk ($serverSrc -match "'\.wasm'\s*\{\s*'application/wasm'\s*\}") '.wasm は application/wasm で配信する'
+
 Write-Host 'クエリ文字列の日本語（文字化けの回帰）'
 # HttpListener.QueryString は日本語 Windows で CP932 を使うため
 # 「原本フォルダ」が「蜴滓悽繝輔か繝ｫ繝」になる。RawUrl から UTF-8 で読む。

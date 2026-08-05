@@ -18,7 +18,32 @@ function api(path, options) {
 
 function ensureWasm() {
   // 初期化は実測 369ms。押されるまで走らせない（起動を遅くしないため）。
-  if (!wasmReady) wasmReady = init();
+  //
+  // .wasm を自分で取得してバイト列で渡す。init() に任せると取得と
+  // コンパイルのどちらで失敗したか分からず、原因の切り分けができない。
+  if (!wasmReady) {
+    wasmReady = (async function () {
+      const url = '/assets/vendor/liteparse/liteparse_wasm_bg.wasm';
+      let res;
+      try { res = await fetch(url); }
+      catch (e) { throw new Error('WASM を取得できません: ' + url + ' (' + e.message + ')'); }
+      if (!res.ok) throw new Error('WASM を取得できません: ' + url + ' (HTTP ' + res.status + ')');
+      const buf = await res.arrayBuffer();
+      if (buf.byteLength < 1000000) throw new Error('WASM のサイズが不正です: ' + buf.byteLength + ' bytes');
+      try {
+        await init({ module_or_path: buf });
+      } catch (e) {
+        // CSP に 'wasm-unsafe-eval' が無いとここで落ちる。原因を名指しする。
+        const msg = (e && e.message) ? e.message : String(e);
+        if (/unsafe-eval|Content Security Policy/i.test(msg)) {
+          throw new Error('WebAssembly がブラウザの制限で実行できません。管理画面の CSP に wasm-unsafe-eval が必要です。(' + msg + ')');
+        }
+        throw new Error('WASM を初期化できません: ' + msg);
+      }
+    })();
+    // 失敗を握りつぶすと次回も同じ Promise を返してしまう。捨てて作り直せるようにする。
+    wasmReady.catch(function () { wasmReady = null; });
+  }
   return wasmReady;
 }
 
@@ -98,8 +123,16 @@ async function ingestAll() {
   if (!pending.length) return;
   $('ingest').disabled = true;
   say($('progress'), 'WASM を読み込んでいます…');
-  await ensureWasm();
-  const lp = new LiteParse({ outputFormat: 'markdown', ocrEnabled: false, quiet: true });
+  let lp;
+  try {
+    await ensureWasm();
+    lp = new LiteParse({ outputFormat: 'markdown', ocrEnabled: false, quiet: true });
+  } catch (e) {
+    // 握りつぶすと「読み込んでいます…」のまま止まって見える。必ず表に出す。
+    say($('progress'), e && e.message ? e.message : String(e), 'error');
+    $('ingest').disabled = false;
+    return;
+  }
   const counts = { ok: 0, 'low-text': 0, failed: 0 };
   for (let i = 0; i < pending.length; i++) {
     say($('progress'), (i + 1) + ' / ' + pending.length + '  ' + pending[i].source);

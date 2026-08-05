@@ -1504,12 +1504,29 @@ function Get-YakuMimeType {
     }
 }
 
+function Get-YakuContentSecurityPolicy {
+    <#
+      既定は script-src 'self' のみ。一般利用者の画面はこれを維持する。
+
+      AllowWasm は管理画面（コーパス作成）専用。ブラウザは CSP に
+      script-src がある場合、WebAssembly のコンパイルに 'wasm-unsafe-eval' を要求する。
+      無いと WebAssembly.instantiateStreaming が
+      「Refused to compile or instantiate WebAssembly module」で失敗する。
+      'unsafe-eval' ではなく 'wasm-unsafe-eval' にするのは、
+      eval() を許さず WebAssembly だけを許すため。
+    #>
+    param([switch]$AllowWasm)
+    $scriptSrc = if ($AllowWasm) { "script-src 'self' 'wasm-unsafe-eval'" } else { "script-src 'self'" }
+    return ("default-src 'self'; " + $scriptSrc + "; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+}
+
 function Send-YakuResponse {
     param(
         [Parameter(Mandatory=$true)]$Context,
         [Parameter(Mandatory=$true)][byte[]]$Bytes,
         [string]$ContentType = 'text/html; charset=utf-8',
-        [int]$StatusCode = 200
+        [int]$StatusCode = 200,
+        [switch]$AllowWasm
     )
     $resp = $Context.Response
     $resp.StatusCode = $StatusCode
@@ -1519,7 +1536,7 @@ function Send-YakuResponse {
     $resp.Headers['X-Content-Type-Options'] = 'nosniff'
     $resp.Headers['X-Frame-Options'] = 'DENY'
     $resp.Headers['Referrer-Policy'] = 'no-referrer'
-    $resp.Headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+    $resp.Headers['Content-Security-Policy'] = Get-YakuContentSecurityPolicy -AllowWasm:$AllowWasm
     $resp.OutputStream.Write($Bytes, 0, $Bytes.Length)
     $resp.OutputStream.Close()
 }
@@ -1529,10 +1546,11 @@ function Send-YakuTextResponse {
         [Parameter(Mandatory=$true)]$Context,
         [Parameter(Mandatory=$true)][string]$Text,
         [string]$ContentType = 'text/html; charset=utf-8',
-        [int]$StatusCode = 200
+        [int]$StatusCode = 200,
+        [switch]$AllowWasm
     )
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
-    Send-YakuResponse -Context $Context -Bytes $bytes -ContentType $ContentType -StatusCode $StatusCode
+    Send-YakuResponse -Context $Context -Bytes $bytes -ContentType $ContentType -StatusCode $StatusCode -AllowWasm:$AllowWasm
 }
 
 function Get-YakuQueryValue {
@@ -1670,7 +1688,8 @@ function Serve-YakuAdminPage {
     $path = Join-Path $script:YakuRoot 'www\admin.html'
     $html = Get-Content -LiteralPath $path -Raw -Encoding UTF8
     $html = $html.Replace('__YAKU_SESSION_TOKEN__', (ConvertTo-YakuHtml $script:YakuSessionToken))
-    Send-YakuTextResponse -Context $Context -Text $html -ContentType 'text/html; charset=utf-8'
+    # 管理画面だけ WebAssembly を許す。一般利用者の画面は既定のまま。
+    Send-YakuTextResponse -Context $Context -Text $html -ContentType 'text/html; charset=utf-8' -AllowWasm
 }
 
 function Invoke-YakuRoute {
