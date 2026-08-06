@@ -133,7 +133,8 @@ async function ingestOne(lp, item, root) {
     const bytes = new Uint8Array(await res.arrayBuffer());
     // OCR は必ず無効にする。有効だと tessdata を外部から取得しようとして止まる。
     const parsed = await lp.parse(bytes);
-    const mdPages = (parsed.pages || []).map(function (p) { return p.markdown || ''; });
+    // 段の位置を保った plain text を採る。markdown は空になる（json モードのため）。
+    const mdPages = (parsed.pages || []).map(function (p) { return p.text || p.markdown || ''; });
     pages = mdPages.length;
     pageChars = mdPages.map(function (m) { return m.length; });
     markdown = mdPages.map(function (m, i) { return '<!--yaku-page:' + (i + 1) + '-->\n' + m; }).join('\n\n');
@@ -161,7 +162,11 @@ async function ingestAll() {
   let lp;
   try {
     await ensureWasm();
-    lp = new LiteParse({ outputFormat: 'markdown', ocrEnabled: false, quiet: true });
+    // outputFormat は json にする。markdown は段組を潰して隣の段と連結してしまう
+    // （実測 2026-08-07: 「前向きに…広げる」＋「1920年の創立以来…」が1行に混ざった）。
+    // plain text は段の位置を空白の並びとして保つので、情報が多い。
+    // textItems（座標つき）も同時に手に入る。
+    lp = new LiteParse({ outputFormat: 'json', ocrEnabled: false, quiet: true });
   } catch (e) {
     // 握りつぶすと「読み込んでいます…」のまま止まって見える。必ず表に出す。
     say($('progress'), e && e.message ? e.message : String(e), 'error');
