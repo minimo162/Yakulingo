@@ -145,6 +145,48 @@ function Group-YakuCellsIntoSegments {
     return @($segments.ToArray())
 }
 
+function Split-YakuTextIntoSegments {
+    <#
+      貼り付けたテキストを、訳す単位へ分ける。
+
+      なぜ要るのか:
+
+        簡易翻訳を使っている人に CAT のほうが便利でも、急に画面が変わると
+        覚え直しの負担を負わせることになる（利用者の懸念 2026-08-06）。
+        入力の作法を揃えるのが橋渡しになる。**貼って押す**が両方で同じなら、
+        変わるのは出口だけになり、覚えることが1つで済む。
+
+        ファイルを開く経路と、貼り付ける経路の両方を用意する話は、
+        以前から挙がっていた（利用者の希望 2026-08-06）。
+
+      分け方:
+
+        まず行で切る。見出しや箇条書きは1行が1つの単位である。
+        次に行の中を句点で切る。文ごとに見比べたいのが CAT の目的なので、
+        1文が既定の単位になる。
+
+        分け方が外れても、グリッドで結合・解除できる。ここでも
+        「当てる」ではなく「直せる」を前提に置く。
+    #>
+    param([AllowNull()][string]$Text)
+    $t = [string]$Text
+    if ([string]::IsNullOrWhiteSpace($t)) { return @() }
+    $out = New-Object System.Collections.Generic.List[string]
+    foreach ($line in ($t -split "`r?`n")) {
+        $l = [string]$line
+        if ([string]::IsNullOrWhiteSpace($l)) { continue }
+        # 句点・感嘆符・疑問符の後ろで切る。閉じ括弧が続く場合はそこまで含める。
+        # 英語は終止符の後に空白と大文字が続くときだけ切る。小数点や Inc. で切らない。
+        $parts = [regex]::Split($l, '(?<=[。！？][」』）\)”"]?)(?!\s*$)|(?<=[.!?][”"]?)\s+(?=[A-Z])')
+        foreach ($p in $parts) {
+            $s = [string]$p
+            if ([string]::IsNullOrWhiteSpace($s)) { continue }
+            [void]$out.Add($s.Trim())
+        }
+    }
+    return @($out.ToArray())
+}
+
 function Get-YakuExcelRowOccupancy {
     <#
       シートごとに、各行がいくつのセルで埋まっているかを数える。

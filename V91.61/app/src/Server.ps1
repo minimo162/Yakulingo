@@ -2216,9 +2216,18 @@ function Invoke-YakuRoute {
             $action = $path.Substring('/api/cat/'.Length)
 
             if ($action -eq 'open') {
-                $incoming = Resolve-YakuIncomingFile -Payload $payload -Settings $settings
                 $direction = 'to_en'
                 try { if (@('to_en','to_jp') -contains [string]$payload['direction']) { $direction = [string]$payload['direction'] } } catch {}
+                # 貼り付けたテキストからも開ける。簡易翻訳と入力の作法を揃え、
+                # 覚え直しの負担を減らすため（利用者の懸念 2026-08-06）。
+                $pastedText = ''
+                try { $pastedText = [string]$payload['text'] } catch {}
+                if (-not [string]::IsNullOrWhiteSpace($pastedText)) {
+                    $project = New-YakuCatTextProject -Root $script:YakuRoot -Text $pastedText -Settings $settings -Direction $direction
+                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
+                    return
+                }
+                $incoming = Resolve-YakuIncomingFile -Payload $payload -Settings $settings
                 $project = New-YakuCatProject -Root $script:YakuRoot -Path ([string]$incoming.Path) -Settings $settings -Direction $direction
                 Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 return
@@ -2314,12 +2323,14 @@ function Invoke-YakuRoute {
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 }
                 'export' {
-                    $outputPath = Get-YakuTranslatedOutputPath -InputPath ([string]$project.Path)
                     $warnings = New-Object System.Collections.Generic.List[object]
+                    # 貼り付けたテキストは書き戻す元が無いので、訳文を繋いで返す。
+                    $outputPath = if ([string]$project.Source -eq 'text') { '' } else { Get-YakuTranslatedOutputPath -InputPath ([string]$project.Path) }
                     $exported = Export-YakuCatProject -Project $project -OutputPath $outputPath -Settings $settings -Warnings $warnings
                     $body = [ordered]@{
                         output_path = [string]$exported.OutputPath
                         output_name = [string]$exported.OutputName
+                        text = $(try { [string]$exported.Text } catch { '' })
                         written = [int]$exported.Written
                         skipped = [int]$exported.Skipped
                     }

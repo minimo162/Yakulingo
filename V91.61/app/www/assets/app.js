@@ -555,7 +555,10 @@
       var s = segments[i];
       // 繋いだセグメントは「何セルを1つにまとめたか」を出す。
       // 繋ぎ方が外れていても、ここを見れば気づける。
-      var loc = s.joined ? (s.cells + 'セル結合') : (s.kind === 'cell' ? 'セル' : s.kind);
+      var loc;
+      if (s.kind === 'text') loc = s.joined ? '結合' : '文';
+      else if (s.kind === 'cell') loc = s.joined ? (s.cells + 'セル結合') : 'セル';
+      else loc = (s.kind === 'shape') ? '図形' : (s.kind === 'chart' ? 'グラフ' : s.kind);
       var origin = yakuCatOriginLabel(s.origin);
       // 繋ぎ直しの操作。自動で完璧に分けるのは無理なので、外れたら人が直す。
       var ops = '';
@@ -598,6 +601,9 @@
     }
     var translateBtn = document.getElementById('cat-translate-button');
     if (translateBtn) translateBtn.textContent = data.corpus_ready ? '文例を使って残りを翻訳' : '残りをCopilotで翻訳';
+    // 貼り付けたテキストは書き戻す元が無い。出口が違うので言葉も変える。
+    var exportBtn = document.getElementById('cat-export-button');
+    if (exportBtn) exportBtn.textContent = (data.source === 'text') ? '訳文をコピー' : '出力';
     yakuCatSetStatus(data.file_name + ' … ' + data.total + ' セグメント（訳済 ' + data.translated + ' / 残り ' + data.remaining + '、結合 ' + data.joined + '）');
   }
 
@@ -612,7 +618,19 @@
     });
   }
 
+  function yakuCatSourceMode() {
+    var checked = document.querySelector('input[name="cat_source"]:checked');
+    return checked ? checked.value : 'text';
+  }
+
   function yakuCatSource() {
+    // 貼り付けからも始められる。簡易翻訳と入力の作法を揃えるため。
+    if (yakuCatSourceMode() === 'text') {
+      var area = document.getElementById('cat-text');
+      var text = area ? area.value : '';
+      if (!text.trim()) return Promise.reject(new Error('翻訳したいテキストを貼り付けてください。'));
+      return Promise.resolve({ text: text });
+    }
     // ファイル翻訳と同じ入口を使う。アップロードかローカルパスのどちらか。
     var input = document.getElementById('cat-file-input');
     var path = document.getElementById('cat-path');
@@ -680,6 +698,20 @@
     if (!yakuCatProjectId) return;
     yakuCatSetStatus('出力しています…');
     yakuCatPost('export', { id: yakuCatProjectId }).then(function (data) {
+      // 貼り付けたテキストは書き戻す元が無いので、繋いだ訳文をクリップボードへ。
+      // 簡易翻訳と同じ終わり方にして、覚えることを増やさない。
+      if (data.text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(data.text).then(function () {
+            yakuCatSetStatus('訳文をコピーしました（' + data.written + '件）。');
+          }, function () {
+            yakuCatSetStatus('訳文はできましたが、コピーできませんでした。訳文欄から選んでコピーしてください。');
+          });
+        } else {
+          yakuCatSetStatus('訳文はできましたが、コピーできませんでした。訳文欄から選んでコピーしてください。');
+        }
+        return;
+      }
       yakuCatSetStatus('出力しました: ' + data.output_path);
     }).catch(function (error) {
       yakuCatSetStatus('出力できませんでした: ' + (error && error.message ? error.message : ''));
@@ -1061,6 +1093,16 @@
     });
     var catSearch = document.getElementById('cat-search');
     if (catSearch) catSearch.addEventListener('input', function () { yakuCatRender(null); });
+    // 取り込み元の切り替え。貼り付けが既定で、Excel は選んだときだけ出す。
+    document.addEventListener('change', function (event) {
+      if (!event.target || event.target.name !== 'cat_source') return;
+      var isText = (event.target.value === 'text');
+      var textRow = document.getElementById('cat-text-row');
+      var fileRow = document.getElementById('cat-file-row');
+      if (textRow) textRow.hidden = !isText;
+      if (fileRow) fileRow.hidden = isText;
+      yakuCatSetStatus(isText ? 'テキストを貼り付けて「取り込む」を押してください。' : 'Excelを選択して「取り込む」を押してください。');
+    });
     var catFileInput = document.getElementById('cat-file-input');
     if (catFileInput) catFileInput.addEventListener('change', function () {
       yakuCatUploaded = null;
@@ -1071,6 +1113,24 @@
       var input = event.target.closest && event.target.closest('[data-yaku-cat-input]');
       if (!input) return;
       yakuCatSaveSegment(parseInt(input.getAttribute('data-yaku-cat-input'), 10), input.value);
+    });
+    // 簡易翻訳の結果から CAT へ渡す。原文をそのまま持っていくので、
+    // 押した先に見慣れた文が並ぶ。覚えることは「1文ずつ見える」だけになる。
+    document.addEventListener('click', function (event) {
+      var toCat = event.target.closest && event.target.closest('[data-yaku-to-cat]');
+      if (!toCat) return;
+      var source = yakuDecodeBase64Utf8(toCat.getAttribute('data-yaku-to-cat'));
+      var radio = document.querySelector('input[name="cat_source"][value="text"]');
+      if (radio) { radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true })); }
+      var area = document.getElementById('cat-text');
+      if (area) area.value = source;
+      var dir = document.querySelector('input[name="text_direction"]:checked');
+      if (dir && dir.value !== 'auto') {
+        var catDir = document.querySelector('input[name="cat_direction"][value="' + dir.value + '"]');
+        if (catDir) catDir.checked = true;
+      }
+      yakuActivateTab('cat');
+      yakuCatOpen();
     });
     document.addEventListener('click', function (event) {
       var merge = event.target.closest && event.target.closest('[data-yaku-cat-merge]');

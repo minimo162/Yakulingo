@@ -98,6 +98,53 @@ function New-YakuCatProject {
     return $project
 }
 
+function New-YakuCatTextProject {
+    <#
+      貼り付けたテキストから CAT のプロジェクトを作る。
+
+      簡易翻訳と入力の作法を揃えるための経路である（利用者の懸念 2026-08-06）。
+      貼って押す、までは同じで、変わるのは出口だけになる。
+      Excel を知らなくても CAT を使えるようにする。
+
+      出口も違う。書き戻す元のファイルが無いので、出力は訳文を繋いだもの
+      （画面でコピーする）。簡易翻訳と同じ終わり方になる。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Root,
+        [Parameter(Mandatory=$true)][string]$Text,
+        [Parameter(Mandatory=$true)]$Settings,
+        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en'
+    )
+    $segments = New-Object System.Collections.Generic.List[object]
+    foreach ($s in @(Split-YakuTextIntoSegments -Text $Text)) {
+        $seg = [pscustomobject]@{
+            Text = [string]$s
+            BlockIds = @()
+            Cells = @()
+            Joined = $false
+            Kind = 'text'
+            Sheet = ''
+            Location = '本文'
+            Translation = ''
+            Origin = ''
+        }
+        [void]$segments.Add($seg)
+    }
+    $project = [pscustomobject]@{
+        Id        = [guid]::NewGuid().ToString('N')
+        Path      = ''
+        FileName  = '貼り付けたテキスト'
+        Direction = [string]$Direction
+        Blocks    = @()
+        Segments  = @($segments.ToArray())
+        Warnings  = @()
+        Source    = 'text'
+        CreatedAt = (Get-Date).ToString('s')
+    }
+    $script:YakuCatProjects[$project.Id] = $project
+    return $project
+}
+
 function Get-YakuCatProject {
     param([Parameter(Mandatory=$true)][string]$Id)
     if (-not $script:YakuCatProjects.ContainsKey($Id)) { return $null }
@@ -143,9 +190,11 @@ function ConvertTo-YakuCatProjectJson {
             kind        = [string]$segs[$i].Kind
             location    = [string]$segs[$i].Location
             # 次と繋げるか。シートが違う・図形が挟まる場合は繋げない。
-            can_merge   = ([string]$segs[$i].Kind -eq 'cell' -and ($i -lt ($segs.Count - 1)) -and
-                           [string]$segs[$i + 1].Kind -eq 'cell' -and [string]$segs[$i].Sheet -eq [string]$segs[$i + 1].Sheet)
-            can_split   = ([string]$segs[$i].Kind -eq 'cell' -and @($segs[$i].Cells).Count -gt 1)
+            can_merge   = ($i -lt ($segs.Count - 1)) -and ([string]$segs[$i].Kind -eq [string]$segs[$i + 1].Kind) -and (
+                           ([string]$segs[$i].Kind -eq 'text') -or
+                           ([string]$segs[$i].Kind -eq 'cell' -and [string]$segs[$i].Sheet -eq [string]$segs[$i + 1].Sheet))
+            can_split   = (([string]$segs[$i].Kind -eq 'cell' -and @($segs[$i].Cells).Count -gt 1) -or
+                           ([string]$segs[$i].Kind -eq 'text' -and @(Get-YakuCatTextPieces -Segment $segs[$i]).Count -gt 1))
         })
     }
     $summary = Get-YakuCatProjectSummary -Project $Project
@@ -171,6 +220,7 @@ function ConvertTo-YakuCatProjectJson {
     }
     return ([ordered]@{
         id         = [string]$Project.Id
+        source     = $(try { if ([string]$Project.Source -eq 'text') { 'text' } else { 'file' } } catch { 'file' })
         corpus_ready = $(try { -not [string]::IsNullOrWhiteSpace([string]$Project.CorpusSection) } catch { $false })
         corpus     = @($corpusRows.ToArray())
         file_name  = [string]$Project.FileName
@@ -280,6 +330,21 @@ function Invoke-YakuCatCopilotPass {
     }
 }
 
+function Get-YakuCatTextPieces {
+    <#
+      テキストのセグメントが抱えている元の文を返す。
+
+      繋いだものは Pieces を持ち、繋いでいないものは持たない。
+      @($null) は「空」ではなく「null が1つ入った配列」になるので、
+      件数で判断する前に必ず空要素を落とす。
+    #>
+    param([Parameter(Mandatory=$true)]$Segment)
+    $pieces = @()
+    try { $pieces = @(@($Segment.Pieces) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }) } catch { $pieces = @() }
+    if ($pieces.Count -eq 0) { $pieces = @([string]$Segment.Text) }
+    return @($pieces)
+}
+
 function Set-YakuCatSegments {
     # 並べ替えたセグメントを差し戻す。訳文と出どころは各セグメントが持つ。
     param([Parameter(Mandatory=$true)]$Project, [Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Segments)
@@ -311,7 +376,27 @@ function Merge-YakuCatSegments {
     if ($Index -lt 0 -or $Index -ge ($segs.Count - 1)) { throw '次のセグメントがありません。' }
     $a = $segs[$Index]
     $b = $segs[$Index + 1]
-    if ([string]$a.Kind -ne 'cell' -or [string]$b.Kind -ne 'cell') { throw 'セル以外は結合できません。' }
+    if ([string]$a.Kind -ne [string]$b.Kind) { throw '種類が違うため結合できません。' }
+    if ([string]$a.Kind -eq 'text') {
+        # 貼り付けたテキスト。戻すセルが無いので、本文を繋ぐだけでよい。
+        # 元の文は覚えておく。解除して1文ずつへ戻せるようにするため。
+        $pieces = @(@(Get-YakuCatTextPieces -Segment $a) + @(Get-YakuCatTextPieces -Segment $b))
+        $joiner = if ((@($pieces) -join '') -match '[぀-ヿ一-鿿]') { '' } else { ' ' }
+        $merged = [pscustomobject]@{
+            Text = (@($pieces) -join $joiner); BlockIds = @(); Cells = @(); Joined = $true
+            Kind = 'text'; Sheet = ''; Location = '本文'; Pieces = @($pieces)
+            Translation = ''; Origin = ''
+        }
+        $out = New-Object System.Collections.Generic.List[object]
+        for ($i = 0; $i -lt $segs.Count; $i++) {
+            if ($i -eq $Index) { [void]$out.Add($merged); continue }
+            if ($i -eq ($Index + 1)) { continue }
+            [void]$out.Add($segs[$i])
+        }
+        Set-YakuCatSegments -Project $Project -Segments @($out.ToArray())
+        return $Project
+    }
+    if ([string]$a.Kind -ne 'cell') { throw 'セル以外は結合できません。' }
     if ([string]$a.Sheet -ne [string]$b.Sheet) { throw 'シートが違うため結合できません。' }
     $merged = New-YakuCellSegment -Sheet ([string]$a.Sheet) -Cells (@($a.Cells) + @($b.Cells)) -Joined $true
     $merged | Add-Member -NotePropertyName 'Translation' -NotePropertyValue '' -Force
@@ -340,6 +425,23 @@ function Split-YakuCatSegment {
     $segs = @($Project.Segments)
     if ($Index -lt 0 -or $Index -ge $segs.Count) { throw 'セグメントが見つかりません。' }
     $target = $segs[$Index]
+    if ([string]$target.Kind -eq 'text') {
+        $pieces = @(Get-YakuCatTextPieces -Segment $target)
+        if ($pieces.Count -le 1) { throw 'このセグメントは繋がっていません。' }
+        $out = New-Object System.Collections.Generic.List[object]
+        for ($i = 0; $i -lt $segs.Count; $i++) {
+            if ($i -ne $Index) { [void]$out.Add($segs[$i]); continue }
+            foreach ($p in $pieces) {
+                [void]$out.Add([pscustomobject]@{
+                    Text = [string]$p; BlockIds = @(); Cells = @(); Joined = $false
+                    Kind = 'text'; Sheet = ''; Location = '本文'
+                    Translation = ''; Origin = ''
+                })
+            }
+        }
+        Set-YakuCatSegments -Project $Project -Segments @($out.ToArray())
+        return $Project
+    }
     if ([string]$target.Kind -ne 'cell') { throw 'セル以外は解除できません。' }
     $cells = @($target.Cells)
     if ($cells.Count -le 1) { throw 'このセグメントは繋がっていません。' }
@@ -383,13 +485,29 @@ function Export-YakuCatProject {
     #>
     param(
         [Parameter(Mandatory=$true)]$Project,
-        [Parameter(Mandatory=$true)][string]$OutputPath,
+        # 貼り付けたテキストのときは空。書き戻す元のファイルが無い。
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$OutputPath,
         [AllowNull()]$Settings,
         [AllowNull()]$Warnings,
         [AllowNull()]$ProgressState
     )
     if ($null -eq $Warnings) { $Warnings = New-Object System.Collections.Generic.List[object] }
     $segs = @($Project.Segments)
+    # 貼り付けたテキストは書き戻す元のファイルが無い。訳文を繋いで返すだけ。
+    # 簡易翻訳と同じ終わり方（画面でコピーする）にして、覚えることを増やさない。
+    if ([string]$Project.Source -eq 'text') {
+        $lines = @($segs | ForEach-Object {
+            $t = [string]$_.Translation
+            if ([string]::IsNullOrWhiteSpace($t)) { [string]$_.Text } else { $t }
+        })
+        return [pscustomobject]@{
+            OutputPath = ''
+            OutputName = ''
+            Text       = (@($lines) -join "`n")
+            Written    = @($segs | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.Translation) }).Count
+            Skipped    = @($segs | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.Translation) }).Count
+        }
+    }
     $bySegment = @{}
     for ($i = 0; $i -lt $segs.Count; $i++) {
         $t = [string]$segs[$i].Translation

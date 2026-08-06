@@ -21,7 +21,7 @@ $toolsRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $toolsRoot
 $script:fail = 0
 
-foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','FileTranslation.ps1','CellSegments.ps1','CatProject.ps1')) {
+foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','BriefStyle.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','FileTranslation.ps1','CellSegments.ps1','CatProject.ps1')) {
     . (Join-Path (Join-Path $root 'src') $n)
 }
 function Chk { param([bool]$c,[string]$m) if($c){Write-Host ('  ok   ' + $m) -ForegroundColor Green}else{Write-Host ('  FAIL ' + $m) -ForegroundColor Red;$script:fail++} }
@@ -171,6 +171,57 @@ $rejoined = ((@($read['A1'], $read['A2']) -join ' ') -replace '\s+', ' ').Trim()
 Chk ($rejoined -eq 'In the first quarter, fixed costs were reduced through a review of production.') '繋いだ訳文が元の2セルへ戻る'
 Chk ([string]$read['A4'] -eq $knownTarget) '用語集で置換したラベルが出力される'
 Chk ([string]$read['B4'] -eq '1234') '数値セルは触らない'
+
+# ---------------------------------------------------------------- 貼り付けから開く
+# 簡易翻訳を使っている人にも CAT のほうが便利だが、急に画面が変わると
+# 覚え直しの負担を負わせる（利用者の懸念 2026-08-06）。入力の作法を揃える。
+Write-Host '貼り付けたテキストから開く'
+$pasted = @"
+当第1四半期は、生産体制の見直しにより固定費を圧縮しました。為替の影響は限定的でした。
+今後も市場環境を注視してまいります。
+"@
+$tp = New-YakuCatTextProject -Root $root -Text $pasted -Settings $settings -Direction 'to_en'
+$tsegs = @($tp.Segments)
+Chk ($tsegs.Count -eq 3) ('行と句点で分かれる: ' + $tsegs.Count)
+Chk ([string]$tsegs[0].Text -eq '当第1四半期は、生産体制の見直しにより固定費を圧縮しました。') '1文目'
+Chk ([string]$tsegs[1].Text -eq '為替の影響は限定的でした。') '同じ行の2文目も分かれる'
+Chk ([string]$tsegs[2].Text -eq '今後も市場環境を注視してまいります。') '次の行'
+Chk ([string]$tsegs[0].Kind -eq 'text') 'セルではなくテキストとして扱う'
+$tview = (ConvertTo-YakuCatProjectJson -Project $tp) | ConvertFrom-Json
+Chk ([string]$tview.source -eq 'text') '画面が出口を切り替えられる'
+
+# 繋ぎ直しはテキストでもできる。分け方が外れても直せることが前提。
+$null = Merge-YakuCatSegments -Project $tp -Index 0
+$tsegs = @($tp.Segments)
+Chk ($tsegs.Count -eq 2) ('隣と結合できる: ' + $tsegs.Count)
+Chk ([string]$tsegs[0].Text -eq '当第1四半期は、生産体制の見直しにより固定費を圧縮しました。為替の影響は限定的でした。') '本文が繋がる'
+$null = Split-YakuCatSegment -Project $tp -Index 0
+$tsegs = @($tp.Segments)
+Chk ($tsegs.Count -eq 3) '解除すると元の文へ戻る'
+Chk ([string]$tsegs[1].Text -eq '為替の影響は限定的でした。') '元の切れ目で戻る'
+
+# 出口はコピー。書き戻す元のファイルが無い。
+$null = Set-YakuCatSegmentTranslation -Project $tp -Index 0 -Text 'Fixed costs were reduced.'
+$null = Set-YakuCatSegmentTranslation -Project $tp -Index 1 -Text 'FX impact was limited.'
+$texported = Export-YakuCatProject -Project $tp -OutputPath '' -Settings $settings
+Chk ([string]::IsNullOrEmpty([string]$texported.OutputPath)) 'ファイルは作らない'
+Chk ([string]$texported.Text -match 'Fixed costs were reduced\.') '訳文が繋がって返る'
+Chk ([string]$texported.Text -match 'FX impact was limited\.') '2文目も入る'
+# 未訳のセグメントは原文のまま残す。抜け落ちると文書として使えない。
+Chk ([string]$texported.Text -match '今後も市場環境を注視してまいります。') '未訳は原文のまま残す'
+Remove-YakuCatProject -Id ([string]$tp.Id)
+
+# 画面に導線があること。押した先に見慣れた文が並ぶようにする。
+$textResult = [pscustomobject]@{
+    Direction='to_en'; SourceText='当第1四半期の営業利益は増益となりました。'; InputLength=20; Warnings=@()
+    Options=@([pscustomobject]@{ Style='full'; Label='FULL'; Translation='Q1 operating profit increased.'; MaskedTranslation='Q1 operating profit increased.' })
+}
+$handoff = Convert-YakuTextResultToHtml -Result $textResult -IncludeStatusOob:$false
+Chk ($handoff -match 'data-yaku-to-cat') '簡易翻訳の結果から CAT へ渡す導線がある'
+$appJsText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'assets\app.js'))
+Chk ($appJsText.Contains("name=`"cat_source`"")) '取り込み元を切り替えられる'
+$indexText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'index.html'))
+Chk ($indexText -match 'id="cat-text"') 'CAT に貼り付け欄がある'
 
 # ---------------------------------------------------------------- 片付け
 Remove-YakuCatProject -Id ([string]$project.Id)

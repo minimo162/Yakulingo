@@ -159,6 +159,21 @@ $reviseHtml</article>
 "@
     }
 
+    # V91.61（2026-08-06）: 簡易翻訳から CAT へ渡す導線。
+    #
+    # 簡易翻訳を使っている人にも CAT のほうが便利だが、急に画面が変わると
+    # 覚え直しの負担を負わせることになる（利用者の懸念 2026-08-06）。
+    # 先に覚えてもらうのではなく、**確認したくなった時に**押せる場所へ置く。
+    # 原文はそのまま持っていくので、押した先に見慣れた文が並ぶ。
+    if ($canRevise -and $options.Count -gt 0) {
+        $html += @"
+<div class='cat-handoff'>
+  <button type='button' class='secondary-button compact' data-yaku-to-cat='$(ConvertTo-YakuUtf8Base64 $sourceText)'>CATで1文ずつ確認する</button>
+  <span class='muted'>原文を1文ずつ並べて、直しながら仕上げられます。</span>
+</div>
+"@
+    }
+
     $html += "</section>"
     return $html
 }

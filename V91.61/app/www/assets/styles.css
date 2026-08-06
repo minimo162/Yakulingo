@@ -146,6 +146,11 @@ input[type="text"], select { width: 100%; min-height: 34px; border: 0; border-ra
 .cat-direction { display: flex; gap: 16px; align-items: center; }
 .cat-status { margin: var(--space-2) 0; font-size: var(--font-meta); }
 .cat-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: var(--space-2); }
+.cat-mode-row { display: flex; gap: 16px; align-items: center; margin-bottom: var(--space-2); }
+.cat-text-row { margin-bottom: var(--space-2); }
+.cat-text-row textarea { width: 100%; }
+.cat-open-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.cat-handoff { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: var(--space-2); font-size: var(--font-meta); }
 .cat-corpus-panel { margin-bottom: var(--space-2); }
 .cat-corpus-list { display: grid; gap: 8px; margin-top: 8px; max-height: 30vh; overflow: auto; }
 .cat-corpus-item { border-left: 2px solid var(--line-strong); padding-left: 10px; font-size: var(--font-meta); }
