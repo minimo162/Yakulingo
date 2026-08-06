@@ -2204,6 +2204,18 @@ function Invoke-YakuRoute {
                     $null = Invoke-YakuCatGlossaryPass -Root $script:YakuRoot -Project $project -Settings $settings
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 }
+                'merge' {
+                    $index = -1
+                    try { $index = [int]$payload['index'] } catch { $index = -1 }
+                    $null = Merge-YakuCatSegments -Project $project -Index $index
+                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
+                }
+                'split' {
+                    $index = -1
+                    try { $index = [int]$payload['index'] } catch { $index = -1 }
+                    $null = Split-YakuCatSegment -Project $project -Index $index
+                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
+                }
                 'segment' {
                     $index = -1
                     try { $index = [int]$payload['index'] } catch { $index = -1 }

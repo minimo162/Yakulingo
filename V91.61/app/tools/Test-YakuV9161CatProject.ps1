@@ -70,6 +70,8 @@ Chk (@($segs | Where-Object { [bool]$_.Joined }).Count -eq 1) '割られた文�
 Chk (@($segs | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.Translation) }).Count -eq 2) '取り込んだ時点では訳は付いていない'
 $summary = Get-YakuCatProjectSummary -Project $project
 Chk ([int]$summary.Total -eq 2 -and [int]$summary.Translated -eq 0) '要約が原文だけの状態を表す'
+$proseIdx = 0
+for ($i = 0; $i -lt $segs.Count; $i++) { if ([bool]$segs[$i].Joined) { $proseIdx = $i } }
 Chk ((Get-YakuCatProject -Id ([string]$project.Id)) -ne $null) 'Id で取り出せる'
 
 # ---------------------------------------------------------------- 用語集で置換
@@ -95,6 +97,43 @@ Chk (@($view.segments | Where-Object { [bool]$_.joined }).Count -eq 1) '結合�
 Chk (@($view.segments | Where-Object { [int]$_.cells -gt 1 }).Count -eq 1) '何セルを繋いだか分かる'
 # 元の塊やセルの座標は画面に用が無いので載せない。
 Chk (-not ($view.segments[0].PSObject.Properties.Name -contains 'BlockIds')) '内部の識別子は画面へ出さない'
+
+# ---------------------------------------------------------------- 繋ぎ直し
+# 自動で完璧にセグメントを分けるのは無理なので（利用者の指摘 2026-08-06）、
+# 外れたときに人が直せることが前提になっている。
+Write-Host '手で繋ぎ直す'
+$before = @($project.Segments).Count
+$null = Split-YakuCatSegment -Project $project -Index $proseIdx
+$segs = @($project.Segments)
+Chk ($segs.Count -eq ($before + 1)) ('解除すると元のセル1つずつに戻る: ' + $before + ' -> ' + $segs.Count)
+Chk (@($segs | Where-Object { [bool]$_.Joined }).Count -eq 0) '繋がったものが無くなる'
+Chk ([string]$segs[0].Text -eq '当第1四半期は、生産体制の見直しにより') '1つ目は元のセルの文字'
+Chk ([string]$segs[1].Text -eq '固定費を圧縮しました。') '2つ目も元のセルの文字'
+# 訳文は消す。繋ぎ方が変われば原文が別の文になるので、前の訳は断片の訳になる。
+# 残すと「一見良さげだが中身が合っていない」状態を自分で作ることになる。
+Chk ([string]::IsNullOrWhiteSpace([string]$segs[0].Translation)) '解除すると訳文は消える'
+
+$null = Merge-YakuCatSegments -Project $project -Index 0
+$segs = @($project.Segments)
+Chk ($segs.Count -eq $before) ('隣と結合すると元の数へ戻る: ' + $segs.Count)
+Chk ([bool]$segs[0].Joined) '結合した印が付く'
+Chk ([string]$segs[0].Text -eq '当第1四半期は、生産体制の見直しにより固定費を圧縮しました。') '本文が繋がる'
+Chk (@($segs[0].Cells).Count -eq 2) '元のセルを2つとも覚えている'
+Chk ([string]::IsNullOrWhiteSpace([string]$segs[0].Translation)) '結合しても訳文は消える'
+
+# 繋げないものは繋げない。
+$labelIdx = -1
+for ($i = 0; $i -lt $segs.Count; $i++) { if ([string]$segs[$i].Text -eq $knownSource) { $labelIdx = $i } }
+$threw = $false
+try { $null = Merge-YakuCatSegments -Project $project -Index ($segs.Count - 1) } catch { $threw = $true }
+Chk $threw '最後のセグメントは次が無いので結合できない'
+$threw = $false
+try { $null = Split-YakuCatSegment -Project $project -Index $labelIdx } catch { $threw = $true }
+Chk $threw '繋がっていないセグメントは解除できない'
+# 画面へ「繋げるか」を出す。押せない操作をボタンで見せない。
+$view2 = (ConvertTo-YakuCatProjectJson -Project $project) | ConvertFrom-Json
+Chk ([bool]$view2.segments[0].can_split) '結合済みは解除できると出る'
+Chk (-not [bool]$view2.segments[$view2.segments.Count - 1].can_merge) '最後のセグメントは結合できないと出る'
 
 # ---------------------------------------------------------------- 人の直し
 Write-Host '人が直したものを機械が踏まない'

@@ -528,11 +528,16 @@
       // 繋ぎ方が外れていても、ここを見れば気づける。
       var loc = s.joined ? (s.cells + 'セル結合') : (s.kind === 'cell' ? 'セル' : s.kind);
       var origin = yakuCatOriginLabel(s.origin);
+      // 繋ぎ直しの操作。自動で完璧に分けるのは無理なので、外れたら人が直す。
+      var ops = '';
+      if (s.can_merge) ops += '<button type="button" class="cat-op" data-yaku-cat-merge="' + s.index + '" title="次のセグメントと結合します（訳文は消えます）">↓結合</button>';
+      if (s.can_split) ops += '<button type="button" class="cat-op" data-yaku-cat-split="' + s.index + '" title="セル1つずつに戻します（訳文は消えます）">解除</button>';
       rows.push(
         '<tr data-yaku-cat-row="' + s.index + '">' +
         '<td class="cat-col-no">' + (s.index + 1) + '</td>' +
-        '<td class="cat-col-loc"><span class="cat-loc">' + yakuEscape(loc) + '</span>' +
-        (origin ? '<span class="cat-origin cat-origin-' + yakuEscape(s.origin) + '">' + yakuEscape(origin) + '</span>' : '') + '</td>' +
+        '<td class="cat-col-loc"><span class="cat-loc" title="' + yakuEscape(s.location || '') + '">' + yakuEscape(loc) + '</span>' +
+        (origin ? '<span class="cat-origin cat-origin-' + yakuEscape(s.origin) + '">' + yakuEscape(origin) + '</span>' : '') +
+        (ops ? '<span class="cat-ops">' + ops + '</span>' : '') + '</td>' +
         '<td class="cat-source">' + yakuEscape(s.source) + '</td>' +
         '<td class="cat-target"><textarea rows="2" data-yaku-cat-input="' + s.index + '">' + yakuEscape(s.translation || '') + '</textarea></td>' +
         '</tr>'
@@ -628,6 +633,14 @@
       yakuCatSetStatus('出力しました: ' + data.output_path);
     }).catch(function (error) {
       yakuCatSetStatus('出力できませんでした: ' + (error && error.message ? error.message : ''));
+    });
+  }
+
+  function yakuCatRegroup(action, index) {
+    if (!yakuCatProjectId) return;
+    yakuCatSetStatus(action === 'merge' ? '結合しています…' : '解除しています…');
+    yakuCatPost(action, { id: yakuCatProjectId, index: index }).then(yakuCatRender).catch(function (error) {
+      yakuCatSetStatus('変更できませんでした: ' + (error && error.message ? error.message : ''));
     });
   }
 
@@ -1000,6 +1013,12 @@
       var input = event.target.closest && event.target.closest('[data-yaku-cat-input]');
       if (!input) return;
       yakuCatSaveSegment(parseInt(input.getAttribute('data-yaku-cat-input'), 10), input.value);
+    });
+    document.addEventListener('click', function (event) {
+      var merge = event.target.closest && event.target.closest('[data-yaku-cat-merge]');
+      if (merge) { yakuCatRegroup('merge', parseInt(merge.getAttribute('data-yaku-cat-merge'), 10)); return; }
+      var split = event.target.closest && event.target.closest('[data-yaku-cat-split]');
+      if (split) { yakuCatRegroup('split', parseInt(split.getAttribute('data-yaku-cat-split'), 10)); }
     });
 
     document.addEventListener('keydown', function (event) {

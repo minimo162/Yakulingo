@@ -142,6 +142,10 @@ function ConvertTo-YakuCatProjectJson {
             cells       = @($segs[$i].BlockIds).Count
             kind        = [string]$segs[$i].Kind
             location    = [string]$segs[$i].Location
+            # 次と繋げるか。シートが違う・図形が挟まる場合は繋げない。
+            can_merge   = ([string]$segs[$i].Kind -eq 'cell' -and ($i -lt ($segs.Count - 1)) -and
+                           [string]$segs[$i + 1].Kind -eq 'cell' -and [string]$segs[$i].Sheet -eq [string]$segs[$i + 1].Sheet)
+            can_split   = ([string]$segs[$i].Kind -eq 'cell' -and @($segs[$i].Cells).Count -gt 1)
         })
     }
     $summary = Get-YakuCatProjectSummary -Project $Project
@@ -252,6 +256,83 @@ function Invoke-YakuCatCopilotPass {
         Sent = $items.Count
         Remaining = @($segs | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.Translation) }).Count
     }
+}
+
+function Set-YakuCatSegments {
+    # 並べ替えたセグメントを差し戻す。訳文と出どころは各セグメントが持つ。
+    param([Parameter(Mandatory=$true)]$Project, [Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Segments)
+    $Project.Segments = @($Segments)
+}
+
+function Merge-YakuCatSegments {
+    <#
+      隣り合うセグメントを1つに繋ぐ。
+
+      なぜ手で繋げるようにするのか:
+
+        繋ぐ判定は「同じ列で行が連続し、他に埋まったセルが無く、句点で
+        終わっていない」という目に見える事実だけで決めている。それでも
+        自動で完璧に分けるのは無理である（利用者の指摘 2026-08-06）。
+        外れたときに人が直せることが、この作りの前提になっている。
+
+      訳文は消す:
+
+        繋いだ後の原文は、繋ぐ前とは別の文である。前の訳文は断片の訳
+        なので、残すと「一見良さげだが中身が合っていない」状態を自分で
+        作ることになる。それはこの作り直しがいちばん避けたかったものである。
+
+      繋げるのはセルどうし、同じシートのものだけ。図形はレイアウト上の
+      位置で並ぶので、セルの並びへ混ぜられない。
+    #>
+    param([Parameter(Mandatory=$true)]$Project, [Parameter(Mandatory=$true)][int]$Index)
+    $segs = @($Project.Segments)
+    if ($Index -lt 0 -or $Index -ge ($segs.Count - 1)) { throw '次のセグメントがありません。' }
+    $a = $segs[$Index]
+    $b = $segs[$Index + 1]
+    if ([string]$a.Kind -ne 'cell' -or [string]$b.Kind -ne 'cell') { throw 'セル以外は結合できません。' }
+    if ([string]$a.Sheet -ne [string]$b.Sheet) { throw 'シートが違うため結合できません。' }
+    $merged = New-YakuCellSegment -Sheet ([string]$a.Sheet) -Cells (@($a.Cells) + @($b.Cells)) -Joined $true
+    $merged | Add-Member -NotePropertyName 'Translation' -NotePropertyValue '' -Force
+    $merged | Add-Member -NotePropertyName 'Origin' -NotePropertyValue '' -Force
+    $out = New-Object System.Collections.Generic.List[object]
+    for ($i = 0; $i -lt $segs.Count; $i++) {
+        if ($i -eq $Index) { [void]$out.Add($merged); continue }
+        if ($i -eq ($Index + 1)) { continue }
+        [void]$out.Add($segs[$i])
+    }
+    Set-YakuCatSegments -Project $Project -Segments @($out.ToArray())
+    return $Project
+}
+
+function Split-YakuCatSegment {
+    <#
+      繋がっているセグメントを、元のセル1つずつへ戻す。
+
+      「隣と繋ぐ」と「元へ戻す」の2つがあれば、どんなまとめ方にも
+      到達できる。途中で切る操作は入れない。操作が増えるだけで、
+      できることは変わらない。
+
+      訳文は消す。理由は Merge-YakuCatSegments と同じ。
+    #>
+    param([Parameter(Mandatory=$true)]$Project, [Parameter(Mandatory=$true)][int]$Index)
+    $segs = @($Project.Segments)
+    if ($Index -lt 0 -or $Index -ge $segs.Count) { throw 'セグメントが見つかりません。' }
+    $target = $segs[$Index]
+    if ([string]$target.Kind -ne 'cell') { throw 'セル以外は解除できません。' }
+    $cells = @($target.Cells)
+    if ($cells.Count -le 1) { throw 'このセグメントは繋がっていません。' }
+    $out = New-Object System.Collections.Generic.List[object]
+    for ($i = 0; $i -lt $segs.Count; $i++) {
+        if ($i -ne $Index) { [void]$out.Add($segs[$i]); continue }
+        foreach ($c in $cells) {
+            $one = New-YakuCellSegment -Sheet ([string]$target.Sheet) -Cells @($c) -Joined $false
+            $one | Add-Member -NotePropertyName 'Translation' -NotePropertyValue '' -Force
+            $one | Add-Member -NotePropertyName 'Origin' -NotePropertyValue '' -Force
+            [void]$out.Add($one)
+        }
+    }
+    Set-YakuCatSegments -Project $Project -Segments @($out.ToArray())
+    return $Project
 }
 
 function Set-YakuCatSegmentTranslation {

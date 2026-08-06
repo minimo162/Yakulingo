@@ -158,6 +158,9 @@ input[type="text"], select { width: 100%; min-height: 34px; border: 0; border-ra
 .cat-loc { display: block; color: var(--muted); }
 .cat-origin { display: inline-block; margin-top: 4px; border-radius: 999px; padding: 1px 7px; font-size: 11px; background: var(--soft); color: var(--muted); }
 .cat-origin-manual { background: var(--accent); color: #fff; }
+.cat-ops { display: flex; gap: 4px; margin-top: 4px; }
+.cat-op { min-height: 22px; padding: 0 6px; font-size: 11px; background: transparent; border: 1px solid var(--line-strong); color: var(--text); }
+.cat-op:hover { background: var(--soft); }
 
 .revise-form { margin-top: var(--space-2); }
 .revise-label { display: block; margin-bottom: 6px; color: var(--muted); font-size: var(--font-meta); }

@@ -212,46 +212,82 @@ function Group-YakuTextBlocksIntoSegments {
     $all = @($Blocks | Where-Object { $null -ne $_ })
     $segments = New-Object System.Collections.Generic.List[object]
     $cellsBySheet = @{}
-    $blockById = @{}
+    $otherBySheet = @{}
+    # シートの出てくる順。ブックの並びのまま一覧へ出すため。
+    # 並びが読み順でないと、隣どうしを繋ぐ操作が意味を持たなくなる。
+    $sheetOrder = New-Object System.Collections.Generic.List[string]
 
     foreach ($b in $all) {
-        $blockById[[string]$b.Id] = $b
         $kind = ''
         try { $kind = [string]$b.Meta.Kind } catch { $kind = '' }
+        $sheet = ''
+        try { $sheet = [string]$b.Meta.Sheet } catch { $sheet = '' }
+        if (-not $sheetOrder.Contains($sheet)) { [void]$sheetOrder.Add($sheet) }
         if ($kind -ne 'cell') {
-            [void]$segments.Add([pscustomobject]@{
+            if (-not $otherBySheet.ContainsKey($sheet)) { $otherBySheet[$sheet] = New-Object System.Collections.Generic.List[object] }
+            [void]$otherBySheet[$sheet].Add([pscustomobject]@{
                 Text     = [string]$b.Text
                 BlockIds = @([string]$b.Id)
                 Cells    = @()
                 Joined   = $false
                 Kind     = $(if ([string]::IsNullOrWhiteSpace($kind)) { 'other' } else { $kind })
+                Sheet    = $sheet
                 Location = [string]$b.Location
             })
             continue
         }
-        $sheet = [string]$b.Meta.Sheet
         if (-not $cellsBySheet.ContainsKey($sheet)) { $cellsBySheet[$sheet] = New-Object System.Collections.Generic.List[object] }
         $entry = New-YakuSegmentCell -Row ([int]$b.Meta.Row) -Column ([int]$b.Meta.Col) -Text ([string]$b.Text) -IsText $true
         $entry | Add-Member -NotePropertyName 'BlockId' -NotePropertyValue ([string]$b.Id) -Force
+        # A1 番地。どのセルを繋いだかを画面で見せるために持つ。
+        $a1 = ''
+        try { $a1 = [string]$b.Meta.A1 } catch { $a1 = '' }
+        $entry | Add-Member -NotePropertyName 'Address' -NotePropertyValue $a1 -Force
         [void]$cellsBySheet[$sheet].Add($entry)
     }
 
-    foreach ($sheet in @($cellsBySheet.Keys)) {
-        $occ = $null
-        if ($null -ne $RowOccupancy -and $RowOccupancy.ContainsKey($sheet)) { $occ = $RowOccupancy[$sheet] }
-        foreach ($s in @(Group-YakuCellsIntoSegments -Cells @($cellsBySheet[$sheet].ToArray()) -MaxJoin $MaxJoin -RowOccupancy $occ)) {
-            $cells = @($s.Cells)
-            [void]$segments.Add([pscustomobject]@{
-                Text     = [string]$s.Text
-                BlockIds = @($cells | ForEach-Object { [string]$_.BlockId })
-                Cells    = $cells
-                Joined   = [bool]$s.Joined
-                Kind     = 'cell'
-                Location = ($sheet + ', ' + (@($cells | ForEach-Object { [string]$_.BlockId }) -join '+'))
-            })
+    foreach ($sheet in $sheetOrder) {
+        if ($cellsBySheet.ContainsKey($sheet)) {
+            $occ = $null
+            if ($null -ne $RowOccupancy -and $RowOccupancy.ContainsKey($sheet)) { $occ = $RowOccupancy[$sheet] }
+            foreach ($s in @(Group-YakuCellsIntoSegments -Cells @($cellsBySheet[$sheet].ToArray()) -MaxJoin $MaxJoin -RowOccupancy $occ)) {
+                [void]$segments.Add((New-YakuCellSegment -Sheet $sheet -Cells @($s.Cells) -Joined ([bool]$s.Joined)))
+            }
+        }
+        # 図形・グラフはシートのセルの後ろへ置く。位置で並ぶので、
+        # 行優先の並びの中へ差し込むと順序が入れ替わる。
+        if ($otherBySheet.ContainsKey($sheet)) {
+            foreach ($o in @($otherBySheet[$sheet].ToArray())) { [void]$segments.Add($o) }
         }
     }
     return @($segments.ToArray())
+}
+
+function New-YakuCellSegment {
+    <#
+      セルの並びからセグメントを1つ作る。繋ぎ直したあとにも使う。
+      本文の繋ぎ方（日本語は詰める・英語は空白）を1か所に集めておく。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Sheet,
+        [Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Cells,
+        [bool]$Joined
+    )
+    $list = @($Cells)
+    $joiner = if ((@($list | ForEach-Object { [string]$_.Text }) -join '') -match '[぀-ヿ一-鿿]') { '' } else { ' ' }
+    $addresses = @($list | ForEach-Object { [string]$_.Address })
+    if (@($addresses | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count -eq 0) {
+        $addresses = @($list | ForEach-Object { 'R' + [string]$_.Row + 'C' + [string]$_.Column })
+    }
+    return [pscustomobject]@{
+        Text     = (@($list | ForEach-Object { ([string]$_.Text).Trim() }) -join $joiner)
+        BlockIds = @($list | ForEach-Object { [string]$_.BlockId })
+        Cells    = $list
+        Joined   = $(if ($PSBoundParameters.ContainsKey('Joined')) { [bool]$Joined } else { $list.Count -gt 1 })
+        Kind     = 'cell'
+        Sheet    = [string]$Sheet
+        Location = ([string]$Sheet + ', ' + (@($addresses) -join '+'))
+    }
 }
 
 function Get-YakuSegmentTranslationByBlockId {
