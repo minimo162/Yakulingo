@@ -12,6 +12,7 @@ prompts/text_translate_to_en.txt	lf
 prompts/text_translate_to_jp.txt	crlf
 src/BriefStyle.ps1	lf
 src/CellAlign.ps1	crlf
+src/CellSegments.ps1	crlf
 src/CopilotClient.ps1	lf
 src/Corpus.ps1	lf
 src/CorpusReference.ps1	lf
@@ -55,6 +56,7 @@ tools/Test-YakuV9159SettingsPath.ps1	crlf
 tools/Test-YakuV9160NumericMasking.ps1	crlf
 tools/Test-YakuV9161BriefStyle.ps1	lf
 tools/Test-YakuV9161CellAlign.ps1	crlf
+tools/Test-YakuV9161CellSegments.ps1	crlf
 tools/Test-YakuV9161Corpus.ps1	lf
 tools/Test-YakuV9161CorpusReference.ps1	lf
 tools/Test-YakuV9161CorpusSearch.ps1	lf
