@@ -1609,6 +1609,8 @@ function Invoke-YakuTextTranslationRequests {
         return (Invoke-YakuSingleTranslationBatch -Root $Root -InputText $InputText -Settings $Settings -Direction $Direction -StyleReference $StyleReference -SkipFreshChatWait:$SkipFreshChatWait -ProgressState $ProgressState -Warnings $Warnings -CorpusSection $CorpusSection)
     }
 
+    # 簡易翻訳でも電文体は出す（利用者の判断 2026-08-06）。
+    # 並列にしてあるので、2つ作っても待ち時間はほとんど変わらない。
     $modes = @('full','brief')
     $results = $null
     $mode2 = 'sequential'
@@ -1854,13 +1856,16 @@ function Invoke-YakuTextTranslation {
     # 部分的に読み込む回帰テスト）でも翻訳が止まらないようにする。
     # 「コーパスは足しであって前提ではない」を、依存関係の面でも守る。
     $corpusSw = [System.Diagnostics.Stopwatch]::StartNew()
-    $corpusReference = $null
-    if (Get-Command Get-YakuCorpusReference -ErrorAction SilentlyContinue) {
-        $corpusReference = Get-YakuCorpusReference -Root $Root -InputText $processingInput -Settings $Settings -Direction $direction -Warnings $warnings -ProgressState $ProgressState
-    }
-    if ($null -eq $corpusReference) {
-        $corpusReference = [pscustomobject]@{ Section = ''; Terms = @(); Count = 0; Reason = 'not-loaded'; Used = $false }
-    }
+    # V91.61（2026-08-06）: 簡易翻訳ではコーパスを引かない。
+    #
+    # 検索語を Copilot に作らせる往復が1回増えるため、その場で1つ訳したい
+    # ときには重すぎる（利用者の判断 2026-08-06）。効きも弱く、用語集が
+    # 有効なときはコーパスの言い回しが通らないことを実機で確かめている
+    # （実機検証結果 §3-2）。
+    #
+    # 仕組みは消していない。腰を据えて訳す CAT 側へ移した。
+    # 参照する価値があるのは、資料をまとめて仕上げるときである。
+    $corpusReference = [pscustomobject]@{ Section = ''; Terms = @(); Examples = @(); Count = 0; Reason = 'text-mode-disabled'; Used = $false }
     $corpusSw.Stop()
     $corpusSection = [string]$corpusReference.Section
     # 検索語の生成で新規チャットを1度使っているなら、最初のバッチは短い待ちでよい。

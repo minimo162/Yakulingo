@@ -237,13 +237,26 @@ Chk (-not [string]::IsNullOrWhiteSpace([string]@($refEx.Examples)[0].Source)) '�
 $refNoneEx = Get-YakuCorpusReference -Root $root -InputText 'x' -Settings $settings -Direction 'to_jp' -Warnings $null -ProgressState $null
 Chk (@($refNoneEx.Examples).Count -eq 0) '使わなかったときは空（呼び出し側で場合分けしない）'
 
-# ---------------------------------------------------------------- 触っていないこと
-Write-Host 'ファイル翻訳を触っていないこと'
-$fileText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'FileTranslation.ps1'))
-Chk ($fileText -notmatch 'CorpusSection') 'ファイル翻訳へは差し込まない'
-Chk ($fileText -notmatch 'Get-YakuCorpusReference') 'ファイル翻訳はコーパスを引かない'
+# ---------------------------------------------------------------- どちらで引くか
+# V91.61（2026-08-06）: 文例を引く場所を、簡易翻訳から CAT へ移した。
+#
+# 簡易翻訳は「その場で1つ訳す」ためのもので、検索語を Copilot に作らせる
+# 往復が1回増えるのは重すぎる（利用者の判断 2026-08-06）。
+# 腰を据えて資料を仕上げる CAT 側でこそ、過去の言い回しを参照する値打ちがある。
+#
+# CAT でも自動では引かない。文例の検索と AI 翻訳を別のボタンに分け、
+# 「検索だけ」「翻訳だけ」「検索してから翻訳」を利用者が選べるようにした。
+Write-Host '文例を引く場所'
+$translationSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Translation.ps1'))
+Chk ($translationSrc -notmatch 'Get-YakuCorpusReference -Root \$Root -InputText \$processingInput') '簡易翻訳では引かない（重いので外した）'
+Chk ($translationSrc -match 'text-mode-disabled') '外したことが分かる印がある'
+$serverSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Server.ps1'))
+Chk ($serverSrc -match 'Get-YakuCorpusReference') 'CAT からは引ける'
 $fileTemplate = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'prompts') 'file_translate_to_en.txt'))
-Chk ($fileTemplate -notmatch 'corpus_section') 'ファイル用テンプレートに枠を足していない'
+Chk ($fileTemplate -match 'corpus_section') 'ファイル用テンプレートに差し込み口がある'
+$fileText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'FileTranslation.ps1'))
+Chk ($fileText -match 'CorpusSection') 'ファイル用プロンプトが文例を受け取れる'
+Chk ($fileText -notmatch 'Get-YakuCorpusReference') 'ファイル翻訳自身は引かない（渡されたものを使うだけ）'
 $jpTemplate = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'prompts') 'text_translate_to_jp.txt'))
 Chk ($jpTemplate -notmatch 'corpus_section') 'to_jp のテンプレートにも足していない'
 
@@ -251,13 +264,18 @@ Write-Host '設定項目を増やしていないこと'
 $settingsText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Settings.ps1'))
 Chk ($settingsText -notmatch 'corpus') '設定へコーパスの項目を足していない'
 $indexHtml = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'index.html'))
-Chk ($indexHtml -notmatch 'corpus') '一般利用者の画面にも出さない'
+# V91.61（2026-08-06）: CAT に「文例を検索」を置いたので、参照する側は
+# 一般利用者の画面にも現れる。出してはいけないのは**作る側**である。
+# コーパスの取り込み・索引作りは管理画面（admin.html）にだけ置く。
+Chk ($indexHtml -notmatch '(?i)corpus[-_]?(build|rebuild|index|import|ingest|admin|manage)') 'コーパスを作る操作は一般利用者の画面に出さない'
+Chk ($indexHtml -match 'cat-corpus-button') 'CAT からは文例を検索できる'
 
 Write-Host 'キャッシュ鍵'
 $translationText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Translation.ps1'))
 # 文例なしで作った訳文を文例ありの依頼へ返さないため。
 Chk ($translationText -match "corpus-v9161:") 'キャッシュ鍵に文例が含まれる'
-Chk ($translationText -match 'Get-YakuCorpusReference -Root \$Root -InputText \$processingInput') 'ジョブごとに1回、分割前に引く'
+# 文例は CAT のジョブごとに1回だけ引く。バッチごとに引くと往復が増える。
+Chk ($serverSrc -match 'Get-YakuCorpusReference -Root \$Root -InputText \$catSample') 'CAT ではジョブごとに1回、分割前に引く'
 
 } finally {
     if (-not [string]::IsNullOrWhiteSpace($prevData)) { $env:YAKULINGO_DATA_DIR = $prevData } else { Remove-Item Env:\YAKULINGO_DATA_DIR -ErrorAction SilentlyContinue }

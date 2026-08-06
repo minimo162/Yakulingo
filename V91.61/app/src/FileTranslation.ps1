@@ -158,7 +158,11 @@ function New-YakuFilePrompt {
         [Parameter(Mandatory=$true)][object[]]$Items,
         [Parameter(Mandatory=$true)]$Settings,
         [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
-        [Parameter(Mandatory=$true)][string]$RequestId
+        [Parameter(Mandatory=$true)][string]$RequestId,
+        # 参考資料から引いた文例。CAT からのみ渡る（利用者の判断 2026-08-06）。
+        # 簡易翻訳では検索の往復が1回増えて重いので外した。腰を据えて訳す
+        # CAT 側でだけ使う。
+        [AllowNull()][string]$CorpusSection
     )
     $sourceList = New-YakuFileSourceList -Items $Items
     $templateName = if ($Direction -eq 'to_en') { 'file_translate_to_en.txt' } else { 'file_translate_to_jp.txt' }
@@ -169,6 +173,7 @@ function New-YakuFilePrompt {
         # ファイル用テンプレートは規則を直書きしていたため、方向差分と
         # プレースホルダー保護が二重管理になっていた。1箇所へ寄せる。
         numeric_rules = Get-YakuNumericRulesSection -InputText $sourceList -Direction $Direction
+        corpus_section = [string]$CorpusSection
         request_id = $RequestId
     }
     return Expand-YakuTemplate -Template $template -Variables $vars
@@ -1432,7 +1437,7 @@ function Invoke-YakuFileTranslationItems {
                 try {
                     Add-YakuWarning -Warnings $Warnings -Category 'hangul-retry' -Location ("ID $($item.Index)") -Message "Hangul混入を検出したため再翻訳しました: $(Get-YakuShortTextPreview -Text $sourceForValidation -MaxLength 40)"
                     $retryRequestId = [guid]::NewGuid().ToString('N')
-                    $retryPrompt = New-YakuFilePrompt -Root $Root -Items @($item) -Settings $Settings -Direction $Direction -RequestId $retryRequestId
+                    $retryPrompt = New-YakuFilePrompt -Root $Root -Items @($item) -Settings $Settings -Direction $Direction -RequestId $retryRequestId -CorpusSection ([string]$Context['CorpusSection'])
                     $retrySkipFresh = ([int]$Context['CopilotCalls'] -gt 0)
                     $Context['CopilotCalls'] = [int]$Context['CopilotCalls'] + 1
                     $retryRaw = Invoke-YakuCopilotPrompt -Prompt $retryPrompt -Settings $Settings -SkipFreshChatWait:$retrySkipFresh -AnswerFormat numbered -PreserveEndMarker -Warnings $Warnings -ProgressState $ProgressState
@@ -1448,7 +1453,7 @@ function Invoke-YakuFileTranslationItems {
                 if (-not [bool]$numericAudit.Ok -and [int]$numericAudit.ScaleErrors -gt 0) {
                     try {
                         $numericRetryRequestId = [guid]::NewGuid().ToString('N')
-                        $numericRetryPrompt = New-YakuFilePrompt -Root $Root -Items @($item) -Settings $Settings -Direction $Direction -RequestId $numericRetryRequestId
+                        $numericRetryPrompt = New-YakuFilePrompt -Root $Root -Items @($item) -Settings $Settings -Direction $Direction -RequestId $numericRetryRequestId -CorpusSection ([string]$Context['CorpusSection'])
                         $numericRetryPrompt += "`n`n" + (New-YakuNumericCorrectionInstruction -Audit $numericAudit)
                         $Context['CopilotCalls'] = [int]$Context['CopilotCalls'] + 1
                         $numericRetryRaw = Invoke-YakuCopilotPrompt -Prompt $numericRetryPrompt -Settings $Settings -SkipFreshChatWait -AnswerFormat numbered -PreserveEndMarker -Warnings $Warnings -ProgressState $ProgressState
@@ -1766,7 +1771,7 @@ function Invoke-YakuFileTranslation {
             if (-not [bool]$finalNumericAudit.Ok -and [int]$finalNumericAudit.ScaleErrors -gt 0) {
                 try {
                     $numericRequestId = [guid]::NewGuid().ToString('N')
-                    $numericPrompt = New-YakuFilePrompt -Root $Root -Items @($item) -Settings $Settings -Direction $Direction -RequestId $numericRequestId
+                    $numericPrompt = New-YakuFilePrompt -Root $Root -Items @($item) -Settings $Settings -Direction $Direction -RequestId $numericRequestId -CorpusSection ([string]$Context['CorpusSection'])
                     $numericPrompt += "`n`n" + (New-YakuNumericCorrectionInstruction -Audit $finalNumericAudit)
                     $context['CopilotCalls'] = [int]$context['CopilotCalls'] + 1
                     $numericRaw = Invoke-YakuCopilotPrompt -Prompt $numericPrompt -Settings $Settings -SkipFreshChatWait -AnswerFormat numbered -PreserveEndMarker -Warnings $warnings -ProgressState $ProgressState

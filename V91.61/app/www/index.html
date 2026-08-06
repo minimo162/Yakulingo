@@ -33,7 +33,7 @@
         <div class="section-title-row">
           <div>
             <h1>テキスト翻訳</h1>
-            <p class="muted">日→英はFULL/BRIEF、英他→日は日本語訳を生成します。</p>
+            <p class="muted">その場で1つ訳すための画面です。資料をまとめて訳すときはCATタブを使ってください。</p>
           </div>
         </div>
         <label for="input-text" class="sr-only">翻訳したいテキスト</label>
@@ -131,10 +131,36 @@
           <button id="cat-open-button" type="button">取り込む</button>
         </div>
         <div id="cat-status" class="cat-status muted" aria-live="polite">Excelを選択して「取り込む」を押してください。</div>
+        <!--
+          文例の検索と AI 翻訳は別のボタンにする（利用者の判断 2026-08-06）。
+          検索は往復が1回増えて重いので、いつも付けると遅くなる。
+          分けておけば「検索だけ」「翻訳だけ」「検索してから翻訳」を選べる。
+        -->
         <div id="cat-actions" class="cat-actions" hidden>
           <button id="cat-glossary-button" type="button" class="secondary-button">用語集で置換</button>
+          <button id="cat-corpus-button" type="button" class="secondary-button">文例を検索</button>
           <button id="cat-translate-button" type="button" class="secondary-button">残りをCopilotで翻訳</button>
           <button id="cat-export-button" type="button">出力</button>
+        </div>
+        <details id="cat-corpus-panel" class="cat-corpus-panel" hidden>
+          <summary>参照する文例（<span id="cat-corpus-count">0</span>件）</summary>
+          <div id="cat-corpus-list" class="cat-corpus-list"></div>
+        </details>
+        <!--
+          実物の ECM は数百セグメントになる。絞り込みが無いと一覧が使えない。
+          市販の CAT ツールも状態での絞り込みを備えている。
+        -->
+        <div id="cat-filter-row" class="cat-filter-row" hidden>
+          <div class="cat-filter" role="radiogroup" aria-label="表示する範囲">
+            <label><input type="radio" name="cat_filter" value="all" checked><span>すべて</span></label>
+            <label><input type="radio" name="cat_filter" value="untranslated"><span>未訳</span></label>
+            <label><input type="radio" name="cat_filter" value="joined"><span>結合</span></label>
+            <label><input type="radio" name="cat_filter" value="manual"><span>手直し</span></label>
+          </div>
+          <label class="cat-search-label" for="cat-search">絞り込み
+            <input id="cat-search" type="search" placeholder="原文・訳文を検索" autocomplete="off">
+          </label>
+          <span id="cat-filter-count" class="muted"></span>
         </div>
         <div id="cat-grid-wrap" class="cat-grid-wrap" hidden>
           <table class="cat-grid">

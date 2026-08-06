@@ -146,6 +146,14 @@ input[type="text"], select { width: 100%; min-height: 34px; border: 0; border-ra
 .cat-direction { display: flex; gap: 16px; align-items: center; }
 .cat-status { margin: var(--space-2) 0; font-size: var(--font-meta); }
 .cat-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: var(--space-2); }
+.cat-corpus-panel { margin-bottom: var(--space-2); }
+.cat-corpus-list { display: grid; gap: 8px; margin-top: 8px; max-height: 30vh; overflow: auto; }
+.cat-corpus-item { border-left: 2px solid var(--line-strong); padding-left: 10px; font-size: var(--font-meta); }
+.cat-corpus-where { color: var(--muted); }
+.cat-filter-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin-bottom: var(--space-2); font-size: var(--font-meta); }
+.cat-filter { display: flex; gap: 12px; align-items: center; }
+.cat-search-label { display: flex; gap: 6px; align-items: center; }
+.cat-search-label input { min-width: 220px; }
 .cat-grid-wrap { max-height: 60vh; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-control); }
 .cat-grid { width: 100%; border-collapse: collapse; font-size: var(--font-meta); }
 .cat-grid thead th { position: sticky; top: 0; z-index: 1; background: var(--surface); border-bottom: 1px solid var(--line-strong); padding: 8px 10px; text-align: left; }

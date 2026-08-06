@@ -149,8 +149,30 @@ function ConvertTo-YakuCatProjectJson {
         })
     }
     $summary = Get-YakuCatProjectSummary -Project $Project
+    # 引いた文例。検索したときだけ入る。何が引けたかを見てから
+    # 使うかどうか決められるようにするため（利用者の判断 2026-08-06）。
+    $corpusExamples = @()
+    try { $corpusExamples = @($Project.CorpusExamples) } catch { $corpusExamples = @() }
+    $corpusRows = New-Object System.Collections.Generic.List[object]
+    foreach ($e in $corpusExamples) {
+        if ($null -eq $e) { continue }
+        # 出どころは Database / Source / Page。どの資料の何ページかが分からないと、
+        # 文例を採るかどうか判断できない。
+        $text = ''; $db = ''; $doc = ''; $page = ''
+        try { $text = [string]$e.Text } catch {}
+        try { $db = [string]$e.Database } catch {}
+        try { $doc = [string]$e.Source } catch {}
+        try { $page = [string]$e.Page } catch {}
+        # Source が既にデータベース名で始まっていることがある。二重に付けない。
+        if ((-not [string]::IsNullOrWhiteSpace($db)) -and $doc.StartsWith($db)) { $db = '' }
+        $where = (@($db, $doc) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join '/'
+        if (-not [string]::IsNullOrWhiteSpace($page)) { $where = ($where + ' p.' + $page).Trim() }
+        [void]$corpusRows.Add([ordered]@{ text = $text; where = $where })
+    }
     return ([ordered]@{
         id         = [string]$Project.Id
+        corpus_ready = $(try { -not [string]::IsNullOrWhiteSpace([string]$Project.CorpusSection) } catch { $false })
+        corpus     = @($corpusRows.ToArray())
         file_name  = [string]$Project.FileName
         direction  = [string]$Project.Direction
         total      = [int]$summary.Total

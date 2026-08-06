@@ -29,6 +29,7 @@ Rules:
 - Keep already-English product names, account codes, URLs, email addresses, and obvious identifiers unchanged.
 - Do not output Korean/Hangul.
 {numeric_rules}
+{corpus_section}
 
 ===INPUT_TEXT:{request_id}===
 {source_list}

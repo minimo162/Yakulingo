@@ -1155,6 +1155,29 @@ function Start-YakuTranslationJob {
             if ($Kind -eq 'cat') {
                 $cat = $CatJson | ConvertFrom-Json
                 $catWarnings = New-Object System.Collections.Generic.List[object]
+                $catMode = ''
+                try { $catMode = [string]$cat.mode } catch { $catMode = '' }
+                if ($catMode -eq 'corpus') {
+                    # 文例を引くだけ。訳はしない。何が引けたかを見てから
+                    # 使うかどうか決められるようにするため（利用者の判断 2026-08-06）。
+                    Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label '文例を検索中' -Progress 10 -Detail '' -Phase 'translating'
+                    try {
+                        $catSample = (@($cat.items | ForEach-Object { [string]$_.text }) -join "`n")
+                        $catRef = Get-YakuCorpusReference -Root $Root -InputText $catSample -Settings $settings -Direction ([string]$cat.direction) -Warnings $catWarnings -ProgressState $JobState
+                        if ($null -eq $catRef) { $catRef = [pscustomobject]@{ Section=''; Examples=@(); Terms=@(); Count=0; Reason='not-loaded' } }
+                        $result = [pscustomobject]@{
+                            Kind = 'cat'; Mode = 'corpus'
+                            ProjectId = [string]$cat.project_id
+                            CorpusSection = [string]$catRef.Section
+                            CorpusExamples = @($catRef.Examples)
+                            CorpusCount = [int]$catRef.Count
+                            CorpusReason = [string]$catRef.Reason
+                            Warnings = @($catWarnings.ToArray())
+                        }
+                    } catch {
+                        $result = [pscustomobject]@{ Kind = 'cat'; Mode = 'corpus'; Error = $_.Exception.Message }
+                    }
+                } else {
                 Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label '翻訳中' -Progress 10 -Detail '' -Phase 'translating'
                 try {
                     # 同じ原文は1回だけ送る。割り戻しはこの中で行う。
@@ -1171,7 +1194,11 @@ function Start-YakuTranslationJob {
                         [void]$byText[$text].Targets.Add([int]$it.index)
                     }
                     $maxChars = Get-YakuSettingInt -Settings $settings -Name 'file_batch_chars' -Default 3000
-                    $catContext = @{ BatchOrdinal = 0; TotalBatches = @(Split-YakuFileTranslationItems -Items @($items.ToArray()) -MaxChars $maxChars).Count; MaxRetryDepth = 0 }
+                    # 文例は自動では引かない。引くかどうかは利用者が別のボタンで決める
+                    # （利用者の判断 2026-08-06）。検索の往復が1回増えるので、
+                    # 「検索だけ」「翻訳だけ」「検索してから翻訳」を選べるようにしてある。
+                    # ここへ渡ってくるのは、既に検索して保持している文例だけ。
+                    $catContext = @{ BatchOrdinal = 0; TotalBatches = @(Split-YakuFileTranslationItems -Items @($items.ToArray()) -MaxChars $maxChars).Count; MaxRetryDepth = 0; CorpusSection = ([string]$cat.corpus_section) }
                     $map = Invoke-YakuFileTranslationItems -Root $Root -Items @($items.ToArray()) -Settings $settings `
                         -Direction ([string]$cat.direction) -MaxChars $maxChars -Warnings $catWarnings `
                         -ProgressState $JobState -Context $catContext
@@ -1184,13 +1211,16 @@ function Start-YakuTranslationJob {
                     }
                     $result = [pscustomobject]@{
                         Kind = 'cat'
+                        Mode = 'translate'
                         ProjectId = [string]$cat.project_id
                         Translations = @($pairs.ToArray())
                         Sent = $items.Count
+                        UsedCorpus = (-not [string]::IsNullOrWhiteSpace([string]$cat.corpus_section))
                         Warnings = @($catWarnings.ToArray())
                     }
                 } catch {
-                    $result = [pscustomobject]@{ Kind = 'cat'; Error = $_.Exception.Message }
+                    $result = [pscustomobject]@{ Kind = 'cat'; Mode = 'translate'; Error = $_.Exception.Message }
+                }
                 }
             } elseif ($Kind -eq 'revise') {
                 $rev = $ReviseJson | ConvertFrom-Json
@@ -2244,7 +2274,14 @@ function Invoke-YakuRoute {
                         Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind info -Message '訳す残りがありません。')) -StatusCode 409
                         return
                     }
-                    $catJson = ([ordered]@{ project_id = [string]$project.Id; direction = [string]$project.Direction; items = @($pending) } | ConvertTo-Json -Depth 6 -Compress)
+                    # 文例は自動では付けない。「文例を検索」を押して引いてあれば使う。
+                    # 押さなければ付かない。これで「検索だけ」「翻訳だけ」
+                    # 「検索してから翻訳」の3通りが、ボタン1つ足すだけで揃う。
+                    $catMode = 'translate'
+                    try { if ([string]$payload['mode'] -eq 'corpus') { $catMode = 'corpus' } } catch {}
+                    $catCorpus = ''
+                    if ($catMode -eq 'translate') { try { $catCorpus = [string]$project.CorpusSection } catch { $catCorpus = '' } }
+                    $catJson = ([ordered]@{ project_id = [string]$project.Id; direction = [string]$project.Direction; mode = $catMode; corpus_section = $catCorpus; items = @($pending) } | ConvertTo-Json -Depth 6 -Compress)
                     $state = Start-YakuTranslationJob -InputText '' -Settings $settings -Kind 'cat' -CatJson $catJson
                     Send-YakuTextResponse -Context $Context -Text (Convert-YakuTranslationJobStartedHtml -State $state)
                 }
@@ -2257,6 +2294,14 @@ function Invoke-YakuRoute {
                     if ([string]::IsNullOrWhiteSpace($resultJson)) { throw '翻訳結果を取得できませんでした。' }
                     $result = $resultJson | ConvertFrom-Json
                     if ($result.PSObject.Properties.Name -contains 'Error' -and $result.Error) { throw [string]$result.Error }
+                    # 文例の検索だけだったときは、引いたものを持っておく。
+                    # 次に「残りを翻訳」を押したときに使う。押さなければ使わない。
+                    if (($result.PSObject.Properties.Name -contains 'Mode') -and [string]$result.Mode -eq 'corpus') {
+                        $project | Add-Member -NotePropertyName 'CorpusSection' -NotePropertyValue ([string]$result.CorpusSection) -Force
+                        $project | Add-Member -NotePropertyName 'CorpusExamples' -NotePropertyValue (@($result.CorpusExamples)) -Force
+                        Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
+                        return
+                    }
                     $segs = @($project.Segments)
                     foreach ($pair in @($result.Translations)) {
                         $i = [int]$pair.index

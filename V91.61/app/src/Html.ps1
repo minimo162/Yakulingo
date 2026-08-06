@@ -86,7 +86,9 @@ function Convert-YakuTextResultToHtml {
         $html += "<div class='batch-note'>修正の指示: $(ConvertTo-YakuHtml $revisedFrom)</div>"
     }
 
-    $html += New-YakuCorpusReferenceHtml -Result $Result
+    # 参照した社内資料の一覧は簡易翻訳では出さない。コーパスを引くのをやめたため
+    # （利用者の判断 2026-08-06）。New-YakuCorpusReferenceHtml は CAT 側で使う。
+
 
     $batchCount = 0
     try { $batchCount = [int]$Result.BatchCount } catch { $batchCount = 0 }
