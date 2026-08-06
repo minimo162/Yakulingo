@@ -104,6 +104,80 @@ function Get-YakuWorkbookCellSequence {
     return [pscustomobject]@{ Sheets = $sheets; Order = @($order.ToArray()) }
 }
 
+function Get-YakuSheetMatches {
+    <#
+      日本語版のシートに、英語版のどのシートが対応するかを決める。
+
+      三段で試す。前の段で決まったシートは次の段の対象から外す。
+
+        1. 名前が完全一致
+        2. 期の部分を伏せた名前が一致
+           シート名は四半期で変わり、日英で表記が揃わないことがある
+           （損益_Q1 と 損益_1Q）。利用者の説明 2026-08-06。
+        3. 中身が一致
+           シート名そのものが訳されていることがある（損益 と PL）。
+           名前では結べないので、共有する錨（両側で1回だけ現れる数値）の
+           多さで決める。名前に頼らないので、並べ替えにも改名にも強い。
+
+      3段目には歯止めを掛ける。錨が少なすぎるものは結ばない。
+      2番手と差が付かないものも結ばない。まるごと別の表を対応付けると、
+      誤った対訳が大量に出るためである。決められないなら結ばないほうがよい。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Source,
+        [Parameter(Mandatory=$true)]$Target,
+        # 中身で結ぶときに要る錨の数。これ未満なら偶然の一致とみなす。
+        [int]$MinContentAnchors = 3
+    )
+    $result = @{}
+    $usedTarget = @{}
+
+    foreach ($n in @($Source.Order)) {
+        if ($Target.Sheets.ContainsKey($n) -and -not $usedTarget.ContainsKey($n)) {
+            $result[$n] = [pscustomobject]@{ Target = $n; Basis = '名前' }
+            $usedTarget[$n] = $true
+        }
+    }
+
+    if (Get-Command ConvertTo-YakuPeriodNeutralName -ErrorAction SilentlyContinue) {
+        # 伏せた名前が2つ以上の相手で重なる場合は使わない。どれと結ぶか決められない。
+        $neutral = @{}
+        foreach ($n in @($Target.Order)) {
+            if ($usedTarget.ContainsKey($n)) { continue }
+            $k = ConvertTo-YakuPeriodNeutralName -Name $n
+            if ([string]::IsNullOrWhiteSpace($k)) { continue }
+            if ($neutral.ContainsKey($k)) { $neutral[$k] = '' } else { $neutral[$k] = $n }
+        }
+        foreach ($n in @($Source.Order)) {
+            if ($result.ContainsKey($n)) { continue }
+            $k = ConvertTo-YakuPeriodNeutralName -Name $n
+            if ([string]::IsNullOrWhiteSpace($k) -or -not $neutral.ContainsKey($k)) { continue }
+            $t = [string]$neutral[$k]
+            if ([string]::IsNullOrWhiteSpace($t) -or $usedTarget.ContainsKey($t)) { continue }
+            $result[$n] = [pscustomobject]@{ Target = $t; Basis = '期を伏せた名前' }
+            $usedTarget[$t] = $true
+        }
+    }
+
+    foreach ($n in @($Source.Order)) {
+        if ($result.ContainsKey($n)) { continue }
+        $best = ''; $bestScore = 0; $runnerUp = 0
+        foreach ($t in @($Target.Order)) {
+            if ($usedTarget.ContainsKey($t)) { continue }
+            $score = @(Get-YakuCellAnchors -Left $Source.Sheets[$n] -Right $Target.Sheets[$t]).Count
+            if ($score -gt $bestScore) { $runnerUp = $bestScore; $bestScore = $score; $best = $t }
+            elseif ($score -gt $runnerUp) { $runnerUp = $score }
+        }
+        if ([string]::IsNullOrWhiteSpace($best)) { continue }
+        if ($bestScore -lt $MinContentAnchors) { continue }
+        # 2番手と差が付かないなら決めない。取り違えは誤訳を大量に生む。
+        if ($runnerUp -gt 0 -and $bestScore -lt ($runnerUp * 2)) { continue }
+        $result[$n] = [pscustomobject]@{ Target = $best; Basis = ('中身（錨 ' + $bestScore + '）') }
+        $usedTarget[$best] = $true
+    }
+    return $result
+}
+
 function Get-YakuWorkbookPairCandidates {
     <#
       対訳のブック2冊から、置換表の候補を取り出す。
@@ -125,17 +199,21 @@ function Get-YakuWorkbookPairCandidates {
         $wbT = Open-YakuWorkbookWithManualCalc -Context $Context -Path $TargetPath -ReadOnly $true
         $seqS = Get-YakuWorkbookCellSequence -Workbook $wbS
         $seqT = Get-YakuWorkbookCellSequence -Workbook $wbT
+        $matches = Get-YakuSheetMatches -Source $seqS -Target $seqT
         $pairs = New-Object System.Collections.Generic.List[object]
         $sheetReport = New-Object System.Collections.Generic.List[object]
         foreach ($name in $seqS.Order) {
-            if (-not $seqT.Sheets.ContainsKey($name)) {
-                [void]$sheetReport.Add([pscustomobject]@{ Sheet = $name; Matched = $false; Anchors = 0; Pairs = 0 })
+            $targetName = ''
+            $basis = ''
+            if ($matches.ContainsKey($name)) { $targetName = [string]$matches[$name].Target; $basis = [string]$matches[$name].Basis }
+            if ([string]::IsNullOrWhiteSpace($targetName)) {
+                [void]$sheetReport.Add([pscustomobject]@{ Sheet = $name; TargetSheet = ''; Basis = ''; Matched = $false; Anchors = 0; Pairs = 0 })
                 continue
             }
-            $r = Get-YakuBilingualCellPairs -Left $seqS.Sheets[$name] -Right $seqT.Sheets[$name]
+            $r = Get-YakuBilingualCellPairs -Left $seqS.Sheets[$name] -Right $seqT.Sheets[$targetName]
             foreach ($p in @($r.Pairs)) { [void]$pairs.Add($p) }
             [void]$sheetReport.Add([pscustomobject]@{
-                Sheet = $name; Matched = $true
+                Sheet = $name; TargetSheet = $targetName; Basis = $basis; Matched = $true
                 Anchors = [int]$r.AnchorCount
                 Pairs = @($r.Pairs).Count
             })

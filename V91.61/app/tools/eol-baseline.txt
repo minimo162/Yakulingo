@@ -20,6 +20,7 @@ src/EdgeLaunch.ps1	lf
 src/FileProcessors.ps1	lf
 src/FileTranslation.ps1	lf
 src/FileWorker.ps1	lf
+src/GlossaryVariants.ps1	crlf
 src/Html.ps1	lf
 src/JobObject.ps1	crlf
 src/Paths.ps1	crlf
@@ -57,6 +58,7 @@ tools/Test-YakuV9161CellAlign.ps1	crlf
 tools/Test-YakuV9161Corpus.ps1	lf
 tools/Test-YakuV9161CorpusReference.ps1	lf
 tools/Test-YakuV9161CorpusSearch.ps1	lf
+tools/Test-YakuV9161GlossaryVariants.ps1	crlf
 tools/Test-YakuV9161LabelCoverage.ps1	lf
 tools/Test-YakuV9161Revise.ps1	crlf
 tools/Test-YakuV9161SplitRequests.ps1	crlf

@@ -190,6 +190,52 @@ Chk (@($conf | Where-Object { [bool]$_.Conflict }).Count -eq 2) '競合として
 Chk (-not [bool](@($merged | Where-Object { [string]$_.Source -eq '売上高' })[0].Conflict)) '競合していないものには印を付けない'
 Chk (@($merged[0].Samples).Count -gt 0) 'どのセルから来たかを残す（人が確かめられるように）'
 
+# ------------------------------------------------------------------ シートの対応
+# シート名は四半期で変わり、名前そのものが訳されていることもある
+# （損益 と PL）。名前で結べないなら中身で結ぶ。
+Write-Host 'シートの対応を決める'
+. (Join-Path (Join-Path $root 'src') 'GlossaryVariants.ps1')
+function Book { param([hashtable]$Sheets)
+    $order = @($Sheets.Keys)
+    $map = @{}
+    foreach ($k in $order) { $map[$k] = Seq -Sheet $k -Cells $Sheets[$k] }
+    return [pscustomobject]@{ Sheets = $map; Order = $order }
+}
+$bJa = Book @{ '損益' = @('売上高','11,577','営業利益','1,234','経常利益','2,345') }
+$bEn = Book @{ '損益' = @('Revenue','11,577','Operating profit','1,234','Ordinary profit','2,345') }
+$m = Get-YakuSheetMatches -Source $bJa -Target $bEn
+Chk ([string]$m['損益'].Basis -eq '名前') '同名なら名前で結ぶ'
+
+$bJa2 = Book @{ '損益_Q1' = @('売上高','11,577','営業利益','1,234','経常利益','2,345') }
+$bEn2 = Book @{ '損益_1Q' = @('Revenue','11,577','Operating profit','1,234','Ordinary profit','2,345') }
+$m2 = Get-YakuSheetMatches -Source $bJa2 -Target $bEn2
+Chk ([string]$m2['損益_Q1'].Target -eq '損益_1Q') '期の書き方が違っても結ぶ（Q1 と 1Q）'
+Chk ([string]$m2['損益_Q1'].Basis -eq '期を伏せた名前') '期を伏せた名前で結んだと分かる'
+
+# シート名そのものが訳されている場合。名前では手掛かりが無いので中身で結ぶ。
+$bJa3 = Book @{ '損益' = @('売上高','11,577','営業利益','1,234','経常利益','2,345') }
+$bEn3 = Book @{ 'PL' = @('Revenue','11,577','Operating profit','1,234','Ordinary profit','2,345') }
+$m3 = Get-YakuSheetMatches -Source $bJa3 -Target $bEn3
+Chk ([string]$m3['損益'].Target -eq 'PL') '名前が訳されていても中身で結ぶ'
+Chk ([string]$m3['損益'].Basis -like '中身*') '中身で結んだと分かる'
+
+# 決められないなら結ばない。まるごと別の表を結ぶと誤訳が大量に出る。
+$bJa4 = Book @{ '損益' = @('売上高','11,577','営業利益','1,234','経常利益','2,345') }
+$bEn4 = Book @{ '無関係' = @('Something','9,001','Other','9,002','More','9,003') }
+$m4 = Get-YakuSheetMatches -Source $bJa4 -Target $bEn4
+Chk (-not $m4.ContainsKey('損益')) '共通の錨が無ければ結ばない'
+# 2番手と差が付かない場合も結ばない。
+$common = @('項目','11,577','項目2','1,234','項目3','2,345')
+$bJa5 = Book @{ 'A' = $common }
+$bEn5 = Book @{ 'X' = $common; 'Y' = $common }
+$m5 = Get-YakuSheetMatches -Source $bJa5 -Target $bEn5
+Chk (-not $m5.ContainsKey('A')) '同点の相手が居れば結ばない'
+# 相手は1度しか使わない。2つのシートが同じ相手を取り合わないこと。
+$bJa6 = Book @{ '損益' = @('売上高','11,577','営業利益','1,234','経常利益','2,345'); '注記' = @('会計方針','4,001','偶発債務','4,002','後発事象','4,003') }
+$bEn6 = Book @{ '損益' = @('Revenue','11,577','Operating profit','1,234','Ordinary profit','2,345'); 'Notes' = @('Accounting policies','4,001','Contingent liabilities','4,002','Subsequent events','4,003') }
+$m6 = Get-YakuSheetMatches -Source $bJa6 -Target $bEn6
+Chk ([string]$m6['損益'].Target -eq '損益' -and [string]$m6['注記'].Target -eq 'Notes') '名前で決まった相手は中身の候補から外れる'
+
 # ------------------------------------------------------------------ Excel との繋ぎ目
 # 算法だけを試していると、Excel から並びを作る側の取り違えを見逃す
 # （実際に列名の取り出しで引数名を間違え、ここで初めて分かった）。

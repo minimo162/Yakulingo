@@ -43,7 +43,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $toolsRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $toolsRoot
-foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','FileProcessors.ps1','CellAlign.ps1')) {
+foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','FileProcessors.ps1','GlossaryVariants.ps1','CellAlign.ps1')) {
     . (Join-Path (Join-Path $root 'src') $n)
 }
 if ([string]::IsNullOrWhiteSpace($OutputPath)) { $OutputPath = Join-Path $toolsRoot 'cell-glossary-candidates.csv' }
@@ -79,10 +79,12 @@ try {
         $r = Get-YakuWorkbookPairCandidates -SourcePath $src -TargetPath $tgt -Context $context
         foreach ($s in @($r.Sheets)) {
             if (-not [bool]$s.Matched) {
-                Write-Host ('    ' + [string]$s.Sheet + ' … 英語版に同名のシートが無い（対象外）') -ForegroundColor Yellow
+                Write-Host ('    ' + [string]$s.Sheet + ' … 英語版に対応するシートが無い（対象外）') -ForegroundColor Yellow
                 continue
             }
-            Write-Host ('    ' + [string]$s.Sheet + ' … 錨 ' + [string]$s.Anchors + ' / 候補 ' + [string]$s.Pairs)
+            $via = ''
+            if ([string]$s.TargetSheet -ne [string]$s.Sheet) { $via = ' → ' + [string]$s.TargetSheet }
+            Write-Host ('    ' + [string]$s.Sheet + $via + ' … 対応: ' + [string]$s.Basis + ' / 錨 ' + [string]$s.Anchors + ' / 候補 ' + [string]$s.Pairs)
         }
         foreach ($p in @($r.Pairs)) { [void]$all.Add($p) }
     }
@@ -98,7 +100,10 @@ $usable = @(@($all.ToArray()) | Where-Object {
     Test-YakuCellPairUsableAsGlossary -Pair $_
 })
 $merged = @(Merge-YakuCellPairOccurrences -Pairs $usable)
-$fresh = @($merged | Where-Object { -not $known.ContainsKey([string]$_.Source) })
+# 期をずらした版を先に作っておく。最新の四半期から採ると次の四半期に
+# 当たらなくなるため（利用者の指示 2026-08-06）。実測は上書きしない。
+$withVariants = @(Add-YakuGlossaryPeriodVariants -Entries $merged)
+$fresh = @($withVariants | Where-Object { -not $known.ContainsKey([string]$_.Source) })
 
 $rows = New-Object System.Collections.Generic.List[object]
 foreach ($e in $fresh) {
@@ -106,6 +111,7 @@ foreach ($e in $fresh) {
         採用       = ''
         Source     = [string]$e.Source
         Target     = [string]$e.Target
+        種別       = [string]$e.Origin
         出現数     = [int]$e.Count
         競合       = $(if ([bool]$e.Conflict) { 'あり' } else { '' })
         確度       = [string]$e.Confidence
@@ -118,6 +124,7 @@ Write-Host ''
 Write-Host ('候補（生）        : ' + $all.Count + ' 件')
 Write-Host ('置換表に使える形  : ' + $usable.Count + ' 件')
 Write-Host ('まとめた後        : ' + $merged.Count + ' 件')
+Write-Host ('期をずらした版を追加: ' + ($withVariants.Count - $merged.Count) + ' 件')
 Write-Host ('登録済みを除く    : ' + $fresh.Count + ' 件')
 $conflicts = @($fresh | Where-Object { [bool]$_.Conflict }).Count
 if ($conflicts -gt 0) { Write-Host ('うち訳が割れているもの: ' + $conflicts + ' 件（どちらを採るか人が決めること）') -ForegroundColor Yellow }
