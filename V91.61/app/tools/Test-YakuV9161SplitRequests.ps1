@@ -21,7 +21,7 @@ $toolsRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $toolsRoot
 $script:fail = 0
 
-foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1')) {
+foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','BriefStyle.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1')) {
     . (Join-Path (Join-Path $root 'src') $n)
 }
 function Chk { param([bool]$c,[string]$m) if($c){Write-Host ('  ok   ' + $m) -ForegroundColor Green}else{Write-Host ('  FAIL ' + $m) -ForegroundColor Red;$script:fail++} }
@@ -76,6 +76,53 @@ Chk ($pBrief -match 'not a shortened version') '電文体は独立した成果�
 Chk ($pBrief -match 'attaches to in SOURCE') '係り受けの基準が FULL ではなく原文になっている'
 Chk ($pBrief -match $src) '原文が入る'
 Chk ($pFull -match $src) '原文が入る（完全訳）'
+
+# ---------------------------------------------------------------- 節の条件化
+# 規則を1節ずつ外して実機で測ったところ、B1-B7 と WHAT は 5事例すべてで
+# 出力が変わらなかった（scratchpad の測定）。だが 0/5 は「効かない」証拠ではなく
+# 「その原文が引き金を引かなかった」だけである。引用の規則は引用の原文でしか、
+# 月名は月が出る原文でしか出番が無い。
+# そこで規則は残し、引き金が原文に無いときだけ出さない。
+# 実機で 6事例すべて、圧縮前と出力が一致することを確認済み（-757〜-1,634字）。
+Write-Host '電文体の節を原文に応じて出す'
+$briefSettings = Read-YakuSettings -Root $root
+function BriefPrompt { param([string]$Src) (New-YakuTextPrompt -Root $root -InputText $Src -Settings $briefSettings -DirectionOverride 'to_en' -RequestId $rid -Mode 'brief').Prompt }
+
+$plain = BriefPrompt '通期見通しへの影響は限定的と見込まれます。'
+Chk ($plain -notmatch '\{brief_\w+\}') '差し込み口が残らない'
+Chk ($plain -notmatch 'B6\. Quotations') '引用の無い原文に引用の規則を出さない'
+Chk ($plain -notmatch 'Months: Jan\.') '月の無い原文に月名の規則を出さない'
+Chk ($plain -notmatch 'FULL-WIDTH') '山括弧の無い原文に山括弧の作法を出さない'
+Chk ($plain -notmatch 'Signed breakdowns') '内訳の無い原文に符号付き内訳の規則を出さない'
+
+Chk ((BriefPrompt '社長は「連携が不可欠だ」と述べました。') -match 'B6\. Quotations') '引用があれば引用の規則を出す'
+Chk ((BriefPrompt '社長は「連携が不可欠だ」と述べました。') -match '推進していくと述べた') '引用があれば引用の文例も出す'
+Chk ((BriefPrompt '4月の生産台数は前年を上回りました。') -match 'Months: Jan\.') '月があれば月名の規則を出す'
+Chk ((BriefPrompt "＜要約＞`n生産は堅調です。") -match 'FULL-WIDTH') '山括弧があれば山括弧の作法を出す'
+Chk ((BriefPrompt '増減要因は、数量が+91億円です。') -match 'Signed breakdowns') '内訳があれば符号付き内訳の規則を出す'
+Chk ((BriefPrompt '増減要因は、数量が+91億円です。') -match 'Breakdown: vol\.') '内訳があれば内訳の文例も出す'
+Chk ((BriefPrompt '追加関税導入以降で最大の課税額となりました。') -match 'Attachment fidelity') '係り受けの規則は原文に依らず常に出す'
+Chk ((BriefPrompt '追加関税導入以降で最大の課税額となりました。') -match 'trigger for stronger fin\. controls') '係り受けの文例も常に出す'
+# 条件化は電文体だけ。完全訳の雛形には枠が無いので、通り抜けても跡が残らないこと。
+Chk (((New-YakuTextPrompt -Root $root -InputText '生産は堅調です。' -Settings $briefSettings -DirectionOverride 'to_en' -RequestId $rid -Mode 'full').Prompt) -notmatch '\{brief_\w+\}') '完全訳の雛形に跡が残らない'
+
+# ---------------------------------------------------------------- 略語の後処理
+# 文脈に依らない略語はプロンプトの一覧から外し、アプリで当てる。
+# 一覧に書くのは確率的だが、当てれば必ず揃う。
+Write-Host '文脈に依らない略語はアプリが当てる'
+Chk ((Convert-YakuBriefAbbreviations -Text 'Revenue increased.') -eq 'Rev. increased.') 'revenue -> rev.'
+Chk ((Convert-YakuBriefAbbreviations -Text 'Higher volume drove it.') -eq 'Higher vol. drove it.') 'volume -> vol.'
+Chk ((Convert-YakuBriefAbbreviations -Text 'Consolidated OP up.') -eq 'Consol. OP up.') 'consolidated -> consol.'
+Chk ((Convert-YakuBriefAbbreviations -Text 'FC reduction 0.5 oku.') -eq 'FC redn. 0.5 oku.') 'reduction -> redn.'
+# 動詞・形容詞の用法があるものは移さない。機械的に当てると読みにくくなる。
+Chk ((Convert-YakuBriefAbbreviations -Text 'We forecast growth.') -eq 'We forecast growth.') 'forecast は当てない（動詞の用法がある）'
+Chk ((Convert-YakuBriefAbbreviations -Text 'The actual figure.') -eq 'The actual figure.') 'actual は当てない（形容詞の用法がある）'
+# 引用の中は従来どおり触らない。
+Chk ((Convert-YakuBriefAbbreviations -Text 'He said "revenue increased".') -eq 'He said "revenue increased".') '引用の中の略語は当てない'
+# プロンプト側の一覧から消えていること。二重に書くと、外した意味が無い。
+$briefTpl = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'prompts') 'text_translate_brief_to_en.txt'))
+Chk ($briefTpl -notmatch 'revenue -> rev\.') 'プロンプトの一覧から revenue が消えている'
+Chk ($briefTpl -match 'rev\., vol\., consol\., redn\.') '「呼び出し側が当てるのでどちらでもよい」側に載っている'
 
 # ---------------------------------------------------------------- 並列の既定
 # 既定で並列にする（利用者の判断 2026-08-06）。止めるときだけ環境変数で切る。

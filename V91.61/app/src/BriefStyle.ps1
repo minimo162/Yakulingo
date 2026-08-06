@@ -46,6 +46,19 @@ $script:YakuBriefAbbreviationPairs = @(
     # 機械的に当てると必ず壊すので、判断が要るものとしてモデルへ返す。
     # 指示は prompts/style_brief_rules.txt の Months にある。
 
+    # --- 決算の言い回し。文脈に依らないのでここで当てる（2026-08-06）。
+    # アブレーションで、これらをプロンプトの一覧から外すとモデルが
+    # 綴りのまま書く場合があった（Rev. increased -> Sales up）。
+    # 一覧で「使え」と言うのは確率的なので、当てて確定させる。
+    # forecast と actual は入れない。動詞・形容詞の用法があり、
+    # 「we forecast」「the actual figure」まで略すと読みにくくなる。迷ったら載せない。
+    @{ From = 'revenues';     To = 'rev.' }
+    @{ From = 'revenue';      To = 'rev.' }
+    @{ From = 'volumes';      To = 'vol.' }
+    @{ From = 'volume';       To = 'vol.' }
+    @{ From = 'consolidated'; To = 'consol.' }
+    @{ From = 'reduction';    To = 'redn.' }
+
     # --- 語句の置換。規則の Phrase substitutions より。
     @{ From = 'approximately'; To = 'approx.' }
     @{ From = 'including';     To = 'incl.' }
