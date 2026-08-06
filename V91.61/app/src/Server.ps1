@@ -1017,11 +1017,15 @@ function Start-YakuTranslationJob {
         [AllowNull()][string]$InputText = '',
         [Parameter(Mandatory=$true)]$Settings,
         [AllowNull()][string]$TextDirectionOverride = '',
-        [ValidateSet('text','file')][string]$Kind = 'text',
+        [ValidateSet('text','file','revise')][string]$Kind = 'text',
         [AllowNull()][string]$FilePath = '',
         [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
         [AllowNull()][string[]]$Sheets,
-        [bool]$UploadedInput = $false
+        [bool]$UploadedInput = $false,
+        # V91.61（2026-08-06）: 修正の依頼。原文・現訳・指示・文体を JSON で運ぶ。
+        # 翻訳と同じジョブの仕組みに乗せるのは、Copilot への往復が1度に1つで
+        # なければならないため。別経路にすると翻訳中の修正が衝突する。
+        [AllowNull()][string]$ReviseJson = ''
     )
     $null = Assert-YakuBuildIdentity -Root $script:YakuRoot -ExpectedBuildId $script:YakuBuildId
     Update-YakuTranslationJobs
@@ -1085,7 +1089,8 @@ function Start-YakuTranslationJob {
             [AllowNull()][string]$SheetsJson,
             [Parameter(Mandatory=$true)][string]$SettingsJson,
             [Parameter(Mandatory=$true)][string]$ExpectedBuildId,
-            [Parameter(Mandatory=$true)]$JobState
+            [Parameter(Mandatory=$true)]$JobState,
+            [AllowNull()][string]$ReviseJson
         )
         $ErrorActionPreference = 'Stop'
         $startupSw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -1135,7 +1140,37 @@ function Start-YakuTranslationJob {
             $otherStartupMs = [Math]::Max(0, $startupSw.ElapsedMilliseconds - $moduleLoadMs - $buildIdentityMs - $settingsReadMs)
             Write-YakuLog "Translation runspace startup timings. settings-read elapsedMs=$settingsReadMs build-identity elapsedMs=$buildIdentityMs module-load elapsedMs=$moduleLoadMs other elapsedMs=$otherStartupMs total elapsedMs=$($startupSw.ElapsedMilliseconds)" 'INFO'
 
-            if ($Kind -eq 'file') {
+            if ($Kind -eq 'revise') {
+                $rev = $ReviseJson | ConvertFrom-Json
+                $revWarnings = New-Object System.Collections.Generic.List[object]
+                Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label '修正を依頼中' -Progress 20 -Detail '' -Phase 'translating'
+                try {
+                    $rev1 = Invoke-YakuTextRevision -Root $Root -InputText ([string]$rev.source_text) -CurrentText ([string]$rev.current_text) -Instruction ([string]$rev.instruction) -Settings $settings -Direction ([string]$rev.direction) -Style ([string]$rev.style) -ProgressState $JobState -Warnings $revWarnings
+                    # 直っていないときに黙って同じ訳文を返すと、壊れたように見える。
+                    # 指示が原文に反していれば、雛形は現訳のまま返すよう求めている。
+                    $unchanged = ([string](@($rev1.Options)[0].MaskedTranslation).Trim() -eq ([string]$rev.current_text).Trim())
+                    if ($unchanged) {
+                        Add-YakuWarning -Warnings $revWarnings -Category 'revision' -Location '修正' -Details @{ Instruction=[string]$rev.instruction } -Message '訳文は変わりませんでした。指示が原文の事実と食い違うか、判断できなかった可能性があります。言い換えて、もう一度お試しください。'
+                    }
+                    $result = [pscustomobject]@{
+                        Direction = [string]$rev1.Direction
+                        DirectionLabel = $(if ([string]$rev1.Direction -eq 'to_en') { '日本語 → 英語' } else { '英語 → 日本語' })
+                        MaskedCount = [int]$rev1.MaskedCount
+                        KeptCount = [int]$rev1.KeptCount
+                        InputLength = ([string]$rev.source_text).Length
+                        SourceText = [string]$rev.source_text
+                        Options = @($rev1.Options)
+                        Raw = [string]$rev1.Raw
+                        Prompt = [string]$rev1.Prompt
+                        BatchCount = 1
+                        Warnings = @($revWarnings.ToArray())
+                        RevisedFrom = [string]$rev.instruction
+                        Timestamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+                    }
+                } catch {
+                    $result = [pscustomobject]@{ Error = $_.Exception.Message; Prompt = ''; Direction = [string]$rev.direction }
+                }
+            } elseif ($Kind -eq 'file') {
                 $result = Invoke-YakuFileTranslation -Root $Root -InputPath $FilePath -Settings $settings -ProgressState $JobState -Direction $Direction -Sheets $sheets -JobId ([string]$JobState['id'])
             } else {
                 $result = Invoke-YakuTextTranslation -Root $Root -InputText $InputText -Settings $settings -ProgressState $JobState -DirectionOverride $TextDirectionOverride
@@ -1216,7 +1251,7 @@ function Start-YakuTranslationJob {
             $ps = [powershell]::Create()
             $ps.Runspace = $runspace
         }
-        [void]$ps.AddScript($worker.ToString()).AddArgument($root).AddArgument($Kind).AddArgument($InputText).AddArgument($TextDirectionOverride).AddArgument($FilePath).AddArgument($Direction).AddArgument($sheetsJson).AddArgument($settingsJson).AddArgument($script:YakuBuildId).AddArgument($state)
+        [void]$ps.AddScript($worker.ToString()).AddArgument($root).AddArgument($Kind).AddArgument($InputText).AddArgument($TextDirectionOverride).AddArgument($FilePath).AddArgument($Direction).AddArgument($sheetsJson).AddArgument($settingsJson).AddArgument($script:YakuBuildId).AddArgument($state).AddArgument($ReviseJson)
         $async = $ps.BeginInvoke()
         # Publish only after BeginInvoke succeeds (transactional start).
         $script:YakuTranslateJobs[$jobId] = $state
@@ -1248,7 +1283,10 @@ function Convert-YakuTranslationJobStartedHtml {
     $inputLength = [string]$State['input_length']
     $fileName = [string]$State['file_name']
     $meta = if ($kind -eq 'file') { 'ファイル: ' + $fileName } else { $inputLength + '字' }
-    $caption = if ($kind -eq 'file') { '抽出中' } else { '準備中' }
+    $caption = if ($kind -eq 'file') { '抽出中' } elseif ($kind -eq 'revise') { '修正を依頼中' } else { '準備中' }
+    # 修正はテキストの成果物なので、画面上はテキスト側へ描く。
+    # ここの kind は「どちらのタブへ結果を入れるか」にしか使われない。
+    if ($kind -eq 'revise') { $kind = 'text' }
     $html = @"
 <div class='result-loading job-loading' data-yaku-job-id='$(ConvertTo-YakuHtml $jobId)' data-yaku-kind='$(ConvertTo-YakuHtml $kind)' title='Job: $(ConvertTo-YakuHtml $jobId)'>
   <div class='job-loading-inner'>
@@ -2074,6 +2112,53 @@ function Invoke-YakuRoute {
         } catch {
             $safeError = Convert-YakuExceptionToUserMessage $_
             try { Write-YakuLog "Translate job start exception: $($_.Exception.ToString())" 'ERROR' } catch {}
+            Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind error -Message $safeError)) -StatusCode 400
+        }
+        return
+    }
+    if ($method -eq 'POST' -and $path -eq '/api/revise-text') {
+        # V91.61（2026-08-06）: できあがった訳文へ指示を1つ当てて直す。
+        # 現訳はマスク後のものを受け取る。画面の訳文（実値入り）を送らせると、
+        # 伏せたはずの数値が Copilot へ出る。
+        $payload = Read-YakuRequestJson -Request $req
+        $settings = Read-YakuSettings -Root $script:YakuRoot
+        $srcText = ''
+        $curText = ''
+        $instruction = ''
+        $revStyle = 'full'
+        $revDirection = 'to_en'
+        try { $srcText = [string]$payload['source_text'] } catch {}
+        try { $curText = [string]$payload['current_text'] } catch {}
+        try { $instruction = [string]$payload['instruction'] } catch {}
+        try { if (@('full','brief') -contains [string]$payload['style']) { $revStyle = [string]$payload['style'] } } catch {}
+        try { if (@('to_en','to_jp') -contains [string]$payload['direction']) { $revDirection = [string]$payload['direction'] } } catch {}
+        if ([string]::IsNullOrWhiteSpace($instruction)) {
+            Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind warning -Message '修正の指示を入力してください。')) -StatusCode 400
+            return
+        }
+        if ([string]::IsNullOrWhiteSpace($srcText) -or [string]::IsNullOrWhiteSpace($curText)) {
+            Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind warning -Message '修正のもとになる原文と訳文を取得できませんでした。もう一度翻訳してからお試しください。')) -StatusCode 400
+            return
+        }
+        $readyState = Get-YakuTranslateReadinessState
+        if (-not [bool]$readyState.canTranslate) {
+            $message = if ([string]$readyState.mode -eq 'working') { '翻訳ジョブが実行中です。完了してからお試しください。' } else { 'Copilotの準備が完了してから修正を依頼できます。' }
+            Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind warning -Message $message)) -StatusCode 409
+            return
+        }
+        try {
+            $revisePayload = ([ordered]@{
+                source_text  = $srcText
+                current_text = $curText
+                instruction  = $instruction
+                style        = $revStyle
+                direction    = $revDirection
+            } | ConvertTo-Json -Depth 5 -Compress)
+            $state = Start-YakuTranslationJob -InputText $srcText -Settings $settings -Kind 'revise' -ReviseJson $revisePayload
+            Send-YakuTextResponse -Context $Context -Text (Convert-YakuTranslationJobStartedHtml -State $state)
+        } catch {
+            $safeError = Convert-YakuExceptionToUserMessage $_
+            try { Write-YakuLog "Revise job start exception: $($_.Exception.ToString())" 'ERROR' } catch {}
             Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind error -Message $safeError)) -StatusCode 400
         }
         return

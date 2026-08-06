@@ -71,7 +71,10 @@ $clientText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') '
 
 # プロンプトが Copilot に出させるラベルを、当てずっぽうではなく prompts から集める。
 # 入力側の枠と終端マーカーは出力ラベルではないので除く。
-$frameLabels = @('SOURCE_BEGIN','SOURCE_END','SOURCE_ITEMS_END','YAKULINGO_END','YAKULINGO_OK','YAKULINGO_DONE')
+# CURRENT_* と INSTRUCTION_* は修正の依頼が原文以外に渡す入力の囲み
+# （V91.61 2026-08-06）。モデルに出させるラベルではないので同じ扱いにする。
+$frameLabels = @('SOURCE_BEGIN','SOURCE_END','SOURCE_ITEMS_END','YAKULINGO_END','YAKULINGO_OK','YAKULINGO_DONE',
+                 'CURRENT_BEGIN','CURRENT_END','INSTRUCTION_BEGIN','INSTRUCTION_END')
 $askedLabels = New-Object System.Collections.Generic.List[string]
 foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $root 'prompts') -Filter '*.txt')) {
     $body = [System.IO.File]::ReadAllText($f.FullName)

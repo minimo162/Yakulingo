@@ -116,8 +116,10 @@ Chk ((Conv 'Operating profit up approximately [[N1]] oku vs. [[N2]] oku.') -eq '
 Write-Host '翻訳経路への組み込み'
 $translationText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Translation.ps1'))
 # 呼び出しだけを数える。存在確認（Get-Command …）は呼び出しではない。
+# V91.61（2026-08-06）: 修正の依頼が3箇所目。直した訳文にも略語が当たること。
+# ここを通らないと、修正するたびに略語が spelled-out へ戻る。
 $hookCount = ([regex]::Matches($translationText, 'Convert-YakuBriefTranslationOptions -Options')).Count
-Chk ($hookCount -eq 2) ('キャッシュ命中とそれ以外の両方に入っている: ' + $hookCount)
+Chk ($hookCount -eq 3) ('キャッシュ命中・通常・修正の3経路に入っている: ' + $hookCount)
 # 復元より前に置く。復元後の数字（12,340 など）を語として拾わせないため。
 $convAt = $translationText.IndexOf('Convert-YakuBriefTranslationOptions -Options $options')
 $restoreAt = $translationText.IndexOf('Restore-YakuMaskedTranslationOptions -Options $options')
@@ -128,7 +130,7 @@ Write-Host '読み込まれていない経路でも止まらない'
 # ワーカー・部分的に読み込む回帰テスト）で翻訳を止めない。
 # 当たらなければ従来どおりモデルの出力のままになるだけである。
 $guards = ([regex]::Matches($translationText, 'Get-Command Convert-YakuBriefTranslationOptions')).Count
-Chk ($guards -eq 2) ('両方の呼び出しが守られている: ' + $guards)
+Chk ($guards -eq 3) ('3経路とも守られている: ' + $guards)
 
 Write-Host 'プロンプトから外れていること'
 $briefRules = Get-YakuBriefRules -Root $root

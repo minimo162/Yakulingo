@@ -576,7 +576,20 @@ $sendAt = $corpusRefText.IndexOf('Invoke-YakuCopilotPrompt')
 Assert-YakuMask ($maskAt -ge 0) 'コーパス検索語の経路もマスクを呼ぶ'
 Assert-YakuMask ($sendAt -ge 0 -and $maskAt -lt $sendAt) 'マスクしてから送っている'
 Assert-YakuMask ($corpusRefText -match "Location 'corpus-query'") '記録に経路名が残る（どこでマスクしたか分かる）'
-Assert-YakuMask ((@($callSites | Where-Object { $_ -eq 'Translation.ps1' }).Count) -eq 1) 'テキスト経路の呼び出しは1箇所（逆翻訳の分が消えている）'
+# V91.61（2026-08-06）: 修正の依頼が2箇所目になる。訳文へ指示を1つ当てて直す
+# 経路で、原文と現訳を外部へ送る点は翻訳と同じ。件数で見張るのは、
+# 送る経路が黙って増えるのを気づかせるため。増やすときは下の確認も足すこと。
+$translationSends = @($callSites | Where-Object { $_ -eq 'Translation.ps1' }).Count
+Assert-YakuMask ($translationSends -eq 2) ('テキスト経路の送信は2箇所（翻訳と修正）: ' + $translationSends)
+# 修正の経路もマスクしてから送っていること。現訳は呼び出し側から
+# マスク後の姿で渡ってくるが、原文はここでマスクする。
+$translationSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Translation.ps1'))
+$reviseFn = [regex]::Match($translationSrc, '(?s)function Invoke-YakuTextRevision \{.*?\n\}\r?\n\r?\nfunction ').Value
+Assert-YakuMask ($reviseFn.Length -gt 0) '修正の経路が見つかる'
+$rMask = $reviseFn.IndexOf('New-YakuNumericMaskMap')
+$rSend = $reviseFn.IndexOf('Invoke-YakuCopilotPrompt')
+Assert-YakuMask ($rMask -ge 0 -and $rSend -ge 0 -and $rMask -lt $rSend) '修正の経路もマスクしてから送っている'
+Assert-YakuMask ($reviseFn -match "Location 'text-revise'") '修正の経路にも経路名が残る'
 
 if ($script:Failures -gt 0) {
     Write-Host "V91.60 numeric masking test failed. failures=$script:Failures" -ForegroundColor Red

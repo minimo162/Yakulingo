@@ -78,6 +78,14 @@ function Convert-YakuTextResultToHtml {
     # 実際に適用された保証が無いのに適用されたように読めていた。
     # use_bundled_glossary を切っても出るうえ、プロンプトへ渡しただけの語も並ぶ。
 
+    # どの指示で直した結果かを出す。出さないと、何度か直した後にどれが
+    # どの指示の結果か分からなくなる。
+    $revisedFrom = ''
+    try { $revisedFrom = [string]$Result.RevisedFrom } catch { $revisedFrom = '' }
+    if (-not [string]::IsNullOrWhiteSpace($revisedFrom)) {
+        $html += "<div class='batch-note'>修正の指示: $(ConvertTo-YakuHtml $revisedFrom)</div>"
+    }
+
     $html += New-YakuCorpusReferenceHtml -Result $Result
 
     $batchCount = 0
@@ -98,9 +106,46 @@ function Convert-YakuTextResultToHtml {
         }
     }
 
+    # V91.61（2026-08-06）: 訳文ごとに修正の依頼口を付ける。
+    # 利用者の使い方は「一文を訳す → 目で見る → 何度か直す → 確定」であり、
+    # 直すには原文を書き換えて訳し直すしかなかった。それでは直していない箇所も
+    # 毎回変わるので、確定へ向かって収束しない。
+    #
+    # 原文はここで各札へ持たせる。画面の入力欄から取り直すと、利用者が
+    # 入力欄を書き換えた後に「別の原文と現訳」を突き合わせることになる。
+    # 現訳はマスク後のものを持たせる。画面の訳文（実値入り）を送り返させると、
+    # 伏せたはずの数値が Copilot へ出る。
+    $sourceText = ''
+    try { $sourceText = [string]$Result.SourceText } catch { $sourceText = '' }
+    $direction = ''
+    try { $direction = [string]$Result.Direction } catch { $direction = '' }
+    $canRevise = (-not [string]::IsNullOrWhiteSpace($sourceText))
+
     foreach ($opt in $options) {
         $title = ConvertTo-YakuHtml $opt.Label
         $translation = ConvertTo-YakuHtml $opt.Translation
+        $style = ''
+        try { $style = [string]$opt.Style } catch { $style = '' }
+        if ($style -ne 'brief') { $style = 'full' }
+        $masked = [string]$opt.Translation
+        try { if (-not [string]::IsNullOrEmpty([string]$opt.MaskedTranslation)) { $masked = [string]$opt.MaskedTranslation } } catch {}
+        $reviseHtml = ''
+        if ($canRevise) {
+            $reviseHtml = @"
+  <form class='revise-form' data-yaku-revise
+        data-yaku-source='$(ConvertTo-YakuUtf8Base64 $sourceText)'
+        data-yaku-current='$(ConvertTo-YakuUtf8Base64 $masked)'
+        data-yaku-style='$(ConvertTo-YakuHtml $style)'
+        data-yaku-direction='$(ConvertTo-YakuHtml $direction)'>
+    <label class='revise-label' for='revise-$style'>この訳文への修正指示</label>
+    <div class='revise-row'>
+      <input type='text' id='revise-$style' class='revise-input' name='instruction' autocomplete='off'
+             placeholder='例: 為替影響は FX ではなく forex にしてください' />
+      <button type='submit' class='secondary-button compact revise-button'>修正を依頼</button>
+    </div>
+  </form>
+"@
+        }
         $html += @"
 <article class='result-card result-card-translation'>
   <header>
@@ -108,7 +153,7 @@ function Convert-YakuTextResultToHtml {
     $(New-YakuCopyButtonHtml -Text ([string]$opt.Translation) -Label 'コピー')
   </header>
   <pre class='translation'>$translation</pre>
-</article>
+$reviseHtml</article>
 "@
     }
 

@@ -672,6 +672,13 @@ function Restore-YakuMaskedTranslationOptions {
         [string]$Location = 'text'
     )
     if ($null -eq $Options) { return @() }
+    # V91.61（2026-08-06）: 修正の依頼はマスク後の訳文を送り返してもらう。
+    # 画面に出ているのは実値に戻した訳文なので、それを送れば実値が外へ出る。
+    # 戻す前の姿をここで控えておく。マスクが無いときは両者が同じになる。
+    foreach ($o in @($Options)) {
+        if ($null -eq $o) { continue }
+        try { $o | Add-Member -NotePropertyName 'MaskedTranslation' -NotePropertyValue ([string]$o.Translation) -Force } catch {}
+    }
     if ($null -eq $Map -or $Map.Count -eq 0) { return @($Options) }
     foreach ($option in $Options) {
         $style = [string]$option.Style
@@ -1494,6 +1501,85 @@ function Invoke-YakuTextRequestsInParallel {
     }
 }
 
+function Invoke-YakuTextRevision {
+    <#
+      できあがった訳文に、利用者の指示を1つ当てて直す。
+
+      なぜ翻訳と別の経路なのか:
+
+        利用者の使い方は「一文を訳す → 目で見る → 何度か直す → 確定」である
+        （利用者の説明 2026-08-06）。従来のアプリにはこの「直す」が無く、
+        直したければ原文を書き換えて訳し直すしかなかった。それでは
+        直していない箇所まで毎回変わるので、確定へ向かって収束しない。
+
+        ここでは規則集を送らない。理由は New-YakuRevisePrompt に書いた。
+        送るのは 原文・現訳・指示 の3つだけである。
+
+      マスクの扱い:
+
+        画面に出ている訳文は実値へ戻した後のものなので、そのまま送ると
+        伏せた数値が外へ出る。呼び出し側にはマスク後の訳文
+        （Option.MaskedTranslation）を送り返してもらい、ここではそれを
+        そのまま現訳として使う。原文からは同じ手順でマスク表を作り直す。
+        原文が同じなら割り当ても同じなので、対応表を持ち回らなくて済む。
+
+      再試行はしない。指示どおりに直らなかったかどうかは人が見て決める
+      ことであり、機械が判定できない。もう一度頼めばよい。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Root,
+        [Parameter(Mandatory=$true)][string]$InputText,
+        # マスク後の現訳。実値の入った訳文を渡してはならない。
+        [Parameter(Mandatory=$true)][string]$CurrentText,
+        [Parameter(Mandatory=$true)][string]$Instruction,
+        [Parameter(Mandatory=$true)]$Settings,
+        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
+        [ValidateSet('full','brief')][string]$Style = 'full',
+        [AllowNull()]$ProgressState,
+        [AllowNull()]$Warnings
+    )
+    $requestId = [guid]::NewGuid().ToString('N')
+    # 原文から同じ手順でマスク表を作り直す。割り当ては原文だけで決まるので、
+    # 翻訳したときと同じトークンになり、現訳の[[N1]]とかみ合う。
+    $maskResult = New-YakuNumericMaskMap -Text $InputText -Root $Root -Direction $Direction -Location 'text-revise'
+    $sourceText = [string]$maskResult.Text
+    $maskMap = $maskResult.Map
+
+    $built = New-YakuRevisePrompt -Root $Root -InputText $sourceText -CurrentText $CurrentText -Instruction $Instruction -Direction $Direction -Style $Style -RequestId $requestId
+    $mode = if ($Direction -eq 'to_en') { $Style } else { '' }
+    $raw = Invoke-YakuCopilotPrompt -Prompt $built.Prompt -Settings $Settings -PreserveEndMarker -ProgressState $ProgressState -Warnings $Warnings
+    $options = @(Parse-YakuTextTranslationResponse -Raw $raw -Direction $Direction -RequestId $requestId -Warnings $Warnings -Mode $mode)
+    if ($options.Count -eq 0) { throw 'RESPONSE_EMPTY: 修正後の訳文を取り出せませんでした。' }
+
+    # 伏せた数値が落ちていないかを見る。直す指示で数値が消えるのは事故なので、
+    # 電文体でも見る（翻訳時は圧縮で落ちうるため見送っていた）。
+    if ($maskMap.Count -gt 0) {
+        foreach ($option in $options) {
+            $integrity = Test-YakuNumericMaskIntegrity -MaskedSource $CurrentText -Translated ([string]$option.Translation) -Location ('text-revise-' + [string]$option.Style)
+            if ([bool]$integrity.Ok) { continue }
+            try {
+                if ($null -ne $Warnings -and (Get-Command Add-YakuWarning -ErrorAction SilentlyContinue)) {
+                    Add-YakuWarning -Warnings $Warnings -Category 'numeric-integrity' -Location '修正' -Details @{ Detail=[string]$integrity.Detail } -Message "修正の前後で数値の数が変わっています。指示どおりか確認してください。($([string]$integrity.Detail))"
+                }
+            } catch {}
+        }
+    }
+
+    if (Get-Command Convert-YakuBriefTranslationOptions -ErrorAction SilentlyContinue) {
+        $options = @(Convert-YakuBriefTranslationOptions -Options $options)
+    }
+    $options = @(Restore-YakuMaskedTranslationOptions -Options $options -MaskedSource $sourceText -Map $maskMap -Warnings $Warnings -Location 'text-revise')
+    return [pscustomobject]@{
+        Direction   = $Direction
+        Options     = $options
+        Raw         = $raw
+        Prompt      = $built.Prompt
+        RequestId   = $requestId
+        MaskedCount = [int]$maskResult.MaskedCount
+        KeptCount   = [int]$maskResult.KeptCount
+    }
+}
+
 function Invoke-YakuTextTranslationRequests {
     <#
       1つの原文に対して、必要な依頼を出して訳文を揃える。
@@ -1874,6 +1960,10 @@ function Invoke-YakuTextTranslation {
             MaskedCount = [int]$maskedTotal
             KeptCount = [int]$keptTotal
             InputLength = $InputText.Length
+            # V91.61（2026-08-06）: 修正の依頼が原文を必要とする。画面の入力欄から
+            # 取り直すと、利用者が入力欄を書き換えた後に「別の原文と現訳」を
+            # 突き合わせることになる。訳した時の原文を結果に固定しておく。
+            SourceText = [string]$InputText
             Options = $options
             # V91.61 段階3: 何を参照して訳したかを画面へ出すため。
             CorpusExamples = @($corpusReference.Examples)

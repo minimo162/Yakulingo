@@ -141,6 +141,11 @@ input[type="text"], select { width: 100%; min-height: 34px; border: 0; border-ra
 .eyebrow { color: var(--faint); font-size: var(--font-meta); font-weight: 600; letter-spacing: .06em; }
 .result-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .translation { margin: 0; white-space: pre-wrap; font-size: var(--font-input); line-height: 1.65; font-family: inherit; color: var(--text); background: var(--soft); border-radius: var(--radius-control); padding: 14px; }
+.revise-form { margin-top: var(--space-2); }
+.revise-label { display: block; margin-bottom: 6px; color: var(--muted); font-size: var(--font-meta); }
+.revise-row { display: flex; gap: 8px; align-items: center; }
+.revise-input { flex: 1 1 auto; min-width: 0; }
+.revise-button { flex: 0 0 auto; white-space: nowrap; }
 .stat-pills { display: flex; flex-wrap: wrap; gap: 8px; margin: var(--space-2) 0; }
 .stat-pill, .term-pill { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; background: var(--soft); color: var(--muted); padding: 4px 9px; font-size: var(--font-meta); font-variant-numeric: tabular-nums; }
 .stat-pill strong { color: var(--text); font-weight: 600; }

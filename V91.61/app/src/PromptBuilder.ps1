@@ -702,6 +702,69 @@ function New-YakuTextPrompt {
     }
 }
 
+function New-YakuRevisePrompt {
+    <#
+      修正の依頼を組み立てる。
+
+      なぜ規則集を送らないのか:
+
+        利用者の使い方は「一文を訳す → 目で見る → 何度か直す → 確定」である
+        （利用者の説明 2026-08-06）。この「直す」を、規則集ごと投げ直す形で
+        作ってはいけない。理由は2つある。
+
+        1つ目。現訳はすでに規則を通って出てきたものである。同じ規則を
+        もう一度送れば、モデルは指示ではなく規則へ引っ張られ、
+        利用者が触っていない箇所まで書き換わる。直したいのは1点だけである。
+
+        2つ目。電文体の規則は圧縮後でも 5,500字あり、利用者の指示は
+        たいてい20字である。長さの比が 250:1 では指示が埋もれる。
+
+        したがって送るのは 原文・現訳・指示 の3つと、動かせない機構だけ
+        （ラベルの契約と、伏せた数値の扱い）。文体は一行の注記で示す。
+
+      原文を送るのは、指示が事実を落とす形になっていないかを確かめさせるため。
+      現訳だけでは、モデルは指示が原文に反しているかを知りようがない。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Root,
+        [Parameter(Mandatory=$true)][string]$InputText,
+        [Parameter(Mandatory=$true)][string]$CurrentText,
+        [Parameter(Mandatory=$true)][string]$Instruction,
+        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
+        # 現訳がどちらの成果物か。求めるラベルと文体の注記が決まる。
+        [ValidateSet('full','brief')][string]$Style = 'full',
+        [AllowNull()][string]$RequestId
+    )
+    if ([string]::IsNullOrWhiteSpace($RequestId)) { $RequestId = [guid]::NewGuid().ToString('N') }
+    $label =
+        if ($Direction -ne 'to_en') { 'JAPANESE_TEXT' }
+        elseif ($Style -eq 'brief') { 'BRIEF_TEXT' }
+        else { 'FULL_TEXT' }
+    # 文体は一行で示す。ここに規則を書き足すと、規則集を送らない意味が無くなる。
+    $styleNote =
+        if ($Direction -ne 'to_en') { 'CURRENT is a Japanese translation. Keep its register, terminology and level of detail.' }
+        elseif ($Style -eq 'brief') { 'CURRENT is an English telegraphic line, in the register used inside a Japanese company''s own disclosure and management materials. Keep that register: grammar words go, facts stay. Do not expand it into prose.' }
+        else { 'CURRENT is a complete English translation. Keep it complete: no compression and no abbreviations that SOURCE does not itself use.' }
+    # 伏せた数値の規則だけは残す。トークンが原文と現訳の両方に居るため、
+    # 扱いを示さないと書き換えられて実値へ戻せなくなる。
+    $numeric = Get-YakuNumericRulesSection -InputText ([string]$InputText + "`n" + [string]$CurrentText) -Direction $Direction
+    $template = Get-YakuPromptTemplate -Root $Root -Name 'text_revise.txt'
+    $vars = @{
+        request_id       = $RequestId
+        output_label     = $label
+        style_note       = $styleNote
+        numeric_rules    = $numeric
+        input_text       = $InputText.Trim()
+        current_text     = $CurrentText.Trim()
+        instruction_text = $Instruction.Trim()
+    }
+    return [pscustomobject]@{
+        Direction = $Direction
+        Label     = $label
+        Prompt    = Expand-YakuTemplate -Template $template -Variables $vars
+    }
+}
+
 function Get-YakuGlossaryDuplicateSummaryHtml {
     param([Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Entries)
     $pairs = @{}

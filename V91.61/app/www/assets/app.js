@@ -441,6 +441,42 @@
     });
   }
 
+  function yakuDecodeBase64Utf8(value) {
+    // 原文と現訳は base64 で札に載っている。改行や引用符を属性へ
+    // そのまま置けないため。
+    if (!value) return '';
+    var binary = window.atob(value);
+    var bytes = new Uint8Array(binary.length);
+    for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new TextDecoder('utf-8').decode(bytes);
+  }
+
+  function yakuSubmitRevision(form) {
+    // できあがった訳文へ指示を1つ当てて直す。翻訳と同じジョブの仕組みに
+    // 乗せるのは、Copilot への往復が1度に1つでなければならないため。
+    var input = form.querySelector('.revise-input');
+    var instruction = input ? input.value : '';
+    if (!instruction.trim()) { if (input) input.focus(); return; }
+    if (!yakuReady || yakuTranslating) { yakuPollReadyState(); return; }
+    // 送るのはマスク後の訳文。画面に出ている訳文は実値へ戻した後のもので、
+    // そのまま送ると伏せた数値が外へ出る。
+    var payload = {
+      source_text: yakuDecodeBase64Utf8(form.getAttribute('data-yaku-source')),
+      current_text: yakuDecodeBase64Utf8(form.getAttribute('data-yaku-current')),
+      instruction: instruction,
+      style: form.getAttribute('data-yaku-style') || 'full',
+      direction: form.getAttribute('data-yaku-direction') || 'to_en'
+    };
+    yakuTranslating = true;
+    yakuActiveJobKind = 'text';
+    yakuSetButtonEnabled(false);
+    yakuRenderJobLoading('', 0, '修正を依頼中', '準備中');
+    yakuScrollJobResultIntoView();
+    yakuJsonPost('/api/revise-text', payload).then(yakuResponseText).then(yakuStartFromHtml).catch(function (error) {
+      yakuShowStartError(error, '修正を依頼できませんでした。');
+    });
+  }
+
   function yakuFileFingerprint(file) {
     return [file.name, file.size, file.lastModified].join(':');
   }
@@ -768,6 +804,8 @@
     }
 
     document.addEventListener('submit', function (event) {
+      var revise = event.target.closest && event.target.closest('form[data-yaku-revise]');
+      if (revise) { event.preventDefault(); yakuSubmitRevision(revise); return; }
       var form = event.target.closest && event.target.closest('form[data-yaku-json-post]');
       if (!form) return;
       event.preventDefault();
