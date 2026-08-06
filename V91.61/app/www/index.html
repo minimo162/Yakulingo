@@ -25,6 +25,7 @@
     <nav class="tab-bar" aria-label="翻訳種別" role="tablist">
       <button id="tab-text" type="button" role="tab" class="tab-button is-active" data-yaku-tab="text" aria-selected="true" aria-controls="panel-text" tabindex="0">テキスト翻訳</button>
       <button id="tab-file" type="button" role="tab" class="tab-button" data-yaku-tab="file" aria-selected="false" aria-controls="panel-file" tabindex="-1">ファイル翻訳</button>
+      <button id="tab-cat" type="button" role="tab" class="tab-button" data-yaku-tab="cat" aria-selected="false" aria-controls="panel-cat" tabindex="-1">CAT</button>
     </nav>
 
     <section id="panel-text" role="tabpanel" aria-labelledby="tab-text" class="translator tab-panel is-active" data-yaku-panel="text" aria-label="テキスト翻訳">
@@ -101,6 +102,48 @@
           </div>
           <div id="file-meta" class="file-meta muted" aria-live="polite">ファイルを選択するか、ローカルパスを入力してください。</div>
         </form>
+      </div>
+    </section>
+
+    <!--
+      CAT: ファイル翻訳と同じことを、途中が見える形でやる。
+      取り込む → 用語集で置換 → 残りを訳す → 出力 を、押した分だけ進める。
+      精度が低いもう半分の理由は「途中が見えないので、一見良さげな Excel が
+      出来上がってしまう」ことにあった（利用者の診断 2026-08-06）。
+    -->
+    <section id="panel-cat" role="tabpanel" aria-labelledby="tab-cat" class="cat-translator tab-panel" data-yaku-panel="cat" aria-label="CAT" hidden>
+      <div class="card">
+        <h2>CAT（原文と訳文を並べて確認）</h2>
+        <p class="muted">Excelを取り込んでセグメントに分け、用語集での置換とCopilot翻訳を段階に分けて進めます。原文と訳文を並べて確認してから出力します。</p>
+        <div class="cat-source-row">
+          <label class="file-drop cat-drop" for="cat-file-input" id="cat-drop" role="button" tabindex="0" aria-describedby="cat-file-name">
+            <input id="cat-file-input" type="file" accept=".xlsx,.xlsm" hidden tabindex="-1">
+            <span>ここにファイルをドロップ、またはクリックして選択（.xlsx / .xlsm）</span>
+            <span id="cat-file-name" class="muted">ローカルパス指定も利用できます</span>
+          </label>
+          <label for="cat-path">ローカルパス直接指定（任意）
+            <input id="cat-path" type="text" placeholder="例: C:\Documents\ECM_2026Q1.xlsx">
+          </label>
+          <div class="cat-direction" role="radiogroup" aria-label="翻訳方向">
+            <label><input type="radio" name="cat_direction" value="to_en" checked><span>日→英</span></label>
+            <label><input type="radio" name="cat_direction" value="to_jp"><span>英他→日</span></label>
+          </div>
+          <button id="cat-open-button" type="button">取り込む</button>
+        </div>
+        <div id="cat-status" class="cat-status muted" aria-live="polite">Excelを選択して「取り込む」を押してください。</div>
+        <div id="cat-actions" class="cat-actions" hidden>
+          <button id="cat-glossary-button" type="button" class="secondary-button">用語集で置換</button>
+          <button id="cat-translate-button" type="button" class="secondary-button">残りをCopilotで翻訳</button>
+          <button id="cat-export-button" type="button">出力</button>
+        </div>
+        <div id="cat-grid-wrap" class="cat-grid-wrap" hidden>
+          <table class="cat-grid">
+            <thead>
+              <tr><th class="cat-col-no">#</th><th class="cat-col-loc">場所</th><th>原文</th><th>訳文</th></tr>
+            </thead>
+            <tbody id="cat-grid-body"></tbody>
+          </table>
+        </div>
       </div>
     </section>
 

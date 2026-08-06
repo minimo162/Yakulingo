@@ -22,6 +22,8 @@ $script:YakuRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyComman
 . (Join-Path $PSScriptRoot 'CorpusSearch.ps1')
 . (Join-Path $PSScriptRoot 'CorpusReference.ps1')
 . (Join-Path $PSScriptRoot 'BriefStyle.ps1')
+. (Join-Path $PSScriptRoot 'CellSegments.ps1')
+. (Join-Path $PSScriptRoot 'CatProject.ps1')
 
 $script:YakuBuildId = Assert-YakuBuildIdentity -Root $script:YakuRoot -ExpectedBuildId (Get-YakuBuildId)
 # V91.61: 管理画面。既定は無効で、無効なら管理用の経路を一切登録しない。
@@ -449,6 +451,8 @@ function New-YakuWarmTranslationRunspace {
             . (Join-Path $Root 'src\CorpusSearch.ps1')
             . (Join-Path $Root 'src\CorpusReference.ps1')
             . (Join-Path $Root 'src\BriefStyle.ps1')
+                . (Join-Path $Root 'src\CellSegments.ps1')
+                . (Join-Path $Root 'src\CatProject.ps1')
             $null = Assert-YakuBuildIdentity -Root $Root -ExpectedBuildId $ExpectedBuildId
             $preloadSw = [System.Diagnostics.Stopwatch]::StartNew()
             $settings = Read-YakuSettings -Root $Root
@@ -560,6 +564,8 @@ function Start-YakuWarmTranslationRunspaceBuild {
                     . (Join-Path $Root 'src\CorpusSearch.ps1')
                     . (Join-Path $Root 'src\CorpusReference.ps1')
                     . (Join-Path $Root 'src\BriefStyle.ps1')
+                . (Join-Path $Root 'src\CellSegments.ps1')
+                . (Join-Path $Root 'src\CatProject.ps1')
                     $null = Assert-YakuBuildIdentity -Root $Root -ExpectedBuildId $ExpectedBuildId
                     $preloadSw = [System.Diagnostics.Stopwatch]::StartNew()
                     $settings = Read-YakuSettings -Root $Root
@@ -1017,7 +1023,7 @@ function Start-YakuTranslationJob {
         [AllowNull()][string]$InputText = '',
         [Parameter(Mandatory=$true)]$Settings,
         [AllowNull()][string]$TextDirectionOverride = '',
-        [ValidateSet('text','file','revise')][string]$Kind = 'text',
+        [ValidateSet('text','file','revise','cat')][string]$Kind = 'text',
         [AllowNull()][string]$FilePath = '',
         [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
         [AllowNull()][string[]]$Sheets,
@@ -1025,7 +1031,10 @@ function Start-YakuTranslationJob {
         # V91.61（2026-08-06）: 修正の依頼。原文・現訳・指示・文体を JSON で運ぶ。
         # 翻訳と同じジョブの仕組みに乗せるのは、Copilot への往復が1度に1つで
         # なければならないため。別経路にすると翻訳中の修正が衝突する。
-        [AllowNull()][string]$ReviseJson = ''
+        [AllowNull()][string]$ReviseJson = '',
+        # CAT の「残りを訳す」。訳す原文だけを渡し、訳文だけを返させる。
+        # ジョブは別のランスペースで走るため、メモリ上のプロジェクトを触れない。
+        [AllowNull()][string]$CatJson = ''
     )
     $null = Assert-YakuBuildIdentity -Root $script:YakuRoot -ExpectedBuildId $script:YakuBuildId
     Update-YakuTranslationJobs
@@ -1090,7 +1099,8 @@ function Start-YakuTranslationJob {
             [Parameter(Mandatory=$true)][string]$SettingsJson,
             [Parameter(Mandatory=$true)][string]$ExpectedBuildId,
             [Parameter(Mandatory=$true)]$JobState,
-            [AllowNull()][string]$ReviseJson
+            [AllowNull()][string]$ReviseJson,
+            [AllowNull()][string]$CatJson
         )
         $ErrorActionPreference = 'Stop'
         $startupSw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -1114,6 +1124,8 @@ function Start-YakuTranslationJob {
                 . (Join-Path $Root 'src\CorpusSearch.ps1')
                 . (Join-Path $Root 'src\CorpusReference.ps1')
                 . (Join-Path $Root 'src\BriefStyle.ps1')
+                . (Join-Path $Root 'src\CellSegments.ps1')
+                . (Join-Path $Root 'src\CatProject.ps1')
             }
             $sectionSw.Stop(); $moduleLoadMs = $sectionSw.ElapsedMilliseconds
             $sectionSw.Restart()
@@ -1140,7 +1152,47 @@ function Start-YakuTranslationJob {
             $otherStartupMs = [Math]::Max(0, $startupSw.ElapsedMilliseconds - $moduleLoadMs - $buildIdentityMs - $settingsReadMs)
             Write-YakuLog "Translation runspace startup timings. settings-read elapsedMs=$settingsReadMs build-identity elapsedMs=$buildIdentityMs module-load elapsedMs=$moduleLoadMs other elapsedMs=$otherStartupMs total elapsedMs=$($startupSw.ElapsedMilliseconds)" 'INFO'
 
-            if ($Kind -eq 'revise') {
+            if ($Kind -eq 'cat') {
+                $cat = $CatJson | ConvertFrom-Json
+                $catWarnings = New-Object System.Collections.Generic.List[object]
+                Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label '翻訳中' -Progress 10 -Detail '' -Phase 'translating'
+                try {
+                    # 同じ原文は1回だけ送る。割り戻しはこの中で行う。
+                    $byText = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([System.StringComparer]::Ordinal)
+                    $items = New-Object System.Collections.Generic.List[object]
+                    foreach ($it in @($cat.items)) {
+                        $text = [string]$it.text
+                        if ([string]::IsNullOrWhiteSpace($text)) { continue }
+                        if (-not $byText.ContainsKey($text)) {
+                            $entry = [pscustomobject]@{ Index = ($items.Count + 1); Text = $text; BlockIds = (New-Object System.Collections.Generic.List[string]); Targets = (New-Object System.Collections.Generic.List[int]) }
+                            $byText[$text] = $entry
+                            [void]$items.Add($entry)
+                        }
+                        [void]$byText[$text].Targets.Add([int]$it.index)
+                    }
+                    $maxChars = Get-YakuSettingInt -Settings $settings -Name 'file_batch_chars' -Default 3000
+                    $catContext = @{ BatchOrdinal = 0; TotalBatches = @(Split-YakuFileTranslationItems -Items @($items.ToArray()) -MaxChars $maxChars).Count; MaxRetryDepth = 0 }
+                    $map = Invoke-YakuFileTranslationItems -Root $Root -Items @($items.ToArray()) -Settings $settings `
+                        -Direction ([string]$cat.direction) -MaxChars $maxChars -Warnings $catWarnings `
+                        -ProgressState $JobState -Context $catContext
+                    $pairs = New-Object System.Collections.Generic.List[object]
+                    foreach ($entry in @($items.ToArray())) {
+                        if (-not $map.ContainsKey([int]$entry.Index)) { continue }
+                        $translation = [string]$map[[int]$entry.Index]
+                        if ([string]::IsNullOrWhiteSpace($translation)) { continue }
+                        foreach ($t in @($entry.Targets)) { [void]$pairs.Add([ordered]@{ index = [int]$t; text = $translation }) }
+                    }
+                    $result = [pscustomobject]@{
+                        Kind = 'cat'
+                        ProjectId = [string]$cat.project_id
+                        Translations = @($pairs.ToArray())
+                        Sent = $items.Count
+                        Warnings = @($catWarnings.ToArray())
+                    }
+                } catch {
+                    $result = [pscustomobject]@{ Kind = 'cat'; Error = $_.Exception.Message }
+                }
+            } elseif ($Kind -eq 'revise') {
                 $rev = $ReviseJson | ConvertFrom-Json
                 $revWarnings = New-Object System.Collections.Generic.List[object]
                 Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label '修正を依頼中' -Progress 20 -Detail '' -Phase 'translating'
@@ -1251,7 +1303,7 @@ function Start-YakuTranslationJob {
             $ps = [powershell]::Create()
             $ps.Runspace = $runspace
         }
-        [void]$ps.AddScript($worker.ToString()).AddArgument($root).AddArgument($Kind).AddArgument($InputText).AddArgument($TextDirectionOverride).AddArgument($FilePath).AddArgument($Direction).AddArgument($sheetsJson).AddArgument($settingsJson).AddArgument($script:YakuBuildId).AddArgument($state).AddArgument($ReviseJson)
+        [void]$ps.AddScript($worker.ToString()).AddArgument($root).AddArgument($Kind).AddArgument($InputText).AddArgument($TextDirectionOverride).AddArgument($FilePath).AddArgument($Direction).AddArgument($sheetsJson).AddArgument($settingsJson).AddArgument($script:YakuBuildId).AddArgument($state).AddArgument($ReviseJson).AddArgument($CatJson)
         $async = $ps.BeginInvoke()
         # Publish only after BeginInvoke succeeds (transactional start).
         $script:YakuTranslateJobs[$jobId] = $state
@@ -1283,7 +1335,7 @@ function Convert-YakuTranslationJobStartedHtml {
     $inputLength = [string]$State['input_length']
     $fileName = [string]$State['file_name']
     $meta = if ($kind -eq 'file') { 'ファイル: ' + $fileName } else { $inputLength + '字' }
-    $caption = if ($kind -eq 'file') { '抽出中' } elseif ($kind -eq 'revise') { '修正を依頼中' } else { '準備中' }
+    $caption = if ($kind -eq 'file') { '抽出中' } elseif ($kind -eq 'revise') { '修正を依頼中' } elseif ($kind -eq 'cat') { '翻訳中' } else { '準備中' }
     # 修正はテキストの成果物なので、画面上はテキスト側へ描く。
     # ここの kind は「どちらのタブへ結果を入れるか」にしか使われない。
     if ($kind -eq 'revise') { $kind = 'text' }
@@ -1306,6 +1358,14 @@ function Convert-YakuResultJsonToHtml {
     $result = $ResultJson | ConvertFrom-Json
     if ($result -and ($result.PSObject.Properties.Name -contains 'Kind') -and [string]$result.Kind -eq 'file') {
         return Convert-YakuFileResultToHtml -Result $result -IncludeStatusOob:$false
+    }
+    # CAT の訳文はグリッドへ取り込むので、共有の結果欄には出さない。
+    # ここでテキスト翻訳の描画へ落ちると、CAT の結果の形を知らないため壊れる。
+    if ($result -and ($result.PSObject.Properties.Name -contains 'Kind') -and [string]$result.Kind -eq 'cat') {
+        if (($result.PSObject.Properties.Name -contains 'Error') -and $result.Error) {
+            return (New-YakuAlertHtml -Kind error -Message ([string]$result.Error))
+        }
+        return (New-YakuAlertHtml -Kind info -Message ('Copilot翻訳が完了しました。CATタブの一覧へ取り込みます。（' + [string]@($result.Translations).Count + ' セグメント）'))
     }
     return Convert-YakuTextResultToHtml -Result $result -IncludeStatusOob:$false
 }
@@ -2113,6 +2173,106 @@ function Invoke-YakuRoute {
             $safeError = Convert-YakuExceptionToUserMessage $_
             try { Write-YakuLog "Translate job start exception: $($_.Exception.ToString())" 'ERROR' } catch {}
             Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind error -Message $safeError)) -StatusCode 400
+        }
+        return
+    }
+    # ---------------------------------------------------------------- CAT
+    # ファイル翻訳と同じことを、押した分だけ進む形にする。
+    # 段階ごとに口を分けているのは、途中を画面へ出すためである。
+    if ($method -eq 'POST' -and $path.StartsWith('/api/cat/')) {
+        $settings = Read-YakuSettings -Root $script:YakuRoot
+        try {
+            $payload = Read-YakuRequestJson -Request $req
+            $action = $path.Substring('/api/cat/'.Length)
+
+            if ($action -eq 'open') {
+                $incoming = Resolve-YakuIncomingFile -Payload $payload -Settings $settings
+                $direction = 'to_en'
+                try { if (@('to_en','to_jp') -contains [string]$payload['direction']) { $direction = [string]$payload['direction'] } } catch {}
+                $project = New-YakuCatProject -Root $script:YakuRoot -Path ([string]$incoming.Path) -Settings $settings -Direction $direction
+                Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
+                return
+            }
+
+            $projectId = ''
+            try { $projectId = [string]$payload['id'] } catch {}
+            $project = Get-YakuCatProject -Id $projectId
+            if ($null -eq $project) { throw '取り込んだファイルが見つかりません。もう一度「取り込む」を押してください。' }
+
+            switch ($action) {
+                'glossary' {
+                    $null = Invoke-YakuCatGlossaryPass -Root $script:YakuRoot -Project $project -Settings $settings
+                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
+                }
+                'segment' {
+                    $index = -1
+                    try { $index = [int]$payload['index'] } catch { $index = -1 }
+                    $text = ''
+                    try { $text = [string]$payload['text'] } catch {}
+                    $null = Set-YakuCatSegmentTranslation -Project $project -Index $index -Text $text
+                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
+                }
+                'translate' {
+                    # Copilot への往復は他の翻訳と同じくジョブで行う（一度に1つ）。
+                    # ジョブは別のランスペースで走るため、メモリ上のプロジェクトを
+                    # 直接触れない。訳文だけを返させ、完了後に apply で反映する。
+                    $readyState = Get-YakuTranslateReadinessState
+                    if (-not [bool]$readyState.canTranslate) {
+                        $message = if ([string]$readyState.mode -eq 'working') { '翻訳ジョブが実行中です。完了してからお試しください。' } else { 'Copilotの準備が完了してから翻訳できます。' }
+                        Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind warning -Message $message)) -StatusCode 409
+                        return
+                    }
+                    $pending = @()
+                    $segs = @($project.Segments)
+                    for ($i = 0; $i -lt $segs.Count; $i++) {
+                        if (-not [string]::IsNullOrWhiteSpace([string]$segs[$i].Translation)) { continue }
+                        $pending += ,([ordered]@{ index = $i; text = [string]$segs[$i].Text })
+                    }
+                    if (@($pending).Count -eq 0) {
+                        Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind info -Message '訳す残りがありません。')) -StatusCode 409
+                        return
+                    }
+                    $catJson = ([ordered]@{ project_id = [string]$project.Id; direction = [string]$project.Direction; items = @($pending) } | ConvertTo-Json -Depth 6 -Compress)
+                    $state = Start-YakuTranslationJob -InputText '' -Settings $settings -Kind 'cat' -CatJson $catJson
+                    Send-YakuTextResponse -Context $Context -Text (Convert-YakuTranslationJobStartedHtml -State $state)
+                }
+                'apply' {
+                    $jobId = ''
+                    try { $jobId = [string]$payload['job_id'] } catch {}
+                    Update-YakuTranslationJobs
+                    if ([string]::IsNullOrWhiteSpace($jobId) -or -not $script:YakuTranslateJobs.ContainsKey($jobId)) { throw (Get-YakuTranslationJobMissingMessage -JobId $jobId) }
+                    $resultJson = [string]$script:YakuTranslateJobs[$jobId]['result_json']
+                    if ([string]::IsNullOrWhiteSpace($resultJson)) { throw '翻訳結果を取得できませんでした。' }
+                    $result = $resultJson | ConvertFrom-Json
+                    if ($result.PSObject.Properties.Name -contains 'Error' -and $result.Error) { throw [string]$result.Error }
+                    $segs = @($project.Segments)
+                    foreach ($pair in @($result.Translations)) {
+                        $i = [int]$pair.index
+                        if ($i -lt 0 -or $i -ge $segs.Count) { continue }
+                        # 待っている間に人が直したものは踏まない。
+                        if (-not [string]::IsNullOrWhiteSpace([string]$segs[$i].Translation)) { continue }
+                        $segs[$i].Translation = [string]$pair.text
+                        $segs[$i].Origin = 'copilot'
+                    }
+                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
+                }
+                'export' {
+                    $outputPath = Get-YakuTranslatedOutputPath -InputPath ([string]$project.Path)
+                    $warnings = New-Object System.Collections.Generic.List[object]
+                    $exported = Export-YakuCatProject -Project $project -OutputPath $outputPath -Settings $settings -Warnings $warnings
+                    $body = [ordered]@{
+                        output_path = [string]$exported.OutputPath
+                        output_name = [string]$exported.OutputName
+                        written = [int]$exported.Written
+                        skipped = [int]$exported.Skipped
+                    }
+                    Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                default { throw ('不明な操作です: ' + $action) }
+            }
+        } catch {
+            $body = [ordered]@{ error = (Convert-YakuExceptionToUserMessage $_) }
+            Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
         }
         return
     }

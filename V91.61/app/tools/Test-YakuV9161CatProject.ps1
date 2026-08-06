@@ -84,6 +84,18 @@ $proseSeg = @($segs | Where-Object { [bool]$_.Joined })
 Chk ([string]::IsNullOrWhiteSpace([string]$proseSeg[0].Translation)) '完全一致しない文章は空のまま'
 Chk ([int]$g.Remaining -eq 1) '残りが1件と分かる'
 
+# ---------------------------------------------------------------- 画面へ渡す形
+Write-Host '画面へ渡す形'
+$json = ConvertTo-YakuCatProjectJson -Project $project
+$view = $json | ConvertFrom-Json
+Chk ([string]$view.id -eq [string]$project.Id) 'Id が入る'
+Chk ([int]$view.total -eq 2 -and [int]$view.translated -eq 1 -and [int]$view.remaining -eq 1) '件数が入る'
+Chk (@($view.segments).Count -eq 2) 'セグメントが並ぶ'
+Chk (@($view.segments | Where-Object { [bool]$_.joined }).Count -eq 1) '結合したものが分かる'
+Chk (@($view.segments | Where-Object { [int]$_.cells -gt 1 }).Count -eq 1) '何セルを繋いだか分かる'
+# 元の塊やセルの座標は画面に用が無いので載せない。
+Chk (-not ($view.segments[0].PSObject.Properties.Name -contains 'BlockIds')) '内部の識別子は画面へ出さない'
+
 # ---------------------------------------------------------------- 人の直し
 Write-Host '人が直したものを機械が踏まない'
 $null = Set-YakuCatSegmentTranslation -Project $project -Index 0 -Text 'Hand written.'

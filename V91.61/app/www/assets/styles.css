@@ -141,6 +141,24 @@ input[type="text"], select { width: 100%; min-height: 34px; border: 0; border-ra
 .eyebrow { color: var(--faint); font-size: var(--font-meta); font-weight: 600; letter-spacing: .06em; }
 .result-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .translation { margin: 0; white-space: pre-wrap; font-size: var(--font-input); line-height: 1.65; font-family: inherit; color: var(--text); background: var(--soft); border-radius: var(--radius-control); padding: 14px; }
+/* CAT: 原文と訳文を並べて確認する */
+.cat-source-row { display: grid; gap: var(--space-2); margin-bottom: var(--space-2); }
+.cat-direction { display: flex; gap: 16px; align-items: center; }
+.cat-status { margin: var(--space-2) 0; font-size: var(--font-meta); }
+.cat-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: var(--space-2); }
+.cat-grid-wrap { max-height: 60vh; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-control); }
+.cat-grid { width: 100%; border-collapse: collapse; font-size: var(--font-meta); }
+.cat-grid thead th { position: sticky; top: 0; z-index: 1; background: var(--surface); border-bottom: 1px solid var(--line-strong); padding: 8px 10px; text-align: left; }
+.cat-grid td { border-bottom: 1px solid var(--line); padding: 6px 10px; vertical-align: top; }
+.cat-col-no { width: 46px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.cat-col-loc { width: 116px; }
+.cat-source { width: 40%; white-space: pre-wrap; }
+.cat-target { width: 40%; }
+.cat-target textarea { width: 100%; min-height: 44px; resize: vertical; font-size: var(--font-meta); }
+.cat-loc { display: block; color: var(--muted); }
+.cat-origin { display: inline-block; margin-top: 4px; border-radius: 999px; padding: 1px 7px; font-size: 11px; background: var(--soft); color: var(--muted); }
+.cat-origin-manual { background: var(--accent); color: #fff; }
+
 .revise-form { margin-top: var(--space-2); }
 .revise-label { display: block; margin-bottom: 6px; color: var(--muted); font-size: var(--font-meta); }
 .revise-row { display: flex; gap: 8px; align-items: center; }

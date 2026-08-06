@@ -124,6 +124,39 @@ function Get-YakuCatProjectSummary {
     }
 }
 
+function ConvertTo-YakuCatProjectJson {
+    <#
+      画面へ渡す形。原文・訳文・出どころ・場所だけを出す。
+      元の塊やセルの座標は画面に用が無いので載せない。
+    #>
+    param([Parameter(Mandatory=$true)]$Project)
+    $segs = @($Project.Segments)
+    $rows = New-Object System.Collections.Generic.List[object]
+    for ($i = 0; $i -lt $segs.Count; $i++) {
+        [void]$rows.Add([ordered]@{
+            index       = $i
+            source      = [string]$segs[$i].Text
+            translation = [string]$segs[$i].Translation
+            origin      = [string]$segs[$i].Origin
+            joined      = [bool]$segs[$i].Joined
+            cells       = @($segs[$i].BlockIds).Count
+            kind        = [string]$segs[$i].Kind
+            location    = [string]$segs[$i].Location
+        })
+    }
+    $summary = Get-YakuCatProjectSummary -Project $Project
+    return ([ordered]@{
+        id         = [string]$Project.Id
+        file_name  = [string]$Project.FileName
+        direction  = [string]$Project.Direction
+        total      = [int]$summary.Total
+        translated = [int]$summary.Translated
+        remaining  = [int]$summary.Remaining
+        joined     = [int]$summary.Joined
+        segments   = @($rows.ToArray())
+    } | ConvertTo-Json -Depth 6 -Compress)
+}
+
 function Invoke-YakuCatGlossaryPass {
     <#
       登録された用語集で、機械的に置換する。

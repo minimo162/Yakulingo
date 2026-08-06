@@ -17,7 +17,8 @@
   var yakuSettingsSaving = false;
   var yakuActiveTab = 'text';
   var yakuActiveJobKind = 'text';
-  var yakuResultByTab = { text: '', file: '' };
+  // CAT の結果はグリッドへ出すので、共有の結果欄は常に空のままでよい。
+  var yakuResultByTab = { text: '', file: '', cat: '' };
   var yakuLastManualScrollAt = 0;
 
   function yakuMarkManualScroll() { yakuLastManualScrollAt = Date.now(); }
@@ -327,6 +328,18 @@
 
   function yakuFinishJob(data) {
     window.clearTimeout(yakuJobTimer);
+    // CAT は結果を共有の結果欄へ出さない。訳文はグリッドへ取り込む。
+    if (yakuActiveJobKind === 'cat') {
+      var catJobId = yakuActiveJobId;
+      yakuTranslating = false;
+      yakuActiveJobId = null;
+      var catTarget = yakuGetResultTarget();
+      if (catTarget) { catTarget.removeAttribute('aria-busy'); catTarget.innerHTML = '<div class="empty-state">実行中ジョブと翻訳結果はここに表示されます</div>'; }
+      yakuSetButtonEnabled(yakuReady);
+      yakuPollReadyState();
+      yakuCatApply(catJobId);
+      return;
+    }
     var result = yakuGetResultTarget();
     var completedKind = yakuActiveJobKind === 'file' ? 'file' : 'text';
     var completedHtml = data && data.html ? data.html : '<div class="alert alert-warning">翻訳結果を取得できませんでした。</div>';
@@ -377,11 +390,13 @@
   function yakuStartJobPolling(jobId, kind) {
     if (!jobId) return;
     yakuActiveJobId = jobId;
-    yakuActiveJobKind = kind === 'file' ? 'file' : 'text';
+    // CAT も残す。ここで text へ丸めると、完了時にグリッドへ取り込む枝が通らない。
+    var normalizedKind = (kind === 'file' || kind === 'cat') ? kind : 'text';
+    yakuActiveJobKind = normalizedKind;
     yakuTranslating = true;
     try {
       sessionStorage.setItem('yaku-job-id', jobId);
-      sessionStorage.setItem('yaku-job-kind', kind === 'file' ? 'file' : 'text');
+      sessionStorage.setItem('yaku-job-kind', normalizedKind);
     } catch (ignore) {}
     yakuSetButtonEnabled(false);
     window.clearTimeout(yakuJobTimer);
@@ -393,6 +408,12 @@
     var kind = 'text';
     try { jobId = sessionStorage.getItem('yaku-job-id') || ''; kind = sessionStorage.getItem('yaku-job-kind') || 'text'; } catch (ignore) {}
     if (!jobId || yakuRestoredJobId === jobId) return;
+    // CAT のジョブは復元しない。画面を読み直すと取り込んだ一覧が消えており、
+    // 訳文の戻し先が無い。中途半端に復元すると、消えた一覧へ入れようとして失敗する。
+    if (kind === 'cat') {
+      try { sessionStorage.removeItem('yaku-job-id'); sessionStorage.removeItem('yaku-job-kind'); } catch (ignore) {}
+      return;
+    }
     yakuRestoredJobId = jobId;
     yakuActivateTab(kind === 'file' ? 'file' : 'text');
     yakuRenderJobLoading(jobId, 0, 'このタブのジョブを復元しています', '結果確認中');
@@ -475,6 +496,149 @@
     yakuJsonPost('/api/revise-text', payload).then(yakuResponseText).then(yakuStartFromHtml).catch(function (error) {
       yakuShowStartError(error, '修正を依頼できませんでした。');
     });
+  }
+
+  // ---------------------------------------------------------------- CAT
+  // ファイル翻訳と同じことを、押した分だけ進める。
+  // 取り込む → 用語集で置換 → 残りをCopilotで訳す → 出力。
+  var yakuCatProjectId = '';
+  var yakuCatUploaded = null;
+
+  function yakuCatSetStatus(text) {
+    var el = document.getElementById('cat-status');
+    if (el) el.textContent = text;
+  }
+
+  function yakuCatOriginLabel(origin) {
+    if (origin === 'glossary') return '用語集';
+    if (origin === 'copilot') return 'Copilot';
+    if (origin === 'manual') return '手直し';
+    return '';
+  }
+
+  function yakuCatRender(data) {
+    yakuCatProjectId = data.id || '';
+    var body = document.getElementById('cat-grid-body');
+    if (!body) return;
+    var rows = [];
+    var segments = data.segments || [];
+    for (var i = 0; i < segments.length; i++) {
+      var s = segments[i];
+      // 繋いだセグメントは「何セルを1つにまとめたか」を出す。
+      // 繋ぎ方が外れていても、ここを見れば気づける。
+      var loc = s.joined ? (s.cells + 'セル結合') : (s.kind === 'cell' ? 'セル' : s.kind);
+      var origin = yakuCatOriginLabel(s.origin);
+      rows.push(
+        '<tr data-yaku-cat-row="' + s.index + '">' +
+        '<td class="cat-col-no">' + (s.index + 1) + '</td>' +
+        '<td class="cat-col-loc"><span class="cat-loc">' + yakuEscape(loc) + '</span>' +
+        (origin ? '<span class="cat-origin cat-origin-' + yakuEscape(s.origin) + '">' + yakuEscape(origin) + '</span>' : '') + '</td>' +
+        '<td class="cat-source">' + yakuEscape(s.source) + '</td>' +
+        '<td class="cat-target"><textarea rows="2" data-yaku-cat-input="' + s.index + '">' + yakuEscape(s.translation || '') + '</textarea></td>' +
+        '</tr>'
+      );
+    }
+    body.innerHTML = rows.join('');
+    var wrap = document.getElementById('cat-grid-wrap');
+    if (wrap) wrap.hidden = false;
+    var actions = document.getElementById('cat-actions');
+    if (actions) actions.hidden = false;
+    yakuCatSetStatus(data.file_name + ' … ' + data.total + ' セグメント（訳済 ' + data.translated + ' / 残り ' + data.remaining + '、結合 ' + data.joined + '）');
+  }
+
+  function yakuCatPost(action, payload) {
+    return yakuJsonPost('/api/cat/' + action, payload).then(function (response) {
+      return response.text().then(function (text) {
+        var data = null;
+        try { data = JSON.parse(text); } catch (e) { data = null; }
+        if (!response.ok) throw new Error((data && data.error) ? data.error : text);
+        return data;
+      });
+    });
+  }
+
+  function yakuCatSource() {
+    // ファイル翻訳と同じ入口を使う。アップロードかローカルパスのどちらか。
+    var input = document.getElementById('cat-file-input');
+    var path = document.getElementById('cat-path');
+    if (input && input.files && input.files.length) {
+      var file = input.files[0];
+      var fingerprint = yakuFileFingerprint(file);
+      if (yakuCatUploaded && yakuCatUploaded.fingerprint === fingerprint) return Promise.resolve({ file_handle: yakuCatUploaded.handle });
+      return yakuFetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream', 'X-Yaku-File-Name': encodeURIComponent(file.name) },
+        body: file
+      }).then(yakuResponseJson).then(function (data) {
+        if (!data.file_handle) throw new Error('アップロードハンドルを取得できませんでした。');
+        yakuCatUploaded = { fingerprint: fingerprint, handle: data.file_handle };
+        return { file_handle: data.file_handle };
+      });
+    }
+    if (path && path.value.trim()) return Promise.resolve({ file_path: path.value.trim() });
+    return Promise.reject(new Error('ファイルを選択するか、ローカルパスを入力してください。'));
+  }
+
+  function yakuCatOpen() {
+    var checked = document.querySelector('input[name="cat_direction"]:checked');
+    yakuCatSetStatus('取り込んでいます…');
+    yakuCatSource().then(function (source) {
+      source.direction = checked ? checked.value : 'to_en';
+      return yakuCatPost('open', source);
+    }).then(yakuCatRender).catch(function (error) {
+      yakuCatSetStatus('取り込めませんでした: ' + (error && error.message ? error.message : ''));
+    });
+  }
+
+  function yakuCatGlossary() {
+    if (!yakuCatProjectId) return;
+    yakuCatSetStatus('用語集で置換しています…');
+    yakuCatPost('glossary', { id: yakuCatProjectId }).then(yakuCatRender).catch(function (error) {
+      yakuCatSetStatus('置換できませんでした: ' + (error && error.message ? error.message : ''));
+    });
+  }
+
+  function yakuCatTranslate() {
+    if (!yakuCatProjectId) return;
+    if (!yakuReady || yakuTranslating) { yakuPollReadyState(); return; }
+    yakuTranslating = true;
+    yakuActiveJobKind = 'cat';
+    yakuSetButtonEnabled(false);
+    yakuRenderJobLoading('', 0, 'Copilotで翻訳中', '準備中');
+    yakuScrollJobResultIntoView();
+    // ジョブは別のランスペースで走り、メモリ上のプロジェクトを触れない。
+    // 訳文だけを返させ、完了後に apply で取り込む。
+    yakuJsonPost('/api/cat/translate', { id: yakuCatProjectId }).then(yakuResponseText).then(yakuStartFromHtml).catch(function (error) {
+      yakuShowStartError(error, 'Copilot翻訳を開始できませんでした。');
+    });
+  }
+
+  function yakuCatApply(jobId) {
+    if (!yakuCatProjectId || !jobId) return;
+    yakuCatSetStatus('訳文を取り込んでいます…');
+    yakuCatPost('apply', { id: yakuCatProjectId, job_id: jobId }).then(yakuCatRender).catch(function (error) {
+      yakuCatSetStatus('訳文を取り込めませんでした: ' + (error && error.message ? error.message : ''));
+    });
+  }
+
+  function yakuCatExport() {
+    if (!yakuCatProjectId) return;
+    yakuCatSetStatus('出力しています…');
+    yakuCatPost('export', { id: yakuCatProjectId }).then(function (data) {
+      yakuCatSetStatus('出力しました: ' + data.output_path);
+    }).catch(function (error) {
+      yakuCatSetStatus('出力できませんでした: ' + (error && error.message ? error.message : ''));
+    });
+  }
+
+  function yakuCatSaveSegment(index, text) {
+    if (!yakuCatProjectId) return;
+    yakuCatPost('segment', { id: yakuCatProjectId, index: index, text: text }).then(function (data) {
+      // 全体を描き直すと編集中のカーソルが飛ぶので、件数だけ更新する。
+      yakuCatSetStatus(data.file_name + ' … ' + data.total + ' セグメント（訳済 ' + data.translated + ' / 残り ' + data.remaining + '、結合 ' + data.joined + '）');
+      var row = document.querySelector('[data-yaku-cat-row="' + index + '"] .cat-col-loc .cat-origin');
+      if (row) { row.className = 'cat-origin cat-origin-manual'; row.textContent = '手直し'; }
+    }).catch(function () {});
   }
 
   function yakuFileFingerprint(file) {
@@ -576,7 +740,7 @@
   }
 
   function yakuActivateTab(name, focus) {
-    var target = name === 'file' ? 'file' : 'text';
+    var target = (name === 'file' || name === 'cat') ? name : 'text';
     yakuActiveTab = target;
     document.querySelectorAll('[data-yaku-tab]').forEach(function (button) {
       var active = button.getAttribute('data-yaku-tab') === target;
@@ -815,6 +979,27 @@
     document.addEventListener('input', function (event) {
       var form = event.target.closest && event.target.closest('form[data-yaku-settings-form]');
       if (form) yakuMarkSettingsDirty(form);
+    });
+
+    // CAT の操作。訳文欄は離れたときに保存する。打つたびに送ると往復が増える。
+    var catOpen = document.getElementById('cat-open-button');
+    if (catOpen) catOpen.addEventListener('click', yakuCatOpen);
+    var catGlossary = document.getElementById('cat-glossary-button');
+    if (catGlossary) catGlossary.addEventListener('click', yakuCatGlossary);
+    var catTranslate = document.getElementById('cat-translate-button');
+    if (catTranslate) catTranslate.addEventListener('click', yakuCatTranslate);
+    var catExport = document.getElementById('cat-export-button');
+    if (catExport) catExport.addEventListener('click', yakuCatExport);
+    var catFileInput = document.getElementById('cat-file-input');
+    if (catFileInput) catFileInput.addEventListener('change', function () {
+      yakuCatUploaded = null;
+      var name = document.getElementById('cat-file-name');
+      if (name) name.textContent = (catFileInput.files && catFileInput.files.length) ? catFileInput.files[0].name : 'ローカルパス指定も利用できます';
+    });
+    document.addEventListener('focusout', function (event) {
+      var input = event.target.closest && event.target.closest('[data-yaku-cat-input]');
+      if (!input) return;
+      yakuCatSaveSegment(parseInt(input.getAttribute('data-yaku-cat-input'), 10), input.value);
     });
 
     document.addEventListener('keydown', function (event) {
