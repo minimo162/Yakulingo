@@ -189,6 +189,15 @@
           </label>
           <span id="cat-filter-count" class="muted"></span>
         </div>
+        <!--
+          候補ペイン。市販の CAT エディタの中核にあたる部分で、いま見ている
+          セグメントに対する手掛かりを並べる。用語集は手元で引けるので、
+          行を移るたびに即座に出せる。
+        -->
+        <div id="cat-candidates" class="cat-candidates" hidden>
+          <div class="cat-candidates-title muted">この行の候補<span class="cat-keyhint muted"><kbd>Ctrl</kbd><kbd>1</kbd>…で挿入</span></div>
+          <div id="cat-candidates-list" class="cat-candidates-list"></div>
+        </div>
         <div id="cat-grid-wrap" class="cat-grid-wrap" hidden>
           <table class="cat-grid">
             <thead>

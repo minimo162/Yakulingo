@@ -2255,6 +2255,16 @@ function Invoke-YakuRoute {
                     $null = Split-YakuCatSegment -Project $project -Index $index
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 }
+                'candidates' {
+                    # 現在行の候補。用語集を引くだけなので手元で終わり、行を移る
+                    # たびに出せる。コーパスの文例はここに出さない（英語でしか
+                    # 引けず、行ごとに Copilot へ往復できないため）。
+                    $index = -1
+                    try { $index = [int]$payload['index'] } catch { $index = -1 }
+                    $items = @(Get-YakuCatSegmentCandidates -Root $script:YakuRoot -Project $project -Index $index)
+                    $rows = @($items | ForEach-Object { [ordered]@{ kind = [string]$_.Kind; source = [string]$_.Source; target = [string]$_.Target; exact = [bool]$_.Exact } })
+                    Send-YakuTextResponse -Context $Context -Text (([ordered]@{ index = $index; candidates = @($rows) } | ConvertTo-Json -Depth 5 -Compress)) -ContentType 'application/json; charset=utf-8'
+                }
                 'segment' {
                     $index = -1
                     try { $index = [int]$payload['index'] } catch { $index = -1 }

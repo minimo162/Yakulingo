@@ -459,6 +459,73 @@ function Split-YakuCatSegment {
     return $Project
 }
 
+function Get-YakuCatSegmentCandidates {
+    <#
+      1つのセグメントに対する候補を返す。CAT エディタの中核にあたる部分。
+
+      市販ツールはここに 翻訳メモリ・用語集・機械翻訳 を一致率つきで並べ、
+      Ctrl+数字 で差し込めるようにしている。訳す前に「過去はどう訳したか」が
+      目に入ることが、一貫性を保つ仕組みそのものになっている。
+
+      いま出せるのは用語集だけである。
+
+        - 翻訳メモリはまだ無い。
+        - コーパスの文例は、英語でしか引けない。日本語の原文から英語の
+          検索語を作るのに Copilot への往復が要るので、行を移るたびには
+          引けない（利用者の指摘 2026-08-06）。しかも公表訳が意訳のときは、
+          日本語を直訳した検索語では目当ての文例に当たらない。
+          日本語側も取り込んで日本語で引けるようにするのが筋で、
+          そこまでは用語集だけを出す。
+
+      完全一致だけでなく部分一致も出す。表のラベルは完全一致で機械置換
+      できるが、文の中に現れた語は置換しない（活用と一致が壊れるため。
+      実機検証結果 §3-2）。置換しないからこそ、目に入る場所へ出す値打ちがある。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Root,
+        [Parameter(Mandatory=$true)]$Project,
+        [Parameter(Mandatory=$true)][int]$Index,
+        [int]$Max = 8
+    )
+    $segs = @($Project.Segments)
+    if ($Index -lt 0 -or $Index -ge $segs.Count) { return @() }
+    $text = [string]$segs[$Index].Text
+    if ([string]::IsNullOrWhiteSpace($text)) { return @() }
+    $toEn = ([string]$Project.Direction -eq 'to_en')
+    $sourceKey = ConvertTo-YakuGlossaryMatchKey -Value (ConvertTo-YakuGlossaryField -Value $text)
+
+    $out = New-Object System.Collections.Generic.List[object]
+    $seen = @{}
+    foreach ($entry in @(Get-YakuGlossaryEntries -Root $Root)) {
+        $from = if ($toEn) { ConvertTo-YakuGlossaryField -Value $entry.Source } else { ConvertTo-YakuGlossaryField -Value $entry.Target }
+        $to   = if ($toEn) { ConvertTo-YakuGlossaryField -Value $entry.Target } else { ConvertTo-YakuGlossaryField -Value $entry.Source }
+        if ([string]::IsNullOrWhiteSpace($from) -or [string]::IsNullOrWhiteSpace($to)) { continue }
+        $exact = [string]::Equals((ConvertTo-YakuGlossaryMatchKey -Value $from), $sourceKey, [System.StringComparison]::Ordinal)
+        if (-not $exact) {
+            # 部分一致。1文字の語で拾いすぎないよう、ある程度の長さを求める。
+            if ($from.Length -lt 2) { continue }
+            $at = $text.IndexOf($from, [System.StringComparison]::Ordinal)
+            if ($at -lt 0) { continue }
+            # 短い漢字語が、前の漢字と続いて別の語になっている場合は拾わない。
+            # 「四半期」の中の「半期」が Half-year として出ると、かえって誤らせる。
+            # 日本語には語の切れ目が無いので、これ以上のことは字面から分からない。
+            if ($from.Length -le 2 -and $from -match '^[一-鿿]' -and $at -gt 0 -and [string]$text[$at - 1] -match '[一-鿿]') { continue }
+        }
+        $key = $from + [string][char]31 + $to
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        [void]$out.Add([pscustomobject]@{
+            Kind   = 'glossary'
+            Source = $from
+            Target = $to
+            Exact  = $exact
+            # 長い語ほど手掛かりとして強い。並べ替えに使う。
+            Weight = $(if ($exact) { 10000 } else { $from.Length })
+        })
+    }
+    return @(@($out.ToArray()) | Sort-Object -Property @{ Expression = { [int]$_.Weight }; Descending = $true } | Select-Object -First $Max)
+}
+
 function Set-YakuCatSegmentTranslation {
     <#
       人が直した訳文を入れる。以後、機械の処理はここを触らない。

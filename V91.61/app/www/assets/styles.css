@@ -189,6 +189,18 @@ input[type="text"], select { width: 100%; min-height: 34px; border: 0; border-ra
 .cat-op { min-height: 22px; padding: 0 6px; font-size: 11px; background: transparent; border: 1px solid var(--line-strong); color: var(--text); }
 .cat-op:hover { background: var(--soft); }
 
+/* 候補ペイン。CAT エディタの中核で、いま見ている行の手掛かりを並べる。 */
+.cat-candidates { border: 1px solid var(--line); border-radius: var(--radius-control); padding: 10px 12px; margin-bottom: var(--space-2); }
+.cat-candidates-title { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; font-size: var(--font-meta); }
+.cat-candidates-list { display: grid; gap: 4px; max-height: 22vh; overflow: auto; }
+.cat-cand { display: grid; grid-template-columns: 20px 62px minmax(0, 1fr) minmax(0, 1fr); gap: 8px; align-items: baseline; width: 100%; min-height: 26px; padding: 3px 6px; text-align: left; background: transparent; border: 1px solid transparent; color: var(--text); font-size: var(--font-meta); }
+.cat-cand:hover { background: var(--soft); border-color: var(--line-strong); }
+.cat-cand-no { color: var(--muted); font-variant-numeric: tabular-nums; }
+.cat-cand-tag { border-radius: 999px; padding: 0 6px; background: var(--soft); color: var(--muted); font-size: 11px; text-align: center; }
+.cat-cand-tag.is-exact { background: #8a6d1f; color: #fff; }
+.cat-cand-src { color: var(--muted); overflow-wrap: anywhere; }
+.cat-cand-tgt { overflow-wrap: anywhere; }
+
 .cat-progress-row { display: flex; gap: 12px; align-items: center; margin-bottom: var(--space-2); font-size: var(--font-meta); }
 .cat-progress { flex: 0 0 200px; height: 8px; border-radius: 4px; background: var(--soft); overflow: hidden; }
 .cat-progress-bar { display: block; height: 100%; background: var(--accent); transition: width .2s; }

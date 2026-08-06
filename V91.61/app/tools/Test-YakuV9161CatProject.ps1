@@ -241,6 +241,37 @@ Chk ($indexText -match 'id="cat-progress-bar"') '進捗バーがある'
 # いたので、一覧を上から見ていくだけで全部が手直し扱いになっていた。
 Chk ($appJsText.Contains("data-yaku-original")) '変更が無ければ保存しない（触っただけで手直しにしない）'
 
+# ---------------------------------------------------------------- 候補ペイン
+# CAT エディタの中核にあたる部分（利用者の指摘 2026-08-06）。
+# いま出せるのは用語集だけ。翻訳メモリはまだ無く、コーパスの文例は英語でしか
+# 引けないため行ごとには出せない。
+Write-Host '候補ペイン'
+$cp = New-YakuCatTextProject -Root $root -Text '上期営利' -Settings $settings -Direction 'to_en'
+$cands = @(Get-YakuCatSegmentCandidates -Root $root -Project $cp -Index 0)
+Chk ($cands.Count -gt 0) ('候補が出る: ' + $cands.Count)
+Chk ([bool]$cands[0].Exact) '完全一致が先頭に来る'
+Chk ([string]$cands[0].Target -eq '1H OP') ('上期営利 -> 1H OP: ' + [string]$cands[0].Target)
+Remove-YakuCatProject -Id ([string]$cp.Id)
+
+# 文中の一致も出す。表のラベルは完全一致で機械置換できるが、文中の語は
+# 置換しない（活用と一致が壊れるため）。置換しないからこそ目に入れる。
+$cp2 = New-YakuCatTextProject -Root $root -Text '固定費を圧縮した一方、為替の影響を受けました。' -Settings $settings -Direction 'to_en'
+$c2 = @(Get-YakuCatSegmentCandidates -Root $root -Project $cp2 -Index 0)
+Chk (@($c2 | Where-Object { [string]$_.Source -eq '固定費' }).Count -eq 1) '文中の語を拾う'
+Chk (@($c2 | Where-Object { [bool]$_.Exact }).Count -eq 0) '文には完全一致が無い'
+Remove-YakuCatProject -Id ([string]$cp2.Id)
+
+# 短い漢字語が前の漢字と続いて別の語になっている場合は拾わない。
+# 「四半期」の中の「半期」が Half-year として出ると、かえって誤らせる。
+$cp3 = New-YakuCatTextProject -Root $root -Text '当第1四半期の実績です。' -Settings $settings -Direction 'to_en'
+$c3 = @(Get-YakuCatSegmentCandidates -Root $root -Project $cp3 -Index 0)
+Chk (@($c3 | Where-Object { [string]$_.Source -eq '半期' }).Count -eq 0) '四半期 の中の 半期 を拾わない'
+Remove-YakuCatProject -Id ([string]$cp3.Id)
+
+Chk ($appJsText.Contains('yakuCatLoadCandidates')) '行を移るたびに候補を出す'
+Chk ($appJsText.Contains('data-yaku-cat-insert')) '候補を訳文へ差し込める'
+Chk ($indexText -match 'id="cat-candidates"') '候補ペインがある'
+
 # ---------------------------------------------------------------- 片付け
 Remove-YakuCatProject -Id ([string]$project.Id)
 Chk ((Get-YakuCatProject -Id ([string]$project.Id)) -eq $null) '終わったプロジェクトは捨てられる'

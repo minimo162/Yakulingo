@@ -737,6 +737,50 @@
     });
   }
 
+  // 候補ペイン。用語集は手元で引けるので、行を移るたびに出せる。
+  var yakuCatCandidateSeq = 0;
+
+  function yakuCatLoadCandidates(index) {
+    if (!yakuCatProjectId || isNaN(index)) return;
+    var seq = ++yakuCatCandidateSeq;
+    yakuCatPost('candidates', { id: yakuCatProjectId, index: index }).then(function (data) {
+      // 行を早く移ったときに、古い応答で上書きしない。
+      if (seq !== yakuCatCandidateSeq) return;
+      var panel = document.getElementById('cat-candidates');
+      var list = document.getElementById('cat-candidates-list');
+      if (!panel || !list) return;
+      var items = data.candidates || [];
+      panel.hidden = false;
+      if (!items.length) {
+        list.innerHTML = '<div class="muted">この行に当たる用語はありません。</div>';
+        return;
+      }
+      list.innerHTML = items.map(function (c, i) {
+        // 完全一致か文中の一致かを区別する。完全一致は機械置換の対象で、
+        // 文中の語は置換しない（活用と一致が壊れるため）。目に入れるだけ。
+        var tag = c.exact ? '完全一致' : '文中';
+        return '<button type="button" class="cat-cand" data-yaku-cat-insert="' + yakuEscape(c.target) + '">' +
+          '<span class="cat-cand-no">' + (i + 1) + '</span>' +
+          '<span class="cat-cand-tag' + (c.exact ? ' is-exact' : '') + '">' + tag + '</span>' +
+          '<span class="cat-cand-src">' + yakuEscape(c.source) + '</span>' +
+          '<span class="cat-cand-tgt">' + yakuEscape(c.target) + '</span>' +
+          '</button>';
+      }).join('');
+    }).catch(function () {});
+  }
+
+  function yakuCatInsert(input, text) {
+    if (!input || !text) return;
+    // 空なら丸ごと入れる。書きかけならカーソル位置へ差し込む。
+    if (!input.value.trim()) { input.value = text; }
+    else {
+      var at = (typeof input.selectionStart === 'number') ? input.selectionStart : input.value.length;
+      input.value = input.value.slice(0, at) + text + input.value.slice(at);
+      input.selectionStart = input.selectionEnd = at + text.length;
+    }
+    input.focus();
+  }
+
   function yakuCatRegroup(action, index) {
     if (!yakuCatProjectId) return;
     yakuCatSetStatus(action === 'merge' ? '結合しています…' : '解除しています…');
@@ -1165,7 +1209,25 @@
       if (input) {
         var row = input.closest('[data-yaku-cat-row]');
         if (row) row.classList.add('is-active');
+        yakuCatLoadCandidates(parseInt(input.getAttribute('data-yaku-cat-input'), 10));
       }
+    });
+    // Ctrl+1..9 で候補を差し込む。市販の CAT エディタと同じ割り当て。
+    document.addEventListener('keydown', function (event) {
+      if (!(event.ctrlKey || event.metaKey) || event.key < '1' || event.key > '9') return;
+      var input = event.target.closest && event.target.closest('[data-yaku-cat-input]');
+      if (!input) return;
+      var buttons = document.querySelectorAll('#cat-candidates-list [data-yaku-cat-insert]');
+      var pick = buttons[parseInt(event.key, 10) - 1];
+      if (!pick) return;
+      event.preventDefault();
+      yakuCatInsert(input, pick.getAttribute('data-yaku-cat-insert'));
+    });
+    document.addEventListener('click', function (event) {
+      var pick = event.target.closest && event.target.closest('[data-yaku-cat-insert]');
+      if (!pick) return;
+      var active = document.querySelector('[data-yaku-cat-row].is-active [data-yaku-cat-input]');
+      if (active) yakuCatInsert(active, pick.getAttribute('data-yaku-cat-insert'));
     });
     // Ctrl+Enter で保存して次の訳文へ。市販の CAT エディタと同じ割り当てで、
     // 手をキーボードから離さずに一覧を下りていける。
