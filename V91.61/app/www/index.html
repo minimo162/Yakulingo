@@ -147,6 +147,18 @@
         </div>
         <div id="cat-status" class="cat-status muted" aria-live="polite">テキストを貼り付けて「取り込む」を押してください。</div>
         <!--
+          進捗とキーボードの案内。市販の CAT エディタはどちらも常に見える所に
+          置いている。どこまで進んだかと、手を止めずに進む方法が分からないと、
+          長い一覧を最後まで見る気にならない。
+        -->
+        <div id="cat-progress-row" class="cat-progress-row" hidden>
+          <div class="cat-progress" role="progressbar" aria-label="翻訳の進捗" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <span id="cat-progress-bar" class="cat-progress-bar" style="width:0%"></span>
+          </div>
+          <span id="cat-progress-text" class="muted"></span>
+          <span class="cat-keyhint muted"><kbd>Ctrl</kbd><kbd>↵</kbd>で次の訳文へ</span>
+        </div>
+        <!--
           文例の検索と AI 翻訳は別のボタンにする（利用者の判断 2026-08-06）。
           検索は往復が1回増えて重いので、いつも付けると遅くなる。
           分けておけば「検索だけ」「翻訳だけ」「検索してから翻訳」を選べる。

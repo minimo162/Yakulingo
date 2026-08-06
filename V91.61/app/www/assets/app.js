@@ -564,14 +564,17 @@
       var ops = '';
       if (s.can_merge) ops += '<button type="button" class="cat-op" data-yaku-cat-merge="' + s.index + '" title="次のセグメントと結合します（訳文は消えます）">↓結合</button>';
       if (s.can_split) ops += '<button type="button" class="cat-op" data-yaku-cat-split="' + s.index + '" title="セル1つずつに戻します（訳文は消えます）">解除</button>';
+      // 行の状態を色で示す。市販の CAT エディタは状態列を色で分けており、
+      // 一覧を眺めたときに「どこが手つかずか」が一目で分かる。
+      var state = (s.translation || '').trim() ? (s.origin || 'other') : 'untranslated';
       rows.push(
-        '<tr data-yaku-cat-row="' + s.index + '">' +
+        '<tr data-yaku-cat-row="' + s.index + '" data-yaku-cat-state="' + yakuEscape(state) + '">' +
         '<td class="cat-col-no">' + (s.index + 1) + '</td>' +
         '<td class="cat-col-loc"><span class="cat-loc" title="' + yakuEscape(s.location || '') + '">' + yakuEscape(loc) + '</span>' +
         (origin ? '<span class="cat-origin cat-origin-' + yakuEscape(s.origin) + '">' + yakuEscape(origin) + '</span>' : '') +
         (ops ? '<span class="cat-ops">' + ops + '</span>' : '') + '</td>' +
         '<td class="cat-source">' + yakuEscape(s.source) + '</td>' +
-        '<td class="cat-target"><textarea rows="2" data-yaku-cat-input="' + s.index + '">' + yakuEscape(s.translation || '') + '</textarea></td>' +
+        '<td class="cat-target"><textarea rows="2" data-yaku-cat-input="' + s.index + '" data-yaku-original="' + yakuEscape(s.translation || '') + '">' + yakuEscape(s.translation || '') + '</textarea></td>' +
         '</tr>'
       );
     }
@@ -605,6 +608,22 @@
     var exportBtn = document.getElementById('cat-export-button');
     if (exportBtn) exportBtn.textContent = (data.source === 'text') ? '訳文をコピー' : '出力';
     yakuCatSetStatus(data.file_name + ' … ' + data.total + ' セグメント（訳済 ' + data.translated + ' / 残り ' + data.remaining + '、結合 ' + data.joined + '）');
+    yakuCatUpdateProgress(data);
+  }
+
+  function yakuCatUpdateProgress(data) {
+    var row = document.getElementById('cat-progress-row');
+    if (!row) return;
+    row.hidden = false;
+    var total = data.total || 0;
+    var done = data.translated || 0;
+    var pct = total ? Math.round((done / total) * 100) : 0;
+    var bar = document.getElementById('cat-progress-bar');
+    if (bar) bar.style.width = pct + '%';
+    var meter = row.querySelector('[role="progressbar"]');
+    if (meter) meter.setAttribute('aria-valuenow', pct);
+    var text = document.getElementById('cat-progress-text');
+    if (text) text.textContent = pct + '%（' + done + ' / ' + total + '）';
   }
 
   function yakuCatPost(action, payload) {
@@ -729,10 +748,25 @@
   function yakuCatSaveSegment(index, text) {
     if (!yakuCatProjectId) return;
     yakuCatPost('segment', { id: yakuCatProjectId, index: index, text: text }).then(function (data) {
-      // 全体を描き直すと編集中のカーソルが飛ぶので、件数だけ更新する。
+      // 全体を描き直すと編集中のカーソルが飛ぶので、その行と件数だけ更新する。
+      yakuCatData = data;
       yakuCatSetStatus(data.file_name + ' … ' + data.total + ' セグメント（訳済 ' + data.translated + ' / 残り ' + data.remaining + '、結合 ' + data.joined + '）');
-      var row = document.querySelector('[data-yaku-cat-row="' + index + '"] .cat-col-loc .cat-origin');
-      if (row) { row.className = 'cat-origin cat-origin-manual'; row.textContent = '手直し'; }
+      yakuCatUpdateProgress(data);
+      var tr = document.querySelector('[data-yaku-cat-row="' + index + '"]');
+      if (tr) {
+        tr.setAttribute('data-yaku-cat-state', text.trim() ? 'manual' : 'untranslated');
+        var badge = tr.querySelector('.cat-col-loc .cat-origin');
+        if (text.trim()) {
+          if (!badge) {
+            badge = document.createElement('span');
+            tr.querySelector('.cat-col-loc').insertBefore(badge, tr.querySelector('.cat-ops'));
+          }
+          badge.className = 'cat-origin cat-origin-manual';
+          badge.textContent = '手直し';
+        } else if (badge) {
+          badge.remove();
+        }
+      }
     }).catch(function () {});
   }
 
@@ -1109,10 +1143,42 @@
       var name = document.getElementById('cat-file-name');
       if (name) name.textContent = (catFileInput.files && catFileInput.files.length) ? catFileInput.files[0].name : 'ローカルパス指定も利用できます';
     });
+    // 触っただけのセグメントを「手直し」にしない。以前は離れるたびに保存して
+    // いたので、一覧を上から見ていくだけで全部が手直し扱いになっていた。
+    function yakuCatCommit(input) {
+      if (!input) return false;
+      if (input.value === (input.getAttribute('data-yaku-original') || '')) return false;
+      input.setAttribute('data-yaku-original', input.value);
+      yakuCatSaveSegment(parseInt(input.getAttribute('data-yaku-cat-input'), 10), input.value);
+      return true;
+    }
     document.addEventListener('focusout', function (event) {
       var input = event.target.closest && event.target.closest('[data-yaku-cat-input]');
+      if (input) yakuCatCommit(input);
+    });
+    // いま見ている行を示す。市販の CAT エディタはどこも現在行を強調しており、
+    // 長い一覧の中で自分の位置を見失わないようにしている。
+    document.addEventListener('focusin', function (event) {
+      var input = event.target.closest && event.target.closest('[data-yaku-cat-input]');
+      var previous = document.querySelector('[data-yaku-cat-row].is-active');
+      if (previous) previous.classList.remove('is-active');
+      if (input) {
+        var row = input.closest('[data-yaku-cat-row]');
+        if (row) row.classList.add('is-active');
+      }
+    });
+    // Ctrl+Enter で保存して次の訳文へ。市販の CAT エディタと同じ割り当てで、
+    // 手をキーボードから離さずに一覧を下りていける。
+    document.addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter' || !(event.ctrlKey || event.metaKey)) return;
+      var input = event.target.closest && event.target.closest('[data-yaku-cat-input]');
       if (!input) return;
-      yakuCatSaveSegment(parseInt(input.getAttribute('data-yaku-cat-input'), 10), input.value);
+      event.preventDefault();
+      yakuCatCommit(input);
+      var inputs = Array.prototype.slice.call(document.querySelectorAll('[data-yaku-cat-input]'));
+      var next = inputs[inputs.indexOf(input) + 1];
+      if (next) { next.focus(); next.select(); }
+      else { input.blur(); }
     });
     // 簡易翻訳の結果から CAT へ渡す。原文をそのまま持っていくので、
     // 押した先に見慣れた文が並ぶ。覚えることは「1文ずつ見える」だけになる。

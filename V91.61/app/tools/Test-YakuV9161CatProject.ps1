@@ -223,6 +223,24 @@ Chk ($appJsText.Contains("name=`"cat_source`"")) '取り込み元を切り替え
 $indexText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'index.html'))
 Chk ($indexText -match 'id="cat-text"') 'CAT に貼り付け欄がある'
 
+# ---------------------------------------------------------------- 一覧の作法
+# 市販の CAT エディタが備えていて、こちらに無かったもの（2026-08-06 の比較）。
+# 一日中この一覧の中で作業する道具なので、進み具合・現在位置・キーボードは
+# 「あると便利」ではなく前提に近い。
+Write-Host '一覧の作法（市販ツールに合わせたもの）'
+$cssText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'assets\styles.css'))
+Chk ($cssText -match 'data-yaku-cat-state="untranslated"') '未訳の行を色で示す'
+Chk ($cssText -match 'data-yaku-cat-state="manual"') '手直しの行を色で示す'
+Chk ($cssText -match '\.cat-grid tbody tr\.is-active') 'いま見ている行を強調する'
+Chk ($cssText -match '\.cat-ops \{[^}]*visibility: hidden') '繋ぎ直しのボタンは常には出さない（全行に並ぶと目が滑る）'
+Chk ($appJsText.Contains("addEventListener('focusin'")) '現在行を追う'
+Chk ($appJsText.Contains("event.key !== 'Enter'")) 'Ctrl+Enter で次へ進める'
+Chk ($appJsText.Contains('yakuCatUpdateProgress')) '進み具合を出す'
+Chk ($indexText -match 'id="cat-progress-bar"') '進捗バーがある'
+# 触っただけのセグメントを「手直し」にしない。以前は離れるたびに保存して
+# いたので、一覧を上から見ていくだけで全部が手直し扱いになっていた。
+Chk ($appJsText.Contains("data-yaku-original")) '変更が無ければ保存しない（触っただけで手直しにしない）'
+
 # ---------------------------------------------------------------- 片付け
 Remove-YakuCatProject -Id ([string]$project.Id)
 Chk ((Get-YakuCatProject -Id ([string]$project.Id)) -eq $null) '終わったプロジェクトは捨てられる'
