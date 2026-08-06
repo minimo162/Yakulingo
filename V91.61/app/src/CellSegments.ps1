@@ -84,17 +84,26 @@ function Group-YakuCellsIntoSegments {
     #>
     param(
         [AllowNull()][object[]]$Cells,
-        [int]$MaxJoin = 12
+        [int]$MaxJoin = 12,
+        # 行に埋まったセルがいくつあるか（行番号→件数）。
+        # **翻訳対象のセルだけを数えてはいけない。** 数値セルは抽出されないので、
+        # 「営業利益 | 1,234」の行が「1つだけ」に見え、次の行と繋いでしまう。
+        # 渡されなければ手元のセルから数えるが、それは近似でしかない。
+        [AllowNull()][hashtable]$RowOccupancy
     )
     $list = @($Cells | Where-Object { $null -ne $_ -and -not [string]::IsNullOrWhiteSpace([string]$_.Text) })
     if ($list.Count -eq 0) { return @() }
 
     # その行に埋まったセルがいくつあるか。1つだけなら「行に単独で置かれた文字」。
     $rowCount = @{}
-    foreach ($c in $list) {
-        $r = [int]$c.Row
-        if (-not $rowCount.ContainsKey($r)) { $rowCount[$r] = 0 }
-        $rowCount[$r]++
+    if ($null -ne $RowOccupancy -and $RowOccupancy.Count -gt 0) {
+        $rowCount = $RowOccupancy
+    } else {
+        foreach ($c in $list) {
+            $r = [int]$c.Row
+            if (-not $rowCount.ContainsKey($r)) { $rowCount[$r] = 0 }
+            $rowCount[$r]++
+        }
     }
 
     $segments = New-Object System.Collections.Generic.List[object]
@@ -120,7 +129,9 @@ function Group-YakuCellsIntoSegments {
         if ($null -ne $prev -and $current.Count -gt 0 -and $current.Count -lt $MaxJoin) {
             $sameColumn = ([int]$c.Column -eq [int]$prev.Column)
             $nextRow    = ([int]$c.Row -eq ([int]$prev.Row + 1))
-            $bothAlone  = (([int]$rowCount[[int]$prev.Row] -eq 1) -and ([int]$rowCount[[int]$c.Row] -eq 1))
+                $prevAlone  = ($rowCount.ContainsKey([int]$prev.Row) -and ([int]$rowCount[[int]$prev.Row] -eq 1))
+            $curAlone   = ($rowCount.ContainsKey([int]$c.Row) -and ([int]$rowCount[[int]$c.Row] -eq 1))
+            $bothAlone  = ($prevAlone -and $curAlone)
             $bothText   = ([bool]$prev.IsText -and [bool]$c.IsText)
             $open       = (-not (Test-YakuCellEndsSentence -Text ([string]$prev.Text)))
             $notNewItem = (-not (Test-YakuCellStartsNewItem -Text ([string]$c.Text)))
@@ -132,6 +143,145 @@ function Group-YakuCellsIntoSegments {
     }
     Flush -Buffer $current -Sink $segments
     return @($segments.ToArray())
+}
+
+function Get-YakuExcelRowOccupancy {
+    <#
+      シートごとに、各行がいくつのセルで埋まっているかを数える。
+
+      翻訳対象のセルだけを数えては**いけない**。数値セルは抽出されないので、
+      「営業利益 | 1,234」の行が「1つだけ埋まっている」ように見え、
+      次の行の文字と繋いでしまう。表の行を文章として繋ぐのは最悪の外し方
+      なので、ここは実際のシートから数える。
+
+      返すのは シート名 → @{ 行番号 = 件数 }。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Workbook,
+        [int]$MaxCellsPerSheet = 200000
+    )
+    $out = @{}
+    foreach ($ws in $Workbook.Worksheets) {
+        $name = ''
+        try { $name = [string]$ws.Name } catch { $name = '' }
+        if ([string]::IsNullOrWhiteSpace($name)) { Release-YakuComObject $ws; continue }
+        $rows = @{}
+        $used = $null
+        try { $used = $ws.UsedRange } catch { $used = $null }
+        if ($null -ne $used) {
+            try {
+                $rowCount = [int]$used.Rows.Count
+                $colCount = [int]$used.Columns.Count
+                $firstRow = [int]$used.Row
+                if (($rowCount * $colCount) -le $MaxCellsPerSheet) {
+                    $values = $used.Value2
+                    for ($rr = 1; $rr -le $rowCount; $rr++) {
+                        $n = 0
+                        for ($cc = 1; $cc -le $colCount; $cc++) {
+                            $v = Get-YakuRangeArrayValue -Values $values -RowOffset $rr -ColOffset $cc
+                            if ($null -eq $v) { continue }
+                            if ([string]::IsNullOrWhiteSpace([string]$v)) { continue }
+                            $n++
+                        }
+                        if ($n -gt 0) { $rows[($firstRow + $rr - 1)] = $n }
+                    }
+                }
+            } catch {}
+            Release-YakuComObject $used
+        }
+        Release-YakuComObject $ws
+        $out[$name] = $rows
+    }
+    return $out
+}
+
+function Group-YakuTextBlocksIntoSegments {
+    <#
+      抽出した文字の塊（Get-YakuExcelTextBlocks の出力）を、訳す単位へまとめる。
+
+      セルの塊だけをシートごとに繋ぐ。図形・グラフ・コメントは1つずつ訳す。
+      図形は位置で並ぶので、行優先の並びに混ぜると順序が壊れるためである。
+
+      返すセグメントは BlockIds を持つ。訳したあと、これで元の塊へ戻す。
+    #>
+    param(
+        [AllowNull()][object[]]$Blocks,
+        [AllowNull()][hashtable]$RowOccupancy,
+        [int]$MaxJoin = 12
+    )
+    $all = @($Blocks | Where-Object { $null -ne $_ })
+    $segments = New-Object System.Collections.Generic.List[object]
+    $cellsBySheet = @{}
+    $blockById = @{}
+
+    foreach ($b in $all) {
+        $blockById[[string]$b.Id] = $b
+        $kind = ''
+        try { $kind = [string]$b.Meta.Kind } catch { $kind = '' }
+        if ($kind -ne 'cell') {
+            [void]$segments.Add([pscustomobject]@{
+                Text     = [string]$b.Text
+                BlockIds = @([string]$b.Id)
+                Cells    = @()
+                Joined   = $false
+                Kind     = $(if ([string]::IsNullOrWhiteSpace($kind)) { 'other' } else { $kind })
+                Location = [string]$b.Location
+            })
+            continue
+        }
+        $sheet = [string]$b.Meta.Sheet
+        if (-not $cellsBySheet.ContainsKey($sheet)) { $cellsBySheet[$sheet] = New-Object System.Collections.Generic.List[object] }
+        $entry = New-YakuSegmentCell -Row ([int]$b.Meta.Row) -Column ([int]$b.Meta.Col) -Text ([string]$b.Text) -IsText $true
+        $entry | Add-Member -NotePropertyName 'BlockId' -NotePropertyValue ([string]$b.Id) -Force
+        [void]$cellsBySheet[$sheet].Add($entry)
+    }
+
+    foreach ($sheet in @($cellsBySheet.Keys)) {
+        $occ = $null
+        if ($null -ne $RowOccupancy -and $RowOccupancy.ContainsKey($sheet)) { $occ = $RowOccupancy[$sheet] }
+        foreach ($s in @(Group-YakuCellsIntoSegments -Cells @($cellsBySheet[$sheet].ToArray()) -MaxJoin $MaxJoin -RowOccupancy $occ)) {
+            $cells = @($s.Cells)
+            [void]$segments.Add([pscustomobject]@{
+                Text     = [string]$s.Text
+                BlockIds = @($cells | ForEach-Object { [string]$_.BlockId })
+                Cells    = $cells
+                Joined   = [bool]$s.Joined
+                Kind     = 'cell'
+                Location = ($sheet + ', ' + (@($cells | ForEach-Object { [string]$_.BlockId }) -join '+'))
+            })
+        }
+    }
+    return @($segments.ToArray())
+}
+
+function Get-YakuSegmentTranslationByBlockId {
+    <#
+      セグメントの訳文を、元の塊ごとの訳文へ割り戻す。
+      返すのは Write-YakuExcelTranslations がそのまま受け取れる形。
+
+      繋いだセグメントは、元のセルの長さを重みにして割り振る。
+      繋いでいないものは1対1。
+    #>
+    param(
+        [AllowNull()][object[]]$Segments,
+        [Parameter(Mandatory=$true)][hashtable]$TranslationBySegmentIndex
+    )
+    $map = @{}
+    $segs = @($Segments)
+    for ($i = 0; $i -lt $segs.Count; $i++) {
+        if (-not $TranslationBySegmentIndex.ContainsKey($i)) { continue }
+        $translation = [string]$TranslationBySegmentIndex[$i]
+        $ids = @($segs[$i].BlockIds)
+        if ($ids.Count -eq 0) { continue }
+        if ($ids.Count -eq 1) { $map[[string]$ids[0]] = $translation; continue }
+        $cells = @($segs[$i].Cells)
+        $weights = @($cells | ForEach-Object { [Math]::Max(1, ([string]$_.Text).Trim().Length) })
+        $parts = @(Split-YakuTextAcrossCells -Text $translation -Weights $weights)
+        for ($k = 0; $k -lt $ids.Count; $k++) {
+            $map[[string]$ids[$k]] = $(if ($k -lt $parts.Count) { [string]$parts[$k] } else { '' })
+        }
+    }
+    return $map
 }
 
 function Find-YakuBreakPosition {
