@@ -340,6 +340,8 @@ function Invoke-YakuDocumentAlignment {
     $accepted = New-Object System.Collections.Generic.List[object]
     $usedJa = @{}; $usedEn = @{}; $jaToEn = @{}
     $enCursor = 0; $calls = 0; $splits = 0; $dropped = 0
+    # 途中で止まった位置。-1 なら最後まで通った。
+    $stoppedAt = -1; $stopReason = ''
 
     foreach ($c in $chunks) {
         $span = $c.End - $c.Start + 1
@@ -351,8 +353,22 @@ function Invoke-YakuDocumentAlignment {
         if ($jaToEn.ContainsKey($c.Start)) { $enCursor = [int]$jaToEn[$c.Start] }
         $enStart = [Math]::Min($enCursor, [Math]::Max(0, $en.Count - 1))
         $enEnd = [Math]::Min($en.Count - 1, $enStart + $width)
-        $res = Invoke-YakuAlignmentChunk -JaLines $ja -EnLines $en -JaStart $c.Start -JaEnd $c.End `
-            -EnStart $enStart -EnEnd $enEnd -Settings $Settings -MinCoverage $MinCoverage
+        # 途中で落ちても、そこまでに取れた対は残す。
+        # Copilot は一定量を使うと「問題が発生しました」を返すようになり、
+        # 時間を置くまで戻らない。長い資料は必ずどこかで当たるので、
+        # 例外で抜けると 50塊ぶんの成果が丸ごと消える（2026-08-08 に発生）。
+        try {
+            $res = Invoke-YakuAlignmentChunk -JaLines $ja -EnLines $en -JaStart $c.Start -JaEnd $c.End `
+                -EnStart $enStart -EnEnd $enEnd -Settings $Settings -MinCoverage $MinCoverage
+        } catch {
+            $stopReason = [string]$_.Exception.Message
+            # 数値マスクの失敗だけは握り潰さない。統制なので、続けてはいけない。
+            # 途中まで貯める仕組みを入れたとき、ここを分けずに一度緩めた。
+            if ($stopReason -match 'Alignment masking left a number') { throw }
+            $stoppedAt = $c.Start
+            try { Write-YakuLog ("Alignment stopped mid-document. jaLine=$($c.Start) pairs=$($accepted.Count) reason=" + $stopReason) 'WARN' } catch {}
+            break
+        }
         $calls += [int]$res.Calls; $splits += [int]$res.Splits
 
         foreach ($p in @($res.Pairs)) {
@@ -377,5 +393,10 @@ function Invoke-YakuDocumentAlignment {
         Calls      = $calls
         Splits     = $splits
         Dropped    = $dropped
+        # 途中で止まったかどうか。呼び出し側が「続きから」を判断できるように、
+        # 止まった日本語の行番号と理由を返す。
+        Completed  = ($stoppedAt -lt 0)
+        StoppedAt  = $stoppedAt
+        StopReason = $stopReason
     }
 }

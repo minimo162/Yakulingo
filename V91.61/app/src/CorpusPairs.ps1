@@ -181,10 +181,36 @@ function Import-YakuCorpusPairsFromTexts {
         try { Write-YakuLog "Corpus pair import skipped; empty side. source=$Source ja=$($ja.Count) en=$($en.Count)" 'WARN' } catch {}
         return [pscustomobject]@{ Added = 0; Skipped = 0; JaLines = $ja.Count; EnLines = $en.Count; JaCoverage = 0.0; Calls = 0; Dropped = 0 }
     }
-    try { Write-YakuLog "Corpus pair import started. source=$Source ja=$($ja.Count) en=$($en.Count)" 'INFO' } catch {}
-    $aligned = Invoke-YakuDocumentAlignment -JaLines $ja -EnLines $en -Settings $Settings
+    # 前回どこまで進んだかを覚えてある場合は、その続きから流す。
+    # Copilot は一定量を使うと止まるので、長い資料は何度かに分けて通す。
+    # 頭から流し直すと、同じところで制限に当たって永久に終わらない。
+    $progressPath = Join-Path (Join-Path $Dir $Database) 'progress.json'
+    $progress = @{}
+    if (Test-Path -LiteralPath $progressPath -PathType Leaf) {
+        try { (Get-Content -LiteralPath $progressPath -Raw -Encoding UTF8 | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $progress[$_.Name] = [int]$_.Value } } catch {}
+    }
+    $from = 0
+    if ($progress.ContainsKey($Source)) { $from = [int]$progress[$Source] }
+    if ($from -ge $ja.Count) { $from = 0 }
+    $jaRun = if ($from -gt 0) { @($ja[$from..($ja.Count - 1)]) } else { $ja }
+
+    try { Write-YakuLog "Corpus pair import started. source=$Source ja=$($ja.Count) en=$($en.Count) from=$from" 'INFO' } catch {}
+    $aligned = Invoke-YakuDocumentAlignment -JaLines $jaRun -EnLines $en -Settings $Settings
     $stored = Add-YakuCorpusPairs -Dir $Dir -Database $Database -Source $Source -Pairs @($aligned.Pairs) -Public:$Public
-    try { Write-YakuLog ("Corpus pair import finished. source=$Source added=$($stored.Added) coverage=" + [Math]::Round($aligned.JaCoverage, 3) + " calls=$($aligned.Calls) dropped=$($aligned.Dropped)") 'INFO' } catch {}
+
+    # 止まった位置を覚える。最後まで通ったら消す（次回は頭から検証できる）。
+    if (-not $aligned.Completed -and [int]$aligned.StoppedAt -ge 0) {
+        $progress[$Source] = $from + [int]$aligned.StoppedAt
+    } else {
+        $progress.Remove($Source) | Out-Null
+    }
+    try {
+        $parent = Split-Path -Parent $progressPath
+        if (-not (Test-Path -LiteralPath $parent -PathType Container)) { $null = New-Item -ItemType Directory -Path $parent -Force }
+        ($progress | ConvertTo-Json -Compress) | Set-Content -LiteralPath $progressPath -Encoding UTF8
+    } catch {}
+
+    try { Write-YakuLog ("Corpus pair import finished. source=$Source added=$($stored.Added) coverage=" + [Math]::Round($aligned.JaCoverage, 3) + " calls=$($aligned.Calls) dropped=$($aligned.Dropped) completed=$($aligned.Completed)") 'INFO' } catch {}
     return [pscustomobject]@{
         Added      = [int]$stored.Added
         Skipped    = [int]$stored.Skipped
@@ -193,6 +219,9 @@ function Import-YakuCorpusPairsFromTexts {
         JaCoverage = [double]$aligned.JaCoverage
         Calls      = [int]$aligned.Calls
         Dropped    = [int]$aligned.Dropped
+        Completed  = [bool]$aligned.Completed
+        ResumeFrom = $(if ($aligned.Completed) { 0 } else { $from + [int]$aligned.StoppedAt })
+        StopReason = [string]$aligned.StopReason
     }
 }
 

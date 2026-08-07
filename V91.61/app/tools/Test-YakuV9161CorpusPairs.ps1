@@ -119,6 +119,39 @@ try {
     $imp = Import-YakuCorpusPairsFromTexts -Dir $tmp -Database '統合報告書' -Source 'x.pdf' -JaText '' -EnText $enDoc -Settings $null
     Chk ($imp.Added -eq 0 -and $imp.Calls -eq 0) '片側が空なら Copilot を呼ばない'
 
+    Write-Host '途中で止まっても捨てない' -ForegroundColor Cyan
+    # Copilot が一定量で止まる状況を作る。3回答えたあとは必ず失敗させる。
+    $script:stopAfter = 3
+    function Invoke-YakuCopilotPrompt {
+        param([string]$Prompt, $Settings, [string]$AnswerFormat, [switch]$PreserveEndMarker)
+        if ($script:stopAfter -le 0) { throw 'Copilotの生成停止は検出しましたが、解析可能な回答を取得できませんでした。' }
+        $script:stopAfter--
+        $n = ([regex]::Matches($Prompt, '(?m)^J\d+ ')).Count
+        $m = ([regex]::Matches($Prompt, '(?m)^E\d+ ')).Count
+        $k = [Math]::Min($n, $m)
+        $lines = New-Object System.Collections.Generic.List[string]
+        for ($i = 0; $i -lt $k; $i++) { [void]$lines.Add(('[[ID:{0}]] {0}. J{1:d2} | E{1:d2}' -f ($i + 1), $i)) }
+        return ($lines -join "`n")
+    }
+    $many = @(0..399 | ForEach-Object { "これは第{0}文です。" -f $_ }) -join "`n"
+    $manyEn = @(0..399 | ForEach-Object { "This is sentence number {0}." -f $_ }) -join "`n"
+    $imp = Import-YakuCorpusPairsFromTexts -Dir $tmp -Database '長文' -Source '長文/a.pdf' -JaText $many -EnText $manyEn -Settings $null -Public
+    Chk ($imp.Added -gt 0) '途中で止まっても、そこまでの対は貯まる'
+    Chk (-not [bool]$imp.Completed -and [int]$imp.ResumeFrom -gt 0) '止まった位置を返す'
+    $prog = Join-Path (Join-Path $tmp '長文') 'progress.json'
+    Chk (Test-Path -LiteralPath $prog -PathType Leaf) '続きの位置を書き残す'
+
+    # 次に流すと続きから始まる。頭から流し直すと同じ場所で止まって終わらない。
+    $script:stopAfter = 3
+    $before = @(Read-YakuCorpusPairs -Dir $tmp -Database '長文').Count
+    $imp2 = Import-YakuCorpusPairsFromTexts -Dir $tmp -Database '長文' -Source '長文/a.pdf' -JaText $many -EnText $manyEn -Settings $null -Public
+    Chk ($imp2.Added -gt 0) '2回目は続きの分が増える'
+    Chk (@(Read-YakuCorpusPairs -Dir $tmp -Database '長文').Count -gt $before) '対の総数が増える'
+    Chk ([int]$imp2.ResumeFrom -gt [int]$imp.ResumeFrom) '続きの位置が前へ進む'
+
+    # 止める仕掛けを解除する。以降は普通に答える代役に戻す。
+    $script:stopAfter = 100000
+
     Write-Host 'CAT の画面から突き合わせる' -ForegroundColor Cyan
     foreach ($mod in @('PromptBuilder.ps1', 'CellSegments.ps1', 'Corpus.ps1', 'CatProject.ps1')) {
         . (Join-Path (Join-Path $root 'src') $mod)
