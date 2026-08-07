@@ -92,6 +92,32 @@ try {
 
     $h = @(Find-YakuCorpusPairsForSegment -Dir (Join-Path $tmp 'no-such-dir') -Text '当社は電動化を進めます。')
     Chk ($h.Count -eq 0) 'コーパスが無くても落ちない'
+
+    Write-Host '資料の取り込み' -ForegroundColor Cyan
+    . (Join-Path (Join-Path $root 'src') 'AlignMask.ps1')
+    . (Join-Path (Join-Path $root 'src') 'Alignment.ps1')
+    # Copilot の代役。実機の応答は別に確かめてある。
+    function Invoke-YakuCopilotPrompt {
+        param([string]$Prompt, $Settings, [string]$AnswerFormat, [switch]$PreserveEndMarker)
+        $n = ([regex]::Matches($Prompt, '(?m)^J\d+ ')).Count
+        $m = ([regex]::Matches($Prompt, '(?m)^E\d+ ')).Count
+        $k = [Math]::Min($n, $m)
+        $lines = New-Object System.Collections.Generic.List[string]
+        for ($i = 0; $i -lt $k; $i++) { [void]$lines.Add(('[[ID:{0}]] {0}. J{1:d2} | E{1:d2}' -f ($i + 1), $i)) }
+        return ($lines -join "`n")
+    }
+    $jaDoc = "当社は電動化を進めます。`n`n短`n北米に投資しました。`n業績は堅調に推移しました。"
+    $enDoc = "We will advance electrification.`n`nx`nWe invested in North America.`nResults remained solid."
+    $imp = Import-YakuCorpusPairsFromTexts -Dir $tmp -Database '統合報告書' -Source '統合報告書/2025.pdf' -JaText $jaDoc -EnText $enDoc -Settings $null -Public
+    Chk ($imp.JaLines -eq 3 -and $imp.EnLines -eq 3) '空行と極端に短い行を落とす'
+    Chk ($imp.Added -eq 3) '対を貯める'
+    Chk ([Math]::Abs([double]$imp.JaCoverage - 1.0) -lt 0.001) '網羅率を返す'
+
+    $imp = Import-YakuCorpusPairsFromTexts -Dir $tmp -Database '統合報告書' -Source '統合報告書/2025.pdf' -JaText $jaDoc -EnText $enDoc -Settings $null -Public
+    Chk ($imp.Added -eq 0 -and $imp.Skipped -eq 3) '同じ資料を取り込み直しても増えない'
+
+    $imp = Import-YakuCorpusPairsFromTexts -Dir $tmp -Database '統合報告書' -Source 'x.pdf' -JaText '' -EnText $enDoc -Settings $null
+    Chk ($imp.Added -eq 0 -and $imp.Calls -eq 0) '片側が空なら Copilot を呼ばない'
 }
 finally {
     try { Remove-Item -LiteralPath $tmp -Recurse -Force } catch {}

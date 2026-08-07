@@ -147,6 +147,55 @@ function Find-YakuCorpusPairs {
     return @(@($hits.ToArray()) | Sort-Object -Property Score -Descending | Select-Object -First $Limit)
 }
 
+function Import-YakuCorpusPairsFromTexts {
+    <#
+      日英ひと組の本文から対訳を作って貯める。資料を取り込む口の本体。
+
+      渡すのは liteparse の plain text をそのまま。行はレイアウト行であって
+      文ではないが、繋ぐ判断は Copilot に任せる（実測で 8/8 一致した）。
+      空行と極端に短い行だけ落とす。装飾記号やページ番号を字面で判別しようと
+      すると本文を巻き込むので、判定は増やさない。
+
+      重いので進捗を返せるようにしておく。有報1章で 5回・52秒だった。
+      文書まるごとなら数十分かかる。
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Dir,
+        [Parameter(Mandatory = $true)][string]$Database,
+        [Parameter(Mandatory = $true)][string]$Source,
+        # 空も受ける。抽出に失敗した資料は珍しくないので、呼び出し側で
+        # 弾かせるより、ここで「0件」を返して記録するほうが追いやすい。
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$JaText,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$EnText,
+        [AllowNull()]$Settings,
+        [int]$MinLineLength = 4,
+        [switch]$Public
+    )
+    $clean = {
+        param([string]$Text)
+        return @(($Text -split "`r?`n") | ForEach-Object { $_.TrimEnd() } | Where-Object { $_.Trim().Length -ge $MinLineLength })
+    }
+    $ja = @(& $clean $JaText)
+    $en = @(& $clean $EnText)
+    if ($ja.Count -eq 0 -or $en.Count -eq 0) {
+        try { Write-YakuLog "Corpus pair import skipped; empty side. source=$Source ja=$($ja.Count) en=$($en.Count)" 'WARN' } catch {}
+        return [pscustomobject]@{ Added = 0; Skipped = 0; JaLines = $ja.Count; EnLines = $en.Count; JaCoverage = 0.0; Calls = 0; Dropped = 0 }
+    }
+    try { Write-YakuLog "Corpus pair import started. source=$Source ja=$($ja.Count) en=$($en.Count)" 'INFO' } catch {}
+    $aligned = Invoke-YakuDocumentAlignment -JaLines $ja -EnLines $en -Settings $Settings
+    $stored = Add-YakuCorpusPairs -Dir $Dir -Database $Database -Source $Source -Pairs @($aligned.Pairs) -Public:$Public
+    try { Write-YakuLog ("Corpus pair import finished. source=$Source added=$($stored.Added) coverage=" + [Math]::Round($aligned.JaCoverage, 3) + " calls=$($aligned.Calls) dropped=$($aligned.Dropped)") 'INFO' } catch {}
+    return [pscustomobject]@{
+        Added      = [int]$stored.Added
+        Skipped    = [int]$stored.Skipped
+        JaLines    = $ja.Count
+        EnLines    = $en.Count
+        JaCoverage = [double]$aligned.JaCoverage
+        Calls      = [int]$aligned.Calls
+        Dropped    = [int]$aligned.Dropped
+    }
+}
+
 function Find-YakuCorpusPairsForSegment {
     <#
       CAT の候補ペイン向け。原文セグメント1本に対して、過去の対訳を探す。
