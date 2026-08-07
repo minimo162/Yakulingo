@@ -23,6 +23,7 @@ $script:YakuRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyComman
 . (Join-Path $PSScriptRoot 'CorpusReference.ps1')
 . (Join-Path $PSScriptRoot 'BriefStyle.ps1')
 . (Join-Path $PSScriptRoot 'CellSegments.ps1')
+. (Join-Path $PSScriptRoot 'CorpusPairs.ps1')
 . (Join-Path $PSScriptRoot 'CatProject.ps1')
 
 $script:YakuBuildId = Assert-YakuBuildIdentity -Root $script:YakuRoot -ExpectedBuildId (Get-YakuBuildId)
@@ -452,7 +453,8 @@ function New-YakuWarmTranslationRunspace {
             . (Join-Path $Root 'src\CorpusReference.ps1')
             . (Join-Path $Root 'src\BriefStyle.ps1')
                 . (Join-Path $Root 'src\CellSegments.ps1')
-                . (Join-Path $Root 'src\CatProject.ps1')
+                . (Join-Path $Root 'src\CorpusPairs.ps1')
+. (Join-Path $Root 'src\CatProject.ps1')
             $null = Assert-YakuBuildIdentity -Root $Root -ExpectedBuildId $ExpectedBuildId
             $preloadSw = [System.Diagnostics.Stopwatch]::StartNew()
             $settings = Read-YakuSettings -Root $Root
@@ -565,7 +567,8 @@ function Start-YakuWarmTranslationRunspaceBuild {
                     . (Join-Path $Root 'src\CorpusReference.ps1')
                     . (Join-Path $Root 'src\BriefStyle.ps1')
                 . (Join-Path $Root 'src\CellSegments.ps1')
-                . (Join-Path $Root 'src\CatProject.ps1')
+                . (Join-Path $Root 'src\CorpusPairs.ps1')
+. (Join-Path $Root 'src\CatProject.ps1')
                     $null = Assert-YakuBuildIdentity -Root $Root -ExpectedBuildId $ExpectedBuildId
                     $preloadSw = [System.Diagnostics.Stopwatch]::StartNew()
                     $settings = Read-YakuSettings -Root $Root
@@ -1125,7 +1128,8 @@ function Start-YakuTranslationJob {
                 . (Join-Path $Root 'src\CorpusReference.ps1')
                 . (Join-Path $Root 'src\BriefStyle.ps1')
                 . (Join-Path $Root 'src\CellSegments.ps1')
-                . (Join-Path $Root 'src\CatProject.ps1')
+                . (Join-Path $Root 'src\CorpusPairs.ps1')
+. (Join-Path $Root 'src\CatProject.ps1')
             }
             $sectionSw.Stop(); $moduleLoadMs = $sectionSw.ElapsedMilliseconds
             $sectionSw.Restart()
@@ -2256,13 +2260,12 @@ function Invoke-YakuRoute {
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 }
                 'candidates' {
-                    # 現在行の候補。用語集を引くだけなので手元で終わり、行を移る
-                    # たびに出せる。コーパスの文例はここに出さない（英語でしか
-                    # 引けず、行ごとに Copilot へ往復できないため）。
+                    # 現在行の候補。用語集と過去の対訳を手元のファイルから引く。
+                    # どちらも Copilot への往復が要らないので、行を移るたびに出せる。
                     $index = -1
                     try { $index = [int]$payload['index'] } catch { $index = -1 }
                     $items = @(Get-YakuCatSegmentCandidates -Root $script:YakuRoot -Project $project -Index $index)
-                    $rows = @($items | ForEach-Object { [ordered]@{ kind = [string]$_.Kind; source = [string]$_.Source; target = [string]$_.Target; exact = [bool]$_.Exact } })
+                    $rows = @($items | ForEach-Object { [ordered]@{ kind = [string]$_.Kind; source = [string]$_.Source; target = [string]$_.Target; exact = [bool]$_.Exact; ratio = [double]$_.Ratio; database = [string]$_.Database; verified = [bool]$_.Verified } })
                     Send-YakuTextResponse -Context $Context -Text (([ordered]@{ index = $index; candidates = @($rows) } | ConvertTo-Json -Depth 5 -Compress)) -ContentType 'application/json; charset=utf-8'
                 }
                 'segment' {

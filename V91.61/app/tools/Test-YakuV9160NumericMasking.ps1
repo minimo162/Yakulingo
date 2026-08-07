@@ -565,8 +565,18 @@ foreach ($srcFile in @(Get-ChildItem -LiteralPath (Join-Path $root 'src') -Filte
 # V91.61 段階3: CorpusReference.ps1 が加わる。参考資料を引くための検索語を
 # Copilot に作らせる経路で、原文を外部へ送る点は翻訳と同じ。
 # 送る前にマスクしていることを下で確かめる。
-$outside = @($callSites | Where-Object { $_ -notin @('CopilotClient.ps1','Translation.ps1','FileTranslation.ps1','CorpusReference.ps1') })
+# V91.61: Alignment.ps1 が加わる。日英の対を Copilot に取らせる経路で、
+# 原文を外部へ送る点は翻訳と同じ。こちらは値を戻さない非可逆マスクを使う
+# （返るのは行番号だけで復元が要らないため、安全側に倒せる）。
+$outside = @($callSites | Where-Object { $_ -notin @('CopilotClient.ps1','Translation.ps1','FileTranslation.ps1','CorpusReference.ps1','Alignment.ps1') })
 Assert-YakuMask ($outside.Count -eq 0) ("翻訳経路の外から呼ばれていない: " + (@($outside | Select-Object -Unique) -join ','))
+
+# 許可しただけでは統制にならない。Alignment.ps1 が実際にマスクを通してから
+# 送っていることを確かめる。原文の変数をそのまま渡す形へ書き換えられたら、
+# ここで落ちる。
+$alignSrc = Get-Content -LiteralPath (Join-Path $root 'src\Alignment.ps1') -Raw -Encoding UTF8
+Assert-YakuMask ($alignSrc -match 'Protect-YakuAlignmentLines') 'アライメント経路がマスクを呼んでいる'
+Assert-YakuMask ($alignSrc -match 'New-YakuAlignmentPrompt\s+-JaLines\s+\$jaMasked\s+-EnLines\s+\$enMasked') 'アライメント経路がマスク済みの行だけを渡している'
 
 # 外部へ送る経路が増えたら、そこもマスクを通っていること。
 # 経路を足すたびに手で思い出す話にしない。

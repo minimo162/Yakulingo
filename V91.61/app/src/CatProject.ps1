@@ -467,15 +467,15 @@ function Get-YakuCatSegmentCandidates {
       Ctrl+数字 で差し込めるようにしている。訳す前に「過去はどう訳したか」が
       目に入ることが、一貫性を保つ仕組みそのものになっている。
 
-      いま出せるのは用語集だけである。
+      出せるのは用語集と、過去の対訳（コーパスの対）である。
 
-        - 翻訳メモリはまだ無い。
-        - コーパスの文例は、英語でしか引けない。日本語の原文から英語の
-          検索語を作るのに Copilot への往復が要るので、行を移るたびには
-          引けない（利用者の指摘 2026-08-06）。しかも公表訳が意訳のときは、
-          日本語を直訳した検索語では目当ての文例に当たらない。
-          日本語側も取り込んで日本語で引けるようにするのが筋で、
-          そこまでは用語集だけを出す。
+      対訳のほうは長く出せなかった。コーパスが英文しか持たず、日本語の
+      原文から英語の検索語を作るのに Copilot への往復が要ったためで、
+      行を移るたびには引けなかった（利用者の指摘 2026-08-06）。
+      Copilot によるアライメントで日英の対が取れるようになり、日本語の
+      まま引けるようになったので、ここへ出す。
+
+      翻訳メモリ（この利用者自身が確定した訳）はまだ無い。
 
       完全一致だけでなく部分一致も出す。表のラベルは完全一致で機械置換
       できるが、文の中に現れた語は置換しない（活用と一致が壊れるため。
@@ -523,6 +523,32 @@ function Get-YakuCatSegmentCandidates {
             Weight = $(if ($exact) { 10000 } else { $from.Length })
         })
     }
+
+    # 過去の対訳。用語集より上に出す。市販ツールも翻訳メモリを先頭へ置く。
+    # 語の対応より、文まるごとの前例のほうが強い手掛かりだからである。
+    try {
+        $pairsDir = Get-YakuCorpusBuildDir
+        foreach ($hit in @(Find-YakuCorpusPairsForSegment -Dir $pairsDir -Text $text -SourceLanguage $(if ($toEn) { 'ja' } else { 'en' }) -Limit 5)) {
+            $key = 'pair' + [string][char]31 + [string]$hit.Source + [string][char]31 + [string]$hit.Target
+            if ($seen.ContainsKey($key)) { continue }
+            $seen[$key] = $true
+            [void]$out.Add([pscustomobject]@{
+                Kind     = 'corpus'
+                Source   = [string]$hit.Source
+                Target   = [string]$hit.Target
+                Exact    = [bool]$hit.Exact
+                Database = [string]$hit.Database
+                # 数値の裏取りが通っていない対は、通ったものより下に置く。
+                Verified = [bool]$hit.Verified
+                Ratio    = [double]$hit.Ratio
+                Weight   = 20000 + [int]([double]$hit.Ratio * 1000) + $(if ($hit.Verified) { 100 } else { 0 })
+            })
+        }
+    } catch {
+        # コーパスが無い環境でも用語集は出す。候補ペインごと落ちるほうが困る。
+        try { Write-YakuLog ('Corpus pair candidates unavailable: ' + $_.Exception.Message) 'WARN' } catch {}
+    }
+
     return @(@($out.ToArray()) | Sort-Object -Property @{ Expression = { [int]$_.Weight }; Descending = $true } | Select-Object -First $Max)
 }
 

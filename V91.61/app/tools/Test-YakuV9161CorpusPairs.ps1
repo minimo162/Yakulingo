@@ -75,6 +75,23 @@ try {
     Chk (@($hits | Select-Object -ExpandProperty Database -Unique).Count -eq 2) '資料をまたいで探す'
     $hits = @(Find-YakuCorpusPairs -Dir $tmp -Query '電動化' -Databases @('決算短信'))
     Chk ($hits.Count -eq 1 -and $hits[0].Database -eq '決算短信') '資料を絞れる'
+
+    Write-Host 'セグメント向けの検索（候補ペイン）' -ForegroundColor Cyan
+    $h = @(Find-YakuCorpusPairsForSegment -Dir $tmp -Text '当社は電動化を進めます。')
+    Chk ($h.Count -ge 1 -and [bool]$h[0].Exact -and $h[0].Target -eq 'We will advance electrification.') '同じ文を訳していれば完全一致で出す'
+    Chk ([Math]::Abs([double]$h[0].Ratio - 1.0) -lt 0.001) '完全一致は一致率1.0'
+
+    $h = @(Find-YakuCorpusPairsForSegment -Dir $tmp -Text '当社は電動化を進めます。なお詳細は後述します。')
+    Chk ($h.Count -ge 1 -and -not [bool]$h[0].Exact -and [double]$h[0].Ratio -lt 1.0) '過去の文を含む原文には部分一致で出す'
+
+    $h = @(Find-YakuCorpusPairsForSegment -Dir $tmp -Text '短い')
+    Chk ($h.Count -eq 0) '短すぎる原文では引かない'
+
+    $h = @(Find-YakuCorpusPairsForSegment -Dir $tmp -Text 'まったく関係のない文章をここに置きます。')
+    Chk ($h.Count -eq 0) '当たらなければ何も出さない'
+
+    $h = @(Find-YakuCorpusPairsForSegment -Dir (Join-Path $tmp 'no-such-dir') -Text '当社は電動化を進めます。')
+    Chk ($h.Count -eq 0) 'コーパスが無くても落ちない'
 }
 finally {
     try { Remove-Item -LiteralPath $tmp -Recurse -Force } catch {}

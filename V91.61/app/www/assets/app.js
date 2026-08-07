@@ -752,13 +752,19 @@
       var items = data.candidates || [];
       panel.hidden = false;
       if (!items.length) {
-        list.innerHTML = '<div class="muted">この行に当たる用語はありません。</div>';
+        list.innerHTML = '<div class="muted">この行に当たる用語・文例はありません。</div>';
         return;
       }
       list.innerHTML = items.map(function (c, i) {
-        // 完全一致か文中の一致かを区別する。完全一致は機械置換の対象で、
-        // 文中の語は置換しない（活用と一致が壊れるため）。目に入れるだけ。
-        var tag = c.exact ? '完全一致' : '文中';
+        // 用語集は、完全一致か文中の一致かを区別する。完全一致は機械置換の
+        // 対象で、文中の語は置換しない（活用と一致が壊れるため）。目に入れるだけ。
+        // 過去の対訳は一致率で出す。市販ツールの翻訳メモリと同じ読み方になる。
+        var tag;
+        if (c.kind === 'corpus') {
+          tag = c.exact ? '文例 100%' : '文例 ' + Math.round((c.ratio || 0) * 100) + '%';
+        } else {
+          tag = c.exact ? '完全一致' : '文中';
+        }
         return '<button type="button" class="cat-cand" data-yaku-cat-insert="' + yakuEscape(c.target) + '">' +
           '<span class="cat-cand-no">' + (i + 1) + '</span>' +
           '<span class="cat-cand-tag' + (c.exact ? ' is-exact' : '') + '">' + tag + '</span>' +

@@ -146,3 +146,60 @@ function Find-YakuCorpusPairs {
     }
     return @(@($hits.ToArray()) | Sort-Object -Property Score -Descending | Select-Object -First $Limit)
 }
+
+function Find-YakuCorpusPairsForSegment {
+    <#
+      CAT の候補ペイン向け。原文セグメント1本に対して、過去の対訳を探す。
+
+      利用者が語を選んで検索するのではなく、行を移るたびに自動で引くので、
+      問い合わせは「原文そのもの」になる。市販ツールの翻訳メモリと同じ形。
+
+      3段階で見る。
+        完全一致  過去に同じ文を訳している。そのまま差し込める
+        包含      過去の文がこの原文を含む／含まれる。参考になる
+      一致率は文字数の比で出す。編集距離のほうが精確だが、行を移るたびに
+      全件へ掛けると重い。まず動く形を置き、必要になったら精度を上げる。
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Dir,
+        [Parameter(Mandatory = $true)][string]$Text,
+        [ValidateSet('ja', 'en')][string]$SourceLanguage = 'ja',
+        [AllowNull()][string[]]$Databases,
+        [int]$Limit = 5,
+        [int]$MinLength = 6
+    )
+    $t = ([string]$Text).Trim()
+    if ($t.Length -lt $MinLength) { return @() }
+    if (-not (Test-Path -LiteralPath $Dir -PathType Container)) { return @() }
+    $norm = { param($s) return (([string]$s) -replace '\s+', '') }
+    $tn = & $norm $t
+    $dbs = @($Databases)
+    if ($dbs.Count -eq 0) {
+        $dbs = @(Get-ChildItem -LiteralPath $Dir -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+    }
+    $hits = New-Object System.Collections.Generic.List[object]
+    foreach ($db in $dbs) {
+        foreach ($p in @(Read-YakuCorpusPairs -Dir $Dir -Database $db)) {
+            $src = [string]$(if ($SourceLanguage -eq 'ja') { $p.ja } else { $p.en })
+            $tgt = [string]$(if ($SourceLanguage -eq 'ja') { $p.en } else { $p.ja })
+            if ([string]::IsNullOrWhiteSpace($src) -or [string]::IsNullOrWhiteSpace($tgt)) { continue }
+            $sn = & $norm $src
+            if ($sn.Length -lt $MinLength) { continue }
+            $exact = [string]::Equals($sn, $tn, [StringComparison]::Ordinal)
+            if ($exact) { $ratio = 1.0 }
+            elseif ($sn.IndexOf($tn, [StringComparison]::Ordinal) -ge 0) { $ratio = [double]$tn.Length / $sn.Length }
+            elseif ($tn.IndexOf($sn, [StringComparison]::Ordinal) -ge 0) { $ratio = [double]$sn.Length / $tn.Length }
+            else { continue }
+            if ($ratio -lt 0.3) { continue }
+            [void]$hits.Add([pscustomobject]@{
+                    Database = [string]$p.database
+                    Source   = $src
+                    Target   = $tgt
+                    Verified = [bool]$p.verified
+                    Exact    = $exact
+                    Ratio    = $ratio
+                })
+        }
+    }
+    return @(@($hits.ToArray()) | Sort-Object -Property Ratio -Descending | Select-Object -First $Limit)
+}
