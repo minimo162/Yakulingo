@@ -18,6 +18,7 @@ src/CellAlign.ps1	crlf
 src/CellSegments.ps1	crlf
 src/CopilotClient.ps1	lf
 src/Corpus.ps1	lf
+src/CorpusPairs.ps1	crlf
 src/CorpusReference.ps1	lf
 src/CorpusSearch.ps1	lf
 src/EdgeLaunch.ps1	lf
@@ -64,6 +65,7 @@ tools/Test-YakuV9161CatProject.ps1	crlf
 tools/Test-YakuV9161CellAlign.ps1	crlf
 tools/Test-YakuV9161CellSegments.ps1	crlf
 tools/Test-YakuV9161Corpus.ps1	lf
+tools/Test-YakuV9161CorpusPairs.ps1	crlf
 tools/Test-YakuV9161CorpusReference.ps1	lf
 tools/Test-YakuV9161CorpusSearch.ps1	lf
 tools/Test-YakuV9161ExcelSegmentRoundTrip.ps1	crlf
