@@ -4045,6 +4045,35 @@ function Get-YakuNumberedMainTailSalvageText {
     return $candidate
 }
 
+function Get-YakuCopilotSelfReportedError {
+    <#
+      Copilot 自身が画面に出したエラー文言を拾う。
+
+      拾えたらそれを利用者に見せる。「解析可能な回答を取得できませんでした」
+      とだけ言うと、こちらの不具合を疑って調べ始めることになる（実際にそう
+      なった 2026-08-08）。Copilot が謝っているなら、待って出直すのが正解。
+
+      画面の末尾だけを見る。前の応答に同じ語が含まれていても拾わないため。
+      文言は Copilot の更新で変わりうるので、代表的なものだけを持つ。
+    #>
+    param([AllowNull()][string]$MainTail)
+    $text = [string]$MainTail
+    if ([string]::IsNullOrWhiteSpace($text)) { return '' }
+    $tail = if ($text.Length -gt 600) { $text.Substring($text.Length - 600) } else { $text }
+    $patterns = @(
+        '申し訳ございません。問題が発生しました。[^\r\n]*'
+        '申し訳ありません[^\r\n]*問題が発生しました[^\r\n]*'
+        'Sorry, something went wrong[^\r\n]*'
+        'I''m sorry, something went wrong[^\r\n]*'
+        'エラーが発生しました[^\r\n]*'
+    )
+    foreach ($p in $patterns) {
+        $m = [regex]::Match($tail, $p)
+        if ($m.Success) { return $m.Value.Trim() }
+    }
+    return ''
+}
+
 function Save-YakuCopilotWaitMainTailDiagnostic {
     param(
         [AllowNull()][string]$MainTail,
@@ -4958,6 +4987,17 @@ return YakuCopilotDom.sendButtonCandidates().map(c => ({
                 $tailDiagPath = Save-YakuCopilotWaitMainTailDiagnostic -MainTail (ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $waitResult -Name 'mainTail' -Default '')) -Reason $waitReason -AnswerFormat $AnswerFormat
             } catch {}
             $tailDiagSuffix = if ([string]::IsNullOrWhiteSpace($tailDiagPath)) { '' } else { " MainTailLog=$tailDiagPath" }
+            # Copilot 自身がエラーを返している場合は、それをそのまま伝える。
+            # 「解析できませんでした」と言うと、こちらの不具合を疑わせてしまう。
+            # 実際 2026-08-08 に、Copilot が「問題が発生しました」と答えている
+            # のに気づかず、劣化・回数・解析と3つの誤った仮説を立てた。
+            # この場合は待って出直すのが正解で、他の失敗とは対処が違う。
+            $mainTailText = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $waitResult -Name 'mainTail' -Default '')
+            $copilotSelfError = Get-YakuCopilotSelfReportedError -MainTail $mainTailText
+            if (-not [string]::IsNullOrWhiteSpace($copilotSelfError)) {
+                Write-YakuLog "Copilot reported its own error. text=$copilotSelfError" 'WARN'
+                throw "COPILOT_SERVICE_ERROR: Copilotがエラーを返しました。しばらく置いてからお試しください。Copilotの表示: $copilotSelfError$tailDiagSuffix"
+            }
             throw "Copilotの生成停止は検出しましたが、解析可能な回答を取得できませんでした。Copilot画面の最後の回答を確認してください。AnswerFormat=$AnswerFormat Context=$waitContext Error=$waitError$tailDiagSuffix"
         }
         throw "RESPONSE_END_MARKER_MISSING: Copilotの完全な応答を確認できませんでした。要求ID付き終端マーカーが必要です。Context=$waitContext Error=$waitError Reason=$waitReason"
