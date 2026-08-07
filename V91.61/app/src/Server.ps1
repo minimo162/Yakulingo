@@ -25,6 +25,7 @@ $script:YakuRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyComman
 . (Join-Path $PSScriptRoot 'CellSegments.ps1')
 . (Join-Path $PSScriptRoot 'AlignMask.ps1')
 . (Join-Path $PSScriptRoot 'Alignment.ps1')
+. (Join-Path $PSScriptRoot 'TranslationMemory.ps1')
 . (Join-Path $PSScriptRoot 'CorpusPairs.ps1')
 . (Join-Path $PSScriptRoot 'CatProject.ps1')
 
@@ -457,6 +458,7 @@ function New-YakuWarmTranslationRunspace {
                 . (Join-Path $Root 'src\CellSegments.ps1')
                 . (Join-Path $Root 'src\AlignMask.ps1')
                 . (Join-Path $Root 'src\Alignment.ps1')
+                . (Join-Path $Root 'src\TranslationMemory.ps1')
                 . (Join-Path $Root 'src\CorpusPairs.ps1')
                 . (Join-Path $Root 'src\CatProject.ps1')
             $null = Assert-YakuBuildIdentity -Root $Root -ExpectedBuildId $ExpectedBuildId
@@ -573,6 +575,7 @@ function Start-YakuWarmTranslationRunspaceBuild {
                 . (Join-Path $Root 'src\CellSegments.ps1')
                 . (Join-Path $Root 'src\AlignMask.ps1')
                 . (Join-Path $Root 'src\Alignment.ps1')
+                . (Join-Path $Root 'src\TranslationMemory.ps1')
                 . (Join-Path $Root 'src\CorpusPairs.ps1')
                 . (Join-Path $Root 'src\CatProject.ps1')
                     $null = Assert-YakuBuildIdentity -Root $Root -ExpectedBuildId $ExpectedBuildId
@@ -1136,6 +1139,7 @@ function Start-YakuTranslationJob {
                 . (Join-Path $Root 'src\CellSegments.ps1')
                 . (Join-Path $Root 'src\AlignMask.ps1')
                 . (Join-Path $Root 'src\Alignment.ps1')
+                . (Join-Path $Root 'src\TranslationMemory.ps1')
                 . (Join-Path $Root 'src\CorpusPairs.ps1')
                 . (Join-Path $Root 'src\CatProject.ps1')
             }

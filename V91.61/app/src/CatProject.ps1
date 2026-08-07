@@ -664,8 +664,32 @@ function Get-YakuCatSegmentCandidates {
         })
     }
 
-    # 過去の対訳。用語集より上に出す。市販ツールも翻訳メモリを先頭へ置く。
-    # 語の対応より、文まるごとの前例のほうが強い手掛かりだからである。
+    # 翻訳メモリ。自分が確定した訳なので、どれよりも先に出す。
+    # 公表訳は「読ませる訳」で意訳が多いが、これは自分の文体で、
+    # 自分が正しいと判断したものだけが入っている。そのまま差し込める。
+    try {
+        foreach ($tm in @(Find-YakuTranslationMemory -Text $text -Direction ([string]$Project.Direction) -Limit 5)) {
+            $key = 'tm' + [string][char]31 + [string]$tm.Source + [string][char]31 + [string]$tm.Target
+            if ($seen.ContainsKey($key)) { continue }
+            $seen[$key] = $true
+            [void]$out.Add([pscustomobject]@{
+                Kind     = 'memory'
+                Source   = [string]$tm.Source
+                Target   = [string]$tm.Target
+                Exact    = [bool]$tm.Exact
+                Database = '翻訳メモリ'
+                Verified = $true
+                Ratio    = [double]$tm.Ratio
+                Weight   = 30000 + [int]([double]$tm.Ratio * 1000)
+            })
+        }
+    } catch {
+        # 翻訳メモリが読めなくても候補ペインごと落とさない。
+        try { Write-YakuLog ('Translation memory candidates unavailable: ' + $_.Exception.Message) 'WARN' } catch {}
+    }
+
+    # 過去の対訳。用語集より上、翻訳メモリより下に出す。
+    # 語の対応より文まるごとの前例のほうが強いが、自分が確定した訳には劣る。
     try {
         # 置き場所は呼び出し側から渡せるようにする。要求を捌く runspace は
         # 読み込む一式が違うことがあり、Get-YakuCorpusBuildDir が見えないと
@@ -709,6 +733,15 @@ function Set-YakuCatSegmentTranslation {
     if ($Index -lt 0 -or $Index -ge $segs.Count) { throw ('セグメントが見つかりません: ' + $Index) }
     $segs[$Index].Translation = [string]$Text
     $segs[$Index].Origin = 'manual'
+    # 確定した訳を翻訳メモリへ貯める。次に同じ文が来たら候補に出る。
+    # 市販ツールの Ctrl+Enter と同じ作法で、確定＝記憶にする。
+    # 失敗しても訳の確定は妨げない。貯め損ねより、直せないほうが困る。
+    try {
+        $null = Add-YakuTranslationMemoryEntry -Source ([string]$segs[$Index].Text) -Target ([string]$Text) `
+            -Direction ([string]$Project.Direction) -Origin 'cat'
+    } catch {
+        try { Write-YakuLog ('Translation memory save failed: ' + $_.Exception.Message) 'WARN' } catch {}
+    }
     return $segs[$Index]
 }
 

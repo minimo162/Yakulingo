@@ -35,6 +35,7 @@ src/Runtime.ps1	crlf
 src/Server.ps1	crlf
 src/Settings.ps1	lf
 src/Translation.ps1	crlf
+src/TranslationMemory.ps1	crlf
 Start-YakuLingo.ps1	crlf
 tools/Check-Encoding.ps1	crlf
 tools/Compare-ExcelFormulaIntegrity.ps1	crlf
@@ -74,6 +75,7 @@ tools/Test-YakuV9161GlossaryVariants.ps1	crlf
 tools/Test-YakuV9161LabelCoverage.ps1	lf
 tools/Test-YakuV9161Revise.ps1	crlf
 tools/Test-YakuV9161SplitRequests.ps1	crlf
+tools/Test-YakuV9161TranslationMemory.ps1	crlf
 tools/Test-YakuV917RuntimeWarnings.ps1	crlf
 tools/V64-HTTP-Boundary-Test.ps1	crlf
 tools/V65-Saving-Validation-Test.ps1	crlf
