@@ -118,6 +118,28 @@ try {
 
     $imp = Import-YakuCorpusPairsFromTexts -Dir $tmp -Database '統合報告書' -Source 'x.pdf' -JaText '' -EnText $enDoc -Settings $null
     Chk ($imp.Added -eq 0 -and $imp.Calls -eq 0) '片側が空なら Copilot を呼ばない'
+
+    Write-Host 'CAT の画面から突き合わせる' -ForegroundColor Cyan
+    foreach ($mod in @('PromptBuilder.ps1', 'CellSegments.ps1', 'Corpus.ps1', 'CatProject.ps1')) {
+        . (Join-Path (Join-Path $root 'src') $mod)
+    }
+    $proj = New-YakuCatAlignProject -Root $root -SourceText $jaDoc -TargetText $enDoc -Settings $null -Direction 'to_en'
+    Chk (@($proj.Segments).Count -eq 3) '対応した数だけ行ができる'
+    Chk ([string]@($proj.Segments)[0].Text -eq '当社は電動化を進めます。') '原文側に日本語が入る'
+    Chk ([string]@($proj.Segments)[0].Translation -eq 'We will advance electrification.') '訳文側に英語が入る'
+    Chk ([string]@($proj.Segments)[0].Origin -eq 'align') '機械が作った対応であることを残す'
+    Chk (@($proj.Warnings).Count -eq 0) '網羅できていれば注意は出ない'
+
+    $ng = New-YakuCatAlignProject -Root $root -SourceText '' -TargetText $enDoc -Settings $null
+    Chk (@($ng.Segments).Count -eq 0 -and @($ng.Warnings).Count -eq 1) '片方が空なら注意を出して空で返す'
+
+    # グリッドで直してから貯める、という順序を確かめる。
+    @($proj.Segments)[0].Translation = 'We will promote electrification.'
+    # 保存先は試験用の場所を指す。本番の取り込み場所を汚さない。
+    $saved = Save-YakuCatProjectToCorpus -Project $proj -Database '突合' -Source '手で直した分' -Dir $tmp -Public
+    Chk ($saved.Added -eq 3) '確かめた対訳をコーパスへ入れる'
+    $h = @(Find-YakuCorpusPairs -Dir $tmp -Query 'promote electrification' -Databases @('突合'))
+    Chk ($h.Count -eq 1) '直した内容のほうが入る'
 }
 finally {
     try { Remove-Item -LiteralPath $tmp -Recurse -Force } catch {}

@@ -145,6 +145,125 @@ function New-YakuCatTextProject {
     return $project
 }
 
+function New-YakuCatAlignProject {
+    <#
+      日本語と英語のひと組から CAT のプロジェクトを作る。訳す代わりに、
+      既にある訳と突き合わせる。市販ツールの「文書のアライメント」に当たる。
+
+      管理画面に取り込み専用の画面を作るのではなく、CAT の画面をそのまま
+      使う（利用者の指摘 2026-08-07「今の管理画面は使いづらい」）。
+      利点は作りの節約ではなく、確認の質のほうにある。
+
+        - 対応は原文と訳文が左右に並ぶ、いつものグリッドで見える
+        - ずれていれば、いつもの結合・分割で直せる
+        - 直してからコーパスへ入れられる
+
+      機械が作った対応をそのまま貯めるのではなく、人が一度見てから貯める。
+      誤った対訳は完全一致で機械置換され続けるので、入口で見るのが安い。
+
+      どのファイルとどのファイルが組かは、利用者が2つ選ぶことで決まる。
+      名前から機械的に推測はしない。間違った組で突き合わせると、もっともらしい
+      誤った対訳ができてしまう。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Root,
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$SourceText,
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$TargetText,
+        [Parameter(Mandatory=$true)][AllowNull()]$Settings,
+        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
+        [string]$FileName = '対訳の突き合わせ',
+        [int]$MinLineLength = 4
+    )
+    $clean = {
+        param([string]$Text)
+        return @(($Text -split "`r?`n") | ForEach-Object { $_.TrimEnd() } | Where-Object { $_.Trim().Length -ge $MinLineLength })
+    }
+    $toEn = ([string]$Direction -eq 'to_en')
+    $srcLines = @(& $clean $SourceText)
+    $tgtLines = @(& $clean $TargetText)
+    # アライメントは日本語を軸に切る。実測した壁（50行）が日本語基準のため。
+    $jaLines = if ($toEn) { $srcLines } else { $tgtLines }
+    $enLines = if ($toEn) { $tgtLines } else { $srcLines }
+
+    $warnings = New-Object System.Collections.Generic.List[string]
+    $segments = New-Object System.Collections.Generic.List[object]
+    $aligned = $null
+    if ($jaLines.Count -eq 0 -or $enLines.Count -eq 0) {
+        [void]$warnings.Add('日本語と英語の両方が必要です。片方が空でした。')
+    }
+    else {
+        $aligned = Invoke-YakuDocumentAlignment -JaLines $jaLines -EnLines $enLines -Settings $Settings
+        foreach ($p in @($aligned.Pairs)) {
+            $ja = [string]$p.JaText; $en = [string]$p.EnText
+            [void]$segments.Add([pscustomobject]@{
+                Text        = [string]$(if ($toEn) { $ja } else { $en })
+                BlockIds    = @()
+                Cells       = @()
+                Joined      = $false
+                Kind        = 'align'
+                Sheet       = ''
+                Location    = '対訳'
+                Translation = [string]$(if ($toEn) { $en } else { $ja })
+                # 機械が作った対応であることを残す。人が直せば manual になる。
+                Origin      = 'align'
+            })
+        }
+        $cov = [Math]::Round($aligned.JaCoverage, 2)
+        if ($aligned.JaCoverage -lt 0.9) {
+            [void]$warnings.Add(('対応を取れなかった行があります（網羅率 ' + [string]([int]($cov * 100)) + '%）。抽出が崩れていないか確かめてください。'))
+        }
+        if ([int]$aligned.Dropped -gt 0) {
+            [void]$warnings.Add(('数値が食い違う対を ' + [string]$aligned.Dropped + ' 組はずしました。'))
+        }
+    }
+    $project = [pscustomobject]@{
+        Id        = [guid]::NewGuid().ToString('N')
+        Path      = ''
+        FileName  = [string]$FileName
+        Direction = [string]$Direction
+        Blocks    = @()
+        Segments  = @($segments.ToArray())
+        Warnings  = @($warnings.ToArray())
+        Source    = 'align'
+        CreatedAt = (Get-Date).ToString('s')
+        Alignment = $aligned
+    }
+    $script:YakuCatProjects[$project.Id] = $project
+    return $project
+}
+
+function Save-YakuCatProjectToCorpus {
+    <#
+      グリッドで確かめた対訳をコーパスへ入れる。人が直した対も、直していない
+      対も、この時点の中身をそのまま貯める。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [Parameter(Mandatory=$true)][string]$Database,
+        [string]$Source = '',
+        # 保存先。既定は管理者の取り込み場所。試験は別の場所を指す。
+        [AllowNull()][string]$Dir,
+        [switch]$Public
+    )
+    if ([string]::IsNullOrWhiteSpace($Dir)) { $Dir = Get-YakuCorpusBuildDir }
+    $toEn = ([string]$Project.Direction -eq 'to_en')
+    $pairs = New-Object System.Collections.Generic.List[object]
+    foreach ($seg in @($Project.Segments)) {
+        $a = [string]$seg.Text; $b = [string]$seg.Translation
+        if ([string]::IsNullOrWhiteSpace($a) -or [string]::IsNullOrWhiteSpace($b)) { continue }
+        [void]$pairs.Add([pscustomobject]@{
+            JaText        = [string]$(if ($toEn) { $a } else { $b })
+            EnText        = [string]$(if ($toEn) { $b } else { $a })
+            # 人が直した対は、機械の数値照合を通していなくても信用してよい。
+            NumberChecked = $true
+            NumberAgree   = $true
+        })
+    }
+    $src = [string]$Source
+    if ([string]::IsNullOrWhiteSpace($src)) { $src = [string]$Project.FileName }
+    return (Add-YakuCorpusPairs -Dir $Dir -Database $Database -Source $src -Pairs @($pairs.ToArray()) -Public:$Public)
+}
+
 function Get-YakuCatProject {
     param([Parameter(Mandatory=$true)][string]$Id)
     if (-not $script:YakuCatProjects.ContainsKey($Id)) { return $null }
