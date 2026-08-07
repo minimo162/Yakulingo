@@ -235,3 +235,147 @@ function Split-YakuAlignmentChunks {
     }
     return @($chunks.ToArray())
 }
+
+function Invoke-YakuAlignmentChunk {
+    <#
+      塊ひとつを Copilot へ渡し、通し番号の対にして返す。
+      網羅率が足りなければ塊を半分にして自分を呼び直す。100行で落ちたのは
+      量の問題だったので、量を減らせば取れる。何度も割らないよう深さは限る。
+
+      英語側の窓は日本語側から見当をつける。対応が取れた分だけ窓を進めるので、
+      片方だけ長い節があっても引きずらない。
+    #>
+    param(
+        [AllowNull()][string[]]$JaLines,
+        [AllowNull()][string[]]$EnLines,
+        [Parameter(Mandatory = $true)][int]$JaStart,
+        [Parameter(Mandatory = $true)][int]$JaEnd,
+        [Parameter(Mandatory = $true)][int]$EnStart,
+        [Parameter(Mandatory = $true)][int]$EnEnd,
+        [AllowNull()]$Settings,
+        [double]$MinCoverage = 0.85,
+        [int]$Depth = 0,
+        [int]$MaxDepth = 2
+    )
+    $ja = @($JaLines); $en = @($EnLines)
+    $jaSlice = @($ja[$JaStart..$JaEnd])
+    $enSlice = @($en[$EnStart..$EnEnd])
+
+    # 送信はここだけを通る。マスクが働かなければ例外で止まる。
+    $jaMasked = Protect-YakuAlignmentLines -Lines $jaSlice -Language 'ja'
+    $enMasked = Protect-YakuAlignmentLines -Lines $enSlice -Language 'en'
+
+    $rid = [guid]::NewGuid().ToString('N')
+    $prompt = New-YakuAlignmentPrompt -JaLines $jaMasked -EnLines $enMasked -RequestId $rid
+    $raw = Invoke-YakuCopilotPrompt -Prompt $prompt -Settings $Settings -AnswerFormat numbered -PreserveEndMarker
+    $parsed = ConvertFrom-YakuAlignmentResponse -Raw $raw -JaCount $jaSlice.Count -EnCount $enSlice.Count
+
+    $span = $JaEnd - $JaStart + 1
+    if ($parsed.JaCoverage -lt $MinCoverage -and $Depth -lt $MaxDepth -and $span -ge 20) {
+        $mid = $JaStart + [int][Math]::Floor($span / 2) - 1
+        try { Write-YakuLog ("Alignment coverage low; splitting. range=$JaStart-$JaEnd coverage=" + [Math]::Round($parsed.JaCoverage, 3)) 'WARN' } catch {}
+        $left = Invoke-YakuAlignmentChunk -JaLines $ja -EnLines $en -JaStart $JaStart -JaEnd $mid `
+            -EnStart $EnStart -EnEnd $EnEnd -Settings $Settings -MinCoverage $MinCoverage -Depth ($Depth + 1) -MaxDepth $MaxDepth
+        $rightEnStart = [Math]::Min([Math]::Max($left.LastEn + 1, $EnStart), $EnEnd)
+        $right = Invoke-YakuAlignmentChunk -JaLines $ja -EnLines $en -JaStart ($mid + 1) -JaEnd $JaEnd `
+            -EnStart $rightEnStart -EnEnd $EnEnd -Settings $Settings -MinCoverage $MinCoverage -Depth ($Depth + 1) -MaxDepth $MaxDepth
+        return [pscustomobject]@{
+            Pairs  = @(@($left.Pairs) + @($right.Pairs))
+            LastEn = [Math]::Max($left.LastEn, $right.LastEn)
+            Splits = 1 + [int]$left.Splits + [int]$right.Splits
+            Calls  = 1 + [int]$left.Calls + [int]$right.Calls
+        }
+    }
+
+    # 塊の中の番号を通し番号へ直し、原文で数値の裏を取る。
+    # 照合に使うのはマスク前の原文。Copilot には見せていない。
+    $out = New-Object System.Collections.Generic.List[object]
+    $lastEn = $EnStart - 1
+    foreach ($p in @($parsed.Pairs)) {
+        $gj = @($p.Ja | ForEach-Object { $JaStart + $_ })
+        $ge = @($p.En | ForEach-Object { $EnStart + $_ })
+        $jaText = (@($gj | ForEach-Object { $ja[$_] }) -join '')
+        $enText = (@($ge | ForEach-Object { $en[$_] }) -join ' ')
+        $num = Test-YakuAlignmentNumbersAgree -JaText $jaText -EnText $enText
+        $lastEn = [Math]::Max($lastEn, @($ge)[-1])
+        [void]$out.Add([pscustomobject]@{
+                Ja           = $gj
+                En           = $ge
+                JaText       = $jaText
+                EnText       = $enText
+                NumberChecked = [bool]$num.Checked
+                NumberAgree  = [bool]$num.Agree
+            })
+    }
+    return [pscustomobject]@{
+        Pairs  = @($out.ToArray())
+        LastEn = $lastEn
+        Splits = 0
+        Calls  = 1
+    }
+}
+
+function Invoke-YakuDocumentAlignment {
+    <#
+      文書ひとつを通しでアライメントする。
+      重なりで二度出た対は、先に採ったほうを残す。
+      数値が食い違う対は、翻訳メモリへ入れる前にここで外す。
+      誤った対訳を機械置換され続けるより、拾えない対があるほうが軽い。
+    #>
+    param(
+        [AllowNull()][string[]]$JaLines,
+        [AllowNull()][string[]]$EnLines,
+        [AllowNull()]$Settings,
+        [int]$MaxLines = 50,
+        [int]$Overlap = 5,
+        [double]$MinCoverage = 0.85,
+        [switch]$KeepNumberMismatch
+    )
+    $ja = @($JaLines); $en = @($EnLines)
+    if ($ja.Count -eq 0 -or $en.Count -eq 0) {
+        return [pscustomobject]@{ Pairs = @(); JaCoverage = 0.0; EnCoverage = 0.0; Calls = 0; Splits = 0; Dropped = 0 }
+    }
+    $ratio = [double]$en.Count / [double]$ja.Count
+    $chunks = @(Split-YakuAlignmentChunks -Count $ja.Count -MaxLines $MaxLines -Overlap $Overlap)
+    $accepted = New-Object System.Collections.Generic.List[object]
+    $usedJa = @{}; $usedEn = @{}; $jaToEn = @{}
+    $enCursor = 0; $calls = 0; $splits = 0; $dropped = 0
+
+    foreach ($c in $chunks) {
+        $span = $c.End - $c.Start + 1
+        # 窓は広めに取る。狭いと対応する英文が窓の外に落ちて、その分が丸ごと拾えない。
+        $width = [int][Math]::Ceiling($span * $ratio * 1.6) + 10
+        # 塊は重ねてあるので、英語側も重なりの分だけ戻す。前の塊の末尾まで
+        # 進めてしまうと、重なった日本語に対応する英文が窓の外へ出て、
+        # 継ぎ目が丸ごと拾えなくなる。
+        if ($jaToEn.ContainsKey($c.Start)) { $enCursor = [int]$jaToEn[$c.Start] }
+        $enStart = [Math]::Min($enCursor, [Math]::Max(0, $en.Count - 1))
+        $enEnd = [Math]::Min($en.Count - 1, $enStart + $width)
+        $res = Invoke-YakuAlignmentChunk -JaLines $ja -EnLines $en -JaStart $c.Start -JaEnd $c.End `
+            -EnStart $enStart -EnEnd $enEnd -Settings $Settings -MinCoverage $MinCoverage
+        $calls += [int]$res.Calls; $splits += [int]$res.Splits
+
+        foreach ($p in @($res.Pairs)) {
+            if (@($p.Ja | Where-Object { $usedJa.ContainsKey($_) }).Count -gt 0) { continue }
+            if (@($p.En | Where-Object { $usedEn.ContainsKey($_) }).Count -gt 0) { continue }
+            if ($p.NumberChecked -and -not $p.NumberAgree -and -not $KeepNumberMismatch) {
+                $dropped++
+                try { Write-YakuLog ('Alignment pair dropped on number mismatch. ja=' + (@($p.Ja) -join '+')) 'WARN' } catch {}
+                continue
+            }
+            foreach ($x in $p.Ja) { $usedJa[$x] = $true; if (-not $jaToEn.ContainsKey($x)) { $jaToEn[$x] = @($p.En)[0] } }
+            foreach ($x in $p.En) { $usedEn[$x] = $true }
+            [void]$accepted.Add($p)
+        }
+        if ($res.LastEn -ge $enCursor) { $enCursor = $res.LastEn + 1 }
+        if ($enCursor -ge $en.Count) { $enCursor = $en.Count - 1 }
+    }
+    return [pscustomobject]@{
+        Pairs      = @($accepted.ToArray())
+        JaCoverage = [double]$usedJa.Count / $ja.Count
+        EnCoverage = [double]$usedEn.Count / $en.Count
+        Calls      = $calls
+        Splits     = $splits
+        Dropped    = $dropped
+    }
+}

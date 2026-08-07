@@ -89,6 +89,53 @@ Chk (@($c | Where-Object { ($_.End - $_.Start + 1) -gt 50 }).Count -eq 0) 'ど�
 Chk ($c[1].Start -eq ($c[0].End + 1 - 5)) '隣り合う塊が5行重なる'
 Chk ($c[-1].End -eq 119) '最後の行まで届く'
 
+Write-Host '通しの駆動' -ForegroundColor Cyan
+. (Join-Path (Join-Path $root 'src') 'AlignMask.ps1')
+
+# Copilot の代役。実機の応答は別に確かめる。ここで見たいのは、
+# 塊に割って呼び、重なりを畳み、通し番号へ戻す側の振る舞い。
+$script:fakeCalls = 0
+$script:fakeCover = 1.0
+function Invoke-YakuCopilotPrompt {
+    param([string]$Prompt, $Settings, [string]$AnswerFormat, [switch]$PreserveEndMarker)
+    $script:fakeCalls++
+    $n = ([regex]::Matches($Prompt, '(?m)^J\d+ ')).Count
+    $m = ([regex]::Matches($Prompt, '(?m)^E\d+ ')).Count
+    $k = [int][Math]::Floor([Math]::Min($n, $m) * $script:fakeCover)
+    $lines = New-Object System.Collections.Generic.List[string]
+    for ($i = 0; $i -lt $k; $i++) { [void]$lines.Add(('[[ID:{0}]] {0}. J{1:d2} | E{1:d2}' -f ($i + 1), $i)) }
+    return ($lines -join "`n")
+}
+
+$ja = @(0..119 | ForEach-Object { "これは第{0}文です。" -f $_ })
+$en = @(0..119 | ForEach-Object { "This is sentence number {0}." -f $_ })
+$script:fakeCalls = 0
+$r = Invoke-YakuDocumentAlignment -JaLines $ja -EnLines $en -Settings $null
+Chk ($script:fakeCalls -eq 3) '120行を50行ずつ3回に分けて呼ぶ'
+Chk ([Math]::Abs([double]$r.JaCoverage - 1.0) -lt 0.001) '全体を覆う'
+Chk (@($r.Pairs).Count -eq 120) '重なりで出た対を二重に採らない'
+Chk ([string](@($r.Pairs)[119].JaText) -eq 'これは第119文です。') '最後の対まで通し番号が合う'
+
+# 網羅率が足りなければ塊を割って呼び直す。
+$script:fakeCalls = 0; $script:fakeCover = 0.5
+$r = Invoke-YakuDocumentAlignment -JaLines $ja[0..49] -EnLines $en[0..49] -Settings $null -MinCoverage 0.85
+Chk ($script:fakeCalls -gt 1 -and $r.Splits -ge 1) '網羅率が足りない塊は割って呼び直す'
+$script:fakeCover = 1.0
+
+# 数値が食い違う対は、翻訳メモリへ入れる前に外す。
+$jaN = @('北米に122億円を投資しました。', '当社は電動化を進めます。')
+$enN = @('In North America, ¥45.6 billion was invested.', 'We will advance electrification.')
+$r = Invoke-YakuDocumentAlignment -JaLines $jaN -EnLines $enN -Settings $null
+Chk ([int]$r.Dropped -eq 1 -and @($r.Pairs).Count -eq 1) '数値が食い違う対を外す'
+$r = Invoke-YakuDocumentAlignment -JaLines $jaN -EnLines $enN -Settings $null -KeepNumberMismatch
+Chk (@($r.Pairs).Count -eq 2) '指示があれば食い違う対も残す'
+
+# マスクを迂回できないこと。Protect- を壊せば送信まで届かない。
+function ConvertTo-YakuAlignmentMaskedText { param([AllowNull()][string]$Text, [string]$Language = 'ja') return [string]$Text }
+$threw = $false
+try { $null = Invoke-YakuDocumentAlignment -JaLines $jaN -EnLines $enN -Settings $null } catch { $threw = $true }
+Chk $threw 'マスクが働かなければ通しの駆動ごと止まる'
+
 if ($script:fail -gt 0) {
     Write-Host "V91.61 alignment regression failed. failures=$script:fail" -ForegroundColor Red
     exit 1
