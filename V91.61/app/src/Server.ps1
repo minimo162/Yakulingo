@@ -2277,6 +2277,56 @@ function Invoke-YakuRoute {
                 return
             }
 
+            if ($action -eq 'align') {
+                # 既にある訳と突き合わせる。まだプロジェクトが無いので open と同じ側に置く。
+                # 数分かかるのでジョブで走らせ、完了後に align-apply で組み立てる。
+                $direction = 'to_en'
+                try { if (@('to_en','to_jp') -contains [string]$payload['direction']) { $direction = [string]$payload['direction'] } } catch {}
+                $srcText = ''; $tgtText = ''; $alignName = '対訳の突き合わせ'
+                try { $srcText = [string]$payload['source_text'] } catch {}
+                try { $tgtText = [string]$payload['target_text'] } catch {}
+                try { if (-not [string]::IsNullOrWhiteSpace([string]$payload['file_name'])) { $alignName = [string]$payload['file_name'] } } catch {}
+                if ([string]::IsNullOrWhiteSpace($srcText) -or [string]::IsNullOrWhiteSpace($tgtText)) {
+                    Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind warning -Message '原文と訳文の両方を入れてください。')) -StatusCode 409
+                    return
+                }
+                $readyState = Get-YakuTranslateReadinessState
+                if (-not [bool]$readyState.canTranslate) {
+                    $message = if ([string]$readyState.mode -eq 'working') { '別のジョブが実行中です。完了してからお試しください。' } else { 'Copilotの準備が完了してから実行できます。' }
+                    Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind warning -Message $message)) -StatusCode 409
+                    return
+                }
+                $catJson = ([ordered]@{ project_id = ''; direction = $direction; mode = 'align'; file_name = $alignName; source_text = $srcText; target_text = $tgtText; items = @() } | ConvertTo-Json -Depth 6 -Compress)
+                $state = Start-YakuTranslationJob -InputText '' -Settings $settings -Kind 'cat' -CatJson $catJson
+                Send-YakuTextResponse -Context $Context -Text (Convert-YakuTranslationJobStartedHtml -State $state)
+                return
+            }
+
+            if ($action -eq 'align-apply') {
+                # ジョブが返した対からプロジェクトを組み立てる。以後はいつもの
+                # グリッドなので、結合・分割・手直しがそのまま使える。
+                $direction = 'to_en'
+                try { if (@('to_en','to_jp') -contains [string]$payload['direction']) { $direction = [string]$payload['direction'] } } catch {}
+                $alignName = '対訳の突き合わせ'
+                try { if (-not [string]::IsNullOrWhiteSpace([string]$payload['file_name'])) { $alignName = [string]$payload['file_name'] } } catch {}
+                # 対はジョブの結果から読む。画面へ往復させない。数千組になると
+                # 送り返すだけで重いうえ、途中で欠けても気づけない。
+                $jobId = ''
+                try { $jobId = [string]$payload['job_id'] } catch {}
+                Update-YakuTranslationJobs
+                if ([string]::IsNullOrWhiteSpace($jobId) -or -not $script:YakuTranslateJobs.ContainsKey($jobId)) { throw (Get-YakuTranslationJobMissingMessage -JobId $jobId) }
+                $resultJson = [string]$script:YakuTranslateJobs[$jobId]['result_json']
+                if ([string]::IsNullOrWhiteSpace($resultJson)) { throw '突き合わせの結果を取得できませんでした。' }
+                $alignResult = $resultJson | ConvertFrom-Json
+                if ($alignResult.PSObject.Properties.Name -contains 'Error' -and $alignResult.Error) { throw [string]$alignResult.Error }
+                if ([string]$alignResult.Direction -ne '') { $direction = [string]$alignResult.Direction }
+                $incomingPairs = @(@($alignResult.Pairs) | ForEach-Object { [pscustomobject]@{ JaText = [string]$_.JaText; EnText = [string]$_.EnText } })
+                $project = New-YakuCatProjectFromPairs -Pairs $incomingPairs -Direction $direction -FileName $alignName `
+                    -JaCoverage ([double]$alignResult.JaCoverage) -Dropped ([int]$alignResult.Dropped)
+                Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
+                return
+            }
+
             $projectId = ''
             try { $projectId = [string]$payload['id'] } catch {}
             $project = Get-YakuCatProject -Id $projectId
@@ -2307,6 +2357,15 @@ function Invoke-YakuRoute {
                     $items = @(Get-YakuCatSegmentCandidates -Root $script:YakuRoot -Project $project -Index $index)
                     $rows = @($items | ForEach-Object { [ordered]@{ kind = [string]$_.Kind; source = [string]$_.Source; target = [string]$_.Target; exact = [bool]$_.Exact; ratio = [double]$_.Ratio; database = [string]$_.Database; verified = [bool]$_.Verified } })
                     Send-YakuTextResponse -Context $Context -Text (([ordered]@{ index = $index; candidates = @($rows) } | ConvertTo-Json -Depth 5 -Compress)) -ContentType 'application/json; charset=utf-8'
+                }
+                'save-corpus' {
+                    # グリッドで確かめた対訳をコーパスへ入れる。人が一度見てから
+                    # 貯める、という順序をここで担保する。
+                    $database = ''
+                    try { $database = [string]$payload['database'] } catch {}
+                    if ([string]::IsNullOrWhiteSpace($database)) { $database = '対訳' }
+                    $saved = Save-YakuCatProjectToCorpus -Project $project -Database $database -Source ([string]$project.FileName) -Public
+                    Send-YakuTextResponse -Context $Context -Text (([ordered]@{ added = [int]$saved.Added; skipped = [int]$saved.Skipped; database = $database } | ConvertTo-Json -Compress)) -ContentType 'application/json; charset=utf-8'
                 }
                 'segment' {
                     $index = -1

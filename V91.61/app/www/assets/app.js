@@ -337,7 +337,9 @@
       if (catTarget) { catTarget.removeAttribute('aria-busy'); catTarget.innerHTML = '<div class="empty-state">実行中ジョブと翻訳結果はここに表示されます</div>'; }
       yakuSetButtonEnabled(yakuReady);
       yakuPollReadyState();
-      yakuCatApply(catJobId);
+      // 突き合わせは訳文ではなく対応を返す。組み立てが違うので分ける。
+      if (yakuCatAligning) { yakuCatAligning = false; yakuCatAlignApply(catJobId); }
+      else { yakuCatApply(catJobId); }
       return;
     }
     var result = yakuGetResultTarget();
@@ -502,6 +504,9 @@
   // ファイル翻訳と同じことを、押した分だけ進める。
   // 取り込む → 用語集で置換 → 残りをCopilotで訳す → 出力。
   var yakuCatProjectId = '';
+  // 走っているジョブが「突き合わせ」かどうか。終わったあとの組み立てが
+  // 訳文の取り込みとは違うので、ここで区別する。
+  var yakuCatAligning = false;
   var yakuCatUploaded = null;
 
   function yakuCatSetStatus(text) {
@@ -607,6 +612,9 @@
     // 貼り付けたテキストは書き戻す元が無い。出口が違うので言葉も変える。
     var exportBtn = document.getElementById('cat-export-button');
     if (exportBtn) exportBtn.textContent = (data.source === 'text') ? '訳文をコピー' : '出力';
+    // 突き合わせたときだけ「コーパスへ登録」を出す。
+    var saveBtn = document.getElementById('cat-save-corpus-button');
+    if (saveBtn) saveBtn.hidden = (data.source !== 'align');
     yakuCatSetStatus(data.file_name + ' … ' + data.total + ' セグメント（訳済 ' + data.translated + ' / 残り ' + data.remaining + '、結合 ' + data.joined + '）');
     yakuCatUpdateProgress(data);
   }
@@ -710,6 +718,61 @@
     yakuCatSetStatus('訳文を取り込んでいます…');
     yakuCatPost('apply', { id: yakuCatProjectId, job_id: jobId }).then(yakuCatRender).catch(function (error) {
       yakuCatSetStatus('訳文を取り込めませんでした: ' + (error && error.message ? error.message : ''));
+    });
+  }
+
+  // 既にある訳と突き合わせる。数分かかるのでジョブで走らせ、
+  // 終わったら対を受け取ってグリッドを組み立てる。
+  function yakuCatAlign() {
+    var src = document.getElementById('cat-align-source');
+    var tgt = document.getElementById('cat-align-target');
+    var name = document.getElementById('cat-align-name');
+    var dir = document.querySelector('input[name="cat_direction"]:checked');
+    if (!src || !tgt || !src.value.trim() || !tgt.value.trim()) {
+      yakuCatSetStatus('原文と訳文の両方を貼り付けてください。');
+      return;
+    }
+    yakuCatProjectId = null;
+    yakuCatAligning = true;
+    yakuRenderJobLoading('', 0, '対訳を突き合わせ中', '準備中');
+    yakuCatSetStatus('突き合わせています…（数分かかります）');
+    yakuPostJson('/api/cat/align', {
+      direction: dir ? dir.value : 'to_en',
+      source_text: src.value,
+      target_text: tgt.value,
+      file_name: name ? name.value : ''
+    }).then(function (html) {
+      yakuStartJobPolling(html, 'cat');
+    }).catch(function (error) {
+      yakuShowStartError(error, '突き合わせを開始できませんでした。');
+    });
+  }
+
+  function yakuCatAlignApply(jobId) {
+    if (!jobId) return;
+    var name = document.getElementById('cat-align-name');
+    var dir = document.querySelector('input[name="cat_direction"]:checked');
+    yakuCatSetStatus('対応を取り込んでいます…');
+    yakuCatPost('align-apply', {
+      job_id: jobId,
+      direction: dir ? dir.value : 'to_en',
+      file_name: name ? name.value : ''
+    }).then(yakuCatRender).catch(function (error) {
+      yakuCatSetStatus('対応を取り込めませんでした: ' + (error && error.message ? error.message : ''));
+    });
+  }
+
+  // 確かめた対訳をコーパスへ入れる。押すまで貯まらない。
+  function yakuCatSaveCorpus() {
+    if (!yakuCatProjectId) return;
+    var name = document.getElementById('cat-align-name');
+    var database = window.prompt('どのデータベースへ入れますか（例: 有報、決算短信）', (name && name.value) ? name.value : '対訳');
+    if (!database) return;
+    yakuCatSetStatus('コーパスへ登録しています…');
+    yakuCatPost('save-corpus', { id: yakuCatProjectId, database: database }).then(function (data) {
+      yakuCatSetStatus('コーパスへ登録しました：' + (data.added || 0) + '組を追加、' + (data.skipped || 0) + '組は登録済みでした。');
+    }).catch(function (error) {
+      yakuCatSetStatus('登録できませんでした: ' + (error && error.message ? error.message : ''));
     });
   }
 
@@ -1162,7 +1225,9 @@
 
     // CAT の操作。訳文欄は離れたときに保存する。打つたびに送ると往復が増える。
     var catOpen = document.getElementById('cat-open-button');
-    if (catOpen) catOpen.addEventListener('click', yakuCatOpen);
+    if (catOpen) catOpen.addEventListener('click', function () { if (yakuCatSourceMode() === 'align') yakuCatAlign(); else yakuCatOpen(); });
+    var catSaveCorpus = document.getElementById('cat-save-corpus-button');
+    if (catSaveCorpus) catSaveCorpus.addEventListener('click', yakuCatSaveCorpus);
     var catGlossary = document.getElementById('cat-glossary-button');
     if (catGlossary) catGlossary.addEventListener('click', yakuCatGlossary);
     var catTranslate = document.getElementById('cat-translate-button');
@@ -1180,12 +1245,18 @@
     // 取り込み元の切り替え。貼り付けが既定で、Excel は選んだときだけ出す。
     document.addEventListener('change', function (event) {
       if (!event.target || event.target.name !== 'cat_source') return;
-      var isText = (event.target.value === 'text');
+      var mode = event.target.value;
       var textRow = document.getElementById('cat-text-row');
       var fileRow = document.getElementById('cat-file-row');
-      if (textRow) textRow.hidden = !isText;
-      if (fileRow) fileRow.hidden = isText;
-      yakuCatSetStatus(isText ? 'テキストを貼り付けて「取り込む」を押してください。' : 'Excelを選択して「取り込む」を押してください。');
+      var alignRow = document.getElementById('cat-align-row');
+      if (textRow) textRow.hidden = (mode !== 'text');
+      if (fileRow) fileRow.hidden = (mode !== 'file');
+      if (alignRow) alignRow.hidden = (mode !== 'align');
+      var open = document.getElementById('cat-open-button');
+      if (open) open.textContent = (mode === 'align') ? '突き合わせる' : '取り込む';
+      yakuCatSetStatus(mode === 'text' ? 'テキストを貼り付けて「取り込む」を押してください。'
+        : mode === 'file' ? 'Excelを選択して「取り込む」を押してください。'
+        : '同じ資料の日本語版と英語版を貼り付けて「突き合わせる」を押してください。');
     });
     var catFileInput = document.getElementById('cat-file-input');
     if (catFileInput) catFileInput.addEventListener('change', function () {

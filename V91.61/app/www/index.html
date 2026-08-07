@@ -123,10 +123,27 @@
         <div class="cat-mode-row" role="radiogroup" aria-label="取り込み元">
           <label><input type="radio" name="cat_source" value="text" checked><span>テキストを貼り付け</span></label>
           <label><input type="radio" name="cat_source" value="file"><span>Excelファイル</span></label>
+          <label><input type="radio" name="cat_source" value="align"><span>対訳を突き合わせる</span></label>
         </div>
         <div id="cat-text-row" class="cat-text-row">
           <label for="cat-text" class="sr-only">翻訳したいテキスト</label>
           <textarea id="cat-text" rows="8" placeholder="翻訳したいテキストを貼り付け（1文ずつ並べて確認できます）"></textarea>
+        </div>
+        <!--
+          既にある訳と突き合わせる経路。市販ツールの「文書のアライメント」に当たる。
+          取り込み専用の画面を作らず、この画面をそのまま使う
+          （利用者の指摘 2026-08-07「今の管理画面は使いづらい」）。
+          対応はいつものグリッドに出るので、ずれていれば結合・分割で直せる。
+        -->
+        <div id="cat-align-row" class="cat-text-row" hidden>
+          <p class="muted">同じ資料の日本語版と英語版を貼り付けてください。文の対応を作ってグリッドに並べます。数分かかります。</p>
+          <label for="cat-align-source" class="sr-only">原文</label>
+          <textarea id="cat-align-source" rows="6" placeholder="原文（日→英なら日本語）を貼り付け"></textarea>
+          <label for="cat-align-target" class="sr-only">既にある訳文</label>
+          <textarea id="cat-align-target" rows="6" placeholder="既にある訳文（日→英なら英語）を貼り付け"></textarea>
+          <label for="cat-align-name">資料名（コーパスに残ります）
+            <input id="cat-align-name" type="text" placeholder="例: 有報 第160期">
+          </label>
         </div>
         <div class="cat-source-row" id="cat-file-row" hidden>
           <label class="file-drop cat-drop" for="cat-file-input" id="cat-drop" role="button" tabindex="0" aria-describedby="cat-file-name">
@@ -167,6 +184,11 @@
           <button id="cat-glossary-button" type="button" class="secondary-button">用語集で置換</button>
           <button id="cat-corpus-button" type="button" class="secondary-button">文例を検索</button>
           <button id="cat-translate-button" type="button" class="secondary-button">残りをCopilotで翻訳</button>
+          <!--
+            確かめた対訳をコーパスへ入れる。突き合わせたときだけ出す。
+            機械が作った対応をそのまま貯めず、一度グリッドで見てから貯める。
+          -->
+          <button id="cat-save-corpus-button" type="button" class="secondary-button" hidden>コーパスへ登録</button>
           <button id="cat-export-button" type="button">出力</button>
         </div>
         <details id="cat-corpus-panel" class="cat-corpus-panel" hidden>
