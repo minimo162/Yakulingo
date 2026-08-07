@@ -23,6 +23,8 @@ $script:YakuRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyComman
 . (Join-Path $PSScriptRoot 'CorpusReference.ps1')
 . (Join-Path $PSScriptRoot 'BriefStyle.ps1')
 . (Join-Path $PSScriptRoot 'CellSegments.ps1')
+. (Join-Path $PSScriptRoot 'AlignMask.ps1')
+. (Join-Path $PSScriptRoot 'Alignment.ps1')
 . (Join-Path $PSScriptRoot 'CorpusPairs.ps1')
 . (Join-Path $PSScriptRoot 'CatProject.ps1')
 
@@ -453,8 +455,10 @@ function New-YakuWarmTranslationRunspace {
             . (Join-Path $Root 'src\CorpusReference.ps1')
             . (Join-Path $Root 'src\BriefStyle.ps1')
                 . (Join-Path $Root 'src\CellSegments.ps1')
+                . (Join-Path $Root 'src\AlignMask.ps1')
+                . (Join-Path $Root 'src\Alignment.ps1')
                 . (Join-Path $Root 'src\CorpusPairs.ps1')
-. (Join-Path $Root 'src\CatProject.ps1')
+                . (Join-Path $Root 'src\CatProject.ps1')
             $null = Assert-YakuBuildIdentity -Root $Root -ExpectedBuildId $ExpectedBuildId
             $preloadSw = [System.Diagnostics.Stopwatch]::StartNew()
             $settings = Read-YakuSettings -Root $Root
@@ -567,8 +571,10 @@ function Start-YakuWarmTranslationRunspaceBuild {
                     . (Join-Path $Root 'src\CorpusReference.ps1')
                     . (Join-Path $Root 'src\BriefStyle.ps1')
                 . (Join-Path $Root 'src\CellSegments.ps1')
+                . (Join-Path $Root 'src\AlignMask.ps1')
+                . (Join-Path $Root 'src\Alignment.ps1')
                 . (Join-Path $Root 'src\CorpusPairs.ps1')
-. (Join-Path $Root 'src\CatProject.ps1')
+                . (Join-Path $Root 'src\CatProject.ps1')
                     $null = Assert-YakuBuildIdentity -Root $Root -ExpectedBuildId $ExpectedBuildId
                     $preloadSw = [System.Diagnostics.Stopwatch]::StartNew()
                     $settings = Read-YakuSettings -Root $Root
@@ -1128,8 +1134,10 @@ function Start-YakuTranslationJob {
                 . (Join-Path $Root 'src\CorpusReference.ps1')
                 . (Join-Path $Root 'src\BriefStyle.ps1')
                 . (Join-Path $Root 'src\CellSegments.ps1')
+                . (Join-Path $Root 'src\AlignMask.ps1')
+                . (Join-Path $Root 'src\Alignment.ps1')
                 . (Join-Path $Root 'src\CorpusPairs.ps1')
-. (Join-Path $Root 'src\CatProject.ps1')
+                . (Join-Path $Root 'src\CatProject.ps1')
             }
             $sectionSw.Stop(); $moduleLoadMs = $sectionSw.ElapsedMilliseconds
             $sectionSw.Restart()
@@ -1180,6 +1188,38 @@ function Start-YakuTranslationJob {
                         }
                     } catch {
                         $result = [pscustomobject]@{ Kind = 'cat'; Mode = 'corpus'; Error = $_.Exception.Message }
+                    }
+                } elseif ($catMode -eq 'align') {
+                    # 既にある訳と突き合わせる。訳はしない。
+                    # 数分かかるのでジョブに乗せる。組み立てはサーバー側で行う
+                    # （プロジェクトはサーバーの手元に持つため）。
+                    Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label '対訳を突き合わせ中' -Progress 10 -Detail '' -Phase 'translating'
+                    try {
+                        $alignClean = {
+                            param([string]$Text)
+                            return @(($Text -split "`r?`n") | ForEach-Object { $_.TrimEnd() } | Where-Object { $_.Trim().Length -ge 4 })
+                        }
+                        $alignToEn = ([string]$cat.direction -eq 'to_en')
+                        $alignSrc = @(& $alignClean ([string]$cat.source_text))
+                        $alignTgt = @(& $alignClean ([string]$cat.target_text))
+                        # 切り分けは日本語を軸にする。実測した壁（50行）が日本語基準のため。
+                        $alignJa = if ($alignToEn) { $alignSrc } else { $alignTgt }
+                        $alignEn = if ($alignToEn) { $alignTgt } else { $alignSrc }
+                        if ($alignJa.Count -eq 0 -or $alignEn.Count -eq 0) { throw '日本語と英語の両方が必要です。片方が空でした。' }
+                        $alignRes = Invoke-YakuDocumentAlignment -JaLines $alignJa -EnLines $alignEn -Settings $settings
+                        $result = [pscustomobject]@{
+                            Kind = 'cat'; Mode = 'align'
+                            ProjectId = [string]$cat.project_id
+                            FileName = [string]$cat.file_name
+                            Direction = [string]$cat.direction
+                            Pairs = @(@($alignRes.Pairs) | ForEach-Object { [pscustomobject]@{ JaText = [string]$_.JaText; EnText = [string]$_.EnText } })
+                            JaCoverage = [double]$alignRes.JaCoverage
+                            Dropped = [int]$alignRes.Dropped
+                            Calls = [int]$alignRes.Calls
+                            Warnings = @($catWarnings.ToArray())
+                        }
+                    } catch {
+                        $result = [pscustomobject]@{ Kind = 'cat'; Mode = 'align'; Error = $_.Exception.Message }
                     }
                 } else {
                 Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label '翻訳中' -Progress 10 -Detail '' -Phase 'translating'

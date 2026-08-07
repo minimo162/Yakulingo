@@ -185,36 +185,57 @@ function New-YakuCatAlignProject {
     $jaLines = if ($toEn) { $srcLines } else { $tgtLines }
     $enLines = if ($toEn) { $tgtLines } else { $srcLines }
 
-    $warnings = New-Object System.Collections.Generic.List[string]
-    $segments = New-Object System.Collections.Generic.List[object]
-    $aligned = $null
     if ($jaLines.Count -eq 0 -or $enLines.Count -eq 0) {
-        [void]$warnings.Add('日本語と英語の両方が必要です。片方が空でした。')
+        return (New-YakuCatProjectFromPairs -Pairs @() -Direction $Direction -FileName $FileName `
+                -Warnings @('日本語と英語の両方が必要です。片方が空でした。'))
     }
-    else {
-        $aligned = Invoke-YakuDocumentAlignment -JaLines $jaLines -EnLines $enLines -Settings $Settings
-        foreach ($p in @($aligned.Pairs)) {
-            $ja = [string]$p.JaText; $en = [string]$p.EnText
-            [void]$segments.Add([pscustomobject]@{
-                Text        = [string]$(if ($toEn) { $ja } else { $en })
-                BlockIds    = @()
-                Cells       = @()
-                Joined      = $false
-                Kind        = 'align'
-                Sheet       = ''
-                Location    = '対訳'
-                Translation = [string]$(if ($toEn) { $en } else { $ja })
-                # 機械が作った対応であることを残す。人が直せば manual になる。
-                Origin      = 'align'
-            })
-        }
-        $cov = [Math]::Round($aligned.JaCoverage, 2)
-        if ($aligned.JaCoverage -lt 0.9) {
-            [void]$warnings.Add(('対応を取れなかった行があります（網羅率 ' + [string]([int]($cov * 100)) + '%）。抽出が崩れていないか確かめてください。'))
-        }
-        if ([int]$aligned.Dropped -gt 0) {
-            [void]$warnings.Add(('数値が食い違う対を ' + [string]$aligned.Dropped + ' 組はずしました。'))
-        }
+    $aligned = Invoke-YakuDocumentAlignment -JaLines $jaLines -EnLines $enLines -Settings $Settings
+    return (New-YakuCatProjectFromPairs -Pairs @($aligned.Pairs) -Direction $Direction -FileName $FileName `
+            -JaCoverage ([double]$aligned.JaCoverage) -Dropped ([int]$aligned.Dropped))
+}
+
+function New-YakuCatProjectFromPairs {
+    <#
+      取れた対から CAT のプロジェクトを組み立てる。
+
+      突き合わせ自体は時間がかかるのでジョブ側（別のランスペース）で走らせる。
+      プロジェクトはサーバーの手元に持つので、組み立ては分けてある。
+      New-YakuCatAlignProject も、試験や単独実行のためにこれを呼ぶ。
+    #>
+    param(
+        [AllowNull()][object[]]$Pairs,
+        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
+        [string]$FileName = '対訳の突き合わせ',
+        [AllowNull()][string[]]$Warnings,
+        [double]$JaCoverage = 1.0,
+        [int]$Dropped = 0
+    )
+    $toEn = ([string]$Direction -eq 'to_en')
+    $warn = New-Object System.Collections.Generic.List[string]
+    foreach ($w in @($Warnings)) { if (-not [string]::IsNullOrWhiteSpace([string]$w)) { [void]$warn.Add([string]$w) } }
+    $segments = New-Object System.Collections.Generic.List[object]
+    foreach ($p in @($Pairs)) {
+        $ja = [string]$p.JaText; $en = [string]$p.EnText
+        if ([string]::IsNullOrWhiteSpace($ja) -and [string]::IsNullOrWhiteSpace($en)) { continue }
+        [void]$segments.Add([pscustomobject]@{
+            Text        = [string]$(if ($toEn) { $ja } else { $en })
+            BlockIds    = @()
+            Cells       = @()
+            Joined      = $false
+            Kind        = 'align'
+            Sheet       = ''
+            Location    = '対訳'
+            Translation = [string]$(if ($toEn) { $en } else { $ja })
+            # 機械が作った対応であることを残す。人が直せば manual になる。
+            Origin      = 'align'
+        })
+    }
+    # 黙って少ない結果を返すと、取れているように見えてしまう。
+    if ($segments.Count -gt 0 -and $JaCoverage -lt 0.9) {
+        [void]$warn.Add(('対応を取れなかった行があります（網羅率 ' + [string]([int]([Math]::Round($JaCoverage * 100))) + '%）。抽出が崩れていないか確かめてください。'))
+    }
+    if ($Dropped -gt 0) {
+        [void]$warn.Add(('数値が食い違う対を ' + [string]$Dropped + ' 組はずしました。'))
     }
     $project = [pscustomobject]@{
         Id        = [guid]::NewGuid().ToString('N')
@@ -223,10 +244,9 @@ function New-YakuCatAlignProject {
         Direction = [string]$Direction
         Blocks    = @()
         Segments  = @($segments.ToArray())
-        Warnings  = @($warnings.ToArray())
+        Warnings  = @($warn.ToArray())
         Source    = 'align'
         CreatedAt = (Get-Date).ToString('s')
-        Alignment = $aligned
     }
     $script:YakuCatProjects[$project.Id] = $project
     return $project
