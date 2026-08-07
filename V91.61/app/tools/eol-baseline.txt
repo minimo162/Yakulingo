@@ -10,6 +10,7 @@ prompts/text_translate_brief_to_en.txt	crlf
 prompts/text_translate_full_to_en.txt	crlf
 prompts/text_translate_to_en.txt	lf
 prompts/text_translate_to_jp.txt	crlf
+src/AlignMask.ps1	crlf
 src/BriefStyle.ps1	lf
 src/CatProject.ps1	crlf
 src/CellAlign.ps1	crlf
@@ -55,6 +56,7 @@ tools/Test-YakuV9110BulkFormulaGuard.ps1	lf
 tools/Test-YakuV9117BandedFormulaFree.ps1	lf
 tools/Test-YakuV9159SettingsPath.ps1	crlf
 tools/Test-YakuV9160NumericMasking.ps1	crlf
+tools/Test-YakuV9161AlignMask.ps1	crlf
 tools/Test-YakuV9161BriefStyle.ps1	lf
 tools/Test-YakuV9161CatProject.ps1	crlf
 tools/Test-YakuV9161CellAlign.ps1	crlf
