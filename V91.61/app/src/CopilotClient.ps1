@@ -4740,7 +4740,13 @@ function Invoke-YakuCopilotPrompt {
         }
         if (-not $freshReady) {
             Write-YakuLog "Copilot fresh chat request failed after retries. error=$freshLastError result=$(Get-YakuCopilotActionSummary -Result $freshLast)" 'WARN'
-            throw "新しいチャットの準備に失敗しました。EdgeのCopilot画面でアンケート等のダイアログを閉じ、「新しいチャット」を開いてから再実行してください。Detail=$freshLastError"
+            # 原因を断定しない。以前はここで一律に「ダイアログを閉じてください」と
+            # 案内していたが、ページ側が無応答のときはダイアログなど無く、
+            # 調査を誤らせた（2026-08-07）。観測できた事実で場合を分ける。
+            if ([string]$freshLastError -match 'timed out|timeout') {
+                throw "Copilotの画面が応答しません。Edgeは動いていますが、ページからの返事が返ってきません。YakuLingoを終了してCopilot用のEdgeを閉じ、起動し直してください。それでも続く場合はログを確認してください。Detail=$freshLastError"
+            }
+            throw "新しいチャットの準備に失敗しました。EdgeのCopilot画面にダイアログ（アンケート等）が出ていれば閉じ、「新しいチャット」を開いてから再実行してください。Detail=$freshLastError"
         }
     }
 
