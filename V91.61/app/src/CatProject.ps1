@@ -624,7 +624,8 @@ function Get-YakuCatSegmentCandidates {
         [Parameter(Mandatory=$true)][string]$Root,
         [Parameter(Mandatory=$true)]$Project,
         [Parameter(Mandatory=$true)][int]$Index,
-        [int]$Max = 8
+        [int]$Max = 8,
+        [AllowNull()][string]$PairsDir
     )
     $segs = @($Project.Segments)
     if ($Index -lt 0 -or $Index -ge $segs.Count) { return @() }
@@ -666,7 +667,11 @@ function Get-YakuCatSegmentCandidates {
     # 過去の対訳。用語集より上に出す。市販ツールも翻訳メモリを先頭へ置く。
     # 語の対応より、文まるごとの前例のほうが強い手掛かりだからである。
     try {
-        $pairsDir = Get-YakuCorpusBuildDir
+        # 置き場所は呼び出し側から渡せるようにする。要求を捌く runspace は
+        # 読み込む一式が違うことがあり、Get-YakuCorpusBuildDir が見えないと
+        # 対訳が丸ごと出なくなる。実機のログで気づいた（2026-08-07）。
+        $pairsDir = [string]$PairsDir
+        if ([string]::IsNullOrWhiteSpace($pairsDir)) { $pairsDir = Get-YakuCorpusBuildDir }
         foreach ($hit in @(Find-YakuCorpusPairsForSegment -Dir $pairsDir -Text $text -SourceLanguage $(if ($toEn) { 'ja' } else { 'en' }) -Limit 5)) {
             $key = 'pair' + [string][char]31 + [string]$hit.Source + [string][char]31 + [string]$hit.Target
             if ($seen.ContainsKey($key)) { continue }
