@@ -123,6 +123,29 @@ function Convert-YakuTextResultToHtml {
     try { $direction = [string]$Result.Direction } catch { $direction = '' }
     $canRevise = (-not [string]::IsNullOrWhiteSpace($sourceText))
 
+    # 答えを1つに絞り、ほかは下に小さく添える。
+    #
+    # これまでは同じ重さのカードを縦に2枚並べていた。英語が得意でない人に
+    # 「どちらを使うか」を読んで判断させることになり、選べない
+    # （独立評価 2026-08-08）。主が1つあれば読む場所が決まる。
+    #
+    # 既定は開示資料の書き方にする。間違いの重さが対称でないため。
+    # 公表資料に社内表記が混ざれば社外に出るが、社内資料が正式な書き方でも
+    # 冗長なだけで社内で止まる。初めて使う人にも ¥12.3 billion のほうが読める。
+    # 選んだ形は覚えるので、押し直すのは最初の1回だけになる。
+    $ordered = New-Object System.Collections.Generic.List[object]
+    foreach ($want in @('published', 'full', 'brief')) {
+        foreach ($o in $options) {
+            $s = ''
+            try { $s = [string]$o.Style } catch { $s = '' }
+            if ($s -eq $want) { [void]$ordered.Add($o) }
+        }
+    }
+    foreach ($o in $options) { if (-not $ordered.Contains($o)) { [void]$ordered.Add($o) } }
+    $options = @($ordered.ToArray())
+    $optionIndex = 0
+    $altHtml = ''
+
     foreach ($opt in $options) {
         $title = ConvertTo-YakuHtml $opt.Label
         $translation = ConvertTo-YakuHtml $opt.Translation
@@ -149,26 +172,42 @@ function Convert-YakuTextResultToHtml {
         # 手元で切り替える。「社内は oku」と決めつけない
         # （利用者の指摘 2026-08-08「それは自分の周りだけかもしれない」）。
         # oku を含まない訳には出さない。押しても何も変わらないボタンは邪魔なだけ。
-        $unitToggle = ''
-        $published = ConvertTo-YakuPublishedUnitText -Text ([string]$opt.Translation)
-        if ($published -ne [string]$opt.Translation) {
-            $unitToggle = @"
-  <div class='unit-toggle'>
-    <button type='button' class='secondary-button compact' data-yaku-units-toggle
-            data-yaku-units-house='$(ConvertTo-YakuUtf8Base64 ([string]$opt.Translation))'
-            data-yaku-units-published='$(ConvertTo-YakuUtf8Base64 $published)'>¥12.2 billion の書き方にする</button>
+        # 1つ目を主にし、2つ目以降は下に小さく添える。押すと入れ替わる。
+        $isMain = ($optionIndex -eq 0)
+        $optionIndex++
+        $chars = ([string]$opt.Translation).Length
+        $b64 = ConvertTo-YakuUtf8Base64 ([string]$opt.Translation)
+        if ($isMain) {
+            $html += @"
+<article class='result-card result-card-translation' data-yaku-main-card>
+$dropNotice  <pre class='translation' data-yaku-main-text>$translation</pre>
+  <div class='result-actions'>
+    <span class='result-kind' data-yaku-main-kind>$title</span>
+    $(New-YakuCopyButtonHtml -Text ([string]$opt.Translation) -Label 'コピー')
   </div>
+</article>
+"@
+            $altHtml += ""
+        }
+        else {
+            # 添え物にも中身を出す。押す前にどう違うかが見えないと選べない。
+            $preview = [string]$opt.Translation
+            if ($preview.Length -gt 90) { $preview = $preview.Substring(0, 90) + '…' }
+            $altHtml += @"
+  <button type='button' class='result-alt' data-yaku-swap='$b64' data-yaku-swap-kind='$(ConvertTo-YakuHtml $opt.Label)'>
+    <span class='result-alt-head'>$title<span class='result-alt-chars'>$chars 字</span></span>
+    <span class='result-alt-body'>$(ConvertTo-YakuHtml $preview)</span>
+  </button>
 "@
         }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($altHtml)) {
         $html += @"
-<article class='result-card result-card-translation'>
-  <header>
-    <div class='eyebrow'>$title</div>
-    $(New-YakuCopyButtonHtml -Text ([string]$opt.Translation) -Label 'コピー')
-  </header>
-$dropNotice  <pre class='translation' data-yaku-units='house'>$translation</pre>
-$unitToggle
-$reviseHtml</article>
+<div class='result-alts'>
+  <p class='result-alts-lead'>ほかの書き方もあります。押すと上と入れ替わります。</p>
+  <div class='result-alts-list'>
+$altHtml  </div>
+</div>
 "@
     }
 

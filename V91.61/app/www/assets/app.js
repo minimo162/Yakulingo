@@ -363,6 +363,8 @@
     if (result) {
       result.removeAttribute('aria-busy');
       result.innerHTML = completedHtml;
+      // 前に選んだ書き方を主へ持ってくる。毎回押し直さなくて済むように。
+      yakuNotifyResultRendered();
       window.setTimeout(function () { yakuScrollCompletionIntoView(result); }, 0);
     }
     yakuSetButtonEnabled(yakuReady);
@@ -433,6 +435,9 @@
     yakuStartJobPolling(jobId, kind);
   }
 
+  function yakuNotifyResultRendered() {
+    try { document.dispatchEvent(new CustomEvent('yaku:result-rendered')); } catch (e) {}
+  }
   function yakuStartFromHtml(html) {
     var result = yakuGetResultTarget();
     if (result) result.innerHTML = html || '<div class="alert alert-warning">ジョブ開始結果を取得できませんでした。</div>';
@@ -1134,7 +1139,7 @@
     });
     if (!yakuTranslating) {
       var result = yakuGetResultTarget();
-      if (result) result.innerHTML = yakuResultByTab[target] || yakuEmptyResultHtml();
+      if (result) { result.innerHTML = yakuResultByTab[target] || yakuEmptyResultHtml(); yakuNotifyResultRendered(); }
     }
   }
 
@@ -1400,27 +1405,56 @@
         yakuCatSetStatus('フォルダを開けませんでした: ' + (error && error.message ? error.message : ''));
       });
     });
-    // 単位の書き方を切り替える。訳し直しではなく書き分けなので、その場で入れ替える。
-    document.addEventListener('click', function (event) {
-      var btn = event.target.closest && event.target.closest('[data-yaku-units-toggle]');
-      if (!btn) return;
-      var card = btn.closest('.result-card-translation');
-      var pre = card ? card.querySelector('.translation') : null;
-      if (!pre) return;
-      var toPublished = pre.getAttribute('data-yaku-units') !== 'published';
-      var key = toPublished ? 'data-yaku-units-published' : 'data-yaku-units-house';
-      pre.textContent = yakuDecodeBase64Utf8(btn.getAttribute(key) || '');
-      pre.setAttribute('data-yaku-units', toPublished ? 'published' : 'house');
-      btn.textContent = toPublished ? 'oku の書き方に戻す' : '¥12.2 billion の書き方にする';
-      // コピーボタンが古い訳を持ったままにならないようにする。
-      // 切り替えた側をコピーさせないと、画面と貼られるものが食い違う。
+    // 主の訳と、下に添えた訳を入れ替える。
+    // 選んだ種類は覚える。毎回押し直すのは面倒なので。
+    function yakuPreferredKind() {
+      try { return window.localStorage.getItem('yaku-result-kind') || ''; } catch (e) { return ''; }
+    }
+    function yakuRememberKind(kind) {
+      try { window.localStorage.setItem('yaku-result-kind', kind || ''); } catch (e) {}
+    }
+    function yakuSwapResult(button) {
+      var card = document.querySelector('[data-yaku-main-card]');
+      var main = card ? card.querySelector('[data-yaku-main-text]') : null;
+      var kindEl = card ? card.querySelector('[data-yaku-main-kind]') : null;
+      if (!main || !kindEl) return;
+      var newText = yakuDecodeBase64Utf8(button.getAttribute('data-yaku-swap') || '');
+      var newKind = button.getAttribute('data-yaku-swap-kind') || '';
+      var oldText = main.textContent;
+      var oldKind = kindEl.textContent;
+      // 入れ替え。押した側には元の主が入るので、押し戻せる。
+      main.textContent = newText;
+      kindEl.textContent = newKind;
+      button.setAttribute('data-yaku-swap', yakuEncodeUtf8Base64(oldText));
+      button.setAttribute('data-yaku-swap-kind', oldKind);
+      var head = button.querySelector('.result-alt-head');
+      var body = button.querySelector('.result-alt-body');
+      if (head) head.innerHTML = yakuEscape(oldKind) + '<span class="result-alt-chars">' + oldText.length + ' 字</span>';
+      if (body) body.textContent = oldText.length > 90 ? (oldText.slice(0, 90) + '…') : oldText;
       var copy = card.querySelector('[data-yaku-copy], [data-yaku-copy-b64]');
-      if (copy) {
-        copy.removeAttribute('data-yaku-copy-b64');
-        copy.setAttribute('data-yaku-copy', pre.textContent);
-      }
+      if (copy) { copy.removeAttribute('data-yaku-copy-b64'); copy.setAttribute('data-yaku-copy', newText); }
+      yakuRememberKind(newKind);
+    }
+    function yakuEncodeUtf8Base64(s) {
+      try { return window.btoa(String.fromCharCode.apply(null, new TextEncoder().encode(s))); }
+      catch (e) { return ''; }
+    }
+    document.addEventListener('click', function (event) {
+      var sw = event.target.closest && event.target.closest('[data-yaku-swap]');
+      if (sw) yakuSwapResult(sw);
     });
-    yakuCatLoadRecent();
+    // 結果が出たら、前に選んだ種類を主に持ってくる。
+    document.addEventListener('yaku:result-rendered', function () {
+      var want = yakuPreferredKind();
+      if (!want) return;
+      var card = document.querySelector('[data-yaku-main-card]');
+      var kindEl = card ? card.querySelector('[data-yaku-main-kind]') : null;
+      if (!kindEl || kindEl.textContent === want) return;
+      var alts = document.querySelectorAll('[data-yaku-swap]');
+      for (var i = 0; i < alts.length; i++) {
+        if (alts[i].getAttribute('data-yaku-swap-kind') === want) { yakuSwapResult(alts[i]); return; }
+      }
+    });    yakuCatLoadRecent();
     // 保存できていない行がある状態で閉じようとしたら止める。
     window.addEventListener('beforeunload', function (event) {
       if (!document.querySelector('.cat-unsaved')) return;

@@ -140,7 +140,23 @@ input[type="text"], select { width: 100%; min-height: 34px; border: 0; border-ra
 .result-card header, .result-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-2); }
 .eyebrow { color: var(--faint); font-size: var(--font-meta); font-weight: 600; letter-spacing: .06em; }
 .result-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.translation { margin: 0; white-space: pre-wrap; font-size: var(--font-input); line-height: 1.65; font-family: inherit; color: var(--text); background: var(--soft); border-radius: var(--radius-control); padding: 14px; }
+/* 訳文は画面でいちばん読まれる場所なので、いちばん大きくする。
+   老眼でも読める大きさ（18px）と、目が行を追いやすい行間（1.8）にする。
+   大きすぎると1行に入る語が減って読みにくくなるので、幅も制限する。 */
+.translation { margin: 0; white-space: pre-wrap; font-size: 18px; line-height: 1.8; font-family: inherit; color: var(--text); background: var(--soft); border-radius: var(--radius-control); padding: 18px 20px; max-width: 62ch; }
+/* 主の訳。カードの中で最初に目に入る位置に置く。 */
+[data-yaku-main-card] { padding: 22px 24px; }
+.result-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
+.result-kind { color: var(--muted); font-size: 14px; font-weight: 600; }
+/* 添え物。主より小さくするが、13px より下げない。読めないと選べない。 */
+.result-alts { margin-top: 14px; }
+.result-alts-lead { margin: 0 0 8px; color: var(--muted); font-size: 14px; }
+.result-alts-list { display: grid; gap: 8px; }
+.result-alt { display: block; width: 100%; text-align: left; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); cursor: pointer; min-height: 0; }
+.result-alt:hover { border-color: var(--line-strong); background: var(--soft); }
+.result-alt-head { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.result-alt-chars { color: var(--faint); font-weight: 400; font-variant-numeric: tabular-nums; }
+.result-alt-body { display: block; color: var(--text); font-size: 15px; line-height: 1.6; font-weight: 400; }
 /* CAT: 原文と訳文を並べて確認する */
 .cat-source-row { display: grid; gap: var(--space-2); margin-bottom: var(--space-2); }
 .cat-direction { display: flex; gap: 16px; align-items: center; }
