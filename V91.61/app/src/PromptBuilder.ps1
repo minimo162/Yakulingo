@@ -301,6 +301,30 @@ function Get-YakuGlossaryEntries {
     } catch {}
 
     if ($IncludeDuplicates) { return @($allEntries) }
+    # 個人用の用語集を上に重ねる。市販ツールでも、共通のものと作業用のものを
+    # 2段重ねにして作業用を優先する。配布分はいま開発者が代わりに作っている
+    # 下敷きで、本来は各自が貯めるもの（利用者の整理 2026-08-08）。
+    # 将来「各自が作る」へ移るときは、配布分を外すだけで済む。
+    try {
+        if (Get-Command Read-YakuPersonalGlossary -ErrorAction SilentlyContinue) {
+            $personal = Read-YakuPersonalGlossary
+            if ($personal.Count -gt 0) {
+                $merged = New-Object System.Collections.Generic.List[object]
+                $ownKeys = @{}
+                foreach ($k in @($personal.Keys)) {
+                    $ownKeys[[string]$k] = $true
+                    [void]$merged.Add([pscustomobject]@{ Source = [string]$k; Target = [string]$personal[$k]; Row = 0; Origin = 'personal' })
+                }
+                foreach ($e in @($ordered)) {
+                    if ($ownKeys.ContainsKey([string]$e.Source)) { continue }
+                    [void]$merged.Add($e)
+                }
+                return @($merged.ToArray())
+            }
+        }
+    } catch {
+        try { Write-YakuLog ('Personal glossary merge failed: ' + $_.Exception.Message) 'WARN' } catch {}
+    }
     return @($ordered)
 }
 
@@ -522,7 +546,14 @@ function Get-YakuRelevantGlossaryMatches {
 function Get-YakuNumericRulesSection {
     param(
         [AllowNull()][string]$InputText,
-        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en'
+        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
+        # 表記の種類。既定は社内で使ってきた書き方（oku・括弧の負数）。
+        # 'published' は開示資料の書き方。マツダの英文開示を実測して決めた
+        # （2026-08-08、英文短信・有報・統合報告書 24資料）。
+        #   文章では ¥1,205.6 billion のように円マークを付ける（315件）
+        #   文章の負数は括弧を使わず "a decrease of ¥26.6 billion" と言葉で書く
+        #   （¥を括弧で囲む形は1件も無かった）
+        [ValidateSet('house','published')][string]$Notation = 'house'
     )
     if ([string]$InputText -notmatch '\[\[N\d+\]\]|[0-9０-９▲△＋+%％〜~↑↓<>＜＞→]|oku|k units|k yen|YoY|QoQ|CAGR|前年|四半期') { return '' }
     $nl = [Environment]::NewLine
@@ -542,6 +573,21 @@ function Get-YakuNumericRulesSection {
     # V91.60: 数値は外部送信前に[[N1]]へ置き換えている。指示は禁止事項の列挙ではなく
     # 「左に一致したら右を出す」形の決定表で書く。想定外の形が来たときでも
     # 行き先を類推できるようにするため。
+    if ($Notation -eq 'published') {
+        # 開示資料の書き方。社内表記（oku・括弧）は使わない。
+        $pubRules = @()
+        if ([string]$InputText -match '\[\[N\d+\]\]') {
+            $pubRules += '- NUMBER PLACEHOLDERS (highest priority). [[N1]], [[N2]] ... stand for redacted numbers. Copy each token character for character, exactly once, and never invent, merge, drop, or reorder them.'
+        }
+        return (@($pubRules + @(
+            '- Amount units: write yen amounts as published disclosure does: a yen sign, the figure, then billion or million. Example: [[N1]] oku -> ¥[[N1]] billion. Never write oku, k yen, or k units.'
+            '- The caller rescales the figure itself; you only choose the unit word and the yen sign. Keep the placeholder unchanged.'
+            '- Negative amounts: do NOT use parentheses in running text. Express the direction in words, as published disclosure does: "a decrease of ¥[[N1]] billion", "down ¥[[N1]] billion". Parentheses around figures belong to tables, not sentences.'
+            '- Percentages keep %. A negative percentage is written in words too: "a decrease of [[N1]]%".'
+            '- Do not abbreviate. Write operating income, not OP. Write year on year, not YoY. This text is for external publication.'
+            '- Arrow (→) between two numbers: reproduce ONLY when SOURCE writes A→B; never create one.'
+        )) -join $nl)
+    }
     $placeholderRules = @()
     if ([string]$InputText -match '\[\[N\d+\]\]') {
         $placeholderRules = @(
@@ -676,7 +722,9 @@ function New-YakuTextPrompt {
     $direction = if ([string]::IsNullOrWhiteSpace($DirectionOverride)) { Get-YakuDirection -Text $InputText } else { $DirectionOverride }
     $templateName =
         if ($direction -ne 'to_en') { 'text_translate_to_jp.txt' }
-        elseif ([string]$Mode -eq 'full') { 'text_translate_full_to_en.txt' }
+        # published は開示資料の書き方。出す枠は full と同じ（完全な文1つ）で、
+        # 数値の規則だけを差し替える。公表資料に電文体は使わない。
+        elseif ([string]$Mode -eq 'full' -or [string]$Mode -eq 'published') { 'text_translate_full_to_en.txt' }
         elseif ([string]$Mode -eq 'brief') { 'text_translate_brief_to_en.txt' }
         else { 'text_translate_to_en.txt' }
     $template = Get-YakuPromptTemplate -Root $Root -Name $templateName
@@ -686,7 +734,7 @@ function New-YakuTextPrompt {
         # to_jp のテンプレートには枠が無い。渡ってきても差し込まれないが、
         # 呼び出し側でも方向を見て空にしている（Test-YakuCorpusReferenceApplicable）。
         corpus_section = [string]$CorpusSection
-        numeric_rules = Get-YakuNumericRulesSection -InputText $InputText -Direction $direction
+        numeric_rules = Get-YakuNumericRulesSection -InputText $InputText -Direction $direction -Notation $(if ([string]$Mode -eq 'published') { 'published' } else { 'house' })
         request_id = $RequestId
     }
     # 電文体の雛形だけが持つ差し込み口。原文に引き金が無い節は出さない。

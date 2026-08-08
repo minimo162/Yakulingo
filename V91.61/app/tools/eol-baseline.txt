@@ -29,6 +29,7 @@ src/GlossaryVariants.ps1	crlf
 src/Html.ps1	lf
 src/JobObject.ps1	crlf
 src/Paths.ps1	crlf
+src/PersonalGlossary.ps1	crlf
 src/ProcessStopper.ps1	crlf
 src/PromptBuilder.ps1	lf
 src/Runtime.ps1	crlf

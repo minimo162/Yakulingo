@@ -161,7 +161,13 @@
             順番（用語集 → 文例 → 翻訳）はこちらが知っているので、こちらが決める。
             分けて使いたい人のために、段階ごとの押し方は下に畳んで残す。
           -->
-          <button id="cat-run-button" type="button">訳す</button>
+          <!--
+            押す前に何行が対象か見える。市販ツールでも事前翻訳は名前の付いた
+            作業で、設定が見えていて、押さなければ起きない。取り込んだだけで
+            勝手に置き換わるのは気味が悪い（利用者の指摘 2026-08-08）。
+          -->
+          <button id="cat-glossary-run" type="button">用語集を当てる<span id="cat-glossary-count"></span></button>
+          <button id="cat-run-button" type="button" class="secondary-button">残りをまとめて訳す</button>
           <details class="cat-steps">
             <summary class="muted">段階ごとに実行する</summary>
             <div class="cat-actions-detail">
@@ -187,12 +193,8 @@
         -->
         <div id="cat-filter-row" class="cat-filter-row" hidden>
           <div class="cat-filter" role="radiogroup" aria-label="表示する範囲">
-            <label><input type="radio" name="cat_filter" value="all" checked><span>すべて</span></label>
-            <label><input type="radio" name="cat_filter" value="untranslated"><span>未訳</span></label>
-            <!-- 途中から再開するときに一番使う絞り込み。まだ見ていない行だけを出す。 -->
-            <label><input type="radio" name="cat_filter" value="unconfirmed"><span>未確認</span></label>
-            <label><input type="radio" name="cat_filter" value="joined"><span>結合</span></label>
-            <label><input type="radio" name="cat_filter" value="manual"><span>手直し</span></label>
+            <label><input type="radio" name="cat_filter" value="all"><span>すべて</span></label>
+            <label><input type="radio" name="cat_filter" value="unconfirmed" checked><span>未確認だけ</span></label>
           </div>
           <label class="cat-search-label" for="cat-search">絞り込み
             <input id="cat-search" type="search" placeholder="原文・訳文を検索" autocomplete="off">

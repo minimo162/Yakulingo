@@ -194,6 +194,7 @@ function Get-YakuTextRequiredLabels {
     if ($Direction -ne 'to_en') { return @('JAPANESE_TEXT') }
     switch ([string]$Mode) {
         'full'  { return @('FULL_TEXT') }
+        'published' { return @('FULL_TEXT') }
         'brief' { return @('BRIEF_TEXT') }
         default { return @('FULL_TEXT','BRIEF_TEXT') }
     }
@@ -1649,7 +1650,9 @@ function Invoke-YakuTextTranslationRequests {
 
     # 簡易翻訳でも電文体は出す（利用者の判断 2026-08-06）。
     # 並列にしてあるので、2つ作っても待ち時間はほとんど変わらない。
-    $modes = @('full','brief')
+    # 3並列。社内の書き方（ふつう・短く）と、開示資料の書き方（ふつう）。
+    # 開示資料に電文体は使わないので、published の短い版は作らない。
+    $modes = @('full','brief','published')
     $results = $null
     $mode2 = 'sequential'
     $sw = [System.Diagnostics.Stopwatch]::StartNew()

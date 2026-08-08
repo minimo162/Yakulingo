@@ -483,6 +483,7 @@ function ConvertTo-YakuCatProjectJson {
             kind        = [string]$segs[$i].Kind
             location    = [string]$segs[$i].Location
             confirmed   = [bool]$segs[$i].Confirmed
+            status      = Get-YakuCatSegmentStatus -Segment $segs[$i]
             # 次と繋げるか。シートが違う・図形が挟まる場合は繋げない。
             can_merge   = ($i -lt ($segs.Count - 1)) -and ([string]$segs[$i].Kind -eq [string]$segs[$i + 1].Kind) -and (
                            ([string]$segs[$i].Kind -eq 'text') -or
@@ -525,6 +526,9 @@ function ConvertTo-YakuCatProjectJson {
         joined     = [int]$summary.Joined
         confirmed   = [int]$summary.Confirmed
         unconfirmed = [int]$summary.Unconfirmed
+        untranslated = @($segs | Where-Object { (Get-YakuCatSegmentStatus -Segment $_) -eq 'untranslated' }).Count
+        glossary_candidates = $(try { [int]$Project.GlossaryCandidates } catch { 0 })
+        draft        = @($segs | Where-Object { (Get-YakuCatSegmentStatus -Segment $_) -eq 'draft' }).Count
         segments   = @($rows.ToArray())
     } | ConvertTo-Json -Depth 6 -Compress)
 }
@@ -564,6 +568,48 @@ function Invoke-YakuCatGlossaryPass {
         $hits++
     }
     return [pscustomobject]@{ Applied = $hits; Remaining = @($segs | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.Translation) }).Count }
+}
+
+function Measure-YakuCatGlossaryCandidates {
+    <#
+      用語集で埋められる行が何行あるかを、置き換えずに数える。
+
+      取り込んだ直後に勝手に置き換えるのは気味が悪い（利用者の指摘 2026-08-08）。
+      市販ツールでも事前翻訳は名前の付いた作業で、設定が見えていて、
+      押さなければ起きない。押す前に「何行が対象か」を見せる。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Root,
+        [Parameter(Mandatory=$true)]$Project,
+        [Parameter(Mandatory=$true)]$Settings
+    )
+    $segs = @($Project.Segments)
+    $items = New-Object System.Collections.Generic.List[object]
+    for ($i = 0; $i -lt $segs.Count; $i++) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$segs[$i].Translation)) { continue }
+        [void]$items.Add([pscustomobject]@{ Index = $i; Text = [string]$segs[$i].Text; BlockIds = (New-Object System.Collections.Generic.List[string]) })
+    }
+    if ($items.Count -eq 0) { return 0 }
+    $map = @{}
+    try { $null = Resolve-YakuFileExactGlossaryTranslations -Root $Root -Items @($items.ToArray()) -Direction ([string]$Project.Direction) -Settings $Settings -TranslationByIndex $map } catch { return 0 }
+    return @($map.Keys).Count
+}
+
+function Get-YakuCatSegmentStatus {
+    <#
+      行の状態。市販ツールに倣って3つにする。
+
+        未翻訳  訳が入っていない
+        下訳    機械が入れた。人はまだ見ていない
+        確定    人が見て、これでよいと決めた
+
+      「訳が入っているか」と「人が見たか」は別物である。
+      用語集で埋めた行も、目を通すまでは終わっていない。
+    #>
+    param([Parameter(Mandatory=$true)]$Segment)
+    if ([bool]$Segment.Confirmed) { return 'confirmed' }
+    if ([string]::IsNullOrWhiteSpace([string]$Segment.Translation)) { return 'untranslated' }
+    return 'draft'
 }
 
 function Invoke-YakuCatCopilotPass {

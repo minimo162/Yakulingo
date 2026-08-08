@@ -25,6 +25,7 @@ $script:YakuRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyComman
 . (Join-Path $PSScriptRoot 'CellSegments.ps1')
 . (Join-Path $PSScriptRoot 'AlignMask.ps1')
 . (Join-Path $PSScriptRoot 'Alignment.ps1')
+. (Join-Path $PSScriptRoot 'PersonalGlossary.ps1')
 . (Join-Path $PSScriptRoot 'TranslationMemory.ps1')
 . (Join-Path $PSScriptRoot 'CorpusPairs.ps1')
 . (Join-Path $PSScriptRoot 'CatProject.ps1')
@@ -458,6 +459,7 @@ function New-YakuWarmTranslationRunspace {
                 . (Join-Path $Root 'src\CellSegments.ps1')
                 . (Join-Path $Root 'src\AlignMask.ps1')
                 . (Join-Path $Root 'src\Alignment.ps1')
+                . (Join-Path $Root 'src\PersonalGlossary.ps1')
                 . (Join-Path $Root 'src\TranslationMemory.ps1')
                 . (Join-Path $Root 'src\CorpusPairs.ps1')
                 . (Join-Path $Root 'src\CatProject.ps1')
@@ -575,6 +577,7 @@ function Start-YakuWarmTranslationRunspaceBuild {
                 . (Join-Path $Root 'src\CellSegments.ps1')
                 . (Join-Path $Root 'src\AlignMask.ps1')
                 . (Join-Path $Root 'src\Alignment.ps1')
+                . (Join-Path $Root 'src\PersonalGlossary.ps1')
                 . (Join-Path $Root 'src\TranslationMemory.ps1')
                 . (Join-Path $Root 'src\CorpusPairs.ps1')
                 . (Join-Path $Root 'src\CatProject.ps1')
@@ -1139,6 +1142,7 @@ function Start-YakuTranslationJob {
                 . (Join-Path $Root 'src\CellSegments.ps1')
                 . (Join-Path $Root 'src\AlignMask.ps1')
                 . (Join-Path $Root 'src\Alignment.ps1')
+                . (Join-Path $Root 'src\PersonalGlossary.ps1')
                 . (Join-Path $Root 'src\TranslationMemory.ps1')
                 . (Join-Path $Root 'src\CorpusPairs.ps1')
                 . (Join-Path $Root 'src\CatProject.ps1')
@@ -2314,12 +2318,15 @@ function Invoke-YakuRoute {
                     $pastedTranslation = ''
                     try { $pastedTranslation = [string]$payload['translation'] } catch {}
                     $project = New-YakuCatTextProject -Root $script:YakuRoot -Text $pastedText -Settings $settings -Direction $direction -Translation $pastedTranslation
+                    try { $project | Add-Member -NotePropertyName 'GlossaryCandidates' -NotePropertyValue (Measure-YakuCatGlossaryCandidates -Root $script:YakuRoot -Project $project -Settings $settings) -Force } catch {}
+                    try { $project | Add-Member -NotePropertyName 'GlossaryCandidates' -NotePropertyValue (Measure-YakuCatGlossaryCandidates -Root $script:YakuRoot -Project $project -Settings $settings) -Force } catch {}
                     $null = Save-YakuCatProject -Project $project
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                     return
                 }
                 $incoming = Resolve-YakuIncomingFile -Payload $payload -Settings $settings
                 $project = New-YakuCatProject -Root $script:YakuRoot -Path ([string]$incoming.Path) -Settings $settings -Direction $direction
+                try { $project | Add-Member -NotePropertyName 'GlossaryCandidates' -NotePropertyValue (Measure-YakuCatGlossaryCandidates -Root $script:YakuRoot -Project $project -Settings $settings) -Force } catch {}
                 $null = Save-YakuCatProject -Project $project
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 return
@@ -2412,6 +2419,7 @@ function Invoke-YakuRoute {
             switch ($action) {
                 'glossary' {
                     $null = Invoke-YakuCatGlossaryPass -Root $script:YakuRoot -Project $project -Settings $settings
+                    try { $project | Add-Member -NotePropertyName 'GlossaryCandidates' -NotePropertyValue (Measure-YakuCatGlossaryCandidates -Root $script:YakuRoot -Project $project -Settings $settings) -Force } catch {}
                     $null = Save-YakuCatProject -Project $project
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 }
@@ -2419,6 +2427,7 @@ function Invoke-YakuRoute {
                     $index = -1
                     try { $index = [int]$payload['index'] } catch { $index = -1 }
                     $null = Merge-YakuCatSegments -Project $project -Index $index
+                    try { $project | Add-Member -NotePropertyName 'GlossaryCandidates' -NotePropertyValue (Measure-YakuCatGlossaryCandidates -Root $script:YakuRoot -Project $project -Settings $settings) -Force } catch {}
                     $null = Save-YakuCatProject -Project $project
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 }
@@ -2426,6 +2435,7 @@ function Invoke-YakuRoute {
                     $index = -1
                     try { $index = [int]$payload['index'] } catch { $index = -1 }
                     $null = Split-YakuCatSegment -Project $project -Index $index
+                    try { $project | Add-Member -NotePropertyName 'GlossaryCandidates' -NotePropertyValue (Measure-YakuCatGlossaryCandidates -Root $script:YakuRoot -Project $project -Settings $settings) -Force } catch {}
                     $null = Save-YakuCatProject -Project $project
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 }
@@ -2439,6 +2449,19 @@ function Invoke-YakuRoute {
                     $rows = @($items | ForEach-Object { [ordered]@{ kind = [string]$_.Kind; source = [string]$_.Source; target = [string]$_.Target; exact = [bool]$_.Exact; ratio = [double]$_.Ratio; database = [string]$_.Database; verified = [bool]$_.Verified } })
                     Send-YakuTextResponse -Context $Context -Text (([ordered]@{ index = $index; candidates = @($rows) } | ConvertTo-Json -Depth 5 -Compress)) -ContentType 'application/json; charset=utf-8'
                 }
+                'glossary-add' {
+                    # 行から個人用の用語集へ足す。これが無いと「用語集を直す」という
+                    # 方針が回らない。これまでは CSV を手で開くしかなかった。
+                    $index = -1
+                    try { $index = [int]$payload['index'] } catch { $index = -1 }
+                    $segs2 = @($project.Segments)
+                    if ($index -lt 0 -or $index -ge $segs2.Count) { throw '行が見つかりません。' }
+                    $added = Add-YakuPersonalGlossaryEntry -Source ([string]$segs2[$index].Text) -Target ([string]$segs2[$index].Translation)
+                    if (-not [bool]$added.Added -and [string]$added.Reason -eq 'empty') { throw '訳文を入れてから追加してください。' }
+                    if (-not [bool]$added.Added -and [string]$added.Reason -eq 'too-long') { throw '用語集は表の項目のための一覧です。文章は追加できません。' }
+                    $msg = if ([bool]$added.Added) { '用語集に追加しました。次から自動で入ります。' } else { 'すでに同じ内容が用語集にあります。' }
+                    Send-YakuTextResponse -Context $Context -Text (([ordered]@{ ok = [bool]$added.Added; message = $msg } | ConvertTo-Json -Compress)) -ContentType 'application/json; charset=utf-8'
+                }
                 'confirm' {
                     # 「この行は見た」を記録する。訳文が変わっていなくても押せる。
                     $index = -1
@@ -2446,6 +2469,7 @@ function Invoke-YakuRoute {
                     $flag = $true
                     try { if ($payload.ContainsKey('confirmed')) { $flag = [bool]$payload['confirmed'] } } catch {}
                     $null = Set-YakuCatSegmentConfirmed -Project $project -Index $index -Confirmed $flag
+                    try { $project | Add-Member -NotePropertyName 'GlossaryCandidates' -NotePropertyValue (Measure-YakuCatGlossaryCandidates -Root $script:YakuRoot -Project $project -Settings $settings) -Force } catch {}
                     $null = Save-YakuCatProject -Project $project
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 }
@@ -2464,6 +2488,7 @@ function Invoke-YakuRoute {
                     $text = ''
                     try { $text = [string]$payload['text'] } catch {}
                     $null = Set-YakuCatSegmentTranslation -Project $project -Index $index -Text $text
+                    try { $project | Add-Member -NotePropertyName 'GlossaryCandidates' -NotePropertyValue (Measure-YakuCatGlossaryCandidates -Root $script:YakuRoot -Project $project -Settings $settings) -Force } catch {}
                     $null = Save-YakuCatProject -Project $project
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 }
@@ -2512,7 +2537,8 @@ function Invoke-YakuRoute {
                     if (($result.PSObject.Properties.Name -contains 'Mode') -and [string]$result.Mode -eq 'corpus') {
                         $project | Add-Member -NotePropertyName 'CorpusSection' -NotePropertyValue ([string]$result.CorpusSection) -Force
                         $project | Add-Member -NotePropertyName 'CorpusExamples' -NotePropertyValue (@($result.CorpusExamples)) -Force
-                        $null = Save-YakuCatProject -Project $project
+                        try { $project | Add-Member -NotePropertyName 'GlossaryCandidates' -NotePropertyValue (Measure-YakuCatGlossaryCandidates -Root $script:YakuRoot -Project $project -Settings $settings) -Force } catch {}
+                    $null = Save-YakuCatProject -Project $project
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                         return
                     }
@@ -2525,6 +2551,7 @@ function Invoke-YakuRoute {
                         $segs[$i].Translation = [string]$pair.text
                         $segs[$i].Origin = 'copilot'
                     }
+                    try { $project | Add-Member -NotePropertyName 'GlossaryCandidates' -NotePropertyValue (Measure-YakuCatGlossaryCandidates -Root $script:YakuRoot -Project $project -Settings $settings) -Force } catch {}
                     $null = Save-YakuCatProject -Project $project
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 }

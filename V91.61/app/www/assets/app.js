@@ -541,11 +541,9 @@
   }
 
   function yakuCatKeep(s, mode, needle) {
-    if (mode === 'untranslated' && (s.translation || '').trim()) return false;
-    // 途中から再開するときに一番使う。まだ見ていない行だけを出す。
+    // 絞り込みは2つだけ。未翻訳は未確認に含まれるので、分ける必要がない。
+    // 上から潰せば、用語集で埋まった行にも必ず目が通る。
     if (mode === 'unconfirmed' && s.confirmed) return false;
-    if (mode === 'joined' && !s.joined) return false;
-    if (mode === 'manual' && s.origin !== 'manual') return false;
     if (needle) {
       var hay = ((s.source || '') + '\n' + (s.translation || '')).toLowerCase();
       if (hay.indexOf(needle) < 0) return false;
@@ -584,16 +582,24 @@
       if (s.can_split) ops += '<button type="button" class="cat-op" data-yaku-cat-split="' + s.index + '" title="セル1つずつに戻します（訳文は消えます）">解除</button>';
       // 行の状態を色で示す。市販の CAT エディタは状態列を色で分けており、
       // 一覧を眺めたときに「どこが手つかずか」が一目で分かる。
-      var state = (s.translation || '').trim() ? (s.origin || 'other') : 'untranslated';
+      // 状態は3つ。訳が入っているかと、人が見たかは別物である。
+      var state = s.status || ((s.translation || '').trim() ? 'draft' : 'untranslated');
+      var stateLabel = state === 'confirmed' ? '確定' : (state === 'draft' ? '下訳' : '未翻訳');
       rows.push(
         '<tr data-yaku-cat-row="' + s.index + '" data-yaku-cat-state="' + yakuEscape(state) + '"' +
         ' data-yaku-confirmed="' + (s.confirmed ? '1' : '0') + '">' +
-        '<td class="cat-col-no">' + (s.index + 1) + (s.confirmed ? '<span class="cat-confirmed" title="確認済み">✓</span>' : '') + '</td>' +
+        '<td class="cat-col-no">' + (s.index + 1) + '<span class="cat-state cat-state-' + state + '">' + stateLabel + '</span></td>' +
         '<td class="cat-col-loc"><span class="cat-loc" title="' + yakuEscape(s.location || '') + '">' + yakuEscape(loc) + '</span>' +
         (origin ? '<span class="cat-origin cat-origin-' + yakuEscape(s.origin) + '">' + yakuEscape(origin) + '</span>' : '') +
         (ops ? '<span class="cat-ops">' + ops + '</span>' : '') + '</td>' +
         '<td class="cat-source">' + yakuEscape(s.source) + '</td>' +
-        '<td class="cat-target"><textarea rows="2" data-yaku-cat-input="' + s.index + '" data-yaku-original="' + yakuEscape(s.translation || '') + '">' + yakuEscape(s.translation || '') + '</textarea></td>' +
+        '<td class="cat-target"><textarea rows="2" data-yaku-cat-input="' + s.index + '" data-yaku-original="' + yakuEscape(s.translation || '') + '">' + yakuEscape(s.translation || '') + '</textarea>' +
+          // キーボードだけでなくマウスでも進められるようにする。
+          // 四半期に1回しか使わない人が Ctrl+Enter を覚えている前提は成り立たない。
+          '<div class="cat-row-actions">' +
+          (s.confirmed ? '' : '<button type="button" class="cat-op cat-op-ok" data-yaku-cat-ok="' + s.index + '">これでよい</button>') +
+          ((s.kind === 'cell' && (s.translation || '').trim() && s.source.length <= 40) ? '<button type="button" class="cat-op" data-yaku-cat-toglossary="' + s.index + '">用語集に追加</button>' : '') +
+          '</div></td>' +
         '</tr>'
       );
     }
@@ -682,7 +688,11 @@
     if (meter) meter.setAttribute('aria-valuenow', pct);
     var text = document.getElementById('cat-progress-text');
     // 機械が埋めた数も併記する。訳が入っているかと、見たかは別の話なので。
-    if (text) text.textContent = '確認 ' + pct + '%（' + confirmed + ' / ' + total + '）　訳あり ' + filled;
+    // 数字だけでは伝わらない。いま何が残っているかを言葉で書く。
+    var left = total - confirmed;
+    if (text) text.textContent = left > 0
+      ? ('全 ' + total + ' 行のうち ' + confirmed + ' 行を確認しました。残り ' + left + ' 行です。')
+      : ('全 ' + total + ' 行の確認が終わりました。');
   }
 
   function yakuCatPost(action, payload) {
@@ -973,6 +983,11 @@
       yakuCatData = data;
       yakuCatSetStatus(data.file_name + ' … ' + data.total + ' 行（訳あり ' + data.translated + ' / 残り ' + data.remaining + '、結合 ' + data.joined + '）');
       yakuCatUpdateProgress(data);
+      // 用語集で埋められる行数を、押す前に出す。
+      var gcount = document.getElementById('cat-glossary-count');
+      if (gcount) gcount.textContent = (data.glossary_candidates > 0) ? ('（' + data.glossary_candidates + ' 行）') : '';
+      var grun = document.getElementById('cat-glossary-run');
+      if (grun) grun.disabled = !(data.glossary_candidates > 0);
       var tr = document.querySelector('[data-yaku-cat-row="' + index + '"]');
       if (tr) {
         tr.setAttribute('data-yaku-cat-state', text.trim() ? 'manual' : 'untranslated');
@@ -1350,6 +1365,31 @@
     document.addEventListener('click', function (event) {
       var resume = event.target.closest && event.target.closest('[data-yaku-cat-resume]');
       if (resume) yakuCatResume(resume.getAttribute('data-yaku-cat-resume'));
+    });
+    // 行のボタン。マウスだけで最後まで進められるようにする。
+    document.addEventListener('click', function (event) {
+      var ok = event.target.closest && event.target.closest('[data-yaku-cat-ok]');
+      if (ok) { yakuCatConfirm(parseInt(ok.getAttribute('data-yaku-cat-ok'), 10)); return; }
+      var toGlossary = event.target.closest && event.target.closest('[data-yaku-cat-toglossary]');
+      if (!toGlossary) return;
+      var idx = parseInt(toGlossary.getAttribute('data-yaku-cat-toglossary'), 10);
+      yakuCatPost('glossary-add', { id: yakuCatProjectId, index: idx }).then(function (data) {
+        yakuCatSetStatus(data.message || '用語集に追加しました。');
+      }).catch(function (error) {
+        yakuCatSetStatus('用語集に追加できませんでした: ' + (error && error.message ? error.message : ''));
+      });
+    });
+    // 用語集を当てる。押す前に件数が見えている。
+    var catGlossaryRun = document.getElementById('cat-glossary-run');
+    if (catGlossaryRun) catGlossaryRun.addEventListener('click', function () {
+      if (!yakuCatProjectId) { yakuCatSetStatus('先に原文を取り込んでください。'); return; }
+      yakuCatSetStatus('用語集を当てています…');
+      yakuCatPost('glossary', { id: yakuCatProjectId }).then(function (data) {
+        yakuCatRender(data);
+        yakuCatSetStatus('用語集で ' + (data.draft || 0) + ' 行が埋まりました。まだ ' + (data.untranslated || 0) + ' 行が空です。');
+      }).catch(function (error) {
+        yakuCatSetStatus('用語集を当てられませんでした: ' + (error && error.message ? error.message : ''));
+      });
     });
     var catOpenFolder = document.getElementById('cat-open-folder-button');
     if (catOpenFolder) catOpenFolder.addEventListener('click', function () {
