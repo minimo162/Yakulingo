@@ -99,9 +99,15 @@ function Get-YakuSettingsSchema {
         use_bundled_glossary              = @{ Type='bool'; Default=$true }
         # 金額の書き方。訳の種類ではなく書き方なので、毎回選ばせず設定で持つ。
         # 外部公表は billion、社内資料の一部が oku（利用者 2026-08-08）。
-        # 既定は oku。今の利用者が触らずに使えるほうを既定にする。
-        # 配布先が広がったら billion へ寄せる。
-        amount_notation                   = @{ Type='enum'; Default='oku'; Values=@('oku','billion') }
+        #
+        # **billion は今は選べない。** プロンプトは「桁の換算は呼び出し側でやる」と
+        # 書いているが、その換算コードが存在しない。122億円 が ¥122 billion になる。
+        # 正しくは ¥12.2 billion で、10倍の誤りである（2026-08-08 に実行して確認）。
+        # 開示資料に10倍の数字が出るのは、訳の善し悪しの話ではない。
+        #
+        # 換算はロードマップ第2段階（復元のときに表記ごとに書き分ける）で入れる。
+        # 入るまでは選択肢から外す。壊れた選択肢を残すほうが害が大きい。
+        amount_notation                   = @{ Type='enum'; Default='oku'; Values=@('oku') }
         glossary_prompt_limit             = @{ Type='int';  Default=48; Min=1; Max=200 }
         browser_display_mode              = @{ Type='enum'; Default='foreground'; Values=@('foreground') }
         edge_window_size                  = @{ Type='string'; Default='1280,900'; MaxLength=24 }

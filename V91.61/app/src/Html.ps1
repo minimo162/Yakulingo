@@ -99,15 +99,17 @@ function New-YakuAmountNotationHtml {
       説明を読まなくてもどちらが要るか分かる。
     #>
     param([AllowNull()]$Settings)
+    # billion は今は出さない。桁の換算コードが無く、122億円 が ¥122 billion に
+    # なる（10倍の誤り、2026-08-08 に確認）。押せる選択肢として出しておいて
+    # 壊れているのが最も悪い。換算が入るまで、いま何で書いているかだけを示す。
+    # 復活させるときは Settings.ps1 の Values と、ここの札を両方戻す。
     $notation = 'oku'
     try { if ([string]$Settings.amount_notation -eq 'billion') { $notation = 'billion' } } catch {}
-    $okuChecked = if ($notation -eq 'oku') { ' checked' } else { '' }
-    $billionChecked = if ($notation -eq 'billion') { ' checked' } else { '' }
-    $post = "hx-post='/api/amount-notation' hx-target='#amount-notation-row' hx-swap='innerHTML'"
+    if ($notation -ne 'oku') { $notation = 'oku' }
     return @"
 <span class='row-label'>金額</span>
-<label><input type='radio' name='amount_notation' value='oku'$okuChecked $post hx-vals='{"notation":"oku"}'><span>122 oku</span></label>
-<label><input type='radio' name='amount_notation' value='billion'$billionChecked $post hx-vals='{"notation":"billion"}'><span>&#165;12.2 billion</span></label>
+<label><input type='radio' name='amount_notation' value='oku' checked disabled><span>122 oku</span></label>
+<span class='shorten-note'>いまは oku で書きます。&#165; billion は桁の換算を入れてから出します。</span>
 "@
 }
 

@@ -552,7 +552,14 @@ function Get-YakuAmountNotation {
     param([AllowNull()]$Settings)
     $v = ''
     try { $v = [string]$Settings.amount_notation } catch { $v = '' }
-    if ($v -eq 'billion') { return 'billion' }
+    # billion は今は返さない。桁の換算コードが無く、122億円 が ¥122 billion に
+    # なる（10倍の誤り、2026-08-08 に確認）。今日のうちに billion を保存した
+    # 設定ファイルが残っている可能性があるので、入口で落とす。
+    #
+    # 第2段階（復元のときに表記ごとに書き分ける）で換算が入ったら、
+    # ここを `if ($v -eq 'billion') { return 'billion' }` へ戻す。
+    # billion 用の規則そのものは Get-YakuNumericRulesSection に残してある。
+    if ($v -eq 'billion') { return 'oku' }
     return 'oku'
 }
 
@@ -876,12 +883,16 @@ function New-YakuShortenPrompt {
         [Parameter(Mandatory=$true)][string]$InputText,
         # マスク後の現訳。実値の入った訳文を渡してはならない。
         [Parameter(Mandatory=$true)][string]$CurrentText,
+        # 金額の書き方。渡さないと既定（oku）の規則を送ることになり、
+        # 別の表記で作った現訳に対して「その表記を使うな」と言う形になる
+        # （2026-08-08 の指摘。設定を無視していた）。
+        [AllowNull()]$Settings,
         [AllowNull()][string]$RequestId
     )
     if ([string]::IsNullOrWhiteSpace($RequestId)) { $RequestId = [guid]::NewGuid().ToString('N') }
     # 伏せた数値の扱いだけは残す。トークンが原文と現訳の両方に居るので、
     # 扱いを示さないと書き換えられて実値へ戻せなくなる。
-    $numeric = Get-YakuNumericRulesSection -InputText ([string]$InputText + "`n" + [string]$CurrentText) -Direction 'to_en' -Notation (Get-YakuAmountNotation -Settings $null)
+    $numeric = Get-YakuNumericRulesSection -InputText ([string]$InputText + "`n" + [string]$CurrentText) -Direction 'to_en' -Notation (Get-YakuAmountNotation -Settings $Settings)
     # 圧縮の手口だけを渡す。文体の規則集を丸ごと再掲しない。
     # 既に良い訳が入力なのに、それを産んだ規則を全部見せると
     # 「一から作り直す」を誘発する（独立評価 2026-08-08）。

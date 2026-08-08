@@ -1700,7 +1700,7 @@ function Invoke-YakuTextShorten {
         }
     }
 
-    $built = New-YakuShortenPrompt -Root $Root -InputText $sourceText -CurrentText $MaskedCurrentText -RequestId $requestId
+    $built = New-YakuShortenPrompt -Root $Root -InputText $sourceText -CurrentText $MaskedCurrentText -Settings $Settings -RequestId $requestId
     $raw = Invoke-YakuCopilotPrompt -Prompt $built.Prompt -Settings $Settings -PreserveEndMarker -ProgressState $ProgressState -Warnings $Warnings
     $options = @(Parse-YakuTextTranslationResponse -Raw $raw -Direction 'to_en' -RequestId $requestId -Warnings $Warnings -Mode 'brief')
     if ($options.Count -eq 0) { throw 'SHORTEN_RESPONSE_EMPTY: 短くした訳文を取り出せませんでした。' }
