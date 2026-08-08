@@ -173,6 +173,7 @@ input[type="text"], select { width: 100%; min-height: 34px; border: 0; border-ra
 .cat-confirmed { margin-left: 4px; color: var(--accent); font-weight: 700; }
 /* 保存できなかった行。黙って消えるより、目に見えて残るほうがよい。 */
 .cat-unsaved > td { background: color-mix(in srgb, var(--bg) 82%, #d33 18%); }
+.cat-output-row { display: flex; gap: 10px; align-items: center; margin: 8px 0; padding: 8px 10px; border-radius: 6px; background: color-mix(in srgb, var(--bg) 88%, var(--accent) 12%); }
 .cat-resume { margin: 6px 0; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .cat-steps { margin-left: 8px; }
 .cat-actions-detail { display: flex; gap: 6px; flex-wrap: wrap; padding: 6px 0; }

@@ -892,7 +892,15 @@
         }
         return;
       }
-      yakuCatSetStatus('出力しました: ' + data.output_path);
+      // パスの文字列だけでは、成果物に辿り着けない。
+      // ~/.yakulingo-ps は、この利用者が一生自力では開かないフォルダである。
+      var openRow = document.getElementById('cat-output-row');
+      var nameEl = document.getElementById('cat-output-name');
+      if (openRow && nameEl) {
+        openRow.hidden = false;
+        nameEl.textContent = data.output_name || data.output_path;
+      }
+      yakuCatSetStatus('出力しました。下の「フォルダを開く」でファイルの場所を開けます。');
     }).catch(function (error) {
       yakuCatSetStatus('出力できませんでした: ' + (error && error.message ? error.message : ''));
     });
@@ -1359,6 +1367,15 @@
       if (event.target && event.target.name === 'cat_kind') yakuCatKindNote();
     });
     yakuCatKindNote();
+    var catOpenFolder = document.getElementById('cat-open-folder-button');
+    if (catOpenFolder) catOpenFolder.addEventListener('click', function () {
+      if (!yakuCatProjectId) return;
+      yakuJsonPost('/api/open-output', { project_id: yakuCatProjectId }).then(yakuResponseText).then(function () {
+        yakuCatSetStatus('フォルダを開きました。');
+      }).catch(function (error) {
+        yakuCatSetStatus('フォルダを開けませんでした: ' + (error && error.message ? error.message : ''));
+      });
+    });
     yakuCatLoadRecent();
     // 保存できていない行がある状態で閉じようとしたら止める。
     window.addEventListener('beforeunload', function (event) {

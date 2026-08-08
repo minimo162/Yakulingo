@@ -1573,10 +1573,34 @@ function Clear-YakuExpiredUploads {
             if (-not [string]::IsNullOrWhiteSpace($activeInput)) { [void]$protectedDirs.Add([System.IO.Path]::GetFullPath((Split-Path -Parent $activeInput))) }
         } catch {}
     }
+    # 作業中の CAT が読んでいる元ファイルも守る。
+    #
+    # これが無いと、アップロードの1時間期限が来た時点でフォルダごと消える。
+    # CAT は行を触るたびにリクエストを飛ばし、掃除はリクエストの先頭で走るので、
+    # 利用者自身の操作が自分の元ファイルを消していた。しかも出力は元ファイルを
+    # 読みに行くので、数時間かけて見終わって「出力」を押した瞬間に失敗する。
+    # 丁寧に仕事をした人ほど確実に失敗する（2026-08-08 に判明）。
+    foreach ($proj in @($script:YakuCatProjects.Values)) {
+        try {
+            $projPath = [string]$proj.Path
+            if ([string]::IsNullOrWhiteSpace($projPath)) { continue }
+            [void]$protectedDirs.Add([System.IO.Path]::GetFullPath((Split-Path -Parent $projPath)))
+        } catch {}
+    }
     foreach ($id in @($script:YakuUploadHandles.Keys)) {
         try {
             $item = $script:YakuUploadHandles[$id]
             if ([datetime]$item.ExpiresAt -gt $now) { continue }
+            # 守るべきフォルダは消さない。$protectedDirs を作っておきながら、
+            # ここで参照していなかったので、実行中のジョブの入力すら
+            # 消し得た（2026-08-08 に判明）。
+            $dir = ''
+            try { $dir = [System.IO.Path]::GetFullPath((Split-Path -Parent ([string]$item.Path))) } catch { $dir = '' }
+            if ($dir -and $protectedDirs.Contains($dir)) {
+                # まだ使っている。期限を延ばして次の掃除に回す。
+                try { $item.ExpiresAt = $now.AddHours(1) } catch {}
+                continue
+            }
             if ($item.Path -and (Test-Path -LiteralPath ([string]$item.Path))) { Remove-Item -LiteralPath (Split-Path -Parent ([string]$item.Path)) -Recurse -Force -ErrorAction SilentlyContinue }
             $script:YakuUploadHandles.Remove([string]$id)
         } catch {}
@@ -1959,9 +1983,24 @@ function Invoke-YakuRoute {
         try {
             $payload = Read-YakuRequestJson -Request $req
             $jobId = [string]$payload['job_id']
-            Update-YakuTranslationJobs
-            if ([string]::IsNullOrWhiteSpace($jobId) -or -not $script:YakuTranslateJobs.ContainsKey($jobId)) { throw (Get-YakuTranslationJobMissingMessage -JobId $jobId) }
-            $output = Get-YakuJobOutputPath -State $script:YakuTranslateJobs[$jobId]
+            # CAT の出力はジョブを経由しないので、プロジェクトの id でも開けるようにする。
+            # 開くボタンは既にあったのに、CAT の出力からは届かない場所にあった。
+            # 数時間かけて見終わった人が、灰色のパス文字列を目で読んで
+            # エクスプローラーに打ち込む必要があった（2026-08-08 に判明）。
+            $output = ''
+            $catId = ''
+            try { $catId = [string]$payload['project_id'] } catch {}
+            if (-not [string]::IsNullOrWhiteSpace($catId)) {
+                $catProject = Get-YakuCatProject -Id $catId
+                if ($null -eq $catProject) { throw '作業中のファイルが見つかりません。' }
+                try { $output = [string]$catProject.LastOutputPath } catch { $output = '' }
+                if ([string]::IsNullOrWhiteSpace($output)) { throw 'まだ出力していません。先に「出力」を押してください。' }
+            }
+            else {
+                Update-YakuTranslationJobs
+                if ([string]::IsNullOrWhiteSpace($jobId) -or -not $script:YakuTranslateJobs.ContainsKey($jobId)) { throw (Get-YakuTranslationJobMissingMessage -JobId $jobId) }
+                $output = Get-YakuJobOutputPath -State $script:YakuTranslateJobs[$jobId]
+            }
             if ([string]::IsNullOrWhiteSpace($output)) { throw '出力ファイルが見つかりません。' }
             try { Start-Process -FilePath 'explorer.exe' -ArgumentList ('/select,"' + $output + '"') | Out-Null } catch { Start-Process -FilePath (Split-Path -Parent $output) | Out-Null }
             Send-YakuTextResponse -Context $Context -Text (New-YakuAlertHtml -Kind success -Message '出力フォルダを開きました。')
@@ -2497,6 +2536,8 @@ function Invoke-YakuRoute {
                     # 貼り付けたテキストは書き戻す元が無いので、訳文を繋いで返す。
                     $outputPath = if ([string]$project.Source -eq 'text') { '' } else { Get-YakuTranslatedOutputPath -InputPath ([string]$project.Path) }
                     $exported = Export-YakuCatProject -Project $project -OutputPath $outputPath -Settings $settings -Warnings $warnings
+                    # 出した場所を覚えておく。「フォルダを開く」から使う。
+                    try { $project | Add-Member -NotePropertyName 'LastOutputPath' -NotePropertyValue ([string]$exported.OutputPath) -Force } catch {}
                     $body = [ordered]@{
                         output_path = [string]$exported.OutputPath
                         output_name = [string]$exported.OutputName

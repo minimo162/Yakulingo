@@ -143,6 +143,14 @@
           <span class="muted">前回の続き：</span>
           <span id="cat-resume-list"></span>
         </div>
+        <!--
+          出したファイルの場所。パスの文字列だけでは辿り着けない。
+          ~/.yakulingo-ps はドット始まりで、自力では開かないフォルダである。
+        -->
+        <div id="cat-output-row" class="cat-output-row" hidden>
+          <span>できあがりました：<strong id="cat-output-name"></strong></span>
+          <button id="cat-open-folder-button" type="button">フォルダを開く</button>
+        </div>
         <div id="cat-status" class="cat-status muted" aria-live="polite">テキストを貼り付けて「取り込む」を押してください。</div>
         <!--
           進捗とキーボードの案内。市販の CAT エディタはどちらも常に見える所に
