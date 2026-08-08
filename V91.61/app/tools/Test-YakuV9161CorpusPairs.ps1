@@ -173,6 +173,15 @@ try {
     Chk ($saved.Added -eq 3) '確かめた対訳をコーパスへ入れる'
     $h = @(Find-YakuCorpusPairs -Dir $tmp -Query 'promote electrification' -Databases @('突合'))
     Chk ($h.Count -eq 1) '直した内容のほうが入る'
+
+    # 文例を作るのは開発者であって、日々の利用者ではない
+    # （利用者の整理 2026-08-08）。訳しながら片手間に文例を作らせると、
+    # 公表前の資料や作りかけの訳が混ざる。入口は突き合わせに限る。
+    $daily = New-YakuCatTextProject -Root $root -Settings $null -Direction 'to_en' `
+        -Text '当社は電動化を進めます。' -Translation 'We will advance electrification.'
+    $refused = $false
+    try { $null = Save-YakuCatProjectToCorpus -Project $daily -Database '突合' -Dir $tmp -Public } catch { $refused = $true }
+    Chk $refused '日々の翻訳からは文例を作れない'
 }
 finally {
     try { Remove-Item -LiteralPath $tmp -Recurse -Force } catch {}

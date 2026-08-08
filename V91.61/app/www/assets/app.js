@@ -759,6 +759,8 @@
     yakuCatSetStatus('取り込んでいます…');
     yakuCatSource().then(function (source) {
       source.direction = checked ? checked.value : 'to_en';
+      var kind = document.querySelector('input[name="cat_kind"]:checked');
+      source.kind = kind ? kind.value : 'internal';
       // 簡易翻訳から渡された訳文があれば一緒に送る。
       // 開いた瞬間に原文と訳文が並ぶので、押すボタンがゼロで確認に入れる。
       if (existingTranslation) { source.translation = existingTranslation; }
@@ -1343,6 +1345,20 @@
       var resume = event.target.closest && event.target.closest('[data-yaku-cat-resume]');
       if (resume) yakuCatResume(resume.getAttribute('data-yaku-cat-resume'));
     });
+    // 文書の種類を選んだときに、何が変わるかを一言で出す。
+    // 単位の書き方まで変わるので、選び間違いに気づける場所が要る。
+    function yakuCatKindNote() {
+      var kind = document.querySelector('input[name="cat_kind"]:checked');
+      var note = document.getElementById('cat-kind-note');
+      if (!note) return;
+      note.textContent = (kind && kind.value === 'public')
+        ? '公表資料：公表訳の言い回しに従います。単位は ¥12.2 billion。公表後は文例として保存できます。'
+        : '内部資料：スペースに収まることを優先します。単位は oku、略記あり。文例には保存しません。';
+    }
+    document.addEventListener('change', function (event) {
+      if (event.target && event.target.name === 'cat_kind') yakuCatKindNote();
+    });
+    yakuCatKindNote();
     yakuCatLoadRecent();
     // 保存できていない行がある状態で閉じようとしたら止める。
     window.addEventListener('beforeunload', function (event) {

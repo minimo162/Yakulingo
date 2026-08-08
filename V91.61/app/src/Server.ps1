@@ -2266,6 +2266,9 @@ function Invoke-YakuRoute {
             if ($action -eq 'open') {
                 $direction = 'to_en'
                 try { if (@('to_en','to_jp') -contains [string]$payload['direction']) { $direction = [string]$payload['direction'] } } catch {}
+                # 文書の種類。単位の書き方・候補の並び・文例にできるかが決まる。
+                $catKind = 'internal'
+                try { if (@('internal','public') -contains [string]$payload['kind']) { $catKind = [string]$payload['kind'] } } catch {}
                 # 貼り付けたテキストからも開ける。簡易翻訳と入力の作法を揃え、
                 # 覚え直しの負担を減らすため（利用者の懸念 2026-08-06）。
                 $pastedText = ''
@@ -2274,13 +2277,13 @@ function Invoke-YakuRoute {
                     # 簡易翻訳から渡された訳文があれば一緒に取り込む。
                     $pastedTranslation = ''
                     try { $pastedTranslation = [string]$payload['translation'] } catch {}
-                    $project = New-YakuCatTextProject -Root $script:YakuRoot -Text $pastedText -Settings $settings -Direction $direction -Translation $pastedTranslation
+                    $project = New-YakuCatTextProject -Root $script:YakuRoot -Text $pastedText -Settings $settings -Direction $direction -Kind $catKind -Translation $pastedTranslation
                     $null = Save-YakuCatProject -Project $project
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                     return
                 }
                 $incoming = Resolve-YakuIncomingFile -Payload $payload -Settings $settings
-                $project = New-YakuCatProject -Root $script:YakuRoot -Path ([string]$incoming.Path) -Settings $settings -Direction $direction
+                $project = New-YakuCatProject -Root $script:YakuRoot -Path ([string]$incoming.Path) -Settings $settings -Direction $direction -Kind $catKind
                 $null = Save-YakuCatProject -Project $project
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 return

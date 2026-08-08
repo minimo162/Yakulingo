@@ -113,6 +113,21 @@
             <input id="cat-path" type="text" placeholder="例: C:\Documents\ECM_2026Q1.xlsx">
           </label>
         </div>
+        <!--
+          文書の種類。これ1つで、単位の書き方・候補の並び・文例にできるかが
+          決まる（利用者の整理 2026-08-08）。
+            内部資料  スペースに収まることが第一。億円は oku、略記あり。
+                      公表しないので文例にはできない。前期の自分の訳が最も効く。
+            公表資料  会社の公式な言い方に従う。¥12.2 billion、略記なし。
+                      公表後は文例として全員で使える。
+          どちらかによって望ましい出力が単位のレベルから違うので、
+          訳し始める前に決める。
+        -->
+        <div class="cat-kind-row" role="radiogroup" aria-label="文書の種類">
+          <label><input type="radio" name="cat_kind" value="internal" checked><span>内部資料</span></label>
+          <label><input type="radio" name="cat_kind" value="public"><span>公表資料</span></label>
+          <span id="cat-kind-note" class="muted"></span>
+        </div>
         <div class="cat-open-row">
           <div class="cat-direction" role="radiogroup" aria-label="翻訳方向">
             <label><input type="radio" name="cat_direction" value="to_en" checked><span>日→英</span></label>

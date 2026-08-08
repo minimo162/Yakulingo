@@ -27,6 +27,22 @@
 
 $script:YakuCatProjects = [hashtable]::Synchronized(@{})
 
+# 文書の種類。内部資料と公表資料では、望ましい出力が単位のレベルから違う
+# （利用者の整理 2026-08-08）。
+#
+#   内部資料  スペースに収まることが第一。億円は oku、略記あり、電文体を使う。
+#             公表しないので文例にはできない。毎期同じ資料を作るので、
+#             前期に自分がどう訳したかが最も効く。
+#   公表資料  会社の公式な言い方に従う。¥12.2 billion、略記なし。
+#             公表後は文例として全員で使える。
+#
+# 同じ「翻訳支援」でも、この2つは候補の並べ方から保存の可否まで逆を向く。
+# どちらかを最初に決めることで、下流の判断をまとめて済ませる。
+function Test-YakuCatProjectIsPublic {
+    param([Parameter(Mandatory=$true)]$Project)
+    try { return ([string]$Project.Kind -eq 'public') } catch { return $false }
+}
+
 function New-YakuCatSegmentView {
     <#
       画面へ渡すセグメント1件分。中身は保持しているものの写しである。
@@ -56,6 +72,7 @@ function New-YakuCatProject {
         [Parameter(Mandatory=$true)][string]$Path,
         [Parameter(Mandatory=$true)]$Settings,
         [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
+        [ValidateSet('internal','public')][string]$Kind = 'internal',
         [AllowNull()][string[]]$Sheets,
         [AllowNull()]$ProgressState
     )
@@ -93,6 +110,7 @@ function New-YakuCatProject {
         Path      = [string]$Path
         FileName  = [System.IO.Path]::GetFileName($Path)
         Direction = [string]$Direction
+        Kind      = [string]$Kind
         Blocks    = $blocks
         Segments  = $segments
         Warnings  = @($extract.Warnings)
@@ -118,6 +136,7 @@ function New-YakuCatTextProject {
         [Parameter(Mandatory=$true)][string]$Text,
         [Parameter(Mandatory=$true)][AllowNull()]$Settings,
         [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
+        [ValidateSet('internal','public')][string]$Kind = 'internal',
         # 簡易翻訳から持ってきた訳文。原文と同じ規則で分けて並べる。
         # 空のまま渡すと、渡した先で「さっきの訳が消えた」ことになる。
         [AllowNull()][string]$Translation
@@ -151,6 +170,7 @@ function New-YakuCatTextProject {
         Path      = ''
         FileName  = '貼り付けたテキスト'
         Direction = [string]$Direction
+        Kind      = [string]$Kind
         Blocks    = @()
         Segments  = @($segments.ToArray())
         Warnings  = @()
@@ -259,6 +279,7 @@ function New-YakuCatProjectFromPairs {
         Path      = ''
         FileName  = [string]$FileName
         Direction = [string]$Direction
+        Kind      = [string]$Kind
         Blocks    = @()
         Segments  = @($segments.ToArray())
         Warnings  = @($warn.ToArray())
@@ -283,6 +304,14 @@ function Save-YakuCatProjectToCorpus {
         [switch]$Public
     )
     if ([string]::IsNullOrWhiteSpace($Dir)) { $Dir = Get-YakuCorpusBuildDir }
+    # 文例を作るのは開発者であって、日々の利用者ではない
+    # （利用者の整理 2026-08-08「公表資料は数も限られているので、開発者が
+    # 最終形を配布用として保存する前提のほうが良い」）。
+    # だから入口は突き合わせ（Source='align'）に限る。訳しながら片手間に
+    # 文例を作らせると、公表前の資料や作りかけの訳が混ざる。
+    if ([string]$Project.Source -ne 'align') {
+        throw '文例は、公表済みの資料を突き合わせたときだけ保存できます。'
+    }
     $toEn = ([string]$Project.Direction -eq 'to_en')
     $pairs = New-Object System.Collections.Generic.List[object]
     foreach ($seg in @($Project.Segments)) {
@@ -511,6 +540,7 @@ function ConvertTo-YakuCatProjectJson {
         corpus     = @($corpusRows.ToArray())
         file_name  = [string]$Project.FileName
         direction  = [string]$Project.Direction
+        kind       = [string]$Project.Kind
         total      = [int]$summary.Total
         translated = [int]$summary.Translated
         remaining  = [int]$summary.Remaining
@@ -783,6 +813,7 @@ function Get-YakuCatSegmentCandidates {
     $toEn = ([string]$Project.Direction -eq 'to_en')
     $sourceKey = ConvertTo-YakuGlossaryMatchKey -Value (ConvertTo-YakuGlossaryField -Value $text)
 
+    $isPublic = Test-YakuCatProjectIsPublic -Project $Project
     $out = New-Object System.Collections.Generic.List[object]
     $seen = @{}
     foreach ($entry in @(Get-YakuGlossaryEntries -Root $Root)) {
@@ -829,7 +860,10 @@ function Get-YakuCatSegmentCandidates {
                 Database = '翻訳メモリ'
                 Verified = $true
                 Ratio    = [double]$tm.Ratio
-                Weight   = 30000 + [int]([double]$tm.Ratio * 1000)
+                # 内部資料では前期の自分の訳が主役。毎期同じ資料を作るので、
+                # 前期と揃っていることが品質そのものになる。
+                # 公表資料では、自分の訳より会社の公式な言い方が優先される。
+                Weight   = $(if ($isPublic) { 20000 } else { 30000 }) + [int]([double]$tm.Ratio * 1000)
             })
         }
     } catch {
@@ -858,7 +892,10 @@ function Get-YakuCatSegmentCandidates {
                 # 数値の裏取りが通っていない対は、通ったものより下に置く。
                 Verified = [bool]$hit.Verified
                 Ratio    = [double]$hit.Ratio
-                Weight   = 20000 + [int]([double]$hit.Ratio * 1000) + $(if ($hit.Verified) { 100 } else { 0 })
+                # 公表資料では公表訳が第一候補。会社が公式に出した言い方に従う。
+                # 内部資料でも出す。倣う値打ちがあるため（利用者の整理 2026-08-08）。
+                # ただし単位と略記は社内表記へ寄せる必要があるので、下に置く。
+                Weight   = $(if ($isPublic) { 30000 } else { 20000 }) + [int]([double]$hit.Ratio * 1000) + $(if ($hit.Verified) { 100 } else { 0 })
             })
         }
     } catch {
