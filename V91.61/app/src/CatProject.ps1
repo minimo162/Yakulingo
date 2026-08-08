@@ -383,6 +383,11 @@ function Get-YakuCatSavedProjects {
                     Total = $segs.Count
                     Confirmed = @($segs | Where-Object { [bool]$_.confirmed }).Count
                     Saved = [string]$o.saved
+                    # Excel から取り込んだものは、再開しても Excel へ出力できない
+                    # （元の塊を保存していないため）。開く前に区別が付くようにする。
+                    # 貼り付けたテキストは訳文を繋いで返すだけなので出力できる。
+                    Source = [string]$o.source
+                    ExportBlocked = ([string]$o.source -ne 'text')
                 })
         } catch {
             try { Write-YakuLog ('CAT project unreadable, skipped. file=' + $f.Name) 'WARN' } catch {}
@@ -471,6 +476,10 @@ function ConvertTo-YakuCatProjectJson {
     #>
     param([Parameter(Mandatory=$true)]$Project)
     $segs = @($Project.Segments)
+    # 再開したもので、かつ元の塊を持っていないかどうか。出力を押す前に
+    # 知らせるために画面へ渡す。押してから「出せません」と言うのは、
+    # 伝達ではなく通告になる（数時間の確認作業のあとに言われる形）。
+    $exportBlocked = ([bool]$Project.Restored -and @($Project.Blocks).Count -eq 0 -and [string]$Project.Source -ne 'text')
     $rows = New-Object System.Collections.Generic.List[object]
     for ($i = 0; $i -lt $segs.Count; $i++) {
         [void]$rows.Add([ordered]@{
@@ -516,6 +525,8 @@ function ConvertTo-YakuCatProjectJson {
     return ([ordered]@{
         id         = [string]$Project.Id
         source     = $(try { if ([string]$Project.Source -eq 'text') { 'text' } else { 'file' } } catch { 'file' })
+        # 出力できない状態かどうか。押す前に画面へ出す。
+        export_blocked = [bool]$exportBlocked
         corpus_ready = $(try { -not [string]::IsNullOrWhiteSpace([string]$Project.CorpusSection) } catch { $false })
         corpus     = @($corpusRows.ToArray())
         file_name  = [string]$Project.FileName
@@ -1145,6 +1156,18 @@ function Export-YakuCatProject {
             Written    = @($segs | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.Translation) }).Count
             Skipped    = @($segs | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.Translation) }).Count
         }
+    }
+    # 再開したものは元の塊（Blocks）を持っていない。持たずに書き戻すと、
+    # 元ファイルをコピーしただけの**日本語のままのファイル**ができる。
+    # しかも Written は BlockIds から数えるので非ゼロになり、画面は
+    # 「出力しました」と言う。数時間の確認作業のあとに、成功を装った
+    # 未翻訳の成果物が出る（2026-08-08 に実行して確認）。
+    #
+    # 直すのは「番地を信用している」という同じ根の話（未解決の書き戻し）と
+    # 一緒にやる。それまでは黙って壊れた成果物を作らせないほうを採る。
+    # 貼り付けたテキストは Blocks を使わないので、ここへは来ない。
+    if ([bool]$Project.Restored -and @($Project.Blocks).Count -eq 0) {
+        throw 'CAT_EXPORT_RESTORED_NO_BLOCKS: 前回の続きから再開した作業は、いまのところ Excel へ出力できません。元ファイルの取り込み情報が残っていないため、訳文が1件も書き込まれないファイルができてしまいます。お手数ですが、同じ Excel をもう一度取り込んでください（訳文は残っています）。'
     }
     $bySegment = @{}
     for ($i = 0; $i -lt $segs.Count; $i++) {

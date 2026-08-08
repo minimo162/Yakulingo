@@ -688,7 +688,18 @@
     if (translateBtn) translateBtn.textContent = data.corpus_ready ? '文例を使って残りを翻訳' : '残りをCopilotで翻訳';
     // 貼り付けたテキストは書き戻す元が無い。出口が違うので言葉も変える。
     var exportBtn = document.getElementById('cat-export-button');
-    if (exportBtn) exportBtn.textContent = (data.source === 'text') ? '訳文をコピー' : '出力';
+    if (exportBtn) {
+      exportBtn.textContent = (data.source === 'text') ? '訳文をコピー' : '出力';
+      // 再開したものは元の塊を持っていないので Excel へ書き戻せない。
+      // 押せる状態で置いておくと、数時間の確認のあとに「出せません」と
+      // 言われることになる。押す前に、押せないことと理由を出す。
+      exportBtn.disabled = !!data.export_blocked;
+      exportBtn.title = data.export_blocked
+        ? '前回の続きから再開した作業は、いまのところ Excel へ出力できません。同じ Excel をもう一度取り込んでください。'
+        : '';
+    }
+    var blockedNote = document.getElementById('cat-export-blocked');
+    if (blockedNote) blockedNote.hidden = !data.export_blocked;
     // 突き合わせたときだけ「文例として保存」を出す。
     var saveBtn = document.getElementById('cat-save-corpus-button');
     if (saveBtn) saveBtn.hidden = (data.source !== 'align');
@@ -776,8 +787,11 @@
       box.hidden = false;
       list.innerHTML = items.slice(0, 3).map(function (p) {
         var pct = p.total ? Math.round((p.confirmed / p.total) * 100) : 0;
+        // Excel から取り込んだものは、再開しても Excel へ出力できない。
+        // 開く前に分かるようにする。開いてから知るのでは遅い。
+        var note = p.export_blocked ? '・出力不可' : '';
         return '<button type="button" class="cat-op" data-yaku-cat-resume="' + yakuEscape(p.id) + '">' +
-          yakuEscape(p.file_name) + '（確認 ' + pct + '%）</button>';
+          yakuEscape(p.file_name) + '（確認 ' + pct + '%' + note + '）</button>';
       }).join(' ');
     }).catch(function () {});
   }

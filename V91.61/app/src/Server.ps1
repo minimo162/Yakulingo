@@ -2409,7 +2409,8 @@ function Invoke-YakuRoute {
                 # 前回までの作業一覧。取り込む前に「続きから」を選べるようにする。
                 $rows = @(Get-YakuCatSavedProjects -Limit 10 | ForEach-Object {
                         [ordered]@{ id = [string]$_.Id; file_name = [string]$_.FileName; direction = [string]$_.Direction
-                            total = [int]$_.Total; confirmed = [int]$_.Confirmed; saved = [string]$_.Saved }
+                            total = [int]$_.Total; confirmed = [int]$_.Confirmed; saved = [string]$_.Saved
+                            export_blocked = [bool]$_.ExportBlocked }
                     })
                 Send-YakuTextResponse -Context $Context -Text (([ordered]@{ projects = @($rows) } | ConvertTo-Json -Depth 4 -Compress)) -ContentType 'application/json; charset=utf-8'
                 return

@@ -245,6 +245,27 @@ Chk ($appJsText.Contains("data-yaku-original")) '変更が無ければ保存し�
 # CAT エディタの中核にあたる部分（利用者の指摘 2026-08-06）。
 # いま出せるのは用語集だけ。翻訳メモリはまだ無く、コーパスの文例は英語でしか
 # 引けないため行ごとには出せない。
+Write-Host '再開したものは Excel へ出力できない（黙って未翻訳を出さない）'
+# 再開時に元の塊（Blocks）を保存していないため、書き戻すと元ファイルの
+# コピーだけができる。Written は BlockIds から数えるので非ゼロになり、
+# 画面は「出力しました」と言う。数時間の確認のあとに、成功を装った
+# 未翻訳の成果物が出る（2026-08-08 に実行して確認）。
+$seg1 = [pscustomobject]@{ Text = '売上高'; Translation = 'Net sales'; BlockIds = @('b1'); Cells = @(); Joined = $false; Origin = 'copilot'; Confirmed = $true; Kind = 'cell'; Location = '損益' }
+$restoredProj = [pscustomobject]@{ Id = 'r1'; Path = 'a.xlsx'; FileName = 'a.xlsx'; Direction = 'to_en'; Blocks = @(); Segments = @($seg1); Source = 'file'; Restored = $true }
+$threw = $false
+try { $null = Export-YakuCatProject -Project $restoredProj -OutputPath 'out.xlsx' -Settings $null -Warnings $null -ProgressState $null } catch { $threw = ([string]$_.Exception.Message -match 'CAT_EXPORT_RESTORED_NO_BLOCKS') }
+Chk $threw '再開した Excel の出力は止まる（元ファイルのコピーを作らない）'
+$flag = { param($p) return ((ConvertTo-YakuCatProjectJson -Project $p) | ConvertFrom-Json).export_blocked }
+Chk ([bool](& $flag $restoredProj)) '押す前に画面へ伝える（押してからでは遅い）'
+$freshProj = [pscustomobject]@{ Id = 'f1'; Path = 'a.xlsx'; FileName = 'a.xlsx'; Direction = 'to_en'; Blocks = @([pscustomobject]@{ Id = 'b1' }); Segments = @($seg1); Source = 'file' }
+Chk (-not [bool](& $flag $freshProj)) '取り込み直後は止めない'
+$textProj = [pscustomobject]@{ Id = 't1'; Path = ''; FileName = '貼り付け'; Direction = 'to_en'; Blocks = @(); Segments = @($seg1); Source = 'text'; Restored = $true }
+Chk (-not [bool](& $flag $textProj)) '貼り付けたテキストは再開しても出せる（Blocks を使わない）'
+$jsSrcX = Get-Content -LiteralPath (Join-Path (Join-Path $root 'www\assets') 'app.js') -Raw -Encoding UTF8
+Chk ($jsSrcX -match 'export_blocked') '画面が受け取っている'
+Chk ($jsSrcX -match 'exportBtn\.disabled') '出力ボタンを押せなくする'
+Chk ($jsSrcX -match '出力不可') '再開の一覧でも、開く前に分かる'
+
 Write-Host '候補ペイン'
 $cp = New-YakuCatTextProject -Root $root -Text '上期営利' -Settings $settings -Direction 'to_en'
 $cands = @(Get-YakuCatSegmentCandidates -Root $root -Project $cp -Index 0)
