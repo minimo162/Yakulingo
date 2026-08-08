@@ -86,6 +86,25 @@ Chk ($pAt -gt 0 -and $nAt -gt 0 -and $pAt -lt $nAt) '固有名詞を数値より
 $pb = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'PromptBuilder.ps1') -Raw -Encoding UTF8
 Chk ($pb -match 'PROPER NOUN PLACEHOLDERS') '記号の扱いをプロンプトで説明する'
 
+Write-Host '固有名詞の記号を数値マスクが壊さない' -ForegroundColor Cyan
+# 固有名詞は数値より先に伏せるので、数値マスクへ来るときには [[P1]] が本文に居る。
+# 保護しないと中の 1 が数字として伏せられ、[[P[[N2]]]] という壊れた形で送られる。
+# 復元が数値→固有名詞の順なので偶然もとに戻り、今日まで気づかなかった
+# （2026-08-08 に実際に確認）。偶然に頼ってよい話ではない。
+foreach ($mod in @('Paths.ps1', 'Runtime.ps1', 'Settings.ps1', 'PromptBuilder.ps1', 'Translation.ps1')) {
+    . (Join-Path (Join-Path $root 'src') $mod)
+}
+$pnSrc = '営業利益は115.77億円、毛籠社長と青山専務が発表しました。'
+$pnMasked = New-YakuProperNounMaskMap -Text $pnSrc -Root $root
+$pnUnits = Convert-YakuNumericUnits -Text ([string]$pnMasked.Text) -Location 'test'
+$pnNum = New-YakuNumericMaskMap -Text ([string]$pnUnits.Text) -Root $root -Direction 'to_en' -Location 'test'
+Chk ([string]$pnNum.Text -match '\[\[P1\]\]') '[[P1]] がそのまま残る'
+Chk ([string]$pnNum.Text -notmatch '\[\[P\[\[N') '[[P[[N2]]]] のような壊れた形にならない'
+Chk ([int]$pnNum.MaskedCount -eq 1) '名前の中の数字を数えない（伏せた件数が水増しされない）'
+$pnBack = Restore-YakuProperNounMask -Text (Restore-YakuNumericMask -Text ([string]$pnNum.Text) -Map $pnNum.Map) -Map $pnMasked.Map
+Chk ($pnBack -match 'Moro' -and $pnBack -match 'Aoyama') '2人とも戻る'
+Chk ($pnBack -match '115\.77') '数値も戻る'
+
 Write-Host '数値が無い文でも固有名詞を戻す' -ForegroundColor Cyan
 # 「毛籠社長が就任しました。」には数字が1つも無い。数値マスクが空になるが、
 # それを理由に復元ごと打ち切っていたため、画面へ [[P1]] が出ていた

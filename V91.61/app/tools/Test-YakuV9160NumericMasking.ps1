@@ -635,6 +635,9 @@ $sendingPaths = @(
     @{ File = 'CatProject.ps1';      Numeric = 'New-YakuNumericMaskMap'; Proper = 'New-YakuProperNounMaskMap' }
     @{ File = 'CorpusReference.ps1'; Numeric = 'New-YakuNumericMaskMap'; Proper = 'New-YakuProperNounMaskMap' }
     @{ File = 'Alignment.ps1';       Numeric = 'Protect-YakuAlignmentLines'; Proper = '' }
+    # ジョブのランスペースから直接送る経路。CAT の「残りを訳す」はここを通る。
+    # 自分では伏せず、切り出した Protect-YakuCatItems へ委ねる。順序は下で別に見る。
+    @{ File = 'Server.ps1';          Numeric = 'Protect-YakuCatItems';   Proper = '' }
 )
 # 中継そのもの。ここは送る側ではないので統制の対象にしない。
 $transportOnly = @('CopilotClient.ps1', 'ProperNoun.ps1')
@@ -642,6 +645,61 @@ $transportOnly = @('CopilotClient.ps1', 'ProperNoun.ps1')
 $listed = @(@($sendingPaths | ForEach-Object { [string]$_.File }) + $transportOnly)
 $unlisted = @(@($callSites | Select-Object -Unique) | Where-Object { $_ -notin $listed })
 Assert-YakuMask ($unlisted.Count -eq 0) ('表に無い送信経路が増えていない: ' + (@($unlisted) -join ','))
+
+# ---------------------------------------------------------------------------
+# ファイル単位の grep だけでは足りない。
+#
+# 直前の版はこの表を「Invoke-YakuCopilotPrompt というリテラルを含むファイル」
+# から作っていた。CAT はその中継関数（Invoke-YakuFileTranslationItems）を
+# 呼ぶだけなので表に現れず、**Server.ps1 が実数値と人名を素のまま送っていた**
+# のに検査は通った（2026-08-08 に判明）。マスクは呼び出し元が0件の関数
+# （Invoke-YakuCatCopilotPass）の中にあり、そのファイルを grep していたため。
+#
+# 送信は「Copilot を直接呼ぶ関数」だけでなく「それを内側で呼ぶ関数」からも
+# 起きる。中継関数を名指しし、それを呼ぶファイルも送信経路として扱う。
+#
+# 中継関数は2種類ある。**この区別が今回の抜けの本質である。**
+#
+#   自分で伏せるもの    呼び出し側は何もしなくてよい
+#   呼び出し側に任せるもの  呼び出し側が伏せていなければ素通しになる
+#
+# Invoke-YakuFileTranslationItems は後者である。ファイル翻訳の内側から
+# 呼ばれる前提で作られており、自分では伏せない。CAT とジョブ側がこれを
+# 直接呼び、片方が伏せていなかった。後者を呼ぶファイルだけを見張る。
+$translationSrcFile = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'FileTranslation.ps1'))
+$relayNeedsCallerMask = @('Invoke-YakuFileTranslationItems')
+$relayCallers = @()
+foreach ($srcFile in @(Get-ChildItem -LiteralPath (Join-Path $root 'src') -Filter '*.ps1')) {
+    $lines = @(Get-Content -LiteralPath $srcFile.FullName -Encoding UTF8)
+    foreach ($line in $lines) {
+        $l = [string]$line
+        foreach ($fn in $relayNeedsCallerMask) {
+            if ($l -notmatch [regex]::Escape($fn)) { continue }
+            # 定義そのものと、存在確認は呼び出しではない。
+            if ($l -match ('function\s+' + [regex]::Escape($fn))) { continue }
+            if ($l -match ('Get-Command\s+' + [regex]::Escape($fn))) { continue }
+            $relayCallers += $srcFile.Name
+        }
+    }
+}
+$relayCallers = @($relayCallers | Select-Object -Unique)
+$unguarded = @($relayCallers | Where-Object { $_ -notin $listed })
+Assert-YakuMask ($unguarded.Count -eq 0) ('伏せない中継関数を呼ぶファイルも表に載っている: ' + (@($unguarded) -join ','))
+# 中継関数が「自分では伏せない」ことを固定する。内側で伏せる作りに変えたら
+# ここが落ちるので、そのとき上の前提を見直すことになる。
+$itemsFn = [regex]::Match($translationSrcFile, '(?s)function Invoke-YakuFileTranslationItems \{.*?\n\}\r?\n').Value
+Assert-YakuMask ($itemsFn.Length -gt 0) '中継関数の本体が見つかる'
+Assert-YakuMask ($itemsFn -notmatch 'New-YakuNumericMaskMap') '中継関数は自分では伏せない（だから呼び出し側が伏せる）'
+
+# 実際に走る経路（ジョブ側）が伏せてから送っていること。
+# ここが抜けていた当人なので、名指しで確かめる。
+$serverSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Server.ps1'))
+$catSendAt = $serverSrc.IndexOf('$map = Invoke-YakuFileTranslationItems')
+Assert-YakuMask ($catSendAt -ge 0) 'ジョブ側の CAT 送信箇所が見つかる'
+$catHead = $serverSrc.Substring([Math]::Max(0, $catSendAt - 1200), [Math]::Min(1200, $catSendAt))
+Assert-YakuMask ($catHead -match 'Protect-YakuCatItems') 'ジョブ側は送信の直前に伏せている'
+$catTail = $serverSrc.Substring($catSendAt, [Math]::Min(900, $serverSrc.Length - $catSendAt))
+Assert-YakuMask ($catTail -match 'Restore-YakuCatItemTranslations') 'ジョブ側は訳文を実値へ戻している'
 
 foreach ($p in $sendingPaths) {
     $file = [string]$p.File

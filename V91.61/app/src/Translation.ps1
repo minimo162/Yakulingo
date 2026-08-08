@@ -522,6 +522,19 @@ function Get-YakuNumericMaskProtectedSpans {
     foreach ($m in [regex]::Matches([string]$Text, '\[\[N\d+\]\]')) {
         if ($m.Length -gt 0) { $spans.Add([pscustomobject]@{ Start = [int]$m.Index; End = [int]($m.Index + $m.Length) }) | Out-Null }
     }
+    # 固有名詞の記号も保護する。固有名詞は数値より先に伏せるので、ここへ来る
+    # ときには [[P1]] が本文に居る。保護しないと中の 1 が数字として伏せられ、
+    # [[P[[N2]]]] という壊れた形で Copilot へ出る（2026-08-08 に実際に確認）。
+    #
+    # 復元は数値→固有名詞の順なので、モデルが忠実に写せば偶然もとに戻る。
+    # だから今日まで気づかなかった。しかし
+    #   - 伏せた件数が水増しされる（名前の一部を数値として数える）
+    #   - 数値整合の警告が、実際には名前の一部について出る
+    #   - モデルが壊れた形を整えると名前が失われる
+    # ので、偶然に頼ってよい話ではない。
+    foreach ($m in [regex]::Matches([string]$Text, '\[\[P\d+\]\]')) {
+        if ($m.Length -gt 0) { $spans.Add([pscustomobject]@{ Start = [int]$m.Index; End = [int]($m.Index + $m.Length) }) | Out-Null }
+    }
 
     # 用語集に一致した範囲。数字を含む語(FY26/3 1Q、AAT 営業利益(50%)、
     # MTMUS製(CX-50) 等)を壊さないため、マスク前のテキストから求める。

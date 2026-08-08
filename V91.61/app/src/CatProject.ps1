@@ -612,12 +612,124 @@ function Get-YakuCatSegmentStatus {
     return 'draft'
 }
 
+function Protect-YakuCatItems {
+    <#
+      CAT が送る項目を、送信前に伏せる。
+
+      **なぜ Project ではなく items を受け取るのか。**
+
+      翻訳のジョブは別のランスペースで走るので、メモリ上のプロジェクトを
+      触れない（Server.ps1 のコメント参照）。そのため Project を受け取る形の
+      関数はジョブから呼べず、同じ処理が Server.ps1 の中に書き直されていた。
+      そして**マスクは書き直された側に入っていなかった。**
+
+      結果、2026-08-08 の時点で CAT の「残りを訳す」は実数値と人名を素のまま
+      Copilot へ送っていた。「CAT 経路が数値をマスクせずに送っていたのを直した」
+      という記録は誤りで、直した先は呼び出し元が0件の関数だった。
+      統制テストも CatProject.ps1 の本文を grep していたので通っていた。
+
+      同じ失敗を繰り返さないため、マスクは**items だけを受け取る形**にする。
+      これならジョブからも、プロジェクトを持つ経路からも同じものを呼べる。
+
+      順序は翻訳経路と同じ。固有名詞 → 数値（住所の全角数字を数値マスクに
+      取られないため）。表は項目へ持たせ、復元で使う。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Items,
+        [Parameter(Mandatory=$true)][string]$Root,
+        [Parameter(Mandatory=$true)][string]$Direction
+    )
+    $maskedItems = 0
+    $properItems = 0
+    foreach ($item in @($Items)) {
+        if ($null -eq $item) { continue }
+        $text = [string]$item.Text
+        $properMap = $null
+        if (Get-Command New-YakuProperNounMaskMap -ErrorAction SilentlyContinue) {
+            $properResult = New-YakuProperNounMaskMap -Text $text -Root $Root
+            $properMap = $properResult.Map
+            $text = [string]$properResult.Text
+            if ($null -ne $properMap -and $properMap.Count -gt 0) { $properItems++ }
+        }
+        $maskResult = New-YakuNumericMaskMap -Text $text -Root $Root -Direction $Direction -Location ("cat-ID-" + [string]$item.Index)
+        $item | Add-Member -NotePropertyName ProperMaskMap -NotePropertyValue $properMap -Force
+        $item | Add-Member -NotePropertyName NumericMaskMap -NotePropertyValue $maskResult.Map -Force
+        $item | Add-Member -NotePropertyName MaskedText -NotePropertyValue ([string]$maskResult.Text) -Force
+        $item.Text = [string]$maskResult.Text
+        if ([int]$maskResult.MaskedCount -gt 0) { $maskedItems++ }
+    }
+    try { Write-YakuLog "CAT masking. items=$(@($Items).Count) maskedItems=$maskedItems properItems=$properItems" 'INFO' } catch {}
+    return [pscustomobject]@{ MaskedItems = [int]$maskedItems; ProperItems = [int]$properItems }
+}
+
+function Restore-YakuCatItemTranslations {
+    <#
+      訳文の伏せ字を実値へ戻す。個数が合わなければ警告する。
+      無言で数値や人名が消えるのを避ける。
+
+      数値と固有名詞は別々に有無を見る。まとめて「マスクが無ければ次へ」と
+      すると、数字を含まない行（「毛籠社長」）で固有名詞が戻らず、
+      画面へ [[P1]] が出る。簡易翻訳側で実際に起きていた形である。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Items,
+        [Parameter(Mandatory=$true)]$Map,
+        [AllowNull()]$Warnings
+    )
+    foreach ($item in @($Items)) {
+        if ($null -eq $item) { continue }
+        $idx = [int]$item.Index
+        if (-not $Map.ContainsKey($idx)) { continue }
+        $maskMap = $null
+        try { $maskMap = $item.NumericMaskMap } catch { $maskMap = $null }
+        $properMap = $null
+        try { $properMap = $item.ProperMaskMap } catch { $properMap = $null }
+        $hasNumeric = ($null -ne $maskMap -and $maskMap.Count -gt 0)
+        $hasProper = ($null -ne $properMap -and $properMap.Count -gt 0)
+        if (-not $hasNumeric -and -not $hasProper) { continue }
+        $translated = [string]$Map[$idx]
+        if ($hasNumeric) {
+            try {
+                $integrity = Test-YakuNumericMaskIntegrity -MaskedSource ([string]$item.MaskedText) -Translated $translated -Location ("cat-ID-" + [string]$idx)
+                if (-not [bool]$integrity.Ok -and $null -ne $Warnings) {
+                    Add-YakuWarning -Warnings $Warnings -Location ("ID $idx") -Category 'numeric-mask-integrity' `
+                        -Details @{ Detail = [string]$integrity.Detail } `
+                        -Message "数値の個数が原文と一致しません。該当箇所の数値を必ずご確認ください。($([string]$integrity.Detail))"
+                }
+            } catch {}
+            $translated = Restore-YakuNumericMask -Text $translated -Map $maskMap
+            try { $item.Text = Restore-YakuNumericMask -Text ([string]$item.Text) -Map $maskMap } catch {}
+        }
+        if ($hasProper) {
+            try {
+                $pInt = Test-YakuProperNounMaskIntegrity -MaskedSource ([string]$item.MaskedText) -Translated $translated -Map $properMap
+                if (-not [bool]$pInt.Ok -and $null -ne $Warnings) {
+                    $lost = @(@($pInt.Missing) | ForEach-Object { [string]$properMap[[string]$_] })
+                    Add-YakuWarning -Warnings $Warnings -Location ("ID $idx") -Category 'proper-noun-dropped' `
+                        -Details @{ Missing = @($pInt.Missing) } `
+                        -Message ("固有名詞が訳文から抜けています: " + (@($lost) -join '、') + "。必ずご確認ください。")
+                }
+            } catch {}
+            $translated = Restore-YakuProperNounMask -Text $translated -Map $properMap
+            try { $item.Text = Restore-YakuProperNounMask -Text ([string]$item.Text) -Map $properMap } catch {}
+        }
+        $Map[$idx] = $translated
+    }
+}
+
 function Invoke-YakuCatCopilotPass {
     <#
       用語集で埋まらなかったセグメントを Copilot で訳す。
 
       同じ原文が何度出ても1回しか送らない。ファイル翻訳と同じ扱いである。
       既に訳が入っているものは送らない。
+
+      **この関数はいま呼ばれていない。** 実際に走るのは Server.ps1 の
+      ジョブ側（Kind='cat'）である。プロジェクトを受け取る形なので、
+      別ランスペースのジョブから呼べないためである。
+      残してあるのは、プロジェクトを直接持つ経路（回帰テスト）で使うため。
+      マスクは Protect-YakuCatItems / Restore-YakuCatItemTranslations に
+      切り出し、両方の経路が同じものを呼ぶようにした。
     #>
     param(
         [Parameter(Mandatory=$true)][string]$Root,
@@ -654,84 +766,18 @@ function Invoke-YakuCatCopilotPass {
     # これは一括翻訳の経路（Invoke-YakuFileTranslation）にしか無く、CAT は
     # その内側の Invoke-YakuFileTranslationItems を直接呼んでいたため、
     # 実数値のまま Copilot へ送っていた（2026-08-08 に判明）。
-    # ファイル翻訳タブを廃止して全員をこの画面へ寄せたので、社内で最も機密性の
-    # 高い作業（公表前の財務情報の英訳）が、最も無防備な経路を通っていた。
     #
+    # マスクと復元は Protect-YakuCatItems / Restore-YakuCatItemTranslations へ
+    # 切り出した。ここに直接書いていたため、ジョブ側（Server.ps1）が同じ処理を
+    # 書き直したときにマスクが落ち、それに気づけなかった。
     # 完全一致置換のあとにマスクする。先にマスクすると見出し語と一致しない。
-    #
-    # 固有名詞も同じ場所で伏せる。数値より先に掛ける（住所の全角数字を
-    # 数値マスクに取られないため）。この経路には固有名詞マスクが無く、
-    # 人名・法人名が素のまま Copilot へ出ていた（独立評価の指摘、2026-08-08）。
-    # 数値のときとまったく同じ抜け方をしている。
-    $maskedItems = 0
-    $properItems = 0
-    foreach ($item in @($items.ToArray())) {
-        $text = [string]$item.Text
-        $properMap = $null
-        if (Get-Command New-YakuProperNounMaskMap -ErrorAction SilentlyContinue) {
-            $properResult = New-YakuProperNounMaskMap -Text $text -Root $Root
-            $properMap = $properResult.Map
-            $text = [string]$properResult.Text
-            if ($null -ne $properMap -and $properMap.Count -gt 0) { $properItems++ }
-        }
-        $maskResult = New-YakuNumericMaskMap -Text $text -Root $Root -Direction ([string]$Project.Direction) -Location ("cat-ID-" + [string]$item.Index)
-        $item | Add-Member -NotePropertyName ProperMaskMap -NotePropertyValue $properMap -Force
-        $item | Add-Member -NotePropertyName NumericMaskMap -NotePropertyValue $maskResult.Map -Force
-        $item | Add-Member -NotePropertyName MaskedText -NotePropertyValue ([string]$maskResult.Text) -Force
-        $item.Text = [string]$maskResult.Text
-        if ([int]$maskResult.MaskedCount -gt 0) { $maskedItems++ }
-    }
-    try { Write-YakuLog "CAT masking. items=$(@($items.ToArray()).Count) maskedItems=$maskedItems properItems=$properItems" 'INFO' } catch {}
+    $null = Protect-YakuCatItems -Items @($items.ToArray()) -Root $Root -Direction ([string]$Project.Direction)
 
     $map = Invoke-YakuFileTranslationItems -Root $Root -Items @($items.ToArray()) -Settings $Settings `
         -Direction ([string]$Project.Direction) -MaxChars $maxChars -Warnings $Warnings `
         -ProgressState $ProgressState -Context $context
 
-    # 訳文の数値と固有名詞を戻す。個数が合わなければ警告する。
-    # 無言で数値や人名が消えるのを避ける。
-    #
-    # 数値と固有名詞は別々に有無を見る。ひとまとめに「マスクが無ければ次へ」と
-    # すると、数字を含まない行（「毛籠社長」）で固有名詞が戻らず、
-    # 画面へ [[P1]] が出る。簡易翻訳側で実際に起きていた形である。
-    foreach ($item in @($items.ToArray())) {
-        $idx = [int]$item.Index
-        if (-not $map.ContainsKey($idx)) { continue }
-        $maskMap = $null
-        try { $maskMap = $item.NumericMaskMap } catch { $maskMap = $null }
-        $properMap = $null
-        try { $properMap = $item.ProperMaskMap } catch { $properMap = $null }
-        $hasNumeric = ($null -ne $maskMap -and $maskMap.Count -gt 0)
-        $hasProper = ($null -ne $properMap -and $properMap.Count -gt 0)
-        if (-not $hasNumeric -and -not $hasProper) { continue }
-        $translated = [string]$map[$idx]
-        if ($hasNumeric) {
-            try {
-                $integrity = Test-YakuNumericMaskIntegrity -MaskedSource ([string]$item.MaskedText) -Translated $translated -Location ("cat-ID-" + [string]$idx)
-                if (-not [bool]$integrity.Ok) {
-                    Add-YakuWarning -Warnings $Warnings -Location ("ID $idx") -Category 'numeric-mask-integrity' `
-                        -Details @{ Detail = [string]$integrity.Detail } `
-                        -Message "数値の個数が原文と一致しません。該当箇所の数値を必ずご確認ください。($([string]$integrity.Detail))"
-                }
-            } catch {}
-            $translated = Restore-YakuNumericMask -Text $translated -Map $maskMap
-            try { $item.Text = Restore-YakuNumericMask -Text ([string]$item.Text) -Map $maskMap } catch {}
-        }
-        if ($hasProper) {
-            try {
-                $pInt = Test-YakuProperNounMaskIntegrity -MaskedSource ([string]$item.MaskedText) -Translated $translated -Map $properMap
-                if (-not [bool]$pInt.Ok) {
-                    $lost = @(@($pInt.Missing) | ForEach-Object { [string]$properMap[[string]$_] })
-                    Add-YakuWarning -Warnings $Warnings -Location ("ID $idx") -Category 'proper-noun-dropped' `
-                        -Details @{ Missing = @($pInt.Missing) } `
-                        -Message ("固有名詞が訳文から抜けています: " + (@($lost) -join '、') + "。必ずご確認ください。")
-                }
-            } catch {}
-            $translated = Restore-YakuProperNounMask -Text $translated -Map $properMap
-            try { $item.Text = Restore-YakuProperNounMask -Text ([string]$item.Text) -Map $properMap } catch {}
-        }
-        $map[$idx] = $translated
-    }
-
+    Restore-YakuCatItemTranslations -Items @($items.ToArray()) -Map $map -Warnings $Warnings
     $filled = 0
     foreach ($item in @($items.ToArray())) {
         $idx = [int]$item.Index

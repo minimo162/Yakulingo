@@ -1259,9 +1259,20 @@ function Start-YakuTranslationJob {
                     # 「検索だけ」「翻訳だけ」「検索してから翻訳」を選べるようにしてある。
                     # ここへ渡ってくるのは、既に検索して保持している文例だけ。
                     $catContext = @{ BatchOrdinal = 0; TotalBatches = @(Split-YakuFileTranslationItems -Items @($items.ToArray()) -MaxChars $maxChars).Count; MaxRetryDepth = 0; CorpusSection = ([string]$cat.corpus_section) }
+                    # 送る前に伏せる。ここが抜けていたため、CAT の「残りを訳す」は
+                    # 実数値と人名を素のまま Copilot へ送っていた（2026-08-08 に判明）。
+                    #
+                    # マスクは CatProject.ps1 の Invoke-YakuCatCopilotPass に書いて
+                    # あったが、あの関数は Project を受け取る形でジョブから呼べず、
+                    # 呼び出し元が0件だった。ここが実際に走る唯一の経路である。
+                    # ファイル翻訳タブを廃止して全員をこの画面へ寄せたので、社内で
+                    # 最も機密性の高い作業が、最も無防備な経路を通っていた。
+                    $null = Protect-YakuCatItems -Items @($items.ToArray()) -Root $Root -Direction ([string]$cat.direction)
                     $map = Invoke-YakuFileTranslationItems -Root $Root -Items @($items.ToArray()) -Settings $settings `
                         -Direction ([string]$cat.direction) -MaxChars $maxChars -Warnings $catWarnings `
                         -ProgressState $JobState -Context $catContext
+                    # 訳文を実値へ戻す。戻さないと画面へ [[N1]] が出る。
+                    Restore-YakuCatItemTranslations -Items @($items.ToArray()) -Map $map -Warnings $catWarnings
                     $pairs = New-Object System.Collections.Generic.List[object]
                     foreach ($entry in @($items.ToArray())) {
                         if (-not $map.ContainsKey([int]$entry.Index)) { continue }
