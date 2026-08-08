@@ -83,7 +83,7 @@ try {
         }
     } catch { try { Write-YakuLog "Cancelled output cleanup failed. error=$($_.Exception.Message)" 'WARN' } catch {} }
     $state['mode'] = 'cancelled'
-    $state['label'] = 'Cancelled'
+    $state['label'] = '中止しました'
     $state['class'] = 'idle'
     $state['detail'] = '翻訳をキャンセルしました。'
     $state['progress'] = 100
@@ -96,7 +96,7 @@ try {
     $errorResult = [pscustomobject]@{ Error=$safeMessage; ErrorCode='FILE_WORKER_FAILED'; Kind='file'; JobId=[string]$state['id'] }
     Write-YakuJsonAtomic -Path $ResultPath -Value $errorResult -Depth 12
     $state['mode'] = 'failed'
-    $state['label'] = 'Translation error'
+    $state['label'] = '翻訳できませんでした'
     $state['class'] = 'warn'
     $state['detail'] = $safeMessage
     $state['progress'] = 100

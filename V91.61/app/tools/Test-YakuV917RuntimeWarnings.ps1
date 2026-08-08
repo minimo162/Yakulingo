@@ -13,9 +13,12 @@ if ($failures.Count -eq 0) {
     $processorText = Get-Content -LiteralPath $fileProcessors -Raw -Encoding UTF8
     $translationText = Get-Content -LiteralPath $fileTranslation -Raw -Encoding UTF8
     if ($processorText.Contains('return $false }`n        $end')) { $failures.Add('literal backtick-n remains in Add-YakuAddressRangeToSet') | Out-Null }
-    if ($translationText -notmatch 'glossary-conflict-review') { $failures.Add('conflict review category is missing') | Out-Null }
-    if ($translationText -notmatch 'sourceTerm=\$plainFrom') { $failures.Add('plain glossary source term logging is missing') | Out-Null }
-    if ($translationText -notmatch 'selectionRule=longest-then-earliest-row') { $failures.Add('deterministic conflict selection rule is missing') | Out-Null }
+    # 文中の用語監査（conflict-review / 用語遵守の突き合わせ）は廃止した
+    # （利用者の判断 2026-08-06）。用語集はレイアウトの保証だけに使う。
+    # 戻っていないことと、保証側が残っていることを見る。
+    if ($translationText -match 'glossary-conflict-review') { $failures.Add('in-sentence glossary conflict review must stay removed') | Out-Null }
+    if ($translationText -match 'function Get-YakuFileGlossaryOccurrenceAudit') { $failures.Add('in-sentence glossary audit must stay removed') | Out-Null }
+    if ($translationText -notmatch 'function Resolve-YakuFileExactGlossaryTranslations') { $failures.Add('cell-exact replacement (the layout guarantee) is missing') | Out-Null }
 }
 if (-not [string]::IsNullOrWhiteSpace($JobLogPath)) {
     if (-not (Test-Path -LiteralPath $JobLogPath)) {

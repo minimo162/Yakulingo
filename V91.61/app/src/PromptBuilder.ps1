@@ -133,13 +133,6 @@ function Get-YakuGlossaryPath {
     return (Join-Path $Root 'glossary.csv')
 }
 
-function Get-YakuPromptGlossaryPath {
-    param([Parameter(Mandatory=$true)][string]$Root)
-    $path = Join-Path $Root 'prompt_glossary.csv'
-    if (Test-Path -LiteralPath $path -PathType Leaf) { return $path }
-    return (Get-YakuGlossaryPath -Root $Root)
-}
-
 function Get-YakuGlossaryEntries {
     param(
         [Parameter(Mandatory=$true)][string]$Root,
@@ -308,6 +301,30 @@ function Get-YakuGlossaryEntries {
     } catch {}
 
     if ($IncludeDuplicates) { return @($allEntries) }
+    # 個人用の用語集を上に重ねる。市販ツールでも、共通のものと作業用のものを
+    # 2段重ねにして作業用を優先する。配布分はいま開発者が代わりに作っている
+    # 下敷きで、本来は各自が貯めるもの（利用者の整理 2026-08-08）。
+    # 将来「各自が作る」へ移るときは、配布分を外すだけで済む。
+    try {
+        if (Get-Command Read-YakuPersonalGlossary -ErrorAction SilentlyContinue) {
+            $personal = Read-YakuPersonalGlossary
+            if ($personal.Count -gt 0) {
+                $merged = New-Object System.Collections.Generic.List[object]
+                $ownKeys = @{}
+                foreach ($k in @($personal.Keys)) {
+                    $ownKeys[[string]$k] = $true
+                    [void]$merged.Add([pscustomobject]@{ Source = [string]$k; Target = [string]$personal[$k]; Row = 0; Origin = 'personal' })
+                }
+                foreach ($e in @($ordered)) {
+                    if ($ownKeys.ContainsKey([string]$e.Source)) { continue }
+                    [void]$merged.Add($e)
+                }
+                return @($merged.ToArray())
+            }
+        }
+    } catch {
+        try { Write-YakuLog ('Personal glossary merge failed: ' + $_.Exception.Message) 'WARN' } catch {}
+    }
     return @($ordered)
 }
 
@@ -509,60 +526,60 @@ function Get-YakuRelevantGlossaryMatches {
     return @($orderedSurvivors)
 }
 
-function Get-YakuRelevantGlossaryLines {
-    param(
-        [Parameter(Mandatory=$true)][string]$Root,
-        [AllowNull()][string]$InputText,
-        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
-        [int]$Limit = 48,
-        [AllowNull()][string]$Path
-    )
-    $matches = @(Get-YakuRelevantGlossaryMatches -Root $Root -InputText $InputText -Direction $Direction -Limit $Limit -Path $Path)
-    $lines = New-Object System.Collections.Generic.List[string]
-    foreach ($item in $matches) {
-        $lines.Add('- ' + [string]$item.From + ' = ' + [string]$item.To) | Out-Null
-    }
-    return @($lines.ToArray())
-}
+# GLOSSARY 節は廃止した（利用者の判断 2026-08-06）。
+#
+# 用語集の目的はレイアウトの保証であって、文中の言い回しの統一ではない
+# （_docs/決定_用語集は用語の一貫性ではなくレイアウトの保証.md）。
+# はみ出すのはラベルであり、文はセルの中で折り返せば行高が吸収する。
+#
+# 実機で、GLOSSARY 節があるとコーパスの言い回しが通らず、切ると通ることを
+# 確認した（_docs/実機検証結果_2026-08-05.md §3-2）。文中では用語集が
+# コーパスの邪魔をしていた。
+#
+# 既存の翻訳製品も、文中の用語を機械的に置換していない。CAT/TMS は印を付けて
+# 人が直し、MT の用語集（DeepL / Google）はモデルの内側で寄せる仕組みで、
+# DeepL は「search-and-replace 方式ではない」と明記し、Google は用語集適用前と
+# 適用後の両方を返す（＝保証ではない）。活用と一致が壊れるためである。
+#
+# ラベルの保証は Resolve-YakuFileExactGlossaryTranslations のセル完全一致が担う。
 
-function Get-YakuAppliedGlossaryEntries {
-    param(
-        [Parameter(Mandatory=$true)][string]$Root,
-        [AllowNull()][string]$InputText,
-        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
-        [AllowNull()]$Settings,
-        [int]$Limit = 0
-    )
-    if ($Limit -le 0) { $Limit = Get-YakuGlossaryPromptLimit -Settings $Settings }
-    $path = Get-YakuPromptGlossaryPath -Root $Root
-    return @(Get-YakuRelevantGlossaryMatches -Root $Root -InputText $InputText -Direction $Direction -Limit $Limit -Path $path)
-}
-
-function Get-YakuReferenceSection {
-    param(
-        [Parameter(Mandatory=$true)][string]$Root,
-        [Parameter(Mandatory=$true)]$Settings,
-        [AllowNull()][string]$InputText,
-        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction
-    )
-    $useGlossary = $true
-    try { $useGlossary = [bool]$Settings.use_bundled_glossary } catch { $useGlossary = $true }
-    if (-not $useGlossary) { return '' }
-
-    $limit = Get-YakuGlossaryPromptLimit -Settings $Settings
-    $path = Get-YakuPromptGlossaryPath -Root $Root
-    $lines = @(Get-YakuRelevantGlossaryLines -Root $Root -InputText $InputText -Direction $Direction -Limit $limit -Path $path)
-    if ($lines.Count -le 0) { return '' }
-    $nl = [Environment]::NewLine
-    return ('GLOSSARY (mandatory). When a source term below appears, use the mapped target term exactly; never a synonym; never apply to items where the term does not occur. FULL uses the spelled-out mapped term; BRIEF may replace it with its standard abbreviation from the BRIEF rules (spelled-out form and its abbreviation count as the same rendering). Casing: keep all-caps acronyms and proper nouns (e.g. FX, OP, B/E) exactly as listed; abbreviations of ordinary words (e.g. Vol., Act.) and ordinary words follow the context - capitalized as listed only when the term stands alone as a heading or label line; inside a sentence, including signed breakdown lists, it is running text (lowercase):' + $nl + ($lines -join $nl))
+function Get-YakuAmountNotation {
+    <#
+      金額の書き方を設定から取り出す。設定が読めない経路（回帰テスト、
+      ワーカー、部分読み込み）でも止めず、既定の oku へ落ちる。
+      翻訳が止まる理由にはしない。
+    #>
+    param([AllowNull()]$Settings)
+    $v = ''
+    try { $v = [string]$Settings.amount_notation } catch { $v = '' }
+    # billion は今は返さない。桁の換算コードが無く、122億円 が ¥122 billion に
+    # なる（10倍の誤り、2026-08-08 に確認）。今日のうちに billion を保存した
+    # 設定ファイルが残っている可能性があるので、入口で落とす。
+    #
+    # 第2段階（復元のときに表記ごとに書き分ける）で換算が入ったら、
+    # ここを `if ($v -eq 'billion') { return 'billion' }` へ戻す。
+    # billion 用の規則そのものは Get-YakuNumericRulesSection に残してある。
+    if ($v -eq 'billion') { return 'oku' }
+    return 'oku'
 }
 
 function Get-YakuNumericRulesSection {
     param(
         [AllowNull()][string]$InputText,
-        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en'
+        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
+        # 金額の書き方。設定 amount_notation から来る。
+        #
+        #   billion  ¥12.2 billion。負数は括弧を使わず "a decrease of ¥12.2 billion"
+        #            と言葉で書く。マツダの英文開示12冊で ¥ を括弧で囲む形は
+        #            1件も無かった。外部公表はこちら
+        #   oku      122 oku。負数は (12.2) oku。社内資料の一部で使う書き方
+        #
+        # かつては plain / house / published の3つだったが、plain と published は
+        # 規則がほぼ同一だった（2026-08-08 に確認）。訳の種類ではなく金額の
+        # 書き方なので、2つに畳んで設定へ移した。
+        [ValidateSet('oku','billion')][string]$Notation = 'oku'
     )
-    if ([string]$InputText -notmatch '【N\d+】|[0-9０-９▲△＋+%％〜~↑↓<>＜＞→]|oku|k units|k yen|YoY|QoQ|CAGR|前年|四半期') { return '' }
+    if ([string]$InputText -notmatch '\[\[N\d+\]\]|[0-9０-９▲△＋+%％〜~↑↓<>＜＞→]|oku|k units|k yen|YoY|QoQ|CAGR|前年|四半期') { return '' }
     $nl = [Environment]::NewLine
     # V91.60 段階4: to_jp は単位が訳されるため、逐語保持を前提にした to_en の
     # 規則をそのまま流用できない。方向ごとに別の規則を返す。
@@ -570,21 +587,44 @@ function Get-YakuNumericRulesSection {
     # 途中で指示言語が切り替わるのは避ける。日本語の単位名だけを字義どおり置く。
     if ($Direction -eq 'to_jp') {
         $jpRules = @()
-        if ([string]$InputText -match '【N\d+】') {
-            $jpRules += '- NUMBER PLACEHOLDERS (highest priority). 【N1】, 【N2】 ... stand for redacted numbers. Copy each token character-for-character into the Japanese output. Never translate, renumber, reorder, merge, split, or drop one; never invent one; never replace one with a digit or with a word such as 一定額, 約, 数, or いくつか. Every token in SOURCE appears the same number of times in the output. A number written WITHOUT a placeholder is not redacted: copy it verbatim as a number.'
+        if ([string]$InputText -match '\[\[N\d+\]\]') {
+            $jpRules += '- NUMBER PLACEHOLDERS (highest priority). [[N1]], [[N2]] ... stand for redacted numbers. Copy each token character-for-character into the Japanese output. Never translate, renumber, reorder, merge, split, or drop one; never invent one; never replace one with a digit or with a word such as 一定額, 約, 数, or いくつか. Every token in SOURCE appears the same number of times in the output. A number written WITHOUT a placeholder is not redacted: copy it verbatim as a number.'
         }
         $jpRules += '- Render units in Japanese one for one, without regrouping digits: oku -> 億円 / k yen -> 千円 / k units -> 千台. Keep % as %. Never recompute the magnitude: 12,340 k yen is 12,340千円, never 1億2,340万円.'
-        $jpRules += '- Signs follow SOURCE. A value written in parentheses becomes ▲ in front of the value: (【N1】) oku -> ▲【N1】億円. Keep + as +.'
+        $jpRules += '- Signs follow SOURCE. A value written in parentheses becomes ▲ in front of the value: ([[N1]]) oku -> ▲[[N1]]億円. Keep + as +.'
         return (@($jpRules) -join $nl)
     }
-    # V91.60: 数値は外部送信前に【N1】へ置き換えている。指示は禁止事項の列挙ではなく
+    # V91.60: 数値は外部送信前に[[N1]]へ置き換えている。指示は禁止事項の列挙ではなく
     # 「左に一致したら右を出す」形の決定表で書く。想定外の形が来たときでも
     # 行き先を類推できるようにするため。
+    if ($Notation -eq 'billion') {
+        # 外部公表の書き方。マツダの英文開示12冊を読んで決めた。
+        # 社内表記（oku・括弧の負数）は持ち込まない。
+        $billionRules = @()
+        if ([string]$InputText -match '\[\[P\d+\]\]') {
+            $billionRules += '- PROPER NOUN PLACEHOLDERS. [[P1]], [[P2]] ... stand for names. Copy each token character for character and never translate or explain them.'
+        }
+        if ([string]$InputText -match '\[\[N\d+\]\]') {
+            $billionRules += '- NUMBER PLACEHOLDERS (highest priority). [[N1]], [[N2]] ... stand for redacted numbers. Copy each token character for character, exactly once, and never invent, merge, drop, or reorder them.'
+        }
+        return (@($billionRules + @(
+            '- Amount units: write yen amounts as published disclosure does: a yen sign, the figure, then billion or million. Example: [[N1]] oku -> ¥[[N1]] billion. Never write oku, k yen, or k units.'
+            '- The caller rescales the figure itself; you only choose the unit word and the yen sign. Keep the placeholder unchanged.'
+            '- Negative amounts: do NOT use parentheses in running text, and never keep the source marks (▲, △). Express the direction in words: "a decrease of ¥[[N1]] billion", "down ¥[[N1]] billion". Parentheses around figures belong to tables, not sentences.'
+            '- Percentages keep %. A negative percentage is written in words too: "a decrease of [[N1]]%".'
+            '- Arrow (→) between two numbers: reproduce ONLY when SOURCE writes A→B; never create one.'
+        )) -join $nl)
+    }
     $placeholderRules = @()
-    if ([string]$InputText -match '【N\d+】') {
+    # 固有名詞の記号。人名・法人名・地名は読みが自明でないものが多いので、
+    # 送る前に置き換えてある。判断させず、そのまま写させる。
+    if ([string]$InputText -match '\[\[P\d+\]\]') {
+        $placeholderRules += '- PROPER NOUN PLACEHOLDERS. [[P1]], [[P2]] ... stand for names of people, firms, and places. Copy each token character for character, exactly as many times as it appears, and never translate, romanize, inflect, or explain them.'
+    }
+    if ([string]$InputText -match '\[\[N\d+\]\]') {
         $placeholderRules = @(
-            '- NUMBER PLACEHOLDERS (highest priority). 【N1】, 【N2】 ... stand for redacted numbers. Copy each token character-for-character. Never translate, renumber, reorder, merge, split, or drop one; never invent one; never replace one with a digit or a word (one, several, approximately, a few). Every token in SOURCE appears the same number of times in each output section. Signs, units, and % stay OUTSIDE the token. A number written WITHOUT a placeholder is not redacted: copy it verbatim as a number.'
-            '- Placeholder decision table, SOURCE -> OUTPUT: 【N1】 oku -> 【N1】 oku / +【N1】 oku -> +【N1】 oku / ▲【N1】 oku -> (【N1】) oku / △【N1】% -> (【N1】)% / 【N1】 k units -> 【N1】 k units / 【N1】 k yen -> 【N1】 k yen / 【N1】→【N2】 -> 【N1】→【N2】.'
+            '- NUMBER PLACEHOLDERS (highest priority). [[N1]], [[N2]] ... stand for redacted numbers. Copy each token character-for-character. Never translate, renumber, reorder, merge, split, or drop one; never invent one; never replace one with a digit or a word (one, several, approximately, a few). Every token in SOURCE appears the same number of times in each output section. Signs, units, and % stay OUTSIDE the token. A number written WITHOUT a placeholder is not redacted: copy it verbatim as a number.'
+            '- Placeholder decision table, SOURCE -> OUTPUT: [[N1]] oku -> [[N1]] oku / +[[N1]] oku -> +[[N1]] oku / ▲[[N1]] oku -> ([[N1]]) oku / △[[N1]]% -> ([[N1]])% / [[N1]] k units -> [[N1]] k units / [[N1]] k yen -> [[N1]] k yen / [[N1]]→[[N2]] -> [[N1]]→[[N2]].'
         )
     }
     return (@($placeholderRules + @(
@@ -593,6 +633,86 @@ function Get-YakuNumericRulesSection {
         '- Numeric tokens already in English (oku, k units, k yen): keep the number and unit verbatim; never rescale, re-convert, add yen after oku, or restore Japanese units. Signs and % follow the existing rules. Never million, billion, trillion, bn, or tn.'
         '- Arrow (→) between two numbers: reproduce ONLY when SOURCE writes A→B; never create one. No tilde or greater-than/less-than signs; use words. Keep YoY, QoQ, CAGR, 3Q, Jan. to Dec.'
     )) -join $nl)
+}
+
+function Get-YakuBriefConditionalSections {
+    <#
+      電文体の雛形のうち、原文に手掛かりが無ければ出さない節を返す。
+
+      なぜ「消す」ではなく「条件で出す」なのか:
+
+        規則を1節ずつ外して同じ原文を実機へ投げ、出力が変わるかを測った
+        （scratchpad/Ablate-Brief.ps1、5事例）。結果は次のとおり:
+
+          EXAMPLES                946字  5/5 で出力が変わる
+          WORDING                 738字  2/5
+          ABBREVIATIONS         1,684字  1/5
+          B1-B7                 1,765字  0/5
+          WHAT YOU ARE WRITING    802字  0/5
+
+        いちばん小さい節が全部を担い、大きい2節は測れる効果が無かった。
+        しかし 5事例で 0/5 なのは「効かない」証拠ではなく、
+        「その5事例では引き金を引かなかった」だけである。
+        引用の規則は引用の原文でしか効かず、月名は月が出る原文でしか効かない。
+
+        したがって規則そのものは残し、**引き金が原文に無いときだけ出さない**。
+        Get-YakuNumericRulesSection が数値の規則で先に採っている形と同じ。
+        素の一文なら 1,500字強が落ちるが、失われる規則は1つも無い。
+
+      差し込み口は、直前の行の末尾に置いてある。
+      値は自分の改行を先頭に持つ。空のときに空行が残らないようにするため。
+    #>
+    param([AllowNull()][string]$InputText)
+    $t = [string]$InputText
+    $nl = [Environment]::NewLine
+    $v = @{
+        brief_angle_rule     = ''
+        brief_quotation_rule = ''
+        brief_months_rule    = ''
+        brief_signed_rule    = ''
+        brief_extra_examples = ''
+    }
+    $examples = @()
+
+    # 全角山括弧。原文に山括弧の見出しが無ければ、往復の作法を説く必要が無い。
+    if ($t -match '[<>＜＞]') {
+        $v.brief_angle_rule = $nl + '- Never output half-width < or >. Use FULL-WIDTH ＜ and ＞ for angle-bracket headings; the caller restores them.'
+    }
+
+    # 引用。話法の規則は、引用符か発言の動詞がある原文でしか出番が無い。
+    # 実測では、引用の事例を外すと電文体そのものが崩れた（文に戻った）ので、
+    # 引き金を引いたときは規則と事例の両方を出す。
+    if ($t -match '[「」『』"“”]|述べ|語っ|表明|コメント|発言|と説明|と話|インタビュー') {
+        $v.brief_quotation_rule = $nl + (@(
+            'B6. Quotations. For speech, attributed quotes and quote-like headlines you must pick one of exactly two forms:'
+            '    (a) Keep the quotation marks. Then the quoted words are translated faithfully and are NOT compressed: no dropped articles, no abbreviations, no noun-stacking inside the marks.'
+            '    (b) Remove the quotation marks and use indirect speech, keeping who said it and the reporting verb. Then compress freely.'
+            '    Quotation marks around compressed wording are wrong, because they claim the person said those words. Prefer (b) in this register.'
+            '    Short quoted terms, product names, programmes and places with no speech reading are not speech: keep their marks and follow B1-B5.'
+        ) -join $nl)
+        $examples += (@(
+            '社長は生産現場の連携が不可欠であり、フィジカルAIを推進していくと述べた。'
+            '-> Mfg.-site collaboration essential; he intends to advance physical AI.'
+            '   NOT "...; intends to advance." (the subject must stay recoverable)'
+        ) -join $nl)
+    }
+
+    # 月名。数値は差し替え済みなので「1月」は「[[N1]]月」になる。月の字だけを見る。
+    if ($t -match '月') {
+        $v.brief_months_rule = $nl + '- Months: Jan. Feb. Mar. Apr. Jun. Jul. Aug. Sep. Oct. Nov. Dec.; May stays May. Abbreviate only a calendar month. A person, company, product or place name keeps the full word (April Smith, June Tanaka, March & Co.). If unsure, leave it spelled out.'
+    }
+
+    # 符号付きの内訳。増減要因の表記が無ければ出さない。
+    if ($t -match '内訳|増減要因|要因は|[▲△]|[＋+]\s*[0-9０-９\[]|[(（][0-9０-９]') {
+        $v.brief_signed_rule = $nl + '- Signed breakdowns: term + one space + source sign and figure + unit. No "impact", no "of", no colon, no up/down. Only a sentence-level period change may read "subject up/down X YoY". If unsure, keep +X / (X).'
+        $examples += (@(
+            '第4四半期の変動利益は前年同期比xxx億円の減益。内訳は数量(xxx)、関税(xxx)、構成+xxx。'
+            '-> Q4 VP down xxx oku YoY. Breakdown: vol. (xxx); tariffs (xxx); mix +xxx.'
+        ) -join $nl)
+    }
+
+    if ($examples.Count -gt 0) { $v.brief_extra_examples = $nl + $nl + (@($examples) -join ($nl + $nl)) }
+    return $v
 }
 
 function Get-YakuStyleReferenceSection {
@@ -625,25 +745,172 @@ function New-YakuTextPrompt {
         [AllowNull()][string]$RequestId,
         # V91.61 段階3: 参考資料コーパスから引いた文例。
         # 作るのは CorpusReference.ps1 で、ここは受け取って差し込むだけ。
-        [AllowNull()][string]$CorpusSection
+        [AllowNull()][string]$CorpusSection,
+        # V91.61（2026-08-06）: 完全訳と開示用の電文体は別々の依頼になった。
+        # full / brief でそれぞれの雛形を選ぶ。空なら 1依頼で2つ返す旧雛形。
+        [AllowNull()][string]$Mode
     )
     if ([string]::IsNullOrWhiteSpace($RequestId)) { $RequestId = [guid]::NewGuid().ToString('N') }
     $direction = if ([string]::IsNullOrWhiteSpace($DirectionOverride)) { Get-YakuDirection -Text $InputText } else { $DirectionOverride }
-    $templateName = if ($direction -eq 'to_en') { 'text_translate_to_en.txt' } else { 'text_translate_to_jp.txt' }
+    $templateName =
+        if ($direction -ne 'to_en') { 'text_translate_to_jp.txt' }
+        # published は開示資料の書き方。出す枠は full と同じ（完全な文1つ）で、
+        elseif ([string]$Mode -eq 'full') { 'text_translate_full_to_en.txt' }
+        elseif ([string]$Mode -eq 'brief') { 'text_translate_brief_to_en.txt' }
+        else { 'text_translate_to_en.txt' }
     $template = Get-YakuPromptTemplate -Root $Root -Name $templateName
     $vars = @{
         input_text = $InputText.Trim()
-        reference_section = Get-YakuReferenceSection -Root $Root -Settings $Settings -InputText $InputText -Direction $direction
         style_reference_section = Get-YakuStyleReferenceSection -StyleReference $StyleReference
         # to_jp のテンプレートには枠が無い。渡ってきても差し込まれないが、
         # 呼び出し側でも方向を見て空にしている（Test-YakuCorpusReferenceApplicable）。
         corpus_section = [string]$CorpusSection
-        numeric_rules = Get-YakuNumericRulesSection -InputText $InputText -Direction $direction
+        # 金額の書き方は依頼の種類（そのまま／短く）では変わらない。設定で決まる。
+        # 訳の種類と書き方を混ぜていたので、名前が何を指すのか分からなくなっていた
+        # （利用者の指摘 2026-08-08「社内の書き方もおかしい」）。
+        numeric_rules = Get-YakuNumericRulesSection -InputText $InputText -Direction $direction -Notation (Get-YakuAmountNotation -Settings $Settings)
         request_id = $RequestId
+    }
+    # 電文体の雛形だけが持つ差し込み口。原文に引き金が無い節は出さない。
+    # 他の雛形には枠が無いので、渡しても差し込まれない。
+    if ([string]$Mode -eq 'brief') {
+        foreach ($kv in (Get-YakuBriefConditionalSections -InputText $InputText).GetEnumerator()) {
+            $vars[$kv.Key] = [string]$kv.Value
+        }
     }
     return [pscustomobject]@{
         Direction = $direction
         Prompt = Expand-YakuTemplate -Template $template -Variables $vars
+    }
+}
+
+function New-YakuRevisePrompt {
+    <#
+      修正の依頼を組み立てる。
+
+      なぜ規則集を送らないのか:
+
+        利用者の使い方は「一文を訳す → 目で見る → 何度か直す → 確定」である
+        （利用者の説明 2026-08-06）。この「直す」を、規則集ごと投げ直す形で
+        作ってはいけない。理由は2つある。
+
+        1つ目。現訳はすでに規則を通って出てきたものである。同じ規則を
+        もう一度送れば、モデルは指示ではなく規則へ引っ張られ、
+        利用者が触っていない箇所まで書き換わる。直したいのは1点だけである。
+
+        2つ目。電文体の規則は圧縮後でも 5,500字あり、利用者の指示は
+        たいてい20字である。長さの比が 250:1 では指示が埋もれる。
+
+        したがって送るのは 原文・現訳・指示 の3つと、動かせない機構だけ
+        （ラベルの契約と、伏せた数値の扱い）。文体は一行の注記で示す。
+
+      原文を送るのは、指示が事実を落とす形になっていないかを確かめさせるため。
+      現訳だけでは、モデルは指示が原文に反しているかを知りようがない。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Root,
+        [Parameter(Mandatory=$true)][string]$InputText,
+        [Parameter(Mandatory=$true)][string]$CurrentText,
+        [Parameter(Mandatory=$true)][string]$Instruction,
+        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
+        # 現訳がどちらの成果物か。求めるラベルと文体の注記が決まる。
+        [ValidateSet('full','brief')][string]$Style = 'full',
+        [AllowNull()][string]$RequestId
+    )
+    if ([string]::IsNullOrWhiteSpace($RequestId)) { $RequestId = [guid]::NewGuid().ToString('N') }
+    $label =
+        if ($Direction -ne 'to_en') { 'JAPANESE_TEXT' }
+        elseif ($Style -eq 'brief') { 'BRIEF_TEXT' }
+        else { 'FULL_TEXT' }
+    # 文体は一行で示す。ここに規則を書き足すと、規則集を送らない意味が無くなる。
+    $styleNote =
+        if ($Direction -ne 'to_en') { 'CURRENT is a Japanese translation. Keep its register, terminology and level of detail.' }
+        elseif ($Style -eq 'brief') { 'CURRENT is an English telegraphic line, in the register used inside a Japanese company''s own disclosure and management materials. Keep that register: grammar words go, facts stay. Do not expand it into prose.' }
+        else { 'CURRENT is a complete English translation. Keep it complete: no compression and no abbreviations that SOURCE does not itself use.' }
+    # 伏せた数値の規則だけは残す。トークンが原文と現訳の両方に居るため、
+    # 扱いを示さないと書き換えられて実値へ戻せなくなる。
+    $numeric = Get-YakuNumericRulesSection -InputText ([string]$InputText + "`n" + [string]$CurrentText) -Direction $Direction
+    $template = Get-YakuPromptTemplate -Root $Root -Name 'text_revise.txt'
+    $vars = @{
+        request_id       = $RequestId
+        output_label     = $label
+        style_note       = $styleNote
+        numeric_rules    = $numeric
+        input_text       = $InputText.Trim()
+        current_text     = $CurrentText.Trim()
+        instruction_text = $Instruction.Trim()
+    }
+    return [pscustomobject]@{
+        Direction = $Direction
+        Label     = $label
+        Prompt    = Expand-YakuTemplate -Template $template -Variables $vars
+    }
+}
+
+function New-YakuShortenPrompt {
+    <#
+      できあがった訳文を、短くするためだけに依頼する。
+
+      なぜ訳し直しではなく派生なのか（要件整理 §5-A、実測付き）:
+
+        原文→FULL と 原文→BRIEF を並べて頼むと、圧縮が「日本語を読みながら
+        縮める」作業になる。実測で圧縮率が 0.55（用語集がカバーする語彙）と
+        0.75（しない語彙）に割れた。同じ文長・同じ文体でこれだけ差が出るのは、
+        圧縮を日本語照合でやっているからである。
+
+        できた英文から縮めれば、圧縮は英語→英語の操作になり、語彙依存が
+        原理的に消える。用語も原文の解釈も現訳から引き継ぐので、
+        「さっき訳した文と今の文が食い違う」も起きない。
+
+      何を許すか:
+
+        長さだけである。単位表記も負数の書き方も渡さない。単位換算は桁の
+        換算を伴うのでマスクの前にアプリが済ませており、送信後の英文には
+        [[N1]] しか無い。Copilot に換算はできない。負数の書き方は設定
+        amount_notation が決める規則で、最初の翻訳で既に当たっている。
+        機械で決まることをモデルへ渡すのは、往復が高くつく以上は悪い取引である
+        （独立評価 2026-08-08）。
+
+        許す軸を1本に絞ると、指示は守られやすくなる。「A も B も C も
+        変えてよい」は「A だけ」よりはっきり守られない。
+
+      略語は当てない。返ってきた英文へアプリが後から当てる。先に略語入りの
+      英文を渡すと、モデルはそれを知らない語として扱い、書き換えの許可を
+      与えている場でこそ綴りへ戻したり別の語に読み替えたりする。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Root,
+        [Parameter(Mandatory=$true)][string]$InputText,
+        # マスク後の現訳。実値の入った訳文を渡してはならない。
+        [Parameter(Mandatory=$true)][string]$CurrentText,
+        # 金額の書き方。渡さないと既定（oku）の規則を送ることになり、
+        # 別の表記で作った現訳に対して「その表記を使うな」と言う形になる
+        # （2026-08-08 の指摘。設定を無視していた）。
+        [AllowNull()]$Settings,
+        [AllowNull()][string]$RequestId
+    )
+    if ([string]::IsNullOrWhiteSpace($RequestId)) { $RequestId = [guid]::NewGuid().ToString('N') }
+    # 伏せた数値の扱いだけは残す。トークンが原文と現訳の両方に居るので、
+    # 扱いを示さないと書き換えられて実値へ戻せなくなる。
+    $numeric = Get-YakuNumericRulesSection -InputText ([string]$InputText + "`n" + [string]$CurrentText) -Direction 'to_en' -Notation (Get-YakuAmountNotation -Settings $Settings)
+    # 圧縮の手口だけを渡す。文体の規則集を丸ごと再掲しない。
+    # 既に良い訳が入力なのに、それを産んだ規則を全部見せると
+    # 「一から作り直す」を誘発する（独立評価 2026-08-08）。
+    $briefRules = ''
+    try { $briefRules = Get-YakuPromptTemplate -Root $Root -Name 'style_brief_rules.txt' } catch { $briefRules = '' }
+    $template = Get-YakuPromptTemplate -Root $Root -Name 'text_shorten_to_en.txt'
+    $vars = @{
+        request_id    = $RequestId
+        numeric_rules = $numeric
+        brief_rules   = [string]$briefRules
+        input_text    = $InputText.Trim()
+        current_text  = $CurrentText.Trim()
+    }
+    return [pscustomobject]@{
+        Direction = 'to_en'
+        Label     = 'BRIEF_TEXT'
+        RequestId = $RequestId
+        Prompt    = Expand-YakuTemplate -Template $template -Variables $vars
     }
 }
 
@@ -726,15 +993,10 @@ function Convert-YakuGlossaryManagerToHtml {
     $machineAllEntries = @(Get-YakuGlossaryEntries -Root $Root -Path $machinePath -IncludeDuplicates)
     $machineStatus = if (Test-Path -LiteralPath $machinePath -PathType Leaf) { '' } else { '未作成' }
 
-    $promptDisplayPath = Join-Path $Root 'prompt_glossary.csv'
-    $promptExists = Test-Path -LiteralPath $promptDisplayPath -PathType Leaf
-    $promptReadPath = Get-YakuPromptGlossaryPath -Root $Root
-    $promptEntries = @(Get-YakuGlossaryEntries -Root $Root -Path $promptReadPath)
-    $promptAllEntries = @(Get-YakuGlossaryEntries -Root $Root -Path $promptReadPath -IncludeDuplicates)
-    $promptStatus = if ($promptExists) { '' } else { "未作成(glossary.csv にフォールバック中): $promptReadPath" }
-
+    # prompt_glossary.csv は廃止した（利用者の判断 2026-08-06）。
+    # 用語集はレイアウトの保証のためのもので、文中の言い回しには使わない。
     $machineHtml = Convert-YakuGlossarySectionToHtml -Title '表ラベル置換用 — glossary.csv' -Description 'Excel/CSVのセルが完全一致したときCopilotを使わず直接置換。表の正式表記で登録。' -DisplayPath $machinePath -Entries $machineEntries -AllEntries $machineAllEntries -Status $machineStatus
-    $promptHtml = Convert-YakuGlossarySectionToHtml -Title 'Copilot翻訳用 — prompt_glossary.csv' -Description '翻訳プロンプトに参考訳語として注入。文中の形(一般語は小文字)で登録。' -DisplayPath $promptDisplayPath -Entries $promptEntries -AllEntries $promptAllEntries -Status $promptStatus
+    $promptHtml = ''
     $html = @"
 <div class='glossary-manager'>
   <div class='alert alert-info glossary-readonly-note'>編集は各CSVファイルを直接編集してください(UTF-8 BOM付き・カンマ区切り)。保存後は次回の翻訳から自動反映されます。</div>

@@ -57,13 +57,53 @@ $t3 = @(Get-YakuCorpusQueryTerms -Answer 'SEARCH_TERMS: equity equity equity rat
 Chk ($t3.Count -eq 2) '同じ語は重ねない'
 $many = 'SEARCH_TERMS: ' + ((1..30 | ForEach-Object { 'term' + $_ }) -join ' ')
 Chk (@(Get-YakuCorpusQueryTerms -Answer $many).Count -le 12) '検索語には上限がある'
+# 実機の Copilot は検索語と終端マーカーを同じ行に返すことがある（2026-08-05 実測）。
+$sameLine = @(Get-YakuCorpusQueryTerms -Answer 'SEARCH_TERMS: full year outlook foreign exchange YAKULINGO_END:deadbeef')
+Chk ($sameLine -contains 'outlook') '終端マーカーが同じ行に来ても取れる'
+
+# ---------------------------------------------------------------- 応答の受け取り契約
+# ここが素通しになっていたため、段階3 は出荷状態で一度も成立していなかった。
+# Copilot は正しく答えていたのに、labeled 契約が SEARCH_TERMS を知らず、
+# 候補として認めないまま待ち続けて時間切れになっていた。
+# 往復を差し替える回帰では実際の契約を通らないので、契約そのものを読んで確かめる。
+Write-Host '応答の受け取り契約'
+$clientText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CopilotClient.ps1'))
+
+# プロンプトが Copilot に出させるラベルを、当てずっぽうではなく prompts から集める。
+# 入力側の枠と終端マーカーは出力ラベルではないので除く。
+# CURRENT_* と INSTRUCTION_* は修正の依頼が原文以外に渡す入力の囲み
+# （V91.61 2026-08-06）。モデルに出させるラベルではないので同じ扱いにする。
+$frameLabels = @('SOURCE_BEGIN','SOURCE_END','SOURCE_ITEMS_END','YAKULINGO_END','YAKULINGO_OK','YAKULINGO_DONE',
+                 'CURRENT_BEGIN','CURRENT_END','INSTRUCTION_BEGIN','INSTRUCTION_END')
+$askedLabels = New-Object System.Collections.Generic.List[string]
+foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $root 'prompts') -Filter '*.txt')) {
+    $body = [System.IO.File]::ReadAllText($f.FullName)
+    foreach ($m in [regex]::Matches($body, '(?m)^\s*([A-Z][A-Z_]{3,})\s*:')) {
+        $name = [string]$m.Groups[1].Value
+        if ($frameLabels -contains $name) { continue }
+        if (-not $askedLabels.Contains($name)) { [void]$askedLabels.Add($name) }
+    }
+}
+Chk ($askedLabels.Count -ge 4) ('prompts が出させるラベルを集められた: ' + ($askedLabels -join ', '))
+Chk ($askedLabels -contains 'SEARCH_TERMS') 'コーパス検索語のラベルが含まれている'
+
+$labelReLine = [regex]::Match($clientText, '(?m)^const labelRe = .*$').Value
+$startLabelReLine = [regex]::Match($clientText, '(?m)^const startLabelRe = .*$').Value
+$usefulBlock = [regex]::Match($clientText, '(?s)const hasUsefulLabeledOutput = \(text\) => \{.*?\n\};').Value
+Chk (-not [string]::IsNullOrWhiteSpace($labelReLine)) 'labelRe を見つけられる'
+Chk (-not [string]::IsNullOrWhiteSpace($usefulBlock)) 'hasUsefulLabeledOutput を見つけられる'
+foreach ($name in $askedLabels) {
+    Chk ($labelReLine -match [regex]::Escape($name)) ('labelRe が ' + $name + ' を知っている')
+    Chk ($usefulBlock -match [regex]::Escape($name)) ('hasUsefulLabeledOutput が ' + $name + ' を扱う')
+}
+Chk ($startLabelReLine -match 'SEARCH_TERMS') 'startLabelRe が SEARCH_TERMS を知っている（答えの切り出しに要る）'
 
 # ---------------------------------------------------------------- 文例の伏せ字
 Write-Host '文例の数字を伏せる'
 $red = ConvertTo-YakuCorpusExampleText -Text 'Operating income increased 12.3% to 45,600 million yen in 2026.'
 Chk ($red -notmatch '\d') '数字が残らない'
 Chk ($red -match 'Operating income increased') '言い回しは残る'
-Chk ($red -notmatch '【N\d') 'V91.60 のプレースホルダー形式は使わない（原文側と名前空間が衝突するため）'
+Chk (($red -notmatch '\[\[N\d') -and ($red -notmatch '【N\d')) 'V91.60 のプレースホルダー形式は使わない（原文側と名前空間が衝突するため。旧 【N1】 も新 [[N1]] も）'
 Chk ((ConvertTo-YakuCorpusExampleText -Text '') -eq '') '空文字でも落ちない'
 
 # ---------------------------------------------------------------- 文例の組み立て
@@ -82,7 +122,12 @@ Chk ((Get-YakuCorpusExampleSection -Hits @()) -eq '') '0件なら空'
 Chk ((Get-YakuCorpusExampleSection -Hits $null) -eq '') 'null でも空'
 $long = @([pscustomobject]@{ Score=1.0; Database='db'; Source='db/a.pdf'; Page=1; Text=('word ' * 400) })
 $cut = Get-YakuCorpusExampleSection -Hits $long
-Chk ($cut.Length -lt 1200) ('長すぎる一節は切り詰める: ' + $cut.Length)
+# 見出しの分は差し引いて、本文だけを見る。全体の長さで見ていると、
+# 見出しを1行足すたびに閾値を上げ直すことになり、何を守る検査なのか
+# 分からなくなる。守りたいのは「本文が伸びっぱなしにならない」こと。
+$shortHit = @([pscustomobject]@{ Score=1.0; Database='db'; Source='db/a.pdf'; Page=1; Text='word' })
+$headerLen = (Get-YakuCorpusExampleSection -Hits $shortHit).Length - 4
+Chk (($cut.Length - $headerLen) -lt 700) ('長すぎる一節は切り詰める: ' + ($cut.Length - $headerLen))
 Chk ($cut -match '\.\.\.$') '切ったことが分かる'
 
 # ---------------------------------------------------------------- 検索語生成の依頼
@@ -124,7 +169,7 @@ Chk ($ref.Section -match 'CORPUS_EXAMPLES') '差し込む文字列ができる'
 Write-Host '検索語生成の依頼にも数値マスキングが効くこと'
 # ここを素通しにすると V91.60 の「数値を外部へ出さない」保証がこの経路だけ抜ける。
 Chk ($script:LastQueryPrompt -notmatch '45\.6') '原文の数値がそのまま送られていない'
-Chk ($script:LastQueryPrompt -match '【N\d+】') 'マスク済みの本文が送られている'
+Chk ($script:LastQueryPrompt -match '\[\[N\d+\]\]') 'マスク済みの本文が送られている'
 Chk ($script:LastQueryPrompt -match '自己資本比率') 'マスク以外の本文は送られている'
 
 Write-Host '使わない条件'
@@ -197,13 +242,26 @@ Chk (-not [string]::IsNullOrWhiteSpace([string]@($refEx.Examples)[0].Source)) '�
 $refNoneEx = Get-YakuCorpusReference -Root $root -InputText 'x' -Settings $settings -Direction 'to_jp' -Warnings $null -ProgressState $null
 Chk (@($refNoneEx.Examples).Count -eq 0) '使わなかったときは空（呼び出し側で場合分けしない）'
 
-# ---------------------------------------------------------------- 触っていないこと
-Write-Host 'ファイル翻訳を触っていないこと'
-$fileText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'FileTranslation.ps1'))
-Chk ($fileText -notmatch 'CorpusSection') 'ファイル翻訳へは差し込まない'
-Chk ($fileText -notmatch 'Get-YakuCorpusReference') 'ファイル翻訳はコーパスを引かない'
+# ---------------------------------------------------------------- どちらで引くか
+# V91.61（2026-08-06）: 文例を引く場所を、簡易翻訳から CAT へ移した。
+#
+# 簡易翻訳は「その場で1つ訳す」ためのもので、検索語を Copilot に作らせる
+# 往復が1回増えるのは重すぎる（利用者の判断 2026-08-06）。
+# 腰を据えて資料を仕上げる CAT 側でこそ、過去の言い回しを参照する値打ちがある。
+#
+# CAT でも自動では引かない。文例の検索と AI 翻訳を別のボタンに分け、
+# 「検索だけ」「翻訳だけ」「検索してから翻訳」を利用者が選べるようにした。
+Write-Host '文例を引く場所'
+$translationSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Translation.ps1'))
+Chk ($translationSrc -notmatch 'Get-YakuCorpusReference -Root \$Root -InputText \$processingInput') '簡易翻訳では引かない（重いので外した）'
+Chk ($translationSrc -match 'text-mode-disabled') '外したことが分かる印がある'
+$serverSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Server.ps1'))
+Chk ($serverSrc -match 'Get-YakuCorpusReference') 'CAT からは引ける'
 $fileTemplate = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'prompts') 'file_translate_to_en.txt'))
-Chk ($fileTemplate -notmatch 'corpus_section') 'ファイル用テンプレートに枠を足していない'
+Chk ($fileTemplate -match 'corpus_section') 'ファイル用テンプレートに差し込み口がある'
+$fileText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'FileTranslation.ps1'))
+Chk ($fileText -match 'CorpusSection') 'ファイル用プロンプトが文例を受け取れる'
+Chk ($fileText -notmatch 'Get-YakuCorpusReference') 'ファイル翻訳自身は引かない（渡されたものを使うだけ）'
 $jpTemplate = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'prompts') 'text_translate_to_jp.txt'))
 Chk ($jpTemplate -notmatch 'corpus_section') 'to_jp のテンプレートにも足していない'
 
@@ -211,13 +269,18 @@ Write-Host '設定項目を増やしていないこと'
 $settingsText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Settings.ps1'))
 Chk ($settingsText -notmatch 'corpus') '設定へコーパスの項目を足していない'
 $indexHtml = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'index.html'))
-Chk ($indexHtml -notmatch 'corpus') '一般利用者の画面にも出さない'
+# V91.61（2026-08-06）: CAT に「文例を検索」を置いたので、参照する側は
+# 一般利用者の画面にも現れる。出してはいけないのは**作る側**である。
+# コーパスの取り込み・索引作りは管理画面（admin.html）にだけ置く。
+Chk ($indexHtml -notmatch '(?i)corpus[-_]?(build|rebuild|index|import|ingest|admin|manage)') 'コーパスを作る操作は一般利用者の画面に出さない'
+Chk ($indexHtml -match 'cat-corpus-button') 'CAT からは文例を検索できる'
 
 Write-Host 'キャッシュ鍵'
 $translationText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Translation.ps1'))
 # 文例なしで作った訳文を文例ありの依頼へ返さないため。
 Chk ($translationText -match "corpus-v9161:") 'キャッシュ鍵に文例が含まれる'
-Chk ($translationText -match 'Get-YakuCorpusReference -Root \$Root -InputText \$processingInput') 'ジョブごとに1回、分割前に引く'
+# 文例は CAT のジョブごとに1回だけ引く。バッチごとに引くと往復が増える。
+Chk ($serverSrc -match 'Get-YakuCorpusReference -Root \$Root -InputText \$catSample') 'CAT ではジョブごとに1回、分割前に引く'
 
 } finally {
     if (-not [string]::IsNullOrWhiteSpace($prevData)) { $env:YAKULINGO_DATA_DIR = $prevData } else { Remove-Item Env:\YAKULINGO_DATA_DIR -ErrorAction SilentlyContinue }

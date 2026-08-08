@@ -124,6 +124,125 @@ async function scan() {
   $('ingest').disabled = (pending.length === 0);
 }
 
+// ページを段（カラム）に分けて読み直す。
+//
+// liteparse の plain text は、版面の同じ高さにある文字を左から順に並べる。
+// 1段組みなら正しいが、統合報告書のような多段組みでは左段と右段が1行に
+// 連結される。実測では本文行の 60% が連結されていた（2026-08-07）。
+// 目次の項目と、無関係な本文の途中が同じ行に入る。
+// 対応が取れないだけでなく、取れてしまうと意味を成さない対訳が残る。
+//
+// textItems には x 座標があるので、文字の載っていない縦の帯（版面の谷）を
+// 見つけて段に切る。段ごとに上から読めば、元の読み順に戻る。
+function yakuPageTextByColumns(page) {
+  const items = (page.textItems || []).filter(function (t) { return t && t.text && t.text.trim(); });
+  const fallback = page.text || page.markdown || '';
+  if (items.length < 8) return fallback;
+  let minX = Infinity, maxX = -Infinity, hSum = 0;
+  for (const t of items) {
+    const x = Number(t.x) || 0, w = Number(t.width) || 0;
+    if (x < minX) minX = x;
+    if (x + w > maxX) maxX = x + w;
+    hSum += Number(t.height) || 0;
+  }
+  const width = maxX - minX;
+  if (!isFinite(width) || width <= 0) return fallback;
+  const lineHeight = (hSum / items.length) || 10;
+
+  // x 方向を細かい升目に落とし、何個の文字片が載っているかを数える。
+  const BINS = 240;
+  const occ = new Array(BINS).fill(0);
+  for (const t of items) {
+    const x = Number(t.x) || 0, w = Number(t.width) || 0;
+    let a = Math.floor((x - minX) / width * BINS);
+    let b = Math.ceil((x + w - minX) / width * BINS);
+    if (a < 0) a = 0;
+    if (b > BINS - 1) b = BINS - 1;
+    for (let i = a; i <= b; i++) occ[i]++;
+  }
+  // 段をまたぐ見出しが1本あるだけで谷が埋まる。完全な空白ではなく
+  // 「ほとんど載っていない」を谷とみなす。
+  const peak = Math.max.apply(null, occ);
+  const floorLevel = Math.max(1, Math.floor(peak * 0.04));
+  const minGap = Math.max(4, Math.round(BINS * 0.022));
+
+  const bands = [];
+  let start = null;
+  for (let i = 0; i < BINS; i++) {
+    if (occ[i] > floorLevel) {
+      if (start === null) start = i;
+      continue;
+    }
+    let j = i;
+    while (j < BINS && occ[j] <= floorLevel) j++;
+    if (start !== null && (j - i) >= minGap) { bands.push([start, i - 1]); start = null; }
+    i = j - 1;
+  }
+  if (start !== null) bands.push([start, BINS - 1]);
+
+  // 1段なら今までと同じ。刻まれすぎたときは表の可能性が高いので触らない。
+  if (bands.length < 2 || bands.length > 5) return fallback;
+
+  const edges = bands.map(function (b) {
+    return { lo: minX + (b[0] / BINS) * width, hi: minX + ((b[1] + 1) / BINS) * width, items: [] };
+  });
+  for (const t of items) {
+    const cx = (Number(t.x) || 0) + (Number(t.width) || 0) / 2;
+    let band = edges[0];
+    for (const e of edges) { if (cx >= e.lo && cx <= e.hi) { band = e; break; } }
+    band.items.push(t);
+  }
+
+  // 表と段組みを見分ける。
+  //
+  // 行の揃い方では見分けられない。段組みの本文も左右の行は同じ高さに並ぶ
+  // （2026-08-07 に一度これで誤り、統合報告書まで表と判定した）。
+  // 見分けるのは中身のほうである。
+  //   表      セルが短い。「現金及び預金」「1,001,379」
+  //   段組み  1行が文の一部で長い
+  // 表を段として割ると科目と金額が別の行になり、行が意味を失う。
+  // 決算短信は大半が表なので、誤ると既に取れていたものを壊す。
+  const cellLens = [];
+  let numericCells = 0;
+  for (const e of edges) {
+    const rows = new Map();
+    for (const t of e.items) {
+      const key = Math.round((Number(t.y) || 0) / Math.max(1, lineHeight * 0.6));
+      rows.set(key, (rows.get(key) || '') + String(t.text).trim());
+    }
+    for (const v of rows.values()) {
+      cellLens.push(v.length);
+      if (v.length && !/[ぁ-んァ-ヶ一-鿿A-Za-z]{3}/.test(v)) numericCells++;
+    }
+  }
+  if (!cellLens.length) return fallback;
+  cellLens.sort(function (a, b) { return a - b; });
+  const median = cellLens[Math.floor(cellLens.length / 2)];
+  // セルが短い、または数字だけの升目が多いページは表とみなして触らない。
+  if (median < 12 || numericCells / cellLens.length > 0.35) return fallback;
+  const out = [];
+  for (const e of edges) {
+    if (!e.items.length) continue;
+    e.items.sort(function (a, b) {
+      const dy = (Number(a.y) || 0) - (Number(b.y) || 0);
+      if (Math.abs(dy) > lineHeight * 0.6) return dy;
+      return (Number(a.x) || 0) - (Number(b.x) || 0);
+    });
+    let line = [], lastY = null;
+    for (const t of e.items) {
+      const y = Number(t.y) || 0;
+      if (lastY !== null && Math.abs(y - lastY) > lineHeight * 0.6) { out.push(line.join(' ')); line = []; }
+      line.push(String(t.text).trim());
+      lastY = y;
+    }
+    if (line.length) out.push(line.join(' '));
+  }
+  const text = out.join('\n');
+  // 取れ高が明らかに減ったときは信用しない。元の取り出しへ戻す。
+  if (text.replace(/\s/g, '').length < fallback.replace(/\s/g, '').length * 0.8) return fallback;
+  return text;
+}
+
 async function ingestOne(lp, item, root) {
   // 1件分。失敗しても投げ返さず status で返す。1件の失敗で全体を止めない。
   let markdown = '', pages = 0, pageChars = [], status = 'ok', note = '';
@@ -133,7 +252,8 @@ async function ingestOne(lp, item, root) {
     const bytes = new Uint8Array(await res.arrayBuffer());
     // OCR は必ず無効にする。有効だと tessdata を外部から取得しようとして止まる。
     const parsed = await lp.parse(bytes);
-    const mdPages = (parsed.pages || []).map(function (p) { return p.markdown || ''; });
+    // 段に切ってから読む。切れなければ plain text をそのまま使う。
+    const mdPages = (parsed.pages || []).map(function (p) { return yakuPageTextByColumns(p); });
     pages = mdPages.length;
     pageChars = mdPages.map(function (m) { return m.length; });
     markdown = mdPages.map(function (m, i) { return '<!--yaku-page:' + (i + 1) + '-->\n' + m; }).join('\n\n');
@@ -161,7 +281,11 @@ async function ingestAll() {
   let lp;
   try {
     await ensureWasm();
-    lp = new LiteParse({ outputFormat: 'markdown', ocrEnabled: false, quiet: true });
+    // outputFormat は json にする。markdown は段組を潰して隣の段と連結してしまう
+    // （実測 2026-08-07: 「前向きに…広げる」＋「1920年の創立以来…」が1行に混ざった）。
+    // plain text は段の位置を空白の並びとして保つので、情報が多い。
+    // textItems（座標つき）も同時に手に入る。
+    lp = new LiteParse({ outputFormat: 'json', ocrEnabled: false, quiet: true });
   } catch (e) {
     // 握りつぶすと「読み込んでいます…」のまま止まって見える。必ず表に出す。
     say($('progress'), e && e.message ? e.message : String(e), 'error');

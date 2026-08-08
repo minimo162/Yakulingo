@@ -40,6 +40,15 @@ Chk (Test-YakuFileLabelLike -Text '販売費及び一般管理費') '長めの�
 Chk (Test-YakuFileLabelLike -Text '親会社株主に帰属する当期純利益') '途中に活用があってもラベル'
 Chk (Test-YakuFileLabelLike -Text 'その他の包括利益累計額') '長めでも名詞の連なりならラベル'
 Chk (Test-YakuFileLabelLike -Text '前年同期比') '比較語もラベル'
+# 「による」は連体修飾で、後ろに名詞が来る＝ラベルの一部。
+# 途中一致で弾いていたため、実機のファイル翻訳でこの5件を全て取りこぼした（2026-08-05）。
+# 英語にすると長くなる行なので、取りこぼすと はみ出しに気づけない。
+Chk (Test-YakuFileLabelLike -Text '営業活動によるキャッシュ・フロー') '「による」を含む勘定科目もラベル'
+Chk (Test-YakuFileLabelLike -Text '投資活動によるキャッシュ・フロー') '投資活動のキャッシュ・フローもラベル'
+Chk (Test-YakuFileLabelLike -Text '財務活動によるキャッシュ・フロー') '財務活動のキャッシュ・フローもラベル'
+Chk (Test-YakuFileLabelLike -Text '持分法による投資利益') '持分法による投資利益もラベル'
+Chk (Test-YakuFileLabelLike -Text '事業譲渡による損失') '事業譲渡による損失もラベル'
+Chk (Test-YakuFileLabelLike -Text '原価改善による増益') '増減要因表の体言止めもラベル'
 
 Write-Host 'ラベルらしさの判定 — 拾いたくないもの'
 # 句点の無い短文が本題。文字数の上限だけでは拾ってしまう。
@@ -58,6 +67,15 @@ Chk (-not (Test-YakuFileLabelLike -Text 'Operating income')) '英語だけは対
 Chk (-not (Test-YakuFileLabelLike -Text '')) '空文字はラベルではない'
 Chk (-not (Test-YakuFileLabelLike -Text '   ')) '空白だけもラベルではない'
 Chk (-not (Test-YakuFileLabelLike -Text $null)) 'null でも落ちない'
+# 短すぎるものは表の見出しで、用語集へ足す候補ではない。
+# 短い順に並べる以上いちばん上へ来てしまうため下限で落とす（利用者の指示 2026-08-05）。
+# 実機で上位を占めたのがこの3つだった。
+Chk (-not (Test-YakuFileLabelLike -Text '科目')) '2文字の見出しは拾わない（科目）'
+Chk (-not (Test-YakuFileLabelLike -Text '当期')) '2文字の見出しは拾わない（当期）'
+Chk (-not (Test-YakuFileLabelLike -Text '前期')) '2文字の見出しは拾わない（前期）'
+# 下限を4にすると落ちてしまうもの。3で止める理由。
+Chk (Test-YakuFileLabelLike -Text '売上高') '3文字の勘定科目は拾う（下限を4にしてはいけない）'
+Chk (Test-YakuFileLabelLike -Text '営業利益') '4文字の勘定科目は拾う'
 
 # ---------------------------------------------------------------- 未一致ラベルの抽出
 Write-Host '用語集に無いラベルの抽出'
@@ -69,7 +87,7 @@ $items = @(
     [pscustomobject]@{ Index=5; Text='1,234';         OriginalText='1,234' }
 )
 # 1 だけが完全一致で置換できた、という状況
-$applied = @([pscustomobject]@{ Source='販売促進費'; Target='Promo. Costs'; ItemIndex=1; Via='exact' })
+$applied = @([pscustomobject]@{ Source='販売促進費'; Target='VM'; ItemIndex=1; Via='exact' })
 
 $labels = @(Get-YakuFileUnmatchedLabels -Items $items -ExactApplied $applied -Direction 'to_en')
 $texts = @($labels | ForEach-Object { [string]$_.Text })
@@ -108,7 +126,7 @@ Chk (@(Get-YakuFileUnmatchedLabels -Items $items -ExactApplied $null -Direction 
 
 Write-Host 'マスク後の本文に引きずられないこと'
 # 実際の経路では $item.Text は数値マスク後になる。原文で見ていることを確かめる。
-$maskedItems = @([pscustomobject]@{ Index=1; Text='【N1】期実績'; OriginalText='2026期実績' })
+$maskedItems = @([pscustomobject]@{ Index=1; Text='[[N1]]期実績'; OriginalText='2026期実績' })
 $maskedLabels = @(Get-YakuFileUnmatchedLabels -Items $maskedItems -ExactApplied @() -Direction 'to_en')
 Chk ($maskedLabels.Count -eq 1) 'マスク後でも拾える'
 Chk (@($maskedLabels)[0].Text -eq '2026期実績') '原文の字面で出す（用語集へ写せる形）'

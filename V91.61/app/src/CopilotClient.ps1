@@ -563,8 +563,193 @@ function Get-YakuCdpPortRuntimeCachePath {
     return (Join-Path (Get-YakuSubDir 'runtime') 'cdp-port.json')
 }
 
+# V91.61 段階②（2026-08-06）: 完全訳と電文体を同時に流すため、Copilot のタブを
+# 複数使う。どのタブを使うかを「スロット」で表す。既定は 0 で、従来と同じ1枚。
+#
+# スロットはランスペースごとに持つ。$script: はランスペース間で共有されないので、
+# 並列に走る2つのランスペースがそれぞれ別のタブを掴む。
+$script:YakuCopilotSlot = 0
+
+function Set-YakuCopilotSlot {
+    param([int]$Slot)
+    $script:YakuCopilotSlot = [Math]::Max(0, [int]$Slot)
+}
+
+function Get-YakuCopilotSlot {
+    if ($null -eq $script:YakuCopilotSlot) { return 0 }
+    try { return [int]$script:YakuCopilotSlot } catch { return 0 }
+}
+
 function Get-YakuCopilotTargetRuntimeCachePath {
-    return (Join-Path (Get-YakuSubDir 'runtime') 'cdp-copilot-target.json')
+    # スロット0は従来のファイル名のまま。増やしたスロットだけ別ファイルにする。
+    # 1本のファイルを共有すると、並列時に互いの記録を上書きしてしまう。
+    $slot = Get-YakuCopilotSlot
+    $name = if ($slot -le 0) { 'cdp-copilot-target.json' } else { ('cdp-copilot-target-' + [string]$slot + '.json') }
+    return (Join-Path (Get-YakuSubDir 'runtime') $name)
+}
+
+function Get-YakuCdpBrowserWebSocketUrl {
+    # ブラウザ全体を操作する口。ページ用の口ではウィンドウを作れない。
+    param([Parameter(Mandatory=$true)][int]$Port)
+    try {
+        $v = Get-YakuDevToolsVersion -Port $Port -TimeoutSec 3
+        return [string]$v.webSocketDebuggerUrl
+    } catch {
+        try { Write-YakuLog "CDP browser endpoint unavailable. port=$Port reason=$($_.Exception.Message)" 'DEBUG' } catch {}
+        return ''
+    }
+}
+
+function New-YakuCopilotWindow {
+    <#
+      Copilot を「新しいウィンドウ」で開く。タブでは駄目。
+
+      裏に回ったタブはブラウザが処理を抑えるため、長いプロンプトの打ち込みが
+      届かない。実測（2026-08-06）では 5,194 字を送って入力欄へ入ったのは 70 字
+      だった。同じ時間帯に前面のタブは 8,604 字を取りこぼしなく受けている。
+      長さの問題ではなく、裏にあることの問題である。
+
+      作れなければ空文字を返す。呼び出し側は1枚のまま逐次で動く。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][int]$Port,
+        [Parameter(Mandatory=$true)][string]$Url
+    )
+    $ws = Get-YakuCdpBrowserWebSocketUrl -Port $Port
+    if ([string]::IsNullOrWhiteSpace($ws)) { return '' }
+    try {
+        $res = Invoke-YakuCdpMethod -WebSocketUrl $ws -Method 'Target.createTarget' -Params @{ url = $Url; newWindow = $true } -TimeoutSeconds 20
+        $targetId = ''
+        try { $targetId = [string]$res.result.targetId } catch { $targetId = '' }
+        if ([string]::IsNullOrWhiteSpace($targetId)) {
+            try { Write-YakuLog 'Copilot window creation returned no targetId.' 'WARN' } catch {}
+            return ''
+        }
+        Add-YakuCopilotOwnedWindow -Port $Port -TargetId $targetId
+        try { Write-YakuLog "Copilot window created. targetId=$targetId" 'INFO' } catch {}
+        return $targetId
+    } catch {
+        try { Write-YakuLog "Copilot window creation failed. reason=$($_.Exception.Message)" 'WARN' } catch {}
+        return ''
+    }
+}
+
+function Get-YakuCopilotOwnedWindowsPath {
+    return (Join-Path (Get-YakuSubDir 'runtime') 'cdp-copilot-windows.json')
+}
+
+function Add-YakuCopilotOwnedWindow {
+    # 自分で開いたウィンドウだけを記録する。利用者が自分で開いた画面は閉じない。
+    param([Parameter(Mandatory=$true)][int]$Port, [Parameter(Mandatory=$true)][string]$TargetId)
+    try {
+        $path = Get-YakuCopilotOwnedWindowsPath
+        $ids = @()
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            try { $ids = @((Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json).targetIds) } catch { $ids = @() }
+        }
+        if ($ids -notcontains $TargetId) { $ids += $TargetId }
+        $record = [ordered]@{ port = $Port; targetIds = @($ids); savedAt = (Get-Date).ToUniversalTime().ToString('o') }
+        [System.IO.File]::WriteAllText($path, ($record | ConvertTo-Json -Depth 4), (New-Object System.Text.UTF8Encoding($true)))
+    } catch {}
+}
+
+function Close-YakuCopilotOwnedWindows {
+    <#
+      自分で開いた Copilot ウィンドウを閉じる。
+
+      いつ閉じるか:
+        アプリの停止時に閉じる。ジョブごとに閉じると毎回作り直しになり、
+        ウィンドウの生成と読み込みで数秒かかるため、その間ずっと遅くなる。
+        利用中は開いたままにして使い回す。
+
+      落ちて閉じ損ねた場合に備え、記録は残す。次の起動時、記録にあって
+      まだ生きているウィンドウは作り直さずに使い回すので、溜まらない。
+    #>
+    param([AllowNull()][int]$Port = 0)
+    $path = Get-YakuCopilotOwnedWindowsPath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return 0 }
+    $ids = @()
+    $recordedPort = $Port
+    try {
+        $rec = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        $ids = @($rec.targetIds)
+        if ($recordedPort -le 0) { $recordedPort = [int]$rec.port }
+    } catch { return 0 }
+    if ($recordedPort -le 0 -or @($ids).Count -le 0) { return 0 }
+    $ws = Get-YakuCdpBrowserWebSocketUrl -Port $recordedPort
+    $closed = 0
+    if (-not [string]::IsNullOrWhiteSpace($ws)) {
+        foreach ($id in @($ids)) {
+            if ([string]::IsNullOrWhiteSpace([string]$id)) { continue }
+            try {
+                $null = Invoke-YakuCdpMethod -WebSocketUrl $ws -Method 'Target.closeTarget' -Params @{ targetId = [string]$id } -TimeoutSeconds 8
+                $closed++
+            } catch {
+                try { Write-YakuLog "Copilot window close failed. targetId=$id reason=$($_.Exception.Message)" 'DEBUG' } catch {}
+            }
+        }
+    }
+    try { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue } catch {}
+    if ($closed -gt 0) { try { Write-YakuLog "Copilot windows closed. count=$closed" 'INFO' } catch {} }
+    return $closed
+}
+
+function Initialize-YakuCopilotSlotTarget {
+    <#
+      このスロットが使うタブを決めて、対象キャッシュへ載せる。
+
+      並びは Copilot タブの id の昇順で固定する。どのランスペースから見ても
+      同じ順になるので、スロット0とスロット1が同じタブを掴むことがない。
+      足りなければ作る。作れなければ何もしない（呼び出し側が従来どおり1枚で動く）。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][int]$Port,
+        [Parameter(Mandatory=$true)][string]$Url,
+        [int]$WaitSeconds = 20
+    )
+    $slot = Get-YakuCopilotSlot
+    if ($slot -le 0) { return $null }
+
+    # 自分で開いたウィンドウの中から選ぶ。画面に出ている対象を id 順に並べて
+    # 選ぶ方式だと、利用者が開いた裏のタブを掴んでしまう。裏では入力が届かない
+    # ので、それでは並列にする意味が無い（2026-08-06 実測）。
+    $owned = @()
+    try {
+        $path = Get-YakuCopilotOwnedWindowsPath
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            $owned = @((Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json).targetIds)
+        }
+    } catch { $owned = @() }
+
+    $deadline = (Get-Date).AddSeconds($WaitSeconds)
+    $created = $false
+    while ($true) {
+        $live = @()
+        try { $live = @(Get-YakuCdpPages -Port $Port | Where-Object { Test-YakuCopilotUrl -Url ([string]$_.url) }) } catch { $live = @() }
+        $liveIds = @{}
+        foreach ($t in $live) { $liveIds[[string]$t.id] = $t }
+        # 記録にあり、かつまだ生きているウィンドウだけを候補にする。
+        $usable = @($owned | Where-Object { $liveIds.ContainsKey([string]$_) })
+        # スロット0は利用者のもの。スロット1以降が自分で開いたウィンドウを順に使う。
+        if ($usable.Count -ge $slot) {
+            $chosenId = [string]$usable[$slot - 1]
+            $script:YakuCopilotTargetCache = [pscustomobject]@{ Port = [int]$Port; TargetId = $chosenId }
+            try { Write-YakuLog "Copilot slot bound to own window. slot=$slot targetId=$chosenId ownWindows=$($usable.Count)" 'DEBUG' } catch {}
+            return $liveIds[$chosenId]
+        }
+        if (-not $created) {
+            # タブではなくウィンドウで開く。理由は New-YakuCopilotWindow の説明を参照。
+            $newId = ''
+            try { $newId = [string](New-YakuCopilotWindow -Port $Port -Url $Url) } catch { $newId = '' }
+            if (-not [string]::IsNullOrWhiteSpace($newId)) { $owned += $newId }
+            $created = $true
+        }
+        if ((Get-Date) -ge $deadline) {
+            try { Write-YakuLog "Copilot slot could not be bound; running on the default window. slot=$slot ownWindows=$($usable.Count)" 'WARN' } catch {}
+            return $null
+        }
+        Start-Sleep -Milliseconds 700
+    }
 }
 
 function Save-YakuCopilotTargetRuntimeCache {
@@ -942,6 +1127,10 @@ function Get-YakuCopilotPage {
         [string]$Url = 'https://m365.cloud.microsoft/chat/',
         [int]$CreateGraceSeconds = 8
     )
+    # スロットを使う場合は、先にこのスロットのタブを対象キャッシュへ載せる。
+    # 以降の解決経路は従来のまま（キャッシュ済みの対象を拾う道を通る）。
+    if ((Get-YakuCopilotSlot) -gt 0) { $null = Initialize-YakuCopilotSlotTarget -Port $Port -Url $Url }
+
     $pages = @(Get-YakuCdpPages -Port $Port)
     Write-YakuLog "CDP targets found: $($pages.Count)." 'DEBUG'
 
@@ -3171,8 +3360,11 @@ const timeoutMs = __TIMEOUT_MS__;
 const answerFormat = __ANSWER_FORMAT__;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const requestId = String(baseline.requestId || '');
-const labelRe = /(^|\n)\s*(FULL_TEXT|BRIEF_TEXT|JAPANESE_TEXT|FULL_NOTES|BRIEF_NOTES|JAPANESE_NOTES)\s*:/i;
-const startLabelRe = /(^|\n)\s*(FULL_TEXT|JAPANESE_TEXT)\s*:/i;
+// SEARCH_TERMS は V91.61 段階3 のコーパス検索語。翻訳とは別の依頼だが、
+// 同じ labeled 契約（ラベル + YAKULINGO_END）で答えさせている。
+// ここに載せないと候補として認識されず、答えが届いていても待ち続けて失敗する。
+const labelRe = /(^|\n)\s*(FULL_TEXT|BRIEF_TEXT|JAPANESE_TEXT|FULL_NOTES|BRIEF_NOTES|JAPANESE_NOTES|SEARCH_TERMS)\s*:/i;
+const startLabelRe = /(^|\n)\s*(FULL_TEXT|JAPANESE_TEXT|SEARCH_TERMS)\s*:/i;
 const endMarkerRe = requestId
   ? new RegExp('YAKULINGO_END:' + requestId, 'i')
   : /\bYAKULINGO\\?_(?:END|DONE)\b/i;
@@ -3286,10 +3478,19 @@ const labeledValue = (text, label) => {
 };
 const hasUsefulLabeledOutput = (text) => {
   const t = String(text || '');
-  if (/FULL_TEXT\s*:/i.test(t) || /BRIEF_TEXT\s*:/i.test(t)) {
+  // 完全訳と電文体は別々の依頼になったので、片方だけの応答が正しい形になる
+  // （利用者の判断 2026-08-06）。両方在るときだけ両方揃うことを求める。
+  const hasFull = /FULL_TEXT\s*:/i.test(t);
+  const hasBrief = /BRIEF_TEXT\s*:/i.test(t);
+  if (hasFull && hasBrief) {
     return labeledValue(t, 'FULL_TEXT').length > 0 && labeledValue(t, 'BRIEF_TEXT').length > 0;
   }
+  if (hasFull) { return labeledValue(t, 'FULL_TEXT').length > 0; }
+  if (hasBrief) { return labeledValue(t, 'BRIEF_TEXT').length > 0; }
   if (/JAPANESE_TEXT\s*:/i.test(t)) return labeledValue(t, 'JAPANESE_TEXT').length > 0;
+  // コーパス検索語。中身が空でも「引く語が無い」という完結した答えなので、
+  // ラベルが在ることをもって有効とする（完了判定は YAKULINGO_END が別に見る）。
+  if (/SEARCH_TERMS\s*:/i.test(t)) return true;
   return false;
 };
 const hasUsableNumberedOutput = (text) => {
@@ -3844,6 +4045,35 @@ function Get-YakuNumberedMainTailSalvageText {
     return $candidate
 }
 
+function Get-YakuCopilotSelfReportedError {
+    <#
+      Copilot 自身が画面に出したエラー文言を拾う。
+
+      拾えたらそれを利用者に見せる。「解析可能な回答を取得できませんでした」
+      とだけ言うと、こちらの不具合を疑って調べ始めることになる（実際にそう
+      なった 2026-08-08）。Copilot が謝っているなら、待って出直すのが正解。
+
+      画面の末尾だけを見る。前の応答に同じ語が含まれていても拾わないため。
+      文言は Copilot の更新で変わりうるので、代表的なものだけを持つ。
+    #>
+    param([AllowNull()][string]$MainTail)
+    $text = [string]$MainTail
+    if ([string]::IsNullOrWhiteSpace($text)) { return '' }
+    $tail = if ($text.Length -gt 600) { $text.Substring($text.Length - 600) } else { $text }
+    $patterns = @(
+        '申し訳ございません。問題が発生しました。[^\r\n]*'
+        '申し訳ありません[^\r\n]*問題が発生しました[^\r\n]*'
+        'Sorry, something went wrong[^\r\n]*'
+        'I''m sorry, something went wrong[^\r\n]*'
+        'エラーが発生しました[^\r\n]*'
+    )
+    foreach ($p in $patterns) {
+        $m = [regex]::Match($tail, $p)
+        if ($m.Success) { return $m.Value.Trim() }
+    }
+    return ''
+}
+
 function Save-YakuCopilotWaitMainTailDiagnostic {
     param(
         [AllowNull()][string]$MainTail,
@@ -3956,10 +4186,19 @@ function Invoke-YakuMockCopilotPrompt {
         $out.Add($endMarker) | Out-Null
         return (ConvertTo-YakuMockMarkdownEscapedResponse -Text (($out.ToArray()) -join "`n"))
     }
-    if ($Prompt -match 'Task:\s*Japanese to English') {
-        return (ConvertTo-YakuMockMarkdownEscapedResponse -Text ("FULL_TEXT:`nHello.`nBRIEF_TEXT:`nHello.`n" + $endMarker))
+    # V91.61（2026-08-06）: 依頼が「完全訳」と「開示用の電文体」に分かれたので、
+    # 雛形の文言ではなく、そのプロンプトが出させようとしているラベルを見て返す。
+    # 文言で分岐していると、雛形を書き直すたびにモックが黙って壊れる。
+    $wantsFull = ($Prompt -match '(?m)^FULL_TEXT:')
+    $wantsBrief = ($Prompt -match '(?m)^BRIEF_TEXT:')
+    $wantsJp = ($Prompt -match '(?m)^JAPANESE_TEXT:')
+    if ($wantsFull -or $wantsBrief) {
+        $body = ''
+        if ($wantsFull) { $body += "FULL_TEXT:`nHello.`n" }
+        if ($wantsBrief) { $body += "BRIEF_TEXT:`nHello.`n" }
+        return (ConvertTo-YakuMockMarkdownEscapedResponse -Text ($body + $endMarker))
     }
-    if ($Prompt -match 'Task:\s*Non-Japanese to Japanese') {
+    if ($wantsJp -or ($Prompt -match 'Task:\s*Non-Japanese to Japanese')) {
         return (ConvertTo-YakuMockMarkdownEscapedResponse -Text ("JAPANESE_TEXT:`nこれはモック翻訳です。`n" + $endMarker))
     }
     return (ConvertTo-YakuMockMarkdownEscapedResponse -Text ("JAPANESE_TEXT:`nこれはモック応答です。`n" + $endMarker))
@@ -4391,6 +4630,14 @@ function Invoke-YakuCopilotPrompt {
         return (Clean-YakuCopilotAnswer -Text $mock -RequestId '')
     }
 
+    # 実際に送る直前で1回だけ数える。模擬経路（YAKULINGO_MOCK）は数えない。
+    # 数えていなかったため、制限に当たったのかこちらの不具合かを切り分ける
+    # 手段が無かった（独立評価の指摘 2026-08-08）。
+    # CopilotBudget.ps1 を読み込んでいない経路でも止めない。
+    if (Get-Command Add-YakuCopilotCall -ErrorAction SilentlyContinue) {
+        try { Write-YakuCopilotCallLog -Count (Add-YakuCopilotCall) } catch {}
+    }
+
     $port = Get-YakuCdpPort -Settings $Settings
     $copilotUrl = Get-YakuCopilotUrl -Settings $Settings
     if (-not (Test-YakuCopilotUrl -Url $copilotUrl)) { throw 'COPILOT_URL_REJECTED: 承認済みのMicrosoft 365 Copilot URLを選択してください。' }
@@ -4530,7 +4777,13 @@ function Invoke-YakuCopilotPrompt {
         }
         if (-not $freshReady) {
             Write-YakuLog "Copilot fresh chat request failed after retries. error=$freshLastError result=$(Get-YakuCopilotActionSummary -Result $freshLast)" 'WARN'
-            throw "新しいチャットの準備に失敗しました。EdgeのCopilot画面でアンケート等のダイアログを閉じ、「新しいチャット」を開いてから再実行してください。Detail=$freshLastError"
+            # 原因を断定しない。以前はここで一律に「ダイアログを閉じてください」と
+            # 案内していたが、ページ側が無応答のときはダイアログなど無く、
+            # 調査を誤らせた（2026-08-07）。観測できた事実で場合を分ける。
+            if ([string]$freshLastError -match 'timed out|timeout') {
+                throw "Copilotの画面が応答しません。Edgeは動いていますが、ページからの返事が返ってきません。YakuLingoを終了してCopilot用のEdgeを閉じ、起動し直してください。それでも続く場合はログを確認してください。Detail=$freshLastError"
+            }
+            throw "新しいチャットの準備に失敗しました。EdgeのCopilot画面にダイアログ（アンケート等）が出ていれば閉じ、「新しいチャット」を開いてから再実行してください。Detail=$freshLastError"
         }
     }
 
@@ -4742,6 +4995,17 @@ return YakuCopilotDom.sendButtonCandidates().map(c => ({
                 $tailDiagPath = Save-YakuCopilotWaitMainTailDiagnostic -MainTail (ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $waitResult -Name 'mainTail' -Default '')) -Reason $waitReason -AnswerFormat $AnswerFormat
             } catch {}
             $tailDiagSuffix = if ([string]::IsNullOrWhiteSpace($tailDiagPath)) { '' } else { " MainTailLog=$tailDiagPath" }
+            # Copilot 自身がエラーを返している場合は、それをそのまま伝える。
+            # 「解析できませんでした」と言うと、こちらの不具合を疑わせてしまう。
+            # 実際 2026-08-08 に、Copilot が「問題が発生しました」と答えている
+            # のに気づかず、劣化・回数・解析と3つの誤った仮説を立てた。
+            # この場合は待って出直すのが正解で、他の失敗とは対処が違う。
+            $mainTailText = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $waitResult -Name 'mainTail' -Default '')
+            $copilotSelfError = Get-YakuCopilotSelfReportedError -MainTail $mainTailText
+            if (-not [string]::IsNullOrWhiteSpace($copilotSelfError)) {
+                Write-YakuLog "Copilot reported its own error. text=$copilotSelfError" 'WARN'
+                throw "COPILOT_SERVICE_ERROR: Copilotがエラーを返しました。しばらく置いてからお試しください。Copilotの表示: $copilotSelfError$tailDiagSuffix"
+            }
             throw "Copilotの生成停止は検出しましたが、解析可能な回答を取得できませんでした。Copilot画面の最後の回答を確認してください。AnswerFormat=$AnswerFormat Context=$waitContext Error=$waitError$tailDiagSuffix"
         }
         throw "RESPONSE_END_MARKER_MISSING: Copilotの完全な応答を確認できませんでした。要求ID付き終端マーカーが必要です。Context=$waitContext Error=$waitError Reason=$waitReason"

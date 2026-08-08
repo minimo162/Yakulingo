@@ -51,6 +51,40 @@ function Set-YakuFileTranslationProgress {
 }
 
 
+function Get-YakuFileRemainingHint {
+    <#
+      残りどれくらいかを言葉で返す。
+
+      数十分かかる処理なのに、これまで所要の予告も残り時間も出していなかった。
+      利用者は「進んでいるのか、止まっているのか」を推測するしかない。
+      実測（ここまでにかかった時間 ÷ 済んだ回数）から見当を出す。
+
+      1回目は材料が無いので何も言わない。分からないときに数字を出すより、
+      黙っているほうがよい。
+    #>
+    param(
+        [Parameter(Mandatory = $true)]$Context,
+        [Parameter(Mandatory = $true)][int]$Current,
+        [Parameter(Mandatory = $true)][int]$Total
+    )
+    if ($Current -le 1 -or $Total -le $Current) { return '' }
+    try {
+        $started = $Context['StartedAt']
+        if (-not $started) { return '' }
+        $elapsed = ((Get-Date) - [datetime]$started).TotalSeconds
+        if ($elapsed -le 0) { return '' }
+        $perBatch = $elapsed / [double]($Current - 1)
+        $remain = $perBatch * ($Total - $Current + 1)
+        if ($remain -lt 90) { return '残り1分ほどです' }
+        $minutes = [int][Math]::Ceiling($remain / 60)
+        # ぴったりの数字は出さない。外れたときに嘘になる。
+        if ($minutes -le 5) { return '残り5分ほどです' }
+        if ($minutes -le 15) { return '残り10〜15分ほどです' }
+        if ($minutes -le 30) { return '残り20〜30分ほどです' }
+        return ('残り ' + [int]([Math]::Ceiling($minutes / 10.0) * 10) + ' 分ほどです')
+    } catch { return '' }
+}
+
 function Get-YakuFileUniqueProgressPercent {
     param([Parameter(Mandatory=$true)][hashtable]$Context)
     $uniqueTotal = 1
@@ -158,18 +192,22 @@ function New-YakuFilePrompt {
         [Parameter(Mandatory=$true)][object[]]$Items,
         [Parameter(Mandatory=$true)]$Settings,
         [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
-        [Parameter(Mandatory=$true)][string]$RequestId
+        [Parameter(Mandatory=$true)][string]$RequestId,
+        # 参考資料から引いた文例。CAT からのみ渡る（利用者の判断 2026-08-06）。
+        # 簡易翻訳では検索の往復が1回増えて重いので外した。腰を据えて訳す
+        # CAT 側でだけ使う。
+        [AllowNull()][string]$CorpusSection
     )
     $sourceList = New-YakuFileSourceList -Items $Items
     $templateName = if ($Direction -eq 'to_en') { 'file_translate_to_en.txt' } else { 'file_translate_to_jp.txt' }
     $template = Get-YakuPromptTemplate -Root $Root -Name $templateName
     $vars = @{
         source_list = $sourceList
-        reference_section = Get-YakuReferenceSection -Root $Root -Settings $Settings -InputText $sourceList -Direction $Direction
         # V91.60 段階5: テキスト経路と同じ数値規則を使う。
         # ファイル用テンプレートは規則を直書きしていたため、方向差分と
         # プレースホルダー保護が二重管理になっていた。1箇所へ寄せる。
         numeric_rules = Get-YakuNumericRulesSection -InputText $sourceList -Direction $Direction
+        corpus_section = [string]$CorpusSection
         request_id = $RequestId
     }
     return Expand-YakuTemplate -Template $template -Variables $vars
@@ -549,303 +587,6 @@ function Get-YakuFileExactGlossaryTranslation {
     return [pscustomobject]@{ Found = $false; Value = '' }
 }
 
-function ConvertTo-YakuGlossaryComplianceKey {
-    param([AllowNull()][object]$Value)
-    $s = Convert-YakuFileTranslationBrackets -Text ([string]$Value)
-    $key = ConvertTo-YakuGlossaryMatchKey -Value $s
-    if ([string]::IsNullOrWhiteSpace($key)) { return '' }
-    # Compliance-only normalization: absorb bracket/space variants such as （Ref.） and ( Ref. ).
-    $key = [regex]::Replace($key, '\s*([()\[\]<>【】])\s*', '$1')
-    return $key.Trim()
-}
-
-function Test-YakuGlossaryNormalizedContains {
-    param(
-        [AllowNull()][string]$Text,
-        [AllowNull()][string]$Term
-    )
-    $haystack = ConvertTo-YakuGlossaryComplianceKey -Value $Text
-    $needle = ConvertTo-YakuGlossaryComplianceKey -Value $Term
-    if ([string]::IsNullOrWhiteSpace($haystack) -or [string]::IsNullOrWhiteSpace($needle)) { return $false }
-    return ($haystack.IndexOf($needle, [System.StringComparison]::Ordinal) -ge 0)
-}
-
-function Get-YakuFileGlossaryOccurrenceAudit {
-    param(
-        [AllowNull()][object[]]$Matches,
-        [Parameter(Mandatory=$true)][object[]]$Items,
-        [Parameter(Mandatory=$true)][hashtable]$TranslationByIndex,
-        [AllowNull()][object[]]$Blocks
-    )
-    $auditSw = [System.Diagnostics.Stopwatch]::StartNew()
-    $blockLookup = @{}
-    foreach ($block in @($Blocks)) {
-        if ($null -eq $block) { continue }
-        $blockId = [string]$block.Id
-        if (-not [string]::IsNullOrWhiteSpace($blockId)) { $blockLookup[$blockId] = $block }
-    }
-
-    # Normalize each glossary pair only once. The previous implementation
-    # normalized source, translation, and every term inside an Items x Matches
-    # loop, which added roughly one minute to medium-sized workbooks.
-    $normalizedMatches = New-Object System.Collections.Generic.List[object]
-    $seenMatches = @{}
-    $targetsByFrom = @{}
-    foreach ($match in @($Matches)) {
-        if ($null -eq $match) { continue }
-        $from = if ($match.PSObject.Properties.Name -contains 'From') { [string]$match.From } else { [string]$match.Source }
-        $to = if ($match.PSObject.Properties.Name -contains 'To') { [string]$match.To } else { [string]$match.Target }
-        $fromKey = ConvertTo-YakuGlossaryComplianceKey -Value $from
-        $toKey = ConvertTo-YakuGlossaryComplianceKey -Value $to
-        $variantValues = if ($match.PSObject.Properties.Name -contains 'Variants') { @($match.Variants) } else { @($to) }
-        $variantKeys = @($variantValues | ForEach-Object { ConvertTo-YakuGlossaryComplianceKey -Value $_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
-        if ($variantKeys.Count -le 0 -and -not [string]::IsNullOrWhiteSpace($toKey)) { $variantKeys = @($toKey) }
-        $scope = if ($match.PSObject.Properties.Name -contains 'Scope') { [string]$match.Scope } else { 'occurrence' }
-        if ($scope -ne 'cell-exact') { $scope = 'occurrence' }
-        if ([string]::IsNullOrWhiteSpace($fromKey) -or [string]::IsNullOrWhiteSpace($toKey)) { continue }
-        $itemIndex = 0
-        try { if ($match.PSObject.Properties.Name -contains 'ItemIndex') { $itemIndex = [int]$match.ItemIndex } } catch { $itemIndex = 0 }
-        $scopeKey = if ($itemIndex -gt 0) { [string]$itemIndex } else { '*' }
-        $matchKey = "$scopeKey|$fromKey=>$toKey"
-        if ($seenMatches.ContainsKey($matchKey)) { continue }
-        $seenMatches[$matchKey] = $true
-        if (-not $targetsByFrom.ContainsKey($fromKey)) { $targetsByFrom[$fromKey] = @{} }
-        $variantSetKey = (@($variantKeys | Sort-Object -Unique) -join [char]31)
-        $targetsByFrom[$fromKey][$variantSetKey] = $true
-        $row = 0
-        try { $row = [int]$match.Row } catch { $row = 0 }
-        $via = ''
-        try { $via = [string]$match.Via } catch { $via = '' }
-        $normalizedMatches.Add([pscustomobject]@{
-            From=$from; To=$to; FromKey=$fromKey; ToKey=$toKey; VariantKeys=[string[]]@($variantKeys); Variants=[string[]]@($variantValues); Scope=$scope; NormLength=[int]$fromKey.Length
-            Row=$row; Via=$via; ItemIndex=$itemIndex
-        }) | Out-Null
-    }
-
-    $violations = New-Object System.Collections.Generic.List[object]
-    $conflictItems = New-Object System.Collections.Generic.List[object]
-    $conflictSeen = @{}
-    $checked = 0
-    $candidatePairs = 0
-    $excludedContained = 0
-    $conflicts = 0
-    foreach ($item in @($Items)) {
-        if ($null -eq $item) { continue }
-        $idx = [int]$item.Index
-        $source = [string]$item.Text
-        $translated = if ($TranslationByIndex.ContainsKey($idx)) { [string]$TranslationByIndex[$idx] } else { [string]$item.Text }
-        $sourceKey = ConvertTo-YakuGlossaryComplianceKey -Value $source
-        $translatedKey = ConvertTo-YakuGlossaryComplianceKey -Value $translated
-        if ([string]::IsNullOrWhiteSpace($sourceKey)) { continue }
-
-        $candidates = New-Object System.Collections.Generic.List[object]
-        $candidateSeen = @{}
-        foreach ($match in @($normalizedMatches.ToArray())) {
-            if ([int]$match.ItemIndex -gt 0 -and [int]$match.ItemIndex -ne $idx) { continue }
-            if ([string]$match.Scope -eq 'cell-exact') {
-                if (-not [string]::Equals($sourceKey, [string]$match.FromKey, [System.StringComparison]::Ordinal)) { continue }
-            } elseif ($sourceKey.IndexOf([string]$match.FromKey, [System.StringComparison]::Ordinal) -lt 0) { continue }
-            $pairKey = ([string]$match.FromKey) + '=>' + ([string]$match.ToKey)
-            if ($candidateSeen.ContainsKey($pairKey)) { continue }
-            $candidateSeen[$pairKey] = $true
-            $positions = New-Object System.Collections.Generic.List[int]
-            if ([string]$match.Scope -eq 'cell-exact') {
-                $positions.Add(0) | Out-Null
-            } else {
-                $offset = 0
-                while ($offset -lt $sourceKey.Length) {
-                    $position = $sourceKey.IndexOf([string]$match.FromKey, $offset, [System.StringComparison]::Ordinal)
-                    if ($position -lt 0) { break }
-                    $positions.Add([int]$position) | Out-Null
-                    $offset = [int]($position + [Math]::Max(1, [int]$match.NormLength))
-                }
-            }
-            $candidates.Add([pscustomobject]@{ Match=$match; Positions=@($positions.ToArray()); NormLength=[int]$match.NormLength; Row=[int]$match.Row }) | Out-Null
-        }
-
-        $coveredIntervals = New-Object System.Collections.Generic.List[object]
-        foreach ($candidate in @($candidates.ToArray() | Sort-Object -Property @{Expression='NormLength';Descending=$true}, @{Expression='Row';Ascending=$true})) {
-            $candidatePairs++
-            $survivingIntervals = New-Object System.Collections.Generic.List[object]
-            foreach ($position in @($candidate.Positions)) {
-                $intervalEnd = [int]$position + [int]$candidate.NormLength
-                $contained = $false
-                foreach ($covered in @($coveredIntervals.ToArray())) {
-                    if ([int]$covered.Start -le [int]$position -and $intervalEnd -le [int]$covered.End) { $contained = $true; break }
-                }
-                if (-not $contained) { $survivingIntervals.Add([pscustomobject]@{ Start=[int]$position; End=$intervalEnd }) | Out-Null }
-            }
-            if ($survivingIntervals.Count -le 0) { $excludedContained++; continue }
-            foreach ($interval in @($survivingIntervals.ToArray())) { $coveredIntervals.Add($interval) | Out-Null }
-
-            $match = $candidate.Match
-            $checked++
-            $expectedPresent = $false
-            foreach ($variantKey in @($match.VariantKeys)) {
-                if ($translatedKey.IndexOf([string]$variantKey, [System.StringComparison]::Ordinal) -ge 0) { $expectedPresent = $true; break }
-            }
-
-            $blockIds = New-Object System.Collections.Generic.List[string]
-            $locations = New-Object System.Collections.Generic.List[string]
-            foreach ($blockIdValue in @($item.BlockIds)) {
-                $blockId = [string]$blockIdValue
-                if ([string]::IsNullOrWhiteSpace($blockId)) { continue }
-                $blockIds.Add($blockId) | Out-Null
-                if ($blockLookup.ContainsKey($blockId)) {
-                    $location = [string]$blockLookup[$blockId].Location
-                    if (-not [string]::IsNullOrWhiteSpace($location)) { $locations.Add($location) | Out-Null }
-                }
-            }
-            $conflict = ($targetsByFrom.ContainsKey([string]$match.FromKey) -and $targetsByFrom[[string]$match.FromKey].Count -gt 1)
-            if ($conflict) {
-                # V91.7: conflict is review-required, not a compliance violation. The deterministic rule is longest source match, then earliest glossary row.
-                $conflictKey = ([string]$idx) + '|' + ([string]$match.FromKey)
-                if (-not $conflictSeen.ContainsKey($conflictKey)) {
-                    $conflictSeen[$conflictKey] = $true
-                    $conflicts++
-                    $targets = @($normalizedMatches.ToArray() | Where-Object { [string]$_.FromKey -eq [string]$match.FromKey } | Sort-Object -Property @{Expression='NormLength';Descending=$true}, @{Expression='Row';Ascending=$true})
-                    $conflictItems.Add([pscustomobject]@{
-                        ItemIndex = $idx
-                        BlockIds = @($blockIds.ToArray())
-                        Locations = @($locations.ToArray())
-                        From = [string]$match.From
-                        SelectedTo = [string]$match.To
-                        CandidateTargets = @($targets | ForEach-Object { [string]$_.To } | Sort-Object -Unique)
-                        CandidateRows = @($targets | ForEach-Object { [int]$_.Row } | Where-Object { $_ -gt 0 } | Sort-Object -Unique)
-                        Row = [int]$match.Row
-                        Via = [string]$match.Via
-                        Reason = 'glossary-conflict'
-                        Conflict = $true
-                        SourceText = $source
-                        TranslatedText = $translated
-                    }) | Out-Null
-                }
-                continue
-            }
-            if ($expectedPresent) { continue }
-            $reason = if ([string]::Equals($sourceKey, $translatedKey, [System.StringComparison]::Ordinal)) { 'original-retained' } else { 'missing-expected-term' }
-            $violations.Add([pscustomobject]@{
-                ItemIndex = $idx
-                BlockIds = @($blockIds.ToArray())
-                Locations = @($locations.ToArray())
-                From = [string]$match.From
-                To = [string]$match.To
-                Row = [int]$match.Row
-                Via = [string]$match.Via
-                Reason = $reason
-                Conflict = $false
-                SourceText = $source
-                TranslatedText = $translated
-            }) | Out-Null
-        }
-    }
-    $auditSw.Stop()
-    return [pscustomobject]@{
-        Checked=[int]$checked; Violated=[int]$violations.Count; ExcludedContained=[int]$excludedContained
-        CandidatePairs=[int]$candidatePairs; ConflictCount=[int]$conflicts; Conflicted=[int]$conflictItems.Count; ElapsedMs=[int64]$auditSw.ElapsedMilliseconds
-        Violations=@($violations.ToArray()); Conflicts=@($conflictItems.ToArray())
-    }
-}
-
-function New-YakuFileGlossaryDiagnosticLogPath {
-    $dir = Get-YakuSubDir 'logs'
-    $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss-fff')
-    return (Join-Path $dir "copilot-glossary-diagnostic-$stamp.jsonl")
-}
-
-function Write-YakuFileGlossaryOccurrenceAuditLog {
-    param(
-        [Parameter(Mandatory=$true)]$Audit,
-        [AllowNull()][string]$JobId,
-        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction
-    )
-    $diagnosticsEnabled = Test-YakuFullTextDiagnosticsEnabled
-    $violationCount = @($Audit.Violations).Count
-    $conflictCount = @($Audit.Conflicts).Count
-    try { Write-YakuLog "Glossary occurrence audit: jobId=$JobId direction=$Direction checked=$($Audit.Checked) violated=$($Audit.Violated) conflicted=$conflictCount excludedContained=$($Audit.ExcludedContained) candidatePairs=$($Audit.CandidatePairs) conflicts=$($Audit.ConflictCount) elapsedMs=$($Audit.ElapsedMs) diagnosticEnabled=$diagnosticsEnabled basis=item-occurrence" 'INFO' } catch {}
-    if ($violationCount -le 0 -and $conflictCount -le 0) { return '' }
-
-    $diagnosticPath = ''
-    if ($diagnosticsEnabled) {
-        try { $diagnosticPath = New-YakuFileGlossaryDiagnosticLogPath } catch { $diagnosticPath = '' }
-    }
-    $ordinal = 0
-    foreach ($violation in @($Audit.Violations)) {
-        $ordinal++
-        $from = [string]$violation.From
-        $to = [string]$violation.To
-        $source = [string]$violation.SourceText
-        $translated = [string]$violation.TranslatedText
-        $fromHash = try { Get-YakuTextSha256 -Text $from } catch { '' }
-        $toHash = try { Get-YakuTextSha256 -Text $to } catch { '' }
-        $sourceHash = try { Get-YakuTextSha256 -Text $source } catch { '' }
-        $translationHash = try { Get-YakuTextSha256 -Text $translated } catch { '' }
-        try {
-            Write-YakuLog "Glossary occurrence violation: jobId=$JobId direction=$Direction ordinal=$ordinal itemIndex=$($violation.ItemIndex) reason=$($violation.Reason) conflict=$($violation.Conflict) blockCount=$(@($violation.BlockIds).Count) locationCount=$(@($violation.Locations).Count) row=$($violation.Row) via=$($violation.Via) fromLength=$($from.Length) fromHash=$fromHash expectedLength=$($to.Length) expectedHash=$toHash sourceLength=$($source.Length) sourceHash=$sourceHash translationLength=$($translated.Length) translationHash=$translationHash" 'INFO'
-        } catch {}
-        if ($diagnosticPath) {
-            try {
-                $entry = [ordered]@{
-                    time = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss.fff')
-                    event = 'glossary-occurrence-violation'
-                    job_id = [string]$JobId
-                    direction = [string]$Direction
-                    ordinal = [int]$ordinal
-                    item_index = [int]$violation.ItemIndex
-                    block_ids = @($violation.BlockIds)
-                    locations = @($violation.Locations)
-                    reason = [string]$violation.Reason
-                    conflict = [bool]$violation.Conflict
-                    glossary = [ordered]@{ from=$from; expected=$to; row=[int]$violation.Row; registered_via=[string]$violation.Via }
-                    source_text = $source
-                    translated_text = $translated
-                    normalized = [ordered]@{ source=(ConvertTo-YakuGlossaryComplianceKey -Value $source); translated=(ConvertTo-YakuGlossaryComplianceKey -Value $translated); expected=(ConvertTo-YakuGlossaryComplianceKey -Value $to) }
-                }
-                Add-Content -LiteralPath $diagnosticPath -Value ($entry | ConvertTo-Json -Depth 30 -Compress) -Encoding UTF8
-            } catch {
-                try { Write-YakuLog "Glossary diagnostic event write failed. jobId=$JobId ordinal=$ordinal error=$($_.Exception.Message)" 'WARN' } catch {}
-            }
-        }
-    }
-    foreach ($conflictItem in @($Audit.Conflicts)) {
-        $ordinal++
-        $from = [string]$conflictItem.From
-        $selectedTo = [string]$conflictItem.SelectedTo
-        $candidateTargets = @($conflictItem.CandidateTargets)
-        $candidateRows = @($conflictItem.CandidateRows)
-        $plainFrom = $from.Replace("`r", ' ').Replace("`n", ' ')
-        try {
-            Write-YakuLog "Glossary occurrence conflict: jobId=$JobId direction=$Direction ordinal=$ordinal itemIndex=$($conflictItem.ItemIndex) sourceTerm=$plainFrom selectedBy=longest-then-earliest-row selectedRow=$($conflictItem.Row) selectedTarget=$selectedTo candidateRows=$($candidateRows -join ',') candidateTargets=$($candidateTargets -join ' | ')" 'WARN'
-        } catch {}
-        if ($diagnosticPath) {
-            try {
-                $entry = [ordered]@{
-                    time = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss.fff')
-                    event = 'glossary-occurrence-conflict'
-                    job_id = [string]$JobId
-                    direction = [string]$Direction
-                    ordinal = [int]$ordinal
-                    item_index = [int]$conflictItem.ItemIndex
-                    source_term = $from
-                    selected_target = $selectedTo
-                    selected_row = [int]$conflictItem.Row
-                    selection_rule = 'longest-source-match-then-earliest-glossary-row'
-                    candidate_targets = @($candidateTargets)
-                    candidate_rows = @($candidateRows)
-                    locations = @($conflictItem.Locations)
-                    source_text = [string]$conflictItem.SourceText
-                    translated_text = [string]$conflictItem.TranslatedText
-                }
-                Add-Content -LiteralPath $diagnosticPath -Value ($entry | ConvertTo-Json -Depth 30 -Compress) -Encoding UTF8
-            } catch {}
-        }
-    }
-    if ($diagnosticPath) {
-        try { Write-YakuLog "Glossary occurrence diagnostic saved. jobId=$JobId records=$ordinal path=$diagnosticPath" 'INFO' } catch {}
-    }
-    return [string]$diagnosticPath
-}
-
 function Add-YakuFileAppliedGlossaryContext {
     param(
         [AllowNull()][hashtable]$Context,
@@ -914,43 +655,6 @@ function ConvertTo-YakuFileItemScopedGlossaryMatches {
         }
     }
     return @($scoped.ToArray())
-}
-
-function Write-YakuFileGlossaryFinalComplianceLog {
-    param(
-        [AllowNull()][object[]]$Matches,
-        [Parameter(Mandatory=$true)][object[]]$Items,
-        [Parameter(Mandatory=$true)][hashtable]$TranslationByIndex,
-        [AllowNull()][object[]]$Blocks,
-        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
-        [AllowNull()][string]$JobId,
-        [AllowNull()]$Warnings,
-        [AllowNull()]$Settings
-    )
-    $occurrenceAudit = Get-YakuFileGlossaryOccurrenceAudit -Matches $Matches -Items $Items -TranslationByIndex $TranslationByIndex -Blocks $Blocks
-    $terms = @($occurrenceAudit.Violations | ForEach-Object { [string]$_.From } | Sort-Object -Unique)
-    $conflictTerms = @($occurrenceAudit.Conflicts | ForEach-Object { [string]$_.From } | Sort-Object -Unique)
-    $result = [pscustomobject]@{ Applied=[int]$occurrenceAudit.Checked; Violated=[int]$occurrenceAudit.Violated; Conflicted=[int]@($occurrenceAudit.Conflicts).Count; Terms=$terms; ConflictTerms=$conflictTerms; Audit=$occurrenceAudit }
-    $logLevel = if ([int]$result.Violated -gt 0 -or [int]$result.Conflicted -gt 0) { 'WARN' } else { 'INFO' }
-    try { Write-YakuLog "Glossary compliance final: applied=$($result.Applied) violated=$($result.Violated) conflicted=$($result.Conflicted) termCount=$($terms.Count) conflictTermCount=$($conflictTerms.Count) excludedContained=$($occurrenceAudit.ExcludedContained) elapsedMs=$($occurrenceAudit.ElapsedMs) selectionRule=longest-then-earliest-row basis=item-occurrence" $logLevel } catch {}
-    $diagnosticPath = [string](Write-YakuFileGlossaryOccurrenceAuditLog -Audit $occurrenceAudit -JobId $JobId -Direction $Direction)
-    if ([int]$result.Violated -gt 0 -and $null -ne $Warnings) {
-        $rows = @($occurrenceAudit.Violations | ForEach-Object { try { [int]$_.Row } catch { 0 } } | Where-Object { $_ -gt 0 } | Sort-Object -Unique)
-        $rowPreview = @($rows | Select-Object -First 5)
-        $rowText = if ($rowPreview.Count -gt 0) { $rowPreview -join ', ' } else { '不明' }
-        if ($rows.Count -gt 5) { $rowText += ' ほか' }
-        $message = "用語集と異なる表現の可能性がある箇所が $($result.Violated) 件あります。必要に応じて該当セルをご確認ください（行: $rowText）。詳細はログをご確認ください。"
-        Add-YakuWarning -Warnings $Warnings -Category 'glossary-compliance' -Location '最終用語監査' -Detail @{ Count=[int]$result.Violated; Rows=$rows; DiagnosticPath=$diagnosticPath; Terms=@($terms) } -Message $message
-    }
-    $maintenanceWarningsEnabled = $false
-    try { $maintenanceWarningsEnabled = ConvertTo-YakuBoolSetting -Value $Settings.glossary_maintenance_warnings_enabled -Default $false } catch { $maintenanceWarningsEnabled = $false }
-    if ([int]$result.Conflicted -gt 0 -and $null -ne $Warnings -and $maintenanceWarningsEnabled) {
-        $conflictRows = @($occurrenceAudit.Conflicts | ForEach-Object { @($_.CandidateRows) } | Where-Object { $_ -gt 0 } | Sort-Object -Unique)
-        $conflictRowText = if ($conflictRows.Count -gt 0) { $conflictRows -join ', ' } else { '不明' }
-        $conflictMessage = "用語集に同一原語の重複エントリがあります（原語: $($conflictTerms -join ', ')）。用語集の整備を推奨します。適用は『最長一致・先頭行優先』で自動選択済みです。"
-        Add-YakuWarning -Warnings $Warnings -Category 'glossary-conflict-review' -Location '最終用語監査' -Detail @{ Count=[int]$result.Conflicted; Rows=$conflictRows; DiagnosticPath=$diagnosticPath; Terms=@($conflictTerms); SelectionRule='longest-then-earliest-row' } -Message $conflictMessage
-    }
-    return $result
 }
 
 function Join-YakuAppliedGlossaryEntries {
@@ -1036,8 +740,22 @@ function Resolve-YakuFileExactGlossaryTranslations {
 #
 # 長さだけでは足りない。セルの中の短文は句点を持たないことが多く
 # （「為替影響により営業利益が減少」）、文字数の上限だけでは拾ってしまう。
+# 文の印。**途中一致**で見るので、正当なラベルに現れる語を入れてはいけない。
+#
+# 「による」を外した理由（2026-08-05 実機）:
+#   連体修飾なので、後ろに名詞が来る。つまりラベルの一部である。
+#     営業活動によるキャッシュ・フロー / 投資活動による… / 財務活動による…
+#     持分法による投資利益 / 事業譲渡による損失 / 原価改善による増益
+#   これらは英語にすると長くなる＝はみ出しやすい行そのものなのに、
+#   途中一致で弾かれて一覧に出ず、取りこぼしに気づけなかった。
+#   実機のファイル翻訳で 5/5 取りこぼすことを確認した。
+#
+#   「により」「によって」は連用修飾で、後ろに用言が来る＝文なので残す。
+#   外して増える誤検出は「原価改善による増益」のような体言止めで、
+#   これは増減要因表の行として実在するため、拾って困るものではない。
+#   本当の文（為替影響により営業利益が減少）は、が/を と句読点の規則で従来どおり落ちる。
 $script:YakuLabelSentenceMarkers = @(
-    'により', 'による', 'によって', 'に伴い', 'に伴う', 'のため', 'ものの',
+    'により', 'によって', 'に伴い', 'に伴う', 'のため', 'ものの',
     'したが', 'ことで', 'ことにより', 'となり', 'となった', 'に対し'
 )
 
@@ -1059,11 +777,19 @@ function Test-YakuFileLabelLike {
 
       判定は完全でなくてよい。ここで拾うのは「用語集へ足す候補」であり、
       間違って拾っても人が捨てるだけである。逆に取りこぼすと気づけない。
-      **残った誤りは、呼び出し側が短い順に並べることで下へ沈む。**
+
+      ただし短すぎるものは別で、**短い順に並べる以上いちばん上に来てしまう。**
+      実機では 科目・当期・前期 が上位を占めた（2026-08-05）。表の見出しであり
+      用語集へ足したいものではないので、下限で落とす（利用者の指示）。
+      下限は3文字。4にすると 売上高 が落ちる。
+
+      MaxChars の既定は呼び出し側（Get-YakuFileUnmatchedLabels）と揃える。
+      揃っていなかったため、引き継ぎ書が上限を 16 と誤って記録していた。
     #>
-    param([AllowNull()][string]$Text, [int]$MaxChars = 16)
+    param([AllowNull()][string]$Text, [int]$MaxChars = 24, [int]$MinChars = 3)
     $clean = ([string]$Text).Trim()
     if ([string]::IsNullOrWhiteSpace($clean)) { return $false }
+    if ($clean.Length -lt $MinChars) { return $false }
     if ($clean.Length -gt $MaxChars) { return $false }
     # 改行を含むもの、文末記号や読点を持つものは文である。
     if ($clean -match "[`r`n]") { return $false }
@@ -1103,7 +829,10 @@ function Get-YakuFileUnmatchedLabels {
         [Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Items,
         [AllowNull()][object[]]$ExactApplied,
         [AllowNull()][string]$Direction,
-        [int]$MaxChars = 24
+        [int]$MaxChars = 24,
+        # 短すぎるものは表の見出し（科目・当期・前期）で、用語集へ足す候補ではない。
+        # 短い順に並べる以上いちばん上へ来てしまうので、ここで落とす。
+        [int]$MinChars = 3
     )
     $result = New-Object System.Collections.Generic.List[object]
     if ([string]$Direction -ne 'to_en') { return @($result.ToArray()) }
@@ -1122,7 +851,7 @@ function Get-YakuFileUnmatchedLabels {
         $text = ''
         try { $text = [string]$item.OriginalText } catch { $text = '' }
         if ([string]::IsNullOrWhiteSpace($text)) { $text = [string]$item.Text }
-        if (-not (Test-YakuFileLabelLike -Text $text -MaxChars $MaxChars)) { continue }
+        if (-not (Test-YakuFileLabelLike -Text $text -MaxChars $MaxChars -MinChars $MinChars)) { continue }
         $key = ConvertTo-YakuGlossaryMatchKey -Value $text
         if ([string]::IsNullOrWhiteSpace($key)) { continue }
         if ($seen.ContainsKey($key)) { continue }
@@ -1132,25 +861,6 @@ function Get-YakuFileUnmatchedLabels {
     # 短い順に出す。判定が完全でない以上、誤って拾ったもの（長めの短文）が
     # 上位を占めないようにしておく。上から見れば用が足りる並びにする。
     return @(@($result.ToArray()) | Sort-Object -Property @{Expression={ ([string]$_.Text).Length }}, @{Expression='Index'})
-}
-
-function Write-YakuFileGlossaryComplianceLog {
-    param(
-        [int]$Batch = 0,
-        [AllowNull()][object[]]$Matches,
-        [Parameter(Mandatory=$true)][object[]]$Items,
-        [Parameter(Mandatory=$true)][hashtable]$TranslationByIndex,
-        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
-        [AllowNull()][string]$JobId
-    )
-    if (@($Matches).Count -le 0) { return }
-    $audit = Get-YakuFileGlossaryOccurrenceAudit -Matches $Matches -Items $Items -TranslationByIndex $TranslationByIndex -Blocks @()
-    $termCount = @($audit.Violations | ForEach-Object { [string]$_.From } | Sort-Object -Unique).Count
-    $reasonSummary = @($audit.Violations | Group-Object -Property Reason | Sort-Object Name | ForEach-Object { ([string]$_.Name) + ':' + [string]$_.Count }) -join ','
-    try { Write-YakuLog "Glossary compliance: batch=$Batch jobId=$JobId applied=$($audit.Checked) checked=$($audit.Checked) violated=$($audit.Violated) termCount=$termCount reasons=$reasonSummary excludedContained=$($audit.ExcludedContained) elapsedMs=$($audit.ElapsedMs) basis=item-occurrence" 'INFO' } catch {}
-    # Save each completed batch immediately. A later Copilot/send failure must not
-    # discard the evidence already collected for earlier batches.
-    $null = Write-YakuFileGlossaryOccurrenceAuditLog -Audit $audit -JobId $JobId -Direction $Direction
 }
 
 function Write-YakuFileBracketFallbackLog {
@@ -1607,11 +1317,16 @@ function Invoke-YakuFileTranslationItems {
             $total = $ord
             $Context['TotalBatches'] = $total
         }
+        if (-not $Context.ContainsKey('StartedAt')) { $Context['StartedAt'] = Get-Date }
         $pct = Get-YakuFileUniqueProgressPercent -Context $Context
         $cacheHits = 0
         try { $cacheHits = [int]$Context['CacheHits'] } catch { $cacheHits = 0 }
         $phaseLabel = if ($Reason -eq 'supplement') { '翻訳中（補完）' } else { '翻訳中' }
-        $detail = "Batch $ord/$total, $($batch.CharCount) chars, cache hits: $cacheHits"
+        # 数十分のあいだ、利用者が見つづける唯一の行になる。日本語で書く。
+        # 「cache hits」は「前回の結果を使い回した件数」のこと。
+        $detail = "$total 回のうち $ord 回目を翻訳中（$($batch.CharCount)字）"
+        if ($cacheHits -gt 0) { $detail += "。$cacheHits 件は前回の結果を再利用しました" }
+        $detail += "。" + (Get-YakuFileRemainingHint -Context $Context -Current $ord -Total $total)
         Set-YakuFileTranslationProgress -ProgressState $ProgressState -Phase 'translate' -Label $phaseLabel -Progress $pct -Detail $detail -Fields (Get-YakuFileUniqueProgressFields -Context $Context -BatchCurrent $ord -BatchTotal $total)
         if ($ProgressState) {
             $nextPct = [Math]::Min(90, [Math]::Max($pct + 1, [int](8 + [Math]::Floor((($Context['TranslatedSoFar'] + @($batch.Items).Count) / [double][Math]::Max(1, $Context['UniqueTotal'])) * 82))))
@@ -1632,17 +1347,9 @@ function Invoke-YakuFileTranslationItems {
             $ProgressState['batch_input_length'] = $batchInputChars
             $ProgressState['batch_expected_chars'] = [Math]::Max(1.0, $base + ([double]$batchInputChars * $ratio))
         }
-        $glossaryLimit = Get-YakuGlossaryPromptLimit -Settings $Settings
-        if (-not $Context.ContainsKey('GlossaryMatchCache')) { $Context['GlossaryMatchCache'] = @{} }
-        $glossaryCacheKey = "$Direction|$glossaryLimit|$sourceList"
-        if ($Context['GlossaryMatchCache'].ContainsKey($glossaryCacheKey)) { $batchGlossaryMatches = @($Context['GlossaryMatchCache'][$glossaryCacheKey]) }
-        else {
-            $promptGlossaryPath = Get-YakuPromptGlossaryPath -Root $Root
-            $batchGlossaryMatchesRaw = @(Get-YakuRelevantGlossaryMatches -Root $Root -InputText $sourceList -Direction $Direction -Limit $glossaryLimit -Path $promptGlossaryPath)
-            $batchGlossaryMatches = @(ConvertTo-YakuFileItemScopedGlossaryMatches -Matches $batchGlossaryMatchesRaw -Items @($batch.Items))
-            $Context['GlossaryMatchCache'][$glossaryCacheKey] = @($batchGlossaryMatches)
-        }
-        Add-YakuFileAppliedGlossaryContext -Context $Context -Matches $batchGlossaryMatches
+        # プロンプト用語集からの照合は廃止した（利用者の判断 2026-08-06）。
+        # 置換していない語を「適用された用語」として集めていただけで、保証ではない。
+        # 実際に置換したもの（セル完全一致・括弧フォールバック）だけを記録する。
         $raw = ''
         $requestId = ''
         $parsed = $null
@@ -1743,7 +1450,6 @@ function Invoke-YakuFileTranslationItems {
             $ProgressState['answer_ratio_sum'] = $ratioSum + $actualRatio
             try { Write-YakuLog ("Copilot answer ratio measured. kind=file jobId={0} batch={1}/{2} inputChars={3} answerChars={4} actualRatio={5:N3}" -f $batchJobId, $ord, $total, $batchInputChars, $answerLength, $actualRatio) 'INFO' } catch {}
         }
-        Write-YakuFileGlossaryComplianceLog -Batch $ord -Matches $batchGlossaryMatches -Items @($batch.Items) -TranslationByIndex $parsedTranslationByIndex -Direction $Direction -JobId $batchJobId
         $missingText = ((@($parsed.MissingIds) | Select-Object -First 10) -join ',')
         $completedBy = Get-YakuCopilotCompletedByForLastCall
         try { Write-YakuLog "File batch parsed. expected=$(@($batch.Items).Count) received=$($parsed.ReceivedCount) missingIds=$missingText completedBy=$completedBy reason=$Reason" 'INFO' } catch {}
@@ -1770,7 +1476,7 @@ function Invoke-YakuFileTranslationItems {
                 try {
                     Add-YakuWarning -Warnings $Warnings -Category 'hangul-retry' -Location ("ID $($item.Index)") -Message "Hangul混入を検出したため再翻訳しました: $(Get-YakuShortTextPreview -Text $sourceForValidation -MaxLength 40)"
                     $retryRequestId = [guid]::NewGuid().ToString('N')
-                    $retryPrompt = New-YakuFilePrompt -Root $Root -Items @($item) -Settings $Settings -Direction $Direction -RequestId $retryRequestId
+                    $retryPrompt = New-YakuFilePrompt -Root $Root -Items @($item) -Settings $Settings -Direction $Direction -RequestId $retryRequestId -CorpusSection ([string]$Context['CorpusSection'])
                     $retrySkipFresh = ([int]$Context['CopilotCalls'] -gt 0)
                     $Context['CopilotCalls'] = [int]$Context['CopilotCalls'] + 1
                     $retryRaw = Invoke-YakuCopilotPrompt -Prompt $retryPrompt -Settings $Settings -SkipFreshChatWait:$retrySkipFresh -AnswerFormat numbered -PreserveEndMarker -Warnings $Warnings -ProgressState $ProgressState
@@ -1786,7 +1492,7 @@ function Invoke-YakuFileTranslationItems {
                 if (-not [bool]$numericAudit.Ok -and [int]$numericAudit.ScaleErrors -gt 0) {
                     try {
                         $numericRetryRequestId = [guid]::NewGuid().ToString('N')
-                        $numericRetryPrompt = New-YakuFilePrompt -Root $Root -Items @($item) -Settings $Settings -Direction $Direction -RequestId $numericRetryRequestId
+                        $numericRetryPrompt = New-YakuFilePrompt -Root $Root -Items @($item) -Settings $Settings -Direction $Direction -RequestId $numericRetryRequestId -CorpusSection ([string]$Context['CorpusSection'])
                         $numericRetryPrompt += "`n`n" + (New-YakuNumericCorrectionInstruction -Audit $numericAudit)
                         $Context['CopilotCalls'] = [int]$Context['CopilotCalls'] + 1
                         $numericRetryRaw = Invoke-YakuCopilotPrompt -Prompt $numericRetryPrompt -Settings $Settings -SkipFreshChatWait -AnswerFormat numbered -PreserveEndMarker -Warnings $Warnings -ProgressState $ProgressState
@@ -1817,7 +1523,10 @@ function Invoke-YakuFileTranslationItems {
         $doneFields = Get-YakuFileUniqueProgressFields -Context $Context -BatchCurrent $ord -BatchTotal $total
         $uniqueDone = [int]$doneFields['unique_done']
         $uniqueTotal = [int]$doneFields['unique_total']
-        $doneDetail = "Batch $ord/$total 完了, unique: $uniqueDone/$uniqueTotal, cache hits: $cacheHits"
+        $doneDetail = "$total 回のうち $ord 回目が終わりました（$uniqueDone / $uniqueTotal 件）"
+        if ($cacheHits -gt 0) { $doneDetail += "。$cacheHits 件は前回の結果を再利用" }
+        $hint = Get-YakuFileRemainingHint -Context $Context -Current ($ord + 1) -Total $total
+        if ($hint) { $doneDetail += "。$hint" }
         Set-YakuFileTranslationProgress -ProgressState $ProgressState -Phase 'translate' -Label $phaseLabel -Progress $donePct -Detail $doneDetail -Fields $doneFields
     }
     return $map
@@ -1993,12 +1702,11 @@ function Invoke-YakuFileTranslation {
     }
     $translationByIndex = @{}
     $sourceListAll = New-YakuFileSourceList -Items $items
-    $promptAppliedGlossaryRaw = @(Get-YakuAppliedGlossaryEntries -Root $Root -InputText $sourceListAll -Direction $Direction -Settings $Settings)
-    $promptAppliedGlossary = @(ConvertTo-YakuFileItemScopedGlossaryMatches -Matches $promptAppliedGlossaryRaw -Items $items)
     $exactGlossary = Resolve-YakuFileExactGlossaryTranslations -Root $Root -Items $items -Direction $Direction -Settings $Settings -TranslationByIndex $translationByIndex
     $glossaryExactHits = 0
     try { $glossaryExactHits = [int]$exactGlossary.Count } catch { $glossaryExactHits = 0 }
-    $appliedGlossary = @(Join-YakuAppliedGlossaryEntries -Primary @($exactGlossary.AppliedGlossary) -Secondary @($promptAppliedGlossary))
+    # セル完全一致で実際に置換したものだけ。プロンプトへ渡しただけの語は集めない。
+    $appliedGlossary = @($exactGlossary.AppliedGlossary)
 
     # 完全一致で置換できなかった短いラベルを知らせる。
     # cell-exact は実運用では「はみ出さないことの保証」なので、
@@ -2018,16 +1726,29 @@ function Invoke-YakuFileTranslation {
     # 突き合わせるため。先にマスクすると一致しなくなる。
     # 以降 $item.Text はマスク後になり、キャッシュキー・プロンプト・
     # 各監査・補完再依頼がすべてマスク後で動く。復元は最後にまとめて行う。
+    # 固有名詞も同じ場所で伏せる。数値より先に掛ける（住所の全角数字を
+    # 数値マスクに取られないため）。この経路にも固有名詞マスクが無く、
+    # 人名・法人名が素のまま Copilot へ出ていた（独立評価の指摘、2026-08-08）。
     $maskedItemCount = 0
     $maskedTokenCount = 0
+    $properItemCount = 0
     foreach ($item in $items) {
-        $maskResult = New-YakuNumericMaskMap -Text ([string]$item.Text) -Root $Root -Direction $Direction -Location ("file-ID-" + [string]$item.Index)
+        $text = [string]$item.Text
+        $properMap = $null
+        if (Get-Command New-YakuProperNounMaskMap -ErrorAction SilentlyContinue) {
+            $properResult = New-YakuProperNounMaskMap -Text $text -Root $Root
+            $properMap = $properResult.Map
+            $text = [string]$properResult.Text
+            if ($null -ne $properMap -and $properMap.Count -gt 0) { $properItemCount++ }
+        }
+        $maskResult = New-YakuNumericMaskMap -Text $text -Root $Root -Direction $Direction -Location ("file-ID-" + [string]$item.Index)
+        $item | Add-Member -NotePropertyName ProperMaskMap -NotePropertyValue $properMap -Force
         $item | Add-Member -NotePropertyName NumericMaskMap -NotePropertyValue $maskResult.Map -Force
         $item | Add-Member -NotePropertyName MaskedText -NotePropertyValue ([string]$maskResult.Text) -Force
         $item.Text = [string]$maskResult.Text
         if ([int]$maskResult.MaskedCount -gt 0) { $maskedItemCount++; $maskedTokenCount += [int]$maskResult.MaskedCount }
     }
-    try { Write-YakuLog "File numeric masking. jobId=$JobId items=$($items.Count) maskedItems=$maskedItemCount maskedTokens=$maskedTokenCount" 'INFO' } catch {}
+    try { Write-YakuLog "File masking. jobId=$JobId items=$($items.Count) maskedItems=$maskedItemCount maskedTokens=$maskedTokenCount properItems=$properItemCount" 'INFO' } catch {}
 
     $pending = New-Object System.Collections.Generic.List[object]
     $cacheHits = 0
@@ -2092,7 +1813,7 @@ function Invoke-YakuFileTranslation {
     }
 
     # V91.36 final numeric audit also covers cache/glossary/fallback routes.
-    # V91.60: to_jp では 【N1】 oku が 【N1】億円 へ訳されるため
+    # V91.60: to_jp では [[N1]] oku が [[N1]]億円 へ訳されるため
     # 「数値+単位」トークンの照合が成立しない(§6)。プレースホルダーの
     # 過不足は下の復元ループで確認する。
     if ($Direction -eq 'to_en') {
@@ -2105,7 +1826,7 @@ function Invoke-YakuFileTranslation {
             if (-not [bool]$finalNumericAudit.Ok -and [int]$finalNumericAudit.ScaleErrors -gt 0) {
                 try {
                     $numericRequestId = [guid]::NewGuid().ToString('N')
-                    $numericPrompt = New-YakuFilePrompt -Root $Root -Items @($item) -Settings $Settings -Direction $Direction -RequestId $numericRequestId
+                    $numericPrompt = New-YakuFilePrompt -Root $Root -Items @($item) -Settings $Settings -Direction $Direction -RequestId $numericRequestId -CorpusSection ([string]$Context['CorpusSection'])
                     $numericPrompt += "`n`n" + (New-YakuNumericCorrectionInstruction -Audit $finalNumericAudit)
                     $context['CopilotCalls'] = [int]$context['CopilotCalls'] + 1
                     $numericRaw = Invoke-YakuCopilotPrompt -Prompt $numericPrompt -Settings $Settings -SkipFreshChatWait -AnswerFormat numbered -PreserveEndMarker -Warnings $warnings -ProgressState $ProgressState
@@ -2136,19 +1857,38 @@ function Invoke-YakuFileTranslation {
         if (-not $translationByIndex.ContainsKey($idx)) { continue }
         $map = $null
         try { $map = $item.NumericMaskMap } catch { $map = $null }
-        if ($null -eq $map -or $map.Count -eq 0) { continue }
+        $properMap = $null
+        try { $properMap = $item.ProperMaskMap } catch { $properMap = $null }
+        # 数値と固有名詞は別々に見る。まとめて「無ければ次へ」とすると、
+        # 数字を含まない項目で固有名詞が戻らず、出力へ [[P1]] が残る。
+        $hasNumeric = ($null -ne $map -and $map.Count -gt 0)
+        $hasProper = ($null -ne $properMap -and $properMap.Count -gt 0)
+        if (-not $hasNumeric -and -not $hasProper) { continue }
         $translated = [string]$translationByIndex[$idx]
         # 原文保持になった項目は untranslated-retained で既に警告済み。
         # プレースホルダーが無いのは当然なので、二重に警告しない。
         if ($translated -eq (Get-YakuFileItemOriginalText -Item $item)) { continue }
-        $maskIntegrity = Test-YakuNumericMaskIntegrity -MaskedSource ([string]$item.MaskedText) -Translated $translated -Location ("file-ID-" + [string]$idx)
-        if (-not [bool]$maskIntegrity.Ok) {
-            $maskIntegrityFailures++
-            try {
-                Add-YakuWarning -Warnings $warnings -Category 'numeric-mask-integrity' -Location ("ID $idx") -Details @{ Detail=[string]$maskIntegrity.Detail; Missing=@($maskIntegrity.Missing); Duplicated=@($maskIntegrity.Duplicated); Unexpected=@($maskIntegrity.Unexpected) } -Message "数値プレースホルダーの個数が原文と一致しません。該当箇所の数値を必ずご確認ください。($([string]$maskIntegrity.Detail))"
-            } catch {}
+        if ($hasNumeric) {
+            $maskIntegrity = Test-YakuNumericMaskIntegrity -MaskedSource ([string]$item.MaskedText) -Translated $translated -Location ("file-ID-" + [string]$idx)
+            if (-not [bool]$maskIntegrity.Ok) {
+                $maskIntegrityFailures++
+                try {
+                    Add-YakuWarning -Warnings $warnings -Category 'numeric-mask-integrity' -Location ("ID $idx") -Details @{ Detail=[string]$maskIntegrity.Detail; Missing=@($maskIntegrity.Missing); Duplicated=@($maskIntegrity.Duplicated); Unexpected=@($maskIntegrity.Unexpected) } -Message "数値プレースホルダーの個数が原文と一致しません。該当箇所の数値を必ずご確認ください。($([string]$maskIntegrity.Detail))"
+                } catch {}
+            }
+            $translated = Restore-YakuNumericMask -Text $translated -Map $map
         }
-        $translationByIndex[$idx] = Restore-YakuNumericMask -Text $translated -Map $map
+        if ($hasProper) {
+            try {
+                $pInt = Test-YakuProperNounMaskIntegrity -MaskedSource ([string]$item.MaskedText) -Translated $translated -Map $properMap
+                if (-not [bool]$pInt.Ok) {
+                    $lost = @(@($pInt.Missing) | ForEach-Object { [string]$properMap[[string]$_] })
+                    Add-YakuWarning -Warnings $warnings -Category 'proper-noun-dropped' -Location ("ID $idx") -Details @{ Missing = @($pInt.Missing) } -Message ("固有名詞が訳文から抜けています: " + (@($lost) -join '、') + "。必ずご確認ください。")
+                }
+            } catch {}
+            $translated = Restore-YakuProperNounMask -Text $translated -Map $properMap
+        }
+        $translationByIndex[$idx] = $translated
     }
     if ($maskIntegrityFailures -gt 0) {
         try { Write-YakuLog "File numeric mask integrity. jobId=$JobId failures=$maskIntegrityFailures" 'WARN' } catch {}
@@ -2157,13 +1897,18 @@ function Invoke-YakuFileTranslation {
     # $item.Text をここで戻す。
     foreach ($item in $items) {
         try { if ($item.PSObject.Properties.Name -contains 'MaskedText') { $item.Text = Restore-YakuNumericMask -Text ([string]$item.Text) -Map $item.NumericMaskMap } } catch {}
+        # 固有名詞も戻す。戻さないと原文保持の判定が [[P1]] 入りの文字列と
+        # 比べることになり、書き戻し先の照合も狂う。
+        try { if ($item.PSObject.Properties.Name -contains 'ProperMaskMap') { $item.Text = Restore-YakuProperNounMask -Text ([string]$item.Text) -Map $item.ProperMaskMap } } catch {}
     }
 
+    # 文中の用語監査は廃止した（利用者の判断 2026-08-06）。
+    # 用語集の目的はレイアウトの保証であり、文中の言い回しの統一ではない。
+    # セル完全一致の置換だけが保証で、それは Resolve-YakuFileExactGlossaryTranslations が行う。
     try {
         $collectedGlossary = @()
         if ($context.ContainsKey('AppliedGlossaryMatches') -and $null -ne $context['AppliedGlossaryMatches']) { $collectedGlossary = @($context['AppliedGlossaryMatches'].ToArray()) }
         $appliedGlossary = @(Join-YakuAppliedGlossaryEntries -Primary $appliedGlossary -Secondary $collectedGlossary)
-        $null = Write-YakuFileGlossaryFinalComplianceLog -Matches $appliedGlossary -Items $items -TranslationByIndex $translationByIndex -Blocks $blocks -Direction $Direction -JobId $JobId -Warnings $warnings -Settings $Settings
     } catch {}
 
     $translationByBlockId = @{}

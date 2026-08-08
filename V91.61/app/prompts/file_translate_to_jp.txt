@@ -26,7 +26,6 @@ Rules:
 - If an item is already Japanese, output that source text unchanged under the same ID and number.
 - Keep product names, account codes, URLs, email addresses, and obvious identifiers unchanged when they are not natural-language text.
 {numeric_rules}
-{reference_section}
 
 ===INPUT_TEXT:{request_id}===
 {source_list}

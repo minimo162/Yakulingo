@@ -53,7 +53,7 @@ function ConvertTo-YakuCorpusExampleText {
     <#
       文例に含まれる数字を伏せる。
 
-      V91.60 の【N1】は使わない。原文側のプレースホルダーと名前空間が衝突し、
+      V91.60 の[[N1]]は使わない。原文側のプレースホルダーと名前空間が衝突し、
       「SOURCE にある token と同じ数だけ出力に現れること」という規則が
       文例のぶんだけ狂うため（要件整理 §6-4 で未解決としていた問題）。
       文例に必要なのは言い回しであって数字ではないので、伏せ字で足りる。
@@ -82,6 +82,11 @@ function Get-YakuCorpusExampleSection {
     # 条件にちょうど当てはまる。どちらの手本なのかを名指しして、混線を防ぐ。
     [void]$lines.Add('CORPUS_EXAMPLES: excerpts from the company''s own past English disclosure documents. Use them ONLY to match terminology, wording, and tone. Do not translate them, do not repeat them, and do not take any fact from them. Figures are redacted as # and must never be copied.')
     [void]$lines.Add('SCOPE: these excerpts are full-length disclosure prose. They are a model for FULL_TEXT wording only. They are NOT a model for BRIEF_TEXT: their length and sentence style say nothing about how short BRIEF must be. BRIEF_TEXT follows the BRIEF rules and their FULL -> BRIEF examples, not these excerpts.')
+    # 文例は公表英文なので、金額の書き方が設定と食い違うことがある。
+    # 設定が oku のとき、文例は "a decrease of ¥26.6 billion" と書いてある。
+    # どちらに従うかを言わないと、訳ごとに揺れる（利用者の指摘 2026-08-08）。
+    # 用語と言い回しは文例、数値の書き方は規則、と切り分けて言う。
+    [void]$lines.Add('PRECEDENCE: the numeric rules above outrank these excerpts. Where an excerpt writes an amount, a negative, or a percentage differently from those rules, follow the rules. Take terminology, phrasing, and tone from the excerpts; take number formatting from the rules.')
     $n = 0
     foreach ($hit in @($Hits)) {
         $n++
@@ -184,7 +189,15 @@ function Get-YakuCorpusReference {
         # 検索語を作らせる依頼にも本文を送る。翻訳と同じくマスクしてから送る。
         # ここを素通しにすると、V91.60 の「数値を外部へ出さない」保証が
         # この経路だけ抜ける。マスク表は使わないので捨てる。
-        $masked = [string](New-YakuNumericMaskMap -Text $InputText -Root $Root -Direction 'to_en' -Location 'corpus-query').Text
+        #
+        # 固有名詞も同じ順序で伏せる（数値より先）。この経路は原文をそのまま
+        # 送るので、人名・法人名だけが素で出ていた。戻す必要は無い。
+        # 使うのは返ってきた検索語だけで、本文は返らない。
+        $properText = $InputText
+        if (Get-Command New-YakuProperNounMaskMap -ErrorAction SilentlyContinue) {
+            $properText = [string](New-YakuProperNounMaskMap -Text $InputText -Root $Root).Text
+        }
+        $masked = [string](New-YakuNumericMaskMap -Text $properText -Root $Root -Direction 'to_en' -Location 'corpus-query').Text
         $requestId = [guid]::NewGuid().ToString('N')
         $prompt = New-YakuCorpusQueryPrompt -Root $Root -InputText $masked -RequestId $requestId
         $sw = [System.Diagnostics.Stopwatch]::StartNew()

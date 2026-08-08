@@ -25,11 +25,11 @@ Rules:
 - Very short labels (a few words) cannot be compressed; translate them directly and never pad.
 - Preserve facts, meaning, numbers, units, signs, placeholders, punctuation intent, and short label structure. Add no facts.
 {brief_rules}
-- Approved promotion-cost labels: 販促費 / 販売促進費 -> Promo. Costs; 固定販促費 -> Fixed Promo.; 子会社 固定販促費 / 子会社固定販促費 -> Subs. Fixed Promo.; 販売奨励金/固定販促費 -> VM / Fixed Promo.; 国内その他 -> Dom. Oth.; 連結調整他 -> Cons. Adj. Use these exact forms for matching table items. Never use MKT, Fixed MKT, or Fixed Marketing for sales promotion costs. Do not change marketing strategy, marketing expenses, sales promotion activities, promotional measures, promotion, or sales promotion campaign.
+- Approved promotion-cost labels: 販促費 / 販売促進費 -> VM; 固定販促費 -> Fixed MKT; 子会社 固定販促費 / 子会社固定販促費 -> Subs. Fixed MKT; 販売奨励金 -> VM; 販売奨励金/固定販促費 -> VM / Fixed MKT; 国内その他 -> Dom. Oth.; 連結調整他 -> Cons. Adj. Use these exact forms for matching table items. VM is the variable side and Fixed MKT is the fixed side; never swap them and never write Promo. Costs or Fixed Promo. Do not change marketing strategy, marketing expenses, sales promotion activities, promotional measures, promotion, or sales promotion campaign.
 - Keep already-English product names, account codes, URLs, email addresses, and obvious identifiers unchanged.
 - Do not output Korean/Hangul.
 {numeric_rules}
-{reference_section}
+{corpus_section}
 
 ===INPUT_TEXT:{request_id}===
 {source_list}

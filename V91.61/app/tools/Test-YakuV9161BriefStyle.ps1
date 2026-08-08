@@ -25,10 +25,13 @@ foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuil
 function Chk { param([bool]$c,[string]$m) if($c){Write-Host ('  ok   ' + $m) -ForegroundColor Green}else{Write-Host ('  FAIL ' + $m) -ForegroundColor Red;$script:fail++} }
 function Conv { param([string]$t) return (Convert-YakuBriefAbbreviations -Text $t) }
 
-Write-Host '月名'
-Chk ((Conv 'Results for January and February.') -eq 'Results for Jan. and Feb.') '月名を略す'
-Chk ((Conv 'from April to September') -eq 'from Apr. to Sep.') '月名を略す（2）'
-Chk ((Conv 'in May') -eq 'in May') 'May は変えない（略語も May）'
+Write-Host '月名はアプリ側で当てない'
+# 実機で人名を潰した（April Smith -> Apr. Smith / June Tanaka -> Jun. Tanaka）。
+# 月名かどうかは文脈が要るので、判断はモデルへ返す（利用者の指示 2026-08-05）。
+foreach ($mon in @('January','February','March','April','June','July','August','September','October','November','December','May')) {
+    Chk ((Conv ("Results for $mon.")) -eq ("Results for $mon.")) ($mon + ' は後処理で変えない')
+}
+Chk ((Conv 'April Smith joined in June.') -eq 'April Smith joined in June.') '人名を潰さない'
 
 Write-Host '語句の置換'
 Chk ((Conv 'approximately 10 oku') -eq 'approx. 10 oku') 'approximately -> approx.'
@@ -36,8 +39,16 @@ Chk ((Conv 'including tax') -eq 'incl. tax') 'including -> incl.'
 Chk ((Conv 'excluding FX impact') -eq 'excl. FX impact') 'excluding -> excl.'
 Chk ((Conv 'compared with PY') -eq 'vs. PY') 'compared with -> vs.'
 Chk ((Conv 'compared to PY') -eq 'vs. PY') 'compared to -> vs.'
-Chk ((Conv 'with tariffs') -eq 'w/ tariffs') 'with -> w/'
-Chk ((Conv 'without tariffs') -eq 'w/o tariffs') 'without -> w/o（with より先に当てる）'
+# with は機械で当てない（2026-08-08）。英文で最も頻出する語の1つで、
+# 「in line with」「in accordance with」まで壊す。節約も2文字しかない。
+Chk ((Conv 'with tariffs') -eq 'with tariffs') 'with は略さない'
+Chk ((Conv 'in line with our plan') -eq 'in line with our plan') '成句の with を壊さない'
+Chk ((Conv 'without tariffs') -eq 'w/o tariffs') 'without -> w/o（単独の語なので残す）'
+# 期の表記。冠詞つきを先に当てないと「the Q1」という英語にならない形が出る。
+Chk ((Conv 'in the first quarter') -eq 'in Q1') 'the first quarter -> Q1（冠詞ごと）'
+Chk ((Conv 'second half results') -eq 'H2 results') 'second half -> H2'
+# semis は出番が少なく誤読の余地があるので綴りのまま。
+Chk ((Conv 'semiconductors remained tight') -eq 'semiconductors remained tight') 'semiconductors は略さない'
 
 Write-Host '定型の金融用語'
 Chk ((Conv 'foreign exchange losses') -eq 'FX losses') 'foreign exchange -> FX'
@@ -48,9 +59,14 @@ Chk ((Conv 'year-on-year change') -eq 'YoY change') 'ハイフンを含む語も
 
 Write-Host '長いものから先に当てる'
 # 短いほうを先に当てると "sales promotion costs" が食われて
-# "fixed Promo. Costs" のような中途半端な形になる。
-Chk ((Conv 'fixed sales promotion costs increased') -eq 'Fixed Promo. Costs increased') '長い語句が優先される'
-Chk ((Conv 'sales promotion costs increased') -eq 'Promo. Costs increased') '短いほうも単独では当たる'
+# "fixed VM" のような、固定側と変動側が混ざった形になる。
+Chk ((Conv 'fixed sales promotion costs increased') -eq 'Fixed MKT increased') '長い語句が優先される'
+Chk ((Conv 'sales promotion costs increased') -eq 'VM increased') '短いほうも単独では当たる'
+# 販促費は 変動側 VM / 固定側 Fixed MKT。取り違えると別項目になる。
+Chk ((Conv 'fixed promotion costs increased') -eq 'Fixed MKT increased') '固定側は VM にならない'
+Chk ((Conv 'promotion costs rose') -eq 'VM rose') '販促費だけでも VM'
+Chk ((Conv "subsidiaries' fixed sales promotion costs") -eq 'Subs. Fixed MKT') '子会社の固定側も対で当たる'
+Chk ((Conv 'sales promotion costs and fixed sales promotion costs') -eq 'VM and Fixed MKT') '同じ文に両方あっても取り違えない'
 Chk ((Conv 'vehicle variable profit') -eq 'VP (Veh.)') '車両変動利益'
 Chk ((Conv 'variable profit') -eq 'VP') '変動利益'
 Chk ((Conv 'fixed costs and variable costs') -eq 'FC and VC') 'FC と VC'
@@ -102,14 +118,16 @@ Chk ((@(Convert-YakuBriefTranslationOptions -Options $jp)[0].Translation) -eq '�
 Chk (@(Convert-YakuBriefTranslationOptions -Options $null).Count -eq 0) 'null でも落ちない'
 
 Write-Host '数値プレースホルダーを壊さないこと'
-# 復元前に当てるので【N1】が残っている。ここを壊すと V91.60 の保証が崩れる。
-Chk ((Conv 'Operating profit up approximately 【N1】 oku vs. 【N2】 oku.') -eq 'OP up approx. 【N1】 oku vs. 【N2】 oku.') 'プレースホルダーはそのまま'
+# 復元前に当てるので[[N1]]が残っている。ここを壊すと V91.60 の保証が崩れる。
+Chk ((Conv 'Operating profit up approximately [[N1]] oku vs. [[N2]] oku.') -eq 'OP up approx. [[N1]] oku vs. [[N2]] oku.') 'プレースホルダーはそのまま'
 
 Write-Host '翻訳経路への組み込み'
 $translationText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Translation.ps1'))
 # 呼び出しだけを数える。存在確認（Get-Command …）は呼び出しではない。
+# V91.61（2026-08-06）: 修正の依頼が3箇所目。直した訳文にも略語が当たること。
+# ここを通らないと、修正するたびに略語が spelled-out へ戻る。
 $hookCount = ([regex]::Matches($translationText, 'Convert-YakuBriefTranslationOptions -Options')).Count
-Chk ($hookCount -eq 2) ('キャッシュ命中とそれ以外の両方に入っている: ' + $hookCount)
+Chk ($hookCount -eq 4) ('キャッシュ命中・通常・修正・短くの4経路に入っている: ' + $hookCount)
 # 復元より前に置く。復元後の数字（12,340 など）を語として拾わせないため。
 $convAt = $translationText.IndexOf('Convert-YakuBriefTranslationOptions -Options $options')
 $restoreAt = $translationText.IndexOf('Restore-YakuMaskedTranslationOptions -Options $options')
@@ -120,11 +138,14 @@ Write-Host '読み込まれていない経路でも止まらない'
 # ワーカー・部分的に読み込む回帰テスト）で翻訳を止めない。
 # 当たらなければ従来どおりモデルの出力のままになるだけである。
 $guards = ([regex]::Matches($translationText, 'Get-Command Convert-YakuBriefTranslationOptions')).Count
-Chk ($guards -eq 2) ('両方の呼び出しが守られている: ' + $guards)
+Chk ($guards -eq 4) ('4経路とも守られている: ' + $guards)
 
 Write-Host 'プロンプトから外れていること'
 $briefRules = Get-YakuBriefRules -Root $root
-Chk ($briefRules -notmatch 'Months: Jan\., Feb\.') '月名の一覧が消えている'
+# 月名はアプリ側から外して指示へ戻したので、指示側に在ることを見る。
+Chk ($briefRules -match '(?m)^- Months:') '月名の指示がプロンプトに在る'
+Chk ($briefRules -match "person's name") '人名では略さないと書いてある'
+Chk ($briefRules -match 'May stays May') 'May の例外が書いてある'
 Chk ($briefRules -notmatch 'foreign exchange -> FX') 'FX の対応が消えている'
 Chk ($briefRules -notmatch 'operating profit=OP') 'OP の対応が消えている'
 Chk ($briefRules -notmatch 'fixed costs / fixed cost -> FC') 'FC の対応が消えている'
@@ -132,7 +153,13 @@ Chk ($briefRules -notmatch 'fixed costs / fixed cost -> FC') 'FC の対応が消
 Chk ($briefRules -match 'corporate -> corp\. only as adjective') '文脈に依るものは残っている'
 Chk ($briefRules -match 'subsidiaries -> Subs\. in table items') '文脈に依るものは残っている（2）'
 Chk ($briefRules -match 'technology -> tech') '文脈に依るものは残っている（3）'
-Chk ($briefRules -match 'applied automatically') 'アプリ側で当てることをモデルへ伝えている'
+# 略語はモデルに選ばせない（2026-08-08）。当てるのはアプリの仕事にする。
+# モデルが自分で選ぶと、一覧に無い略語が本文に入り、読み手が引けなくなる。
+# 「どちらで書いてもよい」という書き方では確率的なままだった。
+Chk ($briefRules -match 'Do NOT abbreviate') '略語を使わないよう伝えている'
+Chk ($briefRules -match 'applies the approved abbreviations') 'アプリ側で当てることを伝えている'
+Chk ($briefRules -match 'SOURCE itself writes') '原文にある略語は残すよう伝えている'
+Chk ($briefRules -match 'Month names are the one thing') '月名だけは自分で短くするよう伝えている'
 
 if ($script:fail -gt 0) {
     Write-Host "V91.61 brief style regression failed. failures=$script:fail" -ForegroundColor Red

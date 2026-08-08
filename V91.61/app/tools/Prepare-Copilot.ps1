@@ -190,11 +190,11 @@ try {
         Start-Sleep -Milliseconds 1200
     }
 
-    $null = Write-YakuWarmupStatus -Mode 'timeout' -Label 'Not ready' -Class 'warn' -Detail "Copilot was not ready within $timeout seconds." -Ready $false
+    $null = Write-YakuWarmupStatus -Mode 'timeout' -Label '準備が終わりません' -Class 'warn' -Detail "Copilotの準備が $([int]($timeout/60)) 分たっても終わりませんでした。EdgeのCopilot画面が開いていれば、ログインが済んでいるかご確認ください。ログイン済みなら、いったんアプリを終了して開き直してください。" -Ready $false
     Write-YakuLog "Copilot warmup timeout after $timeout seconds." 'WARN'
     exit 2
 } catch {
-    $null = Write-YakuWarmupStatus -Mode 'error' -Label 'Copilot preparation failed' -Class 'warn' -Detail $_.Exception.Message -Ready $false
+    $null = Write-YakuWarmupStatus -Mode 'error' -Label 'Copilotを準備できませんでした' -Class 'warn' -Detail ("アプリを終了して開き直してください。それでも直らない場合は、記録をご確認ください。（内部の記録: " + $_.Exception.Message + "）") -Ready $false
     try { Write-YakuLog "Copilot warmup exception: $($_.Exception.ToString())" 'ERROR' } catch {}
     exit 1
 }

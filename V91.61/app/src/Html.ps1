@@ -42,6 +42,77 @@ function Convert-YakuStatusOobHtml {
     return "<div id='copilot-status' class='status' hx-swap-oob='outerHTML' aria-live='polite'><span class='status-dot $Class'></span><span>$(ConvertTo-YakuHtml $Label)</span></div>"
 }
 
+function New-YakuPastTranslationsHtml {
+    <#
+      過去に自社が公表した英訳を、日英そろえて出す。
+
+      利用者の課題は「過去の翻訳例が**見れない**」であって、「使えない」では
+      なかった（利用者 2026-08-08）。プロンプトへ埋めるのは使うことであって
+      見せることではない。埋めるだけなら、参考にしたと名乗るだけになる。
+
+      引くのは手元で完結する。日本語の原文から語を取り出して対訳の日本語側へ
+      当てるので、Copilot への往復は増えない。検索語を Copilot に作らせて
+      いた頃は1往復増えていたが、送りすぎると弾かれる以上それは払えない。
+
+      **何の語で当たったかを添える。** 出典だけでは、なぜこの文が出てきたのか
+      分からない。おかしいと思ったときに確かめられる形にしておく。
+
+      引けなければ何も出さない。利用者はコーパスの存在を知らないので、
+      「見つかりませんでした」と言われても対処のしようがない。
+    #>
+    param([AllowNull()][object[]]$Pairs)
+    $items = @()
+    try { $items = @(@($Pairs) | Where-Object { $null -ne $_ }) } catch { $items = @() }
+    if ($items.Count -le 0) { return '' }
+    $html = "<details class='past-translations'><summary>過去に公表した英訳を見る（$($items.Count)件）</summary>"
+    foreach ($p in $items) {
+        $source = [string]$p.Source
+        $terms = ''
+        try { $terms = (@($p.Terms) -join '、') } catch { $terms = '' }
+        $head = $source
+        if (-not [string]::IsNullOrWhiteSpace($terms)) { $head += '　当たった語: ' + $terms }
+        $ja = [string]$p.Ja
+        $en = [string]$p.En
+        # 長い一節は畳む。読ませたいのは言い回しであって全文ではない。
+        if ($ja.Length -gt 160) { $ja = $ja.Substring(0, 160) + '…' }
+        if ($en.Length -gt 260) { $en = $en.Substring(0, 260) + '…' }
+        $html += @"
+  <article class='past-pair'>
+    <p class='past-pair-head'>$(ConvertTo-YakuHtml $head)</p>
+    <p class='past-pair-ja'>$(ConvertTo-YakuHtml $ja)</p>
+    <p class='past-pair-en'>$(ConvertTo-YakuHtml $en)</p>
+  </article>
+"@
+    }
+    $html += '</details>'
+    return $html
+}
+
+function New-YakuAmountNotationHtml {
+    <#
+      金額の書き方を選ぶ札。設定だが、設定パネルの奥に置くと誰も気づかない
+      （利用者の指摘 2026-08-08「簡単に目に入るところで設定できないと困る」）。
+      翻訳方向の隣に置く。同じ「どう訳してほしいか」の指定である。
+
+      名前ではなく実例を出す。「社内の書き方」のような名前は、どの社内かで
+      意味が変わって当てにならない。122 oku と ¥12.2 billion を並べれば、
+      説明を読まなくてもどちらが要るか分かる。
+    #>
+    param([AllowNull()]$Settings)
+    # billion は今は出さない。桁の換算コードが無く、122億円 が ¥122 billion に
+    # なる（10倍の誤り、2026-08-08 に確認）。押せる選択肢として出しておいて
+    # 壊れているのが最も悪い。換算が入るまで、いま何で書いているかだけを示す。
+    # 復活させるときは Settings.ps1 の Values と、ここの札を両方戻す。
+    $notation = 'oku'
+    try { if ([string]$Settings.amount_notation -eq 'billion') { $notation = 'billion' } } catch {}
+    if ($notation -ne 'oku') { $notation = 'oku' }
+    return @"
+<span class='row-label'>金額</span>
+<label><input type='radio' name='amount_notation' value='oku' checked disabled><span>122 oku</span></label>
+<span class='shorten-note'>いまは oku で書きます。&#165; billion は桁の換算を入れてから出します。</span>
+"@
+}
+
 function Convert-YakuTextResultToHtml {
     param(
         [Parameter(Mandatory=$true)]$Result,
@@ -59,9 +130,7 @@ function Convert-YakuTextResultToHtml {
 
     $html = ''
 
-    $inputLength = 0
-    try { $inputLength = [int]$Result.InputLength } catch { $inputLength = 0 }
-    if ($inputLength -gt 0) { $html += "<div class='batch-note'>ユーザー入力: $(ConvertTo-YakuHtml $inputLength)字</div>" }
+    # 入力の字数は、翻訳前から入力欄の下に出ている。ここで二度言わない。
 
     # V91.60 §9: 何件マスクして送ったかを示す。伏せた件数が見えないと、
     # 利用者は「送信されたのか」を推測するしかない。
@@ -74,25 +143,28 @@ function Convert-YakuTextResultToHtml {
         if (-not [string]::IsNullOrWhiteSpace($message)) { $html += New-YakuAlertHtml -Kind warning -Message $message }
     }
 
-    $glossary = @()
-    try { $glossary = @($Result.AppliedGlossary) } catch { $glossary = @() }
-    if ($glossary.Count -gt 0) {
-        $html += "<section class='glossary-preview' aria-label='適用された用語'><span class='glossary-preview-label'>適用された用語:</span>"
-        foreach ($term in ($glossary | Select-Object -First 12)) {
-            $from = if ($term.From) { [string]$term.From } else { [string]$term.Source }
-            $to = if ($term.To) { [string]$term.To } else { [string]$term.Target }
-            $html += "<span class='term-pill'>$(ConvertTo-YakuHtml ($from + ' → ' + $to))</span>"
-        }
-        if ($glossary.Count -gt 12) { $html += "<span class='term-pill muted-pill'>+$(ConvertTo-YakuHtml ($glossary.Count - 12))</span>" }
-        $html += "</section>"
+    # 「適用された用語」の表示は廃止した（利用者の指示 2026-08-06）。
+    # 実際に適用された保証が無いのに適用されたように読めていた。
+    # use_bundled_glossary を切っても出るうえ、プロンプトへ渡しただけの語も並ぶ。
+
+    # どの指示で直した結果かを出す。出さないと、何度か直した後にどれが
+    # どの指示の結果か分からなくなる。
+    $revisedFrom = ''
+    try { $revisedFrom = [string]$Result.RevisedFrom } catch { $revisedFrom = '' }
+    if (-not [string]::IsNullOrWhiteSpace($revisedFrom)) {
+        $html += "<div class='batch-note'>修正の指示: $(ConvertTo-YakuHtml $revisedFrom)</div>"
     }
 
-    $html += New-YakuCorpusReferenceHtml -Result $Result
+    # 参照した社内資料の一覧は簡易翻訳では出さない。コーパスを引くのをやめたため
+    # （利用者の判断 2026-08-06）。New-YakuCorpusReferenceHtml は CAT 側で使う。
+
 
     $batchCount = 0
     try { $batchCount = [int]$Result.BatchCount } catch { $batchCount = 0 }
     if ($batchCount -gt 1) {
-        $html += "<div class='batch-note'>長文を $batchCount バッチに分割し、前バッチの訳をSTYLE_REFERENCEとして引き継ぎました。</div>"
+        # 「バッチ」も「STYLE_REFERENCE」も、こちらの都合の言葉である。
+        # 利用者が知りたいのは「分けて訳したが、言い回しは揃えてある」だけ。
+        $html += "<div class='batch-note'>長い文章なので $batchCount 回に分けて訳しました。前半の言い回しに合わせています。</div>"
     }
 
     $html += "<section class='result-stack' data-yaku-state='done'>"
@@ -107,17 +179,161 @@ function Convert-YakuTextResultToHtml {
         }
     }
 
+    # V91.61（2026-08-06）: 訳文ごとに修正の依頼口を付ける。
+    # 利用者の使い方は「一文を訳す → 目で見る → 何度か直す → 確定」であり、
+    # 直すには原文を書き換えて訳し直すしかなかった。それでは直していない箇所も
+    # 毎回変わるので、確定へ向かって収束しない。
+    #
+    # 原文はここで各札へ持たせる。画面の入力欄から取り直すと、利用者が
+    # 入力欄を書き換えた後に「別の原文と現訳」を突き合わせることになる。
+    # 現訳はマスク後のものを持たせる。画面の訳文（実値入り）を送り返させると、
+    # 伏せたはずの数値が Copilot へ出る。
+    $sourceText = ''
+    try { $sourceText = [string]$Result.SourceText } catch { $sourceText = '' }
+    $direction = ''
+    try { $direction = [string]$Result.Direction } catch { $direction = '' }
+    $canRevise = (-not [string]::IsNullOrWhiteSpace($sourceText))
+
+    # 答えを1つに絞り、ほかは下に小さく添える。
+    #
+    # これまでは同じ重さのカードを縦に2枚並べていた。英語が得意でない人に
+    # 「どちらを使うか」を読んで判断させることになり、選べない
+    # （独立評価 2026-08-08）。主が1つあれば読む場所が決まる。
+    #
+    # 2つの違いは長さだけにした。金額の書き方は設定で決まるので、
+    # ここで選ばせない（利用者の判断 2026-08-08「そんなに頻繁に切り替える
+    # 必要もないので、金額の書き方は設定で」）。
+    # 主は「そのまま」。短くするのは枠に入らないときだけである。
+    $ordered = New-Object System.Collections.Generic.List[object]
+    foreach ($want in @('full', 'brief')) {
+        foreach ($o in $options) {
+            $s = ''
+            try { $s = [string]$o.Style } catch { $s = '' }
+            if ($s -eq $want) { [void]$ordered.Add($o) }
+        }
+    }
+    foreach ($o in $options) { if (-not $ordered.Contains($o)) { [void]$ordered.Add($o) } }
+    $options = @($ordered.ToArray())
+    $optionIndex = 0
+    $altHtml = ''
+
     foreach ($opt in $options) {
         $title = ConvertTo-YakuHtml $opt.Label
         $translation = ConvertTo-YakuHtml $opt.Translation
-        $html += @"
-<article class='result-card result-card-translation'>
-  <header>
-    <div class='eyebrow'>$title</div>
+        $style = ''
+        try { $style = [string]$opt.Style } catch { $style = '' }
+        if ($style -ne 'brief') { $style = 'full' }
+        $masked = [string]$opt.Translation
+        try { if (-not [string]::IsNullOrEmpty([string]$opt.MaskedTranslation)) { $masked = [string]$opt.MaskedTranslation } } catch {}
+        # 修正指示のフォームは置かない。「すぐ訳す」は貼って押してコピーする
+        # までの画面で、直すのは「見比べて訳す」の役目にする
+        # （利用者の方針 2026-08-08「簡易翻訳は簡易翻訳、CAT は CAT で
+        # 利用者にとってベストなものにする」）。
+        # 直す機能が両方にあると、どちらでやるべきか毎回考えることになる。
+        $reviseHtml = ''
+        # 数値が抜けた訳は、短い訳ではなく事実が欠けた訳である。
+        # コピーボタンの隣に静かに置くと、そのまま貼られる。
+        $dropNotice = ''
+        try {
+            if ([bool]$opt.NumbersDropped) {
+                $dropNotice = "<p class='result-danger'>この訳には数値が入っていません（" + (ConvertTo-YakuHtml ([string]$opt.DroppedNumbers)) + "）。使わずに、もう一方をお使いください。</p>"
+            }
+        } catch {}
+        # 1つ目を主にし、2つ目以降は下に小さく添える。押すと入れ替わる。
+        $isMain = ($optionIndex -eq 0)
+        $optionIndex++
+        $chars = ([string]$opt.Translation).Length
+        $b64 = ConvertTo-YakuUtf8Base64 ([string]$opt.Translation)
+        if ($isMain) {
+            $html += @"
+<article class='result-card result-card-translation' data-yaku-main-card>
+$dropNotice  <pre class='translation' data-yaku-main-text>$translation</pre>
+  <div class='result-actions'>
+    <span class='result-kind' data-yaku-main-kind>$title</span>
     $(New-YakuCopyButtonHtml -Text ([string]$opt.Translation) -Label 'コピー')
-  </header>
-  <pre class='translation'>$translation</pre>
+  </div>
 </article>
+"@
+            $altHtml += ""
+        }
+        else {
+            # 添え物にも中身を出す。押す前にどう違うかが見えないと選べない。
+            $preview = [string]$opt.Translation
+            if ($preview.Length -gt 90) { $preview = $preview.Substring(0, 90) + '…' }
+            $altHtml += @"
+  <button type='button' class='result-alt' data-yaku-swap='$b64' data-yaku-swap-kind='$(ConvertTo-YakuHtml $opt.Label)'>
+    <span class='result-alt-head'>$title<span class='result-alt-chars'>$chars 字</span></span>
+    <span class='result-alt-body'>$(ConvertTo-YakuHtml $preview)</span>
+  </button>
+"@
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($altHtml)) {
+        $html += @"
+<div class='result-alts'>
+  <p class='result-alts-lead'>枠に入らないときは、こちらを押すと上と入れ替わります。</p>
+  <div class='result-alts-list'>
+$altHtml  </div>
+</div>
+"@
+    }
+
+    # 短くする。押されたときだけ Copilot を呼ぶ。
+    #
+    # 毎回2本作ると往復が2倍になり、弾かれる頻度も上がる。
+    # 標準の訳で足りる場面のほうが多いので、要る人が押したときに払う。
+    # 押した直後に出るので、勝手に画面が増えて驚くこともない
+    # （独立評価 2026-08-08）。
+    #
+    # 送るのはマスク後の訳文である。画面の訳文（実値入り）を送り返させると、
+    # 伏せたはずの数値が Copilot へ出る。
+    $mainOption = $null
+    try { if ($options.Count -gt 0) { $mainOption = $options[0] } } catch {}
+    $alreadyBrief = $false
+    try { $alreadyBrief = ([string]$mainOption.Style -eq 'brief') } catch {}
+    if ($canRevise -and $null -ne $mainOption -and $direction -eq 'to_en' -and -not $alreadyBrief) {
+        $mainMasked = [string]$mainOption.Translation
+        try { if (-not [string]::IsNullOrEmpty([string]$mainOption.MaskedTranslation)) { $mainMasked = [string]$mainOption.MaskedTranslation } } catch {}
+        $html += @"
+<div class='shorten-row'>
+  <button type='button' class='secondary-button' data-yaku-shorten
+          data-yaku-source-b64='$(ConvertTo-YakuHtml (ConvertTo-YakuUtf8Base64 $sourceText))'
+          data-yaku-current-b64='$(ConvertTo-YakuHtml (ConvertTo-YakuUtf8Base64 $mainMasked))'>枠に入らないので短くする</button>
+  <span class='shorten-note'>押すともう一度Copilotに頼みます。数値と用語はこの訳のまま、長さだけ縮めます。</span>
+</div>
+"@
+    }
+
+    # 過去に公表した英訳。訳文の下、CAT への導線より上に置く。
+    # 訳を見て「この言い回しでよいのか」と思ったときに、すぐ目に入る位置。
+    # 畳んであるので、要らない人の邪魔にはならない。
+    try { $html += New-YakuPastTranslationsHtml -Pairs @($Result.PastPairs) } catch {}
+
+    # V91.61（2026-08-06）: 簡易翻訳から CAT へ渡す導線。
+    #
+    # 簡易翻訳を使っている人にも CAT のほうが便利だが、急に画面が変わると
+    # 覚え直しの負担を負わせることになる（利用者の懸念 2026-08-06）。
+    # 先に覚えてもらうのではなく、**確認したくなった時に**押せる場所へ置く。
+    # 原文はそのまま持っていくので、押した先に見慣れた文が並ぶ。
+    if ($canRevise -and $options.Count -gt 0) {
+        # 訳文も一緒に持っていく。原文だけ渡すと、渡した先で訳文の列が空になり、
+        # 利用者から見れば「さっきの訳が消えた」うえに訳し直しを待たされる。
+        # 移行を促す導線が、移行しない理由を作ってしまう。
+        $handoffTranslation = ''
+        $fullOption = @($options | Where-Object { [string]$_.Style -ne 'brief' })
+        if ($fullOption.Count -eq 0) { $fullOption = @($options) }
+        try { $handoffTranslation = [string]$fullOption[0].Translation } catch { $handoffTranslation = '' }
+        # 方向も渡す。渡さないと CAT 側の既定（日→英）になり、英→日の利用者が
+        # 黙って逆向きで取り込まれる。$direction は判定済みの実際の向き。
+        $handoffDirection = if ($direction -eq 'to_jp') { 'to_jp' } else { 'to_en' }
+        $html += @"
+<div class='cat-handoff'>
+  <button type='button' class='secondary-button compact'
+          data-yaku-to-cat='$(ConvertTo-YakuUtf8Base64 $sourceText)'
+          data-yaku-to-cat-translation='$(ConvertTo-YakuUtf8Base64 $handoffTranslation)'
+          data-yaku-to-cat-direction='$(ConvertTo-YakuHtml $handoffDirection)'>1文ずつ見比べて直す</button>
+  <span class='muted'>原文と訳文を1文ずつ並べます。直したいところだけ直せます。</span>
+</div>
 "@
     }
 
@@ -249,7 +465,10 @@ function Convert-YakuFileWarningsToGroupedHtml {
     foreach ($category in $groups.Keys) {
         $items = @($groups[$category].ToArray())
         $label = Get-YakuWarningCategoryLabel -Category $category
-        $html += "<section class='file-warning-group'><h3>$(ConvertTo-YakuHtml $label) <span>$(ConvertTo-YakuHtml $items.Count)件</span></h3><ul>"
+        # 見出しの件数表示は廃止した（利用者の指示 2026-08-06）。
+        # ここは警告メッセージの数であって、中身の件数ではない。
+        # 「用語集に無いラベル 1件」の本文が「20 件ありました」となり読み違える。
+        $html += "<section class='file-warning-group'><h3>$(ConvertTo-YakuHtml $label)</h3><ul>"
         foreach ($item in ($items | Select-Object -First 80)) {
             $line = [string]$item.Message
             if (-not [string]::IsNullOrWhiteSpace([string]$item.Location) -and $line -notmatch [regex]::Escape([string]$item.Location)) {
@@ -287,21 +506,12 @@ function Convert-YakuFileResultToHtml {
     try { $smartart = [int]$stats.skipped_smartart } catch {}
     $warnings = @()
     try { $warnings = @($Result.Warnings) } catch { $warnings = @() }
-    $glossary = @()
-    try { $glossary = @($Result.AppliedGlossary) } catch { $glossary = @() }
     $glossaryExactHits = 0
     try { if ($Result.PSObject.Properties.Name -contains 'GlossaryExactHits') { $glossaryExactHits = [int]$Result.GlossaryExactHits } } catch {}
+    # 「適用された用語」の表示は廃止した（利用者の指示 2026-08-06）。
+    # 実際に置換したのは cell-exact だけで、occurrence は監査しかしていない。
+    # 並べると全て適用されたように読める。件数は下の「用語完全一致」で見る。
     $glossaryHtml = ''
-    if ($glossary.Count -gt 0) {
-        $glossaryHtml += "<section class='glossary-preview' aria-label='適用された用語'><span class='glossary-preview-label'>適用された用語:</span>"
-        foreach ($term in ($glossary | Select-Object -First 12)) {
-            $from = if ($term.From) { [string]$term.From } else { [string]$term.Source }
-            $to = if ($term.To) { [string]$term.To } else { [string]$term.Target }
-            $glossaryHtml += "<span class='term-pill'>$(ConvertTo-YakuHtml ($from + ' → ' + $to))</span>"
-        }
-        if ($glossary.Count -gt 12) { $glossaryHtml += "<span class='term-pill muted-pill'>+$(ConvertTo-YakuHtml ($glossary.Count - 12))</span>" }
-        $glossaryHtml += "</section>"
-    }
 
     $maskingHtml = New-YakuMaskingNoticeHtml -Result $Result
     $warningHtml = Convert-YakuFileWarningsToGroupedHtml -Warnings $warnings

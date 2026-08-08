@@ -38,19 +38,28 @@
 # ここに載せてよいのは「文脈に依らないもの」だけである。迷ったら載せない。
 # 載せ忘れはモデルが従来どおり処理するだけだが、誤って載せると必ず壊す。
 $script:YakuBriefAbbreviationPairs = @(
-    # --- 月名。固有名詞で他の意味を持たない。
-    # May は略語も May なので入れない（変換の必要が無い）。
-    @{ From = 'January';   To = 'Jan.' }
-    @{ From = 'February';  To = 'Feb.' }
-    @{ From = 'March';     To = 'Mar.' }
-    @{ From = 'April';     To = 'Apr.' }
-    @{ From = 'June';      To = 'Jun.' }
-    @{ From = 'July';      To = 'Jul.' }
-    @{ From = 'August';    To = 'Aug.' }
-    @{ From = 'September'; To = 'Sep.' }
-    @{ From = 'October';   To = 'Oct.' }
-    @{ From = 'November';  To = 'Nov.' }
-    @{ From = 'December';  To = 'Dec.' }
+    # --- 月名はここに置かない（利用者の指示 2026-08-05。プロンプトで示す）。
+    #
+    # 月名は文脈に依らないつもりで載せていたが、実機で人名を潰すことが分かった。
+    #   April Smith -> Apr. Smith / June Tanaka -> Jun. Tanaka
+    #   March / August も姓名として現れうる。
+    # 機械的に当てると必ず壊すので、判断が要るものとしてモデルへ返す。
+    # 指示は prompts/style_brief_rules.txt の Months にある。
+
+    # --- 決算の言い回し。文脈に依らないのでここで当てる（2026-08-06）。
+    # アブレーションで、これらをプロンプトの一覧から外すとモデルが
+    # 綴りのまま書く場合があった（Rev. increased -> Sales up）。
+    # 一覧で「使え」と言うのは確率的なので、当てて確定させる。
+    # forecast と actual は入れない。動詞・形容詞の用法があり、
+    # 「we forecast」「the actual figure」まで略すと読みにくくなる。迷ったら載せない。
+    # revenue -> rev. は外した（2026-08-08）。rev. は「revised（改訂）」の略
+    # としても広く使われ、多義的である。節約も1〜2文字しかない。
+    # 略語は「綴ると入らない」かつ「一般的である」の両方を満たすものに絞る。
+    @{ From = 'volumes';      To = 'vol.' }
+    @{ From = 'volume';       To = 'vol.' }
+    @{ From = 'consolidated'; To = 'consol.' }
+    # reduction -> redn. は外した（2026-08-08）。一般的な略記ではなく、
+    # 読み手が復元できない。節約も4文字しかない。
 
     # --- 語句の置換。規則の Phrase substitutions より。
     @{ From = 'approximately'; To = 'approx.' }
@@ -68,26 +77,60 @@ $script:YakuBriefAbbreviationPairs = @(
     @{ From = 'board of directors';   To = 'BOD' }
     @{ From = 'per annum';            To = 'p.a.' }
     @{ From = 'commercial paper';     To = 'CP' }
-    @{ From = 'financial institutions'; To = 'FIs' }
+    # financial institutions -> FIs は外した（2026-08-08）。節約は19文字と
+    # 大きいが、複数形の s を付ける略記は一般的ではない。
+    # Suppl. は論文の補足資料で見かける形なので残す。
+    # この会社は operating income に統一している（英文開示12冊に
+    # operating profit は1件も無い）。用語は統一されるものなので、
+    # 見るべきは使うか使わないかであって、出現回数ではない。
+    # 両方置いておく。どちらで書かれても拾える。
+    @{ From = 'operating income';     To = 'OP' }
     @{ From = 'operating profit';     To = 'OP' }
-    @{ From = 'net profit';           To = 'NP' }
-    @{ From = 'gross profit';         To = 'GP' }
+    #
+    # net profit -> NP と gross profit -> GP は外した（2026-08-08）。
+    # 略語は「綴ると入らないもの」に絞る、という線で揃えるため。
+    # net income も gross profit も12文字で、綴っても入る。
+    # 略しても理解の助けにならないうえ、NI は英国の社会保険料、
+    # GP は General Practitioner とも読める。
     @{ From = 'return on sales';      To = 'ROS' }
     @{ From = 'break-even point';     To = 'BEP' }
     @{ From = 'percentage points';    To = 'pts' }
+    # 期の表記（2026-08-08 追加）。決算資料で頻出し、節約が大きく、
+    # 曖昧さが無い。月名と違って人名や地名と衝突しない。
+    #
+    # 冠詞つきを先に当てる。「the first quarter」を「the Q1」にすると
+    # 英語として崩れるので、冠詞ごと置き換える。長い順に当てる仕組みが
+    # あるので、並べる順ではなく字数で先後が決まる。
+    @{ From = 'the first quarter';    To = 'Q1' }
+    @{ From = 'the second quarter';   To = 'Q2' }
+    @{ From = 'the third quarter';    To = 'Q3' }
+    @{ From = 'the fourth quarter';   To = 'Q4' }
+    @{ From = 'first quarter';        To = 'Q1' }
+    @{ From = 'second quarter';       To = 'Q2' }
+    @{ From = 'third quarter';        To = 'Q3' }
+    @{ From = 'fourth quarter';       To = 'Q4' }
+    @{ From = 'the first half';       To = 'H1' }
+    @{ From = 'the second half';      To = 'H2' }
+    @{ From = 'first half';           To = 'H1' }
+    @{ From = 'second half';          To = 'H2' }
     @{ From = 'year-on-year';         To = 'YoY' }
     @{ From = 'month-on-month';       To = 'MoM' }
     @{ From = 'quarter-on-quarter';   To = 'QoQ' }
     @{ From = 'year-end';             To = 'YE' }
     @{ From = 'wholesale';            To = 'W/S' }
-    @{ From = 'semiconductors';       To = 'semis' }
+    # semis は外した（2026-08-08）。出番が少ないうえ、準決勝やセミトレーラー
+    # とも読める。綴りのままで支障が無い、という利用者の判断による。
     @{ From = 'supplementary materials'; To = 'Suppl.' }
 
     # --- 社内で決めた形。規則が「必ずこの形を使う」と定めているもの。
     # 長いものから先に当てる必要がある（下の並べ替えで担保する）。
-    @{ From = 'fixed sales promotion costs'; To = 'Fixed Promo. Costs' }
-    @{ From = 'sales promotion costs';       To = 'Promo. Costs' }
-    @{ From = 'promotion costs';             To = 'Promo. Costs' }
+    # 販促費は 変動側 VM / 固定側 Fixed MKT の対で扱う（利用者の指示 2026-08-05）。
+    # 固定側を先に当てないと "fixed VM" になる。並べ替えで長い語句が先に来ることに依る。
+    @{ From = "subsidiaries' fixed sales promotion costs"; To = 'Subs. Fixed MKT' }
+    @{ From = 'fixed sales promotion costs'; To = 'Fixed MKT' }
+    @{ From = 'fixed promotion costs';       To = 'Fixed MKT' }
+    @{ From = 'sales promotion costs';       To = 'VM' }
+    @{ From = 'promotion costs';             To = 'VM' }
     @{ From = 'vehicle variable profit';     To = 'VP (Veh.)' }
     @{ From = 'variable profit';             To = 'VP' }
     @{ From = 'variable costs';              To = 'VC' }
@@ -98,8 +141,10 @@ $script:YakuBriefAbbreviationPairs = @(
     # --- 前置詞の短縮。BRIEF の電文体では常に短縮する。
     # ここは最も踏み込んだ置換なので、順番の都合上いちばん最後に当てる
     # （"compared with" などを先に処理させるため）。
+    # with は外した（2026-08-08）。英文で最も頻出する語の1つで、機械で当てると
+    # 「in line with」「in accordance with」まで壊す。節約も2文字しかない。
+    # without は単独で現れる語なので残す。節約は4文字あり、誤読の余地も無い。
     @{ From = 'without'; To = 'w/o' }
-    @{ From = 'with';    To = 'w/' }
 )
 
 # 長い語句から先に当てる。"fixed sales promotion costs" を
