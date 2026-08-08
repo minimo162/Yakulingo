@@ -41,6 +41,8 @@ function New-YakuCatSegmentView {
         CellCount   = @($Segment.BlockIds).Count
         Kind        = [string]$Segment.Kind
         Location    = [string]$Segment.Location
+        # 人が「これで良い」と判断したか。訳文が入っているかとは別物である。
+        Confirmed   = [bool]$Segment.Confirmed
     }
 }
 
@@ -82,6 +84,8 @@ function New-YakuCatProject {
         $s | Add-Member -NotePropertyName 'Translation' -NotePropertyValue '' -Force
         # どこから来た訳文か。用語集／Copilot／手直し を区別して画面に出す。
         $s | Add-Member -NotePropertyName 'Origin' -NotePropertyValue '' -Force
+        # 人が「これで良い」と見た行かどうか。訳が入っているかとは別に持つ。
+        $s | Add-Member -NotePropertyName 'Confirmed' -NotePropertyValue $false -Force
     }
 
     $project = [pscustomobject]@{
@@ -112,7 +116,7 @@ function New-YakuCatTextProject {
     param(
         [Parameter(Mandatory=$true)][string]$Root,
         [Parameter(Mandatory=$true)][string]$Text,
-        [Parameter(Mandatory=$true)]$Settings,
+        [Parameter(Mandatory=$true)][AllowNull()]$Settings,
         [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
         # 簡易翻訳から持ってきた訳文。原文と同じ規則で分けて並べる。
         # 空のまま渡すと、渡した先で「さっきの訳が消えた」ことになる。
@@ -138,6 +142,7 @@ function New-YakuCatTextProject {
             Location = '本文'
             Translation = [string]$(if ($useTargets) { $targets[$i] } else { '' })
             Origin = [string]$(if ($useTargets) { 'copilot' } else { '' })
+            Confirmed = $false
         }
         [void]$segments.Add($seg)
     }
@@ -239,6 +244,7 @@ function New-YakuCatProjectFromPairs {
             Translation = [string]$(if ($toEn) { $en } else { $ja })
             # 機械が作った対応であることを残す。人が直せば manual になる。
             Origin      = 'align'
+            Confirmed   = $false
         })
     }
     # 黙って少ない結果を返すと、取れているように見えてしまう。
@@ -310,6 +316,10 @@ function Get-YakuCatProjectSummary {
     param([Parameter(Mandatory=$true)]$Project)
     $segs = @($Project.Segments)
     $done = @($segs | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.Translation) }).Count
+    # 進捗は「人が確認した数」で数える。機械が埋めた数だと、翻訳ボタンを
+    # 押した瞬間に 100% になり、以後どれだけ確認しても動かない。
+    # 数百行を何時間もかけて見る作業では、それは進捗表示として役に立たない。
+    $confirmed = @($segs | Where-Object { [bool]$_.Confirmed }).Count
     return [pscustomobject]@{
         Id        = [string]$Project.Id
         FileName  = [string]$Project.FileName
@@ -318,6 +328,8 @@ function Get-YakuCatProjectSummary {
         Translated = $done
         Remaining = ($segs.Count - $done)
         Joined    = @($segs | Where-Object { [bool]$_.Joined }).Count
+        Confirmed = $confirmed
+        Unconfirmed = ($segs.Count - $confirmed)
     }
 }
 
@@ -339,6 +351,7 @@ function ConvertTo-YakuCatProjectJson {
             cells       = @($segs[$i].BlockIds).Count
             kind        = [string]$segs[$i].Kind
             location    = [string]$segs[$i].Location
+            confirmed   = [bool]$segs[$i].Confirmed
             # 次と繋げるか。シートが違う・図形が挟まる場合は繋げない。
             can_merge   = ($i -lt ($segs.Count - 1)) -and ([string]$segs[$i].Kind -eq [string]$segs[$i + 1].Kind) -and (
                            ([string]$segs[$i].Kind -eq 'text') -or
@@ -379,6 +392,8 @@ function ConvertTo-YakuCatProjectJson {
         translated = [int]$summary.Translated
         remaining  = [int]$summary.Remaining
         joined     = [int]$summary.Joined
+        confirmed   = [int]$summary.Confirmed
+        unconfirmed = [int]$summary.Unconfirmed
         segments   = @($rows.ToArray())
     } | ConvertTo-Json -Depth 6 -Compress)
 }
@@ -744,6 +759,9 @@ function Set-YakuCatSegmentTranslation {
     if ($Index -lt 0 -or $Index -ge $segs.Count) { throw ('セグメントが見つかりません: ' + $Index) }
     $segs[$Index].Translation = [string]$Text
     $segs[$Index].Origin = 'manual'
+    # 手で直したものは、その時点で人が見たということなので確定にする。
+    if ($segs[$Index].PSObject.Properties.Name -contains 'Confirmed') { $segs[$Index].Confirmed = $true }
+    else { $segs[$Index] | Add-Member -NotePropertyName 'Confirmed' -NotePropertyValue $true -Force }
     # 確定した訳を翻訳メモリへ貯める。次に同じ文が来たら候補に出る。
     # 市販ツールの Ctrl+Enter と同じ作法で、確定＝記憶にする。
     # 失敗しても訳の確定は妨げない。貯め損ねより、直せないほうが困る。
@@ -752,6 +770,41 @@ function Set-YakuCatSegmentTranslation {
             -Direction ([string]$Project.Direction) -Origin 'cat'
     } catch {
         try { Write-YakuLog ('Translation memory save failed: ' + $_.Exception.Message) 'WARN' } catch {}
+    }
+    return $segs[$Index]
+}
+
+function Set-YakuCatSegmentConfirmed {
+    <#
+      「この行は見た」を記録する。訳文が変わっていなくても押せる。
+
+      市販の CAT ツールで Ctrl+Enter が担っている役目である。機械訳を読んで
+      「これで良い」と判断したことは、直したことと同じくらい記録に値する。
+      記録が無いと、翌日再開したときに「どこまで見たか」が分からない。
+
+      訳文が空の行は確定できない。読むものが無いのに見たとは言えない。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [Parameter(Mandatory=$true)][int]$Index,
+        [bool]$Confirmed = $true
+    )
+    $segs = @($Project.Segments)
+    if ($Index -lt 0 -or $Index -ge $segs.Count) { throw ('セグメントが見つかりません: ' + $Index) }
+    if ($Confirmed -and [string]::IsNullOrWhiteSpace([string]$segs[$Index].Translation)) {
+        throw '訳文が空の行は確定できません。'
+    }
+    if ($segs[$Index].PSObject.Properties.Name -contains 'Confirmed') { $segs[$Index].Confirmed = $Confirmed }
+    else { $segs[$Index] | Add-Member -NotePropertyName 'Confirmed' -NotePropertyValue $Confirmed -Force }
+    # 確定した訳は翻訳メモリへ入れる。直さずに確定したものも、
+    # 「この訳で良い」という判断が入っている以上、次に使える。
+    if ($Confirmed) {
+        try {
+            $null = Add-YakuTranslationMemoryEntry -Source ([string]$segs[$Index].Text) -Target ([string]$segs[$Index].Translation) `
+                -Direction ([string]$Project.Direction) -Origin 'cat'
+        } catch {
+            try { Write-YakuLog ('Translation memory save failed: ' + $_.Exception.Message) 'WARN' } catch {}
+        }
     }
     return $segs[$Index]
 }

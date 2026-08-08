@@ -169,6 +169,10 @@ input[type="text"], select { width: 100%; min-height: 34px; border: 0; border-ra
 .cat-target { width: 40%; }
 .cat-target textarea { width: 100%; min-height: 44px; resize: vertical; font-size: var(--font-meta); }
 .cat-loc { display: block; color: var(--muted); }
+/* 確認済みの印。番号の隣に小さく出す。一覧を眺めたときに、どこまで見たかが分かる。 */
+.cat-confirmed { margin-left: 4px; color: var(--accent); font-weight: 700; }
+[data-yaku-confirmed="1"] .cat-col-no { opacity: 1; }
+[data-yaku-confirmed="0"] > td { background: color-mix(in srgb, var(--bg) 96%, var(--accent) 4%); }
 .cat-origin { display: inline-block; margin-top: 4px; border-radius: 999px; padding: 1px 7px; font-size: 11px; background: var(--soft); color: var(--muted); }
 .cat-origin-manual { background: var(--accent); color: #fff; }
 

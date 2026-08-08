@@ -542,6 +542,8 @@
 
   function yakuCatKeep(s, mode, needle) {
     if (mode === 'untranslated' && (s.translation || '').trim()) return false;
+    // 途中から再開するときに一番使う。まだ見ていない行だけを出す。
+    if (mode === 'unconfirmed' && s.confirmed) return false;
     if (mode === 'joined' && !s.joined) return false;
     if (mode === 'manual' && s.origin !== 'manual') return false;
     if (needle) {
@@ -584,8 +586,9 @@
       // 一覧を眺めたときに「どこが手つかずか」が一目で分かる。
       var state = (s.translation || '').trim() ? (s.origin || 'other') : 'untranslated';
       rows.push(
-        '<tr data-yaku-cat-row="' + s.index + '" data-yaku-cat-state="' + yakuEscape(state) + '">' +
-        '<td class="cat-col-no">' + (s.index + 1) + '</td>' +
+        '<tr data-yaku-cat-row="' + s.index + '" data-yaku-cat-state="' + yakuEscape(state) + '"' +
+        ' data-yaku-confirmed="' + (s.confirmed ? '1' : '0') + '">' +
+        '<td class="cat-col-no">' + (s.index + 1) + (s.confirmed ? '<span class="cat-confirmed" title="確認済み">✓</span>' : '') + '</td>' +
         '<td class="cat-col-loc"><span class="cat-loc" title="' + yakuEscape(s.location || '') + '">' + yakuEscape(loc) + '</span>' +
         (origin ? '<span class="cat-origin cat-origin-' + yakuEscape(s.origin) + '">' + yakuEscape(origin) + '</span>' : '') +
         (ops ? '<span class="cat-ops">' + ops + '</span>' : '') + '</td>' +
@@ -634,15 +637,20 @@
     var row = document.getElementById('cat-progress-row');
     if (!row) return;
     row.hidden = false;
+    // 進捗は「人が確認した数」で出す。機械が埋めた数だと、翻訳ボタンを
+    // 押した瞬間に 100% になり、以後どれだけ確認しても動かない。
+    // 数百行を何時間もかけて見る作業では、それは進捗として役に立たない。
     var total = data.total || 0;
-    var done = data.translated || 0;
-    var pct = total ? Math.round((done / total) * 100) : 0;
+    var confirmed = data.confirmed || 0;
+    var filled = data.translated || 0;
+    var pct = total ? Math.round((confirmed / total) * 100) : 0;
     var bar = document.getElementById('cat-progress-bar');
     if (bar) bar.style.width = pct + '%';
     var meter = row.querySelector('[role="progressbar"]');
     if (meter) meter.setAttribute('aria-valuenow', pct);
     var text = document.getElementById('cat-progress-text');
-    if (text) text.textContent = pct + '%（' + done + ' / ' + total + '）';
+    // 機械が埋めた数も併記する。訳が入っているかと、見たかは別の話なので。
+    if (text) text.textContent = '確認 ' + pct + '%（' + confirmed + ' / ' + total + '）　訳あり ' + filled;
   }
 
   function yakuCatPost(action, payload) {
@@ -1302,6 +1310,15 @@
     });
     // 触っただけのセグメントを「手直し」にしない。以前は離れるたびに保存して
     // いたので、一覧を上から見ていくだけで全部が手直し扱いになっていた。
+    // 「この行は見た」を記録する。訳文が変わっていなくても記録する。
+    function yakuCatConfirm(index) {
+      if (!yakuCatProjectId || isNaN(index)) return;
+      yakuCatPost('confirm', { id: yakuCatProjectId, index: index, confirmed: true })
+        .then(yakuCatRender)
+        .catch(function (error) {
+          yakuCatSetStatus('確定できませんでした: ' + (error && error.message ? error.message : ''));
+        });
+    }
     function yakuCatCommit(input) {
       if (!input) return false;
       if (input.value === (input.getAttribute('data-yaku-original') || '')) return false;
@@ -1358,10 +1375,23 @@
       var input = event.target.closest && event.target.closest('[data-yaku-cat-input]');
       if (!input) return;
       event.preventDefault();
-      yakuCatCommit(input);
+      // 直していなくても「確定」にする。機械訳を読んで「これで良い」と
+      // 判断したことは、直したことと同じくらい記録に値する。記録が無いと
+      // 翌日再開したときに「どこまで見たか」が分からない。
+      var changed = yakuCatCommit(input);
+      var index = parseInt(input.getAttribute('data-yaku-cat-input'), 10);
+      if (!changed) yakuCatConfirm(index);
       var inputs = Array.prototype.slice.call(document.querySelectorAll('[data-yaku-cat-input]'));
-      var next = inputs[inputs.indexOf(input) + 1];
-      if (next) { next.focus(); next.select(); }
+      var pos = inputs.indexOf(input);
+      // 次の未確認行へ飛ぶ。確認済みを飛ばせるので、途中から再開できる。
+      var next = null;
+      for (var i = pos + 1; i < inputs.length; i++) {
+        var row = inputs[i].closest('[data-yaku-cat-row]');
+        if (!row || row.getAttribute('data-yaku-confirmed') !== '1') { next = inputs[i]; break; }
+      }
+      if (!next) next = inputs[pos + 1];
+      // 全選択しない。次の行の訳が選ばれた状態だと、1打鍵で消えてしまう。
+      if (next) { next.focus(); try { next.setSelectionRange(next.value.length, next.value.length); } catch (e) {} }
       else { input.blur(); }
     });
     // 簡易翻訳の結果から CAT へ渡す。原文をそのまま持っていくので、

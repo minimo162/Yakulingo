@@ -80,6 +80,30 @@ try {
     Chk ($cat -match 'Find-YakuTranslationMemory') '候補ペインが翻訳メモリを引く'
     Chk ($cat -match "Kind\s*=\s*'memory'") '翻訳メモリの候補に印を付ける'
     Chk ($cat -match 'Weight\s*=\s*30000') '翻訳メモリを他の候補より先に出す'
+
+    Write-Host '確定の状態' -ForegroundColor Cyan
+    foreach ($mod in @('PromptBuilder.ps1', 'CellSegments.ps1', 'Corpus.ps1', 'CorpusPairs.ps1', 'CatProject.ps1')) {
+        . (Join-Path (Join-Path $root 'src') $mod)
+    }
+    $proj = New-YakuCatTextProject -Root $root -Settings $null -Direction 'to_en' `
+        -Text "当社は電動化を進めます。" -Translation "We will advance electrification."
+    $sum = Get-YakuCatProjectSummary -Project $proj
+    Chk ([int]$sum.Translated -eq 1 -and [int]$sum.Confirmed -eq 0) '訳が入っていても、見るまでは確定にしない'
+    Chk ([string]@($proj.Segments)[0].Origin -eq 'copilot') '簡易翻訳から来た訳は機械の訳として印を付ける'
+
+    $null = Set-YakuCatSegmentConfirmed -Project $proj -Index 0
+    $sum = Get-YakuCatProjectSummary -Project $proj
+    Chk ([int]$sum.Confirmed -eq 1 -and [int]$sum.Unconfirmed -eq 0) '直さずに確定できる'
+
+    $empty = New-YakuCatTextProject -Root $root -Settings $null -Direction 'to_en' -Text "訳の無い文です。"
+    $threw = $false
+    try { $null = Set-YakuCatSegmentConfirmed -Project $empty -Index 0 } catch { $threw = $true }
+    Chk $threw '訳が空の行は確定できない'
+
+    # 行数が合わない訳文は割り当てない。ずれた対応を見せるより空欄がよい。
+    $mismatch = New-YakuCatTextProject -Root $root -Settings $null -Direction 'to_en' `
+        -Text "一つ目の文です。二つ目の文です。" -Translation "Only one sentence."
+    Chk ([string]@($mismatch.Segments)[0].Translation -eq '') '行数が合わない訳文は割り当てない'
 }
 finally {
     try { Remove-Item -LiteralPath $tmp -Recurse -Force } catch {}

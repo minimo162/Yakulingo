@@ -2366,6 +2366,15 @@ function Invoke-YakuRoute {
                     $rows = @($items | ForEach-Object { [ordered]@{ kind = [string]$_.Kind; source = [string]$_.Source; target = [string]$_.Target; exact = [bool]$_.Exact; ratio = [double]$_.Ratio; database = [string]$_.Database; verified = [bool]$_.Verified } })
                     Send-YakuTextResponse -Context $Context -Text (([ordered]@{ index = $index; candidates = @($rows) } | ConvertTo-Json -Depth 5 -Compress)) -ContentType 'application/json; charset=utf-8'
                 }
+                'confirm' {
+                    # 「この行は見た」を記録する。訳文が変わっていなくても押せる。
+                    $index = -1
+                    try { $index = [int]$payload['index'] } catch { $index = -1 }
+                    $flag = $true
+                    try { if ($payload.ContainsKey('confirmed')) { $flag = [bool]$payload['confirmed'] } } catch {}
+                    $null = Set-YakuCatSegmentConfirmed -Project $project -Index $index -Confirmed $flag
+                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
+                }
                 'save-corpus' {
                     # グリッドで確かめた対訳をコーパスへ入れる。人が一度見てから
                     # 貯める、という順序をここで担保する。

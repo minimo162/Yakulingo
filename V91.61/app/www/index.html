@@ -203,6 +203,8 @@
           <div class="cat-filter" role="radiogroup" aria-label="表示する範囲">
             <label><input type="radio" name="cat_filter" value="all" checked><span>すべて</span></label>
             <label><input type="radio" name="cat_filter" value="untranslated"><span>未訳</span></label>
+            <!-- 途中から再開するときに一番使う絞り込み。まだ見ていない行だけを出す。 -->
+            <label><input type="radio" name="cat_filter" value="unconfirmed"><span>未確認</span></label>
             <label><input type="radio" name="cat_filter" value="joined"><span>結合</span></label>
             <label><input type="radio" name="cat_filter" value="manual"><span>手直し</span></label>
           </div>
