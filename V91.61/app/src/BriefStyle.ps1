@@ -76,9 +76,18 @@ $script:YakuBriefAbbreviationPairs = @(
     @{ From = 'per annum';            To = 'p.a.' }
     @{ From = 'commercial paper';     To = 'CP' }
     @{ From = 'financial institutions'; To = 'FIs' }
+    # この会社は operating income に統一している（英文開示12冊に
+    # operating profit は1件も無い）。用語は統一されるものなので、
+    # 見るべきは使うか使わないかであって、出現回数ではない。
+    # 両方置いておく。どちらで書かれても拾える。
+    @{ From = 'operating income';     To = 'OP' }
     @{ From = 'operating profit';     To = 'OP' }
-    @{ From = 'net profit';           To = 'NP' }
-    @{ From = 'gross profit';         To = 'GP' }
+    #
+    # net profit -> NP と gross profit -> GP は外した（2026-08-08）。
+    # 略語は「綴ると入らないもの」に絞る、という線で揃えるため。
+    # net income も gross profit も12文字で、綴っても入る。
+    # 略しても理解の助けにならないうえ、NI は英国の社会保険料、
+    # GP は General Practitioner とも読める。
     @{ From = 'return on sales';      To = 'ROS' }
     @{ From = 'break-even point';     To = 'BEP' }
     @{ From = 'percentage points';    To = 'pts' }

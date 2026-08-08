@@ -153,7 +153,13 @@ Chk ($briefRules -notmatch 'fixed costs / fixed cost -> FC') 'FC の対応が消
 Chk ($briefRules -match 'corporate -> corp\. only as adjective') '文脈に依るものは残っている'
 Chk ($briefRules -match 'subsidiaries -> Subs\. in table items') '文脈に依るものは残っている（2）'
 Chk ($briefRules -match 'technology -> tech') '文脈に依るものは残っている（3）'
-Chk ($briefRules -match 'applied automatically') 'アプリ側で当てることをモデルへ伝えている'
+# 略語はモデルに選ばせない（2026-08-08）。当てるのはアプリの仕事にする。
+# モデルが自分で選ぶと、一覧に無い略語が本文に入り、読み手が引けなくなる。
+# 「どちらで書いてもよい」という書き方では確率的なままだった。
+Chk ($briefRules -match 'Do NOT abbreviate') '略語を使わないよう伝えている'
+Chk ($briefRules -match 'applies the approved abbreviations') 'アプリ側で当てることを伝えている'
+Chk ($briefRules -match 'SOURCE itself writes') '原文にある略語は残すよう伝えている'
+Chk ($briefRules -match 'Month names are the one thing') '月名だけは自分で短くするよう伝えている'
 
 if ($script:fail -gt 0) {
     Write-Host "V91.61 brief style regression failed. failures=$script:fail" -ForegroundColor Red
