@@ -294,6 +294,12 @@ function Save-YakuCatProjectToCorpus {
     $toEn = ([string]$Project.Direction -eq 'to_en')
     $pairs = New-Object System.Collections.Generic.List[object]
     foreach ($seg in @($Project.Segments)) {
+        # 機械が作った対応を、人が見ないまま公開対訳へ入れない。
+        # 手直しした行は Set-YakuCatSegmentTranslation が確定済みにし、
+        # 直さない行も「これでよい」を押したものだけがここを通る。
+        $confirmed = $false
+        try { $confirmed = [bool]$seg.Confirmed } catch { $confirmed = $false }
+        if (-not $confirmed) { continue }
         $a = [string]$seg.Text; $b = [string]$seg.Translation
         if ([string]::IsNullOrWhiteSpace($a) -or [string]::IsNullOrWhiteSpace($b)) { continue }
         [void]$pairs.Add([pscustomobject]@{
@@ -642,8 +648,8 @@ function Protect-YakuCatItems {
       同じ失敗を繰り返さないため、マスクは**items だけを受け取る形**にする。
       これならジョブからも、プロジェクトを持つ経路からも同じものを呼べる。
 
-      順序は翻訳経路と同じ。固有名詞 → 数値（住所の全角数字を数値マスクに
-      取られないため）。表は項目へ持たせ、復元で使う。
+      順序は翻訳経路と同じ。単位変換 → 固有名詞 → 数値（住所の全角数字を
+      数値マスクに取られないため）。表は項目へ持たせ、復元で使う。
     #>
     param(
         [Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Items,
@@ -655,6 +661,11 @@ function Protect-YakuCatItems {
     foreach ($item in @($Items)) {
         if ($null -eq $item) { continue }
         $text = [string]$item.Text
+        # CAT は一括翻訳の外側を通らず Invoke-YakuFileTranslationItems を直接
+        # 呼ぶため、ここで単位変換を済ませる。先に数値を伏せると
+        # 18万6千台 が [[N1]]万[[N2]]千台 に割れ、1つの数量へ戻せない。
+        $numericPre = Convert-YakuNumericUnits -Text $text -Location ("cat-ID-" + [string]$item.Index)
+        $text = [string]$numericPre.Text
         $properMap = $null
         if (Get-Command New-YakuProperNounMaskMap -ErrorAction SilentlyContinue) {
             $properResult = New-YakuProperNounMaskMap -Text $text -Root $Root
@@ -1072,19 +1083,24 @@ function Set-YakuCatSegmentTranslation {
     )
     $segs = @($Project.Segments)
     if ($Index -lt 0 -or $Index -ge $segs.Count) { throw ('セグメントが見つかりません: ' + $Index) }
-    $segs[$Index].Translation = [string]$Text
-    $segs[$Index].Origin = 'manual'
+    $translation = [string]$Text
+    $hasTranslation = -not [string]::IsNullOrWhiteSpace($translation)
+    $segs[$Index].Translation = $translation
+    $segs[$Index].Origin = $(if ($hasTranslation) { 'manual' } else { '' })
     # 手で直したものは、その時点で人が見たということなので確定にする。
-    if ($segs[$Index].PSObject.Properties.Name -contains 'Confirmed') { $segs[$Index].Confirmed = $true }
-    else { $segs[$Index] | Add-Member -NotePropertyName 'Confirmed' -NotePropertyValue $true -Force }
+    # ただし空に戻した行は未翻訳であり、確認済みにはできない。
+    if ($segs[$Index].PSObject.Properties.Name -contains 'Confirmed') { $segs[$Index].Confirmed = $hasTranslation }
+    else { $segs[$Index] | Add-Member -NotePropertyName 'Confirmed' -NotePropertyValue $hasTranslation -Force }
     # 確定した訳を翻訳メモリへ貯める。次に同じ文が来たら候補に出る。
     # 市販ツールの Ctrl+Enter と同じ作法で、確定＝記憶にする。
     # 失敗しても訳の確定は妨げない。貯め損ねより、直せないほうが困る。
-    try {
-        $null = Add-YakuTranslationMemoryEntry -Source ([string]$segs[$Index].Text) -Target ([string]$Text) `
-            -Direction ([string]$Project.Direction) -Origin 'cat'
-    } catch {
-        try { Write-YakuLog ('Translation memory save failed: ' + $_.Exception.Message) 'WARN' } catch {}
+    if ($hasTranslation) {
+        try {
+            $null = Add-YakuTranslationMemoryEntry -Source ([string]$segs[$Index].Text) -Target $translation `
+                -Direction ([string]$Project.Direction) -Origin 'cat'
+        } catch {
+            try { Write-YakuLog ('Translation memory save failed: ' + $_.Exception.Message) 'WARN' } catch {}
+        }
     }
     return $segs[$Index]
 }

@@ -603,8 +603,12 @@
       var origin = yakuCatOriginLabel(s.origin);
       // 繋ぎ直しの操作。自動で完璧に分けるのは無理なので、外れたら人が直す。
       var ops = '';
-      if (s.can_merge) ops += '<button type="button" class="cat-op" data-yaku-cat-merge="' + s.index + '" title="次の行と結合します（訳文は消えます）">↓結合</button>';
-      if (s.can_split) ops += '<button type="button" class="cat-op" data-yaku-cat-split="' + s.index + '" title="セル1つずつに戻します（訳文は消えます）">解除</button>';
+      var rowNumber = s.index + 1;
+      var nextSegment = s.can_merge ? all[s.index + 1] : null;
+      var mergeLosesTranslation = !!((s.translation || '').trim() || (nextSegment && (nextSegment.translation || '').trim()));
+      var splitLosesTranslation = !!(s.translation || '').trim();
+      if (s.can_merge) ops += '<button type="button" class="cat-op" data-yaku-cat-merge="' + s.index + '" data-yaku-cat-loss="' + (mergeLosesTranslation ? '1' : '0') + '" aria-label="' + rowNumber + '行目を次の行と結合" title="次の行と結合します（訳文は消えます）">↓結合</button>';
+      if (s.can_split) ops += '<button type="button" class="cat-op" data-yaku-cat-split="' + s.index + '" data-yaku-cat-loss="' + (splitLosesTranslation ? '1' : '0') + '" aria-label="' + rowNumber + '行目の結合を解除" title="セル1つずつに戻します（訳文は消えます）">解除</button>';
       // 行の状態を色で示す。市販の CAT エディタは状態列を色で分けており、
       // 一覧を眺めたときに「どこが手つかずか」が一目で分かる。
       // 状態は3つ。訳が入っているかと、人が見たかは別物である。
@@ -618,12 +622,12 @@
         (origin ? '<span class="cat-origin cat-origin-' + yakuEscape(s.origin) + '">' + yakuEscape(origin) + '</span>' : '') +
         (ops ? '<span class="cat-ops">' + ops + '</span>' : '') + '</td>' +
         '<td class="cat-source">' + yakuEscape(s.source) + '</td>' +
-        '<td class="cat-target"><textarea rows="2" data-yaku-cat-input="' + s.index + '" data-yaku-original="' + yakuEscape(s.translation || '') + '">' + yakuEscape(s.translation || '') + '</textarea>' +
+        '<td class="cat-target"><textarea rows="2" aria-label="' + rowNumber + '行目の訳文" data-yaku-cat-input="' + s.index + '" data-yaku-original="' + yakuEscape(s.translation || '') + '">' + yakuEscape(s.translation || '') + '</textarea>' +
           // キーボードだけでなくマウスでも進められるようにする。
           // 四半期に1回しか使わない人が Ctrl+Enter を覚えている前提は成り立たない。
           '<div class="cat-row-actions">' +
-          (s.confirmed ? '' : '<button type="button" class="cat-op cat-op-ok" data-yaku-cat-ok="' + s.index + '">これでよい</button>') +
-          ((s.kind === 'cell' && (s.translation || '').trim() && s.source.length <= 40) ? '<button type="button" class="cat-op" data-yaku-cat-toglossary="' + s.index + '">用語集に追加</button>' : '') +
+          (s.confirmed ? '' : '<button type="button" class="cat-op cat-op-ok" aria-label="' + rowNumber + '行目をこれで確定" data-yaku-cat-ok="' + s.index + '">これでよい</button>') +
+          ((s.kind === 'cell' && (s.translation || '').trim() && s.source.length <= 40) ? '<button type="button" class="cat-op" aria-label="' + rowNumber + '行目を用語集に追加" data-yaku-cat-toglossary="' + s.index + '">用語集に追加</button>' : '') +
           '</div></td>' +
         '</tr>'
       );
@@ -1320,6 +1324,28 @@
     var fileDrop = document.getElementById('file-drop');
     var fileClearButton = document.getElementById('file-clear-button');
 
+    function yakuBindFileDropTarget(dropTarget, input) {
+      if (!dropTarget || !input) return;
+      dropTarget.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          input.click();
+        }
+      });
+      ['dragenter', 'dragover'].forEach(function (name) {
+        dropTarget.addEventListener(name, function (event) { event.preventDefault(); dropTarget.classList.add('dragover'); });
+      });
+      ['dragleave', 'drop'].forEach(function (name) {
+        dropTarget.addEventListener(name, function (event) { event.preventDefault(); dropTarget.classList.remove('dragover'); });
+      });
+      dropTarget.addEventListener('drop', function (event) {
+        if (event.dataTransfer && event.dataTransfer.files.length) {
+          input.files = event.dataTransfer.files;
+          input.dispatchEvent(new Event('change'));
+        }
+      });
+    }
+
     if (textForm) textForm.addEventListener('submit', yakuSubmitText);
     Array.prototype.forEach.call(document.querySelectorAll('input[name="text_direction"]'), function (radio) {
       radio.addEventListener('change', yakuUpdateInputMeta);
@@ -1361,26 +1387,7 @@
       yakuResetFileInfoMessage();
     });
     if (fileForm) fileForm.addEventListener('submit', yakuSubmitFileTranslation);
-    if (fileDrop) {
-      fileDrop.addEventListener('keydown', function (event) {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          if (fileInput) fileInput.click();
-        }
-      });
-      ['dragenter', 'dragover'].forEach(function (name) {
-        fileDrop.addEventListener(name, function (event) { event.preventDefault(); fileDrop.classList.add('dragover'); });
-      });
-      ['dragleave', 'drop'].forEach(function (name) {
-        fileDrop.addEventListener(name, function (event) { event.preventDefault(); fileDrop.classList.remove('dragover'); });
-      });
-      fileDrop.addEventListener('drop', function (event) {
-        if (fileInput && event.dataTransfer && event.dataTransfer.files.length) {
-          fileInput.files = event.dataTransfer.files;
-          fileInput.dispatchEvent(new Event('change'));
-        }
-      });
-    }
+    yakuBindFileDropTarget(fileDrop, fileInput);
 
     document.addEventListener('submit', function (event) {
       var revise = event.target.closest && event.target.closest('form[data-yaku-revise]');
@@ -1554,6 +1561,7 @@
       var name = document.getElementById('cat-file-name');
       if (name) name.textContent = (catFileInput.files && catFileInput.files.length) ? catFileInput.files[0].name : 'ローカルパス指定も利用できます';
     });
+    yakuBindFileDropTarget(document.getElementById('cat-drop'), catFileInput);
     // 触っただけの行を「手直し」にしない。以前は離れるたびに保存して
     // いたので、一覧を上から見ていくだけで全部が手直し扱いになっていた。
     // 「この行は見た」を記録する。訳文が変わっていなくても記録する。
@@ -1674,9 +1682,16 @@
     });
     document.addEventListener('click', function (event) {
       var merge = event.target.closest && event.target.closest('[data-yaku-cat-merge]');
-      if (merge) { yakuCatRegroup('merge', parseInt(merge.getAttribute('data-yaku-cat-merge'), 10)); return; }
+      if (merge) {
+        if (merge.getAttribute('data-yaku-cat-loss') === '1' && !window.confirm('結合すると、対象行の訳文が消えます。結合しますか？')) return;
+        yakuCatRegroup('merge', parseInt(merge.getAttribute('data-yaku-cat-merge'), 10));
+        return;
+      }
       var split = event.target.closest && event.target.closest('[data-yaku-cat-split]');
-      if (split) { yakuCatRegroup('split', parseInt(split.getAttribute('data-yaku-cat-split'), 10)); }
+      if (split) {
+        if (split.getAttribute('data-yaku-cat-loss') === '1' && !window.confirm('解除すると、この行の訳文が消えます。解除しますか？')) return;
+        yakuCatRegroup('split', parseInt(split.getAttribute('data-yaku-cat-split'), 10));
+      }
     });
 
     document.addEventListener('keydown', function (event) {

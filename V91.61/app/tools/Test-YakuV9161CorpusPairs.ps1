@@ -207,8 +207,15 @@ try {
     $ng = New-YakuCatAlignProject -Root $root -SourceText '' -TargetText $enDoc -Settings $null
     Chk (@($ng.Segments).Count -eq 0 -and @($ng.Warnings).Count -eq 1) '片方が空なら注意を出して空で返す'
 
-    # グリッドで直してから貯める、という順序を確かめる。
-    @($proj.Segments)[0].Translation = 'We will promote electrification.'
+    # 機械が作った対応を、未確認のまま貯めない。
+    $unchecked = Save-YakuCatProjectToCorpus -Project $proj -Database '未確認' -Source '未確認の分' -Dir $tmp -Public
+    Chk ($unchecked.Added -eq 0) '未確認の機械アライメントはコーパスへ入れない'
+
+    # グリッドで直すか「これでよい」と確定してから貯める、という順序を確かめる。
+    $null = Set-YakuCatSegmentTranslation -Project $proj -Index 0 -Text 'We will promote electrification.'
+    for ($i = 1; $i -lt @($proj.Segments).Count; $i++) {
+        $null = Set-YakuCatSegmentConfirmed -Project $proj -Index $i
+    }
     # 保存先は試験用の場所を指す。本番の取り込み場所を汚さない。
     $saved = Save-YakuCatProjectToCorpus -Project $proj -Database '突合' -Source '手で直した分' -Dir $tmp -Public
     Chk ($saved.Added -eq 3) '確かめた対訳をコーパスへ入れる'

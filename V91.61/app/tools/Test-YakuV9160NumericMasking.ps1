@@ -24,7 +24,7 @@ function Assert-YakuMask {
     else { Write-Host ('  FAIL ' + $Message) -ForegroundColor Red; $script:Failures++ }
 }
 
-foreach ($name in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','ProperNoun.ps1','Translation.ps1','FileProcessors.ps1','FileTranslation.ps1','BriefStyle.ps1')) {
+foreach ($name in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','ProperNoun.ps1','Translation.ps1','FileProcessors.ps1','FileTranslation.ps1','BriefStyle.ps1','CatProject.ps1')) {
     . (Join-Path (Join-Path $root 'src') $name)
 }
 
@@ -586,6 +586,16 @@ Assert-YakuMask ($catSrc -match 'Test-YakuNumericMaskIntegrity') 'CAT 経路が�
 $catMaskAt = $catSrc.IndexOf('New-YakuNumericMaskMap')
 $catSendAt = $catSrc.IndexOf('Invoke-YakuFileTranslationItems -Root')
 Assert-YakuMask ($catMaskAt -gt 0 -and $catSendAt -gt 0 -and $catMaskAt -lt $catSendAt) 'CAT 経路は送信より前にマスクする'
+
+# 静的な順序だけでなく、実際の中継関数へ複合単位を通す。以前は
+# 18万6千台 が [[N1]]万[[N2]]千台 に割れ、モデルへ日本語の桁が残っていた。
+$catUnitItem = [pscustomobject]@{ Index = 1; Text = '販売台数は18万6千台。' }
+$null = Protect-YakuCatItems -Items @($catUnitItem) -Root $root -Direction 'to_en'
+Assert-YakuMask ([string]$catUnitItem.MaskedText -match '\[\[N1\]\]\s+k units') ('CAT でも複合単位を1つに畳んでから伏せる: ' + [string]$catUnitItem.MaskedText)
+Assert-YakuMask ([string]$catUnitItem.MaskedText -notmatch '[万千]') 'CAT の送信本文に日本語の桁を残さない'
+$catUnitMap = @{ 1 = 'Sales volume was [[N1]] k units.' }
+Restore-YakuCatItemTranslations -Items @($catUnitItem) -Map $catUnitMap -Warnings $null
+Assert-YakuMask ([string]$catUnitMap[1] -match '186\s+k units') ('CAT の訳文へ複合数量を復元する: ' + [string]$catUnitMap[1])
 
 $alignSrc = Get-Content -LiteralPath (Join-Path $root 'src\Alignment.ps1') -Raw -Encoding UTF8
 Assert-YakuMask ($alignSrc -match 'Protect-YakuAlignmentLines') 'アライメント経路がマスクを呼んでいる'

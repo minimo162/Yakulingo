@@ -1359,7 +1359,7 @@ function Invoke-YakuFileTranslationItems {
         $sendStartFailures = 0
         for ($contractAttempt = 1; $contractAttempt -le $contractMaxAttempts; $contractAttempt++) {
             $requestId = [guid]::NewGuid().ToString('N')
-            $prompt = New-YakuFilePrompt -Root $Root -Items @($batch.Items) -Settings $Settings -Direction $Direction -RequestId $requestId
+            $prompt = New-YakuFilePrompt -Root $Root -Items @($batch.Items) -Settings $Settings -Direction $Direction -RequestId $requestId -CorpusSection ([string]$Context['CorpusSection'])
             $skipFresh = ([int]$Context['CopilotCalls'] -gt 0)
             $Context['CopilotCalls'] = [int]$Context['CopilotCalls'] + 1
             try {

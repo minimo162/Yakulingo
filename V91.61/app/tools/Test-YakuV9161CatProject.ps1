@@ -240,6 +240,12 @@ Chk ($indexText -match 'id="cat-progress-bar"') '進捗バーがある'
 # 触っただけのセグメントを「手直し」にしない。以前は離れるたびに保存して
 # いたので、一覧を上から見ていくだけで全部が手直し扱いになっていた。
 Chk ($appJsText.Contains("data-yaku-original")) '変更が無ければ保存しない（触っただけで手直しにしない）'
+Chk ($appJsText.Contains("yakuBindFileDropTarget(document.getElementById('cat-drop'), catFileInput)")) 'CAT のファイル欄へドロップとキーボード操作を結線する'
+Chk ($appJsText.Contains('aria-label="'' + rowNumber + ''行目の訳文"')) '動的な訳文欄に行ごとの読み上げ名がある'
+Chk ($appJsText.Contains("data-yaku-cat-loss")) '結合・解除ボタンが訳文消失の有無を持つ'
+Chk ($appJsText.Contains("window.confirm('結合すると、対象行の訳文が消えます。結合しますか？')")) '訳文がある行の結合前に確認する'
+Chk ($appJsText.Contains("window.confirm('解除すると、この行の訳文が消えます。解除しますか？')")) '訳文がある行の解除前に確認する'
+Chk ($cssText -match '--focus:\s*#5E6AD2') 'フォーカスリングは白地で見える不透明色を使う'
 
 # ---------------------------------------------------------------- 候補ペイン
 # CAT エディタの中核にあたる部分（利用者の指摘 2026-08-06）。
