@@ -884,10 +884,10 @@ function Parse-YakuV25PlainTranslationResponse {
         $fullText = ConvertFrom-YakuTextFullWidthAngle -Text $fullText
         $briefText = ConvertFrom-YakuTextFullWidthAngle -Text $briefText
         if (![string]::IsNullOrWhiteSpace($fullText) -and $fullText.Trim() -ne '...') {
-            $items += [pscustomobject]@{ Style='full'; Label='素直な訳'; Translation=$fullText; Explanation='' }
+            $items += [pscustomobject]@{ Style='full'; Label='一般の英語'; Translation=$fullText; Explanation='' }
         }
         if (![string]::IsNullOrWhiteSpace($briefText) -and $briefText.Trim() -ne '...') {
-            $items += [pscustomobject]@{ Style='brief'; Label='社内向け（短め）'; Translation=$briefText; Explanation='' }
+            $items += [pscustomobject]@{ Style='brief'; Label='社内の書き方'; Translation=$briefText; Explanation='' }
         }
     } else {
         $jpText = Get-YakuLabeledResponseField -Text $clean -Label 'JAPANESE_TEXT'
@@ -1223,7 +1223,7 @@ function Merge-YakuBatchTranslationResults {
     )
     $merged = @()
     if ($Direction -eq 'to_en') {
-        foreach ($spec in @(@{Style='full';Label='素直な訳'}, @{Style='brief';Label='社内向け（短め）'})) {
+        foreach ($spec in @(@{Style='full';Label='一般の英語'}, @{Style='brief';Label='社内の書き方'})) {
             $parts = New-Object System.Collections.Generic.List[string]
             foreach ($br in $BatchResults) {
                 $hit = @($br.Options | Where-Object { $_.Style -eq $spec.Style } | Select-Object -First 1)
@@ -1669,8 +1669,8 @@ function Invoke-YakuTextTranslationRequests {
 
     # 簡易翻訳でも電文体は出す（利用者の判断 2026-08-06）。
     # 並列にしてあるので、2つ作っても待ち時間はほとんど変わらない。
-    # 3並列。社内の書き方（ふつう・短く）と、開示資料の書き方（ふつう）。
-    # 開示資料に電文体は使わないので、published の短い版は作らない。
+    # 3並列。合わせ先で分ける。どこにも合わせない／社内の書き方／公表英文。
+    # 公表英文に電文体は使わないので、published の短い版は作らない。
     $modes = @('full','brief','published')
     $results = $null
     $mode2 = 'sequential'
@@ -1718,7 +1718,7 @@ function Invoke-YakuTextTranslationRequests {
             # 社内表記の完全訳と見分けが付かない。依頼の種類で印を付け直す。
             if ($thisMode -eq 'published') {
                 try { $o.Style = 'published' } catch {}
-                try { $o.Label = '公表向け' } catch {}
+                try { $o.Label = '公表英文を参考' } catch {}
             }
             [void]$options.Add($o)
         }

@@ -129,12 +129,11 @@ function Convert-YakuTextResultToHtml {
     # 「どちらを使うか」を読んで判断させることになり、選べない
     # （独立評価 2026-08-08）。主が1つあれば読む場所が決まる。
     #
-    # 既定は開示資料の書き方にする。間違いの重さが対称でないため。
-    # 公表資料に社内表記が混ざれば社外に出るが、社内資料が正式な書き方でも
-    # 冗長なだけで社内で止まる。初めて使う人にも ¥12.3 billion のほうが読める。
-    # 選んだ形は覚えるので、押し直すのは最初の1回だけになる。
+    # 主は「一般の英語」にする。どこにも合わせていない状態であり、
+    # 社内表記を持ち込まないので、社外へ出す文書に混ざる事故も起きない。
+    # 合わせ先がはっきりしている人は1回選べば、次からその形が主になる。
     $ordered = New-Object System.Collections.Generic.List[object]
-    foreach ($want in @('published', 'full', 'brief')) {
+    foreach ($want in @('full', 'published', 'brief')) {
         foreach ($o in $options) {
             $s = ''
             try { $s = [string]$o.Style } catch { $s = '' }

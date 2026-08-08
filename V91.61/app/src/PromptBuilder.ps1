@@ -549,10 +549,11 @@ function Get-YakuNumericRulesSection {
         [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
         # 表記の種類。3つ出すための軸である（利用者の整理 2026-08-08
         # 「普通の翻訳アプリならこう、社内向けならこう、公表向けならこう」）。
+        # 軸は「何に合わせるか」であって、出来の良し悪しではない。
         #
-        #   plain      普通の翻訳アプリが返すもの。社内の約束を何も持ち込まない
+        #   plain      どこにも合わせない。社内の約束を何も持ち込まない
         #   house      社内で使ってきた書き方。oku、括弧の負数、略語
-        #   published  開示資料の書き方。マツダの英文開示12冊を読んで決めた。
+        #   published  過去の公表英文に合わせる。マツダの英文開示12冊を読んで決めた。
         #              文章では円マークを付ける。負数は括弧を使わず
         #              "a decrease of ¥26.6 billion" と言葉で書く
         #              （¥を括弧で囲む形は1件も無かった）。略語は使わない
@@ -588,7 +589,10 @@ function Get-YakuNumericRulesSection {
         if ([string]$InputText -match '\[\[N\d+\]\]') {
             $plainRules += '- NUMBER PLACEHOLDERS. [[N1]], [[N2]] ... stand for redacted numbers. Copy each token character for character, exactly once, and never invent, merge, drop, or reorder them.'
         }
-        $plainRules += '- Write units the way the source writes them. Do not convert scales and do not introduce house shorthand.'
+        # 単位はふつうの英語で書く。桁をそのまま並べた 12,200,000,000 yen は
+        # 素直でも普通でもなく、ただ読めない（利用者の指摘 2026-08-08）。
+        $plainRules += '- Amount units: write yen amounts the way ordinary business English does: a yen sign, the figure, then billion or million. Example: [[N1]] oku -> ¥[[N1]] billion. Never write oku, k yen, or k units.'
+        $plainRules += '- The caller rescales the figure itself; you only choose the unit word and the yen sign. Keep the placeholder unchanged.'
         $plainRules += '- Do not abbreviate. Write terms spelled out.'
         return (@($plainRules) -join $nl)
     }
@@ -759,9 +763,10 @@ function New-YakuTextPrompt {
         # 呼び出し側でも方向を見て空にしている（Test-YakuCorpusReferenceApplicable）。
         corpus_section = [string]$CorpusSection
         numeric_rules = Get-YakuNumericRulesSection -InputText $InputText -Direction $direction -Notation $(
-            # full は素直な訳。社内の約束を持ち込まない。
-            # brief は社内向け。oku と略語を使う。
-            # published は開示資料の書き方。
+            # 3つは「何に合わせるか」で分かれる。
+            # full はどこにも合わせない。社内の約束を持ち込まない。
+            # brief は社内の書き方に合わせる。oku と略語を使う。
+            # published は公表英文に合わせる。
             switch ([string]$Mode) { 'published' { 'published' } 'full' { 'plain' } default { 'house' } })
         request_id = $RequestId
     }
