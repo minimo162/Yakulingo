@@ -44,6 +44,7 @@ Start-YakuLingo.ps1	crlf
 tools/Check-Encoding.ps1	crlf
 tools/Compare-ExcelFormulaIntegrity.ps1	crlf
 tools/Compare-YakuFormulas.ps1	lf
+tools/Compare-YakuTranslation.ps1	crlf
 tools/Copilot-Diagnostics.ps1	crlf
 tools/Create-Desktop-Shortcut.ps1	crlf
 tools/eval/Build-YakuEvalPrompts.ps1	crlf
