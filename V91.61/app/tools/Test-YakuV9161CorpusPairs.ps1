@@ -56,6 +56,27 @@ try {
     Chk ($hits.Count -eq 2) '複数当たる問い合わせで両方返す'
     Chk ($hits[0].Ja -eq '当社は電動化を進めます。') '短い文に当たったほうを先に出す'
 
+    Write-Host '日本語の原文から往復なしで引く' -ForegroundColor Cyan
+    # 検索語を Copilot に作らせると往復が1回増え、120回の制限を早く食う。
+    # 対訳は日本語側でも引けるので、原文から手元で語を取り出す。
+    $terms = @(Get-YakuJapaneseTerms -Text '当社グループは電動化の黎明期を迎え、生産設備等への投資を進めています。')
+    Chk ($terms -contains '電動化') '漢字の連なりを語として取る'
+    Chk ($terms -contains '生産設備') '複合名詞をひとまとまりで取る'
+    Chk ((@(Get-YakuJapaneseTerms -Text 'これはとてもよいものです')).Count -eq 0) 'ひらがなだけなら語は取れない'
+    Chk ((@(Get-YakuJapaneseTerms -Text '2027年3月期 第1四半期')).Count -eq 0) '期の言い方は落とす（どの資料にも出るので手がかりにならない）'
+    Chk ((@(Get-YakuJapaneseTerms -Text 'サプライチェーンの混乱')) -contains 'サプライチェーン') 'カタカナ語も取る'
+    $long = @(Get-YakuJapaneseTerms -Text '有形固定資産と資産の話')
+    Chk ($long.Count -gt 0 -and $long[0].Length -ge $long[-1].Length) '長い語を先に返す'
+
+    $byTerms = @(Find-YakuCorpusPairsByTerms -Dir $tmp -Text '当社は電動化の黎明期に向けた投資を進めます。' -Limit 3)
+    Chk ($byTerms.Count -ge 1) '原文の語で対訳が引ける'
+    Chk ((@($byTerms[0].Terms)).Count -ge 1) '何の語で当たったかを返す（根拠を画面に出せる）'
+    Chk ($byTerms[0].Ja -match '電動化') '当たった対の日本語側に語が含まれる'
+    Chk (@($byTerms | Where-Object { $_.Score -le 0 }).Count -eq 0) '当たらなかった対は返さない'
+    $none = @(Find-YakuCorpusPairsByTerms -Dir $tmp -Text 'これはとてもよいものです')
+    Chk ($none.Count -eq 0) '語が取れなければ空を返す（落ちない）'
+    Chk ((@(Find-YakuCorpusPairsByTerms -Dir (Join-Path $tmp 'no-such-dir') -Text '電動化')).Count -eq 0) 'コーパスが無くても落ちない'
+
     $hits = @(Find-YakuCorpusPairs -Dir $tmp -Query '電動化' -VerifiedOnly)
     Chk ($hits.Count -eq 1 -and $hits[0].Ja -match '黎明期') '裏取りの通った対だけに絞れる'
 

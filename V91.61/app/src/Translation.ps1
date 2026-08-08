@@ -683,21 +683,34 @@ function Restore-YakuMaskedTranslationOptions {
         if ($null -eq $o) { continue }
         try { $o | Add-Member -NotePropertyName 'MaskedTranslation' -NotePropertyValue ([string]$o.Translation) -Force } catch {}
     }
-    if ($null -eq $Map -or $Map.Count -eq 0) { return @($Options) }
+    # 数値と固有名詞は別々に有無を見る。ひとまとめに「マスクが無ければ帰る」と
+    # していたため、数字を含まない文（「毛籠社長が就任しました。」）では
+    # 固有名詞の復元まで飛ばされ、画面へ [[P1]] がそのまま出ていた
+    # （2026-08-08 に再現）。片方だけあるほうが普通である。
+    $hasNumeric = ($null -ne $Map -and $Map.Count -gt 0)
+    $hasProper = ($null -ne $ProperMap -and $ProperMap.Count -gt 0)
+    if (-not $hasNumeric -and -not $hasProper) { return @($Options) }
     foreach ($option in $Options) {
         $style = [string]$option.Style
         $label = [string]$option.Label
         $translated = [string]$option.Translation
-        $integrity = Test-YakuNumericMaskIntegrity -MaskedSource $MaskedSource -Translated $translated -Location ($Location + '-' + $style)
-        $restored = Restore-YakuNumericMask -Text $translated -Map $Map
-        # 原文に無い番号は実値が無い。残すと画面へ内部トークンが出る。
-        $leftover = @(Get-YakuNumericMaskTokens -Text $restored | Select-Object -Unique)
-        if ($leftover.Count -gt 0) {
-            foreach ($token in $leftover) { $restored = $restored.Replace([string]$token, '') }
-            $restored = [regex]::Replace($restored, '[ \t]{2,}', ' ')
+        $integrity = if ($hasNumeric) {
+            Test-YakuNumericMaskIntegrity -MaskedSource $MaskedSource -Translated $translated -Location ($Location + '-' + $style)
+        } else {
+            [pscustomobject]@{ Ok = $true; Detail = ''; Missing = @(); Duplicated = @(); Unexpected = @() }
+        }
+        $restored = $translated
+        if ($hasNumeric) {
+            $restored = Restore-YakuNumericMask -Text $restored -Map $Map
+            # 原文に無い番号は実値が無い。残すと画面へ内部トークンが出る。
+            $leftover = @(Get-YakuNumericMaskTokens -Text $restored | Select-Object -Unique)
+            if ($leftover.Count -gt 0) {
+                foreach ($token in $leftover) { $restored = $restored.Replace([string]$token, '') }
+                $restored = [regex]::Replace($restored, '[ \t]{2,}', ' ')
+            }
         }
         # 固有名詞を戻す。数値より後で構わない（記号が別なので衝突しない）。
-        if ($null -ne $ProperMap -and $ProperMap.Count -gt 0) {
+        if ($hasProper) {
             $pInt = Test-YakuProperNounMaskIntegrity -MaskedSource $MaskedSource -Translated $restored -Map $ProperMap
             if (-not [bool]$pInt.Ok -and $null -ne $Warnings) {
                 $lost = @(@($pInt.Missing) | ForEach-Object { [string]$ProperMap[[string]$_] })
@@ -1567,7 +1580,14 @@ function Invoke-YakuTextRevision {
     $requestId = [guid]::NewGuid().ToString('N')
     # 原文から同じ手順でマスク表を作り直す。割り当ては原文だけで決まるので、
     # 翻訳したときと同じトークンになり、現訳の[[N1]]とかみ合う。
-    $maskResult = New-YakuNumericMaskMap -Text $InputText -Root $Root -Direction $Direction -Location 'text-revise'
+    #
+    # 固有名詞のマスクも翻訳経路と同じ順序で掛ける。ここが抜けていたため、
+    # 直すたびに人名・法人名が素のまま Copilot へ出ていた。さらに現訳には
+    # [[P1]] が入っているのに復元へ渡していなかったので、直した訳文には
+    # [[P1]] がそのまま残っていた（2026-08-08 に再現）。
+    $properResult = New-YakuProperNounMaskMap -Text $InputText -Root $Root
+    $properMap = $properResult.Map
+    $maskResult = New-YakuNumericMaskMap -Text ([string]$properResult.Text) -Root $Root -Direction $Direction -Location 'text-revise'
     $sourceText = [string]$maskResult.Text
     $maskMap = $maskResult.Map
 
@@ -1594,7 +1614,7 @@ function Invoke-YakuTextRevision {
     if (Get-Command Convert-YakuBriefTranslationOptions -ErrorAction SilentlyContinue) {
         $options = @(Convert-YakuBriefTranslationOptions -Options $options)
     }
-    $options = @(Restore-YakuMaskedTranslationOptions -Options $options -MaskedSource $sourceText -Map $maskMap -Warnings $Warnings -Location 'text-revise')
+    $options = @(Restore-YakuMaskedTranslationOptions -Options $options -MaskedSource $sourceText -Map $maskMap -ProperMap $properMap -Warnings $Warnings -Location 'text-revise')
     return [pscustomobject]@{
         Direction   = $Direction
         Options     = $options

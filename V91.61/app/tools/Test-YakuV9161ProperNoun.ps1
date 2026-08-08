@@ -86,6 +86,33 @@ Chk ($pAt -gt 0 -and $nAt -gt 0 -and $pAt -lt $nAt) '固有名詞を数値より
 $pb = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'PromptBuilder.ps1') -Raw -Encoding UTF8
 Chk ($pb -match 'PROPER NOUN PLACEHOLDERS') '記号の扱いをプロンプトで説明する'
 
+Write-Host '数値が無い文でも固有名詞を戻す' -ForegroundColor Cyan
+# 「毛籠社長が就任しました。」には数字が1つも無い。数値マスクが空になるが、
+# それを理由に復元ごと打ち切っていたため、画面へ [[P1]] が出ていた
+# （2026-08-08 に再現）。片方だけあるほうが普通である。
+foreach ($mod in @('Paths.ps1', 'Runtime.ps1', 'Settings.ps1', 'PromptBuilder.ps1', 'Translation.ps1')) {
+    . (Join-Path (Join-Path $root 'src') $mod)
+}
+function NewOpt { param([string]$Text) return [pscustomobject]@{ Style = 'full'; Label = 'そのまま'; Translation = $Text } }
+
+$onlyProper = @(Restore-YakuMaskedTranslationOptions -Options @(NewOpt '[[P1]] was appointed president.') -MaskedSource '[[P1]]が社長に就任しました。' -Map @{} -ProperMap @{ '[[P1]]' = 'Moro' } -Warnings $null -Location 'test')
+Chk ($onlyProper[0].Translation -eq 'Moro was appointed president.') '数値マスクが空でも固有名詞を戻す'
+Chk ($onlyProper[0].Translation -notmatch '\[\[P\d+\]\]') '記号が画面へ出ない'
+Chk ($onlyProper[0].MaskedTranslation -match '\[\[P1\]\]') 'マスク後の姿は控えておく（修正の依頼で使う）'
+
+$both = @(Restore-YakuMaskedTranslationOptions -Options @(NewOpt '[[P1]] reported [[N1]] oku.') -MaskedSource '[[P1]]は[[N1]] okuと発表した。' -Map @{ '[[N1]]' = '11,577' } -ProperMap @{ '[[P1]]' = 'Moro' } -Warnings $null -Location 'test')
+Chk ($both[0].Translation -eq 'Moro reported 11,577 oku.') '両方あるときは両方戻す'
+
+$onlyNum = @(Restore-YakuMaskedTranslationOptions -Options @(NewOpt 'Sales were [[N1]] oku.') -MaskedSource '売上高は[[N1]] okuでした。' -Map @{ '[[N1]]' = '11,577' } -ProperMap $null -Warnings $null -Location 'test')
+Chk ($onlyNum[0].Translation -eq 'Sales were 11,577 oku.') '固有名詞が無いときも数値は戻る'
+
+Write-Host '直す経路も固有名詞を通す' -ForegroundColor Cyan
+# 直すたびに人名が素のまま外へ出ていた。翻訳経路と同じ順序で掛ける。
+$rev = $tr.IndexOf('text-revise')
+$revBlock = $tr.Substring([Math]::Max(0, $rev - 1200), 1600)
+Chk ($revBlock -match 'New-YakuProperNounMaskMap') '直す経路も原文を固有名詞マスクしてから送る'
+Chk ($tr -match "Map \`$maskMap -ProperMap \`$properMap -Warnings \`$Warnings -Location 'text-revise'") '直した訳文の復元にも固有名詞の表を渡す'
+
 if ($script:fail -gt 0) {
     Write-Host "V91.61 proper noun regression failed. failures=$script:fail" -ForegroundColor Red
     exit 1

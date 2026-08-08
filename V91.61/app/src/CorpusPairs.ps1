@@ -147,6 +147,110 @@ function Find-YakuCorpusPairs {
     return @(@($hits.ToArray()) | Sort-Object -Property Score -Descending | Select-Object -First $Limit)
 }
 
+function Get-YakuJapaneseTerms {
+    <#
+      日本語の文から、検索に使える語を手元で取り出す。
+
+      形態素解析は入れない。財務・開示の文で拾いたいのは「売上高」「為替影響」
+      「有形固定資産」「サプライチェーン」のような複合名詞であり、これらは
+      漢字の連なりとカタカナの連なりとして素直に取れる。助詞・活用語尾は
+      ひらがななので、そこで自然に切れる。
+
+      なぜ手元で作るか。これまで検索語は Copilot に作らせていた。往復が1回
+      増えるうえ、Copilot は120回ほどで使えなくなる。対訳は日本語側でも
+      引けるので、日本語の原文から直接引けば往復は増えない
+      （利用者の指摘 2026-08-08）。
+
+      長い語を先に返す。「有形固定資産」が当たるなら「資産」は要らない。
+    #>
+    param(
+        [AllowNull()][string]$Text,
+        [int]$Limit = 12,
+        [int]$MinKanji = 2,
+        [int]$MinKatakana = 3
+    )
+    $s = [string]$Text
+    if ([string]::IsNullOrWhiteSpace($s)) { return @() }
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+    $terms = New-Object System.Collections.Generic.List[string]
+    # 漢字の連なり。数字（漢数字を含む）だけの語は落とす。年度や期は
+    # どの資料にも出るので、当たっても言い回しの手がかりにならない。
+    foreach ($m in [regex]::Matches($s, '[\p{IsCJKUnifiedIdeographs}]{' + [string]$MinKanji + ',}')) {
+        $t = [string]$m.Value
+        # 「四半期」「第151期」「2026年度」のような期の言い方は、どの資料にも
+        # 出るので当たっても手がかりにならない。半 を入れて四半期を落とす。
+        if ($t -match '^[一二三四五六七八九十百千万億兆半第期年月日度前後同]+$') { continue }
+        # 末尾の「等」「他」は落とす。原文が「生産設備等」でコーパスが
+        # 「生産設備」だと、部分一致では当たらない。3文字以上のときだけ削る。
+        # 「均等」「其他」のような2文字語まで削ると、語が消えてしまう。
+        if ($t.Length -ge 3 -and ($t.EndsWith('等') -or $t.EndsWith('他'))) {
+            $t = $t.Substring(0, $t.Length - 1)
+        }
+        if ($seen.Add($t)) { [void]$terms.Add($t) }
+    }
+    # カタカナの連なり。長音記号も語の一部として含める。
+    foreach ($m in [regex]::Matches($s, '[\p{IsKatakana}ー]{' + [string]$MinKatakana + ',}')) {
+        $t = ([string]$m.Value).Trim('ー')
+        if ($t.Length -lt $MinKatakana) { continue }
+        if ($seen.Add($t)) { [void]$terms.Add($t) }
+    }
+    return @(@($terms.ToArray()) | Sort-Object -Property Length -Descending | Select-Object -First $Limit)
+}
+
+function Find-YakuCorpusPairsByTerms {
+    <#
+      日本語の原文に近い対訳を、往復なしで引く。
+
+      Get-YakuJapaneseTerms で語を取り出し、日本語側にその語を含む対を集めて、
+      当たった語の文字数の合計で並べる。語数ではなく文字数で数えるのは、
+      「有形固定資産」1語のほうが「利益」「増加」2語より手がかりが強いため。
+
+      当たった語を Terms として返す。何を根拠に引いてきた文例なのかを
+      画面に出せないと、参考にしたと名乗るだけになる。
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Dir,
+        [Parameter(Mandatory = $true)][string]$Text,
+        [AllowNull()][string[]]$Databases,
+        [int]$Limit = 3,
+        [int]$TermLimit = 12
+    )
+    if (-not (Test-Path -LiteralPath $Dir -PathType Container)) { return @() }
+    $terms = @(Get-YakuJapaneseTerms -Text $Text -Limit $TermLimit)
+    if ($terms.Count -le 0) { return @() }
+    $dbs = @($Databases)
+    if ($dbs.Count -eq 0) {
+        $dbs = @(Get-ChildItem -LiteralPath $Dir -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+    }
+    $hits = New-Object System.Collections.Generic.List[object]
+    foreach ($db in $dbs) {
+        foreach ($p in @(Read-YakuCorpusPairs -Dir $Dir -Database $db)) {
+            $ja = [string]$p.ja
+            $en = [string]$p.en
+            if ([string]::IsNullOrWhiteSpace($ja) -or [string]::IsNullOrWhiteSpace($en)) { continue }
+            $matched = New-Object System.Collections.Generic.List[string]
+            $score = 0
+            foreach ($t in $terms) {
+                if ($ja.IndexOf($t, [StringComparison]::Ordinal) -ge 0) {
+                    [void]$matched.Add($t)
+                    $score += $t.Length
+                }
+            }
+            if ($score -le 0) { continue }
+            [void]$hits.Add([pscustomobject]@{
+                    Database = [string]$p.database
+                    Source   = [string]$p.source
+                    Ja       = $ja
+                    En       = $en
+                    Verified = [bool]$p.verified
+                    Terms    = @($matched.ToArray())
+                    Score    = [int]$score
+                })
+        }
+    }
+    return @(@($hits.ToArray()) | Sort-Object -Property Score -Descending | Select-Object -First $Limit)
+}
+
 function Import-YakuCorpusPairsFromTexts {
     <#
       日英ひと組の本文から対訳を作って貯める。資料を取り込む口の本体。
