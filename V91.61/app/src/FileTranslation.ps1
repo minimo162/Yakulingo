@@ -51,6 +51,40 @@ function Set-YakuFileTranslationProgress {
 }
 
 
+function Get-YakuFileRemainingHint {
+    <#
+      残りどれくらいかを言葉で返す。
+
+      数十分かかる処理なのに、これまで所要の予告も残り時間も出していなかった。
+      利用者は「進んでいるのか、止まっているのか」を推測するしかない。
+      実測（ここまでにかかった時間 ÷ 済んだ回数）から見当を出す。
+
+      1回目は材料が無いので何も言わない。分からないときに数字を出すより、
+      黙っているほうがよい。
+    #>
+    param(
+        [Parameter(Mandatory = $true)]$Context,
+        [Parameter(Mandatory = $true)][int]$Current,
+        [Parameter(Mandatory = $true)][int]$Total
+    )
+    if ($Current -le 1 -or $Total -le $Current) { return '' }
+    try {
+        $started = $Context['StartedAt']
+        if (-not $started) { return '' }
+        $elapsed = ((Get-Date) - [datetime]$started).TotalSeconds
+        if ($elapsed -le 0) { return '' }
+        $perBatch = $elapsed / [double]($Current - 1)
+        $remain = $perBatch * ($Total - $Current + 1)
+        if ($remain -lt 90) { return '残り1分ほどです' }
+        $minutes = [int][Math]::Ceiling($remain / 60)
+        # ぴったりの数字は出さない。外れたときに嘘になる。
+        if ($minutes -le 5) { return '残り5分ほどです' }
+        if ($minutes -le 15) { return '残り10〜15分ほどです' }
+        if ($minutes -le 30) { return '残り20〜30分ほどです' }
+        return ('残り ' + [int]([Math]::Ceiling($minutes / 10.0) * 10) + ' 分ほどです')
+    } catch { return '' }
+}
+
 function Get-YakuFileUniqueProgressPercent {
     param([Parameter(Mandatory=$true)][hashtable]$Context)
     $uniqueTotal = 1
@@ -1283,11 +1317,16 @@ function Invoke-YakuFileTranslationItems {
             $total = $ord
             $Context['TotalBatches'] = $total
         }
+        if (-not $Context.ContainsKey('StartedAt')) { $Context['StartedAt'] = Get-Date }
         $pct = Get-YakuFileUniqueProgressPercent -Context $Context
         $cacheHits = 0
         try { $cacheHits = [int]$Context['CacheHits'] } catch { $cacheHits = 0 }
         $phaseLabel = if ($Reason -eq 'supplement') { '翻訳中（補完）' } else { '翻訳中' }
-        $detail = "Batch $ord/$total, $($batch.CharCount) chars, cache hits: $cacheHits"
+        # 数十分のあいだ、利用者が見つづける唯一の行になる。日本語で書く。
+        # 「cache hits」は「前回の結果を使い回した件数」のこと。
+        $detail = "$total 回のうち $ord 回目を翻訳中（$($batch.CharCount)字）"
+        if ($cacheHits -gt 0) { $detail += "。$cacheHits 件は前回の結果を再利用しました" }
+        $detail += "。" + (Get-YakuFileRemainingHint -Context $Context -Current $ord -Total $total)
         Set-YakuFileTranslationProgress -ProgressState $ProgressState -Phase 'translate' -Label $phaseLabel -Progress $pct -Detail $detail -Fields (Get-YakuFileUniqueProgressFields -Context $Context -BatchCurrent $ord -BatchTotal $total)
         if ($ProgressState) {
             $nextPct = [Math]::Min(90, [Math]::Max($pct + 1, [int](8 + [Math]::Floor((($Context['TranslatedSoFar'] + @($batch.Items).Count) / [double][Math]::Max(1, $Context['UniqueTotal'])) * 82))))
@@ -1484,7 +1523,10 @@ function Invoke-YakuFileTranslationItems {
         $doneFields = Get-YakuFileUniqueProgressFields -Context $Context -BatchCurrent $ord -BatchTotal $total
         $uniqueDone = [int]$doneFields['unique_done']
         $uniqueTotal = [int]$doneFields['unique_total']
-        $doneDetail = "Batch $ord/$total 完了, unique: $uniqueDone/$uniqueTotal, cache hits: $cacheHits"
+        $doneDetail = "$total 回のうち $ord 回目が終わりました（$uniqueDone / $uniqueTotal 件）"
+        if ($cacheHits -gt 0) { $doneDetail += "。$cacheHits 件は前回の結果を再利用" }
+        $hint = Get-YakuFileRemainingHint -Context $Context -Current ($ord + 1) -Total $total
+        if ($hint) { $doneDetail += "。$hint" }
         Set-YakuFileTranslationProgress -ProgressState $ProgressState -Phase 'translate' -Label $phaseLabel -Progress $donePct -Detail $doneDetail -Fields $doneFields
     }
     return $map

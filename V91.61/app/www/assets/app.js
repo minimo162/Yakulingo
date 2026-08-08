@@ -1350,6 +1350,20 @@
       event.preventDefault();
       event.returnValue = '';
     });
+    // 既定の1ボタン。用語集で置換してから、残りを翻訳する。
+    // 文例は入れない。往復が1回増えて重く、いつも要るものでもない。
+    // 使いたい人は「段階ごとに実行する」から押せる。
+    var catRun = document.getElementById('cat-run-button');
+    if (catRun) catRun.addEventListener('click', function () {
+      if (!yakuCatProjectId) { yakuCatSetStatus('先に原文を取り込んでください。'); return; }
+      yakuCatSetStatus('用語集で置換しています…');
+      yakuCatPost('glossary', { id: yakuCatProjectId }).then(function (data) {
+        yakuCatRender(data);
+        yakuCatTranslate('translate');
+      }).catch(function (error) {
+        yakuCatSetStatus('置換できませんでした: ' + (error && error.message ? error.message : ''));
+      });
+    });
     var catGlossary = document.getElementById('cat-glossary-button');
     if (catGlossary) catGlossary.addEventListener('click', yakuCatGlossary);
     var catTranslate = document.getElementById('cat-translate-button');

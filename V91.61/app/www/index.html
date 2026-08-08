@@ -18,7 +18,7 @@
         <span class="version-label">ECM Translation</span>
       </div>
       <div id="copilot-status" class="status" aria-live="polite">
-        <span class="status-dot warn"></span><span>Preparing</span>
+        <span class="status-dot warn"></span><span>準備中</span>
       </div>
     </header>
 
@@ -147,9 +147,21 @@
           分けておけば「検索だけ」「翻訳だけ」「検索してから翻訳」を選べる。
         -->
         <div id="cat-actions" class="cat-actions" hidden>
-          <button id="cat-glossary-button" type="button" class="secondary-button">用語集で置換</button>
-          <button id="cat-corpus-button" type="button" class="secondary-button">文例を検索</button>
-          <button id="cat-translate-button" type="button" class="secondary-button">残りをCopilotで翻訳</button>
+          <!--
+            既定は1つのボタンにする。取り込んだ直後に4つ並んでいると、どれを
+            どの順に押すのか、押さないと何が起きないのかが分からない。
+            順番（用語集 → 文例 → 翻訳）はこちらが知っているので、こちらが決める。
+            分けて使いたい人のために、段階ごとの押し方は下に畳んで残す。
+          -->
+          <button id="cat-run-button" type="button">訳す</button>
+          <details class="cat-steps">
+            <summary class="muted">段階ごとに実行する</summary>
+            <div class="cat-actions-detail">
+              <button id="cat-glossary-button" type="button" class="secondary-button">用語集で置換</button>
+              <button id="cat-corpus-button" type="button" class="secondary-button">文例を検索</button>
+              <button id="cat-translate-button" type="button" class="secondary-button">残りをCopilotで翻訳</button>
+            </div>
+          </details>
           <!--
             確かめた対訳を文例として貯める。突き合わせたときだけ出す。
             機械が作った対応をそのまま貯めず、一度グリッドで見てから貯める。
