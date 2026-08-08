@@ -189,7 +189,15 @@ function Get-YakuCorpusReference {
         # 検索語を作らせる依頼にも本文を送る。翻訳と同じくマスクしてから送る。
         # ここを素通しにすると、V91.60 の「数値を外部へ出さない」保証が
         # この経路だけ抜ける。マスク表は使わないので捨てる。
-        $masked = [string](New-YakuNumericMaskMap -Text $InputText -Root $Root -Direction 'to_en' -Location 'corpus-query').Text
+        #
+        # 固有名詞も同じ順序で伏せる（数値より先）。この経路は原文をそのまま
+        # 送るので、人名・法人名だけが素で出ていた。戻す必要は無い。
+        # 使うのは返ってきた検索語だけで、本文は返らない。
+        $properText = $InputText
+        if (Get-Command New-YakuProperNounMaskMap -ErrorAction SilentlyContinue) {
+            $properText = [string](New-YakuProperNounMaskMap -Text $InputText -Root $Root).Text
+        }
+        $masked = [string](New-YakuNumericMaskMap -Text $properText -Root $Root -Direction 'to_en' -Location 'corpus-query').Text
         $requestId = [guid]::NewGuid().ToString('N')
         $prompt = New-YakuCorpusQueryPrompt -Root $Root -InputText $masked -RequestId $requestId
         $sw = [System.Diagnostics.Stopwatch]::StartNew()

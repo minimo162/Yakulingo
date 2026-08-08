@@ -1398,6 +1398,15 @@ function Invoke-YakuSingleTranslationBatch {
             $lastError = $_
             $errorMessage = [string]$_.Exception.Message
             $attemptErrorCode = Get-YakuTranslationAttemptErrorCode -Message $errorMessage
+            # 使いすぎに見える失敗は、もう一度頼んでも同じである。
+            # リトライは残りの回数を削るだけで害しかない
+            # （独立評価の指摘 2026-08-08）。ここで打ち切る。
+            if ((Get-Command Test-YakuCopilotLimitError -ErrorAction SilentlyContinue) -and (Test-YakuCopilotLimitError -Message $errorMessage)) {
+                $used = 0
+                try { $used = Get-YakuCopilotCallCount } catch { $used = 0 }
+                try { Write-YakuLog "Copilot usage limit suspected. attempt=$attempt/$maxAttempts callsInWindow=$used retry=stop" 'WARN' } catch {}
+                throw
+            }
             if ($errorMessage -match 'COPILOT_SILENT_START_TIMEOUT') {
                 $silentStartFailures++
                 try { Write-YakuLog "Copilot silent start retry. attempt=$attempt/$maxAttempts silentFailures=$silentStartFailures" 'WARN' } catch {}
@@ -1486,7 +1495,7 @@ function Invoke-YakuTextRequestsInParallel {
         param($Root, $InputText, $SettingsJson, $Direction, $StyleReference, $CorpusSection, $Mode, $Slot, $DataDir)
         $ErrorActionPreference = 'Stop'
         if (-not [string]::IsNullOrWhiteSpace($DataDir)) { $env:YAKULINGO_DATA_DIR = $DataDir }
-        foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','ProperNoun.ps1','Translation.ps1','BriefStyle.ps1')) {
+        foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotBudget.ps1','CopilotClient.ps1','ProperNoun.ps1','Translation.ps1','BriefStyle.ps1')) {
             . (Join-Path $Root ('src\' + $n))
         }
         Set-YakuCopilotSlot -Slot $Slot

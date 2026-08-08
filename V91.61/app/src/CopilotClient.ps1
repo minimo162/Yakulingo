@@ -4630,6 +4630,14 @@ function Invoke-YakuCopilotPrompt {
         return (Clean-YakuCopilotAnswer -Text $mock -RequestId '')
     }
 
+    # 実際に送る直前で1回だけ数える。模擬経路（YAKULINGO_MOCK）は数えない。
+    # 数えていなかったため、制限に当たったのかこちらの不具合かを切り分ける
+    # 手段が無かった（独立評価の指摘 2026-08-08）。
+    # CopilotBudget.ps1 を読み込んでいない経路でも止めない。
+    if (Get-Command Add-YakuCopilotCall -ErrorAction SilentlyContinue) {
+        try { Write-YakuCopilotCallLog -Count (Add-YakuCopilotCall) } catch {}
+    }
+
     $port = Get-YakuCdpPort -Settings $Settings
     $copilotUrl = Get-YakuCopilotUrl -Settings $Settings
     if (-not (Test-YakuCopilotUrl -Url $copilotUrl)) { throw 'COPILOT_URL_REJECTED: 承認済みのMicrosoft 365 Copilot URLを選択してください。' }

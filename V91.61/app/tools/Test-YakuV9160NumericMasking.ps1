@@ -614,6 +614,76 @@ $rSend = $reviseFn.IndexOf('Invoke-YakuCopilotPrompt')
 Assert-YakuMask ($rMask -ge 0 -and $rSend -ge 0 -and $rMask -lt $rSend) '修正の経路もマスクしてから送っている'
 Assert-YakuMask ($reviseFn -match "Location 'text-revise'") '修正の経路にも経路名が残る'
 
+# ---------------------------------------------------------------------------
+# 経路ごとの統制を、経路を足したら必ず落ちる形にする。
+#
+# これまでの確認は経路ごとに手で書いていた。だから経路が増えるたびに
+# 書き忘れ、同じ抜け方を3回した（CAT の数値、修正の固有名詞、
+# CAT/ファイル/コーパス検索の固有名詞）。表に載っていない送信経路が
+# 現れたら落ちる形にして、手で思い出す話をやめる。
+Write-Host '送信経路ごとの統制（表に無い経路が現れたら落ちる）' -ForegroundColor Cyan
+
+# 送信経路と、その経路に要るもの。
+#   Numeric  数値マスクを通してから送る
+#   Proper   固有名詞マスクを通してから送る
+# Alignment は AlignMask.ps1 の破壊的マスクを使う（戻さない経路なので別物）。
+$sendingPaths = @(
+    @{ File = 'Translation.ps1';     Numeric = 'New-YakuNumericMaskMap'; Proper = 'New-YakuProperNounMaskMap' }
+    @{ File = 'FileTranslation.ps1'; Numeric = 'New-YakuNumericMaskMap'; Proper = 'New-YakuProperNounMaskMap' }
+    @{ File = 'CatProject.ps1';      Numeric = 'New-YakuNumericMaskMap'; Proper = 'New-YakuProperNounMaskMap' }
+    @{ File = 'CorpusReference.ps1'; Numeric = 'New-YakuNumericMaskMap'; Proper = 'New-YakuProperNounMaskMap' }
+    @{ File = 'Alignment.ps1';       Numeric = 'Protect-YakuAlignmentLines'; Proper = '' }
+)
+# 中継そのもの。ここは送る側ではないので統制の対象にしない。
+$transportOnly = @('CopilotClient.ps1', 'ProperNoun.ps1')
+
+$listed = @(@($sendingPaths | ForEach-Object { [string]$_.File }) + $transportOnly)
+$unlisted = @(@($callSites | Select-Object -Unique) | Where-Object { $_ -notin $listed })
+Assert-YakuMask ($unlisted.Count -eq 0) ('表に無い送信経路が増えていない: ' + (@($unlisted) -join ','))
+
+foreach ($p in $sendingPaths) {
+    $file = [string]$p.File
+    $src = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') $file))
+    # ファイル全体での出現位置で順序を見てはいけない。関数の定義そのものや、
+    # 別の呼び出し元を拾って、通ったり落ちたりする（2026-08-08 に踏んだ）。
+    # ここで見るのは「その経路にマスクがあるか」だけにする。
+    # 順序は、対になった呼び出しの近さで見る（下）。
+    Assert-YakuMask ($src -match [regex]::Escape([string]$p.Numeric)) ($file + ': 数値マスクを呼ぶ')
+    if (-not [string]::IsNullOrEmpty([string]$p.Proper)) {
+        Assert-YakuMask ($src -match [regex]::Escape([string]$p.Proper)) ($file + ': 固有名詞マスクを呼ぶ')
+        # 住所の全角数字を数値マスクに取られないよう、固有名詞が先。
+        # 対になっているかは「固有名詞マスクの直後に数値マスクが来る」で見る。
+        # 離れた場所の出現と取り違えないよう、窓を狭く取る。
+        $paired = $false
+        foreach ($m in [regex]::Matches($src, [regex]::Escape([string]$p.Proper))) {
+            $tail = $src.Substring($m.Index, [Math]::Min(800, $src.Length - $m.Index))
+            if ($tail -match [regex]::Escape([string]$p.Numeric)) { $paired = $true; break }
+        }
+        Assert-YakuMask $paired ($file + ': 固有名詞を伏せた直後に数値を伏せる')
+    }
+}
+
+Write-Host 'Copilot の呼び出し回数を数える' -ForegroundColor Cyan
+# 120回ほどで応答しなくなるのに、回数を1度も数えていなかった。
+# 数えていないと、制限に当たったのかこちらの不具合かを切り分けられない。
+$clientSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CopilotClient.ps1'))
+Assert-YakuMask ($clientSrc -match 'Add-YakuCopilotCall') '送信のたびに回数を記録する'
+$countAt = $clientSrc.IndexOf('Add-YakuCopilotCall')
+$mockAt = $clientSrc.IndexOf("YAKULINGO_MOCK -eq '1'")
+Assert-YakuMask ($mockAt -ge 0 -and $mockAt -lt $countAt) '模擬経路は数えない（回帰テストで数が増えない）'
+$budgetSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CopilotBudget.ps1'))
+Assert-YakuMask ($budgetSrc -notmatch 'Prompt|Translation') '記録するのは時刻だけ（本文を残さない）'
+# 使いすぎに見える失敗をリトライすると、残りをさらに削る。
+Assert-YakuMask ($translationSrc -match 'Test-YakuCopilotLimitError') '制限らしい失敗ではリトライを止める'
+# 順序はリトライの catch の中だけを見る。ファイル全体で位置を比べると、
+# 無関係な場所の同じ語を拾う。
+$catchAt = $translationSrc.IndexOf('$attemptErrorCode = Get-YakuTranslationAttemptErrorCode')
+Assert-YakuMask ($catchAt -ge 0) 'リトライの判定箇所が見つかる'
+$catchWindow = $translationSrc.Substring($catchAt, [Math]::Min(1200, $translationSrc.Length - $catchAt))
+$limitAt = $catchWindow.IndexOf('Test-YakuCopilotLimitError')
+$silentAt = $catchWindow.IndexOf('COPILOT_SILENT_START_TIMEOUT')
+Assert-YakuMask ($limitAt -ge 0 -and $silentAt -ge 0 -and $limitAt -lt $silentAt) '打ち切りの判定は他の再試行より先に見る'
+
 if ($script:Failures -gt 0) {
     Write-Host "V91.60 numeric masking test failed. failures=$script:Failures" -ForegroundColor Red
     exit 1

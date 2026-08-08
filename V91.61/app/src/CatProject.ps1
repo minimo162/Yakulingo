@@ -658,38 +658,78 @@ function Invoke-YakuCatCopilotPass {
     # 高い作業（公表前の財務情報の英訳）が、最も無防備な経路を通っていた。
     #
     # 完全一致置換のあとにマスクする。先にマスクすると見出し語と一致しない。
+    #
+    # 固有名詞も同じ場所で伏せる。数値より先に掛ける（住所の全角数字を
+    # 数値マスクに取られないため）。この経路には固有名詞マスクが無く、
+    # 人名・法人名が素のまま Copilot へ出ていた（独立評価の指摘、2026-08-08）。
+    # 数値のときとまったく同じ抜け方をしている。
     $maskedItems = 0
+    $properItems = 0
     foreach ($item in @($items.ToArray())) {
-        $maskResult = New-YakuNumericMaskMap -Text ([string]$item.Text) -Root $Root -Direction ([string]$Project.Direction) -Location ("cat-ID-" + [string]$item.Index)
+        $text = [string]$item.Text
+        $properMap = $null
+        if (Get-Command New-YakuProperNounMaskMap -ErrorAction SilentlyContinue) {
+            $properResult = New-YakuProperNounMaskMap -Text $text -Root $Root
+            $properMap = $properResult.Map
+            $text = [string]$properResult.Text
+            if ($null -ne $properMap -and $properMap.Count -gt 0) { $properItems++ }
+        }
+        $maskResult = New-YakuNumericMaskMap -Text $text -Root $Root -Direction ([string]$Project.Direction) -Location ("cat-ID-" + [string]$item.Index)
+        $item | Add-Member -NotePropertyName ProperMaskMap -NotePropertyValue $properMap -Force
         $item | Add-Member -NotePropertyName NumericMaskMap -NotePropertyValue $maskResult.Map -Force
         $item | Add-Member -NotePropertyName MaskedText -NotePropertyValue ([string]$maskResult.Text) -Force
         $item.Text = [string]$maskResult.Text
         if ([int]$maskResult.MaskedCount -gt 0) { $maskedItems++ }
     }
-    try { Write-YakuLog "CAT numeric masking. items=$(@($items.ToArray()).Count) maskedItems=$maskedItems" 'INFO' } catch {}
+    try { Write-YakuLog "CAT masking. items=$(@($items.ToArray()).Count) maskedItems=$maskedItems properItems=$properItems" 'INFO' } catch {}
 
     $map = Invoke-YakuFileTranslationItems -Root $Root -Items @($items.ToArray()) -Settings $Settings `
         -Direction ([string]$Project.Direction) -MaxChars $maxChars -Warnings $Warnings `
         -ProgressState $ProgressState -Context $context
 
-    # 訳文の数値を戻す。個数が合わなければ警告する。無言で数値が消えるのを避ける。
+    # 訳文の数値と固有名詞を戻す。個数が合わなければ警告する。
+    # 無言で数値や人名が消えるのを避ける。
+    #
+    # 数値と固有名詞は別々に有無を見る。ひとまとめに「マスクが無ければ次へ」と
+    # すると、数字を含まない行（「毛籠社長」）で固有名詞が戻らず、
+    # 画面へ [[P1]] が出る。簡易翻訳側で実際に起きていた形である。
     foreach ($item in @($items.ToArray())) {
         $idx = [int]$item.Index
         if (-not $map.ContainsKey($idx)) { continue }
         $maskMap = $null
         try { $maskMap = $item.NumericMaskMap } catch { $maskMap = $null }
-        if ($null -eq $maskMap -or $maskMap.Count -eq 0) { continue }
+        $properMap = $null
+        try { $properMap = $item.ProperMaskMap } catch { $properMap = $null }
+        $hasNumeric = ($null -ne $maskMap -and $maskMap.Count -gt 0)
+        $hasProper = ($null -ne $properMap -and $properMap.Count -gt 0)
+        if (-not $hasNumeric -and -not $hasProper) { continue }
         $translated = [string]$map[$idx]
-        try {
-            $integrity = Test-YakuNumericMaskIntegrity -MaskedSource ([string]$item.MaskedText) -Translated $translated -Location ("cat-ID-" + [string]$idx)
-            if (-not [bool]$integrity.Ok) {
-                Add-YakuWarning -Warnings $Warnings -Location ("ID $idx") -Category 'numeric-mask-integrity' `
-                    -Details @{ Detail = [string]$integrity.Detail } `
-                    -Message "数値の個数が原文と一致しません。該当箇所の数値を必ずご確認ください。($([string]$integrity.Detail))"
-            }
-        } catch {}
-        $map[$idx] = Restore-YakuNumericMask -Text $translated -Map $maskMap
-        try { $item.Text = Restore-YakuNumericMask -Text ([string]$item.Text) -Map $maskMap } catch {}
+        if ($hasNumeric) {
+            try {
+                $integrity = Test-YakuNumericMaskIntegrity -MaskedSource ([string]$item.MaskedText) -Translated $translated -Location ("cat-ID-" + [string]$idx)
+                if (-not [bool]$integrity.Ok) {
+                    Add-YakuWarning -Warnings $Warnings -Location ("ID $idx") -Category 'numeric-mask-integrity' `
+                        -Details @{ Detail = [string]$integrity.Detail } `
+                        -Message "数値の個数が原文と一致しません。該当箇所の数値を必ずご確認ください。($([string]$integrity.Detail))"
+                }
+            } catch {}
+            $translated = Restore-YakuNumericMask -Text $translated -Map $maskMap
+            try { $item.Text = Restore-YakuNumericMask -Text ([string]$item.Text) -Map $maskMap } catch {}
+        }
+        if ($hasProper) {
+            try {
+                $pInt = Test-YakuProperNounMaskIntegrity -MaskedSource ([string]$item.MaskedText) -Translated $translated -Map $properMap
+                if (-not [bool]$pInt.Ok) {
+                    $lost = @(@($pInt.Missing) | ForEach-Object { [string]$properMap[[string]$_] })
+                    Add-YakuWarning -Warnings $Warnings -Location ("ID $idx") -Category 'proper-noun-dropped' `
+                        -Details @{ Missing = @($pInt.Missing) } `
+                        -Message ("固有名詞が訳文から抜けています: " + (@($lost) -join '、') + "。必ずご確認ください。")
+                }
+            } catch {}
+            $translated = Restore-YakuProperNounMask -Text $translated -Map $properMap
+            try { $item.Text = Restore-YakuProperNounMask -Text ([string]$item.Text) -Map $properMap } catch {}
+        }
+        $map[$idx] = $translated
     }
 
     $filled = 0

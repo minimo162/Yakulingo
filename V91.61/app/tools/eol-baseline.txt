@@ -16,6 +16,7 @@ src/BriefStyle.ps1	lf
 src/CatProject.ps1	crlf
 src/CellAlign.ps1	crlf
 src/CellSegments.ps1	crlf
+src/CopilotBudget.ps1	crlf
 src/CopilotClient.ps1	crlf
 src/Corpus.ps1	lf
 src/CorpusPairs.ps1	crlf

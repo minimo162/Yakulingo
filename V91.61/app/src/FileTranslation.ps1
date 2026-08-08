@@ -1726,16 +1726,29 @@ function Invoke-YakuFileTranslation {
     # 突き合わせるため。先にマスクすると一致しなくなる。
     # 以降 $item.Text はマスク後になり、キャッシュキー・プロンプト・
     # 各監査・補完再依頼がすべてマスク後で動く。復元は最後にまとめて行う。
+    # 固有名詞も同じ場所で伏せる。数値より先に掛ける（住所の全角数字を
+    # 数値マスクに取られないため）。この経路にも固有名詞マスクが無く、
+    # 人名・法人名が素のまま Copilot へ出ていた（独立評価の指摘、2026-08-08）。
     $maskedItemCount = 0
     $maskedTokenCount = 0
+    $properItemCount = 0
     foreach ($item in $items) {
-        $maskResult = New-YakuNumericMaskMap -Text ([string]$item.Text) -Root $Root -Direction $Direction -Location ("file-ID-" + [string]$item.Index)
+        $text = [string]$item.Text
+        $properMap = $null
+        if (Get-Command New-YakuProperNounMaskMap -ErrorAction SilentlyContinue) {
+            $properResult = New-YakuProperNounMaskMap -Text $text -Root $Root
+            $properMap = $properResult.Map
+            $text = [string]$properResult.Text
+            if ($null -ne $properMap -and $properMap.Count -gt 0) { $properItemCount++ }
+        }
+        $maskResult = New-YakuNumericMaskMap -Text $text -Root $Root -Direction $Direction -Location ("file-ID-" + [string]$item.Index)
+        $item | Add-Member -NotePropertyName ProperMaskMap -NotePropertyValue $properMap -Force
         $item | Add-Member -NotePropertyName NumericMaskMap -NotePropertyValue $maskResult.Map -Force
         $item | Add-Member -NotePropertyName MaskedText -NotePropertyValue ([string]$maskResult.Text) -Force
         $item.Text = [string]$maskResult.Text
         if ([int]$maskResult.MaskedCount -gt 0) { $maskedItemCount++; $maskedTokenCount += [int]$maskResult.MaskedCount }
     }
-    try { Write-YakuLog "File numeric masking. jobId=$JobId items=$($items.Count) maskedItems=$maskedItemCount maskedTokens=$maskedTokenCount" 'INFO' } catch {}
+    try { Write-YakuLog "File masking. jobId=$JobId items=$($items.Count) maskedItems=$maskedItemCount maskedTokens=$maskedTokenCount properItems=$properItemCount" 'INFO' } catch {}
 
     $pending = New-Object System.Collections.Generic.List[object]
     $cacheHits = 0
@@ -1844,19 +1857,38 @@ function Invoke-YakuFileTranslation {
         if (-not $translationByIndex.ContainsKey($idx)) { continue }
         $map = $null
         try { $map = $item.NumericMaskMap } catch { $map = $null }
-        if ($null -eq $map -or $map.Count -eq 0) { continue }
+        $properMap = $null
+        try { $properMap = $item.ProperMaskMap } catch { $properMap = $null }
+        # 数値と固有名詞は別々に見る。まとめて「無ければ次へ」とすると、
+        # 数字を含まない項目で固有名詞が戻らず、出力へ [[P1]] が残る。
+        $hasNumeric = ($null -ne $map -and $map.Count -gt 0)
+        $hasProper = ($null -ne $properMap -and $properMap.Count -gt 0)
+        if (-not $hasNumeric -and -not $hasProper) { continue }
         $translated = [string]$translationByIndex[$idx]
         # 原文保持になった項目は untranslated-retained で既に警告済み。
         # プレースホルダーが無いのは当然なので、二重に警告しない。
         if ($translated -eq (Get-YakuFileItemOriginalText -Item $item)) { continue }
-        $maskIntegrity = Test-YakuNumericMaskIntegrity -MaskedSource ([string]$item.MaskedText) -Translated $translated -Location ("file-ID-" + [string]$idx)
-        if (-not [bool]$maskIntegrity.Ok) {
-            $maskIntegrityFailures++
-            try {
-                Add-YakuWarning -Warnings $warnings -Category 'numeric-mask-integrity' -Location ("ID $idx") -Details @{ Detail=[string]$maskIntegrity.Detail; Missing=@($maskIntegrity.Missing); Duplicated=@($maskIntegrity.Duplicated); Unexpected=@($maskIntegrity.Unexpected) } -Message "数値プレースホルダーの個数が原文と一致しません。該当箇所の数値を必ずご確認ください。($([string]$maskIntegrity.Detail))"
-            } catch {}
+        if ($hasNumeric) {
+            $maskIntegrity = Test-YakuNumericMaskIntegrity -MaskedSource ([string]$item.MaskedText) -Translated $translated -Location ("file-ID-" + [string]$idx)
+            if (-not [bool]$maskIntegrity.Ok) {
+                $maskIntegrityFailures++
+                try {
+                    Add-YakuWarning -Warnings $warnings -Category 'numeric-mask-integrity' -Location ("ID $idx") -Details @{ Detail=[string]$maskIntegrity.Detail; Missing=@($maskIntegrity.Missing); Duplicated=@($maskIntegrity.Duplicated); Unexpected=@($maskIntegrity.Unexpected) } -Message "数値プレースホルダーの個数が原文と一致しません。該当箇所の数値を必ずご確認ください。($([string]$maskIntegrity.Detail))"
+                } catch {}
+            }
+            $translated = Restore-YakuNumericMask -Text $translated -Map $map
         }
-        $translationByIndex[$idx] = Restore-YakuNumericMask -Text $translated -Map $map
+        if ($hasProper) {
+            try {
+                $pInt = Test-YakuProperNounMaskIntegrity -MaskedSource ([string]$item.MaskedText) -Translated $translated -Map $properMap
+                if (-not [bool]$pInt.Ok) {
+                    $lost = @(@($pInt.Missing) | ForEach-Object { [string]$properMap[[string]$_] })
+                    Add-YakuWarning -Warnings $warnings -Category 'proper-noun-dropped' -Location ("ID $idx") -Details @{ Missing = @($pInt.Missing) } -Message ("固有名詞が訳文から抜けています: " + (@($lost) -join '、') + "。必ずご確認ください。")
+                }
+            } catch {}
+            $translated = Restore-YakuProperNounMask -Text $translated -Map $properMap
+        }
+        $translationByIndex[$idx] = $translated
     }
     if ($maskIntegrityFailures -gt 0) {
         try { Write-YakuLog "File numeric mask integrity. jobId=$JobId failures=$maskIntegrityFailures" 'WARN' } catch {}
@@ -1865,6 +1897,9 @@ function Invoke-YakuFileTranslation {
     # $item.Text をここで戻す。
     foreach ($item in $items) {
         try { if ($item.PSObject.Properties.Name -contains 'MaskedText') { $item.Text = Restore-YakuNumericMask -Text ([string]$item.Text) -Map $item.NumericMaskMap } } catch {}
+        # 固有名詞も戻す。戻さないと原文保持の判定が [[P1]] 入りの文字列と
+        # 比べることになり、書き戻し先の照合も狂う。
+        try { if ($item.PSObject.Properties.Name -contains 'ProperMaskMap') { $item.Text = Restore-YakuProperNounMask -Text ([string]$item.Text) -Map $item.ProperMaskMap } } catch {}
     }
 
     # 文中の用語監査は廃止した（利用者の判断 2026-08-06）。
