@@ -113,20 +113,31 @@ function New-YakuCatTextProject {
         [Parameter(Mandatory=$true)][string]$Root,
         [Parameter(Mandatory=$true)][string]$Text,
         [Parameter(Mandatory=$true)]$Settings,
-        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en'
+        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
+        # 簡易翻訳から持ってきた訳文。原文と同じ規則で分けて並べる。
+        # 空のまま渡すと、渡した先で「さっきの訳が消えた」ことになる。
+        [AllowNull()][string]$Translation
     )
+    $sources = @(Split-YakuTextIntoSegments -Text $Text)
+    $targets = @()
+    if (-not [string]::IsNullOrWhiteSpace($Translation)) {
+        $targets = @(Split-YakuTextIntoSegments -Text $Translation)
+    }
+    # 行数が合わないときは割り当てない。ずれたまま並べると、対応していない
+    # 訳が原文の隣に出る。空欄のほうがまだ分かる。
+    $useTargets = ($targets.Count -gt 0 -and $targets.Count -eq $sources.Count)
     $segments = New-Object System.Collections.Generic.List[object]
-    foreach ($s in @(Split-YakuTextIntoSegments -Text $Text)) {
+    for ($i = 0; $i -lt $sources.Count; $i++) {
         $seg = [pscustomobject]@{
-            Text = [string]$s
+            Text = [string]$sources[$i]
             BlockIds = @()
             Cells = @()
             Joined = $false
             Kind = 'text'
             Sheet = ''
             Location = '本文'
-            Translation = ''
-            Origin = ''
+            Translation = [string]$(if ($useTargets) { $targets[$i] } else { '' })
+            Origin = [string]$(if ($useTargets) { 'copilot' } else { '' })
         }
         [void]$segments.Add($seg)
     }

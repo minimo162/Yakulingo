@@ -166,10 +166,23 @@ $reviseHtml</article>
     # 先に覚えてもらうのではなく、**確認したくなった時に**押せる場所へ置く。
     # 原文はそのまま持っていくので、押した先に見慣れた文が並ぶ。
     if ($canRevise -and $options.Count -gt 0) {
+        # 訳文も一緒に持っていく。原文だけ渡すと、渡した先で訳文の列が空になり、
+        # 利用者から見れば「さっきの訳が消えた」うえに訳し直しを待たされる。
+        # 移行を促す導線が、移行しない理由を作ってしまう。
+        $handoffTranslation = ''
+        $fullOption = @($options | Where-Object { [string]$_.Style -ne 'brief' })
+        if ($fullOption.Count -eq 0) { $fullOption = @($options) }
+        try { $handoffTranslation = [string]$fullOption[0].Translation } catch { $handoffTranslation = '' }
+        # 方向も渡す。渡さないと CAT 側の既定（日→英）になり、英→日の利用者が
+        # 黙って逆向きで取り込まれる。$direction は判定済みの実際の向き。
+        $handoffDirection = if ($direction -eq 'to_jp') { 'to_jp' } else { 'to_en' }
         $html += @"
 <div class='cat-handoff'>
-  <button type='button' class='secondary-button compact' data-yaku-to-cat='$(ConvertTo-YakuUtf8Base64 $sourceText)'>CATで1文ずつ確認する</button>
-  <span class='muted'>原文を1文ずつ並べて、直しながら仕上げられます。</span>
+  <button type='button' class='secondary-button compact'
+          data-yaku-to-cat='$(ConvertTo-YakuUtf8Base64 $sourceText)'
+          data-yaku-to-cat-translation='$(ConvertTo-YakuUtf8Base64 $handoffTranslation)'
+          data-yaku-to-cat-direction='$(ConvertTo-YakuHtml $handoffDirection)'>1文ずつ見比べて直す</button>
+  <span class='muted'>原文と訳文を1文ずつ並べます。直したいところだけ直せます。</span>
 </div>
 "@
     }

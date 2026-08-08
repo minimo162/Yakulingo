@@ -2271,7 +2271,10 @@ function Invoke-YakuRoute {
                 $pastedText = ''
                 try { $pastedText = [string]$payload['text'] } catch {}
                 if (-not [string]::IsNullOrWhiteSpace($pastedText)) {
-                    $project = New-YakuCatTextProject -Root $script:YakuRoot -Text $pastedText -Settings $settings -Direction $direction
+                    # 簡易翻訳から渡された訳文があれば一緒に取り込む。
+                    $pastedTranslation = ''
+                    try { $pastedTranslation = [string]$payload['translation'] } catch {}
+                    $project = New-YakuCatTextProject -Root $script:YakuRoot -Text $pastedText -Settings $settings -Direction $direction -Translation $pastedTranslation
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                     return
                 }

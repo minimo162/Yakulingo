@@ -170,6 +170,17 @@
       button.setAttribute('data-ready', active ? '1' : '0');
       button.textContent = yakuTranslating ? '翻訳中' : (enabled ? '翻訳' : '準備中');
     }
+    // CAT の Copilot を使うボタンも同じ扱いにする。無効化していなかったので、
+    // CAT から始めた人が押しても画面が完全に無反応になっていた。
+    // 主役にしたい画面の入口で、押しても何も起きないのは致命的である。
+    var catActive = !!enabled && !yakuTranslating;
+    [['cat-translate-button', '残りをCopilotで翻訳'], ['cat-corpus-button', '文例を検索']].forEach(function (pair) {
+      var b = document.getElementById(pair[0]);
+      if (!b) return;
+      b.disabled = !catActive;
+      b.setAttribute('aria-disabled', catActive ? 'false' : 'true');
+      b.textContent = yakuTranslating ? '実行中' : (enabled ? pair[1] : '準備中');
+    });
     yakuUpdateFileButton();
   }
 
@@ -679,11 +690,14 @@
     return Promise.reject(new Error('ファイルを選択するか、ローカルパスを入力してください。'));
   }
 
-  function yakuCatOpen() {
+  function yakuCatOpen(existingTranslation) {
     var checked = document.querySelector('input[name="cat_direction"]:checked');
     yakuCatSetStatus('取り込んでいます…');
     yakuCatSource().then(function (source) {
       source.direction = checked ? checked.value : 'to_en';
+      // 簡易翻訳から渡された訳文があれば一緒に送る。
+      // 開いた瞬間に原文と訳文が並ぶので、押すボタンがゼロで確認に入れる。
+      if (existingTranslation) { source.translation = existingTranslation; }
       return yakuCatPost('open', source);
     }).then(yakuCatRender).catch(function (error) {
       yakuCatSetStatus('取り込めませんでした: ' + (error && error.message ? error.message : ''));
@@ -699,8 +713,20 @@
   }
 
   function yakuCatTranslate(mode) {
-    if (!yakuCatProjectId) return;
-    if (!yakuReady || yakuTranslating) { yakuPollReadyState(); return; }
+    if (!yakuCatProjectId) {
+      yakuCatSetStatus('先に原文を取り込んでください。');
+      return;
+    }
+    // 黙って戻らない。何も起きない画面は、壊れているのと区別が付かない。
+    if (yakuTranslating) {
+      yakuCatSetStatus('いま別の処理を実行しています。終わってからもう一度お試しください。');
+      return;
+    }
+    if (!yakuReady) {
+      yakuCatSetStatus('Copilotの準備ができるまでお待ちください。準備できると自動でボタンが使えるようになります。');
+      yakuPollReadyState();
+      return;
+    }
     yakuTranslating = true;
     yakuActiveJobKind = 'cat';
     yakuSetButtonEnabled(false);
@@ -736,14 +762,20 @@
     yakuCatAligning = true;
     yakuRenderJobLoading('', 0, '対訳を突き合わせ中', '準備中');
     yakuCatSetStatus('突き合わせています…（数分かかります）');
-    yakuPostJson('/api/cat/align', {
+    // 他のジョブ開始と同じ道を通す。ここだけ独自に書いて、
+    // 存在しない関数名（yakuPostJson）と、HTML を jobId として渡す誤りを
+    // 同時に入れていた。押した瞬間に落ち、しかも同期例外なので catch にも
+    // 入らず「数分かかります」と出たまま止まっていた（2026-08-08 に判明）。
+    yakuJsonPost('/api/cat/align', {
       direction: dir ? dir.value : 'to_en',
       source_text: src.value,
       target_text: tgt.value,
       file_name: name ? name.value : ''
-    }).then(function (html) {
-      yakuStartJobPolling(html, 'cat');
-    }).catch(function (error) {
+    }).then(yakuResponseText).then(yakuStartFromHtml).catch(function (error) {
+      // 落ちたら待ち状態を必ず解く。解かないと、次に普通の翻訳をしたとき
+      // その結果が突き合わせの結果として扱われ、グリッドが壊れる。
+      yakuCatAligning = false;
+      yakuCatSetStatus('突き合わせを開始できませんでした。');
       yakuShowStartError(error, '突き合わせを開始できませんでした。');
     });
   }
@@ -1283,6 +1315,15 @@
     });
     // いま見ている行を示す。市販の CAT エディタはどこも現在行を強調しており、
     // 長い一覧の中で自分の位置を見失わないようにしている。
+    // 候補をマウスで押したときに、現在行の印が外れないようにする。
+    // ボタンを押すとフォーカスが移るので focusin が先に走り、現在行の印が
+    // 消えてから click が走る。すると差し込み先が見つからず、何も起きない。
+    // 初めて使う人が最初に試す操作が黙って失敗していた（2026-08-08 に判明）。
+    document.addEventListener('mousedown', function (event) {
+      if (event.target.closest && event.target.closest('[data-yaku-cat-insert]')) {
+        event.preventDefault();
+      }
+    });
     document.addEventListener('focusin', function (event) {
       var input = event.target.closest && event.target.closest('[data-yaku-cat-input]');
       var previous = document.querySelector('[data-yaku-cat-row].is-active');
@@ -1329,17 +1370,29 @@
       var toCat = event.target.closest && event.target.closest('[data-yaku-to-cat]');
       if (!toCat) return;
       var source = yakuDecodeBase64Utf8(toCat.getAttribute('data-yaku-to-cat'));
+      // 訳文も一緒に受け取る。原文だけ渡していたので、渡した先で訳文の列が
+      // 空になり、利用者から見れば「さっきの訳が消えた」うえに訳し直しを
+      // 待たされていた。移行を促す導線が移行しない理由を作っていた。
+      var translation = '';
+      try { translation = yakuDecodeBase64Utf8(toCat.getAttribute('data-yaku-to-cat-translation') || ''); } catch (e) { translation = ''; }
       var radio = document.querySelector('input[name="cat_source"][value="text"]');
       if (radio) { radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true })); }
       var area = document.getElementById('cat-text');
       if (area) area.value = source;
-      var dir = document.querySelector('input[name="text_direction"]:checked');
-      if (dir && dir.value !== 'auto') {
-        var catDir = document.querySelector('input[name="cat_direction"][value="' + dir.value + '"]');
+      // 方向はサーバーが判定した実際の向きを使う。画面のラジオは「自動」の
+      // ままのことが多く、それを見ていたので英→日の利用者が黙って
+      // 日→英で取り込まれていた。
+      var resolved = toCat.getAttribute('data-yaku-to-cat-direction');
+      if (!resolved) {
+        var dir = document.querySelector('input[name="text_direction"]:checked');
+        if (dir && dir.value !== 'auto') resolved = dir.value;
+      }
+      if (resolved) {
+        var catDir = document.querySelector('input[name="cat_direction"][value="' + resolved + '"]');
         if (catDir) catDir.checked = true;
       }
       yakuActivateTab('cat');
-      yakuCatOpen();
+      yakuCatOpen(translation);
     });
     document.addEventListener('click', function (event) {
       var merge = event.target.closest && event.target.closest('[data-yaku-cat-merge]');
