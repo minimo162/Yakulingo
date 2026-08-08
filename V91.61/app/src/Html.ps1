@@ -145,13 +145,29 @@ function Convert-YakuTextResultToHtml {
                 $dropNotice = "<p class='result-danger'>この訳には数値が入っていません（" + (ConvertTo-YakuHtml ([string]$opt.DroppedNumbers)) + "）。使わずに、もう一方をお使いください。</p>"
             }
         } catch {}
+        # 単位の書き方は、貼る先で変わる。訳し直しではなく書き分けなので、
+        # 手元で切り替える。「社内は oku」と決めつけない
+        # （利用者の指摘 2026-08-08「それは自分の周りだけかもしれない」）。
+        # oku を含まない訳には出さない。押しても何も変わらないボタンは邪魔なだけ。
+        $unitToggle = ''
+        $published = ConvertTo-YakuPublishedUnitText -Text ([string]$opt.Translation)
+        if ($published -ne [string]$opt.Translation) {
+            $unitToggle = @"
+  <div class='unit-toggle'>
+    <button type='button' class='secondary-button compact' data-yaku-units-toggle
+            data-yaku-units-house='$(ConvertTo-YakuUtf8Base64 ([string]$opt.Translation))'
+            data-yaku-units-published='$(ConvertTo-YakuUtf8Base64 $published)'>¥12.2 billion の書き方にする</button>
+  </div>
+"@
+        }
         $html += @"
 <article class='result-card result-card-translation'>
   <header>
     <div class='eyebrow'>$title</div>
     $(New-YakuCopyButtonHtml -Text ([string]$opt.Translation) -Label 'コピー')
   </header>
-$dropNotice  <pre class='translation'>$translation</pre>
+$dropNotice  <pre class='translation' data-yaku-units='house'>$translation</pre>
+$unitToggle
 $reviseHtml</article>
 "@
     }

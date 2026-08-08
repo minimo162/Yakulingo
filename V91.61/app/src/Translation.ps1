@@ -607,6 +607,38 @@ function Restore-YakuNumericMask {
     return $result
 }
 
+function ConvertTo-YakuPublishedUnitText {
+    <#
+      社内表記の金額を、公表資料の表記へ書き換える。
+
+        122 oku    -> ¥12.2 billion
+        1,500 oku  -> ¥150.0 billion
+
+      同じ訳文の「書き分け」であって、訳し直しではない。数値はマスクして
+      送っているので、手元のマップから2通りに書き戻せる。Copilot への往復は
+      増えない。
+
+      どちらを使うかは利用者が決める。「社内は oku」と決めつけない
+      （利用者の指摘 2026-08-08「それは自分の周りだけかもしれない」）。
+    #>
+    param([AllowNull()][string]$Text)
+    $s = [string]$Text
+    if ([string]::IsNullOrEmpty($s)) { return '' }
+    # 「1,234 oku」「▲12.3 oku」「(45) oku」を拾う。符号と括弧は残す。
+    return [regex]::Replace($s, '(?<num>\d[\d,]*(?:\.\d+)?)\s*oku\b', {
+            param($m)
+            $raw = $m.Groups['num'].Value.Replace(',', '')
+            $val = [decimal]0
+            if (-not [decimal]::TryParse($raw, [Globalization.NumberStyles]::Number, [Globalization.CultureInfo]::InvariantCulture, [ref]$val)) { return $m.Value }
+            # 億円 = 0.1 billion。桁を1つ落とす。
+            $billion = $val / 10
+            # 小数第1位まで。1兆を超えるものは trillion にしない（公表訳の
+            # 慣行として billion 表記が続くため）。
+            $text = $billion.ToString('#,0.0#', [Globalization.CultureInfo]::InvariantCulture)
+            return ('¥' + $text + ' billion')
+        })
+}
+
 function Test-YakuNumericMaskIntegrity {
     <#
       復元の安全のため、プレースホルダーが過不足なく1対1であることを確認する。

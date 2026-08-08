@@ -79,11 +79,9 @@ try {
     Chk ($cat -match 'Add-YakuTranslationMemoryEntry') '訳を確定すると翻訳メモリへ貯まる'
     Chk ($cat -match 'Find-YakuTranslationMemory') '候補ペインが翻訳メモリを引く'
     Chk ($cat -match "Kind\s*=\s*'memory'") '翻訳メモリの候補に印を付ける'
-    # 内部資料と公表資料で候補の並びが逆になる（利用者の整理 2026-08-08）。
-    # 内部資料は毎期同じ資料を作るので、前期の自分の訳が最も効く。
-    # 公表資料は会社の公式な言い方に従うので、公表訳が先に来る。
-    Chk ($cat -match 'isPublic\) \{ 20000 \} else \{ 30000 \}') '内部資料では自分の訳を先に出す'
-    Chk ($cat -match 'isPublic\) \{ 30000 \} else \{ 20000 \}') '公表資料では公表訳を先に出す'
+    # 自分が確定した訳を先頭に置く。公表訳より自分の文体に合うため。
+    Chk ($cat -match 'Weight   = 30000') '自分の訳を先に出す'
+    Chk ($cat -match 'Weight   = 20000') '公表訳をその次に出す'
     # 文例を作るのは開発者。突き合わせた資料からだけ保存できる。
     Chk ($cat -match "Project\.Source -ne 'align'") '文例は突き合わせからだけ保存できる'
 
