@@ -23,17 +23,21 @@
     </header>
 
     <nav class="tab-bar" aria-label="翻訳種別" role="tablist">
-      <button id="tab-text" type="button" role="tab" class="tab-button is-active" data-yaku-tab="text" aria-selected="true" aria-controls="panel-text" tabindex="0">テキスト翻訳</button>
-      <button id="tab-file" type="button" role="tab" class="tab-button" data-yaku-tab="file" aria-selected="false" aria-controls="panel-file" tabindex="-1">ファイル翻訳</button>
-      <button id="tab-cat" type="button" role="tab" class="tab-button" data-yaku-tab="cat" aria-selected="false" aria-controls="panel-cat" tabindex="-1">CAT</button>
+      <!--
+        タブ名は機能で言う。CAT は英字3文字で、初めて見た人に何も伝わらない。
+        ファイル翻訳は廃止した。同じ仕事を「見比べて訳す」が、途中を見せながら
+        できる。劣化版を1枚のタブとして残す理由がない。
+      -->
+      <button id="tab-text" type="button" role="tab" class="tab-button is-active" data-yaku-tab="text" aria-selected="true" aria-controls="panel-text" tabindex="0">すぐ訳す</button>
+      <button id="tab-cat" type="button" role="tab" class="tab-button" data-yaku-tab="cat" aria-selected="false" aria-controls="panel-cat" tabindex="-1">見比べて訳す</button>
     </nav>
 
     <section id="panel-text" role="tabpanel" aria-labelledby="tab-text" class="translator tab-panel is-active" data-yaku-panel="text" aria-label="テキスト翻訳">
       <form id="text-form" class="translate-form">
         <div class="section-title-row">
           <div>
-            <h1>テキスト翻訳</h1>
-            <p class="muted">その場で1つ訳すための画面です。資料をまとめて訳すときはCATタブを使ってください。</p>
+            <h1>すぐ訳す</h1>
+            <p class="muted">貼って押すだけの画面です。訳文はコピーして使います。</p>
           </div>
         </div>
         <label for="input-text" class="sr-only">翻訳したいテキスト</label>
@@ -59,52 +63,6 @@
       <div id="startup-gate" class="startup-message" aria-live="polite">Copilotを準備しています</div>
     </section>
 
-    <section id="panel-file" role="tabpanel" aria-labelledby="tab-file" class="file-translator tab-panel" data-yaku-panel="file" aria-label="ファイル翻訳" hidden>
-      <div class="section-title-row file-title-row">
-        <div>
-          <h1>Excel / CSV ファイル翻訳</h1>
-          <p class="muted">xlsx / xlsm / csv のセル、図形テキスト、グラフタイトルを翻訳して別ファイルに保存します。</p>
-        </div>
-      </div>
-
-      <div class="file-grid">
-        <form id="file-form" class="file-form">
-          <label class="file-drop" for="file-input" id="file-drop" role="button" tabindex="0" aria-describedby="file-name">
-            <input id="file-input" name="file" type="file" accept=".xlsx,.xlsm,.csv" hidden tabindex="-1">
-            <span class="file-drop-title">ここにファイルをドロップ、またはクリックして選択（.xlsx / .xlsm / .csv）</span>
-            <span id="file-name" class="muted">ローカルパス指定も利用できます</span>
-          </label>
-          <div id="file-selected-row" class="file-selected-row" hidden>
-            <span class="file-selected-name"></span>
-            <span class="file-selected-size muted"></span>
-            <button type="button" id="file-clear-button" class="file-clear-button" aria-label="選択ファイルを解除">×</button>
-          </div>
-
-          <label class="field-label" for="file-path">ローカルパス直接指定（任意）
-            <input id="file-path" name="file_path" type="text" placeholder="例: C:\Documents\連結PKG.xlsx">
-          </label>
-
-          <div class="file-fields">
-            <div class="field-label">翻訳方向
-              <div class="direction-row two-option file-direction-row" role="radiogroup" aria-label="ファイル翻訳方向">
-                <label><input type="radio" name="file_direction" value="to_en" checked><span>日→英</span></label>
-                <label><input type="radio" name="file_direction" value="to_jp"><span>英他→日</span></label>
-              </div>
-            </div>
-            <label class="field-label" for="file-sheets">対象シート（任意）
-              <input id="file-sheets" name="sheets" type="text" placeholder="空欄=全シート。複数指定は改行またはカンマ">
-            </label>
-          </div>
-
-          <div class="command-bar file-command-bar">
-            <button id="file-info-button" class="secondary-button" type="button" disabled>ファイル確認</button>
-            <button id="file-translate-button" type="submit" disabled aria-disabled="true">準備中</button>
-          </div>
-          <div id="file-meta" class="file-meta muted" aria-live="polite">ファイルを選択するか、ローカルパスを入力してください。</div>
-        </form>
-      </div>
-    </section>
-
     <!--
       CAT: ファイル翻訳と同じことを、途中が見える形でやる。
       取り込む → 用語集で置換 → 残りを訳す → 出力 を、押した分だけ進める。
@@ -113,8 +71,8 @@
     -->
     <section id="panel-cat" role="tabpanel" aria-labelledby="tab-cat" class="cat-translator tab-panel" data-yaku-panel="cat" aria-label="CAT" hidden>
       <div class="card">
-        <h2>CAT（原文と訳文を並べて確認）</h2>
-        <p class="muted">Excelを取り込んでセグメントに分け、用語集での置換とCopilot翻訳を段階に分けて進めます。原文と訳文を並べて確認してから出力します。</p>
+        <h2>見比べて訳す</h2>
+        <p class="muted">原文を1文ずつに分けて並べ、訳しながら1行ずつ確認します。Excelを取り込めば、直した内容をそのままExcelへ戻せます。</p>
         <!--
           貼り付けからも始められるようにする。簡易翻訳と入力の作法を揃え、
           覚え直しの負担を減らすため（利用者の懸念 2026-08-06）。
@@ -141,7 +99,7 @@
           <textarea id="cat-align-source" rows="6" placeholder="原文（日→英なら日本語）を貼り付け"></textarea>
           <label for="cat-align-target" class="sr-only">既にある訳文</label>
           <textarea id="cat-align-target" rows="6" placeholder="既にある訳文（日→英なら英語）を貼り付け"></textarea>
-          <label for="cat-align-name">資料名（コーパスに残ります）
+          <label for="cat-align-name">資料名（あとで文例として引けます）
             <input id="cat-align-name" type="text" placeholder="例: 有報 第160期">
           </label>
         </div>
@@ -193,10 +151,10 @@
           <button id="cat-corpus-button" type="button" class="secondary-button">文例を検索</button>
           <button id="cat-translate-button" type="button" class="secondary-button">残りをCopilotで翻訳</button>
           <!--
-            確かめた対訳をコーパスへ入れる。突き合わせたときだけ出す。
+            確かめた対訳を文例として貯める。突き合わせたときだけ出す。
             機械が作った対応をそのまま貯めず、一度グリッドで見てから貯める。
           -->
-          <button id="cat-save-corpus-button" type="button" class="secondary-button" hidden>コーパスへ登録</button>
+          <button id="cat-save-corpus-button" type="button" class="secondary-button" hidden>文例として保存</button>
           <button id="cat-export-button" type="button">出力</button>
         </div>
         <details id="cat-corpus-panel" class="cat-corpus-panel" hidden>
@@ -204,7 +162,7 @@
           <div id="cat-corpus-list" class="cat-corpus-list"></div>
         </details>
         <!--
-          実物の ECM は数百セグメントになる。絞り込みが無いと一覧が使えない。
+          実物の ECM は数百行になる。絞り込みが無いと一覧が使えない。
           市販の CAT ツールも状態での絞り込みを備えている。
         -->
         <div id="cat-filter-row" class="cat-filter-row" hidden>
@@ -223,7 +181,7 @@
         </div>
         <!--
           候補ペイン。市販の CAT エディタの中核にあたる部分で、いま見ている
-          セグメントに対する手掛かりを並べる。用語集は手元で引けるので、
+          その行に対する手掛かりを並べる。用語集は手元で引けるので、
           行を移るたびに即座に出せる。
         -->
         <div id="cat-candidates" class="cat-candidates" hidden>

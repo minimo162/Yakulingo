@@ -571,7 +571,7 @@
     if (countEl) countEl.textContent = (segments.length === all.length) ? '' : (segments.length + ' / ' + all.length + ' 件を表示');
     for (var i = 0; i < segments.length; i++) {
       var s = segments[i];
-      // 繋いだセグメントは「何セルを1つにまとめたか」を出す。
+      // 繋いだ行は「何セルを1つにまとめたか」を出す。
       // 繋ぎ方が外れていても、ここを見れば気づける。
       var loc;
       if (s.kind === 'text') loc = s.joined ? '結合' : '文';
@@ -580,7 +580,7 @@
       var origin = yakuCatOriginLabel(s.origin);
       // 繋ぎ直しの操作。自動で完璧に分けるのは無理なので、外れたら人が直す。
       var ops = '';
-      if (s.can_merge) ops += '<button type="button" class="cat-op" data-yaku-cat-merge="' + s.index + '" title="次のセグメントと結合します（訳文は消えます）">↓結合</button>';
+      if (s.can_merge) ops += '<button type="button" class="cat-op" data-yaku-cat-merge="' + s.index + '" title="次の行と結合します（訳文は消えます）">↓結合</button>';
       if (s.can_split) ops += '<button type="button" class="cat-op" data-yaku-cat-split="' + s.index + '" title="セル1つずつに戻します（訳文は消えます）">解除</button>';
       // 行の状態を色で示す。市販の CAT エディタは状態列を色で分けており、
       // 一覧を眺めたときに「どこが手つかずか」が一目で分かる。
@@ -597,7 +597,39 @@
         '</tr>'
       );
     }
+    // 描き直す前に、いまの居場所を覚えておく。
+    // 一覧を全部作り直すと、スクロールは先頭へ戻り、現在行の印も消える。
+    // 400行の資料の200行目で結合を押すたびに自分の位置を探し直すことになり、
+    // 1行ずつ見ていくリズムが毎回途切れる。
+    var scroller = document.getElementById('cat-grid-wrap');
+    var keepTop = scroller ? scroller.scrollTop : 0;
+    // 編集中の欄そのものを覚える。現在行の印を基準にすると、印が付いていない
+    // 状態（描き直した直後など）で復元できない。
+    var focused = document.activeElement;
+    var hadFocus = !!(focused && focused.hasAttribute && focused.hasAttribute('data-yaku-cat-input'));
+    var keepIndex = hadFocus ? focused.getAttribute('data-yaku-cat-input') : null;
+    var caret = hadFocus ? focused.selectionStart : null;
+    if (keepIndex === null) {
+      var activeRow = document.querySelector('[data-yaku-cat-row].is-active');
+      if (activeRow) keepIndex = activeRow.getAttribute('data-yaku-cat-row');
+    }
+
     body.innerHTML = rows.join('');
+
+    if (keepIndex !== null) {
+      var again = document.querySelector('[data-yaku-cat-row="' + keepIndex + '"]');
+      if (again) {
+        again.classList.add('is-active');
+        if (hadFocus) {
+          var input = again.querySelector('[data-yaku-cat-input]');
+          if (input) {
+            input.focus();
+            try { input.setSelectionRange(caret, caret); } catch (e) {}
+          }
+        }
+      }
+    }
+    if (scroller) scroller.scrollTop = keepTop;
     var wrap = document.getElementById('cat-grid-wrap');
     if (wrap) wrap.hidden = false;
     var actions = document.getElementById('cat-actions');
@@ -626,10 +658,10 @@
     // 貼り付けたテキストは書き戻す元が無い。出口が違うので言葉も変える。
     var exportBtn = document.getElementById('cat-export-button');
     if (exportBtn) exportBtn.textContent = (data.source === 'text') ? '訳文をコピー' : '出力';
-    // 突き合わせたときだけ「コーパスへ登録」を出す。
+    // 突き合わせたときだけ「文例として保存」を出す。
     var saveBtn = document.getElementById('cat-save-corpus-button');
     if (saveBtn) saveBtn.hidden = (data.source !== 'align');
-    yakuCatSetStatus(data.file_name + ' … ' + data.total + ' セグメント（訳済 ' + data.translated + ' / 残り ' + data.remaining + '、結合 ' + data.joined + '）');
+    yakuCatSetStatus(data.file_name + ' … ' + data.total + ' 行（訳あり ' + data.translated + ' / 残り ' + data.remaining + '、結合 ' + data.joined + '）');
     yakuCatUpdateProgress(data);
   }
 
@@ -826,15 +858,15 @@
     });
   }
 
-  // 確かめた対訳をコーパスへ入れる。押すまで貯まらない。
+  // 確かめた対訳を文例として貯める。押すまで貯まらない。
   function yakuCatSaveCorpus() {
     if (!yakuCatProjectId) return;
     var name = document.getElementById('cat-align-name');
-    var database = window.prompt('どのデータベースへ入れますか（例: 有報、決算短信）', (name && name.value) ? name.value : '対訳');
+    var database = window.prompt('どの資料の文例として保存しますか（例: 有報、決算短信）', (name && name.value) ? name.value : '対訳');
     if (!database) return;
-    yakuCatSetStatus('コーパスへ登録しています…');
+    yakuCatSetStatus('文例として保存しています…');
     yakuCatPost('save-corpus', { id: yakuCatProjectId, database: database }).then(function (data) {
-      yakuCatSetStatus('コーパスへ登録しました：' + (data.added || 0) + '組を追加、' + (data.skipped || 0) + '組は登録済みでした。');
+      yakuCatSetStatus('文例として保存しました：' + (data.added || 0) + '組を追加、' + (data.skipped || 0) + '組は登録済みでした。');
     }).catch(function (error) {
       yakuCatSetStatus('登録できませんでした: ' + (error && error.message ? error.message : ''));
     });
@@ -890,11 +922,11 @@
         // 見た目でも分ける。市販ツールが 100% 一致を別格に扱うのと同じ。
         var tag;
         if (c.kind === 'memory') {
-          tag = c.exact ? '記憶 100%' : '記憶 ' + Math.round((c.ratio || 0) * 100) + '%';
+          tag = c.exact ? '自分の訳 100%' : '自分の訳 ' + Math.round((c.ratio || 0) * 100) + '%';
         } else if (c.kind === 'corpus') {
-          tag = c.exact ? '文例 100%' : '文例 ' + Math.round((c.ratio || 0) * 100) + '%';
+          tag = c.exact ? '公表訳 100%' : '公表訳 ' + Math.round((c.ratio || 0) * 100) + '%';
         } else {
-          tag = c.exact ? '完全一致' : '文中';
+          tag = c.exact ? '用語集（完全一致）' : '用語集（文中）';
         }
         return '<button type="button" class="cat-cand" data-yaku-cat-insert="' + yakuEscape(c.target) + '">' +
           '<span class="cat-cand-no">' + (i + 1) + '</span>' +
@@ -931,7 +963,7 @@
     yakuCatPost('segment', { id: yakuCatProjectId, index: index, text: text }).then(function (data) {
       // 全体を描き直すと編集中のカーソルが飛ぶので、その行と件数だけ更新する。
       yakuCatData = data;
-      yakuCatSetStatus(data.file_name + ' … ' + data.total + ' セグメント（訳済 ' + data.translated + ' / 残り ' + data.remaining + '、結合 ' + data.joined + '）');
+      yakuCatSetStatus(data.file_name + ' … ' + data.total + ' 行（訳あり ' + data.translated + ' / 残り ' + data.remaining + '、結合 ' + data.joined + '）');
       yakuCatUpdateProgress(data);
       var tr = document.querySelector('[data-yaku-cat-row="' + index + '"]');
       if (tr) {
@@ -1330,8 +1362,14 @@
     document.addEventListener('change', function (event) {
       if (event.target && event.target.name === 'cat_filter') yakuCatRender(null);
     });
+    // 打鍵のたびに一覧を作り直すと、数百行では入力が引っかかる。
+    // 手が止まってから描き直す。
     var catSearch = document.getElementById('cat-search');
-    if (catSearch) catSearch.addEventListener('input', function () { yakuCatRender(null); });
+    var catSearchTimer = null;
+    if (catSearch) catSearch.addEventListener('input', function () {
+      window.clearTimeout(catSearchTimer);
+      catSearchTimer = window.setTimeout(function () { yakuCatRender(null); }, 200);
+    });
     // 取り込み元の切り替え。貼り付けが既定で、Excel は選んだときだけ出す。
     document.addEventListener('change', function (event) {
       if (!event.target || event.target.name !== 'cat_source') return;
@@ -1354,7 +1392,7 @@
       var name = document.getElementById('cat-file-name');
       if (name) name.textContent = (catFileInput.files && catFileInput.files.length) ? catFileInput.files[0].name : 'ローカルパス指定も利用できます';
     });
-    // 触っただけのセグメントを「手直し」にしない。以前は離れるたびに保存して
+    // 触っただけの行を「手直し」にしない。以前は離れるたびに保存して
     // いたので、一覧を上から見ていくだけで全部が手直し扱いになっていた。
     // 「この行は見た」を記録する。訳文が変わっていなくても記録する。
     function yakuCatConfirm(index) {
