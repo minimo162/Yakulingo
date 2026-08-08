@@ -608,38 +608,6 @@ function Restore-YakuNumericMask {
     return $result
 }
 
-function ConvertTo-YakuPublishedUnitText {
-    <#
-      社内表記の金額を、公表資料の表記へ書き換える。
-
-        122 oku    -> ¥12.2 billion
-        1,500 oku  -> ¥150.0 billion
-
-      同じ訳文の「書き分け」であって、訳し直しではない。数値はマスクして
-      送っているので、手元のマップから2通りに書き戻せる。Copilot への往復は
-      増えない。
-
-      どちらを使うかは利用者が決める。「社内は oku」と決めつけない
-      （利用者の指摘 2026-08-08「それは自分の周りだけかもしれない」）。
-    #>
-    param([AllowNull()][string]$Text)
-    $s = [string]$Text
-    if ([string]::IsNullOrEmpty($s)) { return '' }
-    # 「1,234 oku」「▲12.3 oku」「(45) oku」を拾う。符号と括弧は残す。
-    return [regex]::Replace($s, '(?<num>\d[\d,]*(?:\.\d+)?)\s*oku\b', {
-            param($m)
-            $raw = $m.Groups['num'].Value.Replace(',', '')
-            $val = [decimal]0
-            if (-not [decimal]::TryParse($raw, [Globalization.NumberStyles]::Number, [Globalization.CultureInfo]::InvariantCulture, [ref]$val)) { return $m.Value }
-            # 億円 = 0.1 billion。桁を1つ落とす。
-            $billion = $val / 10
-            # 小数第1位まで。1兆を超えるものは trillion にしない（公表訳の
-            # 慣行として billion 表記が続くため）。
-            $text = $billion.ToString('#,0.0#', [Globalization.CultureInfo]::InvariantCulture)
-            return ('¥' + $text + ' billion')
-        })
-}
-
 function Test-YakuNumericMaskIntegrity {
     <#
       復元の安全のため、プレースホルダーが過不足なく1対1であることを確認する。
@@ -884,10 +852,10 @@ function Parse-YakuV25PlainTranslationResponse {
         $fullText = ConvertFrom-YakuTextFullWidthAngle -Text $fullText
         $briefText = ConvertFrom-YakuTextFullWidthAngle -Text $briefText
         if (![string]::IsNullOrWhiteSpace($fullText) -and $fullText.Trim() -ne '...') {
-            $items += [pscustomobject]@{ Style='full'; Label='標準の英語'; Translation=$fullText; Explanation='' }
+            $items += [pscustomobject]@{ Style='full'; Label='そのまま'; Translation=$fullText; Explanation='' }
         }
         if (![string]::IsNullOrWhiteSpace($briefText) -and $briefText.Trim() -ne '...') {
-            $items += [pscustomobject]@{ Style='brief'; Label='社内の書き方'; Translation=$briefText; Explanation='' }
+            $items += [pscustomobject]@{ Style='brief'; Label='短く'; Translation=$briefText; Explanation='' }
         }
     } else {
         $jpText = Get-YakuLabeledResponseField -Text $clean -Label 'JAPANESE_TEXT'
@@ -1223,7 +1191,7 @@ function Merge-YakuBatchTranslationResults {
     )
     $merged = @()
     if ($Direction -eq 'to_en') {
-        foreach ($spec in @(@{Style='full';Label='標準の英語'}, @{Style='brief';Label='社内の書き方'})) {
+        foreach ($spec in @(@{Style='full';Label='そのまま'}, @{Style='brief';Label='短く'})) {
             $parts = New-Object System.Collections.Generic.List[string]
             foreach ($br in $BatchResults) {
                 $hit = @($br.Options | Where-Object { $_.Style -eq $spec.Style } | Select-Object -First 1)
@@ -1669,9 +1637,14 @@ function Invoke-YakuTextTranslationRequests {
 
     # 簡易翻訳でも電文体は出す（利用者の判断 2026-08-06）。
     # 並列にしてあるので、2つ作っても待ち時間はほとんど変わらない。
-    # 3並列。合わせ先で分ける。どこにも合わせない／社内の書き方／公表英文。
-    # 公表英文に電文体は使わないので、published の短い版は作らない。
-    $modes = @('full','brief','published')
+    # 2並列。違うのは長さだけである。
+    #
+    # 以前は3並列で、3つ目は「公表英文を参考」と名乗っていた。しかし
+    # 実体は full と同じ雛形で、違いは金額の書き方の規則だけだった。
+    # 公表英文は1文字も参照していない（簡易翻訳ではコーパスを引かない）。
+    # 名乗りが事実に反していたので畳んだ（2026-08-08 に確認）。
+    # 金額の書き方は設定 amount_notation が決める。
+    $modes = @('full','brief')
     $results = $null
     $mode2 = 'sequential'
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -1708,20 +1681,9 @@ function Invoke-YakuTextTranslationRequests {
     $maskedCount = 0
     $keptCount = 0
     # 完全訳を先に並べる。画面の並びが依頼の順と一致していたほうが追いやすい。
-    $modeIndex = 0
     foreach ($r in @($results)) {
-        $thisMode = [string]$(if ($modeIndex -lt @($modes).Count) { @($modes)[$modeIndex] } else { '' })
-        $modeIndex++
         if ($null -eq $r) { continue }
-        foreach ($o in @($r.Options)) {
-            # 開示資料の書き方は FULL_TEXT で返るので、そのままでは
-            # 社内表記の完全訳と見分けが付かない。依頼の種類で印を付け直す。
-            if ($thisMode -eq 'published') {
-                try { $o.Style = 'published' } catch {}
-                try { $o.Label = '公表英文を参考' } catch {}
-            }
-            [void]$options.Add($o)
-        }
+        foreach ($o in @($r.Options)) { [void]$options.Add($o) }
         [void]$raws.Add([string]$r.Raw)
         [void]$prompts.Add([string]$r.Prompt)
         [void]$requestIds.Add([string]$r.RequestId)

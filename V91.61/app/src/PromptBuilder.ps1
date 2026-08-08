@@ -543,21 +543,34 @@ function Get-YakuRelevantGlossaryMatches {
 #
 # ラベルの保証は Resolve-YakuFileExactGlossaryTranslations のセル完全一致が担う。
 
+function Get-YakuAmountNotation {
+    <#
+      金額の書き方を設定から取り出す。設定が読めない経路（回帰テスト、
+      ワーカー、部分読み込み）でも止めず、既定の oku へ落ちる。
+      翻訳が止まる理由にはしない。
+    #>
+    param([AllowNull()]$Settings)
+    $v = ''
+    try { $v = [string]$Settings.amount_notation } catch { $v = '' }
+    if ($v -eq 'billion') { return 'billion' }
+    return 'oku'
+}
+
 function Get-YakuNumericRulesSection {
     param(
         [AllowNull()][string]$InputText,
         [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
-        # 表記の種類。3つ出すための軸である（利用者の整理 2026-08-08
-        # 「普通の翻訳アプリならこう、社内向けならこう、公表向けならこう」）。
-        # 軸は「何に合わせるか」であって、出来の良し悪しではない。
+        # 金額の書き方。設定 amount_notation から来る。
         #
-        #   plain      どこにも合わせない。社内の約束を何も持ち込まない
-        #   house      社内で使ってきた書き方。oku、括弧の負数、略語
-        #   published  過去の公表英文に合わせる。マツダの英文開示12冊を読んで決めた。
-        #              文章では円マークを付ける。負数は括弧を使わず
-        #              "a decrease of ¥26.6 billion" と言葉で書く
-        #              （¥を括弧で囲む形は1件も無かった）。略語は使わない
-        [ValidateSet('plain','house','published')][string]$Notation = 'house'
+        #   billion  ¥12.2 billion。負数は括弧を使わず "a decrease of ¥12.2 billion"
+        #            と言葉で書く。マツダの英文開示12冊で ¥ を括弧で囲む形は
+        #            1件も無かった。外部公表はこちら
+        #   oku      122 oku。負数は (12.2) oku。社内資料の一部で使う書き方
+        #
+        # かつては plain / house / published の3つだったが、plain と published は
+        # 規則がほぼ同一だった（2026-08-08 に確認）。訳の種類ではなく金額の
+        # 書き方なので、2つに畳んで設定へ移した。
+        [ValidateSet('oku','billion')][string]$Notation = 'oku'
     )
     if ([string]$InputText -notmatch '\[\[N\d+\]\]|[0-9０-９▲△＋+%％〜~↑↓<>＜＞→]|oku|k units|k yen|YoY|QoQ|CAGR|前年|四半期') { return '' }
     $nl = [Environment]::NewLine
@@ -577,41 +590,21 @@ function Get-YakuNumericRulesSection {
     # V91.60: 数値は外部送信前に[[N1]]へ置き換えている。指示は禁止事項の列挙ではなく
     # 「左に一致したら右を出す」形の決定表で書く。想定外の形が来たときでも
     # 行き先を類推できるようにするため。
-    if ($Notation -eq 'plain') {
-        # 普通の翻訳アプリが返すもの。社内の約束を持ち込まない。
-        # 単位も文体も指図せず、原文に忠実であることだけを求める。
-        # 「素直に訳すとこうなる」を見せることに意味があるので、
-        # ここに規則を足したくなったら、それは house か published へ入れる。
-        $plainRules = @()
+    if ($Notation -eq 'billion') {
+        # 外部公表の書き方。マツダの英文開示12冊を読んで決めた。
+        # 社内表記（oku・括弧の負数）は持ち込まない。
+        $billionRules = @()
         if ([string]$InputText -match '\[\[P\d+\]\]') {
-            $plainRules += '- PROPER NOUN PLACEHOLDERS. [[P1]], [[P2]] ... stand for names. Copy each token character for character and never translate or explain them.'
+            $billionRules += '- PROPER NOUN PLACEHOLDERS. [[P1]], [[P2]] ... stand for names. Copy each token character for character and never translate or explain them.'
         }
         if ([string]$InputText -match '\[\[N\d+\]\]') {
-            $plainRules += '- NUMBER PLACEHOLDERS. [[N1]], [[N2]] ... stand for redacted numbers. Copy each token character for character, exactly once, and never invent, merge, drop, or reorder them.'
+            $billionRules += '- NUMBER PLACEHOLDERS (highest priority). [[N1]], [[N2]] ... stand for redacted numbers. Copy each token character for character, exactly once, and never invent, merge, drop, or reorder them.'
         }
-        # 単位はふつうの英語で書く。桁をそのまま並べた 12,200,000,000 yen は
-        # 素直でも普通でもなく、ただ読めない（利用者の指摘 2026-08-08）。
-        $plainRules += '- Amount units: write yen amounts the way ordinary business English does: a yen sign, the figure, then billion or million. Example: [[N1]] oku -> ¥[[N1]] billion. Never write oku, k yen, or k units.'
-        $plainRules += '- The caller rescales the figure itself; you only choose the unit word and the yen sign. Keep the placeholder unchanged.'
-        # 負数の指示が抜けていた。抜けると ▲ がそのまま残ったり、括弧になったり、
-        # マイナス記号になったりして、同じ設定でも訳ごとに揺れる（2026-08-08 に発見）。
-        # 括弧の負数は社内の約束なので、ここには持ち込まない。
-        $plainRules += '- Negative amounts: do NOT use parentheses and never keep the source marks (▲, △). In running text express the direction in words: "a decrease of ¥[[N1]] billion", "down ¥[[N1]] billion". The same applies to percentages: "a decrease of [[N1]]%".'
-        $plainRules += '- Do not abbreviate. Write terms spelled out.'
-        return (@($plainRules) -join $nl)
-    }
-    if ($Notation -eq 'published') {
-        # 開示資料の書き方。社内表記（oku・括弧）は使わない。
-        $pubRules = @()
-        if ([string]$InputText -match '\[\[N\d+\]\]') {
-            $pubRules += '- NUMBER PLACEHOLDERS (highest priority). [[N1]], [[N2]] ... stand for redacted numbers. Copy each token character for character, exactly once, and never invent, merge, drop, or reorder them.'
-        }
-        return (@($pubRules + @(
+        return (@($billionRules + @(
             '- Amount units: write yen amounts as published disclosure does: a yen sign, the figure, then billion or million. Example: [[N1]] oku -> ¥[[N1]] billion. Never write oku, k yen, or k units.'
             '- The caller rescales the figure itself; you only choose the unit word and the yen sign. Keep the placeholder unchanged.'
-            '- Negative amounts: do NOT use parentheses in running text. Express the direction in words, as published disclosure does: "a decrease of ¥[[N1]] billion", "down ¥[[N1]] billion". Parentheses around figures belong to tables, not sentences.'
+            '- Negative amounts: do NOT use parentheses in running text, and never keep the source marks (▲, △). Express the direction in words: "a decrease of ¥[[N1]] billion", "down ¥[[N1]] billion". Parentheses around figures belong to tables, not sentences.'
             '- Percentages keep %. A negative percentage is written in words too: "a decrease of [[N1]]%".'
-            '- Do not abbreviate. Write operating income, not OP. Write year on year, not YoY. This text is for external publication.'
             '- Arrow (→) between two numbers: reproduce ONLY when SOURCE writes A→B; never create one.'
         )) -join $nl)
     }
@@ -755,8 +748,7 @@ function New-YakuTextPrompt {
     $templateName =
         if ($direction -ne 'to_en') { 'text_translate_to_jp.txt' }
         # published は開示資料の書き方。出す枠は full と同じ（完全な文1つ）で、
-        # 数値の規則だけを差し替える。公表資料に電文体は使わない。
-        elseif ([string]$Mode -eq 'full' -or [string]$Mode -eq 'published') { 'text_translate_full_to_en.txt' }
+        elseif ([string]$Mode -eq 'full') { 'text_translate_full_to_en.txt' }
         elseif ([string]$Mode -eq 'brief') { 'text_translate_brief_to_en.txt' }
         else { 'text_translate_to_en.txt' }
     $template = Get-YakuPromptTemplate -Root $Root -Name $templateName
@@ -766,12 +758,10 @@ function New-YakuTextPrompt {
         # to_jp のテンプレートには枠が無い。渡ってきても差し込まれないが、
         # 呼び出し側でも方向を見て空にしている（Test-YakuCorpusReferenceApplicable）。
         corpus_section = [string]$CorpusSection
-        numeric_rules = Get-YakuNumericRulesSection -InputText $InputText -Direction $direction -Notation $(
-            # 3つは「何に合わせるか」で分かれる。
-            # full はどこにも合わせない。社内の約束を持ち込まない。
-            # brief は社内の書き方に合わせる。oku と略語を使う。
-            # published は公表英文に合わせる。
-            switch ([string]$Mode) { 'published' { 'published' } 'full' { 'plain' } default { 'house' } })
+        # 金額の書き方は依頼の種類（そのまま／短く）では変わらない。設定で決まる。
+        # 訳の種類と書き方を混ぜていたので、名前が何を指すのか分からなくなっていた
+        # （利用者の指摘 2026-08-08「社内の書き方もおかしい」）。
+        numeric_rules = Get-YakuNumericRulesSection -InputText $InputText -Direction $direction -Notation (Get-YakuAmountNotation -Settings $Settings)
         request_id = $RequestId
     }
     # 電文体の雛形だけが持つ差し込み口。原文に引き金が無い節は出さない。

@@ -97,6 +97,11 @@ function Get-YakuSettingsSchema {
         worker_heartbeat_timeout_seconds  = @{ Type='int';  Default=180; Min=30; Max=3600 }
         max_retries                       = @{ Type='int';  Default=3; Min=0; Max=10 }
         use_bundled_glossary              = @{ Type='bool'; Default=$true }
+        # 金額の書き方。訳の種類ではなく書き方なので、毎回選ばせず設定で持つ。
+        # 外部公表は billion、社内資料の一部が oku（利用者 2026-08-08）。
+        # 既定は oku。今の利用者が触らずに使えるほうを既定にする。
+        # 配布先が広がったら billion へ寄せる。
+        amount_notation                   = @{ Type='enum'; Default='oku'; Values=@('oku','billion') }
         glossary_prompt_limit             = @{ Type='int';  Default=48; Min=1; Max=200 }
         browser_display_mode              = @{ Type='enum'; Default='foreground'; Values=@('foreground') }
         edge_window_size                  = @{ Type='string'; Default='1280,900'; MaxLength=24 }

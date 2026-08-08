@@ -76,7 +76,6 @@ tools/Test-YakuV9161ExcelSegmentRoundTrip.ps1	crlf
 tools/Test-YakuV9161GlossaryVariants.ps1	crlf
 tools/Test-YakuV9161LabelCoverage.ps1	lf
 tools/Test-YakuV9161ProperNoun.ps1	crlf
-tools/Test-YakuV9161PublishedUnits.ps1	crlf
 tools/Test-YakuV9161Revise.ps1	crlf
 tools/Test-YakuV9161SplitRequests.ps1	crlf
 tools/Test-YakuV9161TranslationMemory.ps1	crlf

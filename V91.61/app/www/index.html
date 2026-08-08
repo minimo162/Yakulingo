@@ -48,6 +48,13 @@
           <label><input type="radio" name="text_direction" value="to_jp"><span>英他→日</span></label>
           <span id="direction-warning" class="direction-warning" title="判定確度が低いため、必要なら方向を指定してください" aria-label="判定確度が低いため、必要なら方向を指定してください" hidden>⚠</span>
         </div>
+        <!--
+          金額の書き方。設定だが、設定パネルの奥に置くと誰も気づかない
+          （利用者の指摘 2026-08-08）。翻訳方向の隣に置き、名前ではなく
+          実例（122 oku / ¥12.2 billion）を出す。押した値はすぐ保存される。
+        -->
+        <div id="amount-notation-row" class="direction-row two-option" role="radiogroup" aria-label="金額の書き方"
+             hx-get="/api/amount-notation" hx-trigger="load" hx-swap="innerHTML"></div>
         <div class="input-meta" aria-live="polite">
           <span id="char-count" class="meta-count">0字</span>
           <span class="meta-separator" aria-hidden="true">·</span>

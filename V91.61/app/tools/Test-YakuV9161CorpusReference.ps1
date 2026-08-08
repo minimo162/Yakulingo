@@ -122,7 +122,12 @@ Chk ((Get-YakuCorpusExampleSection -Hits @()) -eq '') '0件なら空'
 Chk ((Get-YakuCorpusExampleSection -Hits $null) -eq '') 'null でも空'
 $long = @([pscustomobject]@{ Score=1.0; Database='db'; Source='db/a.pdf'; Page=1; Text=('word ' * 400) })
 $cut = Get-YakuCorpusExampleSection -Hits $long
-Chk ($cut.Length -lt 1200) ('長すぎる一節は切り詰める: ' + $cut.Length)
+# 見出しの分は差し引いて、本文だけを見る。全体の長さで見ていると、
+# 見出しを1行足すたびに閾値を上げ直すことになり、何を守る検査なのか
+# 分からなくなる。守りたいのは「本文が伸びっぱなしにならない」こと。
+$shortHit = @([pscustomobject]@{ Score=1.0; Database='db'; Source='db/a.pdf'; Page=1; Text='word' })
+$headerLen = (Get-YakuCorpusExampleSection -Hits $shortHit).Length - 4
+Chk (($cut.Length - $headerLen) -lt 700) ('長すぎる一節は切り詰める: ' + ($cut.Length - $headerLen))
 Chk ($cut -match '\.\.\.$') '切ったことが分かる'
 
 # ---------------------------------------------------------------- 検索語生成の依頼

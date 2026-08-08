@@ -86,6 +86,10 @@ textarea:focus, input:focus, select:focus { background: var(--surface); box-shad
 .direction-row label:first-child span { border-radius: 8px 0 0 8px; }
 .direction-row label:nth-of-type(3) span { border-radius: 0 8px 8px 0; }
 .direction-row.two-option label:nth-of-type(2) span { border-radius: 0 8px 8px 0; }
+/* 行の頭に置く見出し。これがあると label:first-child が効かなくなるので、
+   左端の丸めをこちらで持つ。 */
+.direction-row .row-label { color: var(--muted); font-size: var(--font-meta); margin-right: 10px; }
+.direction-row .row-label + label span { border-radius: 8px 0 0 8px; }
 .direction-row input:checked + span { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); font-weight: 700; z-index: 1; }
 .direction-row input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; z-index: 2; }
 .file-direction-row { margin-top: 0; }

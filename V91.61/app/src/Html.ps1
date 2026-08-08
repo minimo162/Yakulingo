@@ -42,6 +42,29 @@ function Convert-YakuStatusOobHtml {
     return "<div id='copilot-status' class='status' hx-swap-oob='outerHTML' aria-live='polite'><span class='status-dot $Class'></span><span>$(ConvertTo-YakuHtml $Label)</span></div>"
 }
 
+function New-YakuAmountNotationHtml {
+    <#
+      金額の書き方を選ぶ札。設定だが、設定パネルの奥に置くと誰も気づかない
+      （利用者の指摘 2026-08-08「簡単に目に入るところで設定できないと困る」）。
+      翻訳方向の隣に置く。同じ「どう訳してほしいか」の指定である。
+
+      名前ではなく実例を出す。「社内の書き方」のような名前は、どの社内かで
+      意味が変わって当てにならない。122 oku と ¥12.2 billion を並べれば、
+      説明を読まなくてもどちらが要るか分かる。
+    #>
+    param([AllowNull()]$Settings)
+    $notation = 'oku'
+    try { if ([string]$Settings.amount_notation -eq 'billion') { $notation = 'billion' } } catch {}
+    $okuChecked = if ($notation -eq 'oku') { ' checked' } else { '' }
+    $billionChecked = if ($notation -eq 'billion') { ' checked' } else { '' }
+    $post = "hx-post='/api/amount-notation' hx-target='#amount-notation-row' hx-swap='innerHTML'"
+    return @"
+<span class='row-label'>金額</span>
+<label><input type='radio' name='amount_notation' value='oku'$okuChecked $post hx-vals='{"notation":"oku"}'><span>122 oku</span></label>
+<label><input type='radio' name='amount_notation' value='billion'$billionChecked $post hx-vals='{"notation":"billion"}'><span>&#165;12.2 billion</span></label>
+"@
+}
+
 function Convert-YakuTextResultToHtml {
     param(
         [Parameter(Mandatory=$true)]$Result,
@@ -129,11 +152,12 @@ function Convert-YakuTextResultToHtml {
     # 「どちらを使うか」を読んで判断させることになり、選べない
     # （独立評価 2026-08-08）。主が1つあれば読む場所が決まる。
     #
-    # 主は「標準の英語」にする。どこにも合わせていない状態であり、
-    # 社内表記を持ち込まないので、社外へ出す文書に混ざる事故も起きない。
-    # 合わせ先がはっきりしている人は1回選べば、次からその形が主になる。
+    # 2つの違いは長さだけにした。金額の書き方は設定で決まるので、
+    # ここで選ばせない（利用者の判断 2026-08-08「そんなに頻繁に切り替える
+    # 必要もないので、金額の書き方は設定で」）。
+    # 主は「そのまま」。短くするのは枠に入らないときだけである。
     $ordered = New-Object System.Collections.Generic.List[object]
-    foreach ($want in @('full', 'published', 'brief')) {
+    foreach ($want in @('full', 'brief')) {
         foreach ($o in $options) {
             $s = ''
             try { $s = [string]$o.Style } catch { $s = '' }
@@ -167,10 +191,6 @@ function Convert-YakuTextResultToHtml {
                 $dropNotice = "<p class='result-danger'>この訳には数値が入っていません（" + (ConvertTo-YakuHtml ([string]$opt.DroppedNumbers)) + "）。使わずに、もう一方をお使いください。</p>"
             }
         } catch {}
-        # 単位の書き方は、貼る先で変わる。訳し直しではなく書き分けなので、
-        # 手元で切り替える。「社内は oku」と決めつけない
-        # （利用者の指摘 2026-08-08「それは自分の周りだけかもしれない」）。
-        # oku を含まない訳には出さない。押しても何も変わらないボタンは邪魔なだけ。
         # 1つ目を主にし、2つ目以降は下に小さく添える。押すと入れ替わる。
         $isMain = ($optionIndex -eq 0)
         $optionIndex++
@@ -203,7 +223,7 @@ $dropNotice  <pre class='translation' data-yaku-main-text>$translation</pre>
     if (-not [string]::IsNullOrWhiteSpace($altHtml)) {
         $html += @"
 <div class='result-alts'>
-  <p class='result-alts-lead'>ほかの書き方もあります。押すと上と入れ替わります。</p>
+  <p class='result-alts-lead'>枠に入らないときは、こちらを押すと上と入れ替わります。</p>
   <div class='result-alts-list'>
 $altHtml  </div>
 </div>

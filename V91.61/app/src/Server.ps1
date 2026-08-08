@@ -1950,6 +1950,29 @@ function Invoke-YakuRoute {
         Send-YakuTextResponse -Context $Context -Text (Convert-YakuSettingsFormToHtml -Settings $settings)
         return
     }
+    # 金額の書き方だけを切り替える。設定パネル全体の保存を経由させると、
+    # 診断レベルなど無関係な値まで送らせることになる。
+    if ($method -eq 'GET' -and $path -eq '/api/amount-notation') {
+        Send-YakuTextResponse -Context $Context -Text (New-YakuAmountNotationHtml -Settings (Read-YakuSettings -Root $script:YakuRoot))
+        return
+    }
+    if ($method -eq 'POST' -and $path -eq '/api/amount-notation') {
+        try {
+            $payload = Read-YakuRequestJson -Request $req
+            $requested = [string]$payload['notation']
+            if ($requested -ne 'oku' -and $requested -ne 'billion') {
+                throw 'AMOUNT_NOTATION_INVALID: 金額の書き方は oku か billion のどちらかです。'
+            }
+            # 保存すると翻訳キャッシュは Save-YakuUserSettings が捨てる。
+            # 捨てないと、前の書き方で訳したものがそのまま出る。
+            $null = Save-YakuUserSettings -Root $script:YakuRoot -Form @{ amount_notation = $requested }
+            Send-YakuTextResponse -Context $Context -Text (New-YakuAmountNotationHtml -Settings (Read-YakuSettings -Root $script:YakuRoot))
+        } catch {
+            $safe = Convert-YakuExceptionToUserMessage $_
+            Send-YakuTextResponse -Context $Context -Text (New-YakuAlertHtml -Kind error -Message $safe) -StatusCode 400
+        }
+        return
+    }
     if ($method -eq 'GET' -and $path -match '^/api/jobs/([a-f0-9]{32})$') {
         $jobId = [string]$Matches[1]
         Update-YakuTranslationJobs
