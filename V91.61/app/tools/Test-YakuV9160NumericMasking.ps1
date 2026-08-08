@@ -24,7 +24,7 @@ function Assert-YakuMask {
     else { Write-Host ('  FAIL ' + $Message) -ForegroundColor Red; $script:Failures++ }
 }
 
-foreach ($name in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','ProperNoun.ps1','Translation.ps1','FileProcessors.ps1','FileTranslation.ps1','BriefStyle.ps1')) {
+foreach ($name in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','ProperNoun.ps1','Translation.ps1','FileProcessors.ps1','FileTranslation.ps1','BriefStyle.ps1','CatProject.ps1')) {
     . (Join-Path (Join-Path $root 'src') $name)
 }
 
@@ -587,6 +587,17 @@ $catMaskAt = $catSrc.IndexOf('New-YakuNumericMaskMap')
 $catSendAt = $catSrc.IndexOf('Invoke-YakuFileTranslationItems -Root')
 Assert-YakuMask ($catMaskAt -gt 0 -and $catSendAt -gt 0 -and $catMaskAt -lt $catSendAt) 'CAT 経路は送信より前にマスクする'
 
+# 静的な順序だけでなく、実際の中継関数へ複合単位を通す。以前は
+# 18万6千台 が [[N1]]万[[N2]]千台 に割れ、モデルへ日本語の桁が残っていた。
+$catUnitItem = [pscustomobject]@{ Index = 1; Text = '販売台数は18万6千台。' }
+$null = Protect-YakuCatItems -Items @($catUnitItem) -Root $root -Direction 'to_en'
+Assert-YakuMask ([string]$catUnitItem.MaskedText -match '\[\[N1\]\]\s+k units') ('CAT でも複合単位を1つに畳んでから伏せる: ' + [string]$catUnitItem.MaskedText)
+Assert-YakuMask ([string]$catUnitItem.MaskedText -notmatch '[万千]') 'CAT の送信本文に日本語の桁を残さない'
+$catUnitMap = @{ 1 = 'Sales volume was [[N1]] k units.' }
+Restore-YakuCatItemTranslations -Items @($catUnitItem) -Map $catUnitMap -Warnings $null
+Assert-YakuMask ([string]$catUnitMap[1] -match '186\s+k units') ('CAT の訳文へ複合数量を復元する: ' + [string]$catUnitMap[1])
+Assert-YakuMask ([string]$catUnitItem.MaskedTranslation -match '\[\[N1\]\]') 'CAT の推敲用に実値復元前の訳文を保持する'
+
 $alignSrc = Get-Content -LiteralPath (Join-Path $root 'src\Alignment.ps1') -Raw -Encoding UTF8
 Assert-YakuMask ($alignSrc -match 'Protect-YakuAlignmentLines') 'アライメント経路がマスクを呼んでいる'
 Assert-YakuMask ($alignSrc -match 'New-YakuAlignmentPrompt\s+-JaLines\s+\$jaMasked\s+-EnLines\s+\$enMasked') 'アライメント経路がマスク済みの行だけを渡している'
@@ -694,9 +705,9 @@ Assert-YakuMask ($itemsFn -notmatch 'New-YakuNumericMaskMap') '中継関数は�
 # 実際に走る経路（ジョブ側）が伏せてから送っていること。
 # ここが抜けていた当人なので、名指しで確かめる。
 $serverSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Server.ps1'))
-$catSendAt = $serverSrc.IndexOf('$map = Invoke-YakuFileTranslationItems')
+$catSendAt = $serverSrc.IndexOf('Invoke-YakuFileTranslationItems -Root')
 Assert-YakuMask ($catSendAt -ge 0) 'ジョブ側の CAT 送信箇所が見つかる'
-$catHead = $serverSrc.Substring([Math]::Max(0, $catSendAt - 1200), [Math]::Min(1200, $catSendAt))
+$catHead = $serverSrc.Substring([Math]::Max(0, $catSendAt - 3000), [Math]::Min(3000, $catSendAt))
 Assert-YakuMask ($catHead -match 'Protect-YakuCatItems') 'ジョブ側は送信の直前に伏せている'
 $catTail = $serverSrc.Substring($catSendAt, [Math]::Min(900, $serverSrc.Length - $catSendAt))
 Assert-YakuMask ($catTail -match 'Restore-YakuCatItemTranslations') 'ジョブ側は訳文を実値へ戻している'
@@ -733,6 +744,18 @@ $mockAt = $clientSrc.IndexOf("YAKULINGO_MOCK -eq '1'")
 Assert-YakuMask ($mockAt -ge 0 -and $mockAt -lt $countAt) '模擬経路は数えない（回帰テストで数が増えない）'
 $budgetSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CopilotBudget.ps1'))
 Assert-YakuMask ($budgetSrc -notmatch 'Prompt|Translation') '記録するのは時刻だけ（本文を残さない）'
+. (Join-Path (Join-Path $root 'src') 'CopilotBudget.ps1')
+$script:YakuBudgetTestLog = Join-Path ([System.IO.Path]::GetTempPath()) ('yaku-budget-' + [guid]::NewGuid().ToString('N') + '.log')
+function Get-YakuCopilotCallLogPath { return $script:YakuBudgetTestLog }
+$fixedNow = [datetime]'2026-08-09T12:00:00'
+[IO.File]::WriteAllLines($script:YakuBudgetTestLog, @(
+        '2026-08-09T08:59:59', '2026-08-09T09:00:00',
+        '2026-08-09T10:30:00', '2026-08-09T11:59:00', 'broken-line'
+    ), [Text.UTF8Encoding]::new($false))
+Assert-YakuMask ((Get-YakuCopilotCallCount -Now $fixedNow -WindowHours 3) -eq 3) '直近3時間は境界を含め、不正行と境界前を除外する'
+$null = Add-YakuCopilotCall -Now $fixedNow
+Assert-YakuMask ((Get-YakuCopilotCallCount -Now $fixedNow -WindowHours 3) -eq 4) '1時間集計を挟んでも3時間分の履歴を保持する'
+Remove-Item -LiteralPath $script:YakuBudgetTestLog -Force -ErrorAction SilentlyContinue
 # 使いすぎに見える失敗をリトライすると、残りをさらに削る。
 Assert-YakuMask ($translationSrc -match 'Test-YakuCopilotLimitError') '制限らしい失敗ではリトライを止める'
 # 順序はリトライの catch の中だけを見る。ファイル全体で位置を比べると、

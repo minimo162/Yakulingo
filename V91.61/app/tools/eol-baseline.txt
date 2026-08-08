@@ -68,6 +68,7 @@ tools/Test-YakuV9161AlignMask.ps1	crlf
 tools/Test-YakuV9161Alignment.ps1	crlf
 tools/Test-YakuV9161BriefStyle.ps1	lf
 tools/Test-YakuV9161CatProject.ps1	crlf
+tools/Test-YakuV9161CatRecoveryBudget.ps1	crlf
 tools/Test-YakuV9161CellAlign.ps1	crlf
 tools/Test-YakuV9161CellSegments.ps1	crlf
 tools/Test-YakuV9161CopilotSelfError.ps1	crlf

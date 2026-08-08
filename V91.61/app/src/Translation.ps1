@@ -2189,7 +2189,7 @@ function Invoke-YakuTextTranslation {
             try {
                 if (Get-Command Find-YakuCorpusPairsByTerms -ErrorAction SilentlyContinue) {
                     $pairsDir = ''
-                    try { $pairsDir = Get-YakuCorpusBuildDir } catch { $pairsDir = '' }
+                    try { $pairsDir = Get-YakuCorpusSearchDir } catch { $pairsDir = '' }
                     if (-not [string]::IsNullOrWhiteSpace($pairsDir)) {
                         $pastPairs = @(Find-YakuCorpusPairsByTerms -Dir $pairsDir -Text $InputText -Limit 3)
                     }

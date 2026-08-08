@@ -17,6 +17,9 @@
   var yakuSettingsSaving = false;
   var yakuActiveTab = 'text';
   var yakuActiveJobKind = 'text';
+  var yakuCopilotCalls3h = 0;
+  var yakuCatUsage = null;
+  var yakuCatUsageRequest = 0;
   // CAT の結果はグリッドへ出すので、共有の結果欄は常に空のままでよい。
   var yakuResultByTab = { text: '', file: '', cat: '' };
   var yakuLastManualScrollAt = 0;
@@ -200,9 +203,12 @@
 
   function yakuApplyReadyState(data) {
     yakuReady = !!(data && data.canTranslate);
+    yakuCopilotCalls3h = data && typeof data.copilotCalls3h === 'number' ? data.copilotCalls3h : 0;
+    if (yakuCatUsage) yakuCatUsage.calls_last_3h = yakuCopilotCalls3h;
     if (data) yakuSetStatus(data.label, data.class);
     yakuSetButtonEnabled(yakuReady);
     yakuSetStartupMessage(data);
+    yakuCatUpdateUsage();
   }
 
   function yakuPollReadyState() {
@@ -603,8 +609,12 @@
       var origin = yakuCatOriginLabel(s.origin);
       // 繋ぎ直しの操作。自動で完璧に分けるのは無理なので、外れたら人が直す。
       var ops = '';
-      if (s.can_merge) ops += '<button type="button" class="cat-op" data-yaku-cat-merge="' + s.index + '" title="次の行と結合します（訳文は消えます）">↓結合</button>';
-      if (s.can_split) ops += '<button type="button" class="cat-op" data-yaku-cat-split="' + s.index + '" title="セル1つずつに戻します（訳文は消えます）">解除</button>';
+      var rowNumber = s.index + 1;
+      var nextSegment = s.can_merge ? all[s.index + 1] : null;
+      var mergeLosesTranslation = !!((s.translation || '').trim() || (nextSegment && (nextSegment.translation || '').trim()));
+      var splitLosesTranslation = !!(s.translation || '').trim();
+      if (s.can_merge) ops += '<button type="button" class="cat-op" data-yaku-cat-merge="' + s.index + '" data-yaku-cat-loss="' + (mergeLosesTranslation ? '1' : '0') + '" aria-label="' + rowNumber + '行目を次の行と結合" title="次の行と結合します（訳文は消えます）">↓結合</button>';
+      if (s.can_split) ops += '<button type="button" class="cat-op" data-yaku-cat-split="' + s.index + '" data-yaku-cat-loss="' + (splitLosesTranslation ? '1' : '0') + '" aria-label="' + rowNumber + '行目の結合を解除" title="セル1つずつに戻します（訳文は消えます）">解除</button>';
       // 行の状態を色で示す。市販の CAT エディタは状態列を色で分けており、
       // 一覧を眺めたときに「どこが手つかずか」が一目で分かる。
       // 状態は3つ。訳が入っているかと、人が見たかは別物である。
@@ -618,13 +628,18 @@
         (origin ? '<span class="cat-origin cat-origin-' + yakuEscape(s.origin) + '">' + yakuEscape(origin) + '</span>' : '') +
         (ops ? '<span class="cat-ops">' + ops + '</span>' : '') + '</td>' +
         '<td class="cat-source">' + yakuEscape(s.source) + '</td>' +
-        '<td class="cat-target"><textarea rows="2" data-yaku-cat-input="' + s.index + '" data-yaku-original="' + yakuEscape(s.translation || '') + '">' + yakuEscape(s.translation || '') + '</textarea>' +
+        '<td class="cat-target"><textarea rows="2" aria-label="' + rowNumber + '行目の訳文" data-yaku-cat-input="' + s.index + '" data-yaku-original="' + yakuEscape(s.translation || '') + '">' + yakuEscape(s.translation || '') + '</textarea>' +
           // キーボードだけでなくマウスでも進められるようにする。
           // 四半期に1回しか使わない人が Ctrl+Enter を覚えている前提は成り立たない。
           '<div class="cat-row-actions">' +
-          (s.confirmed ? '' : '<button type="button" class="cat-op cat-op-ok" data-yaku-cat-ok="' + s.index + '">これでよい</button>') +
-          ((s.kind === 'cell' && (s.translation || '').trim() && s.source.length <= 40) ? '<button type="button" class="cat-op" data-yaku-cat-toglossary="' + s.index + '">用語集に追加</button>' : '') +
-          '</div></td>' +
+          (s.confirmed ? '' : '<button type="button" class="cat-op cat-op-ok" aria-label="' + rowNumber + '行目をこれで確定" data-yaku-cat-ok="' + s.index + '">これでよい</button>') +
+          ((s.kind === 'cell' && (s.translation || '').trim() && s.source.length <= 40) ? '<button type="button" class="cat-op" aria-label="' + rowNumber + '行目を用語集に追加" data-yaku-cat-toglossary="' + s.index + '">用語集に追加</button>' : '') +
+          '</div>' +
+          (s.can_revise ? '<form class="revise-form" data-yaku-cat-revise="' + s.index + '">' +
+            '<label class="revise-label" for="cat-revise-' + s.index + '">この訳をどう直すか</label>' +
+            '<div class="revise-row"><input id="cat-revise-' + s.index + '" class="revise-input" type="text" autocomplete="off" placeholder="例：主語を省き、簡潔に">' +
+            '<button type="submit" class="secondary-button revise-button">この指示で直す</button></div></form>' : '') +
+          '</td>' +
         '</tr>'
       );
     }
@@ -690,12 +705,11 @@
     var exportBtn = document.getElementById('cat-export-button');
     if (exportBtn) {
       exportBtn.textContent = (data.source === 'text') ? '訳文をコピー' : '出力';
-      // 再開したものは元の塊を持っていないので Excel へ書き戻せない。
-      // 押せる状態で置いておくと、数時間の確認のあとに「出せません」と
-      // 言われることになる。押す前に、押せないことと理由を出す。
+      // 元ファイルが無ければ再抽出できない。存在する場合は出力時に
+      // 原文を再対応付けし、曖昧なら書き込む前に停止する。
       exportBtn.disabled = !!data.export_blocked;
       exportBtn.title = data.export_blocked
-        ? '前回の続きから再開した作業は、いまのところ Excel へ出力できません。同じ Excel をもう一度取り込んでください。'
+        ? '元の Excel が見つかりません。移動または削除されていないか確認してください。'
         : '';
     }
     var blockedNote = document.getElementById('cat-export-blocked');
@@ -705,6 +719,33 @@
     if (saveBtn) saveBtn.hidden = (data.source !== 'align');
     yakuCatSetStatus(data.file_name + ' … ' + data.total + ' 行（訳あり ' + data.translated + ' / 残り ' + data.remaining + '、結合 ' + data.joined + '）');
     yakuCatUpdateProgress(data);
+    yakuCatRefreshUsage();
+  }
+
+  function yakuCatUpdateUsage() {
+    var el = document.getElementById('cat-copilot-usage');
+    if (!el) return;
+    if (!yakuCatData || !yakuCatData.segments || !yakuCatUsage) { el.hidden = true; return; }
+    var estimated = Number(yakuCatUsage.estimated_calls) || 0;
+    var recent = Number(yakuCatUsage.calls_last_3h) || 0;
+    var hits = Number(yakuCatUsage.cache_hits) || 0;
+    el.hidden = false;
+    el.textContent = estimated > 0
+      ? ('残りの翻訳でCopilotを約 ' + estimated + ' 回使います。直近3時間の使用は ' + recent + ' 回です。' + (hits ? ' 前回の結果を ' + hits + ' 件再利用します。' : '') + ' 再試行で増えることがあります。')
+      : ('未翻訳または再利用できる訳だけです。直近3時間のCopilot使用は ' + recent + ' 回です。');
+  }
+
+  function yakuCatRefreshUsage() {
+    if (!yakuCatProjectId) { yakuCatUsage = null; yakuCatUpdateUsage(); return Promise.resolve(null); }
+    var request = ++yakuCatUsageRequest;
+    return yakuCatPost('estimate', { id: yakuCatProjectId }).then(function (usage) {
+      if (request !== yakuCatUsageRequest) return usage;
+      yakuCatUsage = usage || null;
+      yakuCatUpdateUsage();
+      return usage;
+    }).catch(function () {
+      return null;
+    });
   }
 
   function yakuCatUpdateProgress(data) {
@@ -787,8 +828,7 @@
       box.hidden = false;
       list.innerHTML = items.slice(0, 3).map(function (p) {
         var pct = p.total ? Math.round((p.confirmed / p.total) * 100) : 0;
-        // Excel から取り込んだものは、再開しても Excel へ出力できない。
-        // 開く前に分かるようにする。開いてから知るのでは遅い。
+        // 元Excelが無いものは再対応付けできない。開く前に分かるようにする。
         var note = p.export_blocked ? '・出力不可' : '';
         return '<button type="button" class="cat-op" data-yaku-cat-resume="' + yakuEscape(p.id) + '">' +
           yakuEscape(p.file_name) + '（確認 ' + pct + '%' + note + '）</button>';
@@ -840,15 +880,47 @@
       yakuPollReadyState();
       return;
     }
+    var requestedMode = mode || 'translate';
+    // 概算の再取得中も二重起動を防ぐ。応答を待つ数百msだけ無防備だと、
+    // ダブルクリックで同じ残りを2ジョブへ送ってしまう。
     yakuTranslating = true;
     yakuActiveJobKind = 'cat';
     yakuSetButtonEnabled(false);
-    yakuRenderJobLoading('', 0, mode === 'corpus' ? '文例を検索中' : 'Copilotで翻訳中', '準備中');
+    var beforeStart = requestedMode === 'translate' ? yakuCatRefreshUsage() : Promise.resolve(null);
+    beforeStart.then(function () {
+      yakuRenderJobLoading('', 0, requestedMode === 'corpus' ? '文例を検索中' : 'Copilotで翻訳中', '準備中');
+      yakuScrollJobResultIntoView();
+      // ジョブは別のランスペースで走る。各成功バッチはチェックポイントへ
+      // 保存し、完了後の apply では最終結果を取り込む。
+      return yakuJsonPost('/api/cat/translate', { id: yakuCatProjectId, mode: requestedMode }).then(yakuResponseText).then(yakuStartFromHtml);
+    }).catch(function (error) {
+      yakuShowStartError(error, requestedMode === 'corpus' ? '文例を検索できませんでした。' : 'Copilot翻訳を開始できませんでした。');
+    });
+  }
+
+  function yakuCatRevise(form) {
+    if (!yakuCatProjectId || !form) return;
+    var input = form.querySelector('.revise-input');
+    var instruction = input ? input.value.trim() : '';
+    var index = parseInt(form.getAttribute('data-yaku-cat-revise'), 10);
+    if (!instruction) { if (input) input.focus(); return; }
+    if (yakuTranslating) {
+      yakuCatSetStatus('いま別の処理を実行しています。終わってからもう一度お試しください。');
+      return;
+    }
+    if (!yakuReady) { yakuPollReadyState(); return; }
+    yakuTranslating = true;
+    yakuActiveJobKind = 'cat';
+    yakuSetButtonEnabled(false);
+    yakuRenderJobLoading('', 0, '修正を依頼中', '準備中');
     yakuScrollJobResultIntoView();
-    // ジョブは別のランスペースで走り、メモリ上のプロジェクトを触れない。
-    // 結果だけを返させ、完了後に apply で取り込む。
-    yakuJsonPost('/api/cat/translate', { id: yakuCatProjectId, mode: mode || 'translate' }).then(yakuResponseText).then(yakuStartFromHtml).catch(function (error) {
-      yakuShowStartError(error, mode === 'corpus' ? '文例を検索できませんでした。' : 'Copilot翻訳を開始できませんでした。');
+    yakuJsonPost('/api/cat/translate', {
+      id: yakuCatProjectId,
+      mode: 'revise',
+      index: index,
+      instruction: instruction
+    }).then(yakuResponseText).then(yakuStartFromHtml).catch(function (error) {
+      yakuShowStartError(error, '修正を依頼できませんでした。');
     });
   }
 
@@ -1320,6 +1392,28 @@
     var fileDrop = document.getElementById('file-drop');
     var fileClearButton = document.getElementById('file-clear-button');
 
+    function yakuBindFileDropTarget(dropTarget, input) {
+      if (!dropTarget || !input) return;
+      dropTarget.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          input.click();
+        }
+      });
+      ['dragenter', 'dragover'].forEach(function (name) {
+        dropTarget.addEventListener(name, function (event) { event.preventDefault(); dropTarget.classList.add('dragover'); });
+      });
+      ['dragleave', 'drop'].forEach(function (name) {
+        dropTarget.addEventListener(name, function (event) { event.preventDefault(); dropTarget.classList.remove('dragover'); });
+      });
+      dropTarget.addEventListener('drop', function (event) {
+        if (event.dataTransfer && event.dataTransfer.files.length) {
+          input.files = event.dataTransfer.files;
+          input.dispatchEvent(new Event('change'));
+        }
+      });
+    }
+
     if (textForm) textForm.addEventListener('submit', yakuSubmitText);
     Array.prototype.forEach.call(document.querySelectorAll('input[name="text_direction"]'), function (radio) {
       radio.addEventListener('change', yakuUpdateInputMeta);
@@ -1361,28 +1455,11 @@
       yakuResetFileInfoMessage();
     });
     if (fileForm) fileForm.addEventListener('submit', yakuSubmitFileTranslation);
-    if (fileDrop) {
-      fileDrop.addEventListener('keydown', function (event) {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          if (fileInput) fileInput.click();
-        }
-      });
-      ['dragenter', 'dragover'].forEach(function (name) {
-        fileDrop.addEventListener(name, function (event) { event.preventDefault(); fileDrop.classList.add('dragover'); });
-      });
-      ['dragleave', 'drop'].forEach(function (name) {
-        fileDrop.addEventListener(name, function (event) { event.preventDefault(); fileDrop.classList.remove('dragover'); });
-      });
-      fileDrop.addEventListener('drop', function (event) {
-        if (fileInput && event.dataTransfer && event.dataTransfer.files.length) {
-          fileInput.files = event.dataTransfer.files;
-          fileInput.dispatchEvent(new Event('change'));
-        }
-      });
-    }
+    yakuBindFileDropTarget(fileDrop, fileInput);
 
     document.addEventListener('submit', function (event) {
+      var catRevise = event.target.closest && event.target.closest('form[data-yaku-cat-revise]');
+      if (catRevise) { event.preventDefault(); yakuCatRevise(catRevise); return; }
       var revise = event.target.closest && event.target.closest('form[data-yaku-revise]');
       if (revise) { event.preventDefault(); yakuSubmitRevision(revise); return; }
       var form = event.target.closest && event.target.closest('form[data-yaku-json-post]');
@@ -1554,6 +1631,7 @@
       var name = document.getElementById('cat-file-name');
       if (name) name.textContent = (catFileInput.files && catFileInput.files.length) ? catFileInput.files[0].name : 'ローカルパス指定も利用できます';
     });
+    yakuBindFileDropTarget(document.getElementById('cat-drop'), catFileInput);
     // 触っただけの行を「手直し」にしない。以前は離れるたびに保存して
     // いたので、一覧を上から見ていくだけで全部が手直し扱いになっていた。
     // 「この行は見た」を記録する。訳文が変わっていなくても記録する。
@@ -1674,9 +1752,16 @@
     });
     document.addEventListener('click', function (event) {
       var merge = event.target.closest && event.target.closest('[data-yaku-cat-merge]');
-      if (merge) { yakuCatRegroup('merge', parseInt(merge.getAttribute('data-yaku-cat-merge'), 10)); return; }
+      if (merge) {
+        if (merge.getAttribute('data-yaku-cat-loss') === '1' && !window.confirm('結合すると、対象行の訳文が消えます。結合しますか？')) return;
+        yakuCatRegroup('merge', parseInt(merge.getAttribute('data-yaku-cat-merge'), 10));
+        return;
+      }
       var split = event.target.closest && event.target.closest('[data-yaku-cat-split]');
-      if (split) { yakuCatRegroup('split', parseInt(split.getAttribute('data-yaku-cat-split'), 10)); }
+      if (split) {
+        if (split.getAttribute('data-yaku-cat-loss') === '1' && !window.confirm('解除すると、この行の訳文が消えます。解除しますか？')) return;
+        yakuCatRegroup('split', parseInt(split.getAttribute('data-yaku-cat-split'), 10));
+      }
     });
 
     document.addEventListener('keydown', function (event) {

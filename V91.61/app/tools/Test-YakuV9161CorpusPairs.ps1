@@ -96,6 +96,11 @@ try {
     $lookupBlock = $trSrc.Substring([Math]::Max(0, $lookupAt - 900), 1400)
     Chk ($lookupBlock -notmatch 'Invoke-YakuCopilotPrompt') '引くのに Copilot を呼ばない（往復を増やさない）'
     Chk ($trSrc -match 'PastPairs') '結果に PastPairs として載る'
+    Chk ($trSrc -match 'Get-YakuCorpusSearchDir') '簡易翻訳の過去訳は配布済みコーパスを読む'
+    $catSrc = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'CatProject.ps1') -Raw -Encoding UTF8
+    $serverSrc = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'Server.ps1') -Raw -Encoding UTF8
+    Chk ($catSrc -match 'Get-YakuCorpusSearchDir') 'CAT 候補も配布済みコーパスを読む'
+    Chk ($serverSrc -match "pairsDir = Get-YakuCorpusSearchDir") '候補 API が配布先を CAT へ渡す'
 
     $hits = @(Find-YakuCorpusPairs -Dir $tmp -Query '電動化' -VerifiedOnly)
     Chk ($hits.Count -eq 1 -and $hits[0].Ja -match '黎明期') '裏取りの通った対だけに絞れる'
@@ -207,8 +212,15 @@ try {
     $ng = New-YakuCatAlignProject -Root $root -SourceText '' -TargetText $enDoc -Settings $null
     Chk (@($ng.Segments).Count -eq 0 -and @($ng.Warnings).Count -eq 1) '片方が空なら注意を出して空で返す'
 
-    # グリッドで直してから貯める、という順序を確かめる。
-    @($proj.Segments)[0].Translation = 'We will promote electrification.'
+    # 機械が作った対応を、未確認のまま貯めない。
+    $unchecked = Save-YakuCatProjectToCorpus -Project $proj -Database '未確認' -Source '未確認の分' -Dir $tmp -Public
+    Chk ($unchecked.Added -eq 0) '未確認の機械アライメントはコーパスへ入れない'
+
+    # グリッドで直すか「これでよい」と確定してから貯める、という順序を確かめる。
+    $null = Set-YakuCatSegmentTranslation -Project $proj -Index 0 -Text 'We will promote electrification.'
+    for ($i = 1; $i -lt @($proj.Segments).Count; $i++) {
+        $null = Set-YakuCatSegmentConfirmed -Project $proj -Index $i
+    }
     # 保存先は試験用の場所を指す。本番の取り込み場所を汚さない。
     $saved = Save-YakuCatProjectToCorpus -Project $proj -Database '突合' -Source '手で直した分' -Dir $tmp -Public
     Chk ($saved.Added -eq 3) '確かめた対訳をコーパスへ入れる'

@@ -261,6 +261,9 @@ $fileTemplate = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'promp
 Chk ($fileTemplate -match 'corpus_section') 'ファイル用テンプレートに差し込み口がある'
 $fileText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'FileTranslation.ps1'))
 Chk ($fileText -match 'CorpusSection') 'ファイル用プロンプトが文例を受け取れる'
+$filePromptCalls = @(($fileText -split "`r?`n") | Where-Object { [string]$_ -match '^\s*\$\w*Prompt\s*=\s*New-YakuFilePrompt\b' })
+Chk ($filePromptCalls.Count -eq 4) ('ファイル用プロンプトの生成経路をすべて見つける: ' + $filePromptCalls.Count)
+Chk (@($filePromptCalls | Where-Object { [string]$_ -notmatch '-CorpusSection\b' }).Count -eq 0) '通常・Hangul再試行・数値再試行・数値補完のすべてへ文例を渡す'
 Chk ($fileText -notmatch 'Get-YakuCorpusReference') 'ファイル翻訳自身は引かない（渡されたものを使うだけ）'
 $jpTemplate = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'prompts') 'text_translate_to_jp.txt'))
 Chk ($jpTemplate -notmatch 'corpus_section') 'to_jp のテンプレートにも足していない'

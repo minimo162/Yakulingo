@@ -142,7 +142,7 @@ function New-YakuFileUniqueItems {
 
 function Split-YakuFileTranslationItems {
     param(
-        [Parameter(Mandatory=$true)][object[]]$Items,
+        [Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Items,
         [Parameter(Mandatory=$true)][int]$MaxChars
     )
     $batches = New-Object System.Collections.Generic.List[object]
@@ -1359,7 +1359,7 @@ function Invoke-YakuFileTranslationItems {
         $sendStartFailures = 0
         for ($contractAttempt = 1; $contractAttempt -le $contractMaxAttempts; $contractAttempt++) {
             $requestId = [guid]::NewGuid().ToString('N')
-            $prompt = New-YakuFilePrompt -Root $Root -Items @($batch.Items) -Settings $Settings -Direction $Direction -RequestId $requestId
+            $prompt = New-YakuFilePrompt -Root $Root -Items @($batch.Items) -Settings $Settings -Direction $Direction -RequestId $requestId -CorpusSection ([string]$Context['CorpusSection'])
             $skipFresh = ([int]$Context['CopilotCalls'] -gt 0)
             $Context['CopilotCalls'] = [int]$Context['CopilotCalls'] + 1
             try {
@@ -1528,6 +1528,24 @@ function Invoke-YakuFileTranslationItems {
         $hint = Get-YakuFileRemainingHint -Context $Context -Current ($ord + 1) -Total $total
         if ($hint) { $doneDetail += "。$hint" }
         Set-YakuFileTranslationProgress -ProgressState $ProgressState -Phase 'translate' -Label $phaseLabel -Progress $donePct -Detail $doneDetail -Fields $doneFields
+        # CAT は内側のこの関数を直接呼ぶ。バッチが終わるたびに結果を外側へ
+        # 公開し、次のバッチで制限に当たっても完了分を保存・再利用できるようにする。
+        if ($Context.ContainsKey('CompletedMap') -and $null -ne $Context['CompletedMap']) {
+            foreach ($doneItem in @($batch.Items)) {
+                $doneIndex = [int]$doneItem.Index
+                if ($map.ContainsKey($doneIndex)) { $Context['CompletedMap'][$doneIndex] = [string]$map[$doneIndex] }
+            }
+        }
+        if ($Context.ContainsKey('CachePerBatch') -and [bool]$Context['CachePerBatch']) {
+            $cacheKind = if ($Context.ContainsKey('CacheKind')) { [string]$Context['CacheKind'] } else { 'file' }
+            $cacheStyle = if ($Context.ContainsKey('CacheStyle')) { [string]$Context['CacheStyle'] } else { 'concise' }
+            $cacheRoot = if ($Context.ContainsKey('CacheRoot')) { [string]$Context['CacheRoot'] } else { $Root }
+            Add-YakuFileTranslationsToCache -Items @($batch.Items) -Translations $map -Settings $Settings -Direction $Direction -Kind $cacheKind -Style $cacheStyle -Root $cacheRoot
+        }
+        if ($Context.ContainsKey('OnBatchCompleted') -and $null -ne $Context['OnBatchCompleted']) {
+            $onBatchCompleted = $Context['OnBatchCompleted']
+            & $onBatchCompleted @($batch.Items) $map
+        }
     }
     return $map
 }
@@ -1537,7 +1555,10 @@ function Add-YakuFileTranslationsToCache {
         [Parameter(Mandatory=$true)][object[]]$Items,
         [Parameter(Mandatory=$true)][hashtable]$Translations,
         [Parameter(Mandatory=$true)]$Settings,
-        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction
+        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
+        [ValidateSet('file','cat')][string]$Kind = 'file',
+        [string]$Style = 'concise',
+        [AllowNull()][string]$Root
     )
     foreach ($item in @($Items)) {
         $idx = [int]$item.Index
@@ -1549,7 +1570,7 @@ function Add-YakuFileTranslationsToCache {
         $sourceForCache = [string]$item.Text
         $value = Convert-YakuFileTranslationBrackets -Text ([string]$Translations[$idx])
         if (Test-YakuFileTranslationInvalid -Source $sourceForCache -Translation $value -Direction $Direction) { continue }
-        $cacheKey = Get-YakuTranslationCacheKey -Kind 'file' -Direction $Direction -Text $sourceForCache -Style 'concise' -Settings $Settings
+        $cacheKey = Get-YakuTranslationCacheKey -Kind $Kind -Direction $Direction -Text $sourceForCache -Style $Style -Root $Root -Settings $Settings
         Set-YakuTranslationCacheValue -Key $cacheKey -Value $value -Settings $Settings
     }
 }

@@ -104,6 +104,13 @@ try {
     try { $null = Set-YakuCatSegmentConfirmed -Project $empty -Index 0 } catch { $threw = $true }
     Chk $threw '訳が空の行は確定できない'
 
+    $cleared = New-YakuCatTextProject -Root $root -Settings $null -Direction 'to_en' `
+        -Text "一度訳した文です。" -Translation "This sentence was translated once."
+    $null = Set-YakuCatSegmentTranslation -Project $cleared -Index 0 -Text ''
+    Chk ([string]@($cleared.Segments)[0].Translation -eq '') '訳文を空へ戻せる'
+    Chk (-not [bool]@($cleared.Segments)[0].Confirmed) '空へ戻した行は確認済みにしない'
+    Chk ([string]@($cleared.Segments)[0].Origin -eq '') '空へ戻した行に手直し済みの印を残さない'
+
     # 行数が合わない訳文は割り当てない。ずれた対応を見せるより空欄がよい。
     $mismatch = New-YakuCatTextProject -Root $root -Settings $null -Direction 'to_en' `
         -Text "一つ目の文です。二つ目の文です。" -Translation "Only one sentence."

@@ -50,6 +50,9 @@ $script:YakuCopilotCallWarnThreshold = 80
 # 数える窓。上の観測が1時間ごとの集計なので、それに合わせる。
 # 窓の長さそのものは確かめていない。
 $script:YakuCopilotCallWindowHours = 1
+# 画面では直近3時間も示す。送信のたびに1時間より前を捨てると、その値を
+# 後から復元できない。警告の集計窓とは分け、軽い時刻行を24時間だけ保持する。
+$script:YakuCopilotCallRetentionHours = 24
 
 function Get-YakuCopilotCallLogPath {
     $dir = Get-YakuSubDir 'logs'
@@ -88,6 +91,8 @@ function Get-YakuCopilotCallCount {
     $now = if ($null -eq $Now -or $Now -eq [datetime]::MinValue) { Get-Date } else { $Now }
     $hours = if ($WindowHours -gt 0) { $WindowHours } else { $script:YakuCopilotCallWindowHours }
     $since = $now.AddHours(-1 * $hours)
+    $retentionHours = [Math]::Max($hours, [int]$script:YakuCopilotCallRetentionHours)
+    $keepSince = $now.AddHours(-1 * $retentionHours)
     try {
         $path = Get-YakuCopilotCallLogPath
         if (-not [IO.File]::Exists($path)) { return 0 }
@@ -98,14 +103,17 @@ function Get-YakuCopilotCallCount {
             if ([string]::IsNullOrWhiteSpace($t)) { continue }
             $dt = [datetime]::MinValue
             if (-not [datetime]::TryParseExact($t, 'yyyy-MM-ddTHH:mm:ss', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$dt)) { continue }
-            if ($dt -lt $since) { continue }
+            if ($dt -lt $keepSince) { continue }
             [void]$kept.Add($t)
         }
         # 落とせる行があるときだけ書き直す。毎回書くと追記の意味が無くなる。
         if ($kept.Count -lt $lines.Count) {
             try { [IO.File]::WriteAllLines($path, @($kept.ToArray()), [Text.UTF8Encoding]::new($false)) } catch {}
         }
-        return [int]$kept.Count
+        return [int]@($kept | Where-Object {
+                $dt2 = [datetime]::MinValue
+                [datetime]::TryParseExact([string]$_, 'yyyy-MM-ddTHH:mm:ss', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$dt2) -and $dt2 -ge $since
+            }).Count
     } catch {
         return 0
     }

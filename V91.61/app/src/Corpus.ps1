@@ -318,7 +318,22 @@ function New-YakuCorpusPublishFolder {
         Copy-Item -LiteralPath $src -Destination $dst -Force
     }
 
-    # 配布物には元 PDF を入れない。Markdown と台帳だけを配る。
+    # 公表済みの日英対訳も同じデータベースの一部として配る。Markdown だけを
+    # 配ると、検索本文は見えるのに「過去の公表訳」3機能だけが0件になる。
+    $pairDatabases = @($entries | ForEach-Object { [string]$_.database } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+    foreach ($database in $pairDatabases) {
+        $pairRel = Join-Path $database 'pairs.jsonl'
+        $pairSrc = Join-Path $BuildDir $pairRel
+        if (-not (Test-Path -LiteralPath $pairSrc -PathType Leaf)) { continue }
+        $pairDst = Join-Path $versionDir $pairRel
+        $pairDstDir = Split-Path -Parent $pairDst
+        if (-not (Test-Path -LiteralPath $pairDstDir -PathType Container)) {
+            New-Item -ItemType Directory -Path $pairDstDir -Force | Out-Null
+        }
+        Copy-Item -LiteralPath $pairSrc -Destination $pairDst -Force
+    }
+
+    # 配布物には元 PDF を入れない。Markdown・対訳・台帳だけを配る。
     $out = New-YakuCorpusManifest
     $out['corpus_version'] = $Version
     $out['entries'] = @($entries)

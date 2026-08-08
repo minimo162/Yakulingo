@@ -27,7 +27,58 @@ $root = Split-Path -Parent $toolsRoot
 $script:fail = 0
 
 . (Join-Path (Join-Path $root 'src') 'CellAlign.ps1')
+. (Join-Path (Join-Path $root 'src') 'CatProject.ps1')
 function Chk { param([bool]$c,[string]$m) if($c){Write-Host ('  ok   ' + $m) -ForegroundColor Green}else{Write-Host ('  FAIL ' + $m) -ForegroundColor Red;$script:fail++} }
+
+function CatBlocks {
+    param([string]$Sheet, [string[]]$Texts, [string]$Prefix = 'b', [string]$CodeName = '')
+    $out = New-Object System.Collections.Generic.List[object]
+    for ($i = 0; $i -lt $Texts.Count; $i++) {
+        [void]$out.Add([pscustomobject]@{
+            Id = ($Prefix + [string]($i + 1)); Text = [string]$Texts[$i]
+            Location = ($Sheet + ', A' + [string]($i + 1))
+            Meta = [pscustomobject]@{ Kind='cell'; Sheet=$Sheet; SheetCodeName=$CodeName; Row=($i + 1); Col=1; A1=('A' + [string]($i + 1)) }
+        })
+    }
+    return @($out.ToArray())
+}
+
+Write-Host 'CAT 書き戻し用の原文再対応付け'
+$catOld = @(CatBlocks -Sheet '説明' -Texts @('売上高','営業利益','経常利益') -CodeName 'Sheet1')
+$catInserted = @(CatBlocks -Sheet '説明' -Texts @('売上高','新規行','営業利益','経常利益') -Prefix 'n')
+$catR1 = Resolve-YakuCatExportBlocks -OriginalBlocks $catOld -CurrentBlocks $catInserted -RequiredBlockIds @('b1','b2','b3')
+Chk ([bool]$catR1.Success) '行が挿入されても原文で再対応付けできる'
+Chk ([int]$catR1.Map['b2'].Meta.Row -eq 3 -and [int]$catR1.Map['b3'].Meta.Row -eq 4) '旧番地ではなく移動後の行を返す'
+
+$catDeleted = @(CatBlocks -Sheet '説明' -Texts @('売上高','経常利益') -Prefix 'd')
+$catR2 = Resolve-YakuCatExportBlocks -OriginalBlocks $catOld -CurrentBlocks $catDeleted -RequiredBlockIds @('b1','b2','b3')
+Chk (-not [bool]$catR2.Success) '原文が削除されたときは全体を安全停止する'
+Chk (-not $catR2.Map.ContainsKey('b2')) '削除行の訳を次の行へずらさない'
+
+$dupOld = @(CatBlocks -Sheet '注記' -Texts @('錨A 100','注記','錨B 200','注記','錨C 300'))
+$dupNew = @(CatBlocks -Sheet '注記' -Texts @('錨A 100','追加','注記','錨B 200','注記','錨C 300') -Prefix 'u')
+$catR3 = Resolve-YakuCatExportBlocks -OriginalBlocks $dupOld -CurrentBlocks $dupNew -RequiredBlockIds @('b2','b4')
+Chk ([bool]$catR3.Success) '同文でも別々の錨区間なら一対一に対応付ける'
+Chk ([int]$catR3.Map['b2'].Meta.Row -eq 3 -and [int]$catR3.Map['b4'].Meta.Row -eq 5) '重複した訳の順序を入れ替えない'
+$ambOld = @(CatBlocks -Sheet '注記' -Texts @('注記','注記'))
+$ambNew = @(CatBlocks -Sheet '注記' -Texts @('注記','注記') -Prefix 'a')
+$catR4 = Resolve-YakuCatExportBlocks -OriginalBlocks $ambOld -CurrentBlocks $ambNew -RequiredBlockIds @('b1','b2')
+Chk (-not [bool]$catR4.Success -and $catR4.Map.Count -eq 0) '錨のない同文重複は番地で推測しない'
+
+$renamed = @(CatBlocks -Sheet 'Overview' -Texts @('売上高','営業利益','経常利益') -Prefix 'r' -CodeName 'Sheet1')
+$catR5 = Resolve-YakuCatExportBlocks -OriginalBlocks $catOld -CurrentBlocks $renamed -RequiredBlockIds @('b1','b2','b3')
+Chk ([bool]$catR5.Success -and [string]$catR5.SheetMatches['説明'] -eq 'Overview') '3つの一意原文でシート改名を追従する'
+$twoTargets = @($renamed + @(CatBlocks -Sheet 'Overview Copy' -Texts @('売上高','営業利益','経常利益') -Prefix 'x' -CodeName 'Sheet1'))
+$catR6 = Resolve-YakuCatExportBlocks -OriginalBlocks $catOld -CurrentBlocks $twoTargets -RequiredBlockIds @('b1')
+Chk (-not [bool]$catR6.Success) '同内容の改名候補が複数なら別シートへ推測しない'
+$caseOld = @(CatBlocks -Sheet 'Case' -Texts @('US') -CodeName 'Sheet2')
+$caseNew = @(CatBlocks -Sheet 'Case' -Texts @('us') -Prefix 'c' -CodeName 'Sheet2')
+$catR7 = Resolve-YakuCatExportBlocks -OriginalBlocks $caseOld -CurrentBlocks $caseNew -RequiredBlockIds @('b1')
+Chk (-not [bool]$catR7.Success) '大小文字だけの原文変更も完全一致で拒否する'
+$manyOld = @(CatBlocks -Sheet 'Old' -Texts (@('売上高','営業利益','経常利益') + @(1..97 | ForEach-Object { '固有行' + $_ })) -CodeName 'Sheet3')
+$weakOther = @(CatBlocks -Sheet 'Other' -Texts @('売上高','営業利益','経常利益') -Prefix 'w' -CodeName 'Sheet9')
+$catR8 = Resolve-YakuCatExportBlocks -OriginalBlocks $manyOld -CurrentBlocks $weakOther -RequiredBlockIds @('b1')
+Chk (-not [bool]$catR8.Success) '共有ラベル3件だけの別シートを改名先と推測しない'
 
 # 並びを組み立てる小道具。@('見出し','1,234',...) を渡すと、
 # 数字だけのものを数値セル扱いにして並びを作る。
