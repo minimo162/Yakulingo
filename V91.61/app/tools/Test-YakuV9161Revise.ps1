@@ -98,11 +98,21 @@ $result = [pscustomobject]@{
     Options=@([pscustomobject]@{ Style='brief'; Label='電文体'; Translation='OP 20 oku.'; MaskedTranslation='OP [[N1]] oku.' })
 }
 $html = Convert-YakuTextResultToHtml -Result $result -IncludeStatusOob:$false
-Chk ($html -match 'data-yaku-revise') '訳文ごとに修正の依頼口が付く'
-Chk ($html -match 'data-yaku-style=.brief.') 'どちらの成果物かを札が持つ'
-# 現訳はマスク後のものが載っていること。実値の載った札を作ってはならない。
-$curB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('OP [[N1]] oku.'))
-Chk ($html.Contains($curB64)) '札が運ぶ現訳はマスク後のもの'
+# 修正の依頼口は「すぐ訳す」から外した。直すのは「見比べて訳す」の役目にする
+# （利用者の方針 2026-08-08「簡易翻訳は簡易翻訳、CAT は CAT でベストにする」）。
+# 直す機能が両方にあると、どちらでやるべきか毎回考えることになる。
+Chk (-not ($html -match 'data-yaku-revise')) 'すぐ訳すには修正の依頼口を置かない'
+Chk ($html -match 'data-yaku-to-cat') '直したいときの行き先は用意する'
+# 内部の英字ラベルを画面に出さない。利用者が読む言葉にする。
+Chk (-not ($html -match '>FULL<|>BRIEF<')) '内部の英字ラベルを画面に出さない'
+Chk (-not ($html -match 'STYLE_REFERENCE')) 'プロンプト内部の語を画面に出さない'
+Chk (-not ($html -match 'ユーザー入力:')) '入力字数を二度出さない'
+# 修正の依頼口を外したので、マスク後の現訳を持ち回る札も無くなった。
+# 代わりに確かめるのは「実値の訳文を Copilot へ送り返す札が無いこと」。
+# CAT へ渡す札は実値を持つが、これは画面に並べるためで外へは出ない。
+# CAT が Copilot へ送るのは訳文が空の行だけである。
+$realB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('OP 20 oku.'))
+Chk (-not ($html -match "data-yaku-current='$([regex]::Escape($realB64))'")) '実値の現訳を送信用の札に載せない'
 # 実値の入った訳文は data-yaku-current に載らないこと。
 # （コピーボタンには載る。あれは画面に出ている訳文を写すためのもので、
 #   Copilot へは送らない。ここで見たいのは送る側だけである。）

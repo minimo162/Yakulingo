@@ -59,9 +59,7 @@ function Convert-YakuTextResultToHtml {
 
     $html = ''
 
-    $inputLength = 0
-    try { $inputLength = [int]$Result.InputLength } catch { $inputLength = 0 }
-    if ($inputLength -gt 0) { $html += "<div class='batch-note'>ユーザー入力: $(ConvertTo-YakuHtml $inputLength)字</div>" }
+    # 入力の字数は、翻訳前から入力欄の下に出ている。ここで二度言わない。
 
     # V91.60 §9: 何件マスクして送ったかを示す。伏せた件数が見えないと、
     # 利用者は「送信されたのか」を推測するしかない。
@@ -93,7 +91,9 @@ function Convert-YakuTextResultToHtml {
     $batchCount = 0
     try { $batchCount = [int]$Result.BatchCount } catch { $batchCount = 0 }
     if ($batchCount -gt 1) {
-        $html += "<div class='batch-note'>長文を $batchCount バッチに分割し、前バッチの訳をSTYLE_REFERENCEとして引き継ぎました。</div>"
+        # 「バッチ」も「STYLE_REFERENCE」も、こちらの都合の言葉である。
+        # 利用者が知りたいのは「分けて訳したが、言い回しは揃えてある」だけ。
+        $html += "<div class='batch-note'>長い文章なので $batchCount 回に分けて訳しました。前半の言い回しに合わせています。</div>"
     }
 
     $html += "<section class='result-stack' data-yaku-state='done'>"
@@ -131,23 +131,12 @@ function Convert-YakuTextResultToHtml {
         if ($style -ne 'brief') { $style = 'full' }
         $masked = [string]$opt.Translation
         try { if (-not [string]::IsNullOrEmpty([string]$opt.MaskedTranslation)) { $masked = [string]$opt.MaskedTranslation } } catch {}
+        # 修正指示のフォームは置かない。「すぐ訳す」は貼って押してコピーする
+        # までの画面で、直すのは「見比べて訳す」の役目にする
+        # （利用者の方針 2026-08-08「簡易翻訳は簡易翻訳、CAT は CAT で
+        # 利用者にとってベストなものにする」）。
+        # 直す機能が両方にあると、どちらでやるべきか毎回考えることになる。
         $reviseHtml = ''
-        if ($canRevise) {
-            $reviseHtml = @"
-  <form class='revise-form' data-yaku-revise
-        data-yaku-source='$(ConvertTo-YakuUtf8Base64 $sourceText)'
-        data-yaku-current='$(ConvertTo-YakuUtf8Base64 $masked)'
-        data-yaku-style='$(ConvertTo-YakuHtml $style)'
-        data-yaku-direction='$(ConvertTo-YakuHtml $direction)'>
-    <label class='revise-label' for='revise-$style'>この訳文への修正指示</label>
-    <div class='revise-row'>
-      <input type='text' id='revise-$style' class='revise-input' name='instruction' autocomplete='off'
-             placeholder='例: 為替影響は FX ではなく forex にしてください' />
-      <button type='submit' class='secondary-button compact revise-button'>修正を依頼</button>
-    </div>
-  </form>
-"@
-        }
         $html += @"
 <article class='result-card result-card-translation'>
   <header>
