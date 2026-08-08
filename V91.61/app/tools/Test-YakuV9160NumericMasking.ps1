@@ -574,6 +574,19 @@ Assert-YakuMask ($outside.Count -eq 0) ("翻訳経路の外から呼ばれてい
 # 許可しただけでは統制にならない。Alignment.ps1 が実際にマスクを通してから
 # 送っていることを確かめる。原文の変数をそのまま渡す形へ書き換えられたら、
 # ここで落ちる。
+# 「どのファイルが Copilot を呼ぶか」だけでは足りない。CAT は Copilot を
+# 直接呼ばず、FileTranslation.ps1 の内側の関数を呼ぶので許可一覧では捕まらず、
+# その関数はマスクを通っていなかった。実数値のまま送っていたことに、
+# 2026-08-08 まで気づけなかった。呼び出し元ごとにマスクを確かめる。
+$catSrc = Get-Content -LiteralPath (Join-Path $root 'src\CatProject.ps1') -Raw -Encoding UTF8
+Assert-YakuMask ($catSrc -match 'New-YakuNumericMaskMap') 'CAT 経路が送信前にマスクを作る'
+Assert-YakuMask ($catSrc -match 'Restore-YakuNumericMask') 'CAT 経路が訳文の数値を戻す'
+Assert-YakuMask ($catSrc -match 'Test-YakuNumericMaskIntegrity') 'CAT 経路が数値の個数を確かめる'
+# マスクは Copilot を呼ぶ関数より前に置く。順序が逆だと素通りする。
+$catMaskAt = $catSrc.IndexOf('New-YakuNumericMaskMap')
+$catSendAt = $catSrc.IndexOf('Invoke-YakuFileTranslationItems -Root')
+Assert-YakuMask ($catMaskAt -gt 0 -and $catSendAt -gt 0 -and $catMaskAt -lt $catSendAt) 'CAT 経路は送信より前にマスクする'
+
 $alignSrc = Get-Content -LiteralPath (Join-Path $root 'src\Alignment.ps1') -Raw -Encoding UTF8
 Assert-YakuMask ($alignSrc -match 'Protect-YakuAlignmentLines') 'アライメント経路がマスクを呼んでいる'
 Assert-YakuMask ($alignSrc -match 'New-YakuAlignmentPrompt\s+-JaLines\s+\$jaMasked\s+-EnLines\s+\$enMasked') 'アライメント経路がマスク済みの行だけを渡している'
