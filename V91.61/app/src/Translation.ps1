@@ -884,10 +884,10 @@ function Parse-YakuV25PlainTranslationResponse {
         $fullText = ConvertFrom-YakuTextFullWidthAngle -Text $fullText
         $briefText = ConvertFrom-YakuTextFullWidthAngle -Text $briefText
         if (![string]::IsNullOrWhiteSpace($fullText) -and $fullText.Trim() -ne '...') {
-            $items += [pscustomobject]@{ Style='full'; Label='社内の書き方'; Translation=$fullText; Explanation='' }
+            $items += [pscustomobject]@{ Style='full'; Label='素直な訳'; Translation=$fullText; Explanation='' }
         }
         if (![string]::IsNullOrWhiteSpace($briefText) -and $briefText.Trim() -ne '...') {
-            $items += [pscustomobject]@{ Style='brief'; Label='短く（社内の書き方）'; Translation=$briefText; Explanation='' }
+            $items += [pscustomobject]@{ Style='brief'; Label='社内向け（短め）'; Translation=$briefText; Explanation='' }
         }
     } else {
         $jpText = Get-YakuLabeledResponseField -Text $clean -Label 'JAPANESE_TEXT'
@@ -1223,7 +1223,7 @@ function Merge-YakuBatchTranslationResults {
     )
     $merged = @()
     if ($Direction -eq 'to_en') {
-        foreach ($spec in @(@{Style='full';Label='社内の書き方'}, @{Style='brief';Label='短く（社内の書き方）'})) {
+        foreach ($spec in @(@{Style='full';Label='素直な訳'}, @{Style='brief';Label='社内向け（短め）'})) {
             $parts = New-Object System.Collections.Generic.List[string]
             foreach ($br in $BatchResults) {
                 $hit = @($br.Options | Where-Object { $_.Style -eq $spec.Style } | Select-Object -First 1)
@@ -1718,7 +1718,7 @@ function Invoke-YakuTextTranslationRequests {
             # 社内表記の完全訳と見分けが付かない。依頼の種類で印を付け直す。
             if ($thisMode -eq 'published') {
                 try { $o.Style = 'published' } catch {}
-                try { $o.Label = '公表資料の書き方' } catch {}
+                try { $o.Label = '公表向け' } catch {}
             }
             [void]$options.Add($o)
         }

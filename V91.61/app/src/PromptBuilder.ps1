@@ -547,13 +547,16 @@ function Get-YakuNumericRulesSection {
     param(
         [AllowNull()][string]$InputText,
         [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
-        # 表記の種類。既定は社内で使ってきた書き方（oku・括弧の負数）。
-        # 'published' は開示資料の書き方。マツダの英文開示を実測して決めた
-        # （2026-08-08、英文短信・有報・統合報告書 24資料）。
-        #   文章では ¥1,205.6 billion のように円マークを付ける（315件）
-        #   文章の負数は括弧を使わず "a decrease of ¥26.6 billion" と言葉で書く
-        #   （¥を括弧で囲む形は1件も無かった）
-        [ValidateSet('house','published')][string]$Notation = 'house'
+        # 表記の種類。3つ出すための軸である（利用者の整理 2026-08-08
+        # 「普通の翻訳アプリならこう、社内向けならこう、公表向けならこう」）。
+        #
+        #   plain      普通の翻訳アプリが返すもの。社内の約束を何も持ち込まない
+        #   house      社内で使ってきた書き方。oku、括弧の負数、略語
+        #   published  開示資料の書き方。マツダの英文開示12冊を読んで決めた。
+        #              文章では円マークを付ける。負数は括弧を使わず
+        #              "a decrease of ¥26.6 billion" と言葉で書く
+        #              （¥を括弧で囲む形は1件も無かった）。略語は使わない
+        [ValidateSet('plain','house','published')][string]$Notation = 'house'
     )
     if ([string]$InputText -notmatch '\[\[N\d+\]\]|[0-9０-９▲△＋+%％〜~↑↓<>＜＞→]|oku|k units|k yen|YoY|QoQ|CAGR|前年|四半期') { return '' }
     $nl = [Environment]::NewLine
@@ -573,6 +576,22 @@ function Get-YakuNumericRulesSection {
     # V91.60: 数値は外部送信前に[[N1]]へ置き換えている。指示は禁止事項の列挙ではなく
     # 「左に一致したら右を出す」形の決定表で書く。想定外の形が来たときでも
     # 行き先を類推できるようにするため。
+    if ($Notation -eq 'plain') {
+        # 普通の翻訳アプリが返すもの。社内の約束を持ち込まない。
+        # 単位も文体も指図せず、原文に忠実であることだけを求める。
+        # 「素直に訳すとこうなる」を見せることに意味があるので、
+        # ここに規則を足したくなったら、それは house か published へ入れる。
+        $plainRules = @()
+        if ([string]$InputText -match '\[\[P\d+\]\]') {
+            $plainRules += '- PROPER NOUN PLACEHOLDERS. [[P1]], [[P2]] ... stand for names. Copy each token character for character and never translate or explain them.'
+        }
+        if ([string]$InputText -match '\[\[N\d+\]\]') {
+            $plainRules += '- NUMBER PLACEHOLDERS. [[N1]], [[N2]] ... stand for redacted numbers. Copy each token character for character, exactly once, and never invent, merge, drop, or reorder them.'
+        }
+        $plainRules += '- Write units the way the source writes them. Do not convert scales and do not introduce house shorthand.'
+        $plainRules += '- Do not abbreviate. Write terms spelled out.'
+        return (@($plainRules) -join $nl)
+    }
     if ($Notation -eq 'published') {
         # 開示資料の書き方。社内表記（oku・括弧）は使わない。
         $pubRules = @()
@@ -739,7 +758,11 @@ function New-YakuTextPrompt {
         # to_jp のテンプレートには枠が無い。渡ってきても差し込まれないが、
         # 呼び出し側でも方向を見て空にしている（Test-YakuCorpusReferenceApplicable）。
         corpus_section = [string]$CorpusSection
-        numeric_rules = Get-YakuNumericRulesSection -InputText $InputText -Direction $direction -Notation $(if ([string]$Mode -eq 'published') { 'published' } else { 'house' })
+        numeric_rules = Get-YakuNumericRulesSection -InputText $InputText -Direction $direction -Notation $(
+            # full は素直な訳。社内の約束を持ち込まない。
+            # brief は社内向け。oku と略語を使う。
+            # published は開示資料の書き方。
+            switch ([string]$Mode) { 'published' { 'published' } 'full' { 'plain' } default { 'house' } })
         request_id = $RequestId
     }
     # 電文体の雛形だけが持つ差し込み口。原文に引き金が無い節は出さない。
