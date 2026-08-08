@@ -10,6 +10,13 @@ $toolsRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $appRoot = Split-Path -Parent $toolsRoot
 . (Join-Path $appRoot 'src\Paths.ps1')
 . (Join-Path $appRoot 'src\Runtime.ps1')
+# 並列用に開いた Copilot ウィンドウを閉じるために要る。
+# 読み込みに失敗しても停止そのものは続ける。
+try {
+    . (Join-Path $appRoot 'src\Settings.ps1')
+    . (Join-Path $appRoot 'src\EdgeLaunch.ps1')
+    . (Join-Path $appRoot 'src\CopilotClient.ps1')
+} catch { Write-Warning "Copilot window cleanup unavailable: $($_.Exception.Message)" }
 
 # Prefer an identity-checked local process stop. This does not expose a shutdown
 # credential on disk and cannot terminate a PID that has been reused.
@@ -20,6 +27,9 @@ try {
         $serverPid = [int]$runtime.pid
         $started = [string]$runtime.process_started_at
         if (Test-YakuProcessIdentity -Id $serverPid -StartTimeUtc $started) {
+            # 並列用に開いた Copilot ウィンドウを先に閉じる。プロセスを止めてからでは
+            # 誰も閉じないまま残る。この経路は /shutdown を通らない。
+            try { if (Get-Command Close-YakuCopilotOwnedWindows -ErrorAction SilentlyContinue) { $null = Close-YakuCopilotOwnedWindows } } catch {}
             Stop-Process -Id $serverPid -ErrorAction Stop
             Write-Host "YakuLingo server stopped. PID=$serverPid" -ForegroundColor Green
             exit 0

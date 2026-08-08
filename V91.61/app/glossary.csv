@@ -69,11 +69,11 @@ Dist固定費,Dist. Fixed cost
 固定費計,Fixed Cost Total
 固定費他,"Fixed Cost, etc."
 固定費、部品他,"Fixed Cost, Parts, etc."
-固定販促費,Fixed Promo.
-販促費,Promo. Costs
-販売促進費,Promo. Costs
-子会社固定販促費,Subs. Fixed Promo.
-子会社 固定販促費,Subs. Fixed Promo.
+固定販促費,Fixed MKT
+販促費,VM
+販売促進費,VM
+子会社固定販促費,Subs. Fixed MKT
+子会社 固定販促費,Subs. Fixed MKT
 固定費,Fixed Costs|Fixed Cost|FC
 台数構成,Vol./Mix
 構成差,Mix Difference
@@ -213,7 +213,7 @@ US/CAN関税影響,US/CAN Tariff
 ベトナム,Vietnam
 販売奨励金,VM
 奨励金,VM
-販売奨励金/固定販促費,VM / Fixed Promo.
+販売奨励金/固定販促費,VM / Fixed MKT
 台数,Vol.
 台数/為替他,Vol. / FX
 台数/為替レート,Vol. / FX Rate

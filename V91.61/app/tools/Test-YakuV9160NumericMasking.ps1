@@ -24,7 +24,7 @@ function Assert-YakuMask {
     else { Write-Host ('  FAIL ' + $Message) -ForegroundColor Red; $script:Failures++ }
 }
 
-foreach ($name in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','FileTranslation.ps1')) {
+foreach ($name in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','ProperNoun.ps1','Translation.ps1','FileProcessors.ps1','FileTranslation.ps1','BriefStyle.ps1')) {
     . (Join-Path (Join-Path $root 'src') $name)
 }
 
@@ -87,6 +87,30 @@ foreach ($t in $roundTrip) {
     Assert-YakuMask ($back -eq $r.Pre) ("往復一致: $t")
 }
 
+# ---------------------------------------------------------------- 単位の複合
+# 日本語の桁は重ねて書かれる（18万6千台）。複合を畳まないと上位の桁だけが
+# 日本語のまま英文へ残り、モデルが ten thousand と訳す（2026-08-05 実機）。
+# 兆+億 は元から畳んでいたので、万+千 と 億+万 も同じ扱いに揃える。
+Write-Host 'CASE 3b: 桁の複合を畳む'
+foreach ($u in @(
+    @{ In='販売台数は18万6千台。';     Want='186 k units' }
+    @{ In='販売台数は1万9千台。';      Want='19 k units' }
+    @{ In='販売台数は2万0千台。';      Want='20 k units' }
+    @{ In='販売台数は18万6,000台。';   Want='186 k units' }
+    @{ In='費用は3万5千円。';          Want='35 k yen' }
+    @{ In='売上高は1億2,000万円。';    Want='1.2 oku' }
+    @{ In='売上高は3億5千万円。';      Want='3.5 oku' }
+    # 単独の桁は従来どおり
+    @{ In='販売台数は18万台。';        Want='180 k units' }
+    @{ In='販売台数は6千台。';         Want='6 k units' }
+    @{ In='費用は500万円。';           Want='5,000 k yen' }
+    @{ In='売上高は1兆2,345億円。';    Want='12,345 oku' }
+)) {
+    $got = [string](Convert-YakuNumericUnits -Text ([string]$u.In) -Location 'test').Text
+    Assert-YakuMask ($got -match ([regex]::Escape([string]$u.Want))) ("{0} -> {1}" -f $u.In, $got)
+    Assert-YakuMask ($got -notmatch '[万千兆億]') ("日本語の桁が残らない: " + $got)
+}
+
 # ---------------------------------------------------------------- 符号・単位
 Write-Host 'CASE 4: 符号と単位はプレースホルダーの外に残る'
 $signCase = Invoke-YakuMaskPipeline -Text '前年差は▲72億円、計画差は+120億円、比率は△3.1％。'
@@ -96,7 +120,7 @@ foreach ($k in @('▲', '+', '△', 'oku', '％')) {
 Assert-YakuMask (-not ([string]$signCase.Masked.Text -match '(?<!N)\d')) '送信テキストに素の数字が残らない'
 
 $parenCase = Invoke-YakuMaskPipeline -Text '前年差は(50)億円。'
-Assert-YakuMask ([string]$parenCase.Masked.Text -like '*(【N1】)億円*') "半角括弧の負数を壊さない: $($parenCase.Masked.Text)"
+Assert-YakuMask ([string]$parenCase.Masked.Text -match ([regex]::Escape('([[N1]])億円'))) "半角括弧の負数を壊さない: $($parenCase.Masked.Text)"
 
 # ---------------------------------------------------------------- 用語集保護
 Write-Host 'CASE 5: 用語集に一致した範囲は保護される'
@@ -119,10 +143,10 @@ Write-Host 'CASE 7: プレースホルダー整合の検証'
 $base = Invoke-YakuMaskPipeline -Text '売上高は789億円増の11,577億円。'
 $maskedText = [string]$base.Masked.Text
 Assert-YakuMask ((Test-YakuNumericMaskIntegrity -MaskedSource $maskedText -Translated $maskedText).Ok) '同一なら Ok'
-Assert-YakuMask (-not (Test-YakuNumericMaskIntegrity -MaskedSource $maskedText -Translated ($maskedText -replace '【N1】','')).Ok) '欠落を検出'
-Assert-YakuMask (-not (Test-YakuNumericMaskIntegrity -MaskedSource $maskedText -Translated ($maskedText + '【N1】')).Ok) '重複を検出'
-Assert-YakuMask (-not (Test-YakuNumericMaskIntegrity -MaskedSource $maskedText -Translated ($maskedText + '【N9】')).Ok) '混入を検出'
-Assert-YakuMask (-not (Test-YakuNumericMaskIntegrity -MaskedSource $maskedText -Translated ($maskedText -replace '【N1】','789')).Ok) '数字への置換を検出'
+Assert-YakuMask (-not (Test-YakuNumericMaskIntegrity -MaskedSource $maskedText -Translated ($maskedText -replace ([regex]::Escape('[[N1]]')),'')).Ok) '欠落を検出'
+Assert-YakuMask (-not (Test-YakuNumericMaskIntegrity -MaskedSource $maskedText -Translated ($maskedText + '[[N1]]')).Ok) '重複を検出'
+Assert-YakuMask (-not (Test-YakuNumericMaskIntegrity -MaskedSource $maskedText -Translated ($maskedText + '[[N9]]')).Ok) '混入を検出'
+Assert-YakuMask (-not (Test-YakuNumericMaskIntegrity -MaskedSource $maskedText -Translated ($maskedText -replace ([regex]::Escape('[[N1]]')),'789')).Ok) '数字への置換を検出'
 
 # ---------------------------------------------------------------- 【】の扱い
 Write-Host 'CASE 8: 手動マスクの廃止（決定事項#7）'
@@ -134,12 +158,26 @@ Assert-YakuMask (-not ([string]$manual.Masked.Text -like '*11,577*')) '同じ文
 
 $bracketed = Invoke-YakuMaskPipeline -Text '【営業利益 296億円】は前年並みでした。'
 Assert-YakuMask (-not ([string]$bracketed.Masked.Text -like '*296*')) '【】の中の数値もマスクする'
-Assert-YakuMask ([string]$bracketed.Masked.Text -like '*【営業利益 【N1】 oku】*') '【】自体は残す'
+Assert-YakuMask ([string]$bracketed.Masked.Text -match ([regex]::Escape('【営業利益 [[N1]] oku】'))) '【】自体は残す'
 
-# 自分が入れた【N1】は二重マスクしない
+# 自分が入れた[[N1]]は二重マスクしない
 $twice = New-YakuNumericMaskMap -Text ([string]$bracketed.Masked.Text) -Root $root -Direction 'to_en' -Location 'test'
-Assert-YakuMask ([int]$twice.MaskedCount -eq 0) '【N1】を二重にマスクしない'
+Assert-YakuMask ([int]$twice.MaskedCount -eq 0) '[[N1]]を二重にマスクしない'
 Assert-YakuMask ([string]$twice.Text -eq [string]$bracketed.Masked.Text) '二度掛けても変わらない'
+
+# ---------------------------------------------------------------- 括弧の選び方
+# 【】へ戻してはいけない。M365 Copilot は自身の引用参照に【】を使っており、
+# 往復するとトークンごと消える（2026-08-05 実機で確認）。
+# そのとき単位だけが残り "increased% year on year to  oku." のような英文になる。
+# 送信前のマスクは効いたままなので外部への漏れは無いが、訳文が使えなくなる。
+#
+# ここは往復を伴わないので消える現象そのものは再現できない。
+# 「消える括弧を選んでいないこと」だけを見る。
+$delimCheck = New-YakuNumericMaskMap -Text '売上高は1,234億円。' -Root $root -Direction 'to_en' -Location 'test'
+$delimToken = @([string[]]$delimCheck.Map.Keys)[0]
+Assert-YakuMask (-not [string]::IsNullOrWhiteSpace($delimToken)) ('トークンが作られる: ' + $delimToken)
+Assert-YakuMask ($delimToken -notmatch '[【】]') 'Copilot が食う【】をトークンに使わない'
+Assert-YakuMask ($delimToken -match '^\[\[N\d+\]\]$') ('トークンは [[N1]] 形式: ' + $delimToken)
 
 # 廃止した関数が残っていないこと
 foreach ($gone in @('Get-YakuMaskingPlaceholderTokens','Test-YakuMaskingPlaceholderIntegrity','Test-YakuTextResponsePlaceholderIntegrity','Invoke-YakuBackTranslation','New-YakuBackTranslatePrompt','Parse-YakuBackTranslationResponse','Convert-YakuBackTranslationToHtml')) {
@@ -170,33 +208,33 @@ Assert-YakuMask ($onAgain.MaskedCount -gt 0) '既定では有効に戻る'
 
 # ---------------------------------------------------------------- 監査と補正指示
 Write-Host 'CASE 11: 数値整合監査がプレースホルダーを対象にする'
-$auditSource = '売上高は【N1】 oku、比率は【N2】％。'
+$auditSource = '売上高は[[N1]] oku、比率は[[N2]]％。'
 $expectations = @(Get-YakuNumericAuditExpectations -SourceText $auditSource)
-Assert-YakuMask (@($expectations | Where-Object { [string]$_.Expected -eq '【N1】 oku' }).Count -eq 1) '【N1】 oku を監査対象にする'
-Assert-YakuMask (@($expectations | Where-Object { [string]$_.Expected -eq '【N2】%' }).Count -eq 1) '【N2】% を監査対象にする'
-$okAudit = Test-YakuNumericIntegrity -SourceText $auditSource -TranslatedText 'Revenue 【N1】 oku, ratio 【N2】%.' -Location 'test'
+Assert-YakuMask (@($expectations | Where-Object { [string]$_.Expected -eq '[[N1]] oku' }).Count -eq 1) '[[N1]] oku を監査対象にする'
+Assert-YakuMask (@($expectations | Where-Object { [string]$_.Expected -eq '[[N2]]%' }).Count -eq 1) '[[N2]]% を監査対象にする'
+$okAudit = Test-YakuNumericIntegrity -SourceText $auditSource -TranslatedText 'Revenue [[N1]] oku, ratio [[N2]]%.' -Location 'test'
 Assert-YakuMask ($okAudit.Ok) 'プレースホルダーが揃えば Ok'
 $ngAudit = Test-YakuNumericIntegrity -SourceText $auditSource -TranslatedText 'Revenue oku, ratio %.' -Location 'test'
 Assert-YakuMask (-not $ngAudit.Ok) '欠落を検出する'
 
 Write-Host 'CASE 12: 補正指示文に平文の数値を載せない'
 $instruction = New-YakuNumericCorrectionInstruction -Audit $ngAudit
-Assert-YakuMask ($instruction -like '*【N1】 oku*') 'プレースホルダーは指示に載る'
+Assert-YakuMask ($instruction -match ([regex]::Escape('[[N1]] oku'))) 'プレースホルダーは指示に載る'
 Assert-YakuMask (-not ($instruction -match '(?<!N)\d')) ("指示文に素の数字が無い: " + $instruction)
 
 # マスクされなかった数値(年号など)が監査に入っても、指示文へは出さない
-$mixedSource = '売上高は【N1】 oku、前年は72 oku。'
+$mixedSource = '売上高は[[N1]] oku、前年は72 oku。'
 $mixedAudit = Test-YakuNumericIntegrity -SourceText $mixedSource -TranslatedText 'Revenue was oku, prior year oku.' -Location 'test'
 Assert-YakuMask ($mixedAudit.Checked -eq 2) '平文の数値も監査自体は拾う'
 $mixedInstruction = New-YakuNumericCorrectionInstruction -Audit $mixedAudit
-Assert-YakuMask ($mixedInstruction -like '*【N1】*') 'プレースホルダーは残る'
+Assert-YakuMask ($mixedInstruction -match ([regex]::Escape('[[N1]]'))) 'プレースホルダーは残る'
 Assert-YakuMask (-not ($mixedInstruction -like '*72*')) '平文の数値は指示文から落とす'
 
 $allPlainAudit = Test-YakuNumericIntegrity -SourceText '前年は72 oku。' -TranslatedText 'Prior year oku.' -Location 'test'
 Assert-YakuMask ((New-YakuNumericCorrectionInstruction -Audit $allPlainAudit) -eq '') '平文だけなら指示文は空になる'
 
 Write-Host 'CASE 13: to_en プロンプトへプレースホルダー保護規則が入る'
-$rulesWith = Get-YakuNumericRulesSection -InputText '売上高は【N1】 oku。'
+$rulesWith = Get-YakuNumericRulesSection -InputText '売上高は[[N1]] oku。'
 Assert-YakuMask ($rulesWith -like '*NUMBER PLACEHOLDERS*') 'プレースホルダーがあれば保護規則を出す'
 Assert-YakuMask ($rulesWith -like '*decision table*') '決定表を出す'
 Assert-YakuMask ($rulesWith -like '*Positive/additive*') '既存の数値規則も残る'
@@ -207,18 +245,18 @@ Assert-YakuMask ((Get-YakuNumericRulesSection -InputText 'これは文章です�
 
 Write-Host 'CASE 14: 復元ヘルパー'
 $restoreOptions = @(
-    [pscustomobject]@{ Style='full'; Label='FULL'; Translation='Revenue was 【N1】 oku, up 【N2】%.'; Explanation='' }
-    [pscustomobject]@{ Style='brief'; Label='BRIEF'; Translation='Rev. 【N1】 oku (+【N2】%)'; Explanation='' }
+    [pscustomobject]@{ Style='full'; Label='FULL'; Translation='Revenue was [[N1]] oku, up [[N2]]%.'; Explanation='' }
+    [pscustomobject]@{ Style='brief'; Label='BRIEF'; Translation='Rev. [[N1]] oku (+[[N2]]%)'; Explanation='' }
 )
-$restoreMap = @{ '【N1】' = '11,577'; '【N2】' = '3.4' }
-$restored = @(Restore-YakuMaskedTranslationOptions -Options $restoreOptions -MaskedSource '売上高は【N1】 oku、【N2】％増。' -Map $restoreMap -Warnings $null -Location 'test')
+$restoreMap = @{ '[[N1]]' = '11,577'; '[[N2]]' = '3.4' }
+$restored = @(Restore-YakuMaskedTranslationOptions -Options $restoreOptions -MaskedSource '売上高は[[N1]] oku、[[N2]]％増。' -Map $restoreMap -Warnings $null -Location 'test')
 Assert-YakuMask ($restored[0].Translation -eq 'Revenue was 11,577 oku, up 3.4%.') 'FULL を復元する'
 Assert-YakuMask ($restored[1].Translation -eq 'Rev. 11,577 oku (+3.4%)') 'BRIEF を復元する'
-Assert-YakuMask (-not ($restored[0].Translation -match '【N\d+】')) '復元後にトークンが残らない'
+Assert-YakuMask (-not ($restored[0].Translation -match '\[\[N\d+\]\]')) '復元後にトークンが残らない'
 
 $lossOptions = @([pscustomobject]@{ Style='full'; Label='FULL'; Translation='Revenue was up.'; Explanation='' })
 $lossWarnings = New-Object System.Collections.Generic.List[object]
-$null = @(Restore-YakuMaskedTranslationOptions -Options $lossOptions -MaskedSource '売上高は【N1】 oku。' -Map @{ '【N1】' = '72' } -Warnings $lossWarnings -Location 'test')
+$null = @(Restore-YakuMaskedTranslationOptions -Options $lossOptions -MaskedSource '売上高は[[N1]] oku。' -Map @{ '[[N1]]' = '72' } -Warnings $lossWarnings -Location 'test')
 Assert-YakuMask (@($lossWarnings.ToArray() | Where-Object { [string]$_.Category -eq 'numeric-placeholder-unresolved' }).Count -eq 1) '欠落したら警告を立てる'
 
 Write-Host 'CASE 15: 本文翻訳経路の結線（Copilot 呼び出しを差し替えて確認）'
@@ -247,23 +285,23 @@ Assert-YakuMask ($wiredInput -like '*115.77 oku*') '単位変換が先に効く'
 $wired = Invoke-YakuSingleTranslationBatch -Root $root -InputText $wiredInput -Settings $settings -Direction 'to_en' -StyleReference '' -Warnings $wiredWarnings
 $sent = [string]$script:SentPrompts[$script:SentPrompts.Count - 1]
 
-Assert-YakuMask ($sent -like '*【N1】*') 'プロンプトにプレースホルダーが入る'
+Assert-YakuMask ($sent -match ([regex]::Escape('[[N1]]'))) 'プロンプトにプレースホルダーが入る'
 Assert-YakuMask (-not ($sent -like '*115.77*')) 'プロンプトに換算後の売上高が出ない'
 Assert-YakuMask (-not ($sent -like '*8.32*')) 'プロンプトに換算後の営業利益が出ない'
 Assert-YakuMask ($sent -like '*2026年3月期*') '年度は伏せずに送る'
 Assert-YakuMask ($sent -like '*NUMBER PLACEHOLDERS*') 'プロンプトに保護規則が入る'
 Assert-YakuMask ($wired.Options.Count -eq 2) 'FULL/BRIEF が返る'
 Assert-YakuMask (([string]$wired.Options[0].Translation) -like '*115.77*') '訳文は実値へ復元されている'
-Assert-YakuMask (-not (([string]$wired.Options[0].Translation) -match '【N\d+】')) '訳文にトークンが残らない'
+Assert-YakuMask (-not (([string]$wired.Options[0].Translation) -match '\[\[N\d+\]\]')) '訳文にトークンが残らない'
 
 # キャッシュ命中経路でも復元する。ここは別の呼び出し箇所なので個別に見る。
 $script:SentPrompts.Clear()
 $cached = Invoke-YakuSingleTranslationBatch -Root $root -InputText $wiredInput -Settings $settings -Direction 'to_en' -StyleReference '' -Warnings $wiredWarnings
 Assert-YakuMask ([bool]$cached.CacheHit) '2回目はキャッシュに命中する'
 Assert-YakuMask ($script:SentPrompts.Count -eq 0) 'キャッシュ命中時は送信しない'
-Assert-YakuMask ((@($cached.Options | Where-Object { ([string]$_.Translation) -match '【N\d+】' }).Count) -eq 0) 'キャッシュ命中でもトークンが残らない'
+Assert-YakuMask ((@($cached.Options | Where-Object { ([string]$_.Translation) -match '\[\[N\d+\]\]' }).Count) -eq 0) 'キャッシュ命中でもトークンが残らない'
 Assert-YakuMask (([string]$cached.Options[0].Translation) -like '*115.77*') 'キャッシュ命中でも実値へ復元する'
-Assert-YakuMask (([string]$cached.Raw) -like '*【N1】*') 'キャッシュにはマスク後のまま保存する'
+Assert-YakuMask (([string]$cached.Raw) -match ([regex]::Escape('[[N1]]'))) 'キャッシュにはマスク後のまま保存する'
 
 # 無効化した場合は素通し。回帰テスト用の抜け道が効くことも確かめる。
 $env:YAKULINGO_NUMERIC_MASKING = 'off'
@@ -271,16 +309,16 @@ try {
     $script:SentPrompts.Clear()
     $null = Invoke-YakuSingleTranslationBatch -Root $root -InputText $wiredInput -Settings $settings -Direction 'to_en' -StyleReference '' -Warnings $wiredWarnings
     $sentOff = [string]$script:SentPrompts[$script:SentPrompts.Count - 1]
-    Assert-YakuMask (-not ($sentOff -like '*【N1】*')) '無効化するとマスクしない'
+    Assert-YakuMask (-not ($sentOff -match ([regex]::Escape('[[N1]]')))) '無効化するとマスクしない'
     Assert-YakuMask ($sentOff -like '*115.77*') '無効化すると実値が入る'
 } finally { Remove-Item Env:\YAKULINGO_NUMERIC_MASKING -ErrorAction SilentlyContinue }
 
 Write-Host 'CASE 16: to_jp 方向（単位変換の有効化と専用の数値規則）'
-$jpRules = Get-YakuNumericRulesSection -InputText 'Net sales were 【N1】 oku.' -Direction 'to_jp'
+$jpRules = Get-YakuNumericRulesSection -InputText 'Net sales were [[N1]] oku.' -Direction 'to_jp'
 Assert-YakuMask ($jpRules -like '*NUMBER PLACEHOLDERS*') 'to_jp でも保護規則を出す'
 Assert-YakuMask ($jpRules -like '*oku -> 億円*') '単位の日本語表記を指示する'
 Assert-YakuMask ($jpRules -like '*never 1億2,340万円*') '桁の繰り上げを禁じる'
-Assert-YakuMask ($jpRules -like '*▲【N1】億円*') '括弧を▲へ写す指示がある'
+Assert-YakuMask ($jpRules -match ([regex]::Escape('▲[[N1]]億円'))) '括弧を▲へ写す指示がある'
 Assert-YakuMask (-not ($jpRules -like '*Never million, billion*')) 'to_en 専用の規則は混ぜない'
 
 # to_jp でも単位変換を通す（日英混在資料を想定）
@@ -292,7 +330,7 @@ $jpWarnings = New-Object System.Collections.Generic.List[object]
 $jpInput = (Convert-YakuNumericUnits -Text 'Net sales for FY2026/3 were 115.77億円.' -Location 'test').Text
 $jpResult = Invoke-YakuSingleTranslationBatch -Root $root -InputText $jpInput -Settings $settings -Direction 'to_jp' -StyleReference '' -Warnings $jpWarnings
 $jpSent = [string]$script:SentPrompts[$script:SentPrompts.Count - 1]
-Assert-YakuMask ($jpSent -like '*【N1】*') 'to_jp のプロンプトにもプレースホルダーが入る'
+Assert-YakuMask ($jpSent -match ([regex]::Escape('[[N1]]'))) 'to_jp のプロンプトにもプレースホルダーが入る'
 Assert-YakuMask (-not ($jpSent -like '*115.77*')) 'to_jp のプロンプトに実値が出ない'
 Assert-YakuMask ($jpSent -like '*FY2026/3*') 'to_jp でも会計期は伏せない'
 Assert-YakuMask ($jpSent -like '*oku -> 億円*') 'to_jp のプロンプトに単位表記の指示が入る'
@@ -314,7 +352,7 @@ foreach ($fi in $fileItems) {
     $fi.Text = [string]$fm.Text
 }
 $filePrompt = New-YakuFilePrompt -Root $root -Items $fileItems -Settings $settings -Direction 'to_en' -RequestId ([guid]::NewGuid().ToString('N'))
-Assert-YakuMask ($filePrompt -like '*【N1】*') 'ファイル用プロンプトにプレースホルダーが入る'
+Assert-YakuMask ($filePrompt -match ([regex]::Escape('[[N1]]'))) 'ファイル用プロンプトにプレースホルダーが入る'
 Assert-YakuMask (-not ($filePrompt -like '*115.77*')) 'ファイル用プロンプトに実値が出ない'
 Assert-YakuMask (-not ($filePrompt -like '*8.3%*')) 'ファイル用プロンプトに比率の実値が出ない'
 Assert-YakuMask ($filePrompt -like '*2026年3月期*') 'ファイルでも会計期は伏せない'
@@ -328,7 +366,7 @@ Assert-YakuMask ($filePromptJp -like '*oku -> 億円*') 'to_jp のファイル�
 Assert-YakuMask (-not ($filePromptJp -like '*{numeric_rules}*')) 'to_jp でもテンプレート変数が残らない'
 
 # 復元
-$fileTranslations = @{ 1 = 'Net sales for FY2026/3 were 【N1】 oku'; 2 = 'OPM 【N1】%' }
+$fileTranslations = @{ 1 = 'Net sales for FY2026/3 were [[N1]] oku'; 2 = 'OPM [[N1]]%' }
 foreach ($fi in $fileItems) {
     $fileTranslations[[int]$fi.Index] = Restore-YakuNumericMask -Text ([string]$fileTranslations[[int]$fi.Index]) -Map $fi.NumericMaskMap
 }
@@ -345,34 +383,34 @@ Assert-YakuMask ($fpOn -ne $fpOff) 'マスクの有無で指紋が変わる'
 Assert-YakuMask ($fpOn -eq $fpBack) '戻せば同じ指紋になる（メモ化が状態を無視しない）'
 
 Write-Host 'CASE 19: BRIEF は警告のみ / FULL は再試行対象（決定事項#3・#12）'
-$briefMap = @{ '【N1】' = '115.77'; '【N2】' = '296' }
-$briefSource = '売上高は【N1】 oku、うち海外は【N2】 oku。'
+$briefMap = @{ '[[N1]]' = '115.77'; '[[N2]]' = '296' }
+$briefSource = '売上高は[[N1]] oku、うち海外は[[N2]] oku。'
 
 # BRIEF で数値が落ちた場合: 平文つきの専用警告を出し、訳文へ数値を挿入しない
 $briefOptions = @(
-    [pscustomobject]@{ Style='full'; Label='FULL'; Translation='Net sales 【N1】 oku, overseas 【N2】 oku.'; Explanation='' }
-    [pscustomobject]@{ Style='brief'; Label='BRIEF'; Translation='Net sales 【N1】 oku.'; Explanation='' }
+    [pscustomobject]@{ Style='full'; Label='FULL'; Translation='Net sales [[N1]] oku, overseas [[N2]] oku.'; Explanation='' }
+    [pscustomobject]@{ Style='brief'; Label='BRIEF'; Translation='Net sales [[N1]] oku.'; Explanation='' }
 )
 $briefWarnings = New-Object System.Collections.Generic.List[object]
 $briefRestored = @(Restore-YakuMaskedTranslationOptions -Options $briefOptions -MaskedSource $briefSource -Map $briefMap -Warnings $briefWarnings -Location 'test')
 $briefWarn = @($briefWarnings.ToArray() | Where-Object { [string]$_.Category -eq 'numeric-placeholder-dropped-brief' })
 Assert-YakuMask ($briefWarn.Count -eq 1) 'BRIEF 専用の警告カテゴリで出す'
-Assert-YakuMask (([string]$briefWarn[0].Message) -like '*【N2】（296）*') '落ちた数値を平文つきで示す'
+Assert-YakuMask (([string]$briefWarn[0].Message) -match ([regex]::Escape('[[N2]]（296）'))) '落ちた数値を平文つきで示す'
 Assert-YakuMask (([string]$briefRestored[1].Translation) -eq 'Net sales 115.77 oku.') '落ちた数値を訳文へ挿入しない'
 Assert-YakuMask (([string]$briefRestored[0].Translation) -eq 'Net sales 115.77 oku, overseas 296 oku.') 'FULL は通常どおり復元する'
 Assert-YakuMask (@($briefWarnings.ToArray() | Where-Object { [string]$_.Category -eq 'numeric-placeholder-unresolved' }).Count -eq 0) 'BRIEF の欠落は unresolved 扱いにしない'
 
 # FULL で落ちた場合は unresolved 警告
-$fullOptions = @([pscustomobject]@{ Style='full'; Label='FULL'; Translation='Net sales 【N1】 oku.'; Explanation='' })
+$fullOptions = @([pscustomobject]@{ Style='full'; Label='FULL'; Translation='Net sales [[N1]] oku.'; Explanation='' })
 $fullWarnings = New-Object System.Collections.Generic.List[object]
 $null = @(Restore-YakuMaskedTranslationOptions -Options $fullOptions -MaskedSource $briefSource -Map $briefMap -Warnings $fullWarnings -Location 'test')
 Assert-YakuMask (@($fullWarnings.ToArray() | Where-Object { [string]$_.Category -eq 'numeric-placeholder-unresolved' }).Count -eq 1) 'FULL の欠落は unresolved 警告'
 
 # 原文に無い番号を作られた場合は取り除く
-$inventedOptions = @([pscustomobject]@{ Style='brief'; Label='BRIEF'; Translation='Net sales 【N1】 oku and 【N9】 oku.'; Explanation='' })
+$inventedOptions = @([pscustomobject]@{ Style='brief'; Label='BRIEF'; Translation='Net sales [[N1]] oku and [[N9]] oku.'; Explanation='' })
 $inventedWarnings = New-Object System.Collections.Generic.List[object]
 $inventedRestored = @(Restore-YakuMaskedTranslationOptions -Options $inventedOptions -MaskedSource $briefSource -Map $briefMap -Warnings $inventedWarnings -Location 'test')
-Assert-YakuMask (-not (([string]$inventedRestored[0].Translation) -match '【N\d+】')) '原文に無い番号は訳文から取り除く'
+Assert-YakuMask (-not (([string]$inventedRestored[0].Translation) -match '\[\[N\d+\]\]')) '原文に無い番号は訳文から取り除く'
 Assert-YakuMask (@($inventedWarnings.ToArray() | Where-Object { [string]$_.Category -eq 'numeric-placeholder-unresolved' }).Count -eq 1) '混入は unresolved 警告'
 
 # 経路: BRIEF だけ落ちても再試行せず完走する
@@ -416,7 +454,7 @@ Assert-YakuMask ($script:SentPrompts.Count -ge 2) 'FULL の欠落では再送す
 Assert-YakuMask (([string]$fullJob.Options[0].Translation) -like '*223.4*9.9*') '再送後の FULL は数値が揃う'
 
 Write-Host 'CASE 20: 大きさだけが違う定型文はキャッシュを共有する（§7の副次効果）'
-# マスク後は「売上高は【N1】 oku、営業利益は【N2】 oku。」で一致するため、
+# マスク後は「売上高は[[N1]] oku、営業利益は[[N2]] oku。」で一致するため、
 # 数値の異なる同型の文が同じキャッシュ項目に当たる。表項目の多い資料で効く。
 $script:SentPrompts.Clear()
 $shareA = (Convert-YakuNumericUnits -Text '売上高は500.5億円、営業利益は44.4億円でした。' -Location 'test').Text
@@ -506,8 +544,8 @@ $cutToken = 0
 foreach ($lb in $longBatches) {
     $lm = New-YakuNumericMaskMap -Text ([string]$lb.Text) -Root $root -Direction 'to_en' -Location 'test'
     $mt = [string]$lm.Text
-    # 途中で切れたトークンの痕跡（末尾の 【N…、先頭の …】）が無いこと
-    if ($mt -match '【N\d*$' -or $mt -match '^\d*】') { $cutToken++ }
+    # 途中で切れたトークンの痕跡（末尾の [[N…、先頭の …]]）が無いこと
+    if ($mt -match '\[\[N\d*$' -or $mt -match '^\d*\]\]') { $cutToken++ }
     $rejoined += (Restore-YakuNumericMask -Text $mt -Map $lm.Map)
 }
 Assert-YakuMask ($cutToken -eq 0) 'バッチ境界でプレースホルダーが切れない'
@@ -524,9 +562,187 @@ foreach ($srcFile in @(Get-ChildItem -LiteralPath (Join-Path $root 'src') -Filte
         $callSites += ($srcFile.Name)
     }
 }
-$outside = @($callSites | Where-Object { $_ -notin @('CopilotClient.ps1','Translation.ps1','FileTranslation.ps1') })
+# V91.61 段階3: CorpusReference.ps1 が加わる。参考資料を引くための検索語を
+# Copilot に作らせる経路で、原文を外部へ送る点は翻訳と同じ。
+# 送る前にマスクしていることを下で確かめる。
+# V91.61: Alignment.ps1 が加わる。日英の対を Copilot に取らせる経路で、
+# 原文を外部へ送る点は翻訳と同じ。こちらは値を戻さない非可逆マスクを使う
+# （返るのは行番号だけで復元が要らないため、安全側に倒せる）。
+$outside = @($callSites | Where-Object { $_ -notin @('CopilotClient.ps1','ProperNoun.ps1','Translation.ps1','FileTranslation.ps1','CorpusReference.ps1','Alignment.ps1') })
 Assert-YakuMask ($outside.Count -eq 0) ("翻訳経路の外から呼ばれていない: " + (@($outside | Select-Object -Unique) -join ','))
-Assert-YakuMask ((@($callSites | Where-Object { $_ -eq 'Translation.ps1' }).Count) -eq 1) 'テキスト経路の呼び出しは1箇所（逆翻訳の分が消えている）'
+
+# 許可しただけでは統制にならない。Alignment.ps1 が実際にマスクを通してから
+# 送っていることを確かめる。原文の変数をそのまま渡す形へ書き換えられたら、
+# ここで落ちる。
+# 「どのファイルが Copilot を呼ぶか」だけでは足りない。CAT は Copilot を
+# 直接呼ばず、FileTranslation.ps1 の内側の関数を呼ぶので許可一覧では捕まらず、
+# その関数はマスクを通っていなかった。実数値のまま送っていたことに、
+# 2026-08-08 まで気づけなかった。呼び出し元ごとにマスクを確かめる。
+$catSrc = Get-Content -LiteralPath (Join-Path $root 'src\CatProject.ps1') -Raw -Encoding UTF8
+Assert-YakuMask ($catSrc -match 'New-YakuNumericMaskMap') 'CAT 経路が送信前にマスクを作る'
+Assert-YakuMask ($catSrc -match 'Restore-YakuNumericMask') 'CAT 経路が訳文の数値を戻す'
+Assert-YakuMask ($catSrc -match 'Test-YakuNumericMaskIntegrity') 'CAT 経路が数値の個数を確かめる'
+# マスクは Copilot を呼ぶ関数より前に置く。順序が逆だと素通りする。
+$catMaskAt = $catSrc.IndexOf('New-YakuNumericMaskMap')
+$catSendAt = $catSrc.IndexOf('Invoke-YakuFileTranslationItems -Root')
+Assert-YakuMask ($catMaskAt -gt 0 -and $catSendAt -gt 0 -and $catMaskAt -lt $catSendAt) 'CAT 経路は送信より前にマスクする'
+
+$alignSrc = Get-Content -LiteralPath (Join-Path $root 'src\Alignment.ps1') -Raw -Encoding UTF8
+Assert-YakuMask ($alignSrc -match 'Protect-YakuAlignmentLines') 'アライメント経路がマスクを呼んでいる'
+Assert-YakuMask ($alignSrc -match 'New-YakuAlignmentPrompt\s+-JaLines\s+\$jaMasked\s+-EnLines\s+\$enMasked') 'アライメント経路がマスク済みの行だけを渡している'
+
+# 外部へ送る経路が増えたら、そこもマスクを通っていること。
+# 経路を足すたびに手で思い出す話にしない。
+$corpusRefText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CorpusReference.ps1'))
+$maskAt = $corpusRefText.IndexOf('New-YakuNumericMaskMap')
+$sendAt = $corpusRefText.IndexOf('Invoke-YakuCopilotPrompt')
+Assert-YakuMask ($maskAt -ge 0) 'コーパス検索語の経路もマスクを呼ぶ'
+Assert-YakuMask ($sendAt -ge 0 -and $maskAt -lt $sendAt) 'マスクしてから送っている'
+Assert-YakuMask ($corpusRefText -match "Location 'corpus-query'") '記録に経路名が残る（どこでマスクしたか分かる）'
+# V91.61（2026-08-06）: 修正の依頼が2箇所目になる。訳文へ指示を1つ当てて直す
+# 経路で、原文と現訳を外部へ送る点は翻訳と同じ。件数で見張るのは、
+# 送る経路が黙って増えるのを気づかせるため。増やすときは下の確認も足すこと。
+# 3箇所目は「短くする」（Invoke-YakuTextShorten）。現訳をマスク後の姿で
+# 受け取る点も修正と同じで、専用の検査は Test-YakuV9161Shorten.ps1 にある。
+$translationSends = @($callSites | Where-Object { $_ -eq 'Translation.ps1' }).Count
+Assert-YakuMask ($translationSends -eq 3) ('テキスト経路の送信は3箇所（翻訳・修正・短くする）: ' + $translationSends)
+# 修正の経路もマスクしてから送っていること。現訳は呼び出し側から
+# マスク後の姿で渡ってくるが、原文はここでマスクする。
+$translationSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Translation.ps1'))
+$reviseFn = [regex]::Match($translationSrc, '(?s)function Invoke-YakuTextRevision \{.*?\n\}\r?\n\r?\nfunction ').Value
+Assert-YakuMask ($reviseFn.Length -gt 0) '修正の経路が見つかる'
+$rMask = $reviseFn.IndexOf('New-YakuNumericMaskMap')
+$rSend = $reviseFn.IndexOf('Invoke-YakuCopilotPrompt')
+Assert-YakuMask ($rMask -ge 0 -and $rSend -ge 0 -and $rMask -lt $rSend) '修正の経路もマスクしてから送っている'
+Assert-YakuMask ($reviseFn -match "Location 'text-revise'") '修正の経路にも経路名が残る'
+
+# ---------------------------------------------------------------------------
+# 経路ごとの統制を、経路を足したら必ず落ちる形にする。
+#
+# これまでの確認は経路ごとに手で書いていた。だから経路が増えるたびに
+# 書き忘れ、同じ抜け方を3回した（CAT の数値、修正の固有名詞、
+# CAT/ファイル/コーパス検索の固有名詞）。表に載っていない送信経路が
+# 現れたら落ちる形にして、手で思い出す話をやめる。
+Write-Host '送信経路ごとの統制（表に無い経路が現れたら落ちる）' -ForegroundColor Cyan
+
+# 送信経路と、その経路に要るもの。
+#   Numeric  数値マスクを通してから送る
+#   Proper   固有名詞マスクを通してから送る
+# Alignment は AlignMask.ps1 の破壊的マスクを使う（戻さない経路なので別物）。
+$sendingPaths = @(
+    @{ File = 'Translation.ps1';     Numeric = 'New-YakuNumericMaskMap'; Proper = 'New-YakuProperNounMaskMap' }
+    @{ File = 'FileTranslation.ps1'; Numeric = 'New-YakuNumericMaskMap'; Proper = 'New-YakuProperNounMaskMap' }
+    @{ File = 'CatProject.ps1';      Numeric = 'New-YakuNumericMaskMap'; Proper = 'New-YakuProperNounMaskMap' }
+    @{ File = 'CorpusReference.ps1'; Numeric = 'New-YakuNumericMaskMap'; Proper = 'New-YakuProperNounMaskMap' }
+    @{ File = 'Alignment.ps1';       Numeric = 'Protect-YakuAlignmentLines'; Proper = '' }
+    # ジョブのランスペースから直接送る経路。CAT の「残りを訳す」はここを通る。
+    # 自分では伏せず、切り出した Protect-YakuCatItems へ委ねる。順序は下で別に見る。
+    @{ File = 'Server.ps1';          Numeric = 'Protect-YakuCatItems';   Proper = '' }
+)
+# 中継そのもの。ここは送る側ではないので統制の対象にしない。
+$transportOnly = @('CopilotClient.ps1', 'ProperNoun.ps1')
+
+$listed = @(@($sendingPaths | ForEach-Object { [string]$_.File }) + $transportOnly)
+$unlisted = @(@($callSites | Select-Object -Unique) | Where-Object { $_ -notin $listed })
+Assert-YakuMask ($unlisted.Count -eq 0) ('表に無い送信経路が増えていない: ' + (@($unlisted) -join ','))
+
+# ---------------------------------------------------------------------------
+# ファイル単位の grep だけでは足りない。
+#
+# 直前の版はこの表を「Invoke-YakuCopilotPrompt というリテラルを含むファイル」
+# から作っていた。CAT はその中継関数（Invoke-YakuFileTranslationItems）を
+# 呼ぶだけなので表に現れず、**Server.ps1 が実数値と人名を素のまま送っていた**
+# のに検査は通った（2026-08-08 に判明）。マスクは呼び出し元が0件の関数
+# （Invoke-YakuCatCopilotPass）の中にあり、そのファイルを grep していたため。
+#
+# 送信は「Copilot を直接呼ぶ関数」だけでなく「それを内側で呼ぶ関数」からも
+# 起きる。中継関数を名指しし、それを呼ぶファイルも送信経路として扱う。
+#
+# 中継関数は2種類ある。**この区別が今回の抜けの本質である。**
+#
+#   自分で伏せるもの    呼び出し側は何もしなくてよい
+#   呼び出し側に任せるもの  呼び出し側が伏せていなければ素通しになる
+#
+# Invoke-YakuFileTranslationItems は後者である。ファイル翻訳の内側から
+# 呼ばれる前提で作られており、自分では伏せない。CAT とジョブ側がこれを
+# 直接呼び、片方が伏せていなかった。後者を呼ぶファイルだけを見張る。
+$translationSrcFile = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'FileTranslation.ps1'))
+$relayNeedsCallerMask = @('Invoke-YakuFileTranslationItems')
+$relayCallers = @()
+foreach ($srcFile in @(Get-ChildItem -LiteralPath (Join-Path $root 'src') -Filter '*.ps1')) {
+    $lines = @(Get-Content -LiteralPath $srcFile.FullName -Encoding UTF8)
+    foreach ($line in $lines) {
+        $l = [string]$line
+        foreach ($fn in $relayNeedsCallerMask) {
+            if ($l -notmatch [regex]::Escape($fn)) { continue }
+            # 定義そのものと、存在確認は呼び出しではない。
+            if ($l -match ('function\s+' + [regex]::Escape($fn))) { continue }
+            if ($l -match ('Get-Command\s+' + [regex]::Escape($fn))) { continue }
+            $relayCallers += $srcFile.Name
+        }
+    }
+}
+$relayCallers = @($relayCallers | Select-Object -Unique)
+$unguarded = @($relayCallers | Where-Object { $_ -notin $listed })
+Assert-YakuMask ($unguarded.Count -eq 0) ('伏せない中継関数を呼ぶファイルも表に載っている: ' + (@($unguarded) -join ','))
+# 中継関数が「自分では伏せない」ことを固定する。内側で伏せる作りに変えたら
+# ここが落ちるので、そのとき上の前提を見直すことになる。
+$itemsFn = [regex]::Match($translationSrcFile, '(?s)function Invoke-YakuFileTranslationItems \{.*?\n\}\r?\n').Value
+Assert-YakuMask ($itemsFn.Length -gt 0) '中継関数の本体が見つかる'
+Assert-YakuMask ($itemsFn -notmatch 'New-YakuNumericMaskMap') '中継関数は自分では伏せない（だから呼び出し側が伏せる）'
+
+# 実際に走る経路（ジョブ側）が伏せてから送っていること。
+# ここが抜けていた当人なので、名指しで確かめる。
+$serverSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Server.ps1'))
+$catSendAt = $serverSrc.IndexOf('$map = Invoke-YakuFileTranslationItems')
+Assert-YakuMask ($catSendAt -ge 0) 'ジョブ側の CAT 送信箇所が見つかる'
+$catHead = $serverSrc.Substring([Math]::Max(0, $catSendAt - 1200), [Math]::Min(1200, $catSendAt))
+Assert-YakuMask ($catHead -match 'Protect-YakuCatItems') 'ジョブ側は送信の直前に伏せている'
+$catTail = $serverSrc.Substring($catSendAt, [Math]::Min(900, $serverSrc.Length - $catSendAt))
+Assert-YakuMask ($catTail -match 'Restore-YakuCatItemTranslations') 'ジョブ側は訳文を実値へ戻している'
+
+foreach ($p in $sendingPaths) {
+    $file = [string]$p.File
+    $src = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') $file))
+    # ファイル全体での出現位置で順序を見てはいけない。関数の定義そのものや、
+    # 別の呼び出し元を拾って、通ったり落ちたりする（2026-08-08 に踏んだ）。
+    # ここで見るのは「その経路にマスクがあるか」だけにする。
+    # 順序は、対になった呼び出しの近さで見る（下）。
+    Assert-YakuMask ($src -match [regex]::Escape([string]$p.Numeric)) ($file + ': 数値マスクを呼ぶ')
+    if (-not [string]::IsNullOrEmpty([string]$p.Proper)) {
+        Assert-YakuMask ($src -match [regex]::Escape([string]$p.Proper)) ($file + ': 固有名詞マスクを呼ぶ')
+        # 住所の全角数字を数値マスクに取られないよう、固有名詞が先。
+        # 対になっているかは「固有名詞マスクの直後に数値マスクが来る」で見る。
+        # 離れた場所の出現と取り違えないよう、窓を狭く取る。
+        $paired = $false
+        foreach ($m in [regex]::Matches($src, [regex]::Escape([string]$p.Proper))) {
+            $tail = $src.Substring($m.Index, [Math]::Min(800, $src.Length - $m.Index))
+            if ($tail -match [regex]::Escape([string]$p.Numeric)) { $paired = $true; break }
+        }
+        Assert-YakuMask $paired ($file + ': 固有名詞を伏せた直後に数値を伏せる')
+    }
+}
+
+Write-Host 'Copilot の呼び出し回数を数える' -ForegroundColor Cyan
+# 120回ほどで応答しなくなるのに、回数を1度も数えていなかった。
+# 数えていないと、制限に当たったのかこちらの不具合かを切り分けられない。
+$clientSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CopilotClient.ps1'))
+Assert-YakuMask ($clientSrc -match 'Add-YakuCopilotCall') '送信のたびに回数を記録する'
+$countAt = $clientSrc.IndexOf('Add-YakuCopilotCall')
+$mockAt = $clientSrc.IndexOf("YAKULINGO_MOCK -eq '1'")
+Assert-YakuMask ($mockAt -ge 0 -and $mockAt -lt $countAt) '模擬経路は数えない（回帰テストで数が増えない）'
+$budgetSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CopilotBudget.ps1'))
+Assert-YakuMask ($budgetSrc -notmatch 'Prompt|Translation') '記録するのは時刻だけ（本文を残さない）'
+# 使いすぎに見える失敗をリトライすると、残りをさらに削る。
+Assert-YakuMask ($translationSrc -match 'Test-YakuCopilotLimitError') '制限らしい失敗ではリトライを止める'
+# 順序はリトライの catch の中だけを見る。ファイル全体で位置を比べると、
+# 無関係な場所の同じ語を拾う。
+$catchAt = $translationSrc.IndexOf('$attemptErrorCode = Get-YakuTranslationAttemptErrorCode')
+Assert-YakuMask ($catchAt -ge 0) 'リトライの判定箇所が見つかる'
+$catchWindow = $translationSrc.Substring($catchAt, [Math]::Min(1200, $translationSrc.Length - $catchAt))
+$limitAt = $catchWindow.IndexOf('Test-YakuCopilotLimitError')
+$silentAt = $catchWindow.IndexOf('COPILOT_SILENT_START_TIMEOUT')
+Assert-YakuMask ($limitAt -ge 0 -and $silentAt -ge 0 -and $limitAt -lt $silentAt) '打ち切りの判定は他の再試行より先に見る'
 
 if ($script:Failures -gt 0) {
     Write-Host "V91.60 numeric masking test failed. failures=$script:Failures" -ForegroundColor Red

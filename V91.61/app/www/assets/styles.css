@@ -86,6 +86,26 @@ textarea:focus, input:focus, select:focus { background: var(--surface); box-shad
 .direction-row label:first-child span { border-radius: 8px 0 0 8px; }
 .direction-row label:nth-of-type(3) span { border-radius: 0 8px 8px 0; }
 .direction-row.two-option label:nth-of-type(2) span { border-radius: 0 8px 8px 0; }
+/* 短くする導線。訳文のすぐ下に置き、なぜ押すのか（枠に入らないとき）と
+   何が起きるか（もう一度Copilotに頼む）を隣に書く。押す前に分かる形にする。 */
+.shorten-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
+.shorten-note { color: var(--muted); font-size: var(--font-meta); }
+
+/* 過去に公表した英訳。畳んで置く。開いたときに日英が並んで見えること、
+   英文が原文より読みやすい大きさであることを優先する。老眼を想定するので
+   本文は 16px を下回らせない。 */
+.past-translations { margin-top: 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.past-translations > summary { cursor: pointer; padding: 12px 16px; font-size: var(--font-body); font-weight: 600; }
+.past-pair { padding: 0 16px 14px 16px; }
+.past-pair + .past-pair { border-top: 1px solid var(--line); padding-top: 14px; }
+.past-pair-head { margin: 0 0 6px 0; color: var(--muted); font-size: var(--font-meta); }
+.past-pair-ja { margin: 0 0 6px 0; font-size: 16px; line-height: 1.7; }
+.past-pair-en { margin: 0; font-size: 16px; line-height: 1.7; color: var(--accent); }
+
+/* 行の頭に置く見出し。これがあると label:first-child が効かなくなるので、
+   左端の丸めをこちらで持つ。 */
+.direction-row .row-label { color: var(--muted); font-size: var(--font-meta); margin-right: 10px; }
+.direction-row .row-label + label span { border-radius: 8px 0 0 8px; }
 .direction-row input:checked + span { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); font-weight: 700; z-index: 1; }
 .direction-row input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; z-index: 2; }
 .file-direction-row { margin-top: 0; }
@@ -140,7 +160,111 @@ input[type="text"], select { width: 100%; min-height: 34px; border: 0; border-ra
 .result-card header, .result-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-2); }
 .eyebrow { color: var(--faint); font-size: var(--font-meta); font-weight: 600; letter-spacing: .06em; }
 .result-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.translation { margin: 0; white-space: pre-wrap; font-size: var(--font-input); line-height: 1.65; font-family: inherit; color: var(--text); background: var(--soft); border-radius: var(--radius-control); padding: 14px; }
+/* 訳文は画面でいちばん読まれる場所なので、いちばん大きくする。
+   老眼でも読める大きさ（18px）と、目が行を追いやすい行間（1.8）にする。
+   大きすぎると1行に入る語が減って読みにくくなるので、幅も制限する。 */
+.translation { margin: 0; white-space: pre-wrap; font-size: 18px; line-height: 1.8; font-family: inherit; color: var(--text); background: var(--soft); border-radius: var(--radius-control); padding: 18px 20px; max-width: 62ch; }
+/* 主の訳。カードの中で最初に目に入る位置に置く。 */
+[data-yaku-main-card] { padding: 22px 24px; }
+.result-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
+.result-kind { color: var(--muted); font-size: 14px; font-weight: 600; }
+/* 添え物。主より小さくするが、13px より下げない。読めないと選べない。 */
+.result-alts { margin-top: 14px; }
+.result-alts-lead { margin: 0 0 8px; color: var(--muted); font-size: 14px; }
+.result-alts-list { display: grid; gap: 8px; }
+.result-alt { display: block; width: 100%; text-align: left; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); cursor: pointer; min-height: 0; }
+.result-alt:hover { border-color: var(--line-strong); background: var(--soft); }
+.result-alt-head { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.result-alt-chars { color: var(--faint); font-weight: 400; font-variant-numeric: tabular-nums; }
+.result-alt-body { display: block; color: var(--text); font-size: 15px; line-height: 1.6; font-weight: 400; }
+/* CAT: 原文と訳文を並べて確認する */
+.cat-source-row { display: grid; gap: var(--space-2); margin-bottom: var(--space-2); }
+.cat-direction { display: flex; gap: 16px; align-items: center; }
+.cat-status { margin: var(--space-2) 0; font-size: var(--font-meta); }
+.cat-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: var(--space-2); }
+.cat-mode-row { display: flex; gap: 16px; align-items: center; margin-bottom: var(--space-2); }
+.cat-text-row { margin-bottom: var(--space-2); }
+.cat-text-row textarea { width: 100%; }
+.cat-open-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.cat-handoff { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: var(--space-2); font-size: var(--font-meta); }
+.cat-corpus-panel { margin-bottom: var(--space-2); }
+.cat-corpus-list { display: grid; gap: 8px; margin-top: 8px; max-height: 30vh; overflow: auto; }
+.cat-corpus-item { border-left: 2px solid var(--line-strong); padding-left: 10px; font-size: var(--font-meta); }
+.cat-corpus-where { color: var(--muted); }
+.cat-filter-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin-bottom: var(--space-2); font-size: var(--font-meta); }
+.cat-filter { display: flex; gap: 12px; align-items: center; }
+.cat-search-label { display: flex; gap: 6px; align-items: center; }
+.cat-search-label input { min-width: 220px; }
+.cat-grid-wrap { max-height: 60vh; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-control); }
+.cat-grid { width: 100%; border-collapse: collapse; font-size: var(--font-meta); }
+.cat-grid thead th { position: sticky; top: 0; z-index: 1; background: var(--surface); border-bottom: 1px solid var(--line-strong); padding: 8px 10px; text-align: left; }
+.cat-grid td { border-bottom: 1px solid var(--line); padding: 6px 10px; vertical-align: top; }
+.cat-col-no { width: 46px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.cat-col-loc { width: 116px; }
+.cat-source { width: 40%; white-space: pre-wrap; }
+.cat-target { width: 40%; }
+.cat-target textarea { width: 100%; min-height: 44px; resize: vertical; font-size: var(--font-meta); }
+.cat-loc { display: block; color: var(--muted); }
+/* 確認済みの印。番号の隣に小さく出す。一覧を眺めたときに、どこまで見たかが分かる。 */
+.cat-state { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 10px; font-size: var(--font-meta); font-weight: 700; }
+.cat-state-untranslated { background: color-mix(in srgb, var(--bg) 70%, #d33 30%); }
+.cat-state-draft { background: color-mix(in srgb, var(--bg) 70%, #e8a 30%); }
+.cat-state-confirmed { background: color-mix(in srgb, var(--bg) 70%, var(--accent) 30%); }
+.cat-row-actions { display: flex; gap: 4px; margin-top: 4px; }
+.cat-op-ok { font-weight: 700; }
+.cat-confirmed { margin-left: 4px; color: var(--accent); font-weight: 700; }
+/* 保存できなかった行。黙って消えるより、目に見えて残るほうがよい。 */
+.cat-unsaved > td { background: color-mix(in srgb, var(--bg) 82%, #d33 18%); }
+.unit-toggle { margin: 6px 0 0; }
+.result-danger { margin: 0 0 8px; padding: 8px 10px; border-radius: 6px; background: color-mix(in srgb, var(--bg) 80%, #d33 20%); font-weight: 600; }
+.cat-output-row { display: flex; gap: 10px; align-items: center; margin: 8px 0; padding: 8px 10px; border-radius: 6px; background: color-mix(in srgb, var(--bg) 88%, var(--accent) 12%); }
+.cat-resume { margin: 6px 0; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.cat-steps { margin-left: 8px; }
+.cat-actions-detail { display: flex; gap: 6px; flex-wrap: wrap; padding: 6px 0; }
+[data-yaku-confirmed="1"] .cat-col-no { opacity: 1; }
+[data-yaku-confirmed="0"] > td { background: color-mix(in srgb, var(--bg) 96%, var(--accent) 4%); }
+.cat-origin { display: inline-block; margin-top: 4px; border-radius: 999px; padding: 1px 7px; font-size: 11px; background: var(--soft); color: var(--muted); }
+.cat-origin-manual { background: var(--accent); color: #fff; }
+
+/* 行の状態を左端の色で示す。一覧を眺めて「どこが手つかずか」が分かるように。 */
+.cat-grid tbody tr { border-left: 3px solid transparent; }
+.cat-grid tbody tr[data-yaku-cat-state="untranslated"] { border-left-color: var(--line-strong); }
+.cat-grid tbody tr[data-yaku-cat-state="glossary"] { border-left-color: #8a6d1f; }
+.cat-grid tbody tr[data-yaku-cat-state="copilot"] { border-left-color: #6b4fa8; }
+.cat-grid tbody tr[data-yaku-cat-state="manual"] { border-left-color: var(--accent); }
+/* いま見ている行。長い一覧で自分の位置を見失わないようにする。 */
+.cat-grid tbody tr.is-active { background: var(--soft); }
+.cat-grid tbody tr.is-active .cat-ops { visibility: visible; }
+
+/* 繋ぎ直しは常には出さない。全行に並ぶと目が滑る。触った行にだけ出す。 */
+.cat-ops { display: flex; gap: 4px; margin-top: 4px; visibility: hidden; }
+.cat-grid tbody tr:hover .cat-ops,
+.cat-grid tbody tr:focus-within .cat-ops { visibility: visible; }
+.cat-op { min-height: 22px; padding: 0 6px; font-size: 11px; background: transparent; border: 1px solid var(--line-strong); color: var(--text); }
+.cat-op:hover { background: var(--soft); }
+
+/* 候補ペイン。CAT エディタの中核で、いま見ている行の手掛かりを並べる。 */
+.cat-candidates { border: 1px solid var(--line); border-radius: var(--radius-control); padding: 10px 12px; margin-bottom: var(--space-2); }
+.cat-candidates-title { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; font-size: var(--font-meta); }
+.cat-candidates-list { display: grid; gap: 4px; max-height: 22vh; overflow: auto; }
+.cat-cand { display: grid; grid-template-columns: 20px 62px minmax(0, 1fr) minmax(0, 1fr); gap: 8px; align-items: baseline; width: 100%; min-height: 26px; padding: 3px 6px; text-align: left; background: transparent; border: 1px solid transparent; color: var(--text); font-size: var(--font-meta); }
+.cat-cand:hover { background: var(--soft); border-color: var(--line-strong); }
+.cat-cand-no { color: var(--muted); font-variant-numeric: tabular-nums; }
+.cat-cand-tag { border-radius: 999px; padding: 0 6px; background: var(--soft); color: var(--muted); font-size: 11px; text-align: center; }
+.cat-cand-tag.is-exact { background: #8a6d1f; color: #fff; }
+.cat-cand-src { color: var(--muted); overflow-wrap: anywhere; }
+.cat-cand-tgt { overflow-wrap: anywhere; }
+
+.cat-progress-row { display: flex; gap: 12px; align-items: center; margin-bottom: var(--space-2); font-size: var(--font-meta); }
+.cat-progress { flex: 0 0 200px; height: 8px; border-radius: 4px; background: var(--soft); overflow: hidden; }
+.cat-progress-bar { display: block; height: 100%; background: var(--accent); transition: width .2s; }
+.cat-keyhint kbd { margin: 0 1px; }
+
+.revise-form { margin-top: var(--space-2); }
+.revise-label { display: block; margin-bottom: 6px; color: var(--muted); font-size: var(--font-meta); }
+.revise-row { display: flex; gap: 8px; align-items: center; }
+.revise-input { flex: 1 1 auto; min-width: 0; }
+.revise-button { flex: 0 0 auto; white-space: nowrap; }
 .stat-pills { display: flex; flex-wrap: wrap; gap: 8px; margin: var(--space-2) 0; }
 .stat-pill, .term-pill { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; background: var(--soft); color: var(--muted); padding: 4px 9px; font-size: var(--font-meta); font-variant-numeric: tabular-nums; }
 .stat-pill strong { color: var(--text); font-weight: 600; }
