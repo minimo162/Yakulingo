@@ -698,6 +698,30 @@
     return Promise.reject(new Error('ファイルを選択するか、ローカルパスを入力してください。'));
   }
 
+  // 前回の続きを出す。閉じても再起動しても戻せることを、目に見える形にする。
+  function yakuCatLoadRecent() {
+    yakuCatPost('recent', {}).then(function (data) {
+      var box = document.getElementById('cat-resume');
+      var list = document.getElementById('cat-resume-list');
+      if (!box || !list) return;
+      var items = (data.projects || []).filter(function (p) { return p.total > 0; });
+      if (!items.length) { box.hidden = true; return; }
+      box.hidden = false;
+      list.innerHTML = items.slice(0, 3).map(function (p) {
+        var pct = p.total ? Math.round((p.confirmed / p.total) * 100) : 0;
+        return '<button type="button" class="cat-op" data-yaku-cat-resume="' + yakuEscape(p.id) + '">' +
+          yakuEscape(p.file_name) + '（確認 ' + pct + '%）</button>';
+      }).join(' ');
+    }).catch(function () {});
+  }
+
+  function yakuCatResume(id) {
+    yakuCatSetStatus('前回の作業を読み込んでいます…');
+    yakuCatPost('resume', { project_id: id }).then(yakuCatRender).catch(function (error) {
+      yakuCatSetStatus('前回の作業を読み込めませんでした: ' + (error && error.message ? error.message : ''));
+    });
+  }
+
   function yakuCatOpen(existingTranslation) {
     var checked = document.querySelector('input[name="cat_direction"]:checked');
     yakuCatSetStatus('取り込んでいます…');
@@ -923,8 +947,19 @@
         } else if (badge) {
           badge.remove();
         }
+        tr.setAttribute('data-yaku-confirmed', '1');
+        tr.classList.remove('cat-unsaved');
       }
-    }).catch(function () {});
+    }).catch(function (error) {
+      // 黙って捨てない。捨てると、その行は「保存済み」と見なされて
+      // 二度と送られない。直した内容が消えたことに誰も気づけない。
+      var tr = document.querySelector('[data-yaku-cat-row="' + index + '"]');
+      if (tr) tr.classList.add('cat-unsaved');
+      var input = document.querySelector('[data-yaku-cat-input="' + index + '"]');
+      // 保存できていないので「元の値」を戻す。次の機会に送り直せるようにする。
+      if (input) input.removeAttribute('data-yaku-original');
+      yakuCatSetStatus((index + 1) + '行目を保存できませんでした: ' + (error && error.message ? error.message : '') + '（この行は赤く表示しています）');
+    });
   }
 
   function yakuFileFingerprint(file) {
@@ -1272,6 +1307,17 @@
     if (catOpen) catOpen.addEventListener('click', function () { if (yakuCatSourceMode() === 'align') yakuCatAlign(); else yakuCatOpen(); });
     var catSaveCorpus = document.getElementById('cat-save-corpus-button');
     if (catSaveCorpus) catSaveCorpus.addEventListener('click', yakuCatSaveCorpus);
+    document.addEventListener('click', function (event) {
+      var resume = event.target.closest && event.target.closest('[data-yaku-cat-resume]');
+      if (resume) yakuCatResume(resume.getAttribute('data-yaku-cat-resume'));
+    });
+    yakuCatLoadRecent();
+    // 保存できていない行がある状態で閉じようとしたら止める。
+    window.addEventListener('beforeunload', function (event) {
+      if (!document.querySelector('.cat-unsaved')) return;
+      event.preventDefault();
+      event.returnValue = '';
+    });
     var catGlossary = document.getElementById('cat-glossary-button');
     if (catGlossary) catGlossary.addEventListener('click', yakuCatGlossary);
     var catTranslate = document.getElementById('cat-translate-button');
@@ -1321,9 +1367,11 @@
     }
     function yakuCatCommit(input) {
       if (!input) return false;
-      if (input.value === (input.getAttribute('data-yaku-original') || '')) return false;
-      input.setAttribute('data-yaku-original', input.value);
+      if (input.hasAttribute('data-yaku-original') && input.value === input.getAttribute('data-yaku-original')) return false;
+      // 「元の値」を更新するのは保存が成功してから。先に更新すると、
+      // 保存に失敗した行が「保存済み」と見なされて二度と送られない。
       yakuCatSaveSegment(parseInt(input.getAttribute('data-yaku-cat-input'), 10), input.value);
+      input.setAttribute('data-yaku-original', input.value);
       return true;
     }
     document.addEventListener('focusout', function (event) {

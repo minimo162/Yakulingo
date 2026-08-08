@@ -82,7 +82,7 @@ try {
     Chk ($cat -match 'Weight\s*=\s*30000') '翻訳メモリを他の候補より先に出す'
 
     Write-Host '確定の状態' -ForegroundColor Cyan
-    foreach ($mod in @('PromptBuilder.ps1', 'CellSegments.ps1', 'Corpus.ps1', 'CorpusPairs.ps1', 'CatProject.ps1')) {
+    foreach ($mod in @('Paths.ps1', 'Runtime.ps1', 'PromptBuilder.ps1', 'CellSegments.ps1', 'Corpus.ps1', 'CorpusPairs.ps1', 'CatProject.ps1')) {
         . (Join-Path (Join-Path $root 'src') $mod)
     }
     $proj = New-YakuCatTextProject -Root $root -Settings $null -Direction 'to_en' `
@@ -104,6 +104,29 @@ try {
     $mismatch = New-YakuCatTextProject -Root $root -Settings $null -Direction 'to_en' `
         -Text "一つ目の文です。二つ目の文です。" -Translation "Only one sentence."
     Chk ([string]@($mismatch.Segments)[0].Translation -eq '') '行数が合わない訳文は割り当てない'
+
+    Write-Host '作業内容の保存と復元' -ForegroundColor Cyan
+    Chk (Save-YakuCatProject -Project $proj) 'ディスクへ保存できる'
+    $file = Join-Path (Get-YakuCatProjectStoreDir) ([string]$proj.Id + '.json')
+    Chk (Test-Path -LiteralPath $file -PathType Leaf) '保存先にファイルができる'
+
+    # メモリから消したうえで復元する。再起動を模している。
+    Remove-YakuCatProject -Id ([string]$proj.Id)
+    Chk ($null -eq (Get-YakuCatProject -Id ([string]$proj.Id))) 'メモリからは消えている'
+    $back = Restore-YakuCatProject -Id ([string]$proj.Id)
+    Chk ($null -ne $back) '保存したものを戻せる'
+    Chk (@($back.Segments).Count -eq @($proj.Segments).Count) '行数が保たれる'
+    Chk ([bool]@($back.Segments)[0].Confirmed) '確定の状態が残る'
+    Chk ([string]@($back.Segments)[0].Translation -eq 'We will advance electrification.') '訳文が残る'
+    Chk ([string]$back.Direction -eq 'to_en') '翻訳方向が残る'
+
+    $recent = @(Get-YakuCatSavedProjects -Limit 10)
+    Chk (@($recent | Where-Object { [string]$_.Id -eq [string]$proj.Id }).Count -eq 1) '前回の続きの一覧に出る'
+    $entry = @($recent | Where-Object { [string]$_.Id -eq [string]$proj.Id })[0]
+    Chk ([int]$entry.Confirmed -eq 1 -and [int]$entry.Total -eq 1) '一覧に確認済みの数が出る'
+
+    Chk ($null -eq (Restore-YakuCatProject -Id 'no-such-project')) '無いものを戻そうとしても落ちない'
+    try { Remove-Item -LiteralPath $file -Force } catch {}
 }
 finally {
     try { Remove-Item -LiteralPath $tmp -Recurse -Force } catch {}

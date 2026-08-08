@@ -301,6 +301,129 @@ function Save-YakuCatProjectToCorpus {
     return (Add-YakuCorpusPairs -Dir $Dir -Database $Database -Source $src -Pairs @($pairs.ToArray()) -Public:$Public)
 }
 
+function Get-YakuCatProjectStoreDir {
+    return (Get-YakuSubDir 'cat')
+}
+
+function Save-YakuCatProject {
+    <#
+      作業中のプロジェクトをディスクへ書く。
+
+      これまではメモリだけに置いていた。「作業中しか使わないので保存の形を
+      先に決めなくてよい」という判断だったが、確定の状態を持つようになって
+      前提が変わった。どこまで見たかを記録しても、再読み込みで消えるなら
+      記録の意味が無い。数百行を何時間もかけて見る作業で、F5 ひとつで
+      全部消えるのは受け入れられない。
+
+      書くのは中身だけ。Blocks（Excel の抽出結果）は大きく、書き戻しには
+      元のファイルを読み直すので持たない。
+    #>
+    param([Parameter(Mandatory=$true)]$Project)
+    try {
+        $dir = Get-YakuCatProjectStoreDir
+        if (-not (Test-Path -LiteralPath $dir -PathType Container)) { $null = New-Item -ItemType Directory -Path $dir -Force }
+        $segs = @($Project.Segments | ForEach-Object {
+                [ordered]@{
+                    text = [string]$_.Text
+                    translation = [string]$_.Translation
+                    origin = [string]$_.Origin
+                    confirmed = [bool]$_.Confirmed
+                    joined = [bool]$_.Joined
+                    kind = [string]$_.Kind
+                    sheet = [string]$_.Sheet
+                    location = [string]$_.Location
+                    block_ids = @($_.BlockIds)
+                    cells = @($_.Cells)
+                }
+            })
+        $record = [ordered]@{
+            id = [string]$Project.Id
+            path = [string]$Project.Path
+            file_name = [string]$Project.FileName
+            direction = [string]$Project.Direction
+            source = [string]$Project.Source
+            created = [string]$Project.CreatedAt
+            saved = (Get-Date).ToString('s')
+            segments = $segs
+        }
+        $file = Join-Path $dir ([string]$Project.Id + '.json')
+        ($record | ConvertTo-Json -Depth 6 -Compress) | Set-Content -LiteralPath $file -Encoding UTF8
+        return $true
+    } catch {
+        try { Write-YakuLog ('CAT project save failed: ' + $_.Exception.Message) 'WARN' } catch {}
+        return $false
+    }
+}
+
+function Get-YakuCatSavedProjects {
+    <#
+      保存してあるものの一覧。新しい順。
+      画面に「前回の続きから」を出すために使う。
+    #>
+    param([int]$Limit = 10)
+    $dir = Get-YakuCatProjectStoreDir
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { return @() }
+    $out = New-Object System.Collections.Generic.List[object]
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.json' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First $Limit)) {
+        try {
+            $o = Get-Content -LiteralPath $f.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+            $segs = @($o.segments)
+            [void]$out.Add([pscustomobject]@{
+                    Id = [string]$o.id
+                    FileName = [string]$o.file_name
+                    Direction = [string]$o.direction
+                    Total = $segs.Count
+                    Confirmed = @($segs | Where-Object { [bool]$_.confirmed }).Count
+                    Saved = [string]$o.saved
+                })
+        } catch {
+            try { Write-YakuLog ('CAT project unreadable, skipped. file=' + $f.Name) 'WARN' } catch {}
+        }
+    }
+    return @($out.ToArray())
+}
+
+function Restore-YakuCatProject {
+    <#
+      保存したものをメモリへ戻す。書き戻し用の Blocks は持たないので、
+      Excel から取り込んだものは「出力」だけが使えない状態になる。
+      それでも、確認した内容が残るほうが値打ちがある。
+    #>
+    param([Parameter(Mandatory=$true)][string]$Id)
+    $file = Join-Path (Get-YakuCatProjectStoreDir) ($Id + '.json')
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return $null }
+    $o = Get-Content -LiteralPath $file -Raw -Encoding UTF8 | ConvertFrom-Json
+    $segments = New-Object System.Collections.Generic.List[object]
+    foreach ($s in @($o.segments)) {
+        [void]$segments.Add([pscustomobject]@{
+                Text = [string]$s.text
+                Translation = [string]$s.translation
+                Origin = [string]$s.origin
+                Confirmed = [bool]$s.confirmed
+                Joined = [bool]$s.joined
+                Kind = [string]$s.kind
+                Sheet = [string]$s.sheet
+                Location = [string]$s.location
+                BlockIds = @($s.block_ids)
+                Cells = @($s.cells)
+            })
+    }
+    $project = [pscustomobject]@{
+        Id        = [string]$o.id
+        Path      = [string]$o.path
+        FileName  = [string]$o.file_name
+        Direction = [string]$o.direction
+        Blocks    = @()
+        Segments  = @($segments.ToArray())
+        Warnings  = @()
+        Source    = [string]$o.source
+        CreatedAt = [string]$o.created
+        Restored  = $true
+    }
+    $script:YakuCatProjects[$project.Id] = $project
+    return $project
+}
+
 function Get-YakuCatProject {
     param([Parameter(Mandatory=$true)][string]$Id)
     if (-not $script:YakuCatProjects.ContainsKey($Id)) { return $null }

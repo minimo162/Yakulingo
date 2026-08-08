@@ -162,6 +162,14 @@
           </div>
           <button id="cat-open-button" type="button">取り込む</button>
         </div>
+        <!--
+          前回の続き。作業内容はディスクに残るので、閉じても再起動しても戻せる。
+          数百行を何時間もかけて見る作業なので、一度で終わらないことのほうが多い。
+        -->
+        <div id="cat-resume" class="cat-resume" hidden>
+          <span class="muted">前回の続き：</span>
+          <span id="cat-resume-list"></span>
+        </div>
         <div id="cat-status" class="cat-status muted" aria-live="polite">テキストを貼り付けて「取り込む」を押してください。</div>
         <!--
           進捗とキーボードの案内。市販の CAT エディタはどちらも常に見える所に

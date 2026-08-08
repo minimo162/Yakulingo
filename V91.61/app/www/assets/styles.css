@@ -171,6 +171,9 @@ input[type="text"], select { width: 100%; min-height: 34px; border: 0; border-ra
 .cat-loc { display: block; color: var(--muted); }
 /* 確認済みの印。番号の隣に小さく出す。一覧を眺めたときに、どこまで見たかが分かる。 */
 .cat-confirmed { margin-left: 4px; color: var(--accent); font-weight: 700; }
+/* 保存できなかった行。黙って消えるより、目に見えて残るほうがよい。 */
+.cat-unsaved > td { background: color-mix(in srgb, var(--bg) 82%, #d33 18%); }
+.cat-resume { margin: 6px 0; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 [data-yaku-confirmed="1"] .cat-col-no { opacity: 1; }
 [data-yaku-confirmed="0"] > td { background: color-mix(in srgb, var(--bg) 96%, var(--accent) 4%); }
 .cat-origin { display: inline-block; margin-top: 4px; border-radius: 999px; padding: 1px 7px; font-size: 11px; background: var(--soft); color: var(--muted); }

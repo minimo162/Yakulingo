@@ -2275,12 +2275,37 @@ function Invoke-YakuRoute {
                     $pastedTranslation = ''
                     try { $pastedTranslation = [string]$payload['translation'] } catch {}
                     $project = New-YakuCatTextProject -Root $script:YakuRoot -Text $pastedText -Settings $settings -Direction $direction -Translation $pastedTranslation
+                    $null = Save-YakuCatProject -Project $project
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                     return
                 }
                 $incoming = Resolve-YakuIncomingFile -Payload $payload -Settings $settings
                 $project = New-YakuCatProject -Root $script:YakuRoot -Path ([string]$incoming.Path) -Settings $settings -Direction $direction
-                Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
+                $null = Save-YakuCatProject -Project $project
+                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
+                return
+            }
+
+            if ($action -eq 'recent') {
+                # 前回までの作業一覧。取り込む前に「続きから」を選べるようにする。
+                $rows = @(Get-YakuCatSavedProjects -Limit 10 | ForEach-Object {
+                        [ordered]@{ id = [string]$_.Id; file_name = [string]$_.FileName; direction = [string]$_.Direction
+                            total = [int]$_.Total; confirmed = [int]$_.Confirmed; saved = [string]$_.Saved }
+                    })
+                Send-YakuTextResponse -Context $Context -Text (([ordered]@{ projects = @($rows) } | ConvertTo-Json -Depth 4 -Compress)) -ContentType 'application/json; charset=utf-8'
+                return
+            }
+
+            if ($action -eq 'resume') {
+                $wanted = ''
+                try { $wanted = [string]$payload['project_id'] } catch {}
+                $restored = $null
+                if (-not [string]::IsNullOrWhiteSpace($wanted)) {
+                    $restored = Get-YakuCatProject -Id $wanted
+                    if ($null -eq $restored) { $restored = Restore-YakuCatProject -Id $wanted }
+                }
+                if ($null -eq $restored) { throw '前回の作業を読み込めませんでした。' }
+                Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $restored) -ContentType 'application/json; charset=utf-8'
                 return
             }
 
@@ -2330,30 +2355,39 @@ function Invoke-YakuRoute {
                 $incomingPairs = @(@($alignResult.Pairs) | ForEach-Object { [pscustomobject]@{ JaText = [string]$_.JaText; EnText = [string]$_.EnText } })
                 $project = New-YakuCatProjectFromPairs -Pairs $incomingPairs -Direction $direction -FileName $alignName `
                     -JaCoverage ([double]$alignResult.JaCoverage) -Dropped ([int]$alignResult.Dropped)
-                Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
+                $null = Save-YakuCatProject -Project $project
+                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 return
             }
 
             $projectId = ''
             try { $projectId = [string]$payload['id'] } catch {}
             $project = Get-YakuCatProject -Id $projectId
+            # メモリに無ければ、保存してあるものから戻す。アプリを再起動しても
+            # 続きから作業できるようにするため。
+            if ($null -eq $project -and -not [string]::IsNullOrWhiteSpace($projectId)) {
+                try { $project = Restore-YakuCatProject -Id $projectId } catch { $project = $null }
+            }
             if ($null -eq $project) { throw '取り込んだファイルが見つかりません。もう一度「取り込む」を押してください。' }
 
             switch ($action) {
                 'glossary' {
                     $null = Invoke-YakuCatGlossaryPass -Root $script:YakuRoot -Project $project -Settings $settings
+                    $null = Save-YakuCatProject -Project $project
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 }
                 'merge' {
                     $index = -1
                     try { $index = [int]$payload['index'] } catch { $index = -1 }
                     $null = Merge-YakuCatSegments -Project $project -Index $index
+                    $null = Save-YakuCatProject -Project $project
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 }
                 'split' {
                     $index = -1
                     try { $index = [int]$payload['index'] } catch { $index = -1 }
                     $null = Split-YakuCatSegment -Project $project -Index $index
+                    $null = Save-YakuCatProject -Project $project
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 }
                 'candidates' {
@@ -2373,6 +2407,7 @@ function Invoke-YakuRoute {
                     $flag = $true
                     try { if ($payload.ContainsKey('confirmed')) { $flag = [bool]$payload['confirmed'] } } catch {}
                     $null = Set-YakuCatSegmentConfirmed -Project $project -Index $index -Confirmed $flag
+                    $null = Save-YakuCatProject -Project $project
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 }
                 'save-corpus' {
@@ -2390,6 +2425,7 @@ function Invoke-YakuRoute {
                     $text = ''
                     try { $text = [string]$payload['text'] } catch {}
                     $null = Set-YakuCatSegmentTranslation -Project $project -Index $index -Text $text
+                    $null = Save-YakuCatProject -Project $project
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 }
                 'translate' {
@@ -2437,7 +2473,8 @@ function Invoke-YakuRoute {
                     if (($result.PSObject.Properties.Name -contains 'Mode') -and [string]$result.Mode -eq 'corpus') {
                         $project | Add-Member -NotePropertyName 'CorpusSection' -NotePropertyValue ([string]$result.CorpusSection) -Force
                         $project | Add-Member -NotePropertyName 'CorpusExamples' -NotePropertyValue (@($result.CorpusExamples)) -Force
-                        Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
+                        $null = Save-YakuCatProject -Project $project
+                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                         return
                     }
                     $segs = @($project.Segments)
@@ -2449,6 +2486,7 @@ function Invoke-YakuRoute {
                         $segs[$i].Translation = [string]$pair.text
                         $segs[$i].Origin = 'copilot'
                     }
+                    $null = Save-YakuCatProject -Project $project
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 }
                 'export' {
