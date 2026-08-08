@@ -602,8 +602,10 @@ Assert-YakuMask ($corpusRefText -match "Location 'corpus-query'") '記録に経�
 # V91.61（2026-08-06）: 修正の依頼が2箇所目になる。訳文へ指示を1つ当てて直す
 # 経路で、原文と現訳を外部へ送る点は翻訳と同じ。件数で見張るのは、
 # 送る経路が黙って増えるのを気づかせるため。増やすときは下の確認も足すこと。
+# 3箇所目は「短くする」（Invoke-YakuTextShorten）。現訳をマスク後の姿で
+# 受け取る点も修正と同じで、専用の検査は Test-YakuV9161Shorten.ps1 にある。
 $translationSends = @($callSites | Where-Object { $_ -eq 'Translation.ps1' }).Count
-Assert-YakuMask ($translationSends -eq 2) ('テキスト経路の送信は2箇所（翻訳と修正）: ' + $translationSends)
+Assert-YakuMask ($translationSends -eq 3) ('テキスト経路の送信は3箇所（翻訳・修正・短くする）: ' + $translationSends)
 # 修正の経路もマスクしてから送っていること。現訳は呼び出し側から
 # マスク後の姿で渡ってくるが、原文はここでマスクする。
 $translationSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Translation.ps1'))

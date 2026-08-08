@@ -516,6 +516,26 @@
     });
   }
 
+  function yakuSubmitShorten(button) {
+    // 訳文を短くする。押されたときだけ Copilot を呼ぶ。
+    // 毎回2本作ると、Copilot が使える文の数が半分になる（120回で止まる）。
+    if (!yakuReady || yakuTranslating) { yakuPollReadyState(); return; }
+    // 送るのはマスク後の訳文。画面に出ている訳文は実値へ戻した後のもので、
+    // そのまま送ると伏せた数値が外へ出る。
+    var payload = {
+      source_text: yakuDecodeBase64Utf8(button.getAttribute('data-yaku-source-b64')),
+      current_text: yakuDecodeBase64Utf8(button.getAttribute('data-yaku-current-b64'))
+    };
+    yakuTranslating = true;
+    yakuActiveJobKind = 'text';
+    yakuSetButtonEnabled(false);
+    yakuRenderJobLoading('', 0, '短くしています', '準備中');
+    yakuScrollJobResultIntoView();
+    yakuJsonPost('/api/shorten-text', payload).then(yakuResponseText).then(yakuStartFromHtml).catch(function (error) {
+      yakuShowStartError(error, '短くできませんでした。');
+    });
+  }
+
   // ---------------------------------------------------------------- CAT
   // ファイル翻訳と同じことを、押した分だけ進める。
   // 取り込む → 用語集で置換 → 残りをCopilotで訳す → 出力。
@@ -1441,7 +1461,10 @@
     }
     document.addEventListener('click', function (event) {
       var sw = event.target.closest && event.target.closest('[data-yaku-swap]');
-      if (sw) yakuSwapResult(sw);
+      if (sw) { yakuSwapResult(sw); return; }
+      // 短くする。押されたときだけ Copilot を呼ぶ。
+      var shorten = event.target.closest && event.target.closest('[data-yaku-shorten]');
+      if (shorten) { event.preventDefault(); yakuSubmitShorten(shorten); }
     });
     // 結果が出たら、前に選んだ種類を主に持ってくる。
     document.addEventListener('yaku:result-rendered', function () {

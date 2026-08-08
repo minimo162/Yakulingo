@@ -5,6 +5,7 @@ prompts/file_translate_to_en.txt	lf
 prompts/file_translate_to_jp.txt	crlf
 prompts/style_brief_rules.txt	lf
 prompts/text_revise.txt	crlf
+prompts/text_shorten_to_en.txt	crlf
 prompts/text_translate.txt	lf
 prompts/text_translate_brief_to_en.txt	crlf
 prompts/text_translate_full_to_en.txt	crlf
@@ -78,6 +79,7 @@ tools/Test-YakuV9161GlossaryVariants.ps1	crlf
 tools/Test-YakuV9161LabelCoverage.ps1	lf
 tools/Test-YakuV9161ProperNoun.ps1	crlf
 tools/Test-YakuV9161Revise.ps1	crlf
+tools/Test-YakuV9161Shorten.ps1	crlf
 tools/Test-YakuV9161SplitRequests.ps1	crlf
 tools/Test-YakuV9161TranslationMemory.ps1	crlf
 tools/Test-YakuV917RuntimeWarnings.ps1	crlf

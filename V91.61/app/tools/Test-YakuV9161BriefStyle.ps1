@@ -127,7 +127,7 @@ $translationText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'sr
 # V91.61（2026-08-06）: 修正の依頼が3箇所目。直した訳文にも略語が当たること。
 # ここを通らないと、修正するたびに略語が spelled-out へ戻る。
 $hookCount = ([regex]::Matches($translationText, 'Convert-YakuBriefTranslationOptions -Options')).Count
-Chk ($hookCount -eq 3) ('キャッシュ命中・通常・修正の3経路に入っている: ' + $hookCount)
+Chk ($hookCount -eq 4) ('キャッシュ命中・通常・修正・短くの4経路に入っている: ' + $hookCount)
 # 復元より前に置く。復元後の数字（12,340 など）を語として拾わせないため。
 $convAt = $translationText.IndexOf('Convert-YakuBriefTranslationOptions -Options $options')
 $restoreAt = $translationText.IndexOf('Restore-YakuMaskedTranslationOptions -Options $options')
@@ -138,7 +138,7 @@ Write-Host '読み込まれていない経路でも止まらない'
 # ワーカー・部分的に読み込む回帰テスト）で翻訳を止めない。
 # 当たらなければ従来どおりモデルの出力のままになるだけである。
 $guards = ([regex]::Matches($translationText, 'Get-Command Convert-YakuBriefTranslationOptions')).Count
-Chk ($guards -eq 3) ('3経路とも守られている: ' + $guards)
+Chk ($guards -eq 4) ('4経路とも守られている: ' + $guards)
 
 Write-Host 'プロンプトから外れていること'
 $briefRules = Get-YakuBriefRules -Root $root

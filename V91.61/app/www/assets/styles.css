@@ -86,6 +86,11 @@ textarea:focus, input:focus, select:focus { background: var(--surface); box-shad
 .direction-row label:first-child span { border-radius: 8px 0 0 8px; }
 .direction-row label:nth-of-type(3) span { border-radius: 0 8px 8px 0; }
 .direction-row.two-option label:nth-of-type(2) span { border-radius: 0 8px 8px 0; }
+/* 短くする導線。訳文のすぐ下に置き、なぜ押すのか（枠に入らないとき）と
+   何が起きるか（もう一度Copilotに頼む）を隣に書く。押す前に分かる形にする。 */
+.shorten-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
+.shorten-note { color: var(--muted); font-size: var(--font-meta); }
+
 /* 過去に公表した英訳。畳んで置く。開いたときに日英が並んで見えること、
    英文が原文より読みやすい大きさであることを優先する。老眼を想定するので
    本文は 16px を下回らせない。 */

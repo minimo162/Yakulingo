@@ -1635,6 +1635,144 @@ function Invoke-YakuTextRevision {
     }
 }
 
+function Invoke-YakuTextShorten {
+    <#
+      できあがった訳文を短くする。押されたときだけ走る。
+
+      なぜ既定で走らせないのか。Copilot は120回ほどで応答しなくなる。
+      毎回2本作れば使える文の数が半分になる。標準の訳で足りる場面のほうが
+      多いので、要る人が押したときだけ払う（独立評価 2026-08-08、3本が
+      別々の理由で同じ結論）。
+
+      門を置く。プロンプトに「長さだけ変えろ」と書いても守られるかは
+      確率的である。守らせるのはアプリ側の検査だけである
+      （BriefStyle.ps1 冒頭と同じ原則）。
+
+        - 行数が変わっていない（勝手に文を統合・分割していない）
+        - 伏せた数値の過不足が無い
+        - 固有名詞が落ちていない
+        - 短くなっている
+
+      どれかを破ったら短い訳は返さない。派生なので、いつでも元の訳へ
+      戻れる。これは独立に訳す作りには無かった強みである。
+
+      マスクの扱いは修正の経路と同じ。現訳はマスク後のものを受け取り、
+      原文からマスク表を作り直す。画面に出ている訳文を送り返させると、
+      伏せた数値が外へ出る。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Root,
+        [Parameter(Mandatory=$true)][string]$InputText,
+        # マスク後の現訳。実値の入った訳文を渡してはならない。
+        [Parameter(Mandatory=$true)][string]$MaskedCurrentText,
+        [Parameter(Mandatory=$true)]$Settings,
+        [AllowNull()]$ProgressState,
+        [AllowNull()]$Warnings
+    )
+    $requestId = [guid]::NewGuid().ToString('N')
+    # 固有名詞 → 数値の順で伏せる。翻訳経路と同じ順序に揃える。
+    $properResult = New-YakuProperNounMaskMap -Text $InputText -Root $Root
+    $properMap = $properResult.Map
+    $maskResult = New-YakuNumericMaskMap -Text ([string]$properResult.Text) -Root $Root -Direction 'to_en' -Location 'text-shorten'
+    $sourceText = [string]$maskResult.Text
+    $maskMap = $maskResult.Map
+
+    # 実値入りの現訳を受け取ったら、そこで止める。コメントや規約と違って、
+    # 書き換えたときに必ず落ちる（独立評価の助言 2026-08-08）。
+    foreach ($token in @($maskMap.Keys)) {
+        $value = [string]$maskMap[[string]$token]
+        if ([string]::IsNullOrWhiteSpace($value)) { continue }
+        if ($MaskedCurrentText.IndexOf($value, [StringComparison]::Ordinal) -ge 0 -and $MaskedCurrentText.IndexOf([string]$token, [StringComparison]::Ordinal) -lt 0) {
+            throw 'SHORTEN_UNMASKED_CURRENT: マスク前の訳文が渡されました。伏せた数値が外部へ出るため送信しません。'
+        }
+    }
+
+    $built = New-YakuShortenPrompt -Root $Root -InputText $sourceText -CurrentText $MaskedCurrentText -RequestId $requestId
+    $raw = Invoke-YakuCopilotPrompt -Prompt $built.Prompt -Settings $Settings -PreserveEndMarker -ProgressState $ProgressState -Warnings $Warnings
+    $options = @(Parse-YakuTextTranslationResponse -Raw $raw -Direction 'to_en' -RequestId $requestId -Warnings $Warnings -Mode 'brief')
+    if ($options.Count -eq 0) { throw 'SHORTEN_RESPONSE_EMPTY: 短くした訳文を取り出せませんでした。' }
+    $shortened = [string]$options[0].Translation
+
+    # --- 門 ---
+    $rejected = Test-YakuShortenResult -MaskedCurrentText $MaskedCurrentText -Shortened $shortened -ProperMap $properMap
+    if (-not [string]::IsNullOrWhiteSpace($rejected)) {
+        try { Write-YakuLog "Shorten rejected. reason=$rejected requestId=$requestId" 'WARN' } catch {}
+        throw ('SHORTEN_REJECTED: ' + $rejected)
+    }
+
+    # 略語はここで当てる。モデルに選ばせない。
+    if (Get-Command Convert-YakuBriefTranslationOptions -ErrorAction SilentlyContinue) {
+        $options = @(Convert-YakuBriefTranslationOptions -Options $options)
+    }
+    $options = @(Restore-YakuMaskedTranslationOptions -Options $options -MaskedSource $sourceText -Map $maskMap -ProperMap $properMap -Warnings $Warnings -Location 'text-shorten')
+    foreach ($o in $options) {
+        try { $o.Style = 'brief' } catch {}
+        try { $o.Label = '短め' } catch {}
+    }
+    return [pscustomobject]@{
+        Direction   = 'to_en'
+        Options     = $options
+        Raw         = $raw
+        Prompt      = $built.Prompt
+        RequestId   = $requestId
+        MaskedCount = [int]$maskResult.MaskedCount
+    }
+}
+
+function Test-YakuShortenResult {
+    <#
+      短くした訳を受け取ってよいかを決める。
+
+      受け取れない理由を文字列で返す。空なら通す。
+      判定できることだけを見る。「良い圧縮か」は機械では決まらないので見ない。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$MaskedCurrentText,
+        # 空の応答も検査させる。空文字を弾く形にすると、空を弾く枝へ
+        # そもそも辿り着かない（2026-08-08 に実行して気づいた）。
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$Shortened,
+        [AllowNull()][hashtable]$ProperMap
+    )
+    $cur = [string]$MaskedCurrentText
+    $new = [string]$Shortened
+    if ([string]::IsNullOrWhiteSpace($new)) { return '短くした訳文が空です。' }
+
+    # 行数。文を勝手に統合・分割していないか。見出しや箇条書きが潰れると、
+    # 貼った先のレイアウトが崩れる。
+    $curLines = @(($cur -split "`r?`n") | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $newLines = @(($new -split "`r?`n") | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($curLines.Count -ne $newLines.Count) {
+        return ('行の数が変わっています（' + [string]$curLines.Count + ' → ' + [string]$newLines.Count + '）。')
+    }
+
+    # 伏せた数値。過不足があれば事実が欠けている。短い訳ではなく壊れた訳。
+    #
+    # 並べ替えてから比べてはいけない。[[N1]] と [[N2]] が入れ替わっても
+    # 個数は合うので通ってしまい、復元すると営業利益の欄に売上高の数字が入る。
+    # 2段階にすると原文と現訳の両方を見せるので、モデルが対応を付け直す。
+    # 最も危険な壊れ方であり、実際に並べ替え比較では通った（2026-08-08）。
+    # 出てくる順そのものを比べる。
+    $curOrder = (@(Get-YakuNumericMaskTokens -Text $cur)) -join ','
+    $newOrder = (@(Get-YakuNumericMaskTokens -Text $new)) -join ','
+    if ($curOrder -ne $newOrder) { return '数値が増減または入れ替わっています。' }
+
+    # 固有名詞。人名・法人名が落ちるのは圧縮ではない。
+    if ($null -ne $ProperMap -and $ProperMap.Count -gt 0) {
+        foreach ($token in @($ProperMap.Keys)) {
+            $t = [string]$token
+            $cCount = ([regex]::Matches($cur, [regex]::Escape($t))).Count
+            $nCount = ([regex]::Matches($new, [regex]::Escape($t))).Count
+            if ($cCount -gt 0 -and $nCount -ne $cCount) { return '固有名詞が落ちています。' }
+        }
+    }
+
+    # 短くなっていること。同じか長いなら、押した意味が無い。
+    # 完全に同一なのは「これ以上短くできない」という正しい答えなので通す。
+    if ($new.Length -gt $cur.Length) { return '短くなっていません。' }
+
+    return ''
+}
+
 function Invoke-YakuTextTranslationRequests {
     <#
       1つの原文に対して、必要な依頼を出して訳文を揃える。
@@ -1666,14 +1804,17 @@ function Invoke-YakuTextTranslationRequests {
 
     # 簡易翻訳でも電文体は出す（利用者の判断 2026-08-06）。
     # 並列にしてあるので、2つ作っても待ち時間はほとんど変わらない。
-    # 2並列。違うのは長さだけである。
+    # 1本だけ訳す。短くするのは押されたときだけ走る（Invoke-YakuTextShorten）。
     #
-    # 以前は3並列で、3つ目は「公表英文を参考」と名乗っていた。しかし
-    # 実体は full と同じ雛形で、違いは金額の書き方の規則だけだった。
-    # 公表英文は1文字も参照していない（簡易翻訳ではコーパスを引かない）。
-    # 名乗りが事実に反していたので畳んだ（2026-08-08 に確認）。
-    # 金額の書き方は設定 amount_notation が決める。
-    $modes = @('full','brief')
+    # Copilot は120回ほどで応答しなくなる。毎回2本作れば、使える文の数が
+    # 半分になる。標準の訳で足りる場面のほうが多いので、要る人が押したときに
+    # 払う（独立評価 2026-08-08、3本が別々の理由で同じ結論に来た）。
+    #
+    # 短くするのを派生にしたのは、速さのためではない。原文→BRIEF を並べて
+    # 頼むと圧縮が「日本語を読みながら縮める」作業になり、実測で圧縮率が
+    # 用語集のカバー有無で 0.55 と 0.75 に割れていた（要件整理 §5-A）。
+    # できた英文から縮めれば、この語彙依存は原理的に消える。
+    $modes = @('full')
     $results = $null
     $mode2 = 'sequential'
     $sw = [System.Diagnostics.Stopwatch]::StartNew()

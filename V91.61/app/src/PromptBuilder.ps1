@@ -840,6 +840,69 @@ function New-YakuRevisePrompt {
     }
 }
 
+function New-YakuShortenPrompt {
+    <#
+      できあがった訳文を、短くするためだけに依頼する。
+
+      なぜ訳し直しではなく派生なのか（要件整理 §5-A、実測付き）:
+
+        原文→FULL と 原文→BRIEF を並べて頼むと、圧縮が「日本語を読みながら
+        縮める」作業になる。実測で圧縮率が 0.55（用語集がカバーする語彙）と
+        0.75（しない語彙）に割れた。同じ文長・同じ文体でこれだけ差が出るのは、
+        圧縮を日本語照合でやっているからである。
+
+        できた英文から縮めれば、圧縮は英語→英語の操作になり、語彙依存が
+        原理的に消える。用語も原文の解釈も現訳から引き継ぐので、
+        「さっき訳した文と今の文が食い違う」も起きない。
+
+      何を許すか:
+
+        長さだけである。単位表記も負数の書き方も渡さない。単位換算は桁の
+        換算を伴うのでマスクの前にアプリが済ませており、送信後の英文には
+        [[N1]] しか無い。Copilot に換算はできない。負数の書き方は設定
+        amount_notation が決める規則で、最初の翻訳で既に当たっている。
+        機械で決まることをモデルへ渡すのは、120回の制限の下では悪い取引である
+        （独立評価 2026-08-08）。
+
+        許す軸を1本に絞ると、指示は守られやすくなる。「A も B も C も
+        変えてよい」は「A だけ」よりはっきり守られない。
+
+      略語は当てない。返ってきた英文へアプリが後から当てる。先に略語入りの
+      英文を渡すと、モデルはそれを知らない語として扱い、書き換えの許可を
+      与えている場でこそ綴りへ戻したり別の語に読み替えたりする。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Root,
+        [Parameter(Mandatory=$true)][string]$InputText,
+        # マスク後の現訳。実値の入った訳文を渡してはならない。
+        [Parameter(Mandatory=$true)][string]$CurrentText,
+        [AllowNull()][string]$RequestId
+    )
+    if ([string]::IsNullOrWhiteSpace($RequestId)) { $RequestId = [guid]::NewGuid().ToString('N') }
+    # 伏せた数値の扱いだけは残す。トークンが原文と現訳の両方に居るので、
+    # 扱いを示さないと書き換えられて実値へ戻せなくなる。
+    $numeric = Get-YakuNumericRulesSection -InputText ([string]$InputText + "`n" + [string]$CurrentText) -Direction 'to_en' -Notation (Get-YakuAmountNotation -Settings $null)
+    # 圧縮の手口だけを渡す。文体の規則集を丸ごと再掲しない。
+    # 既に良い訳が入力なのに、それを産んだ規則を全部見せると
+    # 「一から作り直す」を誘発する（独立評価 2026-08-08）。
+    $briefRules = ''
+    try { $briefRules = Get-YakuPromptTemplate -Root $Root -Name 'style_brief_rules.txt' } catch { $briefRules = '' }
+    $template = Get-YakuPromptTemplate -Root $Root -Name 'text_shorten_to_en.txt'
+    $vars = @{
+        request_id    = $RequestId
+        numeric_rules = $numeric
+        brief_rules   = [string]$briefRules
+        input_text    = $InputText.Trim()
+        current_text  = $CurrentText.Trim()
+    }
+    return [pscustomobject]@{
+        Direction = 'to_en'
+        Label     = 'BRIEF_TEXT'
+        RequestId = $RequestId
+        Prompt    = Expand-YakuTemplate -Template $template -Variables $vars
+    }
+}
+
 function Get-YakuGlossaryDuplicateSummaryHtml {
     param([Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Entries)
     $pairs = @{}

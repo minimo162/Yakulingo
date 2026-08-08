@@ -1044,7 +1044,7 @@ function Start-YakuTranslationJob {
         [AllowNull()][string]$InputText = '',
         [Parameter(Mandatory=$true)]$Settings,
         [AllowNull()][string]$TextDirectionOverride = '',
-        [ValidateSet('text','file','revise','cat')][string]$Kind = 'text',
+        [ValidateSet('text','file','revise','shorten','cat')][string]$Kind = 'text',
         [AllowNull()][string]$FilePath = '',
         [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
         [AllowNull()][string[]]$Sheets,
@@ -1312,6 +1312,37 @@ function Start-YakuTranslationJob {
                 } catch {
                     $result = [pscustomobject]@{ Error = $_.Exception.Message; Prompt = ''; Direction = [string]$rev.direction }
                 }
+            } elseif ($Kind -eq 'shorten') {
+                # 短くするのは押されたときだけ走る。標準の訳は既に画面にある。
+                $sh = $ReviseJson | ConvertFrom-Json
+                $shWarnings = New-Object System.Collections.Generic.List[object]
+                Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label '短くしています' -Progress 20 -Detail '' -Phase 'translating'
+                try {
+                    $sh1 = Invoke-YakuTextShorten -Root $Root -InputText ([string]$sh.source_text) -MaskedCurrentText ([string]$sh.current_text) -Settings $settings -ProgressState $JobState -Warnings $shWarnings
+                    $result = [pscustomobject]@{
+                        Direction = 'to_en'
+                        DirectionLabel = '日本語 → 英語'
+                        MaskedCount = [int]$sh1.MaskedCount
+                        KeptCount = 0
+                        InputLength = ([string]$sh.source_text).Length
+                        SourceText = [string]$sh.source_text
+                        Options = @($sh1.Options)
+                        Raw = [string]$sh1.Raw
+                        Prompt = [string]$sh1.Prompt
+                        BatchCount = 1
+                        Warnings = @($shWarnings.ToArray())
+                        Timestamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+                    }
+                } catch {
+                    # 門で弾いたときは、その理由をそのまま伝える。
+                    # 「短くできませんでした」だけでは、押した人は何を直せば
+                    # よいか分からないまま、もう1回押して回数を使う。
+                    $detail = [string]$_.Exception.Message
+                    $message =
+                        if ($detail -match '^SHORTEN_REJECTED: (.+)$') { '短くした訳を受け取りませんでした。' + $Matches[1] + ' 上の訳をそのままお使いください。' }
+                        else { $detail }
+                    $result = [pscustomobject]@{ Error = $message; Prompt = ''; Direction = 'to_en' }
+                }
             } elseif ($Kind -eq 'file') {
                 $result = Invoke-YakuFileTranslation -Root $Root -InputPath $FilePath -Settings $settings -ProgressState $JobState -Direction $Direction -Sheets $sheets -JobId ([string]$JobState['id'])
             } else {
@@ -1425,10 +1456,10 @@ function Convert-YakuTranslationJobStartedHtml {
     $inputLength = [string]$State['input_length']
     $fileName = [string]$State['file_name']
     $meta = if ($kind -eq 'file') { 'ファイル: ' + $fileName } else { $inputLength + '字' }
-    $caption = if ($kind -eq 'file') { '抽出中' } elseif ($kind -eq 'revise') { '修正を依頼中' } elseif ($kind -eq 'cat') { '翻訳中' } else { '準備中' }
+    $caption = if ($kind -eq 'file') { '抽出中' } elseif ($kind -eq 'revise') { '修正を依頼中' } elseif ($kind -eq 'shorten') { '短くしています' } elseif ($kind -eq 'cat') { '翻訳中' } else { '準備中' }
     # 修正はテキストの成果物なので、画面上はテキスト側へ描く。
     # ここの kind は「どちらのタブへ結果を入れるか」にしか使われない。
-    if ($kind -eq 'revise') { $kind = 'text' }
+    if ($kind -eq 'revise' -or $kind -eq 'shorten') { $kind = 'text' }
     $html = @"
 <div class='result-loading job-loading' data-yaku-job-id='$(ConvertTo-YakuHtml $jobId)' data-yaku-kind='$(ConvertTo-YakuHtml $kind)' title='Job: $(ConvertTo-YakuHtml $jobId)'>
   <div class='job-loading-inner'>
@@ -2607,6 +2638,37 @@ function Invoke-YakuRoute {
         } catch {
             $body = [ordered]@{ error = (Convert-YakuExceptionToUserMessage $_) }
             Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
+        }
+        return
+    }
+    if ($method -eq 'POST' -and $path -eq '/api/shorten-text') {
+        # できあがった訳文を短くする。押されたときだけ走る。
+        # 現訳はマスク後のものを受け取る。画面の訳文（実値入り）を送らせると、
+        # 伏せたはずの数値が Copilot へ出る。
+        $payload = Read-YakuRequestJson -Request $req
+        $settings = Read-YakuSettings -Root $script:YakuRoot
+        $srcText = ''
+        $curText = ''
+        try { $srcText = [string]$payload['source_text'] } catch {}
+        try { $curText = [string]$payload['current_text'] } catch {}
+        if ([string]::IsNullOrWhiteSpace($srcText) -or [string]::IsNullOrWhiteSpace($curText)) {
+            Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind warning -Message 'もとになる原文と訳文を取得できませんでした。もう一度翻訳してからお試しください。')) -StatusCode 400
+            return
+        }
+        $readyState = Get-YakuTranslateReadinessState
+        if (-not [bool]$readyState.canTranslate) {
+            $message = if ([string]$readyState.mode -eq 'working') { '翻訳ジョブが実行中です。完了してからお試しください。' } else { 'Copilotの準備が完了してからお試しください。' }
+            Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind warning -Message $message)) -StatusCode 409
+            return
+        }
+        try {
+            $shortenPayload = ([ordered]@{ source_text = $srcText; current_text = $curText } | ConvertTo-Json -Depth 5 -Compress)
+            $state = Start-YakuTranslationJob -InputText $srcText -Settings $settings -Kind 'shorten' -ReviseJson $shortenPayload
+            Send-YakuTextResponse -Context $Context -Text (Convert-YakuTranslationJobStartedHtml -State $state)
+        } catch {
+            $safeError = Convert-YakuExceptionToUserMessage $_
+            try { Write-YakuLog "Shorten job start exception: $($_.Exception.ToString())" 'ERROR' } catch {}
+            Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind error -Message $safeError)) -StatusCode 400
         }
         return
     }
