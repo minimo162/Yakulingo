@@ -86,6 +86,17 @@ textarea:focus, input:focus, select:focus { background: var(--surface); box-shad
 .direction-row label:first-child span { border-radius: 8px 0 0 8px; }
 .direction-row label:nth-of-type(3) span { border-radius: 0 8px 8px 0; }
 .direction-row.two-option label:nth-of-type(2) span { border-radius: 0 8px 8px 0; }
+/* 過去に公表した英訳。畳んで置く。開いたときに日英が並んで見えること、
+   英文が原文より読みやすい大きさであることを優先する。老眼を想定するので
+   本文は 16px を下回らせない。 */
+.past-translations { margin-top: 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.past-translations > summary { cursor: pointer; padding: 12px 16px; font-size: var(--font-body); font-weight: 600; }
+.past-pair { padding: 0 16px 14px 16px; }
+.past-pair + .past-pair { border-top: 1px solid var(--line); padding-top: 14px; }
+.past-pair-head { margin: 0 0 6px 0; color: var(--muted); font-size: var(--font-meta); }
+.past-pair-ja { margin: 0 0 6px 0; font-size: 16px; line-height: 1.7; }
+.past-pair-en { margin: 0; font-size: 16px; line-height: 1.7; color: var(--accent); }
+
 /* 行の頭に置く見出し。これがあると label:first-child が効かなくなるので、
    左端の丸めをこちらで持つ。 */
 .direction-row .row-label { color: var(--muted); font-size: var(--font-meta); margin-right: 10px; }

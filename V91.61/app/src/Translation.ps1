@@ -2021,6 +2021,33 @@ function Invoke-YakuTextTranslation {
         $maskedTotal = 0
         $keptTotal = 0
         foreach ($br2 in $batchResults) { $maskedTotal += [int]$br2.MaskedCount; $keptTotal += [int]$br2.KeptCount }
+
+        # 過去に公表した英訳を引く。手元で完結するので往復は増えない。
+        #
+        # 利用者の課題は「過去の翻訳例が見れない」であり、プロンプトへ埋める
+        # ことではなかった（利用者 2026-08-08）。訳の下に日英そろえて出す。
+        #
+        # 引けなくても翻訳は成立する。CorpusPairs.ps1 を読み込んでいない経路や
+        # コーパスを配っていない環境でも止めない。
+        $pastPairs = @()
+        if ($direction -eq 'to_en') {
+            $pastSw = [System.Diagnostics.Stopwatch]::StartNew()
+            try {
+                if (Get-Command Find-YakuCorpusPairsByTerms -ErrorAction SilentlyContinue) {
+                    $pairsDir = ''
+                    try { $pairsDir = Get-YakuCorpusBuildDir } catch { $pairsDir = '' }
+                    if (-not [string]::IsNullOrWhiteSpace($pairsDir)) {
+                        $pastPairs = @(Find-YakuCorpusPairsByTerms -Dir $pairsDir -Text $InputText -Limit 3)
+                    }
+                }
+            } catch {
+                try { Write-YakuLog ('Past translations lookup failed: ' + $_.Exception.Message) 'WARN' } catch {}
+                $pastPairs = @()
+            }
+            $pastSw.Stop()
+            try { Write-YakuLog "Past translations lookup. hits=$(@($pastPairs).Count) elapsedMs=$($pastSw.ElapsedMilliseconds) roundTrips=0" 'INFO' } catch {}
+        }
+
         $result = [pscustomobject]@{
             Direction = $direction
             DirectionLabel = $directionLabel
@@ -2035,6 +2062,8 @@ function Invoke-YakuTextTranslation {
             # V91.61 段階3: 何を参照して訳したかを画面へ出すため。
             CorpusExamples = @($corpusReference.Examples)
             CorpusTerms = @($corpusReference.Terms)
+            # 過去に公表した英訳。日英そろえて画面へ出す（往復ゼロ）。
+            PastPairs = @($pastPairs)
             Raw = $raw
             Prompt = $prompt
             BatchCount = $batches.Count

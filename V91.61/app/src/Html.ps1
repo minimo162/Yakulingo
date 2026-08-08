@@ -42,6 +42,52 @@ function Convert-YakuStatusOobHtml {
     return "<div id='copilot-status' class='status' hx-swap-oob='outerHTML' aria-live='polite'><span class='status-dot $Class'></span><span>$(ConvertTo-YakuHtml $Label)</span></div>"
 }
 
+function New-YakuPastTranslationsHtml {
+    <#
+      過去に自社が公表した英訳を、日英そろえて出す。
+
+      利用者の課題は「過去の翻訳例が**見れない**」であって、「使えない」では
+      なかった（利用者 2026-08-08）。プロンプトへ埋めるのは使うことであって
+      見せることではない。埋めるだけなら、参考にしたと名乗るだけになる。
+
+      引くのは手元で完結する。日本語の原文から語を取り出して対訳の日本語側へ
+      当てるので、Copilot への往復は増えない。検索語を Copilot に作らせて
+      いた頃は1往復増えていたが、120回の制限がある以上それは払えない。
+
+      **何の語で当たったかを添える。** 出典だけでは、なぜこの文が出てきたのか
+      分からない。おかしいと思ったときに確かめられる形にしておく。
+
+      引けなければ何も出さない。利用者はコーパスの存在を知らないので、
+      「見つかりませんでした」と言われても対処のしようがない。
+    #>
+    param([AllowNull()][object[]]$Pairs)
+    $items = @()
+    try { $items = @(@($Pairs) | Where-Object { $null -ne $_ }) } catch { $items = @() }
+    if ($items.Count -le 0) { return '' }
+    $html = "<details class='past-translations'><summary>過去に公表した英訳を見る（$($items.Count)件）</summary>"
+    foreach ($p in $items) {
+        $source = [string]$p.Source
+        $terms = ''
+        try { $terms = (@($p.Terms) -join '、') } catch { $terms = '' }
+        $head = $source
+        if (-not [string]::IsNullOrWhiteSpace($terms)) { $head += '　当たった語: ' + $terms }
+        $ja = [string]$p.Ja
+        $en = [string]$p.En
+        # 長い一節は畳む。読ませたいのは言い回しであって全文ではない。
+        if ($ja.Length -gt 160) { $ja = $ja.Substring(0, 160) + '…' }
+        if ($en.Length -gt 260) { $en = $en.Substring(0, 260) + '…' }
+        $html += @"
+  <article class='past-pair'>
+    <p class='past-pair-head'>$(ConvertTo-YakuHtml $head)</p>
+    <p class='past-pair-ja'>$(ConvertTo-YakuHtml $ja)</p>
+    <p class='past-pair-en'>$(ConvertTo-YakuHtml $en)</p>
+  </article>
+"@
+    }
+    $html += '</details>'
+    return $html
+}
+
 function New-YakuAmountNotationHtml {
     <#
       金額の書き方を選ぶ札。設定だが、設定パネルの奥に置くと誰も気づかない
@@ -229,6 +275,11 @@ $altHtml  </div>
 </div>
 "@
     }
+
+    # 過去に公表した英訳。訳文の下、CAT への導線より上に置く。
+    # 訳を見て「この言い回しでよいのか」と思ったときに、すぐ目に入る位置。
+    # 畳んであるので、要らない人の邪魔にはならない。
+    try { $html += New-YakuPastTranslationsHtml -Pairs @($Result.PastPairs) } catch {}
 
     # V91.61（2026-08-06）: 簡易翻訳から CAT へ渡す導線。
     #

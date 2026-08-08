@@ -77,6 +77,26 @@ try {
     Chk ($none.Count -eq 0) '語が取れなければ空を返す（落ちない）'
     Chk ((@(Find-YakuCorpusPairsByTerms -Dir (Join-Path $tmp 'no-such-dir') -Text '電動化')).Count -eq 0) 'コーパスが無くても落ちない'
 
+    Write-Host '過去の英訳を画面へ出す' -ForegroundColor Cyan
+    # 利用者の課題は「過去の翻訳例が見れない」であって「使えない」ではない。
+    # プロンプトへ埋めるのは使うことであって、見せることではない。
+    . (Join-Path (Join-Path $root 'src') 'Html.ps1')
+    $shown = @(Find-YakuCorpusPairsByTerms -Dir $tmp -Text '当社は電動化の黎明期に向けた投資を進めます。' -Limit 3)
+    $pastHtml = New-YakuPastTranslationsHtml -Pairs $shown
+    Chk ($pastHtml -match '過去に公表した英訳') '見出しが出る'
+    Chk ($pastHtml -match 'past-pair-ja' -and $pastHtml -match 'past-pair-en') '日英そろえて出す（英文だけでは確かめようがない）'
+    Chk ($pastHtml -match '当たった語') 'なぜこの文が出たのかを添える'
+    Chk ($pastHtml -match '<details') '畳んで置く（要らない人の邪魔をしない）'
+    Chk ((New-YakuPastTranslationsHtml -Pairs @()) -eq '') '引けなければ何も出さない'
+    Chk ((New-YakuPastTranslationsHtml -Pairs $null) -eq '') 'null でも落ちない'
+    # 往復を増やさないことが要点。翻訳側が Copilot を呼ばずに引いているか。
+    $trSrc = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'Translation.ps1') -Raw -Encoding UTF8
+    $lookupAt = $trSrc.IndexOf('Find-YakuCorpusPairsByTerms')
+    Chk ($lookupAt -ge 0) '翻訳の結果に過去の英訳を載せている'
+    $lookupBlock = $trSrc.Substring([Math]::Max(0, $lookupAt - 900), 1400)
+    Chk ($lookupBlock -notmatch 'Invoke-YakuCopilotPrompt') '引くのに Copilot を呼ばない（往復を増やさない）'
+    Chk ($trSrc -match 'PastPairs') '結果に PastPairs として載る'
+
     $hits = @(Find-YakuCorpusPairs -Dir $tmp -Query '電動化' -VerifiedOnly)
     Chk ($hits.Count -eq 1 -and $hits[0].Ja -match '黎明期') '裏取りの通った対だけに絞れる'
 
