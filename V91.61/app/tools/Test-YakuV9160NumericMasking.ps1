@@ -596,6 +596,7 @@ Assert-YakuMask ([string]$catUnitItem.MaskedText -notmatch '[万千]') 'CAT の�
 $catUnitMap = @{ 1 = 'Sales volume was [[N1]] k units.' }
 Restore-YakuCatItemTranslations -Items @($catUnitItem) -Map $catUnitMap -Warnings $null
 Assert-YakuMask ([string]$catUnitMap[1] -match '186\s+k units') ('CAT の訳文へ複合数量を復元する: ' + [string]$catUnitMap[1])
+Assert-YakuMask ([string]$catUnitItem.MaskedTranslation -match '\[\[N1\]\]') 'CAT の推敲用に実値復元前の訳文を保持する'
 
 $alignSrc = Get-Content -LiteralPath (Join-Path $root 'src\Alignment.ps1') -Raw -Encoding UTF8
 Assert-YakuMask ($alignSrc -match 'Protect-YakuAlignmentLines') 'アライメント経路がマスクを呼んでいる'
@@ -704,9 +705,9 @@ Assert-YakuMask ($itemsFn -notmatch 'New-YakuNumericMaskMap') '中継関数は�
 # 実際に走る経路（ジョブ側）が伏せてから送っていること。
 # ここが抜けていた当人なので、名指しで確かめる。
 $serverSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Server.ps1'))
-$catSendAt = $serverSrc.IndexOf('$map = Invoke-YakuFileTranslationItems')
+$catSendAt = $serverSrc.IndexOf('Invoke-YakuFileTranslationItems -Root')
 Assert-YakuMask ($catSendAt -ge 0) 'ジョブ側の CAT 送信箇所が見つかる'
-$catHead = $serverSrc.Substring([Math]::Max(0, $catSendAt - 1200), [Math]::Min(1200, $catSendAt))
+$catHead = $serverSrc.Substring([Math]::Max(0, $catSendAt - 3000), [Math]::Min(3000, $catSendAt))
 Assert-YakuMask ($catHead -match 'Protect-YakuCatItems') 'ジョブ側は送信の直前に伏せている'
 $catTail = $serverSrc.Substring($catSendAt, [Math]::Min(900, $serverSrc.Length - $catSendAt))
 Assert-YakuMask ($catTail -match 'Restore-YakuCatItemTranslations') 'ジョブ側は訳文を実値へ戻している'
@@ -743,6 +744,18 @@ $mockAt = $clientSrc.IndexOf("YAKULINGO_MOCK -eq '1'")
 Assert-YakuMask ($mockAt -ge 0 -and $mockAt -lt $countAt) '模擬経路は数えない（回帰テストで数が増えない）'
 $budgetSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CopilotBudget.ps1'))
 Assert-YakuMask ($budgetSrc -notmatch 'Prompt|Translation') '記録するのは時刻だけ（本文を残さない）'
+. (Join-Path (Join-Path $root 'src') 'CopilotBudget.ps1')
+$script:YakuBudgetTestLog = Join-Path ([System.IO.Path]::GetTempPath()) ('yaku-budget-' + [guid]::NewGuid().ToString('N') + '.log')
+function Get-YakuCopilotCallLogPath { return $script:YakuBudgetTestLog }
+$fixedNow = [datetime]'2026-08-09T12:00:00'
+[IO.File]::WriteAllLines($script:YakuBudgetTestLog, @(
+        '2026-08-09T08:59:59', '2026-08-09T09:00:00',
+        '2026-08-09T10:30:00', '2026-08-09T11:59:00', 'broken-line'
+    ), [Text.UTF8Encoding]::new($false))
+Assert-YakuMask ((Get-YakuCopilotCallCount -Now $fixedNow -WindowHours 3) -eq 3) '直近3時間は境界を含め、不正行と境界前を除外する'
+$null = Add-YakuCopilotCall -Now $fixedNow
+Assert-YakuMask ((Get-YakuCopilotCallCount -Now $fixedNow -WindowHours 3) -eq 4) '1時間集計を挟んでも3時間分の履歴を保持する'
+Remove-Item -LiteralPath $script:YakuBudgetTestLog -Force -ErrorAction SilentlyContinue
 # 使いすぎに見える失敗をリトライすると、残りをさらに削る。
 Assert-YakuMask ($translationSrc -match 'Test-YakuCopilotLimitError') '制限らしい失敗ではリトライを止める'
 # 順序はリトライの catch の中だけを見る。ファイル全体で位置を比べると、

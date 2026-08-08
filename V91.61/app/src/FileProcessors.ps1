@@ -1148,6 +1148,8 @@ function Get-YakuExcelTextBlocks {
             try {
                 $ws = $workbook.Worksheets.Item($i)
                 $sheetName = [string]$ws.Name
+                $sheetCodeName = ''
+                try { $sheetCodeName = [string]$ws.CodeName } catch { $sheetCodeName = '' }
                 $actualNames.Add($sheetName) | Out-Null
                 if ($selected.Count -gt 0 -and -not $selected.ContainsKey($sheetName)) { continue }
                 $selectedDone++
@@ -1155,10 +1157,16 @@ function Get-YakuExcelTextBlocks {
                 try { $usedForLog = $ws.UsedRange; $usedRows = [int]$usedForLog.Rows.Count; $usedCols = [int]$usedForLog.Columns.Count } finally { Release-YakuComObject $usedForLog }
                 $sheetWatch = [System.Diagnostics.Stopwatch]::StartNew()
                 $cellsBefore = [int]$stats['cells']; $shapesBefore = [int]$stats['shapes']; $chartsBefore = [int]$stats['charts']
+                $blocksBefore = $blocks.Count
                 try { Write-YakuLog "Excel extract sheet start. sheet=$i/$sheetCount name=$sheetName usedRows=$usedRows usedCols=$usedCols" 'INFO' } catch {}
                 Get-YakuExcelSheetTextBlocks -Worksheet $ws -Direction $Direction -Settings $Settings -Blocks $blocks -Warnings $warnings -Stats $stats
                 Get-YakuExcelShapeTextBlocks -Worksheet $ws -Direction $Direction -Settings $Settings -Blocks $blocks -Warnings $warnings -Stats $stats
                 Get-YakuExcelChartTextBlocks -Worksheet $ws -Direction $Direction -Settings $Settings -Blocks $blocks -Warnings $warnings -Stats $stats
+                # Worksheet.CodeName は表示名を変えても維持される。取り込み時と
+                # 出力時のブロックへ持たせ、別シートを「改名」と推測しない。
+                for ($bi = $blocksBefore; $bi -lt $blocks.Count; $bi++) {
+                    try { $blocks[$bi].Meta | Add-Member -NotePropertyName 'SheetCodeName' -NotePropertyValue $sheetCodeName -Force } catch {}
+                }
                 $sheetCells = [int]$stats['cells'] - $cellsBefore; $sheetShapes = [int]$stats['shapes'] - $shapesBefore; $sheetCharts = [int]$stats['charts'] - $chartsBefore
                 try { Write-YakuLog "Excel extract sheet done. sheet=$i/$sheetCount name=$sheetName cells=$sheetCells shapes=$sheetShapes charts=$sheetCharts elapsedMs=$([int]$sheetWatch.ElapsedMilliseconds)" 'INFO' } catch {}
                 if ($null -ne $OnProgress) { & $OnProgress ([pscustomobject]@{ SheetIndex=$i; SheetTotal=$sheetCount; SelectedIndex=$selectedDone; SelectedTotal=$selectedTotal; SheetName=$sheetName; Cells=$sheetCells }) }

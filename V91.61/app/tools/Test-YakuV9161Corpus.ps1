@@ -31,7 +31,7 @@ $env:YAKULINGO_DATA_DIR = Join-Path $work 'data'
 [System.IO.File]::WriteAllBytes((Join-Path $dbDir 'b_en.pdf'), [System.Text.Encoding]::ASCII.GetBytes('%PDF-1.4 sample B different'))
 
 try {
-foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','FileTranslation.ps1','Corpus.ps1')) {
+foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','FileTranslation.ps1','Corpus.ps1','CorpusSearch.ps1','CorpusPairs.ps1')) {
     . (Join-Path (Join-Path $root 'src') $n)
 }
 
@@ -80,6 +80,9 @@ Write-Host '配布用フォルダ'
 # 出来上がりは共有フォルダへそのまま置ける形にする。
 #   <配布用>\<版>\corpus\current.txt
 #   <配布用>\<版>\corpus\<版>\manifest.json ＋ <データベース>\*.md
+$null = Add-YakuCorpusPairs -Dir $build -Database '英文短信' -Source '英文短信/a_en.pdf' -Public -Pairs @(
+    [pscustomobject]@{ JaText='電動化を推進します。'; EnText='We will promote electrification.'; NumberChecked=$true; NumberAgree=$true }
+)
 $pub = New-YakuCorpusPublishFolder -Version '2026-08-04'
 $pubCorpus = [string]$pub.CorpusDir
 $pubVersion = Join-Path $pubCorpus '2026-08-04'
@@ -93,6 +96,9 @@ $pm = Read-YakuCorpusManifest -Dir $pubVersion
 Chk ($pm.corpus_version -eq '2026-08-04') 'コーパスの版が入る'
 Chk (@(Get-ChildItem -LiteralPath $pub.Path -Recurse -Filter '*.pdf').Count -eq 0) '配布物に元PDFを入れない'
 Chk (@(Get-ChildItem -LiteralPath $pub.Path -Recurse -Filter '*.md').Count -eq 2) 'Markdown が2件'
+Chk (Test-Path -LiteralPath (Join-Path (Join-Path $pubVersion '英文短信') 'pairs.jsonl') -PathType Leaf) '公表済み対訳もデータベースと一緒に配る'
+$publishedPairs = @(Find-YakuCorpusPairs -Dir $pubVersion -Query '電動化')
+Chk ($publishedPairs.Count -eq 1 -and [string]$publishedPairs[0].En -eq 'We will promote electrification.') '配布先だけで対訳を検索できる'
 
 Write-Host '配布用フォルダを共有へ置いたとき、bootstrap が読めるか'
 # 判定は bootstrap.ps1 の実物で行う。期待する形をテストへ書き写すと、
@@ -226,6 +232,8 @@ Write-Host '配布済みコーパスの解決'
 Chk ((Get-YakuCorpusDir) -eq '') '環境変数が無ければ空'
 $env:YAKULINGO_CORPUS_DIR = $pub.Path
 Chk ((Get-YakuCorpusDir) -ne '') '環境変数があれば解決する'
+$env:YAKULINGO_CORPUS_DIR = $pubVersion
+Chk ((Get-YakuCorpusSearchDir) -eq $pubVersion) '対訳の読み手も配布済み版を優先する'
 $env:YAKULINGO_CORPUS_DIR = '/nonexistent/xyz'
 Chk ((Get-YakuCorpusDir) -eq '') '不在なら空を返す（コーパス無しで動く）'
 Remove-Item Env:\YAKULINGO_CORPUS_DIR

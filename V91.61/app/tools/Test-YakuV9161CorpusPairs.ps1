@@ -96,6 +96,11 @@ try {
     $lookupBlock = $trSrc.Substring([Math]::Max(0, $lookupAt - 900), 1400)
     Chk ($lookupBlock -notmatch 'Invoke-YakuCopilotPrompt') '引くのに Copilot を呼ばない（往復を増やさない）'
     Chk ($trSrc -match 'PastPairs') '結果に PastPairs として載る'
+    Chk ($trSrc -match 'Get-YakuCorpusSearchDir') '簡易翻訳の過去訳は配布済みコーパスを読む'
+    $catSrc = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'CatProject.ps1') -Raw -Encoding UTF8
+    $serverSrc = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'Server.ps1') -Raw -Encoding UTF8
+    Chk ($catSrc -match 'Get-YakuCorpusSearchDir') 'CAT 候補も配布済みコーパスを読む'
+    Chk ($serverSrc -match "pairsDir = Get-YakuCorpusSearchDir") '候補 API が配布先を CAT へ渡す'
 
     $hits = @(Find-YakuCorpusPairs -Dir $tmp -Query '電動化' -VerifiedOnly)
     Chk ($hits.Count -eq 1 -and $hits[0].Ja -match '黎明期') '裏取りの通った対だけに絞れる'

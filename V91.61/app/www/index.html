@@ -190,13 +190,10 @@
           <button id="cat-save-corpus-button" type="button" class="secondary-button" hidden>文例として保存</button>
           <button id="cat-export-button" type="button">出力</button>
         </div>
-        <!--
-          再開したものは元の塊（Blocks）を保存していないので、Excel へ書き戻せない。
-          押せる状態で置いておくと、数時間の確認作業のあとに「出せません」と
-          言われることになる。押す前に理由を出す。
-          直すのは「書き戻しが番地だけを見ている」と同じ作業（ロードマップ §4）。
-        -->
-        <p id="cat-export-blocked" class="shorten-note" hidden>前回の続きから再開した作業は、いまのところ Excel へ出力できません。訳文は残っているので、同じ Excel をもう一度取り込んでお使いください。</p>
+        <p id="cat-copilot-usage" class="shorten-note" hidden></p>
+          <!-- 元Excelが無ければ原文を再対応付けできない。数時間の確認作業へ
+               入る前に分かるよう、出力ボタンの近くへ理由を出す。 -->
+        <p id="cat-export-blocked" class="shorten-note" hidden>元の Excel が見つからないため出力できません。移動または削除されていないか確認してください。</p>
         <details id="cat-corpus-panel" class="cat-corpus-panel" hidden>
           <summary>参照する文例（<span id="cat-corpus-count">0</span>件）</summary>
           <div id="cat-corpus-list" class="cat-corpus-list"></div>
