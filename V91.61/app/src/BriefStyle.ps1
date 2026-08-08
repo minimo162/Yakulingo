@@ -82,12 +82,31 @@ $script:YakuBriefAbbreviationPairs = @(
     @{ From = 'return on sales';      To = 'ROS' }
     @{ From = 'break-even point';     To = 'BEP' }
     @{ From = 'percentage points';    To = 'pts' }
+    # 期の表記（2026-08-08 追加）。決算資料で頻出し、節約が大きく、
+    # 曖昧さが無い。月名と違って人名や地名と衝突しない。
+    #
+    # 冠詞つきを先に当てる。「the first quarter」を「the Q1」にすると
+    # 英語として崩れるので、冠詞ごと置き換える。長い順に当てる仕組みが
+    # あるので、並べる順ではなく字数で先後が決まる。
+    @{ From = 'the first quarter';    To = 'Q1' }
+    @{ From = 'the second quarter';   To = 'Q2' }
+    @{ From = 'the third quarter';    To = 'Q3' }
+    @{ From = 'the fourth quarter';   To = 'Q4' }
+    @{ From = 'first quarter';        To = 'Q1' }
+    @{ From = 'second quarter';       To = 'Q2' }
+    @{ From = 'third quarter';        To = 'Q3' }
+    @{ From = 'fourth quarter';       To = 'Q4' }
+    @{ From = 'the first half';       To = 'H1' }
+    @{ From = 'the second half';      To = 'H2' }
+    @{ From = 'first half';           To = 'H1' }
+    @{ From = 'second half';          To = 'H2' }
     @{ From = 'year-on-year';         To = 'YoY' }
     @{ From = 'month-on-month';       To = 'MoM' }
     @{ From = 'quarter-on-quarter';   To = 'QoQ' }
     @{ From = 'year-end';             To = 'YE' }
     @{ From = 'wholesale';            To = 'W/S' }
-    @{ From = 'semiconductors';       To = 'semis' }
+    # semis は外した（2026-08-08）。出番が少ないうえ、準決勝やセミトレーラー
+    # とも読める。綴りのままで支障が無い、という利用者の判断による。
     @{ From = 'supplementary materials'; To = 'Suppl.' }
 
     # --- 社内で決めた形。規則が「必ずこの形を使う」と定めているもの。
@@ -109,8 +128,10 @@ $script:YakuBriefAbbreviationPairs = @(
     # --- 前置詞の短縮。BRIEF の電文体では常に短縮する。
     # ここは最も踏み込んだ置換なので、順番の都合上いちばん最後に当てる
     # （"compared with" などを先に処理させるため）。
+    # with は外した（2026-08-08）。英文で最も頻出する語の1つで、機械で当てると
+    # 「in line with」「in accordance with」まで壊す。節約も2文字しかない。
+    # without は単独で現れる語なので残す。節約は4文字あり、誤読の余地も無い。
     @{ From = 'without'; To = 'w/o' }
-    @{ From = 'with';    To = 'w/' }
 )
 
 # 長い語句から先に当てる。"fixed sales promotion costs" を

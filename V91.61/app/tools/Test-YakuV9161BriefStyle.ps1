@@ -39,8 +39,16 @@ Chk ((Conv 'including tax') -eq 'incl. tax') 'including -> incl.'
 Chk ((Conv 'excluding FX impact') -eq 'excl. FX impact') 'excluding -> excl.'
 Chk ((Conv 'compared with PY') -eq 'vs. PY') 'compared with -> vs.'
 Chk ((Conv 'compared to PY') -eq 'vs. PY') 'compared to -> vs.'
-Chk ((Conv 'with tariffs') -eq 'w/ tariffs') 'with -> w/'
-Chk ((Conv 'without tariffs') -eq 'w/o tariffs') 'without -> w/o（with より先に当てる）'
+# with は機械で当てない（2026-08-08）。英文で最も頻出する語の1つで、
+# 「in line with」「in accordance with」まで壊す。節約も2文字しかない。
+Chk ((Conv 'with tariffs') -eq 'with tariffs') 'with は略さない'
+Chk ((Conv 'in line with our plan') -eq 'in line with our plan') '成句の with を壊さない'
+Chk ((Conv 'without tariffs') -eq 'w/o tariffs') 'without -> w/o（単独の語なので残す）'
+# 期の表記。冠詞つきを先に当てないと「the Q1」という英語にならない形が出る。
+Chk ((Conv 'in the first quarter') -eq 'in Q1') 'the first quarter -> Q1（冠詞ごと）'
+Chk ((Conv 'second half results') -eq 'H2 results') 'second half -> H2'
+# semis は出番が少なく誤読の余地があるので綴りのまま。
+Chk ((Conv 'semiconductors remained tight') -eq 'semiconductors remained tight') 'semiconductors は略さない'
 
 Write-Host '定型の金融用語'
 Chk ((Conv 'foreign exchange losses') -eq 'FX losses') 'foreign exchange -> FX'
