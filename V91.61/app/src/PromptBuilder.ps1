@@ -593,6 +593,10 @@ function Get-YakuNumericRulesSection {
         # 素直でも普通でもなく、ただ読めない（利用者の指摘 2026-08-08）。
         $plainRules += '- Amount units: write yen amounts the way ordinary business English does: a yen sign, the figure, then billion or million. Example: [[N1]] oku -> ¥[[N1]] billion. Never write oku, k yen, or k units.'
         $plainRules += '- The caller rescales the figure itself; you only choose the unit word and the yen sign. Keep the placeholder unchanged.'
+        # 負数の指示が抜けていた。抜けると ▲ がそのまま残ったり、括弧になったり、
+        # マイナス記号になったりして、同じ設定でも訳ごとに揺れる（2026-08-08 に発見）。
+        # 括弧の負数は社内の約束なので、ここには持ち込まない。
+        $plainRules += '- Negative amounts: do NOT use parentheses and never keep the source marks (▲, △). In running text express the direction in words: "a decrease of ¥[[N1]] billion", "down ¥[[N1]] billion". The same applies to percentages: "a decrease of [[N1]]%".'
         $plainRules += '- Do not abbreviate. Write terms spelled out.'
         return (@($plainRules) -join $nl)
     }
