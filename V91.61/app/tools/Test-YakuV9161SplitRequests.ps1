@@ -110,10 +110,13 @@ Chk (((New-YakuTextPrompt -Root $root -InputText '生産は堅調です。' -Set
 # 文脈に依らない略語はプロンプトの一覧から外し、アプリで当てる。
 # 一覧に書くのは確率的だが、当てれば必ず揃う。
 Write-Host '文脈に依らない略語はアプリが当てる'
-Chk ((Convert-YakuBriefAbbreviations -Text 'Revenue increased.') -eq 'Rev. increased.') 'revenue -> rev.'
+# 略語は「綴ると入らない」かつ「一般的である」の両方を満たすものだけに絞った
+# （2026-08-08）。rev. は revised とも読めて多義的、redn. は一般的な略記では
+# ないので外した。綴っても入るものは略さない。
+Chk ((Convert-YakuBriefAbbreviations -Text 'Revenue increased.') -eq 'Revenue increased.') 'revenue は略さない（rev. は revised とも読める）'
+Chk ((Convert-YakuBriefAbbreviations -Text 'FC reduction 0.5 oku.') -eq 'FC reduction 0.5 oku.') 'reduction は略さない（redn. は一般的でない）'
 Chk ((Convert-YakuBriefAbbreviations -Text 'Higher volume drove it.') -eq 'Higher vol. drove it.') 'volume -> vol.'
 Chk ((Convert-YakuBriefAbbreviations -Text 'Consolidated OP up.') -eq 'Consol. OP up.') 'consolidated -> consol.'
-Chk ((Convert-YakuBriefAbbreviations -Text 'FC reduction 0.5 oku.') -eq 'FC redn. 0.5 oku.') 'reduction -> redn.'
 # 動詞・形容詞の用法があるものは移さない。機械的に当てると読みにくくなる。
 Chk ((Convert-YakuBriefAbbreviations -Text 'We forecast growth.') -eq 'We forecast growth.') 'forecast は当てない（動詞の用法がある）'
 Chk ((Convert-YakuBriefAbbreviations -Text 'The actual figure.') -eq 'The actual figure.') 'actual は当てない（形容詞の用法がある）'

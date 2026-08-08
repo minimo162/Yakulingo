@@ -52,12 +52,14 @@ $script:YakuBriefAbbreviationPairs = @(
     # 一覧で「使え」と言うのは確率的なので、当てて確定させる。
     # forecast と actual は入れない。動詞・形容詞の用法があり、
     # 「we forecast」「the actual figure」まで略すと読みにくくなる。迷ったら載せない。
-    @{ From = 'revenues';     To = 'rev.' }
-    @{ From = 'revenue';      To = 'rev.' }
+    # revenue -> rev. は外した（2026-08-08）。rev. は「revised（改訂）」の略
+    # としても広く使われ、多義的である。節約も1〜2文字しかない。
+    # 略語は「綴ると入らない」かつ「一般的である」の両方を満たすものに絞る。
     @{ From = 'volumes';      To = 'vol.' }
     @{ From = 'volume';       To = 'vol.' }
     @{ From = 'consolidated'; To = 'consol.' }
-    @{ From = 'reduction';    To = 'redn.' }
+    # reduction -> redn. は外した（2026-08-08）。一般的な略記ではなく、
+    # 読み手が復元できない。節約も4文字しかない。
 
     # --- 語句の置換。規則の Phrase substitutions より。
     @{ From = 'approximately'; To = 'approx.' }
@@ -75,7 +77,9 @@ $script:YakuBriefAbbreviationPairs = @(
     @{ From = 'board of directors';   To = 'BOD' }
     @{ From = 'per annum';            To = 'p.a.' }
     @{ From = 'commercial paper';     To = 'CP' }
-    @{ From = 'financial institutions'; To = 'FIs' }
+    # financial institutions -> FIs は外した（2026-08-08）。節約は19文字と
+    # 大きいが、複数形の s を付ける略記は一般的ではない。
+    # Suppl. は論文の補足資料で見かける形なので残す。
     # この会社は operating income に統一している（英文開示12冊に
     # operating profit は1件も無い）。用語は統一されるものなので、
     # 見るべきは使うか使わないかであって、出現回数ではない。
