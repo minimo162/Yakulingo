@@ -683,6 +683,8 @@ function Test-YakuNumericMaskIntegrity {
 }
 
 function Restore-YakuMaskedTranslationOptions {
+    # 固有名詞も同じ場所で戻す。数値と同じく、消えていれば警告する。
+    # 別々に戻すと、どちらで壊れたかが分からなくなる。
     <#
       V91.60: 各訳文の[[N1]]を実値へ戻す。戻す前に1対1を確かめ、崩れていれば
       警告を立てる。無言で数値が消えるのを避けるのがここの目的。
@@ -698,6 +700,7 @@ function Restore-YakuMaskedTranslationOptions {
       [[N9]]のまま画面へ出すより取り除くほうが安全なので削除する。
     #>
     param(
+        [AllowNull()][hashtable]$ProperMap,
         [AllowNull()][object[]]$Options,
         [AllowNull()][string]$MaskedSource,
         [AllowNull()][hashtable]$Map,
@@ -724,6 +727,15 @@ function Restore-YakuMaskedTranslationOptions {
         if ($leftover.Count -gt 0) {
             foreach ($token in $leftover) { $restored = $restored.Replace([string]$token, '') }
             $restored = [regex]::Replace($restored, '[ \t]{2,}', ' ')
+        }
+        # 固有名詞を戻す。数値より後で構わない（記号が別なので衝突しない）。
+        if ($null -ne $ProperMap -and $ProperMap.Count -gt 0) {
+            $pInt = Test-YakuProperNounMaskIntegrity -MaskedSource $MaskedSource -Translated $restored -Map $ProperMap
+            if (-not [bool]$pInt.Ok -and $null -ne $Warnings) {
+                $lost = @(@($pInt.Missing) | ForEach-Object { [string]$ProperMap[[string]$_] })
+                try { Add-YakuWarning -Warnings $Warnings -Category 'proper-noun-dropped' -Location $label -Details @{ Missing = @($pInt.Missing) } -Message ("固有名詞が訳文から抜けています: " + (@($lost) -join '、') + "。必ずご確認ください。") } catch {}
+            }
+            $restored = Restore-YakuProperNounMask -Text $restored -Map $ProperMap
         }
         $option.Translation = $restored
 
@@ -1264,9 +1276,16 @@ function Invoke-YakuSingleTranslationBatch {
     # 見つからなければ文字数で切るので、先にマスクすると壊れ得る。
     # 以降この関数の中では $sourceText(マスク後) を原文として扱う。
     # プロンプト・キャッシュキー・各監査を同じ土俵に乗せるため。
-    $maskResult = New-YakuNumericMaskMap -Text $InputText -Root $Root -Direction $Direction -Location 'text'
+    # 固有名詞を先に伏せる。住所に全角数字が入る（新地３番１号）ので、
+    # 数値マスクが先に走ると固有名詞の照合が壊れる。
+    $properResult = New-YakuProperNounMaskMap -Text $InputText -Root $Root
+    $properMap = $properResult.Map
+    $maskResult = New-YakuNumericMaskMap -Text ([string]$properResult.Text) -Root $Root -Direction $Direction -Location 'text'
     $sourceText = [string]$maskResult.Text
     $maskMap = $maskResult.Map
+    if ([int]$properResult.MaskedCount -gt 0) {
+        try { Write-YakuLog "Proper noun masking. location=text masked=$([int]$properResult.MaskedCount)" 'INFO' } catch {}
+    }
     $glossarySw = [System.Diagnostics.Stopwatch]::StartNew()
     $null = @(Get-YakuGlossaryEntries -Root $Root)
     $glossarySw.Stop()
@@ -1310,7 +1329,7 @@ function Invoke-YakuSingleTranslationBatch {
             if (Get-Command Convert-YakuBriefTranslationOptions -ErrorAction SilentlyContinue) {
                 $optionsCached = @(Convert-YakuBriefTranslationOptions -Options $optionsCached)
             }
-            $optionsCached = @(Restore-YakuMaskedTranslationOptions -Options $optionsCached -MaskedSource $sourceText -Map $maskMap -Warnings $Warnings -Location 'text-cache')
+            $optionsCached = @(Restore-YakuMaskedTranslationOptions -Options $optionsCached -MaskedSource $sourceText -Map $maskMap -ProperMap $properMap -Warnings $Warnings -Location 'text-cache')
             return [pscustomobject]@{ Direction=$Direction; Options=$optionsCached; Raw=[string]$cachedEnvelope.raw; Prompt=$built.Prompt; CacheHit=$true; RequestId=$cachedRequestId; MaskedCount=[int]$maskResult.MaskedCount; KeptCount=[int]$maskResult.KeptCount }
         } catch {
             try { (Get-YakuTranslationCacheStore).Remove($cacheKey) } catch {}
@@ -1430,7 +1449,7 @@ function Invoke-YakuSingleTranslationBatch {
     if (Get-Command Convert-YakuBriefTranslationOptions -ErrorAction SilentlyContinue) {
         $options = @(Convert-YakuBriefTranslationOptions -Options $options)
     }
-    $options = @(Restore-YakuMaskedTranslationOptions -Options $options -MaskedSource $sourceText -Map $maskMap -Warnings $Warnings -Location 'text')
+    $options = @(Restore-YakuMaskedTranslationOptions -Options $options -MaskedSource $sourceText -Map $maskMap -ProperMap $properMap -Warnings $Warnings -Location 'text')
     return [pscustomobject]@{
         Direction = $Direction
         Options = $options
@@ -1486,7 +1505,7 @@ function Invoke-YakuTextRequestsInParallel {
         param($Root, $InputText, $SettingsJson, $Direction, $StyleReference, $CorpusSection, $Mode, $Slot, $DataDir)
         $ErrorActionPreference = 'Stop'
         if (-not [string]::IsNullOrWhiteSpace($DataDir)) { $env:YAKULINGO_DATA_DIR = $DataDir }
-        foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1','BriefStyle.ps1')) {
+        foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','ProperNoun.ps1','Translation.ps1','BriefStyle.ps1')) {
             . (Join-Path $Root ('src\' + $n))
         }
         Set-YakuCopilotSlot -Slot $Slot

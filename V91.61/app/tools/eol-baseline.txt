@@ -32,6 +32,7 @@ src/Paths.ps1	crlf
 src/PersonalGlossary.ps1	crlf
 src/ProcessStopper.ps1	crlf
 src/PromptBuilder.ps1	lf
+src/ProperNoun.ps1	crlf
 src/Runtime.ps1	crlf
 src/Server.ps1	crlf
 src/Settings.ps1	lf
@@ -74,6 +75,7 @@ tools/Test-YakuV9161CorpusSearch.ps1	lf
 tools/Test-YakuV9161ExcelSegmentRoundTrip.ps1	crlf
 tools/Test-YakuV9161GlossaryVariants.ps1	crlf
 tools/Test-YakuV9161LabelCoverage.ps1	lf
+tools/Test-YakuV9161ProperNoun.ps1	crlf
 tools/Test-YakuV9161PublishedUnits.ps1	crlf
 tools/Test-YakuV9161Revise.ps1	crlf
 tools/Test-YakuV9161SplitRequests.ps1	crlf

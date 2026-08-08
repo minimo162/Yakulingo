@@ -589,6 +589,11 @@ function Get-YakuNumericRulesSection {
         )) -join $nl)
     }
     $placeholderRules = @()
+    # 固有名詞の記号。人名・法人名・地名は読みが自明でないものが多いので、
+    # 送る前に置き換えてある。判断させず、そのまま写させる。
+    if ([string]$InputText -match '\[\[P\d+\]\]') {
+        $placeholderRules += '- PROPER NOUN PLACEHOLDERS. [[P1]], [[P2]] ... stand for names of people, firms, and places. Copy each token character for character, exactly as many times as it appears, and never translate, romanize, inflect, or explain them.'
+    }
     if ([string]$InputText -match '\[\[N\d+\]\]') {
         $placeholderRules = @(
             '- NUMBER PLACEHOLDERS (highest priority). [[N1]], [[N2]] ... stand for redacted numbers. Copy each token character-for-character. Never translate, renumber, reorder, merge, split, or drop one; never invent one; never replace one with a digit or a word (one, several, approximately, a few). Every token in SOURCE appears the same number of times in each output section. Signs, units, and % stay OUTSIDE the token. A number written WITHOUT a placeholder is not redacted: copy it verbatim as a number.'
