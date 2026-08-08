@@ -706,7 +706,13 @@ function Restore-YakuMaskedTranslationOptions {
                     $value = if ($Map.ContainsKey($tok)) { [string]$Map[$tok] } else { '' }
                     if ([string]::IsNullOrEmpty($value)) { $tok } else { "$tok（$value）" }
                 })
-                Add-YakuWarning -Warnings $Warnings -Category 'numeric-placeholder-dropped-brief' -Location $label -Details $details -Message ("BRIEF は要約のため、次の数値が省略されました: " + (@($dropped) -join '、') + "。意図した省略か確認してください。")
+                # 数値が落ちたものは「短い訳」ではなく、事実が欠けた訳である。
+                # 社内資料であっても致命的なので、意図した省略かを利用者に
+                # 判断させない（利用者の判断 2026-08-08）。使えない印を付けて、
+                # 画面でそれと分かるようにする。
+                try { $option | Add-Member -NotePropertyName 'NumbersDropped' -NotePropertyValue $true -Force } catch {}
+                try { $option | Add-Member -NotePropertyName 'DroppedNumbers' -NotePropertyValue (@($dropped) -join '、') -Force } catch {}
+                Add-YakuWarning -Warnings $Warnings -Category 'numeric-placeholder-dropped-brief' -Location $label -Details $details -Message ("短い訳から次の数値が抜けています: " + (@($dropped) -join '、') + "。この訳は使わず、長いほうをお使いください。")
             } else {
                 Add-YakuWarning -Warnings $Warnings -Category 'numeric-placeholder-unresolved' -Location $label -Details $details -Message "数値プレースホルダーの個数が原文と一致しません。該当箇所の数値を必ずご確認ください。($([string]$integrity.Detail))"
             }

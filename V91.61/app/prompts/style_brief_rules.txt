@@ -1,4 +1,9 @@
-﻿- BRIEF is telegraphic FULL with every fact. Priority: complete facts, telegraphy, brevity. Reword, never delete; preserve line structure, headings, labels, and bullets.
+﻿- ABSOLUTE RULE, ahead of brevity: every numeric placeholder token of the form
+  double-square-bracket N followed by a digit that appears in the source must appear in
+  BRIEF_TEXT, exactly once each, unchanged. These tokens stand for numbers.
+  Dropping one is a factual error, not a shortening. If a sentence cannot be made short
+  while keeping them, keep them and let the sentence be longer.
+- BRIEF is telegraphic FULL with every fact. Priority: complete facts, telegraphy, brevity. Reword, never delete; preserve line structure, headings, labels, and bullets.
 - Apply to every sentence, heading, and label except Q1:
   B1. Delete articles, auxiliary/linking verbs, relative pronouns, and empty openers when clear.
   B2. Use standard financial abbreviations, including in headings, labels, periods, and financial results. Do NOT spell out a term merely to avoid an abbreviation. Some fixed abbreviations (approx./incl./excl./vs., FX, OP, FC/VC/VP, VM, Fixed MKT, w/ and w/o, and similar) are applied automatically after your answer, so write them either way. Month names are NOT applied automatically because they also occur in personal and company names, so you must abbreviate them yourself per the Months rule below; everything else follows the lists below.

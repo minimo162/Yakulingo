@@ -137,13 +137,21 @@ function Convert-YakuTextResultToHtml {
         # 利用者にとってベストなものにする」）。
         # 直す機能が両方にあると、どちらでやるべきか毎回考えることになる。
         $reviseHtml = ''
+        # 数値が抜けた訳は、短い訳ではなく事実が欠けた訳である。
+        # コピーボタンの隣に静かに置くと、そのまま貼られる。
+        $dropNotice = ''
+        try {
+            if ([bool]$opt.NumbersDropped) {
+                $dropNotice = "<p class='result-danger'>この訳には数値が入っていません（" + (ConvertTo-YakuHtml ([string]$opt.DroppedNumbers)) + "）。使わずに、もう一方をお使いください。</p>"
+            }
+        } catch {}
         $html += @"
 <article class='result-card result-card-translation'>
   <header>
     <div class='eyebrow'>$title</div>
     $(New-YakuCopyButtonHtml -Text ([string]$opt.Translation) -Label 'コピー')
   </header>
-  <pre class='translation'>$translation</pre>
+$dropNotice  <pre class='translation'>$translation</pre>
 $reviseHtml</article>
 "@
     }
