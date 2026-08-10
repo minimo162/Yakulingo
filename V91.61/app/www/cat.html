@@ -124,7 +124,10 @@
               <button id="cat-tab-qc" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-qc" data-cat-inspector="qc">機械チェック <span id="cat-qc-count">0</span></button>
               <button id="cat-tab-context" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-context" data-cat-inspector="context">文脈</button>
             </div>
-            <section id="cat-panel-candidates" role="tabpanel" aria-labelledby="cat-tab-candidates"><div id="cat-candidates" class="cat-candidates"><div class="cat-candidates-title">この行の翻訳例</div><div id="cat-candidates-list"><p class="muted">行を選ぶと翻訳例を探します。</p></div></div></section>
+            <section id="cat-panel-candidates" role="tabpanel" aria-labelledby="cat-tab-candidates"><div id="cat-candidates" class="cat-candidates">
+              <section aria-labelledby="cat-terms-title"><div class="cat-candidates-title" id="cat-terms-title">この行で使う用語</div><div id="cat-terms-list"><p class="muted">行を選ぶと用語を探します。</p></div></section>
+              <section aria-labelledby="cat-segment-matches-title"><div class="cat-candidates-title" id="cat-segment-matches-title">文全体の翻訳例</div><div id="cat-candidates-list"><p class="muted">行を選ぶと翻訳例を探します。</p></div></section>
+            </div></section>
             <section id="cat-panel-qc" role="tabpanel" aria-labelledby="cat-tab-qc" hidden><div id="cat-qc-list"></div><button id="cat-next-qc" type="button" class="secondary-button">次の問題へ</button></section>
             <section id="cat-panel-context" role="tabpanel" aria-labelledby="cat-tab-context" hidden><div id="cat-context"></div></section>
           </aside>
@@ -139,5 +142,25 @@
   </main>
   <dialog id="cat-export-dialog" class="confirm-dialog cat-export-dialog"><form method="dialog"><h2 id="cat-export-title">出力前の確認</h2><p id="cat-export-mode"></p><p id="cat-export-name" class="muted"></p><div id="cat-export-checks" role="status"></div><p class="cat-human-review-note">機械チェックは数値・単位などの明らかな破損を確認するものです。表現の適切さはご自身で確認してください。</p><p id="cat-export-notice" class="draft-warning">作成するファイルは確認用DRAFTです。完成版ではなく、社外配布できません。</p><div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>戻って確認する</button><button id="cat-export-confirm" value="export">出力する</button></div></form></dialog>
   <dialog id="cat-delete-dialog" class="confirm-dialog"><form method="dialog"><h2>この作業を削除しますか</h2><p><strong id="cat-delete-name">この作業</strong> の途中保存を削除します。この操作は取り消せません。元のファイルは削除しません。</p><div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>削除しない</button><button value="delete" class="danger-button">削除する</button></div></form></dialog>
+  <dialog id="cat-term-dialog" class="confirm-dialog cat-term-dialog"><form id="cat-term-form" method="dialog">
+    <h2>用語を登録</h2><p class="muted">原文と訳文で登録したい部分を選んでから開くと、自動で入ります。</p>
+    <input id="cat-term-index" type="hidden"><input id="cat-term-id" type="hidden"><input id="cat-term-version" type="hidden">
+    <label class="field-label" for="cat-term-source">原文の用語<input id="cat-term-source" required maxlength="80"></label>
+    <label class="field-label" for="cat-term-target">推奨訳<input id="cat-term-target" required maxlength="80"></label>
+    <label class="field-label" for="cat-term-allowed">許容する別訳<input id="cat-term-allowed" placeholder="複数ある場合は | で区切る"></label>
+    <label class="field-label" for="cat-term-forbidden">使用しない訳<input id="cat-term-forbidden" placeholder="複数ある場合は | で区切る"></label>
+    <fieldset><legend>使用する範囲</legend><label><input type="radio" name="cat-term-scope" value="project" checked> この資料だけ</label><label><input type="radio" name="cat-term-scope" value="personal"> 今後の資料でも使う</label></fieldset>
+    <label class="field-label" for="cat-term-note">補足・使用例（任意）<input id="cat-term-note" maxlength="200"></label>
+    <div class="dialog-actions"><button value="cancel" class="secondary-button" type="button" data-cat-term-cancel>やめる</button><button id="cat-term-submit" value="save" type="submit">登録して該当行を再検査</button></div>
+  </form></dialog>
+  <dialog id="cat-term-exception-dialog" class="confirm-dialog"><form id="cat-term-exception-form" method="dialog">
+    <h2>この行では別の表現を使う</h2><p id="cat-term-exception-description"></p>
+    <input id="cat-term-exception-index" type="hidden"><input id="cat-term-exception-id" type="hidden"><input id="cat-term-exception-version" type="hidden">
+    <label><input type="radio" name="cat-term-exception-reason" value="not-applicable" checked> 文脈上、この用語に該当しない</label>
+    <label><input type="radio" name="cat-term-exception-reason" value="approved-alternative"> この行では別表現を使用する</label>
+    <label class="field-label" for="cat-term-exception-alternative">使用する別表現（「別表現を使用する」場合は必須）<input id="cat-term-exception-alternative" maxlength="80"></label>
+    <label class="field-label" for="cat-term-exception-note">補足（任意）<input id="cat-term-exception-note" maxlength="200"></label>
+    <div class="dialog-actions"><button type="button" class="secondary-button" data-cat-term-exception-cancel>戻る</button><button type="submit">この行だけ例外にする</button></div>
+  </form></dialog>
 </body>
 </html>

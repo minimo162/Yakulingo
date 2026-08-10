@@ -20,6 +20,9 @@ Rules:
 - Use consistent terminology across items. Keep approved financial acronyms, formal metric names, product names, account codes, URLs, email addresses, and obvious identifiers unchanged.
 - Do not output Korean/Hangul.
 {numeric_rules}
+===TERMINOLOGY_DATA:{request_id}===
+{terminology_rules}
+===END_TERMINOLOGY_DATA:{request_id}===
 ===INPUT_TEXT:{request_id}===
 {source_list}
 ===END_INPUT_TEXT:{request_id}===

@@ -31,13 +31,14 @@ src/GlossaryVariants.ps1	crlf
 src/Html.ps1	lf
 src/JobObject.ps1	crlf
 src/Paths.ps1	crlf
-src/PersonalGlossary.ps1	crlf
+src/PersonalGlossary.ps1	lf
 src/PromptBuilder.ps1	lf
 src/ProperNoun.ps1	crlf
 src/QuickArtifact.ps1	lf
 src/Runtime.ps1	crlf
 src/Server.ps1	crlf
 src/Settings.ps1	lf
+src/Terminology.ps1	lf
 src/Translation.ps1	crlf
 src/TranslationMemory.ps1	crlf
 src/VersionUpdate.ps1	crlf
@@ -93,6 +94,8 @@ tools/Test-YakuV9164QuickArtifact.ps1	lf
 tools/Test-YakuV9165DesktopExperience.ps1	lf
 tools/Test-YakuV9165DesktopShell.ps1	lf
 tools/Test-YakuV9165DesktopTutorial.ps1	lf
+tools/Test-YakuV9166CatResources.ps1	lf
+tools/Test-YakuV9166Terminology.ps1	lf
 tools/Test-YakuV917RuntimeWarnings.ps1	crlf
 tools/V64-HTTP-Boundary-Test.ps1	crlf
 tools/V65-Saving-Validation-Test.ps1	crlf

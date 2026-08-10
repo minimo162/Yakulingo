@@ -1543,8 +1543,10 @@ function Invoke-YakuSingleTranslationBatch {
     if (-not [string]::IsNullOrEmpty([string]$CorpusSection)) {
         $protectedFields.Add([pscustomobject]@{ Name='corpus_section'; OriginalText=[string]$CorpusSection; ProtectedText=$protectedCorpusSection; NumericMaskMaps=@($maskMap) }) | Out-Null
     }
+    # Text/Quick is intentionally self-contained: it does not consult the CAT
+    # terminology base, translation memory, or past examples. Terminology is
+    # applied only after an explicit promotion to a CAT project.
     $glossarySw = [System.Diagnostics.Stopwatch]::StartNew()
-    $null = @(Get-YakuGlossaryEntries -Root $Root)
     $glossarySw.Stop()
     $promptSw = [System.Diagnostics.Stopwatch]::StartNew()
     $promptPackage = New-YakuProtectedPromptPackage -Kind text -Root $Root -Direction $Direction -Fields @($protectedFields.ToArray()) `
