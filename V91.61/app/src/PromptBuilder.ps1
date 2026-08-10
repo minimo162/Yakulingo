@@ -1,4 +1,4 @@
-﻿# Keep these character sets identical to YAKU_ZH_ONLY/YAKU_JA_ONLY in www/assets/app.js.
+﻿# Direction decisions are authoritative on the server; browser clients do not duplicate these sets.
 $script:YakuZhSimplifiedChars = '们说这电买卖气汉车马鸟龙国际经济发东乐业专应见观议贝页风飞习书记语读谈请谁边达迟运过还进邮针钱银错门问间闻阳阴际陈难预领题风飘饭馆驶验鱼给绩线组织续维总编罗聚台么为兴举义乌产亿仅从优会伤估体余你侧价俭修倾储儿元党军写农凉减务动劳势区医华单卖南历厂压厅参双变叙叠只号叹后吓吕吗听启呜咏员响哑'
 $script:YakuJaSpecificChars = '経済険応図売変対発拡広働込峠畑辻榊塩駅円団囲桜権沢浜渋瀬焼県窓縁労効単継絵転軽験鉄銭関顔悪帰実読満児仏圧巻歩黒麺涙戦絶縦緑総聴脳臓芸薬蔵訳証誉譲豊軸辺逓遅郷酔釈鋭録雑霊価併侮倹偽厳寿嘱囑噴壊壌壱奨姉娯嬢学宝実寛専岳峡巌帯帰廃弐弾従徳恵悩悪惨愉慎憎懐戸戻抜択拝拠挙掲揺摂撃斉断旧昼晩暁暑暦朗楽横欧歓歳残殴毎氷汚決渉済渇温湿滝滞漢潜瀬灯炉点為犬状独猟獣産畳癒発盗県真研砕碁秘称稲穀穂穏突窃絹継続総緒縄縦繊缶聖粛脇脱脹与'
 
@@ -10,7 +10,7 @@ function Get-YakuDirectionAnalysis {
     $han = [regex]::Matches($Text, '[一-龯㐀-䶵々〆]').Count
     $latin = [regex]::Matches($Text, '[A-Za-z]').Count
     $meaningful = $kana + $han + $latin
-    if ($meaningful -eq 0) { return $result }
+    if ($meaningful -eq 0) { $result.Reason='no-language-text'; return $result }
     if ($kana -gt 0) {
         $jpRatio = ($kana + $han) / [double]$meaningful
         if ($jpRatio -ge 0.30) { $result.Direction='to_en'; $result.Confidence='high'; $result.Reason='kana-dominant' }
@@ -27,11 +27,55 @@ function Get-YakuDirectionAnalysis {
         }
         if ($hasZh -and -not $hasJa) { $result.Direction='to_jp'; $result.Confidence='high'; $result.Reason='zh-simplified'; return $result }
         $hanRatio = $han / [double]$meaningful
-        if ($hasJa -and $hanRatio -ge 0.30) { $result.Direction='to_en'; $result.Confidence='high'; $result.Reason='ja-shinjitai'; return $result }
-        if ($hanRatio -ge 0.30) { $result.Direction='to_en'; $result.Confidence='low'; $result.Reason='han-only-ambiguous'; return $result }
+        # 漢字だけの見出しは日本語・中国語のどちらにも見える。新字体が含まれて
+        # いても、利用者に確認せず英訳へ送らない。英字との混在も同様に止める。
+        if ($kana -eq 0) {
+            $result.Direction = $(if ($hasJa -or $hanRatio -ge 0.30) { 'to_en' } else { 'to_jp' })
+            $result.Confidence='low'
+            $result.Reason=$(if ($latin -gt 0) { 'mixed-han-latin' } else { 'han-only-ambiguous' })
+            return $result
+        }
     }
-    $result.Direction='to_jp'; $result.Confidence='high'; $result.Reason='latin-dominant'
+    $result.Direction='to_jp'
+    if ($latin -lt 4) { $result.Confidence='low'; $result.Reason='short-latin-ambiguous' }
+    else { $result.Confidence='high'; $result.Reason='latin-dominant' }
     return $result
+}
+
+function Get-YakuDirectionSourceFingerprint {
+    param([AllowNull()][string]$Text)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [Text.Encoding]::UTF8.GetBytes([string]$Text)
+        return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant()
+    } finally { $sha.Dispose() }
+}
+
+function Resolve-YakuDirectionDecision {
+    <#
+      方向は入力ごとに一度だけ解決する。auto の低確度は resolved を返さず、
+      Copilot送信やCAT project作成より前に利用者の選択を要求する。
+    #>
+    param(
+        [AllowNull()][string]$Text,
+        [ValidateSet('auto','to_en','to_jp')][string]$Intent = 'auto',
+        [ValidateSet('detected','explicit','inherited','fixed')][string]$Basis = 'detected'
+    )
+    $fingerprint = Get-YakuDirectionSourceFingerprint -Text ([string]$Text)
+    if (@('to_en','to_jp') -contains $Intent) {
+        return [pscustomobject]@{
+            Intent=$Intent; Resolved=$Intent; Basis=$Basis; Confidence='not_applicable'
+            RequiresConfirmation=$false; SourceFingerprint=$fingerprint; Reason='explicit'
+        }
+    }
+    $analysis = Get-YakuDirectionAnalysis -Text ([string]$Text)
+    $requires = ([string]$analysis.Confidence -ne 'high')
+    return [pscustomobject]@{
+        Intent='auto'; Resolved=$(if($requires){''}else{[string]$analysis.Direction})
+        SuggestedDirection=[string]$analysis.Direction; Basis='detected'
+        Confidence=[string]$analysis.Confidence; RequiresConfirmation=$requires
+        SourceFingerprint=$fingerprint; Reason=[string]$analysis.Reason
+    }
 }
 
 function Test-YakuJapaneseText {

@@ -1,0 +1,81 @@
+﻿<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="yaku-session" content="__YAKU_SESSION_TOKEN__">
+  <title>ちょっと翻訳 - YakuLingo</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script src="/assets/common.js" defer></script>
+  <script src="/assets/quick.js" defer></script>
+</head>
+<body class="app-quick">
+  <main class="shell quick-shell">
+    <header class="hero">
+      <div class="brand-block"><a class="brand home-link" href="/">YakuLingo</a><span class="version-label">ちょっと翻訳</span></div>
+      <div class="header-actions">
+        <button id="text-size-toggle" type="button" class="secondary-button compact" aria-pressed="false">文字を大きく</button>
+        <div id="copilot-status" class="status" aria-live="polite"><span class="status-dot warn"></span><span>準備中</span></div>
+      </div>
+    </header>
+
+    <section class="tab-panel" aria-labelledby="quick-title">
+      <form id="quick-form" class="translate-form">
+        <div class="section-title-row"><div>
+          <h1 id="quick-title">ちょっと翻訳</h1>
+          <p class="muted">メール、Web、数文を貼り付けて訳します。この画面の文章と訳文は保存されません。</p>
+        </div></div>
+        <label for="quick-input" class="sr-only">訳したい文章</label>
+        <textarea id="quick-input" rows="10" placeholder="訳したい文章を入力" autocomplete="off"></textarea>
+        <div class="input-meta"><span id="quick-count">0字</span></div>
+        <div class="privacy-note">金額などの数値は、Copilotへ送る前に自動で伏せます。社名・人名・文章はそのまま送信されます。</div>
+
+        <div id="quick-direction-summary" class="direction-summary" hidden>
+          <strong id="quick-direction-label"></strong>
+          <button id="quick-direction-change" type="button" class="secondary-button compact">変更</button>
+        </div>
+        <fieldset id="quick-direction-choice" class="direction-choice" hidden>
+          <legend>どちらに訳しますか？</legend>
+          <p id="quick-direction-help" class="muted">日本語と外国語が混ざっているため、自動で決められません。</p>
+          <div class="direction-choice-grid">
+            <button type="button" class="secondary-button direction-choice-button" data-quick-direction="to_en"><strong>英語に訳す</strong><span>日本語の文章を外国人向けにします</span></button>
+            <button type="button" class="secondary-button direction-choice-button" data-quick-direction="to_jp"><strong>日本語に訳す</strong><span>外国語の内容を日本語で確認します</span></button>
+          </div>
+        </fieldset>
+        <div class="command-bar"><button id="quick-submit" type="submit" disabled>文章を入力してください</button></div>
+      </form>
+
+      <section id="quick-job" class="result-target" aria-live="polite"></section>
+      <section id="quick-result" class="quick-result" aria-labelledby="quick-result-title" hidden>
+        <div class="result-card">
+          <div class="result-card-header"><div><span class="eyebrow">訳案</span><h2 id="quick-result-title"></h2></div></div>
+          <pre id="quick-result-text" class="translation"></pre>
+          <div class="result-actions">
+            <button id="quick-copy" type="button">コピー</button>
+            <button id="quick-revise-open" type="button" class="secondary-button" aria-expanded="false" aria-controls="quick-revise-form">この訳案を直す</button>
+            <button id="quick-promote" type="button" class="secondary-button">資料翻訳で1文ずつ確認する</button>
+          </div>
+          <form id="quick-revise-form" class="quick-revise-panel" hidden>
+            <div>
+              <h3>訳案の表現を直す</h3>
+              <p class="muted">直したい表現をCopilotに伝えます。原文の内容や数値を変えないよう依頼し、数値はアプリでも確認します。結果はご自身で確認してください。</p>
+            </div>
+            <label for="quick-revise-instruction">どこを、どう変えますか？</label>
+            <textarea id="quick-revise-instruction" rows="3" maxlength="300" placeholder="例：「Thank you for contacting me.」を「Thank you for your email.」に変える"></textarea>
+            <div class="result-actions">
+              <button id="quick-revise-submit" type="submit">この指示で訳案を直す</button>
+              <button id="quick-revise-cancel" type="button" class="secondary-button">やめる</button>
+            </div>
+          </form>
+          <p id="quick-revise-status" class="muted" role="status" aria-live="polite"></p>
+          <p id="quick-result-note" class="muted"></p>
+          <p id="quick-mask-summary" class="privacy-note" hidden></p>
+          <p id="quick-copy-status" class="muted" role="status" aria-live="polite"></p>
+          <textarea id="quick-copy-fallback" class="quick-copy-fallback" readonly hidden aria-label="コピー用の訳文"></textarea>
+        </div>
+      </section>
+      <p><a class="button secondary-button" href="/">最初の画面へ戻る</a></p>
+    </section>
+  </main>
+</body>
+</html>

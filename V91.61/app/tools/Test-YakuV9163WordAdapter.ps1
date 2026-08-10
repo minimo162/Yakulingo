@@ -81,7 +81,7 @@ try {
     $fallback=Export-YakuCatProject -Project $complexProject -OutputPath (Join-Path $tempRoot 'must-not-exist.docx') -Settings $settings
     Check-YakuWord ([string]$fallback.OutputPath -eq '' -and [string]$fallback.Text -eq "Linked body text.`nThis is the outlook." -and -not (Test-Path -LiteralPath (Join-Path $tempRoot 'must-not-exist.docx'))) 'unsupported Word keeps complex text in the reviewed translation list without creating a partial file'
     $serverSource=[IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Server.ps1'))
-    $uiSource=[IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'index.html'))
+    $uiSource=[IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'cat.html'))
     Check-YakuWord ($serverSource -match "'\.docx','\.xlsx','\.xlsm','\.csv'" -and $uiSource -match 'accept="\.docx,\.xlsx,\.xlsm"') 'upload and direct-path entry both accept DOCX'
 } finally { try{Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue}catch{} }
 if($script:failed -gt 0){throw("Word adapter tests failed: $script:failed")}

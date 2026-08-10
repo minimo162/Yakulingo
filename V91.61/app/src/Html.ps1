@@ -263,64 +263,8 @@ $altHtml  </div>
 "@
     }
 
-    # 短くする。押されたときだけ Copilot を呼ぶ。
-    #
-    # 毎回2本作ると往復が2倍になり、弾かれる頻度も上がる。
-    # 標準の訳で足りる場面のほうが多いので、要る人が押したときに払う。
-    # 押した直後に出るので、勝手に画面が増えて驚くこともない
-    # （独立評価 2026-08-08）。
-    #
-    # 送るのはマスク後の訳文である。画面の訳文（実値入り）を送り返させると、
-    # 伏せたはずの数値が Copilot へ出る。
-    $mainOption = $null
-    try { if ($options.Count -gt 0) { $mainOption = $options[0] } } catch {}
-    $alreadyBrief = $false
-    try { $alreadyBrief = ([string]$mainOption.Style -eq 'brief') } catch {}
-    if ($canRevise -and $null -ne $mainOption -and $direction -eq 'to_en' -and -not $alreadyBrief) {
-        $mainMasked = [string]$mainOption.Translation
-        try { if (-not [string]::IsNullOrEmpty([string]$mainOption.MaskedTranslation)) { $mainMasked = [string]$mainOption.MaskedTranslation } } catch {}
-        $html += @"
-<div class='shorten-row'>
-  <button type='button' class='secondary-button' data-yaku-shorten
-          data-yaku-source-b64='$(ConvertTo-YakuHtml (ConvertTo-YakuUtf8Base64 $sourceText))'
-          data-yaku-current-b64='$(ConvertTo-YakuHtml (ConvertTo-YakuUtf8Base64 $mainMasked))'>枠に入らないので短くする</button>
-  <span class='shorten-note'>押すともう一度Copilotに頼みます。数値と用語はこの訳のまま、長さだけ縮めます。</span>
-</div>
-"@
-    }
-
-    # 過去に公表した英訳。訳文の下、CAT への導線より上に置く。
-    # 訳を見て「この言い回しでよいのか」と思ったときに、すぐ目に入る位置。
-    # 畳んであるので、要らない人の邪魔にはならない。
-    try { $html += New-YakuPastTranslationsHtml -Pairs @($Result.PastPairs) } catch {}
-
-    # V91.61（2026-08-06）: 簡易翻訳から CAT へ渡す導線。
-    #
-    # 簡易翻訳を使っている人にも CAT のほうが便利だが、急に画面が変わると
-    # 覚え直しの負担を負わせることになる（利用者の懸念 2026-08-06）。
-    # 先に覚えてもらうのではなく、**確認したくなった時に**押せる場所へ置く。
-    # 原文はそのまま持っていくので、押した先に見慣れた文が並ぶ。
-    if ($canRevise -and $options.Count -gt 0) {
-        # 訳文も一緒に持っていく。原文だけ渡すと、渡した先で訳文の列が空になり、
-        # 利用者から見れば「さっきの訳が消えた」うえに訳し直しを待たされる。
-        # 移行を促す導線が、移行しない理由を作ってしまう。
-        $handoffTranslation = ''
-        $fullOption = @($options | Where-Object { [string]$_.Style -ne 'brief' })
-        if ($fullOption.Count -eq 0) { $fullOption = @($options) }
-        try { $handoffTranslation = [string]$fullOption[0].Translation } catch { $handoffTranslation = '' }
-        # 方向も渡す。渡さないと CAT 側の既定（日→英）になり、英→日の利用者が
-        # 黙って逆向きで取り込まれる。$direction は判定済みの実際の向き。
-        $handoffDirection = if ($direction -eq 'to_jp') { 'to_jp' } else { 'to_en' }
-        $html += @"
-<div class='cat-handoff'>
-  <button type='button' class='secondary-button compact'
-          data-yaku-to-cat='$(ConvertTo-YakuUtf8Base64 $sourceText)'
-          data-yaku-to-cat-translation='$(ConvertTo-YakuUtf8Base64 $handoffTranslation)'
-          data-yaku-to-cat-direction='$(ConvertTo-YakuHtml $handoffDirection)'>この訳案を1文ずつ確認する</button>
-  <span class='muted'>原文と訳案を並べます。確認した行を記録し、必要なところだけ直せます。</span>
-</div>
-"@
-    }
+    # 旧HTML結果は表示互換だけに限定する。過去例、短縮、CATへの引継ぎは
+    # DOM属性へ本文を複製せず、専用Quick/CAT画面とserver artifactで扱う。
 
     $html += "</section>"
     return $html

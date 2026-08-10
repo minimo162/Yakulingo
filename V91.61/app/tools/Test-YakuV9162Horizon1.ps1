@@ -31,7 +31,11 @@ function Add-YakuTranslationMemoryEntry { return [pscustomobject]@{ Added=$true;
 try {
     Write-Host 'Legacy route removal' -ForegroundColor Cyan
     $server = [IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Server.ps1'))
-    $client = [IO.File]::ReadAllText((Join-Path (Join-Path (Join-Path $root 'www') 'assets') 'app.js'))
+    $client = @(
+        [IO.File]::ReadAllText((Join-Path (Join-Path (Join-Path $root 'www') 'assets') 'common.js'))
+        [IO.File]::ReadAllText((Join-Path (Join-Path (Join-Path $root 'www') 'assets') 'quick.js'))
+        [IO.File]::ReadAllText((Join-Path (Join-Path (Join-Path $root 'www') 'assets') 'cat.js'))
+    ) -join "`n"
     Check-YakuH1 ($server -notmatch '/api/translate-file') 'legacy API route is absent'
     Check-YakuH1 ($server -notmatch 'Start-YakuFileProcessJob') 'legacy file worker launcher is absent'
     Check-YakuH1 ($client -notmatch 'yakuSubmitFileTranslation|/api/translate-file') 'legacy browser submit route is absent'
@@ -51,6 +55,17 @@ try {
     $prompt = New-YakuCatPrompt -Root $root -Items @($item) -Settings ([pscustomobject]@{}) -Direction 'to_en' -RequestId ([guid]::NewGuid().ToString('N'))
     Check-YakuH1 ($prompt -notmatch '1,234') 'serialized CAT prompt contains no raw protected numeric value'
     Check-YakuH1 ($prompt -match 'complete|省略') 'CAT prompt requests a complete translation'
+    $fiscalItem = [pscustomobject]@{ Index=9; Text='2027年度第1四半期の売上高は1,234億円です。'; BlockIds=(New-Object System.Collections.Generic.List[string]) }
+    $null = Protect-YakuCatItems -Items @($fiscalItem) -Root $root -Direction 'to_en'
+    $fiscalTokens = @(Get-YakuNumericMaskTokens -Text ([string]$fiscalItem.Text))
+    $fiscalTarget = 'FY' + [string]$fiscalTokens[0] + ' revenue was ' + [string]$fiscalTokens[2] + ' oku in Q' + [string]$fiscalTokens[1] + '.'
+    $fiscalIntegrity = Test-YakuNumericMaskIntegrity -MaskedSource ([string]$fiscalItem.Text) -Translated $fiscalTarget -Location 'h1-fiscal-period'
+    Check-YakuH1 ([bool]$fiscalIntegrity.Ok) 'CAT allows fiscal year and quarter to move naturally while preserving financial-value order'
+    $naturalFiscal = ConvertTo-YakuNaturalEnglishNotation -SourceText '2027年度第1四半期の売上高は1,234億円です。' `
+        -Translation 'For the 2027 fiscal year, revenue was 1,234 oku in the 1 quarter.'
+    Check-YakuH1 ($naturalFiscal -eq 'For FY2027, revenue was 1,234 oku in Q1.') 'CAT apply boundary formats fiscal year and quarter naturally from the canonical source'
+    $groupedOku = Restore-YakuNumericMask -Text 'Revenue was [[N1]] oku.' -Map @{ '[[N1]]'='1,234' } -Direction 'to_en' -SourceText '売上高は[[N1]]億円です。'
+    Check-YakuH1 ($groupedOku -eq 'Revenue was 1,234 oku.') 'numeric restoration preserves readable grouping in oku output'
     $forgedItem = $item.PSObject.Copy()
     $forgedItem.NumericMaskMap = @{ '[[N1]]' = '9,999' }
     $fakeMapBlocked = $false
@@ -268,7 +283,9 @@ try {
     }
     foreach ($case in @(
         @{ Source='売上高は一億二千万円でした。'; Target='Revenue was 120 million yen.'; Direction='to_en'; Label='Japanese written amount equivalent' },
-        @{ Source='Revenue was two billion yen.'; Target='売上高は20億円でした。'; Direction='to_jp'; Label='English written amount equivalent' }
+        @{ Source='Revenue was two billion yen.'; Target='売上高は20億円でした。'; Direction='to_jp'; Label='English written amount equivalent' },
+        @{ Source='売上高は1,234億円でした。'; Target='Revenue was 1,234 oku.'; Direction='to_en'; Label='oku yen-equivalent currency' },
+        @{ Source='2027年度第1四半期の売上高は1,234億円、営業利益は120億円です。'; Target='For Q1 of FY2027, revenue was 1,234 oku and operating profit was 120 oku.'; Direction='to_en'; Label='fiscal-period order with financial order preserved' }
     )) {
         $p = New-YakuCatTextProject -Root $root -Text $case.Source -Settings $null -Direction $case.Direction -Translation $case.Target
         $allowed = $true

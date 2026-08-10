@@ -559,10 +559,6 @@ function Resolve-YakuFileExactGlossaryTranslations {
         $TranslationByIndex[$idx] = [string]$candidate
         $hits++
         $applied.Add([pscustomobject]@{ Source=[string]$entry.Source; Target=[string]$entry.Target; From=[string]$entry.From; To=[string]$candidate; Row=[int]$entry.Row; Via='exact'; ItemIndex=$idx }) | Out-Null
-        try {
-            $cacheKey = Get-YakuTranslationCacheKey -Kind 'file' -Direction $Direction -Text ([string]$item.Text) -Style 'concise' -Root $Root -Settings $Settings
-            Set-YakuTranslationCacheValue -Key $cacheKey -Value ([string]$candidate) -Settings $Settings
-        } catch {}
     }
     if ($hits -gt 0) {
         try { Write-YakuLog "File glossary exact hits: count=$hits" 'INFO' } catch {}
@@ -702,19 +698,6 @@ function Add-YakuSupplementOriginalRetainedWarning {
     $details = @{ Count=$countValue; NonFatal=$true }
     if (-not [string]::IsNullOrWhiteSpace([string]$ErrorMessage)) { $details['Error'] = [string]$ErrorMessage }
     Add-YakuWarning -Warnings $Warnings -Category 'supplement-pass' -Location $Location -Details $details -Message "${countValue}件は翻訳を取得できなかったため原文を保持しました(補完パス失敗)"
-}
-
-function Set-YakuFileFallbackCacheValue {
-    param(
-        [Parameter(Mandatory=$true)]$Item,
-        [Parameter(Mandatory=$true)][string]$Translation,
-        [Parameter(Mandatory=$true)]$Settings,
-        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction
-    )
-    try {
-        $cacheKey = Get-YakuTranslationCacheKey -Kind 'file' -Direction $Direction -Text ([string]$Item.Text) -Style 'concise' -Settings $Settings
-        Set-YakuTranslationCacheValue -Key $cacheKey -Value $Translation -Settings $Settings
-    } catch {}
 }
 
 function Test-YakuFileAsciiJoinBoundary {
@@ -863,7 +846,6 @@ function Invoke-YakuFileBracketFallback {
             }
             if ($appliedMatches.Count -le 0) { $appliedMatches.Add([pscustomobject]@{ Source=[string]$inner; Target=[string]$glossary.Value; From=[string]$inner; To=[string]$glossary.Value; Via='bracket-fallback'; ItemIndex=$idx }) | Out-Null }
             Add-YakuFileAppliedGlossaryContext -Context $Context -Matches @($appliedMatches.ToArray())
-            Set-YakuFileFallbackCacheValue -Item $Item -Translation ([string]$candidate) -Settings $Settings -Direction $Direction
             Write-YakuFileBracketFallbackLog -Id $idx -Source $source -Result ([string]$candidate) -Via 'glossary'
             return $true
         }
@@ -882,7 +864,6 @@ function Invoke-YakuFileBracketFallback {
                 $candidate = New-YakuFileBracketWrappedTranslation -InnerText $innerTranslation -Wrappers @($stripped.Wrappers)
                 if (-not (Test-YakuFileTranslationInvalid -Source $source -Translation $candidate -Direction $Direction)) {
                     $TranslationByIndex[$idx] = [string]$candidate
-                    Set-YakuFileFallbackCacheValue -Item $Item -Translation ([string]$candidate) -Settings $Settings -Direction $Direction
                     Write-YakuFileBracketFallbackLog -Id $idx -Source $source -Result ([string]$candidate) -Via 'copilot-retry'
                     return $true
                 }
@@ -1315,43 +1296,12 @@ function Invoke-YakuTranslationBatchItems {
                 if ($map.ContainsKey($doneIndex)) { $Context['CompletedMap'][$doneIndex] = [string]$map[$doneIndex] }
             }
         }
-        if ($Context.ContainsKey('CachePerBatch') -and [bool]$Context['CachePerBatch']) {
-            $cacheKind = if ($Context.ContainsKey('CacheKind')) { [string]$Context['CacheKind'] } else { 'file' }
-            $cacheStyle = if ($Context.ContainsKey('CacheStyle')) { [string]$Context['CacheStyle'] } else { 'concise' }
-            $cacheRoot = if ($Context.ContainsKey('CacheRoot')) { [string]$Context['CacheRoot'] } else { $Root }
-            Add-YakuFileTranslationsToCache -Items @($batch.Items) -Translations $map -Settings $Settings -Direction $Direction -Kind $cacheKind -Style $cacheStyle -Root $cacheRoot
-        }
         if ($Context.ContainsKey('OnBatchCompleted') -and $null -ne $Context['OnBatchCompleted']) {
             $onBatchCompleted = $Context['OnBatchCompleted']
             & $onBatchCompleted @($batch.Items) $map
         }
     }
     return $map
-}
-
-function Add-YakuFileTranslationsToCache {
-    param(
-        [Parameter(Mandatory=$true)][object[]]$Items,
-        [Parameter(Mandatory=$true)][hashtable]$Translations,
-        [Parameter(Mandatory=$true)]$Settings,
-        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
-        [ValidateSet('file','cat')][string]$Kind = 'file',
-        [string]$Style = 'concise',
-        [AllowNull()][string]$Root
-    )
-    foreach ($item in @($Items)) {
-        $idx = [int]$item.Index
-        if (-not $Translations.ContainsKey($idx)) { continue }
-        # 読み出し側と Set-YakuFileFallbackCacheValue は
-        # $item.Text をキーにしている。ここだけ原文を使っていたため書き込みが
-        # 読み出しに当たらなかった。3箇所を $item.Text へ揃える。
-        # 単位変換・マスク後のテキストなので、値もマスク後で整合する(§7)。
-        $sourceForCache = [string]$item.Text
-        $value = Convert-YakuFileTranslationBrackets -Text ([string]$Translations[$idx])
-        if (Test-YakuFileTranslationInvalid -Source $sourceForCache -Translation $value -Direction $Direction) { continue }
-        $cacheKey = Get-YakuTranslationCacheKey -Kind $Kind -Direction $Direction -Text $sourceForCache -Style $Style -Root $Root -Settings $Settings
-        Set-YakuTranslationCacheValue -Key $cacheKey -Value $value -Settings $Settings
-    }
 }
 
 function Invoke-YakuFilePreSupplementBracketGlossaryFallback {

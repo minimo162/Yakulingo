@@ -84,8 +84,8 @@ try {
     $fresh = [pscustomobject]@{ Id='fresh'; Direction='to_en'; CorpusSection=''; Segments=@([pscustomobject]@{ Text=$source1; Translation='' }) }
     $beforeUsageSends = $script:YakuRecoverySends
     $usage = Get-YakuCatCopilotUsage -Root $root -Project $fresh -Settings $settings
-    Chk ([int]$usage.CacheHits -eq 1 -and [int]$usage.EstimatedCalls -eq 0) ('成功バッチのcache writer結果をCAT readerが再利用する (hits=' + [int]$usage.CacheHits + ' calls=' + [int]$usage.EstimatedCalls + ')')
-    Chk ($script:YakuRecoverySends -eq $beforeUsageSends) 'キャッシュ概算ではCopilot送信を増やさない'
+    Chk ([int]$usage.CacheHits -eq 0 -and [int]$usage.EstimatedCalls -eq 1) ('成功バッチは別projectの意味的cacheへ流用しない (hits=' + [int]$usage.CacheHits + ' calls=' + [int]$usage.EstimatedCalls + ')')
+    Chk ($script:YakuRecoverySends -eq $beforeUsageSends) '利用回数の概算自体ではCopilot送信を増やさない'
 
     Write-Host '3時間集計は1時間集計で履歴を失わない'
     $now = [datetime]'2026-08-09T12:00:00'

@@ -34,6 +34,17 @@ try {
 
     $reference=New-YakuCatProjectFromPriorVersion -CurrentJa $currentJa -PriorJa $priorJa -PriorEn $priorEn -PriorEvidence reference_only
     Check-YakuVersionUpdate (@($reference.Segments | Where-Object { [string]$_.Origin -eq 'carried_forward' }).Count -eq 0 -and [int]$reference.VersionUpdateSummary.ReferenceOnly -eq 2) 'unverified prior English is reference-only and never auto-reused'
+    $priorCandidates=@(Get-YakuCatSegmentCandidates -Root $root -Project $reference -Index 1)
+    $priorCandidate=@($priorCandidates | Where-Object { [string]$_.Kind -eq 'prior' })[0]
+    Check-YakuVersionUpdate ($null -ne $priorCandidate -and [string]$priorCandidate.Source -eq '営業利益は20百万円でした。' -and
+        [string]$priorCandidate.Target -eq 'Operating income was 20 million yen.' -and
+        [string]$priorCandidate.SourceName -match '前回版' -and [string]$priorCandidate.Location -eq '前回版 段落 2' -and
+        -not [string]::IsNullOrWhiteSpace([string]$priorCandidate.ReferenceId)) 'reference-only prior English is an explicit provenance-bound CAT candidate'
+    $null=Set-YakuCatSegmentTranslation -Project $reference -Index 1 -Text ([string]$priorCandidate.Target)
+    $null=Set-YakuCatSegmentReferenceUsage -Project $reference -Index 1 -Candidate $priorCandidate
+    Check-YakuVersionUpdate ([string]$reference.Segments[1].ReferenceUsage.kind -eq 'prior' -and
+        [string]$reference.Segments[1].ReferenceUsage.source_name -match '前回版' -and
+        [string]$reference.Segments[1].ReferenceUsage.location -eq '前回版 段落 2') 'explicit prior insertion records the exact prior material and location used'
     $mismatch=New-YakuCatProjectFromPriorVersion -CurrentJa $currentJa -PriorJa $priorJa -PriorEn "Only one prior English paragraph." -PriorEvidence verified_release
     Check-YakuVersionUpdate (-not [bool]$mismatch.PriorVersion.BaselineAligned -and @($mismatch.Segments | Where-Object { [string]$_.Origin -eq 'carried_forward' }).Count -eq 0) 'paragraph-count mismatch disables automatic reuse fail-closed'
     $firstYear=New-YakuCatProjectFromPriorVersion -CurrentJa $currentJa -PriorJa '' -PriorEn '' -PriorEvidence none
@@ -50,9 +61,9 @@ try {
     Check-YakuVersionUpdate ([string]::IsNullOrWhiteSpace([string]$unsafeNumeric.Segments[0].Translation) -and [string]$unsafeNumeric.Segments[0].ChangeKind -eq 'changed') 'text plus numeric change never uses the numeric-only fast path'
 
     $server=[IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Server.ps1'))
-    $ui=[IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'index.html'))
-    $client=[IO.File]::ReadAllText((Join-Path (Join-Path (Join-Path $root 'www') 'assets') 'app.js'))
-    Check-YakuVersionUpdate ($server -match "from-prior-version" -and $ui -match '前回の英語を使って更新') 'API and user entry are connected'
+    $ui=[IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'cat.html'))
+    $client=[IO.File]::ReadAllText((Join-Path (Join-Path (Join-Path $root 'www') 'assets') 'cat.js'))
+    Check-YakuVersionUpdate ($server -match "from-prior-version" -and $ui -match '前回版を参考に更新する' -and $client -match '/api/cat/') 'API and user entry are connected'
 
     Write-Host 'HTTP paste cannot self-assert approval evidence' -ForegroundColor Cyan
     $routeStart=$server.IndexOf("if (`$action -eq 'from-prior-version')",[StringComparison]::Ordinal)

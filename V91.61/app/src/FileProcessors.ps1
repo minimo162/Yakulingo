@@ -4078,6 +4078,20 @@ function Get-YakuOpenXmlIntegritySnapshot {
 
 function Get-YakuOpenXmlFileInfo {
     param([Parameter(Mandatory=$true)][string]$Path)
+    $extension = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
+    if ($extension -eq '.docx') {
+        if (-not (Get-Command Get-YakuWordDocumentInventory -ErrorAction SilentlyContinue)) { throw 'WORD_ADAPTER_NOT_AVAILABLE' }
+        $inventory = Get-YakuWordDocumentInventory -Path $Path
+        $sample = (@($inventory.Blocks | Select-Object -First 200 | ForEach-Object { [string]$_.Text }) -join "`n")
+        $analysis = if (Get-Command Get-YakuDirectionAnalysis -ErrorAction SilentlyContinue) { Get-YakuDirectionAnalysis -Text $sample } else { [pscustomobject]@{ Direction='to_en'; Confidence='low'; Reason='detector-unavailable' } }
+        return [pscustomobject]@{
+            Kind='word'; Name=[System.IO.Path]::GetFileName($Path); FileName=[System.IO.Path]::GetFileName($Path)
+            Extension=$extension; ExcelAvailable=(Test-YakuExcelAvailable)
+            Direction=[string]$analysis.Direction; DetectedDirection=[string]$analysis.Direction
+            DirectionConfidence=[string]$analysis.Confidence; DirectionReason=[string]$analysis.Reason
+            Sheets=@(); SafeMetadataOnly=$true
+        }
+    }
     $snapshot = Get-YakuOpenXmlIntegritySnapshot -Path $Path
     Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue | Out-Null
     $archive = [System.IO.Compression.ZipFile]::OpenRead($Path)
@@ -4092,12 +4106,15 @@ function Get-YakuOpenXmlFileInfo {
             }
             $sample = ($texts.ToArray() -join "`n")
         }
-        $direction = if (Get-Command Get-YakuDirection -ErrorAction SilentlyContinue) { Get-YakuDirection -Text $sample } else { 'to_en' }
+        $analysis = if (Get-Command Get-YakuDirectionAnalysis -ErrorAction SilentlyContinue) { Get-YakuDirectionAnalysis -Text $sample } else { [pscustomobject]@{ Direction='to_en'; Confidence='low'; Reason='detector-unavailable' } }
+        $direction = [string]$analysis.Direction
         $sheets = @($snapshot.SheetNames | ForEach-Object { [pscustomobject]@{ Name=[string]$_; UsedRange='-'; ShapeCount=0; ChartCount=0 } })
         return [pscustomobject]@{
             Kind='excel'; Name=[System.IO.Path]::GetFileName($Path); FileName=[System.IO.Path]::GetFileName($Path)
             Extension=[System.IO.Path]::GetExtension($Path).ToLowerInvariant(); ExcelAvailable=(Test-YakuExcelAvailable)
-            Direction=$direction; DetectedDirection=$direction; Sheets=$sheets; SafeMetadataOnly=$true
+            Direction=$direction; DetectedDirection=$direction
+            DirectionConfidence=[string]$analysis.Confidence; DirectionReason=[string]$analysis.Reason
+            Sheets=$sheets; SafeMetadataOnly=$true
         }
     } finally { $archive.Dispose() }
 }
@@ -4352,8 +4369,9 @@ function Get-YakuFileInfo {
                 if ($sample.Length -lt 8000 -and -not [string]::IsNullOrWhiteSpace([string]$v)) { [void]$sample.AppendLine([string]$v) }
             }
         }
-        $dir = if (Get-Command Get-YakuDirection -ErrorAction SilentlyContinue) { Get-YakuDirection -Text ([string]$sample.ToString()) } else { 'to_en' }
-        return [pscustomobject]@{ Kind='csv'; Name=$name; FileName=$name; Extension='.csv'; ExcelAvailable=(Test-YakuExcelAvailable); Direction=$dir; DetectedDirection=$dir; Sheets=@(); Rows=$rows.Count; Columns=$maxCols }
+        $analysis = if (Get-Command Get-YakuDirectionAnalysis -ErrorAction SilentlyContinue) { Get-YakuDirectionAnalysis -Text ([string]$sample.ToString()) } else { [pscustomobject]@{ Direction='to_en'; Confidence='low'; Reason='detector-unavailable' } }
+        $dir = [string]$analysis.Direction
+        return [pscustomobject]@{ Kind='csv'; Name=$name; FileName=$name; Extension='.csv'; ExcelAvailable=(Test-YakuExcelAvailable); Direction=$dir; DetectedDirection=$dir; DirectionConfidence=[string]$analysis.Confidence; DirectionReason=[string]$analysis.Reason; Sheets=@(); Rows=$rows.Count; Columns=$maxCols }
     }
 
     # V64: file-info must never invoke Excel COM on the HTTP server thread.

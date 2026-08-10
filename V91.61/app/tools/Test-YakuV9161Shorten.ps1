@@ -89,11 +89,9 @@ Write-Host '既定では余分な往復を使わない' -ForegroundColor Cyan
 Chk ($trSrc -match "Invoke-YakuSingleTranslationBatch[\s\S]*-Mode 'full'") '既定の依頼は1本だけ（短くするのは押されたときだけ）'
 Chk ($trSrc -notmatch 'Invoke-YakuTextRequestsInParallel|YAKULINGO_PARALLEL') '休眠中の並列経路が残っていない'
 $htmlSrc = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'Html.ps1') -Raw -Encoding UTF8
-Chk ($htmlSrc -match 'data-yaku-shorten') '画面に短くする導線がある'
-Chk ($htmlSrc -match 'MaskedTranslation') '導線が持つのはマスク後の訳文'
-$jsSrc = Get-Content -LiteralPath (Join-Path (Join-Path $root 'www\assets') 'app.js') -Raw -Encoding UTF8
-Chk ($jsSrc -match 'yakuSubmitShorten') '押したときの処理がある'
-Chk ($jsSrc -match '/api/shorten-text') '専用の入口へ送る'
+Chk ($htmlSrc -notmatch 'data-yaku-shorten') '旧HTML結果にも短縮導線を残さない'
+$quickJs = Get-Content -LiteralPath (Join-Path (Join-Path $root 'www\assets') 'quick.js') -Raw -Encoding UTF8
+Chk ($quickJs -notmatch 'shorten|/api/shorten-text') 'ちょっと翻訳は1本の訳案に絞り、短縮操作を出さない'
 $srvSrc = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'Server.ps1') -Raw -Encoding UTF8
 Chk ($srvSrc -match "'/api/shorten-text'") 'サーバ側に入口がある'
 Chk ($srvSrc -match "SHORTEN_REJECTED") '門で弾いた理由を利用者へ伝える'
