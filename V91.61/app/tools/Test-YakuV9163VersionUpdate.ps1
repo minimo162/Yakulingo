@@ -6,7 +6,7 @@ $toolsRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $toolsRoot
 $script:failed = 0
 function Check-YakuVersionUpdate { param([bool]$Condition,[string]$Message) if($Condition){Write-Host ('  ok   '+$Message) -ForegroundColor Green}else{Write-Host ('  FAIL '+$Message) -ForegroundColor Red;$script:failed++} }
-foreach($name in @('Paths.ps1','Runtime.ps1','Settings.ps1','PromptBuilder.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1','ProperNoun.ps1','CellSegments.ps1','CellAlign.ps1','CatProject.ps1','VersionUpdate.ps1')){. (Join-Path (Join-Path $root 'src') $name)}
+foreach($name in @('Paths.ps1','Runtime.ps1','Settings.ps1','PromptBuilder.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1','CellSegments.ps1','CellAlign.ps1','CatProject.ps1','VersionUpdate.ps1')){. (Join-Path (Join-Path $root 'src') $name)}
 $tempRoot=Join-Path ([IO.Path]::GetTempPath()) ('yaku-version-update-'+[guid]::NewGuid().ToString('N'))
 $null=New-Item -ItemType Directory -Path $tempRoot -Force
 function Get-YakuCatProjectStoreDir { return $tempRoot }
@@ -63,7 +63,7 @@ try {
     $server=[IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Server.ps1'))
     $ui=[IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'cat.html'))
     $client=[IO.File]::ReadAllText((Join-Path (Join-Path (Join-Path $root 'www') 'assets') 'cat.js'))
-    Check-YakuVersionUpdate ($server -match "from-prior-version" -and $ui -match '前回版を参考に更新する' -and $client -match '/api/cat/') 'API and user entry are connected'
+    Check-YakuVersionUpdate ($server -match "from-prior-version" -and $ui -match '前回の資料をもとに、今回の分だけ訳す' -and $client -match '/api/cat/') 'API and user entry are connected'
 
     Write-Host 'HTTP paste cannot self-assert approval evidence' -ForegroundColor Cyan
     $routeStart=$server.IndexOf("if (`$action -eq 'from-prior-version')",[StringComparison]::Ordinal)

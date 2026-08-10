@@ -178,7 +178,7 @@ try {
     Chk ($cat -match "Project\.Source -ne 'align'") '文例は突き合わせからだけ保存できる'
 
     Write-Host '確定の状態' -ForegroundColor Cyan
-    foreach ($mod in @('Paths.ps1', 'Runtime.ps1', 'Settings.ps1', 'PromptBuilder.ps1', 'Translation.ps1', 'ProperNoun.ps1', 'CatTranslation.ps1', 'CellSegments.ps1', 'Corpus.ps1', 'CorpusPairs.ps1', 'CatProject.ps1')) {
+    foreach ($mod in @('Paths.ps1', 'Runtime.ps1', 'Settings.ps1', 'PromptBuilder.ps1', 'Translation.ps1',  'CatTranslation.ps1', 'CellSegments.ps1', 'Corpus.ps1', 'CorpusPairs.ps1', 'CatProject.ps1')) {
         . (Join-Path (Join-Path $root 'src') $mod)
     }
     $proj = New-YakuCatTextProject -Root $root -Settings $null -Direction 'to_en' `

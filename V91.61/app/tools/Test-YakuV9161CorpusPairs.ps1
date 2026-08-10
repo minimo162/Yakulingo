@@ -188,7 +188,7 @@ try {
     $script:stopAfter = 100000
 
     Write-Host 'CAT の画面から突き合わせる' -ForegroundColor Cyan
-    foreach ($mod in @('Paths.ps1', 'Runtime.ps1', 'Settings.ps1', 'PromptBuilder.ps1', 'Translation.ps1', 'ProperNoun.ps1', 'CatTranslation.ps1', 'CellSegments.ps1', 'Corpus.ps1', 'CatProject.ps1')) {
+    foreach ($mod in @('Paths.ps1', 'Runtime.ps1', 'Settings.ps1', 'PromptBuilder.ps1', 'Translation.ps1',  'CatTranslation.ps1', 'CellSegments.ps1', 'Corpus.ps1', 'CatProject.ps1')) {
         . (Join-Path (Join-Path $root 'src') $mod)
     }
     $proj = New-YakuCatAlignProject -Root $root -SourceText $jaDoc -TargetText $enDoc -Settings $null -Direction 'to_en'

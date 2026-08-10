@@ -32,7 +32,6 @@ src/JobObject.ps1	crlf
 src/Paths.ps1	crlf
 src/PersonalGlossary.ps1	lf
 src/PromptBuilder.ps1	lf
-src/ProperNoun.ps1	crlf
 src/QuickArtifact.ps1	lf
 src/Runtime.ps1	crlf
 src/Server.ps1	crlf
@@ -82,7 +81,6 @@ tools/Test-YakuV9161CorpusReference.ps1	lf
 tools/Test-YakuV9161CorpusSearch.ps1	lf
 tools/Test-YakuV9161ExcelSegmentRoundTrip.ps1	crlf
 tools/Test-YakuV9161GlossaryVariants.ps1	crlf
-tools/Test-YakuV9161ProperNoun.ps1	crlf
 tools/Test-YakuV9161Revise.ps1	crlf
 tools/Test-YakuV9161Shorten.ps1	crlf
 tools/Test-YakuV9161SplitRequests.ps1	crlf

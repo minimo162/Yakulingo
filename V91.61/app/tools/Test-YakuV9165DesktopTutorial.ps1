@@ -34,7 +34,7 @@ $commonJs = Read-YakuTutorialFile 'www\assets\common.js'
 
 Check-YakuTutorial ([regex]::Matches($html, 'class="tutorial-step"').Count -eq 4) 'tutorial has exactly four stages'
 Check-YakuTutorial ($html.Contains('1 / 4') -and $js.Contains("String(currentStep + 1) + ' / 4'")) 'tutorial exposes progress in text'
-Check-YakuTutorial ($html.Contains('説明を飛ばして設定へ') -and -not $html.Contains('>スキップ<')) 'skip action leads explicitly to settings'
+Check-YakuTutorial ($html.Contains('設定画面へ進む') -and -not $html.Contains('>スキップ<')) 'skip action leads explicitly to settings'
 Check-YakuTutorial ($html.Contains('文章は自動では読み取りません') -and $html.Contains('貼り付けて「翻訳」を押すまで')) 'tutorial states the no-monitoring and explicit-send boundary'
 Check-YakuTutorial ($html -match 'id="startup-enabled"[^>]*type="checkbox"[^>]*checked') 'startup is visibly ON by default'
 Check-YakuTutorial ($html -match 'id="desktop-shortcut"[^>]*type="checkbox"[^>]*checked') 'desktop shortcut is visibly ON by default'
@@ -57,7 +57,10 @@ Check-YakuTutorial ($css.Contains('font-size: clamp(2rem') -and $css.Contains('f
 
 Check-YakuTutorial ($homeHtml.Contains('起動とショートカット') -and $homeHtml.Contains('使い方を見る') -and $homeHtml.Contains('/tutorial#settings')) 'home exposes help and direct preference routes'
 Check-YakuTutorial ($homeHtml.Contains('id="background-disabled-banner"') -and $homeJs.Contains("data.tutorial_completed === true") -and $homeJs.Contains("data.startup_enabled === false")) 'home explains disabled startup only after first-run confirmation'
-Check-YakuTutorial ($homeJs.Contains("YakuCommon.json('/api/desktop/preferences')") -and -not $homeJs.Contains('YakuCommon.post')) 'home checks preferences without changing them'
+# 開始画面は状態を変えない。読み取り専用の一覧取得（/api/cat/recent）だけを許し、
+# それ以外の POST（とくに起動設定の書き換え）は今までどおり禁止する。
+$homePostTargets = @([regex]::Matches($homeJs, "YakuCommon\.post\('([^']+)'") | ForEach-Object { $_.Groups[1].Value })
+Check-YakuTutorial ($homeJs.Contains("YakuCommon.json('/api/desktop/preferences')") -and (@($homePostTargets | Where-Object { $_ -ne '/api/cat/recent' }).Count -eq 0)) 'home checks preferences without changing them'
 
 Check-YakuTutorial ($commonJs.Contains("data.type !== 'set-startup-enabled'") -and
     $commonJs.Contains("typeof data.enabled !== 'boolean'") -and $commonJs.Contains("keys !== 'enabled,type'")) 'shell handler accepts only the exact startup-toggle message contract'

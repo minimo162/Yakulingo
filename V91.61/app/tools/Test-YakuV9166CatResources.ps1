@@ -23,7 +23,7 @@ $env:YAKULINGO_DATA_DIR = Join-Path $tmp 'data'
 
 foreach ($name in @(
     'Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1',
-    'FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1','CorpusReference.ps1','ProperNoun.ps1','CellSegments.ps1','CellAlign.ps1',
+    'FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1','CorpusReference.ps1','CellSegments.ps1','CellAlign.ps1',
     'Terminology.ps1','PersonalGlossary.ps1','TranslationMemory.ps1','CatProject.ps1'
 )) { . (Join-Path $src $name) }
 
@@ -99,6 +99,29 @@ try {
     $otherFixedProject = New-YakuCatTextProject -Root $root -Text '売上高' -Settings $null -Direction to_en -Register $false
     $otherPass = Invoke-YakuCatGlossaryPass -Root $root -Project $otherFixedProject -Settings $resourceSettings
     Chk ([int]$otherPass.Applied -eq 0) 'この資料だけの固定訳を別projectへ漏らさない'
+
+    # 決算の略語は原文に無い数字を持つ（上期→1H、第1四半期→Q1、2026年度→FY26）。
+    # 登録した固定訳をアプリが丸ごと写した行は、数値の増減チェックから外す。
+    # 外れるのはそこだけで、人が書き換えた訳やCopilotの訳は従来どおり全部検査される。
+    Write-Host 'registered abbreviations with digits' -ForegroundColor Cyan
+    function Test-YakuAbbrevConfirm {
+        param([string]$SourceText, [string]$TermTarget, [string]$OverrideTarget)
+        $abbrevProject = New-YakuCatTextProject -Root $root -Text $SourceText -Settings $null -Direction to_en -Register $false
+        $abbrevSegment = @($abbrevProject.Segments)[0]
+        if ($TermTarget) {
+            $null = Add-YakuTerminologyEntry -Scope project -ProjectId ([string]$abbrevProject.Id) -Kind cell_exact -Enforcement advisory `
+                -JapanesePreferred $SourceText -EnglishPreferred $TermTarget -Origin 'cat-abbrev-test' `
+                -OriginProjectId ([string]$abbrevProject.Id) -OriginFileName 'abbrev.xlsx' `
+                -OriginSegmentId ([string]$abbrevSegment.SegmentId) -OriginLocation '説明!A1' -OriginRevision ([int]$abbrevProject.Revision)
+            $null = Invoke-YakuCatGlossaryPass -Root $root -Project $abbrevProject -Settings $resourceSettings
+        }
+        if ($OverrideTarget) { $null = Set-YakuCatSegmentTranslation -Project $abbrevProject -Index 0 -Text $OverrideTarget }
+        try { $null = Set-YakuCatSegmentConfirmed -Project $abbrevProject -Index 0; return $true } catch { return $false }
+    }
+    Chk (Test-YakuAbbrevConfirm -SourceText '上期営利' -TermTarget '1H OP') '登録した固定訳をアプリが丸ごと当てた行は、数字入りの略語でも確認済みにできる'
+    Chk (Test-YakuAbbrevConfirm -SourceText '2026年度' -TermTarget 'FY26') '年度の略語も確認済みにできる'
+    Chk (-not (Test-YakuAbbrevConfirm -SourceText '上期営利' -TermTarget '1H OP' -OverrideTarget '2H OP 999')) '登録があっても人が書き換えた訳は数値検査を通す'
+    Chk (-not (Test-YakuAbbrevConfirm -SourceText '上期営利' -OverrideTarget '1H OP')) '登録が無い訳文に数字が増えていれば止める'
 
     Write-Host 'UI and API separation' -ForegroundColor Cyan
     $server = [IO.File]::ReadAllText((Join-Path $src 'Server.ps1'))

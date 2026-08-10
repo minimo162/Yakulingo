@@ -91,7 +91,6 @@ Chk ($c[1].Start -eq ($c[0].End + 1 - 5)) '隣り合う塊が5行重なる'
 Chk ($c[-1].End -eq 119) '最後の行まで届く'
 
 Write-Host '通しの駆動' -ForegroundColor Cyan
-. (Join-Path (Join-Path $root 'src') 'ProperNoun.ps1')
 . (Join-Path (Join-Path $root 'src') 'AlignMask.ps1')
 . (Join-Path (Join-Path $root 'src') 'CopilotClient.ps1')
 . (Join-Path (Join-Path $root 'src') 'Translation.ps1')

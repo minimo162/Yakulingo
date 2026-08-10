@@ -3,7 +3,7 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 
-foreach ($name in @('Paths.ps1','Runtime.ps1','Settings.ps1','Html.ps1','EdgeLaunch.ps1','CopilotClient.ps1','PromptBuilder.ps1','FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1','Translation.ps1','ProperNoun.ps1','CellSegments.ps1','CellAlign.ps1','CatProject.ps1')) {
+foreach ($name in @('Paths.ps1','Runtime.ps1','Settings.ps1','Html.ps1','EdgeLaunch.ps1','CopilotClient.ps1','PromptBuilder.ps1','FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1','Translation.ps1','CellSegments.ps1','CellAlign.ps1','CatProject.ps1')) {
     . (Join-Path $root ('src\' + $name))
 }
 
@@ -185,11 +185,11 @@ try {
 
 $progressState = [hashtable]::Synchronized(@{ progress=8; batch_current=1; batch_total=2; batch_progress_start=8; batch_progress_end=50; batch_input_length=940 })
 Set-YakuCopilotProgressPhase -ProgressState $progressState -Phase 'generating' -Label '生成中' -Detail 'Copilot応答待ち' -Progress 88
-Assert-Yaku -Condition ([int]$progressState.progress -eq 44 -and [string]$progressState.label -eq 'バッチ 1/2: 生成中' -and [string]$progressState.detail -match '入力 940字') -Message 'batch one local progress must map into its overall range using input characters'
-Set-YakuTranslationProgress -ProgressState $progressState -Label 'バッチ 1/2: 完了' -Progress 50
+Assert-Yaku -Condition ([int]$progressState.progress -eq 44 -and [string]$progressState.label -eq '生成中（1/2 回目）' -and [string]$progressState.detail -match '入力 940字') -Message 'batch one local progress must map into its overall range using input characters'
+Set-YakuTranslationProgress -ProgressState $progressState -Label '完了（1/2 回目）' -Progress 50
 $progressState.batch_current=2; $progressState.batch_progress_start=50; $progressState.batch_progress_end=92; $progressState.batch_input_length=937
 Set-YakuCopilotProgressPhase -ProgressState $progressState -Phase 'inputting' -Label '入力中' -Detail '' -Progress 25
-Assert-Yaku -Condition ([int]$progressState.progress -eq 60 -and [string]$progressState.label -eq 'バッチ 2/2: 入力中' -and [string]$progressState.detail -eq '入力 937字') -Message 'batch two progress must remain monotonic and use its overall range'
+Assert-Yaku -Condition ([int]$progressState.progress -eq 60 -and [string]$progressState.label -eq '入力中（2/2 回目）' -and [string]$progressState.detail -eq '入力 937字') -Message 'batch two progress must remain monotonic and use its overall range'
 
 $fileItems = @(
     [pscustomobject]@{ Index=11; Text='売上高'; BlockIds=@('a') },
@@ -259,7 +259,7 @@ Assert-Yaku -Condition ($homeIndex.Contains('<h1 id="home-title">何を訳しま
 Assert-Yaku -Condition (-not ($homeIndex -match '<textarea|type="file"|data-cat-|quick-form')) -Message 'the landing screen must ask only for the work experience, not contain a hidden translator'
 Assert-Yaku -Condition ($quickIndex.Contains('この画面の文章と訳文は保存されません') -and $quickIndex.Contains('id="quick-form"') -and -not ($quickIndex -match 'Word・Excelを選ぶ|保存した作業|過去の翻訳例')) -Message 'Quick must be a dedicated no-save text experience without file or reference features'
 Assert-Yaku -Condition ($catIndex.Contains('Word・Excelを取り込む') -and $catIndex.Contains('長い文章を貼り付ける') -and $catIndex.Contains('保存した作業')) -Message 'document translation must keep file, long-text, and resume entries together'
-Assert-Yaku -Condition ($catIndex.Contains('対応する前回の日英版を読み込む') -and $catIndex.Contains('そのほかの始め方')) -Message 'project-bound prior bilingual import must remain available without appearing as a primary mode choice'
+Assert-Yaku -Condition ($catIndex.Contains('前回の日本語と英語を、参考として読み込む') -and $catIndex.Contains('そのほかの始め方')) -Message 'project-bound prior bilingual import must remain available without appearing as a primary mode choice'
 Assert-Yaku -Condition ($quickIndex.Contains('<span class="eyebrow">訳案</span>') -and -not $indexSource.Contains('すぐ訳した完成訳')) -Message 'unreviewed Quick output must consistently be called a draft translation'
 Assert-Yaku -Condition ($catIndex.Contains('前回の英語は「前回版」と出所を明示して表示し、自動では反映しません') -and -not $catIndex.Contains('cat-prior-evidence') -and -not $catClient.Contains('prior_evidence:')) -Message 'prior English must stay reference-only without a self-attested approval selector or evidence payload'
 Assert-Yaku -Condition ($quickClient.Contains('/api/cat/promote') -and $quickClient.Contains('artifact_id') -and -not $quickClient.Contains('source_text:') -and -not $quickClient.Contains('translation:')) -Message 'Quick handoff must promote one server artifact without reposting source or target text from the browser'
@@ -272,7 +272,7 @@ Assert-Yaku -Condition ($indexSource.Contains('cat-save-status') -and $indexSour
 Assert-Yaku -Condition ($indexSource.Contains('id="text-size-toggle"') -and $appJs.Contains("localStorage.setItem('yaku-text-size'") -and $stylesSource.Contains(':root[data-yaku-text-size="large"]')) -Message 'large text preference must be visible and persist across restarts'
 Assert-Yaku -Condition ($stylesSource.Contains('min-height: 44px') -and $stylesSource.Contains('@media (max-width: 900px)') -and $stylesSource.Contains('.cat-card-label')) -Message 'primary controls must retain large targets and CAT rows must reflow to labelled cards'
 Assert-Yaku -Condition ($indexSource.Contains('cat-current-summary') -and $indexSource.Contains('cat-switch-project') -and $catClient.Contains("el('cat-workspace').hidden = false") -and $catClient.Contains('if (busy) return')) -Message 'active CAT work must use a focused summary and reject duplicate commands'
-Assert-Yaku -Condition ($indexSource.Contains('作成するファイルは確認用DRAFTです') -and $appJs.Contains('確認用DRAFTを作成しました。完成版ではありません。社外配布しないでください') -and $appJs.Contains('確認用Word DRAFT（外部配布不可）を作る') -and -not $appJs.Contains('成果物を作成できます')) -Message 'DRAFT output must never be presented as a complete external deliverable'
+Assert-Yaku -Condition ($indexSource.Contains('できあがるファイルは、社内で確認するためのものです。ファイル名の先頭に「DRAFT_」が付きます。完成版ではありませんので、お客様や社外へはそのままお送りにならないでください。') -and $appJs.Contains('社内確認用のファイルを作りました。ファイル名の先頭に「DRAFT_」が付いています。完成版ではありませんので、社外へはそのままお送りにならないでください。') -and $appJs.Contains('社内確認用のWordを作る') -and -not $appJs.Contains('成果物を作成できます')) -Message 'DRAFT output must never be presented as a complete external deliverable'
 Assert-Yaku -Condition ($indexSource.Contains('id="cat-delete-dialog"') -and $indexSource.Contains('autofocus>削除しない') -and -not $appJs.Contains("window.confirm('この翻訳作業")) -Message 'project deletion must use a cancel-first named confirmation dialog'
 Assert-Yaku -Condition ($indexSource.Contains('id="cat-text-output-value"') -and $commonClient.Contains('コピーできませんでした。全文を選択したので、Ctrl+Cでコピーしてください') -and $catClient.Contains("el('cat-text-output-value').select()")) -Message 'clipboard failure must preserve the assembled translation and provide a keyboard recovery path'
 Assert-Yaku -Condition ($catClient.Contains('aria-describedby="' + "' + findingId + '" + '"') -and $catClient.Contains('data.review_blocked') -and $catClient.Contains('function focusAfter(index)')) -Message 'QC findings must be tied to the editor and confirmation focus must advance by segment index'

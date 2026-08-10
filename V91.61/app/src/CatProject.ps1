@@ -412,7 +412,33 @@ function Invoke-YakuCatSegmentValidation {
         $findings.Add([pscustomobject]@{ Code='invalid-or-source-fallback'; Severity='error' }) | Out-Null
     }
     if ($target -match '\[\[(?:N|P)\d+\]\]') { $findings.Add([pscustomobject]@{ Code='placeholder-residue'; Severity='error' }) | Out-Null }
+
+    # 利用者が登録した固定訳（cell_exact）を、アプリがセル丸ごと一字一句そのまま入れた場合だけ、
+    # 数値の増減チェックを外す。
+    #
+    # 決算の略語は原文に無い数字を持つ（上期→1H、第1四半期→Q1、2026年度→FY26）。
+    # これを numeric-value-extra で弾くと、§8「略語は一覧にあるものだけをアプリが当てる」で
+    # 登録した訳が、そのまま確認済みにできなくなる。
+    #
+    # 外すのは「利用者が登録し、アプリが機械的に写した訳」に限る。Copilotの訳文や、
+    # 人が編集した訳文は1文字でも違えば一致しないので、従来どおり全部検査される。
+    $isVerbatimRegisteredTerm = $false
     if (-not [string]::IsNullOrWhiteSpace($target)) {
+        try {
+            $cellExact = Find-YakuCellExactTerminologyMatch -Text $source -Direction ([string]$Project.Direction) `
+                -Entries @(Get-YakuCatTerminologyEntries -Project $Project) -ProjectId ([string]$Project.Id)
+            if ($null -ne $cellExact) {
+                $normalizeForCompare = {
+                    param([AllowNull()][string]$Value)
+                    $text = ([string]$Value).Normalize([Text.NormalizationForm]::FormKC).Trim()
+                    return (($text -replace '\s+', ' ').ToLowerInvariant())
+                }
+                $isVerbatimRegisteredTerm = ((& $normalizeForCompare $target) -eq (& $normalizeForCompare ([string]$cellExact.Target)))
+            }
+        } catch { $isVerbatimRegisteredTerm = $false }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($target) -and -not $isVerbatimRegisteredTerm) {
         try {
             $normalizedSource = if ([string]$Project.Direction -eq 'to_en') { [string](Convert-YakuNumericUnits -Text $source -Location ('cat-review-' + [string]$Segment.SegmentId)).Text } else { $source }
             $audit = Test-YakuNumericIntegrity -SourceText $normalizedSource -TranslatedText $target -Location ('cat-review-' + [string]$Segment.SegmentId)
@@ -460,10 +486,10 @@ function Invoke-YakuCatSegmentValidation {
             }
         } catch { $findings.Add([pscustomobject]@{ Code='numeric-validation-error'; Severity='error' }) | Out-Null }
     }
-    if (($source -match '[△▲]' -or $source -match '\(\s*[-+]?\d[\d,.]*\s*\)') -and $target -notmatch '(?i)(?:^|[\s(])[-−]|loss|decrease|decline|deficit|negative|損失|減少|赤字|マイナス|△|▲') {
+    if (-not $isVerbatimRegisteredTerm -and ($source -match '[△▲]' -or $source -match '\(\s*[-+]?\d[\d,.]*\s*\)') -and $target -notmatch '(?i)(?:^|[\s(])[-−]|loss|decrease|decline|deficit|negative|損失|減少|赤字|マイナス|△|▲') {
         $findings.Add([pscustomobject]@{ Code='numeric-sign-missing'; Severity='error' }) | Out-Null
     }
-    if ([string]$Project.Direction -eq 'to_jp') {
+    if (-not $isVerbatimRegisteredTerm -and [string]$Project.Direction -eq 'to_jp') {
         foreach ($match in [regex]::Matches($source, '(?i)(?<num>\d[\d,]*(?:\.\d+)?)\s+(?<unit>million|billion)\b')) {
             $n = [decimal]0
             if (-not [decimal]::TryParse(([string]$match.Groups['num'].Value).Replace(',',''), [Globalization.NumberStyles]::Number, [Globalization.CultureInfo]::InvariantCulture, [ref]$n)) { continue }
@@ -489,8 +515,8 @@ function Invoke-YakuCatSegmentValidation {
     # `oku` は本アプリの英訳で 1億円を表す単位であり、数値fact抽出でも
     # yen として扱う。ここだけ単純な文字列検査で落とすと、正しい
     # `1,234 oku` を確認済みにできない。
-    if ($source -match '(?i)(?:円|\byen\b|\boku\b)' -and $target -notmatch '(?i)(?:円|\byen\b|\boku\b)') { $findings.Add([pscustomobject]@{ Code='currency-mismatch'; Severity='error'; Detail='yen' }) | Out-Null }
-    if ($source -match '(?i)(?:ドル|\bdollars?\b|\$)' -and $target -notmatch '(?i)(?:ドル|\bdollars?\b|\$)') { $findings.Add([pscustomobject]@{ Code='currency-mismatch'; Severity='error'; Detail='dollar' }) | Out-Null }
+    if (-not $isVerbatimRegisteredTerm -and $source -match '(?i)(?:円|\byen\b|\boku\b)' -and $target -notmatch '(?i)(?:円|\byen\b|\boku\b)') { $findings.Add([pscustomobject]@{ Code='currency-mismatch'; Severity='error'; Detail='yen' }) | Out-Null }
+    if (-not $isVerbatimRegisteredTerm -and $source -match '(?i)(?:ドル|\bdollars?\b|\$)' -and $target -notmatch '(?i)(?:ドル|\bdollars?\b|\$)') { $findings.Add([pscustomobject]@{ Code='currency-mismatch'; Severity='error'; Detail='dollar' }) | Out-Null }
     try {
         $structure = Test-YakuTextStructureIntegrity -SourceText $source -FullText $target -BriefText $target
         if (-not [bool]$structure.Ok) { $findings.Add([pscustomobject]@{ Code='structure-integrity'; Severity='error'; Detail=[string]$structure.Detail }) | Out-Null }
@@ -588,8 +614,8 @@ function Get-YakuCatOutputPreflight {
 
     $reasonText = [ordered]@{
         'project-empty' = '翻訳する行がありません。'
-        'segment-not-reviewed' = 'まだ確認していない行があります。'
-        'segment-qc-not-current' = '訳文の変更後に機械チェックが済んでいない行があります。'
+        'segment-not-reviewed' = 'まだ確認していない行があります。左の「要対応」を押すと、その行だけ表示できます。'
+        'segment-qc-not-current' = '訳文を直したあと、まだ自動点検をしていない行があります。その行を「確認済みにする」と点検します。'
         'segment-untranslated' = '訳文が空の行があります。'
         'source-file-missing' = '元のファイルが見つかりません。'
         'word-unsupported-structure' = '体裁を安全に保てないWord要素があります。'
@@ -627,7 +653,7 @@ function Get-YakuCatOutputPreflight {
         OutputName = $outputName
         Blockers = @($blockers)
         Warnings = @($warnings.ToArray())
-        DraftNotice = if ($mode -in @('word_draft','excel_draft')) { '作成するファイルは確認用DRAFTです。外部配布には使えません。' } else { '確認済み訳文をコピーします。' }
+        DraftNotice = if ($mode -in @('word_draft','excel_draft')) { 'できあがるファイルは、社内で確認するためのものです。ファイル名の先頭に「DRAFT_」が付きます。完成版ではありませんので、お客様や社外へはそのままお送りにならないでください。' } else { '確認済みの訳文をまとめてコピーします。' }
     }
 }
 
@@ -2738,6 +2764,47 @@ function Resolve-YakuCatExportBlocks {
         Map = $map
         Errors = @($errors.ToArray())
         SheetMatches = $sheetMatches
+    }
+}
+
+function Export-YakuCatReviewedSegments {
+    <#
+      確認済みの行だけを取り出す。
+
+      全行を確認し終えるまで何も取り出せないと、10分の細切れで使う利用者は
+      成果ゼロで終わる。ここは「途中の成果を持ち帰る」ための経路であり、
+      元ファイルへの書き戻し（Export-YakuCatProject）とは別物である。
+
+      渡すのは reviewed の行だけ。未確認・未翻訳・自動点検が古い行は含めない。
+      含めなかった行数を必ず返し、画面で「一部である」と言えるようにする。
+    #>
+    param([Parameter(Mandatory=$true)]$Project)
+    $null = Initialize-YakuCatProjectState -Project $Project
+    $segments = @($Project.Segments)
+    if ($segments.Count -eq 0) { throw 'CAT_REVIEWED_EXPORT_EMPTY: 翻訳する行がありません。' }
+
+    $snapshotHash = [string]$Project.TerminologySnapshotHash
+    $included = New-Object System.Collections.Generic.List[object]
+    $skipped = 0
+    foreach ($segment in $segments) {
+        $ok = ([string]$segment.State -eq 'reviewed') -and
+              (-not [string]::IsNullOrWhiteSpace([string]$segment.Translation)) -and
+              (Test-YakuCatSegmentQcCurrent -Segment $segment -TerminologySnapshotHash $snapshotHash)
+        if ($ok) { $included.Add($segment) | Out-Null } else { $skipped++ }
+    }
+    if ($included.Count -eq 0) {
+        throw 'CAT_REVIEWED_EXPORT_NONE: まだ確認済みの行がありません。行を「確認済みにする」と、その行だけ取り出せます。'
+    }
+
+    $lines = @($included | ForEach-Object { [string]$_.Translation })
+    $locations = @($included | ForEach-Object { [string]$_.Location })
+    return [pscustomobject]@{
+        Text      = (@($lines) -join "`n")
+        Written   = [int]$included.Count
+        Skipped   = [int]$skipped
+        Total     = [int]$segments.Count
+        Locations = @($locations)
+        Partial   = ([int]$skipped -gt 0)
     }
 }
 

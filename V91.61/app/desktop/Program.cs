@@ -200,6 +200,9 @@ namespace YakuLingo.Desktop
         private string activeOrigin = "";
         private string activeBaseUrl = "";
         private string desiredRoute = "/";
+        // 資料翻訳は ?project=<id> を持つ。desiredRoute と分けて覚えないと、
+        // 画面サイズの判定（"/cat" との文字列比較）が壊れる。
+        private string desiredQuery = "";
         private string pendingQuickText = "";
         private bool pendingQuickSubmit;
         private Size quickWindowSize = new Size(650, 640);
@@ -229,7 +232,9 @@ namespace YakuLingo.Desktop
             tray.Icon = SystemIcons.Application;
             tray.Text = "YakuLingo";
             tray.Visible = true;
-            tray.DoubleClick += delegate { OpenQuick(); };
+            // 通知領域のアイコンを両押しするのは「アプリを前に出す」動作。
+            // ここで /quick へ飛ばすと、打ちかけの訳文がある資料翻訳から黙って離れてしまう。
+            tray.DoubleClick += delegate { RestoreLastScreen(); };
             ContextMenuStrip menu = new ContextMenuStrip();
             trayStatus.Enabled = false;
             menu.Items.Add(trayStatus);
@@ -393,6 +398,15 @@ namespace YakuLingo.Desktop
                 {
                     tray.ShowBalloonTip(7000, "YakuLingo", "自動起動の設定を変更できませんでした。最初の画面で「使い方を見る」を開き、起動の設定をやり直してください。", ToolTipIcon.Warning);
                 }
+                else if (type == "translation-finished")
+                {
+                    // 数十分かかる翻訳のあいだ、利用者はExcelやOutlookで別の仕事をしている。
+                    // 画面を見ていれば分かるので、前に出ていないときだけ知らせる。
+                    if (!Visible || WindowState == FormWindowState.Minimized || !ContainsFocus)
+                    {
+                        tray.ShowBalloonTip(7000, "YakuLingo", "翻訳が終わりました。YakuLingoを開くと結果を確認できます。", ToolTipIcon.Info);
+                    }
+                }
             }
             catch { }
         }
@@ -523,7 +537,29 @@ namespace YakuLingo.Desktop
             if (!webReady || String.IsNullOrEmpty(activeBaseUrl)) return;
             string route = desiredRoute;
             if (route == "/quick") route = "/quick?compact=1";
+            else if (!String.IsNullOrEmpty(desiredQuery)) route = route + desiredQuery;
             webView.Source = new Uri(new Uri(activeBaseUrl), route.TrimStart('/'));
+        }
+
+        // スリープ復帰やネットワーク切替のあとで、いま開いていた資料へ戻れるようにする。
+        // これを取らないと、再ナビゲートで ?project= が落ちて作業一覧に戻ってしまう。
+        private void CaptureCurrentLocation()
+        {
+            try
+            {
+                Uri source = webView.Source;
+                if (source == null || !IsTrustedOrigin(source)) return;
+                string path = source.AbsolutePath;
+                if (path.StartsWith("/cat", StringComparison.OrdinalIgnoreCase))
+                {
+                    desiredRoute = "/cat";
+                    desiredQuery = source.Query;
+                }
+                else if (path.StartsWith("/quick", StringComparison.OrdinalIgnoreCase)) { desiredRoute = "/quick"; desiredQuery = ""; }
+                else if (path.StartsWith("/tutorial", StringComparison.OrdinalIgnoreCase)) { desiredRoute = "/tutorial"; desiredQuery = ""; }
+                else { desiredRoute = "/"; desiredQuery = ""; }
+            }
+            catch { }
         }
 
         private void ShowLocalWaitingPage(bool quick)
@@ -545,6 +581,7 @@ namespace YakuLingo.Desktop
             RememberCurrentWindowSize();
             bool changed = !String.Equals(desiredRoute, "/quick", StringComparison.OrdinalIgnoreCase);
             desiredRoute = "/quick";
+            desiredQuery = "";
             MinimumSize = new Size(520, 480);
             if (changed) Size = quickWindowSize;
             ShowAndActivate();
@@ -563,9 +600,19 @@ namespace YakuLingo.Desktop
             if (!String.IsNullOrEmpty(activeBaseUrl)) NavigateDesired(); else if (webReady) ShowLocalWaitingPage(false);
         }
 
+        // いま開いている画面のまま、ウィンドウを前に出すだけ。読み込み済みなら再読み込みしない。
+        private void RestoreLastScreen()
+        {
+            CaptureCurrentLocation();
+            ShowAndActivate();
+            if (String.IsNullOrEmpty(activeBaseUrl)) { if (webReady) ShowLocalWaitingPage(String.Equals(desiredRoute, "/quick", StringComparison.OrdinalIgnoreCase)); return; }
+            if (webView.Source == null || !IsTrustedOrigin(webView.Source)) NavigateDesired();
+        }
+
         private void OpenHome()
         {
             RememberCurrentWindowSize();
+            desiredQuery = "";
             string nextRoute = tutorialCompleted ? "/" : "/tutorial";
             bool changed = !String.Equals(desiredRoute, nextRoute, StringComparison.OrdinalIgnoreCase);
             desiredRoute = nextRoute;
@@ -824,14 +871,26 @@ namespace YakuLingo.Desktop
             catch { }
         }
 
+        // 会議室へ移ってWi-Fiが切り替わった、席を外してスリープした。どちらも日常的に起きる。
+        // ここで activeBaseUrl を空にすると、次のタイマーで必ず changed=true になり、
+        // 開いていた資料を捨てて作業一覧へ戻っていた。控えめに再確認するだけにする。
+        // バックエンドが本当に落ちて別ポートで上がったときは、runtime.Url が変わるので
+        // 従来どおり再ナビゲートされる。
+        private void RecheckBackendAfterInterruption()
+        {
+            if (stopping) return;
+            CaptureCurrentLocation();
+            StartBackendIfNeeded();
+        }
+
         private void OnNetworkAvailabilityChanged(object sender, NetworkAvailabilityEventArgs e)
         {
-            if (!stopping) BeginInvoke((MethodInvoker)delegate { activeBaseUrl = ""; activeOrigin = ""; StartBackendIfNeeded(); });
+            if (!stopping) BeginInvoke((MethodInvoker)delegate { RecheckBackendAfterInterruption(); });
         }
 
         private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
         {
-            if (e.Mode == PowerModes.Resume && !stopping) BeginInvoke((MethodInvoker)delegate { activeBaseUrl = ""; activeOrigin = ""; StartBackendIfNeeded(); });
+            if (e.Mode == PowerModes.Resume && !stopping) BeginInvoke((MethodInvoker)delegate { RecheckBackendAfterInterruption(); });
         }
 
         private void Cleanup()

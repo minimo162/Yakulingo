@@ -58,6 +58,10 @@ function Invoke-YakuPersonalGlossaryMigration {
         if ($currentById.ContainsKey($termId)) {
             $old = $currentById[$termId]
             if ([bool]$old.active -and [string]$old.ja.preferred -eq [string]$row.Source -and [string]$old.en.preferred -eq [string]$row.Target) { continue }
+            # 利用者が取り消した登録を、CSVが残っているという理由だけで作り直さない。
+            # 通常はCSVの行も一緒に消しているが、共有フォルダ上などで消せなかったときの保険。
+            if (-not [bool]$old.active -and [string]$old.origin -eq 'personal-glossary-remove' -and
+                [string]$old.ja.preferred -eq [string]$row.Source -and [string]$old.en.preferred -eq [string]$row.Target) { continue }
             $version = [int]$old.version + 1
             $created = [string]$old.created
         }
@@ -69,6 +73,87 @@ function Invoke-YakuPersonalGlossaryMigration {
         if ([bool]$result.Added) { $migrated++; $currentById[$termId] = $entry }
     }
     return [pscustomobject]@{ Migrated=$migrated; LegacyPath=$legacy; TerminologyPath=$termPath }
+}
+
+function Remove-YakuLegacyPersonalGlossaryRow {
+    <#
+      旧CSVから1行だけ消す。
+
+      これをやらないと、次回読み込みの移行処理（Invoke-YakuPersonalGlossaryMigration）が
+      「CSVにあるのに無効になっている」entryを見つけて版を上げ、active=$true で
+      作り直してしまう。利用者から見ると「消したのに戻ってくる」になる。
+    #>
+    param([AllowNull()][string]$Source, [AllowNull()][string]$Path)
+    $target = if ([string]::IsNullOrWhiteSpace($Path)) { Get-YakuPersonalGlossaryPath } else { [string]$Path }
+    $target = [IO.Path]::GetFullPath($target)
+    if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { return $false }
+    $wanted = ([string]$Source).Trim()
+    if ([string]::IsNullOrWhiteSpace($wanted)) { return $false }
+    $kept = New-Object Collections.Generic.List[string]
+    $removed = $false
+    $lineNumber = 0
+    foreach ($line in [IO.File]::ReadAllLines($target, [Text.UTF8Encoding]::new($true))) {
+        $lineNumber++
+        $m = [regex]::Match($line, '^\s*(?:"(?<a>(?:[^"]|"")*)"|(?<a>[^,]*))\s*,\s*(?:"(?<b>(?:[^"]|"")*)"|(?<b>.*?))\s*$')
+        $isRow = $false
+        if ($m.Success -and $lineNumber -ne 1) { $isRow = $true }
+        elseif ($m.Success -and $lineNumber -eq 1) {
+            $head = $m.Groups['a'].Value.Replace('""', '"').Trim().TrimStart([char]0xFEFF)
+            $isRow = -not [string]::Equals($head, 'source', [StringComparison]::OrdinalIgnoreCase)
+        }
+        if ($isRow) {
+            $rowSource = $m.Groups['a'].Value.Replace('""', '"').Trim().TrimStart([char]0xFEFF)
+            if ([string]::Equals($rowSource, $wanted, [StringComparison]::Ordinal)) { $removed = $true; continue }
+        }
+        $kept.Add($line) | Out-Null
+    }
+    if (-not $removed) { return $false }
+    [IO.File]::WriteAllLines($target, @($kept.ToArray()), [Text.UTF8Encoding]::new($true))
+    return $true
+}
+
+function Remove-YakuPersonalGlossaryEntry {
+    <#
+      今後の資料で使う登録（personal スコープ）を1件取り消す。
+
+      記録は追記式なので、行を消すのではなく active=$false の版を足す。
+      いつ誰が消したかが残り、過去に使った行の記録も壊れない。
+      由来が旧CSVのものは、CSV側からも消す（でないと復活する）。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][string]$TermId,
+        [AllowNull()][string]$LegacyPath,
+        [AllowNull()][string]$TerminologyPath
+    )
+    $id = ([string]$TermId).Trim().ToLowerInvariant()
+    if ($id -notmatch '^[a-f0-9]{32}$') { throw 'PERSONAL_GLOSSARY_TERM_ID_INVALID: 取り消す登録を特定できませんでした。画面を読み込み直してからもう一度お試しください。' }
+    $termPath = if ([string]::IsNullOrWhiteSpace($TerminologyPath)) { Get-YakuPersonalTerminologyPath } else { [string]$TerminologyPath }
+    $entries = @(Read-YakuPersonalTerminologyEntries -LegacyPath $LegacyPath -TerminologyPath $TerminologyPath -IncludeInactive |
+        Where-Object { [string]$_.term_id -eq $id })
+    if ($entries.Count -lt 1) { throw 'PERSONAL_GLOSSARY_ENTRY_NOT_FOUND: その登録は見つかりませんでした。すでに取り消されている可能性があります。' }
+    $current = $entries[$entries.Count - 1]
+    if ([string]$current.scope -ne 'personal') {
+        throw 'PERSONAL_GLOSSARY_SCOPE_MISMATCH: これは1つの資料の中だけで使う登録です。その資料を開いて取り消してください。'
+    }
+    $legacyRemoved = $false
+    if ([string]$current.origin -eq 'legacy-personal-csv') {
+        try { $legacyRemoved = [bool](Remove-YakuLegacyPersonalGlossaryRow -Source ([string]$current.ja.preferred) -Path $LegacyPath) } catch { $legacyRemoved = $false }
+    }
+    if (-not [bool]$current.active) {
+        return [pscustomobject]@{ Removed=$false; Reason='already-removed'; LegacyRemoved=$legacyRemoved; Entry=$current }
+    }
+    $entry = New-YakuTerminologyEntry -TermId $id -Version ([int]$current.version + 1) -Active $false `
+        -Scope personal -Kind ([string]$current.kind) -Enforcement ([string]$current.enforcement) `
+        -JapanesePreferred ([string]$current.ja.preferred) -EnglishPreferred ([string]$current.en.preferred) `
+        -JapaneseAllowed @($current.ja.allowed) -JapaneseForbidden @($current.ja.forbidden) `
+        -EnglishAllowed @($current.en.allowed) -EnglishForbidden @($current.en.forbidden) `
+        -Note ([string]$current.note) -Origin 'personal-glossary-remove' `
+        -OriginProjectId ([string]$current.origin_project_id) -OriginFileName ([string]$current.origin_file_name) `
+        -OriginSegmentId ([string]$current.origin_segment_id) -OriginLocation ([string]$current.origin_location) `
+        -OriginRevision ([int]$current.origin_revision) -CreatedAt ([string]$current.created)
+    $result = Add-YakuTerminologyRecord -Entry $entry -Path $termPath
+    return [pscustomobject]@{ Removed=[bool]$result.Added; Reason=''; LegacyRemoved=$legacyRemoved; Entry=$entry }
 }
 
 function Read-YakuPersonalTerminologyEntries {

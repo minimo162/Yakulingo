@@ -18,7 +18,7 @@ function Check-YakuQuick {
 
 foreach ($name in @(
     'Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1',
-    'FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1','CorpusReference.ps1','ProperNoun.ps1',
+    'FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1','CorpusReference.ps1',
     'CellSegments.ps1','CellAlign.ps1','CatProject.ps1','QuickArtifact.ps1'
 )) { . (Join-Path (Join-Path $root 'src') $name) }
 

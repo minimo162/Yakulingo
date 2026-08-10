@@ -3726,7 +3726,7 @@ function Set-YakuCopilotProgressPhase {
         if ($batchCurrent -ge 1 -and $batchEnd -gt $batchStart) {
             $localProgress = [Math]::Min(100, [Math]::Max(0, [int]$Progress))
             $displayProgress = $batchStart + [int][Math]::Floor((($batchEnd - $batchStart) * $localProgress) / 100.0)
-            if ($batchTotal -gt 1) { $displayLabel = "バッチ $($batchCurrent)/$($batchTotal): $Label" }
+            if ($batchTotal -gt 1) { $displayLabel = "$Label（$($batchCurrent)/$($batchTotal) 回目）" }
             $inputDetail = if ($batchInputLength -gt 0) { "入力 $($batchInputLength)字" } else { '' }
             $displayDetail = if ([string]::IsNullOrWhiteSpace($Detail)) { $inputDetail } elseif ([string]::IsNullOrWhiteSpace($inputDetail)) { [string]$Detail } else { "$inputDetail / $Detail" }
         }
@@ -3736,7 +3736,7 @@ function Set-YakuCopilotProgressPhase {
         try { $filePrefix = [string]$ProgressState['file_progress_prefix'] } catch {}
         if (-not [string]::IsNullOrWhiteSpace($filePrefix) -and $Phase -eq 'generating') {
             $displayLabel = $filePrefix
-            $displayDetail = if ([string]::IsNullOrWhiteSpace($displayDetail)) { '生成中' } else { "生成中: $displayDetail" }
+            $displayDetail = if ([string]::IsNullOrWhiteSpace($displayDetail)) { '訳文を受け取っています' } else { "訳文を受け取っています: $displayDetail" }
         }
         $ProgressState['phase'] = $Phase
         $ProgressState['label'] = $displayLabel
@@ -3825,7 +3825,7 @@ function Wait-YakuCopilotResponse {
             } else { 42 }
             $timeFloor = [Math]::Min(60, 42 + $sliceCount)
             $generationProgress = [Math]::Min(88, [Math]::Max($charBased, $timeFloor))
-            Set-YakuCopilotProgressPhase -ProgressState $ProgressState -Phase 'generating' -Label '生成中' -Detail "Copilotが応答を生成しています ($approxChars/$([int][Math]::Ceiling($expectedChars))字目安)" -Progress $generationProgress
+            Set-YakuCopilotProgressPhase -ProgressState $ProgressState -Phase 'generating' -Label '訳文を受け取っています' -Detail "Copilotが訳文を書いています（$approxChars 字ぶん受け取りました。全体はおよそ $([int][Math]::Ceiling($expectedChars)) 字です）" -Progress $generationProgress
         }
         if (-not [string]::IsNullOrWhiteSpace($sliceText)) {
             $lastCandidate = $sliceText
@@ -4867,7 +4867,7 @@ function Invoke-YakuCopilotPromptUnsafe {
     $state = ConvertTo-YakuCdpResultObject -Value $state -Context 'Invoke-YakuCopilotPrompt:baseline-state'
     Write-YakuLog "Copilot baseline state: $(Get-YakuCopilotStateSummary -State $state)" 'DEBUG'
 
-    Set-YakuCopilotProgressPhase -ProgressState $ProgressState -Phase 'inputting' -Label '入力中' -Detail 'Copilotへ翻訳指示を入力しています' -Progress 25
+    Set-YakuCopilotProgressPhase -ProgressState $ProgressState -Phase 'inputting' -Label 'Copilotへ送っています' -Detail 'Copilotの画面へ文章を入力しています' -Progress 25
     $phaseSw = [System.Diagnostics.Stopwatch]::StartNew()
     $null = Assert-YakuCopilotPageTrusted -Page $page -Stage 'before-input'
     $state = Close-YakuCopilotBlockingDialog -Page $page -State (Get-YakuCopilotState -Page $page -TimeoutSeconds 10) -Warnings $Warnings -Stage 'before-fill'
@@ -4956,7 +4956,7 @@ return YakuCopilotDom.sendButtonCandidates().map(c => ({
         throw "COPILOT_SEND_NOT_CONFIRMED: Copilotへの送信を確認できませんでした。$sendCandidateDetail。Copilot画面に表示されているダイアログをキャンセルまたは×で閉じ、「新しいチャット」を開いてから再実行してください。Log=$logPath Reason=$reason Context=$ctx Error=$err"
     }
 
-    Set-YakuCopilotProgressPhase -ProgressState $ProgressState -Phase 'sent' -Label '送信済み' -Detail 'Copilotの応答開始を待っています' -Progress 38
+    Set-YakuCopilotProgressPhase -ProgressState $ProgressState -Phase 'sent' -Label 'Copilotの返事を待っています' -Detail 'Copilotへ送りました。書き始めるのを待っています' -Progress 38
 
     $phaseSw = [System.Diagnostics.Stopwatch]::StartNew()
     $null = Assert-YakuCopilotPageTrusted -Page $page -Stage 'before-response-read'
@@ -4964,7 +4964,7 @@ return YakuCopilotDom.sendButtonCandidates().map(c => ({
     try { $firstActivityTimeoutMs = [int]$Settings.copilotFirstActivityTimeoutMs } catch {}
     $waitResult = ConvertTo-YakuCdpResultObject -Value (Wait-YakuCopilotResponse -Page $page -BaselineState $sendBaseline -RequestId $requestId -TimeoutSeconds $timeout -AnswerFormat $AnswerFormat -Port $port -Url $copilotUrl -FirstActivityTimeoutMs $firstActivityTimeoutMs -ProgressState $ProgressState) -Context 'Wait-YakuCopilotResponse'
     $phaseSw.Stop(); Write-YakuLog "Copilot phase response elapsedMs=$($phaseSw.ElapsedMilliseconds) totalElapsedMs=$($requestSw.ElapsedMilliseconds)" 'INFO'
-    Set-YakuCopilotProgressPhase -ProgressState $ProgressState -Phase 'validating' -Label '検証中' -Detail '応答形式とリクエストIDを検証しています' -Progress 92
+    Set-YakuCopilotProgressPhase -ProgressState $ProgressState -Phase 'validating' -Label '数字が合っているか確認しています' -Detail '受け取った訳文の形式を確認しています' -Progress 92
     $script:YakuLastCopilotWaitResult = $waitResult
     Write-YakuLog "Copilot wait result: $(Get-YakuCopilotWaitSummary -Result $waitResult)" 'INFO'
     $answerText = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $waitResult -Name 'text' -Default '')

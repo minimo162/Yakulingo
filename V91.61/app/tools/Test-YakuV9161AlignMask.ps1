@@ -23,7 +23,6 @@ $toolsRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $toolsRoot
 $script:fail = 0
 
-. (Join-Path (Join-Path $root 'src') 'ProperNoun.ps1')
 . (Join-Path (Join-Path $root 'src') 'AlignMask.ps1')
 function Chk { param([bool]$c, [string]$m) if ($c) { Write-Host ('  ok   ' + $m) -ForegroundColor Green } else { Write-Host ('  FAIL ' + $m) -ForegroundColor Red; $script:fail++ } }
 

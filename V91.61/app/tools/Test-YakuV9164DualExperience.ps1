@@ -87,7 +87,7 @@ Write-Host 'Load production helpers for dynamic contracts' -ForegroundColor Cyan
 foreach ($name in @(
     'Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1',
     'CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1',
-    'CorpusReference.ps1','ProperNoun.ps1','CellSegments.ps1','CellAlign.ps1','TranslationMemory.ps1','CatProject.ps1','QuickArtifact.ps1'
+    'CorpusReference.ps1','CellSegments.ps1','CellAlign.ps1','TranslationMemory.ps1','CatProject.ps1','QuickArtifact.ps1'
 )) {
     $path = Join-Path $srcRoot $name
     if (Test-Path -LiteralPath $path -PathType Leaf) { . $path }
@@ -156,7 +156,7 @@ Check-YakuDual ($catClient -match 'deleteTarget = currentScope\(\)' -and $catCli
 Check-YakuDual ($catClient -match "type: 'translate', scope: jobScope" -and $catClient -match "post\('apply', \{ job_id: jobId \}, true, context\.scope\)") 'job apply stays bound to its starting project and revision'
 Check-YakuDual ($catClient -match "event\.key === 'Enter'" -and $catClient -match '処理中は確認できません' -and $catClient -match 'function focusAfter\(index\)') 'Ctrl+Enter is guarded while busy and advances after confirmation'
 Check-YakuDual ($catClient -match "bindFileDrop\(el\('cat-drop'\), el\('cat-file-input'\)\)" -and $catClient -match "event\.key === 'Enter' \|\| event\.key === ' '") 'file drop supports drag-drop and keyboard activation'
-Check-YakuDual ($catClient -match 'data-cat-loss' -and $catClient -match '結合すると、対象行の訳文が消えます。結合しますか？' -and $catClient -match '解除すると、この行の訳文が消えます。解除しますか？') 'merge and split warn before discarding a translation'
+Check-YakuDual ($catClient -match 'data-cat-loss' -and $catClient -match 'この行と次の行をつなげて1文にします。' -and $catClient -match 'つなげた行を元の2行に戻します。' -and ([regex]::Matches($catClient, '消えた訳文は元に戻せません').Count -ge 2)) 'merge and split warn before discarding a translation'
 Check-YakuDual ($catClient -match 'data\.review_blocked' -and $catClient -match 'var same = document\.querySelector') 'QC-blocked confirmation returns focus to the same row'
 Check-YakuDual ($catClient -match 'function redrawAfterFlush\(\)[\s\S]*?return flush\(\)\.then' -and $catClient -match "button\.hasAttribute\('data-cat-filter'\)[\s\S]{0,180}redrawAfterFlush\(\)") 'filter redraw waits for the shared save barrier'
 
@@ -171,7 +171,7 @@ Check-YakuDual ($catClient -match "currentFilter = 'all'" -and $catPage -match '
 Check-YakuDual ($catPage -match 'id="cat-export-dialog"' -and $catClient -match "post\('preflight', \{\}, true, requestScope\)" -and $catClient -match 'data\.project_id' -and $catClient -match 'Number\(data\.revision\) !== requestScope\.revision') 'DRAFT dialog uses the server preflight bound to the current project revision'
 Check-YakuDual ($catPage -match 'data-cat-change="unchanged"' -and $catPage -match 'data-cat-change="changed"' -and $catPage -match 'data-cat-change="new"' -and $catClient -match 'changeGroup\(segment\)' -and $catClient -match 'segment\.prior_source') '3-way workspace exposes prior-same, changed, and new counts with previous/current context'
 Check-YakuDual ($catClient -match 'data-cat-shorten' -and $catClient -match '修正結果を確認' -and $catClient -match 'data-cat-revert-revision' -and $catClient -match 'data-cat-accept-revision') 'CAT offers a dedicated shorten action with before/after review and revert controls'
-Check-YakuDual ($catPage -match '数値・単位など' -and $catPage -match '表現の適切さは' -and $catClient -match '機械チェックで問題は見つかりません') 'CAT labels mechanical checks without implying translation quality approval'
+Check-YakuDual ($catPage -match '自動で点検しているのは、数字と単位の写しちがいだけです' -and $catPage -match '言い回しが適切かどうか' -and $catClient -match '気になる点は見つかりませんでした') 'CAT labels mechanical checks without implying translation quality approval'
 Check-YakuDual ($catClient -match "el\('cat-export-dialog'\)\.addEventListener\('close'" -and $catClient -match 'scopeIsCurrent\(scope, true\)' -and $catClient -match 'exportProject\(\)') 'export runs only after an unchanged preflight scope is confirmed'
 
 Write-Host 'QuickArtifact promotion contract' -ForegroundColor Cyan
