@@ -146,6 +146,14 @@ try {
     Chk ($client -match 'data-cat-term-insert' -and $client -match 'nextText = input\.value\.slice' -and $client -match 'segment_matches') '画面は用語をカーソル位置へ挿入し全文候補と分ける'
     Chk ($client -notmatch 'input\.setRangeText\(term') '用語保存に失敗する前に画面上の訳文を変更しない'
     Chk ($client -match 'data-cat-tm-delete' -and $server -match "'tm-delete'") '個人TM候補をtombstoneで非表示にできる'
+
+    # サーバが estimate を返しているのに画面が一度も呼んでいなかった。押したあとに
+    # 上限へ当たると、そのバッチぶんの往復が無駄になる。結線が切れたら落とす。
+    Chk ($server -match "'estimate'" -and $server -match 'estimated_calls' -and $server -match 'calls_last_3h') 'サーバーは翻訳前の見積りを返す'
+    Chk ($client -match "/api/cat/estimate" -and $client -match 'estimated_calls' -and $client -match 'calls_last_3h') '画面は押す前に見積りを取りに行く'
+    Chk ($client -match 'cat-copilot-usage') '見積りを出す置き場が画面にある'
+    $catHtml = [IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'cat.html'))
+    Chk ($catHtml -match 'id="cat-copilot-usage"') '見積りの表示先がボタンの並びにある'
 }
 finally {
     $env:YAKULINGO_DATA_DIR = $oldData

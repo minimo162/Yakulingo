@@ -104,7 +104,7 @@ function Get-YakuSettingsSchema {
         # 正しくは ¥12.2 billion で、10倍の誤りである（2026-08-08 に実行して確認）。
         # 開示資料に10倍の数字が出るのは、訳の善し悪しの話ではない。
         #
-        # 換算はロードマップ第2段階（復元のときに表記ごとに書き分ける）で入れる。
+        # 換算は次の段階（復元のときに表記ごとに書き分ける）で入れる。
         # 入るまでは選択肢から外す。壊れた選択肢を残すほうが害が大きい。
         amount_notation                   = @{ Type='enum'; Default='oku'; Values=@('oku') }
         glossary_prompt_limit             = @{ Type='int';  Default=48; Min=1; Max=200 }
