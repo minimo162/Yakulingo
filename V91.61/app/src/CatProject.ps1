@@ -133,7 +133,9 @@ function Get-YakuCanonicalNumericFacts {
         elseif ([string]$descriptor.Currency -eq 'euro') { $category='currency:euro' }
         elseif ([string]$descriptor.Currency -eq 'pound') { $category='currency:pound' }
         elseif ($after -match '^\s*\)?\s*(?:%|％|percent\b|percentage\b)') { $category='ratio:percent' }
-        elseif ($after -match '(?i)^\s*\)?\s*(?:k\s+)?units?\b|^\s*\)?\s*(?:台|件|人|名|株|個|本|回|ポイント)') { $category='count' }
+        # units? も同じ理由で \b が使えない。「186 k unitsでした」のように
+        # 日本語が続くと境界ができないため、英数字が続かないことで判定する。
+        elseif ($after -match '(?i)^\s*\)?\s*(?:k\s+)?units?(?![A-Za-z0-9])|^\s*\)?\s*(?:台|件|人|名|株|個|本|回|ポイント)') { $category='count' }
         $negative = ($before -match '(?:[-−△▲]\s*|\(\s*)$')
         if ($negative -and $value -gt 0) { $value = -$value }
         $canonical = $value.ToString('0.############################', [Globalization.CultureInfo]::InvariantCulture)
@@ -443,9 +445,19 @@ function Invoke-YakuCatSegmentValidation {
             $normalizedSource = if ([string]$Project.Direction -eq 'to_en') { [string](Convert-YakuNumericUnits -Text $source -Location ('cat-review-' + [string]$Segment.SegmentId)).Text } else { $source }
             $audit = Test-YakuNumericIntegrity -SourceText $normalizedSource -TranslatedText $target -Location ('cat-review-' + [string]$Segment.SegmentId)
             if (-not [bool]$audit.Ok) { $findings.Add([pscustomobject]@{ Code='numeric-integrity'; Severity='error'; Detail=[string]$audit.Detail }) | Out-Null }
-            $sourceFacts = @(Get-YakuCanonicalNumericFacts -Text $source -Direction ([string]$Project.Direction) -Location ('cat-review-source-' + [string]$Segment.SegmentId))
-            $sourceValues = @($sourceFacts | ForEach-Object { [string]$_.Key })
+            # 突き合わせにも単位変換後の原文を使う。443行の $audit だけが変換を通っていて、
+            # ここが生の原文のままだった。そのため「1兆3,150億円」が 1 と 3,150 に割れ、
+            # アプリ自身が正しく換算した「13,150 oku」を、アプリ自身が
+            # numeric-value-mismatch と numeric-value-extra で拒否していた。
+            # 兆を含む金額は有報・短信で頻出し、その行は確認済みにできなかった。
             $targetDirection = if ([string]$Project.Direction -eq 'to_en') { 'to_jp' } else { 'to_en' }
+            # 単位変換は原文を訳文側の表記（13,150 oku）へ書き換える。だから分類も
+            # 訳文と同じ側で行う。原文側だけ日本語向けの分類にすると、同じ
+            # 「13,150 oku」が原文では number|13150、訳文では currency:yen|1315000000000 になり、
+            # 一致しなくなる。
+            $sourceFactsDirection = if ([string]$Project.Direction -eq 'to_en') { $targetDirection } else { [string]$Project.Direction }
+            $sourceFacts = @(Get-YakuCanonicalNumericFacts -Text $normalizedSource -Direction $sourceFactsDirection -Location ('cat-review-source-' + [string]$Segment.SegmentId))
+            $sourceValues = @($sourceFacts | ForEach-Object { [string]$_.Key })
             $targetFacts = @(Get-YakuCanonicalNumericFacts -Text $target -Direction $targetDirection -Location ('cat-review-target-' + [string]$Segment.SegmentId))
             $targetValues = @($targetFacts | ForEach-Object { [string]$_.Key })
             $remaining = New-Object System.Collections.Generic.List[string]

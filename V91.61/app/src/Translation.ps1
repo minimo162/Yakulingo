@@ -430,8 +430,15 @@ function Get-YakuNumericContextDescriptor {
     $join='[\s\-\u2010-\u2015]*'
     $scaleName='';[decimal]$scale=1
     $scaleMatch=$null
-    if($after -match ('(?i)^\s*\)?'+$join+'(?<scale>trillion|billion|million|thousand|oku|k(?=\s*(?:yen|units?)\b))\b')){$scaleMatch=$Matches['scale']}
-    elseif($after -match ('(?i)^\s*\)?'+$join+'(?<scale>oku)(?=\s|です|でした|[。、．,.]|$)')){$scaleMatch=$Matches['scale']}
+    # 「k yen」「k units」も日本語の文中へ差し込まれる（「18万6千台」→「186 k units」）。
+    # ここの \b も日本語との間に境界を作らないので、英数字が続かないことで判定する。
+    if($after -match ('(?i)^\s*\)?'+$join+'(?<scale>trillion|billion|million|thousand|oku|k(?=\s*(?:yen|units?)(?![A-Za-z0-9])))\b')){$scaleMatch=$Matches['scale']}
+    # 単位変換は日本語の文の中へ oku を差し込む（「1兆3,150億円」→「13,150 oku」）。
+    # \b は「oku」と日本語の間に境界を作らないので 433行では拾えない。
+    # 以前はここで「です・でした・句読点」を列挙していたが、「となりました」
+    # 「に達しました」などが漏れ、その行は確認済みにできなかった。
+    # 活用を列挙し切ることはできないので、「後ろが英数字でなければ単位」と規則にする。
+    elseif($after -match ('(?i)^\s*\)?'+$join+'(?<scale>oku)(?![A-Za-z0-9])')){$scaleMatch=$Matches['scale']}
     elseif($after -match ('^\s*\)?'+$join+'(?<scale>兆|億|百万|万|千|百)')){$scaleMatch=$Matches['scale']}
     if($null -ne $scaleMatch){
         $scaleName=[string]$scaleMatch

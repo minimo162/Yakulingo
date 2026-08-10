@@ -81,7 +81,7 @@
             <span id="cat-save-status" class="cat-save-status" role="status" aria-live="polite">保存済み</span>
           </div>
           <label class="cat-toolbar-search" for="cat-search"><span>検索</span><input id="cat-search" type="search" placeholder="原文・訳文を検索"></label>
-          <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">残りの訳案を作る</button><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みの行だけコピー</button><button id="cat-export" type="button">訳文を取り出す（確認画面が出ます）</button><button id="cat-switch-project" type="button" class="secondary-button">ほかの資料に切り替える</button></div>
+          <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">残りの訳案を作る</button><button id="cat-export" type="button">訳文を取り出す（確認画面が出ます）</button><details class="cat-more-actions"><summary>そのほか</summary><div class="cat-more-actions-list"><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みの行だけコピー</button><button id="cat-switch-project" type="button" class="secondary-button">ほかの資料に切り替える</button></div></details></div>
         </header>
 
         <div id="cat-status" class="cat-status muted" role="status" aria-live="polite" tabindex="-1"></div>
@@ -127,7 +127,7 @@
             </div>
             <section id="cat-panel-candidates" role="tabpanel" aria-labelledby="cat-tab-candidates"><div id="cat-candidates" class="cat-candidates">
               <section aria-labelledby="cat-terms-title"><div class="cat-candidates-title" id="cat-terms-title">この行で使う用語</div><div id="cat-terms-list"><p class="muted">行を選ぶと用語を探します。</p></div></section>
-              <section aria-labelledby="cat-segment-matches-title"><div class="cat-candidates-title" id="cat-segment-matches-title">似ている過去の訳</div><div id="cat-candidates-list"><p class="muted">行を選ぶと、これまでに確認した訳と、この作業へ読み込んだ前回の資料の訳から、似ているものを探します。</p></div></section>
+              <section aria-labelledby="cat-segment-matches-title"><div class="cat-candidates-title" id="cat-segment-matches-title">似ている過去の訳</div><div id="cat-candidates-list"><p class="muted">行を選ぶと、似た訳を探します。</p><details class="pane-note"><summary>どこから探しますか</summary><p class="muted">これまでに確認した訳と、この作業へ読み込んだ前回の資料の訳から探します。</p></details></div></section>
             </div></section>
             <section id="cat-panel-qc" role="tabpanel" aria-labelledby="cat-tab-qc" hidden><div id="cat-qc-list"></div><button id="cat-next-qc" type="button" class="secondary-button">点検の必要な次の行へ移る</button></section>
             <section id="cat-panel-context" role="tabpanel" aria-labelledby="cat-tab-context" hidden><div id="cat-context"></div></section>
