@@ -80,6 +80,27 @@
         : '残りの訳案を作る';
     }
   }
+  /* Copilot は3時間の窓で使える回数に上限がある（値は非公開）。押したあとに上限へ
+     当たると、そのバッチぶんの往復が無駄になる。サーバは以前から estimate で
+     「この操作で何回使うか」「直近3時間で何回使ったか」を返していたが、画面が
+     一度も呼んでいなかった。押す前に出す。 */
+  var usageSeq = 0;
+  function refreshCopilotUsage() {
+    var host = el('cat-copilot-usage');
+    if (!host) return;
+    var scope = currentScope();
+    if (!scope || !project || Number(project.untranslated) <= 0) { host.hidden = true; return; }
+    var seq = ++usageSeq;
+    return YakuCommon.post('/api/cat/estimate', { id: scope.id }).then(function (data) {
+      if (seq !== usageSeq || !scopeIsCurrent(scope, true)) return;
+      var calls = Number(data && data.estimated_calls) || 0;
+      var recent = Number(data && data.calls_last_3h) || 0;
+      if (calls <= 0) { host.hidden = true; return; }
+      host.textContent = 'この操作でCopilotを約' + calls + '回使います（直近3時間で' + recent + '回）';
+      host.hidden = false;
+    }).catch(function () { if (seq === usageSeq) host.hidden = true; });
+  }
+
   function setBusy(value) {
     busy = value;
     updateActionLabels();
@@ -331,7 +352,7 @@
     el('cat-output-help').textContent = draft ? '作成するファイルは確認作業用です。完成版・外部公表可能資料ではありません。ファイル名と文書内にDRAFTを表示します。' : '';
     el('cat-export').textContent = isFile ? (project.document_format === 'docx' && wordReady ? '社内確認用のWordを作る' : project.document_format === 'docx' ? '確認済み訳文をコピー' : '社内確認用のExcelを作る') : '確認済み訳文をコピー';
     el('cat-export-blocked').textContent = outputGuidance();
-    saveStatus('保存済み', false); setBusy(false);
+    saveStatus('保存済み', false); setBusy(false); refreshCopilotUsage();
     status((project.file_name || '資料') + '・訳あり' + project.translated + '行・残り' + project.remaining + '行');
     if (focusFirst) window.setTimeout(function () { var first = document.querySelector('.is-active [data-cat-input]') || document.querySelector('[data-cat-input]'); YakuCommon.focus(first); }, 0);
   }

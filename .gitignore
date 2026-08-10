@@ -9,3 +9,10 @@ manifest.json
 *.log
 *.tmp
 ~$*
+# 実資料は追跡しない。検証用に置くだけで、リポジトリへ入れない。
+_docs/*.pdf
+_docs/*.xlsx
+_docs/*.docx
+_docs/*.pptx
+output/
+tmp/

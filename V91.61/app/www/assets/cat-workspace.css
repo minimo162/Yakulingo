@@ -653,3 +653,12 @@
 .cat-grid tbody tr[data-cat-confirmed="1"]:not(.is-active) .cat-col-loc {
   color: var(--faint);
 }
+
+/* 押す前に見える位置に置く。警告ではないので色は付けない。ボタンの隣で、
+   ボタンより弱く。 */
+.cat-copilot-usage {
+  align-self: center;
+  color: var(--muted);
+  font-size: var(--font-meta);
+  text-align: right;
+}
