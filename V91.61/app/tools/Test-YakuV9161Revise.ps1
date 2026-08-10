@@ -130,6 +130,18 @@ $appJs = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'asset
 Chk ($appJs.Contains("mode: 'revise'") -and $appJs.Contains('data-cat-revise')) '資料翻訳の現在行から修正を依頼できる'
 Chk (-not $appJs.Contains('data-yaku-current')) 'ブラウザー属性へ現訳を複製せず、保存済みproject revisionを使う'
 
+# 和訳の修正・短くする。ここは prompt 生成だけでなく、その先の解析呼び出しまで
+# 通らないと壊れる。実機で「パラメーター 'Mode の引数を確認できません」が
+# 画面に出た（to_jp のとき Mode に空文字を渡し ValidateSet で弾かれていた）。
+# Copilot 往復なしで守れるのはここまで。
+$revisionSource = [IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Translation.ps1'))
+Chk ($revisionSource -notmatch "\`$mode = if \(\`$Direction -eq 'to_en'\) \{ \`$Style \} else \{ '' \}") '和訳の修正で空の Mode を渡さない'
+Chk ([bool](Get-YakuTextRequiredLabels -Direction 'to_jp' -Mode 'full')) '和訳は Mode=full を受け付ける'
+Chk ((Get-YakuTextRequiredLabels -Direction 'to_jp' -Mode 'full') -contains 'JAPANESE_TEXT') '和訳のラベルは JAPANESE_TEXT'
+$modeRejected = $false
+try { $null = Get-YakuTextRequiredLabels -Direction 'to_jp' -Mode '' } catch { $modeRejected = $true }
+Chk $modeRejected '空の Mode は今も弾かれる（だから空を渡してはいけない）'
+
 if ($script:fail -gt 0) {
     Write-Host "V91.61 revise regression failed. failures=$script:fail" -ForegroundColor Red
     exit 1
