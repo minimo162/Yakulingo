@@ -7,7 +7,10 @@
      固定220+380では、1240のウィンドウで主役が半分を切っていた。 */
   /* 脇役の2ペインで窓の39%を使い、原文と訳文が39%しか残っていなかった。
      MateCat は原文・訳文に45%ずつ割いている。器を詰めて主役へ回す。 */
-  --pane-nav: clamp(9rem, 11vw, 11.5rem);
+  /* 左ナビの幅は、いちばん長い絞り込みラベルが1行に収まるかで決まる。
+     「点検で気になる点」は実測119pxで、詰めた幅には収まらず3行に折り返していた。
+     ラベルを「点検の指摘」（実測74px）に縮めて、幅は主役へ回す。全文は title に置く。 */
+  --pane-nav: clamp(11rem, 13vw, 13rem);
   --pane-inspector: clamp(15rem, 19vw, 20rem);
 }
 
@@ -47,12 +50,24 @@
   min-width: 0;
 }
 
+/* 資料名と訳す向きは1行に並べる。別々の行にすると、器であるツールバーが
+   窓の18%（実測159px）を占め、そのぶん一覧の行数が減る。 */
 .cat-toolbar-document strong,
 .cat-toolbar-document span {
-  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.cat-toolbar-document {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-1);
+}
+
+.cat-toolbar-document .cat-current-kicker {
+  flex-basis: 100%;
 }
 
 .cat-toolbar-search {
@@ -314,15 +329,16 @@
   position: sticky;
   top: 0;
   z-index: 2;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  display: flex;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
 
 .app-cat .cat-inspector-pane .cat-inspector-tabs button {
+  flex: 1 1 auto;
+  min-width: 0;
   min-height: 46px;
-  padding: 6px;
+  padding: 6px 4px;
   border: 0;
   border-bottom: 3px solid transparent;
   border-radius: 0;

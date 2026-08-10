@@ -95,7 +95,7 @@
                 <button type="button" data-cat-filter="actionable" aria-pressed="true">要対応 <span data-cat-count="actionable">0</span></button>
                 <button type="button" data-cat-filter="untranslated" aria-pressed="false">未翻訳 <span data-cat-count="untranslated">0</span></button>
                 <button type="button" data-cat-filter="unconfirmed" aria-pressed="false">未確認 <span data-cat-count="unconfirmed">0</span></button>
-                <button type="button" data-cat-filter="qc" aria-pressed="false">点検で気になる点 <span data-cat-count="qc">0</span></button>
+                <button type="button" data-cat-filter="qc" aria-pressed="false" title="数字の自動点検で気になる点が見つかった行だけを表示します">点検の指摘 <span data-cat-count="qc">0</span></button>
                 <button type="button" data-cat-filter="reviewed" aria-pressed="false">確認済み <span data-cat-count="reviewed">0</span></button>
                 <button type="button" data-cat-filter="all" aria-pressed="false">すべて <span data-cat-count="all">0</span></button>
               </div>
@@ -122,8 +122,8 @@
 
           <aside id="cat-inspector-pane" class="cat-inspector-pane" aria-label="選択中の行の情報">
             <div class="cat-inspector-tabs" role="tablist" aria-label="行の参考情報">
-              <button id="cat-tab-candidates" type="button" role="tab" aria-selected="true" aria-controls="cat-panel-candidates" data-cat-inspector="candidates">用語・参考訳 <span id="cat-candidate-count">0</span></button>
-              <button id="cat-tab-qc" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-qc" data-cat-inspector="qc">数字の自動点検 <span id="cat-qc-count">0</span></button>
+              <button id="cat-tab-candidates" type="button" role="tab" aria-selected="true" aria-controls="cat-panel-candidates" data-cat-inspector="candidates" title="この行で使う登録用語と、似ている過去の訳">用語・参考訳 <span id="cat-candidate-count">0</span></button>
+              <button id="cat-tab-qc" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-qc" data-cat-inspector="qc" title="原文と訳文で、数字・単位・符号が食い違っていないかを自動で点検した結果">数字の点検 <span id="cat-qc-count">0</span></button>
               <button id="cat-tab-context" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-context" data-cat-inspector="context">文脈</button>
             </div>
             <section id="cat-panel-candidates" role="tabpanel" aria-labelledby="cat-tab-candidates"><div id="cat-candidates" class="cat-candidates">
