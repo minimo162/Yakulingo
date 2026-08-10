@@ -207,7 +207,7 @@ function Convert-YakuTextResultToHtml {
         $style = ''
         try { $style = [string]$opt.Style } catch { $style = '' }
         if ($style -ne 'brief') { $style = 'full' }
-        if ($style -eq 'full') { $title = '標準訳案（AI訳・未確認）' }
+        if ($style -eq 'full') { $title = '標準訳案（Copilot訳・未確認）' }
         $masked = [string]$opt.Translation
         try { if (-not [string]::IsNullOrEmpty([string]$opt.MaskedTranslation)) { $masked = [string]$opt.MaskedTranslation } } catch {}
         # 修正指示のフォームは置かない。「すぐ訳す」は貼って押してコピーする

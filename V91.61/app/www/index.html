@@ -17,13 +17,18 @@
       <div class="brand-block"><p class="brand">YakuLingo</p><span class="version-label">翻訳</span></div>
       <div class="header-actions">
         <button id="text-size-toggle" type="button" class="secondary-button compact" aria-pressed="false">文字を大きく</button>
-        <div id="copilot-status" class="status" aria-live="polite"><span class="status-dot warn"></span><span>準備中</span></div>
+        <div class="status-block"><div id="copilot-status" class="status" aria-live="polite"><span class="status-dot warn"></span><span>準備しています</span></div><p id="copilot-status-detail" class="status-detail" role="status" aria-live="polite" hidden></p></div>
       </div>
     </header>
 
     <section class="home-intro" aria-labelledby="home-title">
       <h1 id="home-title">何を訳しますか</h1>
-      <p class="muted">短い文章はその場で訳せます。Word・Excelや長い資料は、途中保存しながら1文ずつ確認できます。</p>
+      <p class="muted">日本語と英語を、Microsoft 365 Copilotで訳します。短い文章はその場で、Word・Excelや長い資料は途中保存しながら1文ずつ確認できます。</p>
+    </section>
+
+    <section id="home-resume" class="home-resume" aria-labelledby="home-resume-title" hidden>
+      <h2 id="home-resume-title">続きから</h2>
+      <div id="home-resume-list" class="home-resume-list"></div>
     </section>
 
     <div class="home-choice-grid">
@@ -36,7 +41,7 @@
       <a class="home-choice-card" href="/cat" id="open-cat">
         <span class="home-choice-kicker">Word・Excel・長い文章</span>
         <strong>資料翻訳</strong>
-        <span>訳案を1文ずつ確認し、作業を保存します。Word・Excelは確認用DRAFTを作れます。</span>
+        <span>訳案を1文ずつ確認し、途中まででも作業を保存します。Word・Excelは、社内確認用のファイルを作れます。</span>
         <span class="home-choice-action">資料を取り込む・続きを開く</span>
       </a>
     </div>

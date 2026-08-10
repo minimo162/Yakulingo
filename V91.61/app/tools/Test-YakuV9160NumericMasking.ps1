@@ -28,7 +28,7 @@ function Assert-YakuMask {
     else { Write-Host ('  FAIL ' + $Message) -ForegroundColor Red; $script:Failures++ }
 }
 
-foreach ($name in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','ProperNoun.ps1','Translation.ps1','FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1','BriefStyle.ps1','CatProject.ps1')) {
+foreach ($name in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1','BriefStyle.ps1','CatProject.ps1')) {
     . (Join-Path (Join-Path $root 'src') $name)
 }
 
@@ -655,7 +655,7 @@ foreach ($srcFile in @(Get-ChildItem -LiteralPath (Join-Path $root 'src') -Filte
 # V91.61: Alignment.ps1 が加わる。日英の対を Copilot に取らせる経路で、
 # 原文を外部へ送る点は翻訳と同じ。こちらは値を戻さない非可逆マスクを使う
 # （返るのは行番号だけで復元が要らないため、安全側に倒せる）。
-$outside = @($callSites | Where-Object { $_ -notin @('CopilotClient.ps1','ProperNoun.ps1','Translation.ps1','CatBatch.ps1','CorpusReference.ps1','Alignment.ps1') })
+$outside = @($callSites | Where-Object { $_ -notin @('CopilotClient.ps1','Translation.ps1','CatBatch.ps1','CorpusReference.ps1','Alignment.ps1') })
 Assert-YakuMask ($outside.Count -eq 0) ("翻訳経路の外から呼ばれていない: " + (@($outside | Select-Object -Unique) -join ','))
 
 # 許可しただけでは統制にならない。Alignment.ps1 が実際にマスクを通してから
@@ -738,7 +738,7 @@ $sendingPaths = @(
     @{ File = 'Server.ps1';          Numeric = 'Protect-YakuCatItems' }
 )
 # 中継そのもの。CatBatch は専用入口を通ったことを内部でも検査する。
-$transportOnly = @('CopilotClient.ps1', 'ProperNoun.ps1', 'CatBatch.ps1')
+$transportOnly = @('CopilotClient.ps1',  'CatBatch.ps1')
 
 $listed = @(@($sendingPaths | ForEach-Object { [string]$_.File }) + $transportOnly)
 $unlisted = @(@($callSites | Select-Object -Unique) | Where-Object { $_ -notin $listed })

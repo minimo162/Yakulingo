@@ -87,15 +87,34 @@
     node.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'center' });
   }
 
-  function setStatus(label, klass) {
+  /* detail には「EdgeのCopilot画面でログインが済んでいるかご確認ください」のような
+     利用者が実際に取るべき行動が入っている。label だけ出していたので一度も見えていなかった。
+     ただし準備完了時の detail はURLなので出さない。 */
+  function setStatus(label, klass, detail) {
     var root = document.getElementById('copilot-status');
     if (!root) return;
-    root.innerHTML = '<span class="status-dot ' + escapeHtml(klass || 'idle') + '"></span><span>' + escapeHtml(label || '') + '</span>';
+    var html = '<span class="status-dot ' + escapeHtml(klass || 'idle') + '"></span><span>' + escapeHtml(label || '') + '</span>';
+    root.innerHTML = html;
+    var hint = document.getElementById('copilot-status-detail');
+    if (hint) {
+      hint.textContent = detail || '';
+      hint.hidden = !detail;
+    }
+  }
+
+  function readableDetail(data) {
+    if (!data || data.canTranslate) return '';
+    var detail = String(data.detail || '').trim();
+    if (!detail) return '';
+    /* 英語のまま、あるいはURLや内部の記録は出さない。 */
+    if (/^https?:/i.test(detail)) return '';
+    if (!/[ぁ-んァ-ヶ一-龥]/.test(detail)) return '';
+    return detail;
   }
 
   function announceReady(data) {
     ready = !!(data && data.canTranslate);
-    setStatus(data && data.label ? data.label : (ready ? '準備完了' : '準備中'), data && data.class ? data.class : (ready ? 'ok' : 'warn'));
+    setStatus(data && data.label ? data.label : (ready ? '使えます' : '準備しています'), data && data.class ? data.class : (ready ? 'ok' : 'warn'), readableDetail(data));
     readyListeners.forEach(function (listener) { try { listener(ready, data || {}); } catch (_) {} });
   }
 
@@ -106,7 +125,7 @@
       readyTimer = window.setTimeout(pollReady, ready ? 5000 : 1500);
     }).catch(function () {
       ready = false;
-      setStatus('接続を確認中', 'warn');
+      setStatus('つながるのを待っています', 'warn', '');
       readyTimer = window.setTimeout(pollReady, 2500);
     });
   }
@@ -124,6 +143,8 @@
       button.textContent = large ? '文字を標準に戻す' : '文字を大きく';
     }
     try { localStorage.setItem('yaku-text-size', large ? 'large' : 'normal'); } catch (_) {}
+    /* 文字を大きくすると、固定ヘッダの高さも変わる。追随したい側へ知らせる。 */
+    try { document.dispatchEvent(new Event('yaku-text-size-changed')); } catch (_) {}
   }
 
   function bindTextSize() {
@@ -155,7 +176,7 @@
   }
 
   function notifyDesktopShell(type) {
-    if (type !== 'desktop-preferences-changed' && type !== 'desktop-preferences-error') return;
+    if (type !== 'desktop-preferences-changed' && type !== 'desktop-preferences-error' && type !== 'translation-finished') return;
     try {
       if (window.chrome && window.chrome.webview && typeof window.chrome.webview.postMessage === 'function') {
         window.chrome.webview.postMessage({ type: type });

@@ -6,7 +6,7 @@ $toolsRoot=Split-Path -Parent $MyInvocation.MyCommand.Path
 $root=Split-Path -Parent $toolsRoot
 $script:failed=0
 function Check-YakuWord { param([bool]$Condition,[string]$Message) if($Condition){Write-Host ('  ok   '+$Message) -ForegroundColor Green}else{Write-Host ('  FAIL '+$Message) -ForegroundColor Red;$script:failed++} }
-foreach($name in @('Paths.ps1','Runtime.ps1','Settings.ps1','PromptBuilder.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1','ProperNoun.ps1','CellSegments.ps1','CellAlign.ps1','WordAdapter.ps1','CatProject.ps1')){. (Join-Path (Join-Path $root 'src') $name)}
+foreach($name in @('Paths.ps1','Runtime.ps1','Settings.ps1','PromptBuilder.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1','CellSegments.ps1','CellAlign.ps1','WordAdapter.ps1','CatProject.ps1')){. (Join-Path (Join-Path $root 'src') $name)}
 $tempRoot=Join-Path ([IO.Path]::GetTempPath()) ('yaku-word-'+[guid]::NewGuid().ToString('N'))
 $null=New-Item -ItemType Directory -Path $tempRoot -Force
 function Get-YakuCatProjectStoreDir { return (Join-Path $tempRoot 'cat') }

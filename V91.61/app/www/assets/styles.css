@@ -8,10 +8,16 @@
   --faint: #686a73;
   --line: #e8e8ec;
   --line-strong: #d9d9e0;
-  --accent: #5E6AD2;
-  --accent-hover: #505cc7;
-  --accent-soft: rgba(94,106,210,.08);
-  --focus: #5E6AD2;
+  /* 文字色に使う accent は、白地でも accent-soft の上でも WCAG AA(4.5:1) を満たす
+     必要がある。旧 #5E6AD2 は白地 4.70:1、accent-soft 上 4.25:1 で後者が落ちていた。
+     面（塗り）用と文字用を分ける。 */
+  --accent: #4550B8;
+  --accent-hover: #38429c;
+  --accent-text: #343DA0;
+  --accent-soft: rgba(69,80,184,.08);
+  --focus: #4550B8;
+  --surface-subtle: #f4f4f6;
+  --danger: #b42318;
   --success: #0f7b55;
   --warning: #a15c00;
   --error: #b42318;
@@ -26,18 +32,16 @@
   --motion: 140ms;
   --ease: cubic-bezier(.25,.46,.45,.94);
   --shadow-card: 0 1px 2px rgba(16,24,40,.04);
-  --font-ui: 17px;
-  --font-input: 18px;
-  --font-meta: 15px;
-  --font-body: 17px;
+  /* 文字の大きさは rem で組む。「文字を大きく」は html の font-size を動かすので、
+     px で書いた場所だけが取り残される事故が起きない。既定 17px、拡大時 21px。 */
+  --font-ui: 1rem;
+  --font-input: 1.06rem;
+  --font-meta: .88rem;
+  --font-body: 1rem;
 }
 
-:root[data-yaku-text-size="large"] {
-  --font-ui: 19px;
-  --font-input: 20px;
-  --font-meta: 17px;
-  --font-body: 19px;
-}
+html { font-size: 17px; }
+:root[data-yaku-text-size="large"] { font-size: 21px; }
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -59,20 +63,25 @@ a { color: inherit; }
 .hero { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: 16px 0; border-bottom: 1px solid var(--line); }
 .header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }
 .brand-block { display: flex; align-items: baseline; gap: 10px; }
-.brand { margin: 0; font-size: var(--font-ui); font-weight: 600; letter-spacing: -.01em; }
+.brand { margin: 0; font-size: var(--font-ui); font-weight: 700; }
 .version-label { color: var(--faint); font-size: var(--font-meta); }
-.status { display: inline-flex; align-items: center; gap: 7px; min-height: 20px; color: var(--muted); font-size: var(--font-meta); line-height: 1; white-space: nowrap; }
-.status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); display: inline-block; flex: 0 0 auto; }
+.status { display: inline-flex; align-items: center; gap: 8px; min-height: 24px; color: var(--text); font-size: var(--font-meta); line-height: 1.4; }
+.status-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--faint); display: inline-block; flex: 0 0 auto; }
 .status-dot.ok { background: var(--success); }
 .status-dot.warn { background: var(--warning); }
 .status-dot.idle { background: var(--faint); }
+.status-block { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; min-width: 0; }
+/* 「EdgeのCopilot画面でログインが済んでいるかご確認ください」のように、
+   利用者が実際にやることが入る行。準備が終われば消える。 */
+.status-detail { max-width: 34em; margin: 0; color: var(--text); font-size: var(--font-meta); line-height: 1.6; text-align: right; }
 
 .tab-panel { margin-top: var(--space-5); opacity: 1; transition: opacity var(--motion) var(--ease); }
 .tab-panel[hidden] { opacity: 0; }
 .section-title-row { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-3); }
-h1 { margin: 0; font-size: calc(var(--font-ui) + 7px); line-height: 1.35; font-weight: 700; letter-spacing: -.01em; }
+h1 { margin: 0; font-size: calc(var(--font-ui) + 7px); line-height: 1.35; font-weight: 700; }
 h2 { margin: 0; font-size: calc(var(--font-ui) + 2px); line-height: 1.4; font-weight: 700; }
-h3 { margin: 0; font-size: var(--font-meta); font-weight: 600; }
+/* h3 が本文より小さいと、画面の構造が読み取れなくなる。必ず本文より大きくする。 */
+h3 { margin: 0; font-size: calc(var(--font-ui) + 1px); line-height: 1.45; font-weight: 700; }
 .muted, .hint, .result-subtitle { color: var(--muted); }
 .section-title-row .muted { margin: 6px 0 0; font-size: var(--font-meta); }
 
@@ -104,38 +113,42 @@ textarea:focus, input:focus, select:focus { background: var(--surface); box-shad
 .past-pair { padding: 0 16px 14px 16px; }
 .past-pair + .past-pair { border-top: 1px solid var(--line); padding-top: 14px; }
 .past-pair-head { margin: 0 0 6px 0; color: var(--muted); font-size: var(--font-meta); }
-.past-pair-ja { margin: 0 0 6px 0; font-size: 16px; line-height: 1.7; }
-.past-pair-en { margin: 0; font-size: 16px; line-height: 1.7; color: var(--accent); }
+.past-pair-ja { margin: 0 0 6px 0; font-size: var(--font-body); line-height: 1.7; }
+.past-pair-en { margin: 0; font-size: var(--font-body); line-height: 1.7; color: var(--accent-text); }
 
 /* 行の頭に置く見出し。これがあると label:first-child が効かなくなるので、
    左端の丸めをこちらで持つ。 */
 .direction-row .row-label { color: var(--muted); font-size: var(--font-meta); margin-right: 10px; }
 .direction-row .row-label + label span { border-radius: 8px 0 0 8px; }
-.direction-row input:checked + span { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); font-weight: 700; z-index: 1; }
+.direction-row input:checked + span { background: var(--accent-soft); color: var(--accent-text); border-color: var(--accent); font-weight: 700; z-index: 1; }
 .direction-row input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; z-index: 2; }
 .file-direction-row { margin-top: 0; }
-.direction-warning { margin-left: 8px; color: #a15c00; font-size: 16px; }
+.direction-warning { margin-left: 8px; color: var(--warning); font-size: var(--font-body); }
 .direction-summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 12px; padding: 12px 14px; border: 1px solid #c8d6f0; border-radius: var(--radius-control); background: #f5f8ff; }
 .direction-summary > div { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
 .direction-summary strong { color: #17366f; font-size: var(--font-body); }
 .direction-choice { margin-top: 12px; padding: 16px; border: 2px solid var(--accent); border-radius: var(--radius-card); background: #f8faff; }
-.direction-choice h2 { margin: 0 0 6px; font-size: 19px; }
+.direction-choice h2 { margin: 0 0 6px; font-size: calc(var(--font-ui) + 2px); }
 .direction-choice p { margin: 0 0 12px; color: var(--muted); }
 .direction-choice-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .direction-choice-actions button { display: flex; min-height: 64px; flex-direction: column; align-items: flex-start; justify-content: center; text-align: left; }
 .direction-choice-actions button span { margin-top: 2px; font-size: var(--font-meta); font-weight: 400; }
 .meta-separator { color: var(--faint); }
-kbd { border: 1px solid var(--line-strong); border-bottom-color: #c9cad2; border-radius: 4px; padding: 1px 5px; background: var(--surface); color: var(--muted); font-size: calc(var(--font-meta) - 2px); font-family: inherit; }
+kbd { border: 1px solid var(--line-strong); border-bottom-color: #c9cad2; border-radius: 4px; padding: 2px 7px; background: var(--surface); color: var(--text); font-size: var(--font-meta); font-family: inherit; }
 .command-bar { display: flex; justify-content: flex-end; gap: 10px; margin-top: var(--space-2); }
 button, .button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: var(--radius-control); border: 1px solid transparent; padding: 7px 16px; font-size: var(--font-ui); font-weight: 600; text-decoration: none; transition: background var(--motion) var(--ease), border-color var(--motion) var(--ease), transform var(--motion) var(--ease), color var(--motion) var(--ease); }
-button:not(.secondary-button):not(.tab-button):not(.file-clear-button), .button { background: var(--accent); border-color: var(--accent); color: #fff; }
-button:not(.secondary-button):not(.tab-button):not(.file-clear-button):hover, .button:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
-button:active, .button:active { transform: translateY(.5px); }
-button[disabled] { cursor: not-allowed; opacity: .52; }
+button:not(.secondary-button):not(.tab-button):not(.file-clear-button):not([disabled]), .button:not([disabled]) { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:not(.secondary-button):not(.tab-button):not(.file-clear-button):not([disabled]):hover, .button:not([disabled]):hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+button:not([disabled]):active, .button:not([disabled]):active { transform: translateY(.5px); }
+/* 無効ボタンを opacity で薄くすると、主ボタンの白文字が背景に溶けて 2.1:1 まで落ちる。
+   「文章を入力してください」のような操作指示そのものが読めなくなるので、実色で塗る。
+   塗りの規則側から [disabled] を除かないと、詳細度で負けてここが効かない。 */
+button[disabled], .button[disabled] { cursor: not-allowed; opacity: 1; background: #e4e4e9; border-color: #c2c3cc; color: #3c3d45; }
 .secondary-button { background: transparent; border: 1px solid var(--line-strong); color: var(--text); }
 .secondary-button:hover { background: var(--soft); }
 .secondary-button.compact { min-height: 44px; padding: 6px 12px; font-size: var(--font-meta); }
-button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* label[tabindex] のファイル選択領域も対象に含める。2px は老眼だと見落とす。 */
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, label:focus-visible, [tabindex]:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 
 .startup-message { margin-top: var(--space-2); padding: 12px 14px; color: var(--muted); font-size: var(--font-meta); }
 .entry-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: var(--space-2); }
@@ -149,7 +162,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .file-grid { display: block; }
 .file-form { display: grid; gap: var(--space-2); }
 .file-drop { display: grid; place-items: center; min-height: 104px; border: 1px dashed var(--line-strong); border-radius: var(--radius-card); background: transparent; color: var(--muted); text-align: center; padding: 20px; transition: border-color var(--motion) var(--ease), background var(--motion) var(--ease); }
-.file-drop:hover, .file-drop.dragover, .file-drop:focus-visible { border-color: var(--accent); background: var(--accent-soft); outline: 3px solid rgba(79,70,229,.2); outline-offset: 2px; }
+.file-drop:hover, .file-drop.dragover { border-color: var(--accent); background: var(--accent-soft); }
+.file-drop:focus-visible { border-color: var(--accent); background: var(--accent-soft); outline: 3px solid var(--focus); outline-offset: 2px; }
 .file-drop-title { font-size: var(--font-meta); color: var(--muted); }
 #file-name { margin-top: 4px; font-size: var(--font-meta); }
 .file-selected-row { display: flex; align-items: center; gap: 10px; min-height: 34px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--soft); padding: 0 10px; }
@@ -163,7 +177,6 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .file-command-bar { margin-top: 0; }
 .file-meta { font-size: var(--font-meta); }
 .file-info-list { margin: 8px 0 0 18px; padding: 0; color: var(--muted); font-size: var(--font-meta); }
-.alert-inline { color: var(--error); }
 
 .shared-result-section { margin-top: var(--space-5); }
 .result-target { min-height: 28px; }
@@ -171,10 +184,16 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .job-loading { padding: 20px 24px; }
 .job-loading-inner { display: grid; gap: 10px; }
 .job-topline, .job-bottomline { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
-.job-phase { color: var(--text); font-size: var(--font-ui); font-weight: 600; }
-.job-percent { color: var(--muted); font-size: var(--font-meta); font-variant-numeric: tabular-nums; }
-.job-meta { color: var(--muted); font-size: var(--font-meta); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.job-progress-line { position: relative; width: 100%; height: 2px; overflow: hidden; border-radius: 999px; background: var(--soft); }
+.job-phase { color: var(--text); font-size: calc(var(--font-ui) + 2px); font-weight: 700; }
+.job-percent { color: var(--text); font-size: calc(var(--font-ui) + 2px); font-weight: 700; font-variant-numeric: tabular-nums; }
+/* 「12回のうち3回目を翻訳中。残り20〜30分ほどです」が入る行。
+   数十分のあいだ利用者が見つづける唯一の行なので、折り返して全部見せる。 */
+.job-meta { color: var(--text); font-size: var(--font-body); line-height: 1.7; min-width: 0; max-width: 42em; }
+.job-bottomline { align-items: flex-start; }
+.job-cancel { flex: 0 0 auto; }
+.job-elapsed { color: var(--muted); font-size: var(--font-meta); font-variant-numeric: tabular-nums; }
+/* 数十分待つ画面で唯一動くもの。2px では動いているかどうかが分からない。 */
+.job-progress-line { position: relative; width: 100%; height: 10px; overflow: hidden; border-radius: 999px; background: var(--line); border: 1px solid var(--line-strong); }
 .job-progress-bar { position: absolute; inset: 0 auto 0 0; width: 0%; background: var(--accent); transition: width 300ms linear; }
 
 .result-stack { display: grid; gap: var(--space-2); }
@@ -185,20 +204,20 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 /* 訳文は画面でいちばん読まれる場所なので、いちばん大きくする。
    老眼でも読める大きさ（18px）と、目が行を追いやすい行間（1.8）にする。
    大きすぎると1行に入る語が減って読みにくくなるので、幅も制限する。 */
-.translation { margin: 0; white-space: pre-wrap; font-size: 18px; line-height: 1.8; font-family: inherit; color: var(--text); background: var(--soft); border-radius: var(--radius-control); padding: 18px 20px; max-width: 62ch; }
+.translation { margin: 0; white-space: pre-wrap; font-size: var(--font-input); line-height: 1.85; font-family: inherit; color: var(--text); background: var(--soft); border-radius: var(--radius-control); padding: 18px 20px; max-width: 62ch; }
 /* 主の訳。カードの中で最初に目に入る位置に置く。 */
 [data-yaku-main-card] { padding: 22px 24px; }
 .result-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
-.result-kind { color: var(--muted); font-size: 14px; font-weight: 600; }
-/* 添え物。主より小さくするが、13px より下げない。読めないと選べない。 */
+.result-kind { color: var(--muted); font-size: var(--font-meta); font-weight: 600; }
+/* 添え物。主より小さくするが、読めないと選べないので --font-meta を下回らせない。 */
 .result-alts { margin-top: 14px; }
-.result-alts-lead { margin: 0 0 8px; color: var(--muted); font-size: 14px; }
+.result-alts-lead { margin: 0 0 8px; color: var(--muted); font-size: var(--font-meta); }
 .result-alts-list { display: grid; gap: 8px; }
 .result-alt { display: block; width: 100%; text-align: left; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); cursor: pointer; min-height: 0; }
 .result-alt:hover { border-color: var(--line-strong); background: var(--soft); }
-.result-alt-head { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.result-alt-head { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: var(--font-meta); font-weight: 600; margin-bottom: 4px; }
 .result-alt-chars { color: var(--faint); font-weight: 400; font-variant-numeric: tabular-nums; }
-.result-alt-body { display: block; color: var(--text); font-size: 15px; line-height: 1.6; font-weight: 400; }
+.result-alt-body { display: block; color: var(--text); font-size: var(--font-body); line-height: 1.7; font-weight: 400; }
 /* CAT: 原文と訳文を並べて確認する */
 .cat-source-row { display: grid; gap: var(--space-2); margin-bottom: var(--space-2); }
 .cat-direction { display: flex; gap: 16px; align-items: center; }
@@ -214,7 +233,7 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .cat-open-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
 .cat-handoff { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: var(--space-2); font-size: var(--font-meta); }
 .cat-corpus-panel { margin-bottom: var(--space-2); }
-.cat-corpus-list { display: grid; gap: 8px; margin-top: 8px; max-height: 30vh; overflow: auto; }
+.cat-corpus-list { display: grid; gap: 8px; margin-top: 8px; max-height: max(30vh, 18rem); overflow: auto; }
 .cat-corpus-item { border-left: 2px solid var(--line-strong); padding-left: 10px; font-size: var(--font-meta); }
 .cat-corpus-where { color: var(--muted); }
 .cat-filter-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin-bottom: var(--space-2); font-size: var(--font-meta); }
@@ -222,7 +241,7 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .cat-search-label { display: flex; gap: 6px; align-items: center; }
 .cat-search-label input { min-width: 220px; }
 .cat-grid-wrap { max-height: 60vh; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-control); }
-.cat-grid { width: 100%; border-collapse: collapse; font-size: 16px; }
+.cat-grid { width: 100%; border-collapse: collapse; font-size: var(--font-body); }
 .cat-grid thead th { position: sticky; top: 0; z-index: 1; background: var(--surface); border-bottom: 1px solid var(--line-strong); padding: 8px 10px; text-align: left; }
 .cat-grid td { border-bottom: 1px solid var(--line); padding: 6px 10px; vertical-align: top; }
 .cat-col-no { width: 46px; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -241,10 +260,19 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .cat-row-actions { display: flex; gap: 4px; margin-top: 4px; }
 .cat-op-ok { font-weight: 700; }
 .cat-confirmed { margin-left: 4px; color: var(--accent); font-weight: 700; }
-/* 保存できなかった行。黙って消えるより、目に見えて残るほうがよい。 */
-.cat-unsaved > td { background: color-mix(in srgb, var(--bg) 82%, #d33 18%); }
-.cat-dirty > td { background: color-mix(in srgb, var(--bg) 92%, #d89b00 8%); }
-.cat-qc-findings { margin-top: .45rem; padding: .45rem .6rem; border-left: 3px solid #b42318; background: #fff0ee; color: #7a271a; font-size: .86rem; line-height: 1.4; }
+/* 保存できなかった行。黙って消えるより、目に見えて残るほうがよい。
+   色だけで示すと、通常行との差が 1.4:1 しかなく老眼では見えない。
+   文字と枠線を必ず添える。これを見落とすと訳した内容がそのまま消える。 */
+.cat-unsaved > td { background: #fdeceb; }
+.cat-unsaved { outline: 3px solid var(--error); outline-offset: -3px; }
+.cat-dirty > td { background: #fdf6e3; }
+.cat-row-flag { display: none; margin-top: 6px; border-radius: 999px; padding: 3px 9px; font-size: var(--font-meta); font-weight: 700; }
+.cat-dirty .cat-row-flag { display: inline-block; background: #7a4f00; color: #fff; }
+.cat-dirty .cat-row-flag::before { content: "● まだ保存していません"; }
+/* 保存失敗は編集中より重い。あとに置いて必ず優先させる。 */
+.cat-unsaved .cat-row-flag { display: inline-block; background: var(--error); color: #fff; }
+.cat-unsaved .cat-row-flag::before { content: "⚠ 保存できませんでした"; }
+.cat-qc-findings { margin-top: .45rem; padding: .5rem .7rem; border-left: 4px solid var(--error); background: #fff0ee; color: #7a271a; line-height: 1.7; }
 .unit-toggle { margin: 6px 0 0; }
 .result-danger { margin: 0 0 8px; padding: 8px 10px; border-radius: 6px; background: color-mix(in srgb, var(--bg) 80%, #d33 20%); font-weight: 600; }
 .cat-output-row { display: flex; gap: 10px; align-items: center; margin: 8px 0; padding: 8px 10px; border-radius: 6px; background: color-mix(in srgb, var(--bg) 88%, var(--accent) 12%); }
@@ -278,12 +306,15 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 /* 候補ペイン。CAT エディタの中核で、いま見ている行の手掛かりを並べる。 */
 .cat-candidates { border: 1px solid var(--line); border-radius: var(--radius-control); padding: 10px 12px; margin-bottom: var(--space-2); }
 .cat-candidates-title { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; font-size: var(--font-meta); }
-.cat-candidates-list { display: grid; gap: 4px; max-height: 22vh; overflow: auto; }
+/* 文字を大きくしたときに枠だけ据え置きだと、見える候補が減ってしまう。rem を併記する。 */
+.cat-candidates-list { display: grid; gap: 4px; max-height: max(22vh, 16rem); overflow: auto; }
 .cat-cand { display: grid; grid-template-columns: 28px 76px minmax(0, 1fr) minmax(0, 1fr); gap: 8px; align-items: center; width: 100%; min-height: 44px; padding: 7px 10px; text-align: left; background: transparent; border: 1px solid transparent; color: var(--text); font-size: var(--font-meta); }
 .cat-cand:hover { background: var(--soft); border-color: var(--line-strong); }
 .cat-cand-no { color: var(--muted); font-variant-numeric: tabular-nums; }
-.cat-cand-tag { border-radius: 999px; padding: 0 6px; background: var(--soft); color: var(--muted); font-size: 11px; text-align: center; }
-.cat-cand-tag.is-exact { background: #8a6d1f; color: #fff; }
+/* 候補の出所（登録用語／過去に確認した訳／前回の資料）を示す唯一の表示。
+   11px にしていたが、老眼では読めないうえ、出所が読めないと候補を選べない。 */
+.cat-cand-tag { border-radius: 999px; padding: 2px 9px; background: var(--soft); color: var(--text); font-size: var(--font-meta); font-weight: 700; text-align: center; }
+.cat-cand-tag.is-exact { background: #6b5416; color: #fff; }
 .cat-cand-src { color: var(--muted); overflow-wrap: anywhere; }
 .cat-cand-tgt { overflow-wrap: anywhere; }
 
@@ -304,7 +335,9 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .file-result-meta { display: flex; flex-wrap: wrap; gap: 12px; color: var(--muted); font-size: var(--font-meta); font-variant-numeric: tabular-nums; margin-bottom: var(--space-2); }
 .hint { margin: var(--space-2) 0; font-size: var(--font-meta); }
 .output-path-details, .file-warning-groups, .prompt-details { margin-top: var(--space-2); }
-summary { cursor: pointer; color: var(--muted); font-size: var(--font-meta); min-height: 44px; display: flex; align-items: center; }
+/* display:flex にすると Chromium が開閉の三角を消す。押せるものだと分からなくなるので
+   list-item のまま高さだけ確保する。 */
+summary { cursor: pointer; color: var(--text); font-size: var(--font-meta); min-height: 44px; display: list-item; padding: 11px 0 11px 2px; }
 .output-path-details code { display: block; margin-top: 8px; border-radius: var(--radius-control); background: var(--soft); padding: 8px 10px; color: var(--muted); font-size: var(--font-meta); overflow-wrap: anywhere; }
 .file-warning-groups > summary { color: var(--warning); font-weight: 600; }
 .warning-group-stack { display: grid; gap: 10px; margin-top: 10px; }
@@ -322,8 +355,8 @@ summary { cursor: pointer; color: var(--muted); font-size: var(--font-meta); min
 .alert-error { color: var(--error); border-color: rgba(180,35,24,.25); }
 .alert-warning { color: var(--warning); border-color: rgba(161,92,0,.25); }
 .alert-success { color: var(--success); border-color: rgba(15,123,85,.25); }
-.persistent-warning { background: #fff8e8; border-width: 2px; }
-.download-warning { background: var(--warning) !important; border-color: var(--warning) !important; }
+/* 目に入るべき文言なので、枠と背景を必ず付ける。#cat-status もここを使う。 */
+.alert-inline { display: block; margin: 8px 0; border-left: 4px solid var(--error); border-radius: var(--radius-control); background: #fdeceb; padding: 10px 12px; color: #7a271a; font-weight: 700; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 .spinner-row { display: inline-flex; align-items: center; gap: 8px; }
 .spinner { width: 12px; height: 12px; border: 2px solid var(--line-strong); border-top-color: var(--accent); border-radius: 50%; animation: spin 900ms linear infinite; }
@@ -331,8 +364,8 @@ summary { cursor: pointer; color: var(--muted); font-size: var(--font-meta); min
 
 .sheet-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .sheet-chip { min-height: 44px; padding: 7px 12px; border: 0; border-radius: 999px; background: var(--soft); color: var(--muted); font-size: var(--font-meta); font-weight: 500; }
-.sheet-chip.is-selected { background: var(--accent-soft); color: var(--accent); }
-.sheet-chip:hover { background: var(--accent-soft); color: var(--accent); }
+.sheet-chip.is-selected { background: var(--accent-soft); color: var(--accent-text); font-weight: 700; }
+.sheet-chip:hover { background: var(--accent-soft); color: var(--accent-text); }
 
 .shortcut-help, .local-path-help { margin-top: 10px; }
 .shortcut-help p, .local-path-help p { margin: 8px 0 0; }
@@ -347,7 +380,7 @@ summary { cursor: pointer; color: var(--muted); font-size: var(--font-meta); min
 .cat-resume { display: block; margin: 12px 0 20px; }
 #cat-resume-list { display: grid; gap: 10px; margin-top: 8px; }
 .cat-resume-card { width: 100%; min-height: 56px; justify-content: flex-start; text-align: left; background: var(--surface); border: 1px solid var(--line-strong); color: var(--text); }
-.cat-resume-recent { flex: 0 0 auto; padding: 2px 7px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: var(--font-meta); }
+.cat-resume-recent { flex: 0 0 auto; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-text); font-size: var(--font-meta); font-weight: 700; }
 .draft-warning { margin: 12px 0; padding: 14px 16px; border: 3px solid #8a4500; border-radius: var(--radius-control); background: #fff3d6; color: #603100; font-size: var(--font-ui); font-weight: 800; }
 .cat-output-row { min-height: 60px; padding: 12px 14px; flex-wrap: wrap; }
 .cat-danger-zone { margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--line); }
@@ -416,16 +449,39 @@ summary { cursor: pointer; color: var(--muted); font-size: var(--font-meta); min
 }
 
 /* Horizon 2: one launcher, separate short-text and document workspaces. */
-.home-link { text-decoration: none; }
+.home-link { display: inline-flex; align-items: center; min-height: 44px; text-decoration: none; }
 .home-intro { margin: var(--space-5) 0 var(--space-3); }
 .home-intro .muted { max-width: 58ch; }
+/* 途中の資料への入口。開始画面に置くことで、中断からの復帰が1回で済む。 */
+.home-resume { margin-bottom: var(--space-3); }
+.home-resume h2 { margin-bottom: 10px; }
+.home-resume-list { display: grid; gap: 10px; }
+.home-resume-card { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; min-height: 60px; border: 2px solid var(--accent); border-radius: var(--radius-card); background: var(--accent-soft); padding: 12px 16px; text-decoration: none; }
+.home-resume-card strong { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
+.home-resume-card > span { color: var(--muted); }
+.home-resume-card > span.home-resume-action { display: inline-flex; min-height: 44px; align-items: center; margin-left: auto; border-radius: var(--radius-control); background: var(--accent); color: #fff; padding: 7px 16px; font-weight: 700; }
+.home-resume-card:hover .home-resume-action { background: var(--accent-hover); }
+.home-resume-more { display: inline-flex; align-items: center; min-height: 44px; color: var(--accent-text); font-size: var(--font-meta); font-weight: 600; }
 .home-choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
 .home-choice-card { display: flex; min-height: 270px; flex-direction: column; align-items: flex-start; gap: 12px; border: 2px solid var(--line-strong); border-radius: var(--radius-card); background: var(--surface); padding: 26px; text-decoration: none; box-shadow: var(--shadow-card); }
 .home-choice-card:hover, .home-choice-card:focus-visible { border-color: var(--accent); background: var(--accent-soft); }
 .home-choice-card strong { font-size: 1.35em; }
 .home-choice-kicker { color: var(--muted); font-size: var(--font-meta); font-weight: 700; }
 .home-choice-action { display: inline-flex; min-height: 44px; align-items: center; margin-top: auto; border-radius: var(--radius-control); background: var(--accent); color: #fff; padding: 7px 16px; font-weight: 700; }
-.privacy-summary, .privacy-note { margin: var(--space-3) 0 0; border-left: 4px solid var(--accent); background: var(--accent-soft); padding: 12px 14px; color: var(--muted); }
+/* 日本語は1行 35〜45字を超えると目が次の行頭を見失う。長い説明文には必ず幅を与える。 */
+.privacy-summary, .privacy-note { max-width: 42em; margin: var(--space-3) 0 0; border-left: 4px solid var(--accent); background: var(--accent-soft); padding: 12px 14px; color: var(--text); }
+.cat-picker p.muted, .cat-start-panel > p.muted, .hint, .batch-note { max-width: 42em; }
+/* 伏せた数値の確認。件数だけでは「自分のあの数字が伏せられたか」に答えられない。
+   老眼を想定し、値そのものは本文サイズを下回らせない。 */
+.mask-summary-line { margin: 0; }
+.mask-detail { margin-top: 8px; }
+.mask-detail > summary { min-height: 44px; color: var(--text); font-size: var(--font-body); font-weight: 700; }
+.mask-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 0; padding: 0; list-style: none; max-height: 8em; overflow-y: auto; }
+.mask-item { display: inline-flex; align-items: baseline; gap: 6px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); padding: 4px 12px; font-size: var(--font-body); font-variant-numeric: tabular-nums; }
+.mask-token { color: var(--muted); font-size: var(--font-meta); }
+.mask-value { font-weight: 700; }
+.mask-detail-note { margin: 10px 0 0; color: var(--muted); font-size: var(--font-meta); }
+
 .quick-shell { max-width: 820px; }
 html.yaku-compact .quick-shell { width: calc(100% - 24px); max-width: none; padding-bottom: 12px; }
 html.yaku-compact .hero { padding: 10px 0; }

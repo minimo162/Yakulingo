@@ -1,4 +1,11 @@
-﻿.app-cat .shell {
+﻿/* ツールバーの高さを定数にする。sticky の top と各ペインの max-height はここから引く。
+   13インチを125%/150%で使うと .cat-actions が2段目に落ちてツールバーが伸びるので、
+   固定値(旧 84px)ではペインの先頭と表の見出しがツールバーの下に隠れていた。 */
+:root {
+  --cat-toolbar-h: 76px;
+}
+
+.app-cat .shell {
   width: min(1600px, calc(100% - 32px));
   max-width: 1600px;
 }
@@ -20,7 +27,7 @@
   grid-template-columns: minmax(220px, 1fr) auto minmax(210px, 300px) auto;
   gap: 12px;
   align-items: center;
-  min-height: 72px;
+  min-height: var(--cat-toolbar-h);
   padding: 10px 12px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-control);
@@ -61,8 +68,11 @@
   margin: 0;
 }
 
+/* ボタンが4つになったので nowrap では収まらない。折り返して全部見せる。
+   ここを nowrap のままにすると、画面全体に横スクロールが出る。 */
 .cat-editor-toolbar .cat-actions {
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .cat-editor-toolbar .cat-actions button {
@@ -87,8 +97,8 @@
 .cat-nav-pane,
 .cat-inspector-pane {
   position: sticky;
-  top: 84px;
-  max-height: calc(100vh - 100px);
+  top: calc(var(--cat-toolbar-h) + 12px);
+  max-height: calc(100vh - var(--cat-toolbar-h) - 28px);
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
@@ -101,7 +111,7 @@
 
 .cat-nav-pane h2 {
   margin-bottom: 8px;
-  font-size: var(--font-meta);
+  font-size: var(--font-ui);
 }
 
 .cat-nav-pane section + section {
@@ -120,8 +130,8 @@
 .app-cat .cat-nav-pane .cat-location-list button {
   justify-content: space-between;
   width: 100%;
-  min-height: 42px;
-  padding: 6px 9px;
+  min-height: 44px;
+  padding: 7px 10px;
   border-color: transparent;
   background: transparent;
   color: var(--text);
@@ -133,7 +143,8 @@
 .app-cat .cat-nav-pane .cat-location-list button[aria-pressed="true"] {
   border-color: var(--accent);
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 700;
 }
 
 .cat-state-filters button span,
@@ -186,7 +197,7 @@
 }
 
 .cat-grid-wrap {
-  max-height: calc(100vh - 145px);
+  max-height: calc(100vh - var(--cat-toolbar-h) - 73px);
   background: var(--surface);
 }
 
@@ -194,9 +205,11 @@
   cursor: pointer;
 }
 
+/* いま編集している行。薄い枠だと 1.9:1 しかなく、どこを触っているか見失う。 */
 .cat-grid tbody tr.is-active {
-  outline: 3px solid color-mix(in srgb, var(--accent) 46%, transparent);
+  outline: 3px solid var(--accent);
   outline-offset: -3px;
+  background: #eef0fc;
 }
 
 .cat-grid tbody tr:not(.is-active) td {
@@ -211,11 +224,13 @@
   -webkit-line-clamp: 3;
 }
 
+/* 一覧の各行を開くための主要なクリック先。min-height:0 だと実効26px しかなく、
+   手が震える利用者には当たらない。 */
 .app-cat .cat-editor-pane button.cat-row-activate {
   display: block;
   width: 100%;
-  min-height: 0;
-  padding: 0;
+  min-height: 44px;
+  padding: 6px 0;
   border: 0;
   background: transparent;
   color: inherit;
@@ -279,7 +294,9 @@
 
 .app-cat .cat-inspector-pane .cat-inspector-tabs button[aria-selected="true"] {
   border-bottom-color: var(--accent);
-  color: var(--text);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: 700;
 }
 
 .cat-inspector-pane [role="tabpanel"] {
@@ -393,6 +410,17 @@
   overflow-wrap: anywhere;
 }
 
+/* 登録した訳の一覧。取り消せることが見えていないと、間違えた登録が全資料へ入り続ける。 */
+.cat-personal-glossary-list { display: grid; gap: 10px; margin: 12px 0; }
+.cat-personal-glossary-item { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--surface); padding: 12px 14px; }
+.cat-personal-glossary-item > div { flex: 1 1 280px; min-width: 0; overflow-wrap: anywhere; }
+.cat-personal-glossary-origin { display: block; margin-top: 4px; color: var(--muted); font-size: var(--font-meta); }
+.cat-danger-zone section + section { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
+.cat-danger-zone p.muted { max-width: 42em; }
+/* 一部だけ取り出したときに、そのことを見落とさせない。 */
+.cat-text-output-note { margin: 0 0 8px; border-left: 4px solid var(--warning); background: #fff8e8; padding: 10px 12px; color: var(--text); font-weight: 700; }
+.cat-text-output-note:empty { display: none; }
+
 .cat-export-blocked {
   min-height: 1.4em;
   margin: 7px 0;
@@ -444,6 +472,10 @@
 }
 
 @media (max-width: 1400px) {
+  /* ここでボタン列が2段目に落ちるので、ツールバーの実高もそのぶん増える。 */
+  :root {
+    --cat-toolbar-h: 136px;
+  }
   .cat-editor-toolbar {
     grid-template-columns: minmax(210px, 1fr) auto minmax(180px, 260px);
   }
@@ -452,7 +484,9 @@
   }
 }
 
-@media (max-width: 1179px) {
+/* 3列（220 + 560 + 380 + gap 24）に必要なのは 1184px。.shell は画面幅 -32px なので
+   ビューポート 1216px を下回ると横スクロールが出ていた。2列化をそこまで引き上げる。 */
+@media (max-width: 1219px) {
   .cat-editor-layout {
     grid-template-columns: 190px minmax(0, 1fr);
   }
@@ -462,12 +496,15 @@
     max-height: none;
   }
   .cat-inspector-pane [role="tabpanel"] {
-    max-height: 45vh;
+    max-height: max(45vh, 22rem);
     overflow: auto;
   }
 }
 
 @media (max-width: 900px) {
+  :root {
+    --cat-toolbar-h: 0px;
+  }
   .app-cat .shell {
     width: min(100% - 24px, 920px);
   }

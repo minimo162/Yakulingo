@@ -90,7 +90,11 @@
       confirmButton.disabled = false;
       confirmButton.textContent = 'この設定で始める';
       backButton.hidden = false;
-      setResponse(YakuCommon.plainError(error && error.message ? error.message : error), [], true);
+      /* 設定に失敗しても翻訳は使える。ここで出口を隠すと、初回起動でアプリが
+         詰んでしまう（同名のショートカットが既にある職場では実際に起きる）。 */
+      setResponse(YakuCommon.plainError(error && error.message ? error.message : error)
+        + ' 設定は変更できませんでしたが、翻訳はこのままお使いいただけます。', [], true);
+      homeLink.hidden = false;
       responseBox.focus();
     });
   }

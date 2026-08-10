@@ -16,7 +16,7 @@
       <a class="brand tutorial-brand" href="/">YakuLingo</a>
       <div class="tutorial-header-actions">
         <button id="text-size-toggle" type="button" class="secondary-button compact" aria-pressed="false">文字を大きく</button>
-        <button id="tutorial-skip" type="button" class="tutorial-skip">説明を飛ばして設定へ</button>
+        <button id="tutorial-skip" type="button" class="tutorial-skip">設定画面へ進む</button>
       </div>
     </header>
 
@@ -26,9 +26,9 @@
     </div>
 
     <section class="tutorial-step" data-step="0" aria-labelledby="tutorial-title">
-      <p class="tutorial-kicker">使い分け</p>
-      <h1 id="tutorial-title" tabindex="-1">YakuLingoでできること</h1>
-      <p class="tutorial-lead">数文なら「ちょっと翻訳」。WordやExcelなどの資料は「資料翻訳」で、1文ずつ確認しながら進めます。</p>
+      <p class="tutorial-kicker">このアプリについて</p>
+      <h1 id="tutorial-title" tabindex="-1">日本語と英語を訳すアプリです</h1>
+      <p class="tutorial-lead">Microsoft 365 Copilotへ文章を送り、訳案（下書きの訳）を受け取ります。そのまま使える訳ではありませんので、内容はご自身で確かめてください。</p>
       <div class="tutorial-example-grid" aria-label="翻訳方法の使い分け">
         <div class="tutorial-example"><strong>ちょっと翻訳</strong><span>メール・Web・数文</span></div>
         <div class="tutorial-example"><strong>資料翻訳</strong><span>Word・Excel・長い文章</span></div>
@@ -57,7 +57,7 @@
       <form id="tutorial-preferences" class="tutorial-preferences">
         <label class="tutorial-check-row" for="startup-enabled">
           <input id="startup-enabled" name="startup_enabled" type="checkbox" checked>
-          <span><strong>WindowsにサインインしたらYakuLingoを準備する（おすすめ）</strong><small>画面を閉じても通知領域で準備を続けます。文章の監視や自動送信はしません。</small></span>
+          <span><strong>WindowsにサインインしたらYakuLingoを準備する（おすすめ）</strong><small>パソコンを起動すると、画面右下の時計のとなりにYakuLingoのアイコンが出ます。翻訳を押したときだけ動き、文章を勝手に読み取ったり送ったりすることはありません。</small></span>
         </label>
         <label class="tutorial-check-row" for="desktop-shortcut">
           <input id="desktop-shortcut" name="desktop_shortcut" type="checkbox" checked>
@@ -72,6 +72,7 @@
       <button id="tutorial-back" type="button" class="secondary-button" hidden>戻る</button>
       <button id="tutorial-next" type="button">次へ</button>
       <a id="tutorial-home" class="button" href="/" hidden>開始画面へ</a>
+      <a class="button secondary-button tutorial-escape" href="/quick">設定はあとで。まず翻訳を使う</a>
     </nav>
   </main>
 </body>

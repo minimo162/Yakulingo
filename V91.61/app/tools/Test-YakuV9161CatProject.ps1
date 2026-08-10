@@ -21,7 +21,7 @@ $toolsRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $toolsRoot
 $script:fail = 0
 
-foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','BriefStyle.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1','ProperNoun.ps1','FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1','CellSegments.ps1','CellAlign.ps1','CatProject.ps1')) {
+foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','BriefStyle.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1','CellSegments.ps1','CellAlign.ps1','CatProject.ps1')) {
     . (Join-Path (Join-Path $root 'src') $n)
 }
 function Chk { param([bool]$c,[string]$m) if($c){Write-Host ('  ok   ' + $m) -ForegroundColor Green}else{Write-Host ('  FAIL ' + $m) -ForegroundColor Red;$script:fail++} }
@@ -157,7 +157,9 @@ Write-Host '元のコピーへ出力する'
 # 文章側にも訳を入れてから出す。
 $proseIndex = 0
 for ($i = 0; $i -lt $segs.Count; $i++) { if ([bool]$segs[$i].Joined) { $proseIndex = $i } }
-$null = Set-YakuCatSegmentTranslation -Project $project -Index $proseIndex -Text 'In the first quarter, fixed costs were reduced through a review of production.'
+# 原文「当第1四半期」の 1 を訳文にも残す。first と綴ると数字が消え、
+# numeric-value-mismatch が正しく発火して出力が止まる（§8 数値が抜けた訳は欠陥）。
+$null = Set-YakuCatSegmentTranslation -Project $project -Index $proseIndex -Text 'In Q1, fixed costs were reduced through a review of the production system.'
 # Horizon 1: 手編集や用語置換だけでは出力できない。各訳文を明示確認し、
 # 現在の原文 revision に対する機械 QC を通してから出力する。
 for ($i = 0; $i -lt @($project.Segments).Count; $i++) {
@@ -182,7 +184,7 @@ try {
     try { [GC]::Collect(); [GC]::WaitForPendingFinalizers() } catch {}
 }
 $rejoined = ((@($read['A1'], $read['A2']) -join ' ') -replace '\s+', ' ').Trim()
-Chk ($rejoined -eq 'In the first quarter, fixed costs were reduced through a review of production.') '繋いだ訳文が元の2セルへ戻る'
+Chk ($rejoined -eq 'In Q1, fixed costs were reduced through a review of the production system.') '繋いだ訳文が元の2セルへ戻る'
 Chk ([string]$read['A4'] -eq $knownTarget) '用語集で置換したラベルが出力される'
 Chk ([string]$read['B4'] -eq '1234') '数値セルは触らない'
 
@@ -236,7 +238,7 @@ try {
     try { [GC]::Collect(); [GC]::WaitForPendingFinalizers() } catch {}
 }
 $movedJoined = ((@($movedRead['A1'], $movedRead['A2']) -join ' ') -replace '\s+', ' ').Trim()
-Chk ($movedJoined -eq 'In the first quarter, fixed costs were reduced through a review of production.') '外部ファイルの行挿入を取り込まず、保存時の配置へ訳文を書き戻す'
+Chk ($movedJoined -eq 'In Q1, fixed costs were reduced through a review of the production system.') '外部ファイルの行挿入を取り込まず、保存時の配置へ訳文を書き戻す'
 Chk ([string]$movedRead['A4'] -eq $knownTarget) '外部ファイルのシート改名を取り込まず、保存時のラベル位置へ書く'
 Chk ([string]$movedRead['B4'] -eq '1234') 'project専用原本の数値セルは触らない'
 
@@ -269,7 +271,8 @@ Chk ($tsegs.Count -eq 3) '解除すると元の文へ戻る'
 Chk ([string]$tsegs[1].Text -eq '為替の影響は限定的でした。') '元の切れ目で戻る'
 
 # 出口は確認済み訳文一覧のコピー。書き戻す元のファイルが無い。
-$null = Set-YakuCatSegmentTranslation -Project $tp -Index 0 -Text 'Fixed costs were reduced.'
+# 原文「当第1四半期」の 1 を残す。落とすと numeric-value-mismatch で確認できない。
+$null = Set-YakuCatSegmentTranslation -Project $tp -Index 0 -Text 'In Q1, fixed costs were reduced.'
 $null = Set-YakuCatSegmentTranslation -Project $tp -Index 1 -Text 'FX impact was limited.'
 $null = Set-YakuCatSegmentTranslation -Project $tp -Index 2 -Text 'We will continue to monitor market conditions.'
 for ($i = 0; $i -lt @($tp.Segments).Count; $i++) {
@@ -313,9 +316,9 @@ Chk ($appJsText.Contains("data-original")) '変更が無ければ保存しない
 Chk ($appJsText.Contains("bindFileDrop(el('cat-drop'), el('cat-file-input'))") -and $appJsText.Contains("event.key === 'Enter' || event.key === ' '")) 'CAT のファイル欄へドロップとキーボード操作を結線する'
 Chk ($appJsText.Contains("'行目の訳文`"")) '動的な訳文欄に行ごとの読み上げ名がある'
 Chk ($appJsText.Contains("data-cat-loss")) '結合・解除ボタンが訳文消失の有無を持つ'
-Chk ($appJsText.Contains("window.confirm('結合すると、対象行の訳文が消えます。結合しますか？')")) '訳文がある行の結合前に確認する'
-Chk ($appJsText.Contains("window.confirm('解除すると、この行の訳文が消えます。解除しますか？')")) '訳文がある行の解除前に確認する'
-Chk ($cssText -match '--focus:\s*#5E6AD2') 'フォーカスリングは白地で見える不透明色を使う'
+Chk ($appJsText -match "data-cat-merge[\s\S]{0,200}?window\.confirm\('[^']*訳文は消えます[^']*元に戻せません") '訳文がある行の結合前に、消えることを告げて確認する'
+Chk ($appJsText -match "data-cat-split[\s\S]{0,200}?window\.confirm\('[^']*訳文は消えます[^']*元に戻せません") '訳文がある行の解除前に、消えることを告げて確認する'
+Chk ($cssText -match '--focus:\s*#[0-9A-Fa-f]{6}\s*;') 'フォーカスリングは白地で見える不透明色を使う'
 Chk ($appJsText.Contains('data-cat-revise')) 'CAT の訳文行に自由入力の修正欄を出す'
 Chk ($appJsText.Contains("mode: 'revise'")) '修正指示を CAT ジョブとして送る'
 $serverText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Server.ps1'))
@@ -329,7 +332,8 @@ Chk ($appJsText.Contains('scopeIsCurrent(packet.scope, true)') -and $appJsText.C
 Chk ($appJsText.Contains('deleteTarget = currentScope()') -and $appJsText.Contains('表示中の作業が変わったため、削除を中止しました')) '削除dialogは開いた時の作業を固定する'
 Chk ($appJsText.Contains("type: 'translate', scope: jobScope") -and $appJsText.Contains("post('apply', { job_id: jobId }, true, context.scope)")) '翻訳jobの結果を開始時の作業へだけ適用する'
 Chk ($appJsText.Contains('data.review_blocked') -and $appJsText.Contains('var same = document.querySelector')) 'QCで確認できない時は同じ行へ戻す'
-Chk ($appJsText.Contains('function redrawAfterFlush()') -and $appJsText.Contains("radio.addEventListener('change', redrawAfterFlush)")) '絞り込み再描画の前に未保存編集を保存する'
+Chk ($appJsText -match 'function redrawAfterFlush\(\)[\s\S]{0,200}?flush\(\)' -and $appJsText -match "data-cat-filter'\)[^
+]*redrawAfterFlush\(\)") '絞り込み再描画の前に未保存編集を保存する'
 Chk ($serverText.Contains('Get-YakuCopilotCallCount -WindowHours 3')) '画面へ直近3時間の実測回数を返す'
 $fileTranslationText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CatBatch.ps1'))
 Chk ($fileTranslationText.Contains("Context.ContainsKey('CompletedMap')")) '各バッチ完了時にCATへ途中結果を公開する'

@@ -15,7 +15,7 @@
       <div class="brand-block"><a class="brand home-link" href="/">YakuLingo</a><span class="version-label">ちょっと翻訳</span></div>
       <div class="header-actions">
         <button id="text-size-toggle" type="button" class="secondary-button compact" aria-pressed="false">文字を大きく</button>
-        <div id="copilot-status" class="status" aria-live="polite"><span class="status-dot warn"></span><span>準備中</span></div>
+        <div class="status-block"><div id="copilot-status" class="status" aria-live="polite"><span class="status-dot warn"></span><span>準備しています</span></div><p id="copilot-status-detail" class="status-detail" role="status" aria-live="polite" hidden></p></div>
       </div>
     </header>
 
@@ -32,7 +32,7 @@
 
         <div id="quick-direction-summary" class="direction-summary" hidden>
           <strong id="quick-direction-label"></strong>
-          <button id="quick-direction-change" type="button" class="secondary-button compact">変更</button>
+          <button id="quick-direction-change" type="button" class="secondary-button compact">訳す言語を変える</button>
         </div>
         <fieldset id="quick-direction-choice" class="direction-choice" hidden>
           <legend>どちらに訳しますか？</legend>
@@ -53,7 +53,7 @@
           <div class="result-actions">
             <button id="quick-copy" type="button">コピー</button>
             <button id="quick-revise-open" type="button" class="secondary-button" aria-expanded="false" aria-controls="quick-revise-form">この訳案を直す</button>
-            <button id="quick-promote" type="button" class="secondary-button">資料翻訳で1文ずつ確認する</button>
+            <button id="quick-promote" type="button" class="secondary-button">この訳を資料翻訳へ移す（画面が切り替わります）</button>
           </div>
           <form id="quick-revise-form" class="quick-revise-panel" hidden>
             <div>
@@ -69,7 +69,14 @@
           </form>
           <p id="quick-revise-status" class="muted" role="status" aria-live="polite"></p>
           <p id="quick-result-note" class="muted"></p>
-          <p id="quick-mask-summary" class="privacy-note" hidden></p>
+          <div id="quick-mask-summary" class="privacy-note mask-summary" hidden>
+            <p class="mask-summary-line"><strong id="quick-mask-count"></strong>を伏せてCopilotへ送り、訳案では元の数値に戻しました。</p>
+            <details id="quick-mask-detail" class="mask-detail" hidden>
+              <summary>伏せた数値を確かめる</summary>
+              <ul id="quick-mask-list" class="mask-list"></ul>
+              <p class="mask-detail-note">この一覧はこのパソコンの中だけで作っています。Copilotへは記号で送りました。</p>
+            </details>
+          </div>
           <p id="quick-copy-status" class="muted" role="status" aria-live="polite"></p>
           <textarea id="quick-copy-fallback" class="quick-copy-fallback" readonly hidden aria-label="コピー用の訳文"></textarea>
         </div>

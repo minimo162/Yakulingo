@@ -135,14 +135,24 @@ function Get-YakuWordDocumentInventory {
             $storyNs = New-YakuWordNamespaceManager -Document $story
             $storyText = @($story.SelectNodes('//w:t', $storyNs) | ForEach-Object { [string]$_.InnerText }) -join ''
             if (-not [string]::IsNullOrWhiteSpace($storyText)) {
-                $unsupported.Add(('未対応の文書領域: ' + $entry.FullName)) | Out-Null
+                $unsupported.Add(('元のファイルへ書き戻せない箇所があります: ' + $entry.FullName)) | Out-Null
                 $storyOrdinal=0
                 foreach($storyParagraph in @($story.SelectNodes('//w:p',$storyNs))){
                     $storyOrdinal++; $paragraphText=Get-YakuWordParagraphText -Paragraph $storyParagraph -Namespaces $storyNs
                     if([string]::IsNullOrWhiteSpace($paragraphText)){continue}
                     $storyKind=if($entry.FullName -match 'header'){'word_header'}elseif($entry.FullName -match 'footer'){'word_footer'}else{'word_story'}
+                    # 画面の「場所」列にそのまま出る。word/footnotes.xml のような内部の名前だと、
+                    # 利用者は自分がどこを訳しているのか分からなくなる。Wordの用語へ直す。
+                    $storyLabel = switch -Regex ($entry.FullName) {
+                        'footnotes' { '脚注'; break }
+                        'endnotes'  { '文末脚注'; break }
+                        'header'    { 'ヘッダー'; break }
+                        'footer'    { 'フッター'; break }
+                        'comments'  { 'コメント'; break }
+                        default     { '本文以外'; break }
+                    }
                     $blocks.Add([pscustomobject]@{
-                        Id=('word:'+$entry.FullName+':p:'+$storyOrdinal);Text=$paragraphText;Location=('文書付属領域 '+$entry.FullName)
+                        Id=('word:'+$entry.FullName+':p:'+$storyOrdinal);Text=$paragraphText;Location=($storyLabel+' '+$storyOrdinal)
                         Meta=[pscustomobject]@{Kind=$storyKind;Part=$entry.FullName;ParagraphOrdinal=$storyOrdinal;WriteSupported=$false}
                     })|Out-Null
                 }

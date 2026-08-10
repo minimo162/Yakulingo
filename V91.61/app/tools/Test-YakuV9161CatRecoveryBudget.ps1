@@ -18,7 +18,7 @@ $null = New-Item -ItemType Directory -Path $tmp -Force
 function Chk { param([bool]$Condition,[string]$Message) if($Condition){Write-Host ('  ok   ' + $Message) -ForegroundColor Green}else{Write-Host ('  FAIL ' + $Message) -ForegroundColor Red;$script:fail++} }
 
 try {
-    foreach ($name in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','BriefStyle.ps1','EdgeLaunch.ps1','CopilotBudget.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','CatBatch.ps1','ProperNoun.ps1','CatTranslation.ps1','CellSegments.ps1','CellAlign.ps1','CatProject.ps1')) {
+    foreach ($name in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','BriefStyle.ps1','EdgeLaunch.ps1','CopilotBudget.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1','CellSegments.ps1','CellAlign.ps1','CatProject.ps1')) {
         . (Join-Path (Join-Path $root 'src') $name)
     }
     $script:YakuCatRecoveryStore = Join-Path $tmp 'cat'

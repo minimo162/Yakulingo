@@ -73,6 +73,10 @@ try {
         QcFindings=@()
     }
     $project = [pscustomobject]@{ Id='test'; Revision=3; Source='text'; Path=''; DocumentFormat='text'; Segments=@($segment) }
+    # QC記録は原文・訳文だけでなく用語集スナップショットにも紐づく。ここを空のままにすると
+    # 「訳文を直したあと点検していない」と判定され、出力可否そのものを見られなくなる。
+    # 値は本番と同じ関数から取る。ハッシュの作り方が変わってもこの試験は追随する。
+    $segment | Add-Member -NotePropertyName QcTerminologyHash -NotePropertyValue (Get-YakuCatTerminologySnapshotHash -Project $project) -Force
     $preflight = Get-YakuCatOutputPreflight -Project $project
     Assert-YakuDesktopTest ([bool]$preflight.Eligible -and [string]$preflight.Mode -eq 'copy_text') 'reviewed text should preflight to copy_text'
     $project.Source = 'file'; $project.Path = Join-Path $testRoot 'missing.docx'; $project.DocumentFormat = 'docx'
