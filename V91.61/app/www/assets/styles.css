@@ -144,12 +144,17 @@ textarea:focus, input:focus, select:focus { background: var(--surface); box-shad
 kbd { border: 1px solid var(--line-strong); border-bottom-color: #c9cad2; border-radius: 4px; padding: 2px 7px; background: var(--surface); color: var(--text); font-size: var(--font-meta); font-family: inherit; }
 .command-bar { display: flex; justify-content: flex-end; gap: 10px; margin-top: var(--space-2); }
 button, .button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: var(--radius-control); border: 1px solid transparent; padding: 7px 16px; font-size: var(--font-ui); font-weight: 600; text-decoration: none; transition: background var(--motion) var(--ease), border-color var(--motion) var(--ease), transform var(--motion) var(--ease), color var(--motion) var(--ease); }
-button:not(.secondary-button):not(.tab-button):not(.file-clear-button):not([disabled]), .button:not([disabled]) { background: var(--accent); border-color: var(--accent); color: #fff; }
-button:not(.secondary-button):not(.tab-button):not(.file-clear-button):not([disabled]):hover, .button:not([disabled]):hover { background: var(--accent-hover); border-color: var(--accent-hover); }
-button:not([disabled]):active, .button:not([disabled]):active { transform: translateY(.5px); }
+/* この一行の詳細度が、CAT画面の見た目を何度も壊してきた。
+   :not() を連ねると 1つにつき class 1個ぶん積み上がり、(0,4,1) にもなる。すると
+   .app-cat .cat-nav-pane ... button のような部品側の (0,3,1) を全部踏み潰し、
+   脇役（絞り込み、点検タブ、閉じている行）まで accent で塗られる。
+   :not() は「引数の中でいちばん強いもの1つぶん」しか積まない。リスト形にして
+   (0,1,1) に抑える。以後、状態を足すたびに詳細度を継ぎ足す必要がなくなる。 */
+button:not(.secondary-button, .tab-button, .file-clear-button, [disabled]), .button:not([disabled]) { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:not(.secondary-button, .tab-button, .file-clear-button, [disabled]):hover, .button:not([disabled]):hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+button:active:not([disabled]), .button:active:not([disabled]) { transform: translateY(.5px); }
 /* 無効ボタンを opacity で薄くすると、主ボタンの白文字が背景に溶けて 2.1:1 まで落ちる。
-   「文章を入力してください」のような操作指示そのものが読めなくなるので、実色で塗る。
-   塗りの規則側から [disabled] を除かないと、詳細度で負けてここが効かない。 */
+   「文章を入力してください」のような操作指示そのものが読めなくなるので、実色で塗る。 */
 button[disabled], .button[disabled] { cursor: not-allowed; opacity: 1; background: #e4e4e9; border-color: #c2c3cc; color: #3c3d45; }
 .secondary-button { background: transparent; border: 1px solid var(--line-strong); color: var(--text); }
 .secondary-button:hover { background: var(--soft); }
@@ -251,22 +256,28 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 /* 一覧の原文と訳文が、この画面の主役。本文より一段大きくする。 */
 .cat-grid { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: var(--font-segment); }
 .cat-grid thead th { position: sticky; top: 0; z-index: 1; background: var(--surface); border-bottom: 1px solid var(--line-strong); padding: 8px 10px; text-align: left; }
-.cat-grid td { border-bottom: 1px solid var(--line); padding: 6px 10px; vertical-align: top; }
-.cat-col-no { width: 5.2rem; color: var(--muted); font-variant-numeric: tabular-nums; }
-.cat-col-loc { width: 9rem; }
+.cat-grid td { border-bottom: 1px solid var(--line); padding: .35em .6em; vertical-align: top; }
+/* 番号・場所は脇役。ここを rem にすると「文字を大きく」で脇役の列だけが太り、
+   原文・訳文が痩せる（実測 番号109+場所189 に対し本文は各222px しかなかった）。
+   増えた幅は主役へ回す。中の文字は --font-meta のまま拡大する。 */
+.cat-col-no { width: 92px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.cat-col-loc { width: 136px; }
 .cat-source { width: 42%; white-space: pre-wrap; }
 .cat-target { width: 42%; }
-.cat-target textarea { width: 100%; min-height: 92px; resize: vertical; font-size: var(--font-segment); line-height: 1.75; }
+/* 開いている行の訳文が、この画面の主役。92px は行間1.75で実質2行弱しかなく、
+   原文が4行とも見えているのに訳文だけ切れていた。em 基準にして「文字を大きく」でも
+   4行ぶんを保つ。実際の行数に合わせた高さは cat.js の自動伸長が上書きする。 */
+.cat-target textarea { width: 100%; min-height: calc(1.8em * 4 + 1.6em); padding: .8em .9em; resize: vertical; overflow-y: hidden; font-size: var(--font-segment); line-height: 1.8; }
 .cat-loc { display: block; color: var(--muted); }
 /* 確認済みの印。番号の隣に小さく出す。一覧を眺めたときに、どこまで見たかが分かる。 */
 /* 行の印。狭い列から溢れて隣に重ならないよう、番号の下に1行で置く。 */
-.cat-state { display: block; width: fit-content; max-width: 100%; margin-top: var(--space-0); padding: 1px 8px; border-radius: 999px; font-size: var(--font-meta); font-weight: 700; white-space: nowrap; }
+.cat-state { display: block; width: fit-content; max-width: 100%; margin-top: var(--space-0); padding: 1px 8px; border-radius: 999px; font-size: var(--font-meta); font-weight: 700; white-space: normal; overflow-wrap: anywhere; }
 .cat-state-untranslated { background: color-mix(in srgb, var(--bg) 70%, #d33 30%); }
 .cat-state-machine_draft { background: color-mix(in srgb, var(--bg) 70%, #e8a 30%); }
 .cat-state-human_edited { background: color-mix(in srgb, var(--bg) 70%, #d9a441 30%); }
 .cat-state-reviewed { background: color-mix(in srgb, var(--bg) 70%, var(--accent) 30%); }
 .cat-state-stale { background: color-mix(in srgb, var(--bg) 65%, #d33 35%); }
-.cat-row-actions { display: flex; gap: 4px; margin-top: 4px; }
+.cat-row-actions { display: flex; gap: var(--space-0); margin-top: var(--space-1); flex-wrap: wrap; }
 .cat-op-ok { font-weight: 700; }
 .cat-confirmed { margin-left: 4px; color: var(--accent); font-weight: 700; }
 /* 保存できなかった行。黙って消えるより、目に見えて残るほうがよい。
@@ -289,9 +300,8 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .cat-steps { margin-left: 8px; }
 .cat-actions-detail { display: flex; gap: 6px; flex-wrap: wrap; padding: 6px 0; }
 [data-yaku-confirmed="1"] .cat-col-no { opacity: 1; }
-[data-yaku-confirmed="0"] > td { background: color-mix(in srgb, var(--bg) 96%, var(--accent) 4%); }
 .cat-origin { display: block; width: fit-content; max-width: 100%; margin-top: var(--space-0); border-radius: 999px; padding: 3px 8px; font-size: var(--font-meta); background: var(--soft); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cat-origin-manual { background: var(--accent); color: #fff; }
+.cat-origin-manual { background: var(--accent-soft); border: 1px solid var(--accent); color: var(--accent-text); }
 
 /* 行の状態を左端の色で示す。一覧を眺めて「どこが手つかずか」が分かるように。 */
 .cat-grid tbody tr { border-left: 3px solid transparent; }
@@ -301,15 +311,19 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .cat-grid tbody tr[data-yaku-cat-state="reviewed"] { border-left-color: var(--accent); }
 .cat-grid tbody tr[data-yaku-cat-state="stale"] { border-left-color: #d33; }
 /* いま見ている行。長い一覧で自分の位置を見失わないようにする。 */
-/* いま見ている行。tr の背景は [data-yaku-confirmed="0"] > td に隠れるので td を塗る。
-   未確認の行こそ、いま作業している行である。 */
+/* いま見ている行。未確認の行に敷いていた薄い accent は外した。ほぼ全行が未確認なので、
+   表全体が色の面になって「いま見ている行」が埋もれていた。未確認かどうかは左端3pxの線と
+   丸章で分かる。表の中で面を持つのはこの行だけにして、視線の行き先を1つに絞る。 */
 .cat-grid tbody tr.is-active { background: var(--soft); }
-.cat-grid tbody tr.is-active > td { background: #dfe4fb; }
+.cat-grid tbody tr.is-active > td { background: color-mix(in srgb, var(--surface) 88%, var(--accent) 12%); }
 
 /* 繋ぎ直しは開いている行にだけ描かれる（cat.js が訳文セルへ入れる）。 */
 /* 行の繋ぎ直し。116px の場所列に入れると日本語が1文字ずつ縦に折り返されるので、
    幅のある訳文セル側へ置く。ボタン内では改行させない。 */
-.cat-ops { display: flex; gap: 8px; margin: 0 0 8px; flex-wrap: wrap; }
+/* 訳文セルは狭い。ボタンの文言は長い。折り返さないとセルからはみ出して
+   隣の列に重なる（文字を大きくすると実測 50-87px はみ出していた）。 */
+.cat-ops { display: flex; gap: var(--space-1); margin: 0 0 var(--space-1); flex-wrap: wrap; }
+.cat-ops > .cat-op, .cat-row-actions > .cat-op, .cat-ops > *, .cat-row-actions > * { max-width: 100%; white-space: normal; text-align: center; }
 .cat-op { min-height: 44px; padding: 7px 12px; font-size: var(--font-meta); background: transparent; border: 1px solid var(--line-strong); color: var(--text); white-space: nowrap; }
 .cat-op-ok { min-height: 48px; font-size: var(--font-ui); background: var(--accent); border-color: var(--accent); color: #fff; }
 .cat-op:hover { background: var(--soft); }
@@ -424,7 +438,7 @@ summary { cursor: pointer; color: var(--text); font-size: var(--font-meta); min-
   .cat-card-label { display: block; margin-bottom: 6px; color: var(--muted); font-size: var(--font-meta); font-weight: 700; }
   .cat-col-no, .cat-col-loc, .cat-source, .cat-target { width: 100%; }
   .cat-source { font-size: var(--font-body); line-height: 1.75; }
-  .cat-target textarea { min-height: 140px; }
+  .cat-target textarea { min-height: calc(1.8em * 6 + 1.6em); }
   .cat-row-actions { gap: 10px; flex-wrap: wrap; margin-top: 12px; }
   .cat-cand { grid-template-columns: 32px 1fr; }
   .cat-cand-src, .cat-cand-tgt { grid-column: 1 / -1; }

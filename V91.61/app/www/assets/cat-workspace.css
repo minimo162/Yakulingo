@@ -163,7 +163,10 @@
 
 .cat-state-filters button span,
 .cat-location-list button span {
-  color: var(--muted);
+  color: inherit;
+  opacity: .82;  /* .72 だと選択中の面（accent-soft）で 4.07:1 まで落ちて AA を割る */
+  min-width: 3.2ch;
+  text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
@@ -226,8 +229,13 @@
   box-shadow: inset 6px 0 0 0 var(--accent);
 }
 
+/* 主役の行だけ息をさせる。脇役は詰めて、一覧としての一望性を保つ。 */
+.cat-grid tbody tr.is-active > td {
+  padding-block: 1em;
+}
+
 .cat-grid tbody tr:not(.is-active) td {
-  padding-block: 9px;
+  padding-block: .5em;
 }
 
 .cat-grid tbody tr:not(.is-active) .cat-source-text,
@@ -250,6 +258,11 @@
   color: inherit;
   text-align: left;
   font: inherit;
+}
+
+/* 閉じている行は脇役。触れたことは背景の淡い変化だけで示す。 */
+.app-cat .cat-editor-pane button.cat-row-activate:hover {
+  background: var(--soft);
 }
 
 .cat-location-main {
