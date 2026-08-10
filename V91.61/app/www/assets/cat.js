@@ -550,7 +550,7 @@
       if (!data) return null;
       var done = Number(data.bulk_confirmed || 0), blocked = (data.bulk_blocked || []).length;
       if (blocked) {
-        status(done + '行を確認済みにしました。' + blocked + '行は数字の自動点検を通らなかったので、確認済みにしていません。左の「点検で気になる点」で絞り込めます。', true);
+        status(done + '行を確認済みにしました。' + blocked + '行は数字の自動点検を通らなかったので、確認済みにしていません。左の「点検の指摘」で絞り込めます。', true);
       } else {
         status(done + '行を確認済みにしました。');
       }
