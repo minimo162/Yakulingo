@@ -1846,7 +1846,11 @@ function Invoke-YakuTextRevision {
     $built = $promptPackage.Built
     $built.Prompt = [string]$promptPackage.Prompt
     $null = Assert-YakuNumericPromptProtected -Prompt ([string]$built.Prompt) -MaskMap $maskMap
-    $mode = if ($Direction -eq 'to_en') { $Style } else { '' }
+    # 電文体（brief）は英訳のときだけ意味を持つ。和訳では Get-YakuTextRequiredLabels が
+    # Mode を見ずに JAPANESE_TEXT を返すので、既定の full を渡す。
+    # ここで '' を渡すと ValidateSet('full','brief') で弾かれ、和訳の作業では
+    # 「短くする」も「この指示で直す」も一切使えなかった。
+    $mode = if ($Direction -eq 'to_en') { $Style } else { 'full' }
     $raw = Invoke-YakuProtectedCopilotPrompt -Envelope $promptPackage.Envelope -Settings $Settings -PreserveEndMarker -ProgressState $ProgressState -Warnings $Warnings
     $options = @(Parse-YakuTextTranslationResponse -Raw $raw -Direction $Direction -RequestId $requestId -Warnings $Warnings -Mode $mode)
     if ($options.Count -eq 0) { throw 'RESPONSE_EMPTY: 修正後の訳文を取り出せませんでした。' }

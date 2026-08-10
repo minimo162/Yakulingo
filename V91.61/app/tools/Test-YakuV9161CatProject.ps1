@@ -304,7 +304,11 @@ $cssText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'ass
 Chk ($cssText -match 'data-yaku-cat-state="untranslated"') '未訳の行を色で示す'
 Chk ($cssText -match 'data-yaku-cat-state="human_edited"') '手直しの行を色で示す'
 Chk ($cssText -match '\.cat-grid tbody tr\.is-active') 'いま見ている行を強調する'
-Chk ($cssText -match '\.cat-ops \{[^}]*visibility: hidden') '繋ぎ直しのボタンは常には出さない（全行に並ぶと目が滑る）'
+# 繋ぎ直しのボタンは、開いている行にだけ描く。以前はCSSのvisibilityで隠していたが、
+# 全行に要素が残り、116pxの場所列で日本語が1文字ずつ縦に折り返されていた。
+# いまは cat.js が isActive の行の訳文セルにだけ入れる。
+Chk ($appJsText -match 'isActive \?[\s\S]{0,2000}?<div class="cat-ops">') '繋ぎ直しのボタンは開いている行にだけ出す（全行に並ぶと目が滑る）'
+Chk ($appJsText -notmatch 'cat-col-loc[^\r\n]{0,400}?cat-ops') '繋ぎ直しのボタンを狭い場所列へ入れない'
 Chk ($appJsText.Contains("addEventListener('focusin'")) '現在行を追う'
 Chk ($appJsText.Contains("event.key === 'Enter'") -and $appJsText.Contains('confirmRow(')) 'Ctrl+Enter で保存・確認して次へ進める'
 Chk ($appJsText.Contains("status('処理中は確認できません")) '処理中のCtrl+Enterを止める'

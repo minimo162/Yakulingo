@@ -293,13 +293,12 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .cat-grid tbody tr[data-yaku-cat-state="stale"] { border-left-color: #d33; }
 /* いま見ている行。長い一覧で自分の位置を見失わないようにする。 */
 .cat-grid tbody tr.is-active { background: var(--soft); }
-.cat-grid tbody tr.is-active .cat-ops { visibility: visible; }
 
-/* 繋ぎ直しは常には出さない。全行に並ぶと目が滑る。触った行にだけ出す。 */
-.cat-ops { display: flex; gap: 8px; margin-top: 8px; visibility: hidden; flex-wrap: wrap; }
-.cat-grid tbody tr:hover .cat-ops,
-.cat-grid tbody tr:focus-within .cat-ops { visibility: visible; }
-.cat-op { min-height: 44px; padding: 7px 12px; font-size: var(--font-meta); background: transparent; border: 1px solid var(--line-strong); color: var(--text); }
+/* 繋ぎ直しは開いている行にだけ描かれる（cat.js が訳文セルへ入れる）。 */
+/* 行の繋ぎ直し。116px の場所列に入れると日本語が1文字ずつ縦に折り返されるので、
+   幅のある訳文セル側へ置く。ボタン内では改行させない。 */
+.cat-ops { display: flex; gap: 8px; margin: 0 0 8px; flex-wrap: wrap; }
+.cat-op { min-height: 44px; padding: 7px 12px; font-size: var(--font-meta); background: transparent; border: 1px solid var(--line-strong); color: var(--text); white-space: nowrap; }
 .cat-op-ok { min-height: 48px; font-size: var(--font-ui); background: var(--accent); border-color: var(--accent); color: #fff; }
 .cat-op:hover { background: var(--soft); }
 
@@ -412,7 +411,6 @@ summary { cursor: pointer; color: var(--text); font-size: var(--font-meta); min-
   .cat-col-no, .cat-col-loc, .cat-source, .cat-target { width: 100%; }
   .cat-source { font-size: var(--font-body); line-height: 1.75; }
   .cat-target textarea { min-height: 140px; }
-  .cat-ops { visibility: visible; }
   .cat-row-actions { gap: 10px; flex-wrap: wrap; margin-top: 12px; }
   .cat-cand { grid-template-columns: 32px 1fr; }
   .cat-cand-src, .cat-cand-tgt { grid-column: 1 / -1; }
