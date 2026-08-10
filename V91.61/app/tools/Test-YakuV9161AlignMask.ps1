@@ -23,6 +23,7 @@ $toolsRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $toolsRoot
 $script:fail = 0
 
+. (Join-Path (Join-Path $root 'src') 'ProperNoun.ps1')
 . (Join-Path (Join-Path $root 'src') 'AlignMask.ps1')
 function Chk { param([bool]$c, [string]$m) if ($c) { Write-Host ('  ok   ' + $m) -ForegroundColor Green } else { Write-Host ('  FAIL ' + $m) -ForegroundColor Red; $script:fail++ } }
 
@@ -70,6 +71,10 @@ $lines = @('生産設備等に122億円を投資しました', '売上高は1兆
 # Protect- は , 付きで返すので @() で包まない。包むと配列が1要素に入れ子になる。
 $masked = Protect-YakuAlignmentLines -Lines $lines -Language 'ja'
 Chk ($masked.Count -eq 2 -and -not (($masked -join '') -match '[0-9０-９]')) '正常な並びはマスクして返す'
+$properMaskedJa = Protect-YakuAlignmentLines -Lines @('マツダ株式会社は新工場を建設します') -Language 'ja' -Root $root
+Chk (($properMaskedJa -join '') -match 'マツダ株式会社' -and ($properMaskedJa -join '') -notmatch '〔名〕') '日本語の固有名詞は送信可なので変更しない'
+$properMaskedEn = Protect-YakuAlignmentLines -Lines @('Mazda Motor Corporation will build a new plant') -Language 'en' -Root $root
+Chk (($properMaskedEn -join '') -match 'Mazda Motor Corporation' -and ($properMaskedEn -join '') -notmatch '\[NAME\]') '英語の固有名詞は送信可なので変更しない'
 
 # マスクを故意に無力化して、検査が働くことを確かめる。
 # 統制が「効いている」ことは、破ってみないと確かめられない。

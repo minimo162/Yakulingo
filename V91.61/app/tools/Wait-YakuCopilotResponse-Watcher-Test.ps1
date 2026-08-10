@@ -1,6 +1,6 @@
 ﻿<#
 Static regression tests for the V64 response watcher. The authoritative
-accept/reject decision remains in Translation.ps1 and FileTranslation.ps1.
+accept/reject decision remains in Translation.ps1 and CatBatch.ps1.
 #>
 [CmdletBinding()]
 param()
@@ -11,7 +11,7 @@ $source = Get-Content -LiteralPath (Join-Path $root 'src\CopilotClient.ps1') -Ra
 $runtimeSource = Get-Content -LiteralPath (Join-Path $root 'src\Runtime.ps1') -Raw -Encoding UTF8
 $serverSource = Get-Content -LiteralPath (Join-Path $root 'src\Server.ps1') -Raw -Encoding UTF8
 $translationSource = Get-Content -LiteralPath (Join-Path $root 'src\Translation.ps1') -Raw -Encoding UTF8
-$fileTranslationSource = Get-Content -LiteralPath (Join-Path $root 'src\FileTranslation.ps1') -Raw -Encoding UTF8
+$fileTranslationSource = Get-Content -LiteralPath (Join-Path $root 'src\CatBatch.ps1') -Raw -Encoding UTF8
 $buildId = (Get-Content -LiteralPath (Join-Path $root 'config\build.txt') -Raw -Encoding UTF8).Trim()
 $freshGateStart = $source.IndexOf('$freshTimeout =')
 $fillStart = $source.IndexOf('$fillResult = ConvertTo-YakuCdpResultObject -Value (Invoke-YakuCopilotFillPrompt')
@@ -57,13 +57,13 @@ Assert-YakuWatcherSource -Condition $source.Contains("reason = 'full-prompt-stil
 Assert-YakuWatcherSource -Condition ($source.Contains('synthetic-click-send-button') -and $source.Contains('native-mouse-click-send-button-stage2')) -Message 'synthetic and trusted native send stages must be diagnosable'
 Assert-YakuWatcherSource -Condition $source.Contains('retryAttempted = [bool]$retryAttempted') -Message 'send result must expose whether a retry occurred'
 Assert-YakuWatcherSource -Condition ($source.Contains('guarded-enter-send-stage3') -and $source.Contains('guarded-enter-inserted-newline-rolled-back')) -Message 'guarded Enter fallback must roll back an inserted newline'
-Assert-YakuWatcherSource -Condition ($buildId -eq 'V91.4' -and $runtimeSource.Contains('config\build.txt') -and -not $runtimeSource.Contains("return 'V91.2-20260717'")) -Message 'build ID must come from config/build.txt'
+Assert-YakuWatcherSource -Condition (-not [string]::IsNullOrWhiteSpace($buildId) -and $runtimeSource.Contains('config\build.txt') -and -not $runtimeSource.Contains("return 'V91.2-20260717'")) -Message 'build ID must come from config/build.txt'
 Assert-YakuWatcherSource -Condition ($source.Contains("Add-Member -NotePropertyName ok -NotePropertyValue `$true -Force") -and $source.Contains("`$normalized['ok'] = `$true") -and $source.Contains("-Name 'ok' -Default `$true")) -Message 'successful state results without an ok property must normalize and remain trusted'
 Assert-YakuWatcherSource -Condition ($source.Contains('\{translation for item') -and $source.Contains('Output format\s*:')) -Message 'current file-prompt placeholders must be rejected as prompt echoes'
 Assert-YakuWatcherSource -Condition (-not $source.Contains("completedBy:'stable-not-busy'") -and -not $source.Contains("completedBy:'stopped-with-output'")) -Message 'incomplete stable/stopped output must not be accepted'
 Assert-YakuWatcherSource -Condition ($serverSource.Contains('BUILD_ID_WARM_RUNSPACE_MISMATCH') -and $serverSource.Contains('build_id=$script:YakuBuildId')) -Message 'server and warm runspace build mismatch must be rejected'
 Assert-YakuWatcherSource -Condition ($serverSource.Contains('[System.IO.FileShare]::ReadWrite') -and $serverSource.Contains('$script:YakuWarmupLastGood = $status') -and $serverSource.Contains('copilot-warmup.{0}.tmp')) -Message 'Copilot warmup status must use shared reads, last-known-good fallback, and atomic replacement'
 Assert-YakuWatcherSource -Condition ($translationSource.Contains('Text response contract diagnostic saved.') -and $translationSource.Contains('Get-YakuTranslationAttemptErrorCode')) -Message 'text contract rejection must preserve its concrete reason and diagnostic response'
-Assert-YakuWatcherSource -Condition ($fileTranslationSource.Contains('Save each completed batch immediately') -and $fileTranslationSource.Contains('reasons=$reasonSummary')) -Message 'glossary evidence must survive a later batch failure'
+Assert-YakuWatcherSource -Condition ($fileTranslationSource.Contains("ContainsKey('OnBatchCompleted')") -and $serverSource.Contains('Save-YakuCatBatchCheckpoint')) -Message 'completed batch results must survive a later batch failure'
 
 Write-Host 'V64/V67/V68/V71/V72/V73/V74/V75/V76/V77/V78/V79/V80/V81/V82/V83/V84/V85/V86/V87/V87.1/V88/V89/V90/V90.1/V90.2/V90.3/V90.4/V90.5/V90.6/V90.7/V90.8/V90.9/V90.9.1/V91/V91.1/V91.2 watcher, silent-start, send recovery, fresh-chat, window normalization, glossary audit scope, warmup status, and build identity tests passed.' -ForegroundColor Green

@@ -601,9 +601,6 @@ function Get-YakuNumericRulesSection {
         # 外部公表の書き方。マツダの英文開示12冊を読んで決めた。
         # 社内表記（oku・括弧の負数）は持ち込まない。
         $billionRules = @()
-        if ([string]$InputText -match '\[\[P\d+\]\]') {
-            $billionRules += '- PROPER NOUN PLACEHOLDERS. [[P1]], [[P2]] ... stand for names. Copy each token character for character and never translate or explain them.'
-        }
         if ([string]$InputText -match '\[\[N\d+\]\]') {
             $billionRules += '- NUMBER PLACEHOLDERS (highest priority). [[N1]], [[N2]] ... stand for redacted numbers. Copy each token character for character, exactly once, and never invent, merge, drop, or reorder them.'
         }
@@ -616,11 +613,6 @@ function Get-YakuNumericRulesSection {
         )) -join $nl)
     }
     $placeholderRules = @()
-    # 固有名詞の記号。人名・法人名・地名は読みが自明でないものが多いので、
-    # 送る前に置き換えてある。判断させず、そのまま写させる。
-    if ([string]$InputText -match '\[\[P\d+\]\]') {
-        $placeholderRules += '- PROPER NOUN PLACEHOLDERS. [[P1]], [[P2]] ... stand for names of people, firms, and places. Copy each token character for character, exactly as many times as it appears, and never translate, romanize, inflect, or explain them.'
-    }
     if ([string]$InputText -match '\[\[N\d+\]\]') {
         $placeholderRules = @(
             '- NUMBER PLACEHOLDERS (highest priority). [[N1]], [[N2]] ... stand for redacted numbers. Copy each token character-for-character. Never translate, renumber, reorder, merge, split, or drop one; never invent one; never replace one with a digit or a word (one, several, approximately, a few). Every token in SOURCE appears the same number of times in each output section. Signs, units, and % stay OUTSIDE the token. A number written WITHOUT a placeholder is not redacted: copy it verbatim as a number.'
@@ -746,18 +738,15 @@ function New-YakuTextPrompt {
         # V91.61 段階3: 参考資料コーパスから引いた文例。
         # 作るのは CorpusReference.ps1 で、ここは受け取って差し込むだけ。
         [AllowNull()][string]$CorpusSection,
-        # V91.61（2026-08-06）: 完全訳と開示用の電文体は別々の依頼になった。
-        # full / brief でそれぞれの雛形を選ぶ。空なら 1依頼で2つ返す旧雛形。
-        [AllowNull()][string]$Mode
+        # 通常翻訳は full。「短く」は専用処理から brief を指定する。
+        [ValidateSet('full','brief')][string]$Mode = 'full'
     )
     if ([string]::IsNullOrWhiteSpace($RequestId)) { $RequestId = [guid]::NewGuid().ToString('N') }
     $direction = if ([string]::IsNullOrWhiteSpace($DirectionOverride)) { Get-YakuDirection -Text $InputText } else { $DirectionOverride }
     $templateName =
         if ($direction -ne 'to_en') { 'text_translate_to_jp.txt' }
-        # published は開示資料の書き方。出す枠は full と同じ（完全な文1つ）で、
-        elseif ([string]$Mode -eq 'full') { 'text_translate_full_to_en.txt' }
-        elseif ([string]$Mode -eq 'brief') { 'text_translate_brief_to_en.txt' }
-        else { 'text_translate_to_en.txt' }
+        elseif ($Mode -eq 'brief') { 'text_translate_brief_to_en.txt' }
+        else { 'text_translate_full_to_en.txt' }
     $template = Get-YakuPromptTemplate -Root $Root -Name $templateName
     $vars = @{
         input_text = $InputText.Trim()
@@ -940,70 +929,5 @@ function Get-YakuGlossaryDuplicateSummaryHtml {
         $html += "<li>$(ConvertTo-YakuHtml $w)</li>"
     }
     $html += "</ul></div>"
-    return $html
-}
-
-function Convert-YakuGlossarySectionToHtml {
-    param(
-        [Parameter(Mandatory=$true)][string]$Title,
-        [Parameter(Mandatory=$true)][string]$Description,
-        [Parameter(Mandatory=$true)][string]$DisplayPath,
-        [Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Entries,
-        [Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$AllEntries,
-        [AllowNull()][string]$Status = ''
-    )
-    $ordered = @($Entries | Sort-Object Row)
-    $statusHtml = if ([string]::IsNullOrWhiteSpace($Status)) { '' } else { "<div class='alert alert-warning'>$(ConvertTo-YakuHtml $Status)</div>" }
-    $warningHtml = Get-YakuGlossaryDuplicateSummaryHtml -Entries $AllEntries
-    $html = @"
-<section class='glossary-section'>
-  <h3>$(ConvertTo-YakuHtml $Title)</h3>
-  <p>$(ConvertTo-YakuHtml $Description)</p>
-  <div class='muted glossary-path'>$(ConvertTo-YakuHtml $DisplayPath)</div>
-  <div class='glossary-count'>エントリ件数: $($ordered.Count)</div>
-  $statusHtml
-  $warningHtml
-  <div class='glossary-table-wrap'>
-    <table class='glossary-table'>
-      <thead><tr><th>行</th><th>用語</th><th>訳語</th></tr></thead>
-      <tbody>
-"@
-    foreach ($entry in $ordered) {
-        $html += @"
-        <tr>
-          <td>$(ConvertTo-YakuHtml $entry.Row)</td>
-          <td>$(ConvertTo-YakuHtml $entry.Source)</td>
-          <td>$(ConvertTo-YakuHtml $entry.Target)</td>
-        </tr>
-"@
-    }
-    $html += @"
-      </tbody>
-    </table>
-  </div>
-</section>
-"@
-    return $html
-}
-
-function Convert-YakuGlossaryManagerToHtml {
-    param([Parameter(Mandatory=$true)][string]$Root)
-    $machinePath = Get-YakuGlossaryPath -Root $Root
-    $machineEntries = @(Get-YakuGlossaryEntries -Root $Root -Path $machinePath)
-    $machineAllEntries = @(Get-YakuGlossaryEntries -Root $Root -Path $machinePath -IncludeDuplicates)
-    $machineStatus = if (Test-Path -LiteralPath $machinePath -PathType Leaf) { '' } else { '未作成' }
-
-    # prompt_glossary.csv は廃止した（利用者の判断 2026-08-06）。
-    # 用語集はレイアウトの保証のためのもので、文中の言い回しには使わない。
-    $machineHtml = Convert-YakuGlossarySectionToHtml -Title '表ラベル置換用 — glossary.csv' -Description 'Excel/CSVのセルが完全一致したときCopilotを使わず直接置換。表の正式表記で登録。' -DisplayPath $machinePath -Entries $machineEntries -AllEntries $machineAllEntries -Status $machineStatus
-    $promptHtml = ''
-    $html = @"
-<div class='glossary-manager'>
-  <div class='alert alert-info glossary-readonly-note'>編集は各CSVファイルを直接編集してください(UTF-8 BOM付き・カンマ区切り)。保存後は次回の翻訳から自動反映されます。</div>
-  <div class='alert alert-warning glossary-masking-note'>用語集に登録した語は、数字を含む部分もそのままCopilotへ送信されます（訳語が崩れるのを防ぐため、マスクの対象外にしています）。機密の数値を用語集に登録しないでください。</div>
-  $machineHtml
-  $promptHtml
-</div>
-"@
     return $html
 }

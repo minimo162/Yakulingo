@@ -1,12 +1,10 @@
 ﻿<#
 .SYNOPSIS
-  V91.61: 完全訳と開示用の電文体を別々の依頼として扱う経路の回帰テスト。
+  V91.61: 通常訳と、利用者が明示的に実行する短縮の応答契約テスト。
 
 .DESCRIPTION
-  電文体は完全訳を短くしたものではなく、同じ原文に対する別の成果物である
-  （利用者の判断 2026-08-06）。依頼を分けると、応答は片方のラベルだけを持つ。
-  従来は FULL_TEXT と BRIEF_TEXT の両方が揃わないと受理しなかったため、
-  受け取り側・契約・取り出しの3か所を Mode で切り替えられるようにした。
+  通常の英訳は FULL_TEXT を1件だけ返す。短縮は通常訳の後で明示的に実行し、
+  BRIEF_TEXT を1件だけ返す。旧来の同時応答は受理しない。
 
   Copilot への往復は行わない。契約と取り出しだけを確かめる。
 
@@ -32,7 +30,7 @@ $rid = 'deadbeefdeadbeefdeadbeefdeadbeef'
 Write-Host '依頼ごとに求めるラベル'
 Chk ((@(Get-YakuTextRequiredLabels -Direction 'to_en' -Mode 'full') -join ',') -eq 'FULL_TEXT') '完全訳の依頼は FULL_TEXT だけ'
 Chk ((@(Get-YakuTextRequiredLabels -Direction 'to_en' -Mode 'brief') -join ',') -eq 'BRIEF_TEXT') '電文体の依頼は BRIEF_TEXT だけ'
-Chk ((@(Get-YakuTextRequiredLabels -Direction 'to_en' -Mode '') -join ',') -eq 'FULL_TEXT,BRIEF_TEXT') 'Mode 無しは従来どおり両方'
+Chk ((@(Get-YakuTextRequiredLabels -Direction 'to_en') -join ',') -eq 'FULL_TEXT') 'Mode 省略時も完全訳だけ'
 Chk ((@(Get-YakuTextRequiredLabels -Direction 'to_jp' -Mode 'full') -join ',') -eq 'JAPANESE_TEXT') 'EN→JA は Mode に依らず JAPANESE_TEXT'
 
 # ---------------------------------------------------------------- 契約
@@ -44,10 +42,8 @@ Chk ([bool](Test-YakuTextResponseContract -Text $briefOnly -Direction 'to_en' -R
 # 求めていないラベルで返ってきたら受理しない。取り違えを見逃さないため。
 Chk (-not [bool](Test-YakuTextResponseContract -Text $briefOnly -Direction 'to_en' -RequestId $rid -Mode 'full').Valid) '完全訳を求めたのに電文体が返れば弾く'
 Chk (-not [bool](Test-YakuTextResponseContract -Text $fullOnly -Direction 'to_en' -RequestId $rid -Mode 'brief').Valid) '電文体を求めたのに完全訳が返れば弾く'
-# 旧経路（1依頼で2つ）は従来どおり両方を要求する。
 $both = "FULL_TEXT:`nOperating profit increased.`nBRIEF_TEXT:`nOP up.`nYAKULINGO_END:$rid"
-Chk ([bool](Test-YakuTextResponseContract -Text $both -Direction 'to_en' -RequestId $rid -Mode '').Valid) 'Mode 無しなら両方揃った応答が通る'
-Chk (-not [bool](Test-YakuTextResponseContract -Text $fullOnly -Direction 'to_en' -RequestId $rid -Mode '').Valid) 'Mode 無しで片方だけなら弾く'
+Chk (-not [bool](Test-YakuTextResponseContract -Text $both -Direction 'to_en' -RequestId $rid).Valid) '旧来の同時応答は受理しない'
 
 # ---------------------------------------------------------------- 取り出し
 Write-Host '取り出す訳文'
@@ -127,17 +123,12 @@ $briefTpl = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'prompts')
 Chk ($briefTpl -notmatch 'revenue -> rev\.') 'プロンプトの一覧から revenue が消えている'
 Chk ($briefTpl -match 'rev\., vol\., consol\., redn\.') '「呼び出し側が当てるのでどちらでもよい」側に載っている'
 
-# ---------------------------------------------------------------- 並列の既定
-# 既定で並列にする（利用者の判断 2026-08-06）。止めるときだけ環境変数で切る。
-# 「1のときだけ有効」に戻ると、既定が黙って逐次へ落ちて遅くなるので見張る。
-Write-Host '並列の既定'
+# ---------------------------------------------------------------- 1回の通常翻訳
+Write-Host '通常翻訳は1回だけ'
 $translationText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Translation.ps1'))
-Chk ($translationText.Contains("YAKULINGO_PARALLEL -eq '0'")) '環境変数は「止める」側（既定は並列）'
-Chk (-not $translationText.Contains("YAKULINGO_PARALLEL -ne '1'")) '「1のときだけ有効」に戻っていない'
-# タブではなくウィンドウで開くこと。裏のタブでは入力が届かない。
-$clientTextW = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CopilotClient.ps1'))
-Chk ($clientTextW -match 'newWindow = \$true') '並列用の Copilot は新規ウィンドウで開く'
-Chk ($clientTextW -match 'function Close-YakuCopilotOwnedWindows') '自分で開いたウィンドウを閉じる手段がある'
+Chk ($translationText -notmatch 'YAKULINGO_PARALLEL') '休眠中の並列切替が無い'
+Chk ($translationText -notmatch 'Invoke-YakuTextRequestsInParallel') '休眠中の並列関数が無い'
+Chk ($translationText -match "Invoke-YakuSingleTranslationBatch[\s\S]*-Mode 'full'") '通常英訳は完全訳を1回だけ要求する'
 
 # ---------------------------------------------------------------- 受け取り契約（JS）
 Write-Host '受け取り契約が片方だけを認める'

@@ -3594,7 +3594,8 @@ function Write-YakuExcelTranslations {
         [Parameter(Mandatory=$true)]$Warnings,
         [AllowNull()]$Settings,
         [AllowNull()][string]$BaselinePath = $null,
-        [AllowNull()]$ProgressState = $null
+        [AllowNull()]$ProgressState = $null,
+        [bool]$DraftMarker = $false
     )
     $ctx = $null
     $excel = $null
@@ -3814,6 +3815,30 @@ function Write-YakuExcelTranslations {
             }
         }
         try { Write-YakuLog "Writeback write phase done. sheets=$applySheetTotal seconds=$([Math]::Round(((Get-Date) - $writeStarted).TotalSeconds, 2))" 'INFO' } catch {}
+        if ($DraftMarker) {
+            # Mark CAT output inside the workbook without changing cells, print areas,
+            # sheet order, or the user's layout. The DRAFT_ filename is the visible marker;
+            # this hidden workbook name is the machine-readable in-document marker.
+            # CustomDocumentProperties is not exposed reliably by every Office COM build.
+            $draftName = $null
+            try {
+                $existingDraftName = $null
+                try {
+                    $existingDraftName = $workbook.Names.Item('_YakuLingoArtifactStatus')
+                    if ($null -ne $existingDraftName) { $existingDraftName.Delete() | Out-Null }
+                } catch {
+                    # A source workbook normally has no marker. Absence is expected.
+                } finally {
+                    if ($null -ne $existingDraftName) { Release-YakuComObject $existingDraftName }
+                }
+                $draftName = $workbook.Names.Add('_YakuLingoArtifactStatus', '="DRAFT - reviewed translation work; not release approved"', $false)
+                if ($null -eq $draftName -or [bool]$draftName.Visible) { throw 'Hidden workbook marker was not created.' }
+            } catch {
+                throw ('CAT_DRAFT_MARKER_FAILED: Excel内にDRAFT標識を記録できませんでした。' + $_.Exception.Message)
+            } finally {
+                if ($null -ne $draftName) { Release-YakuComObject $draftName }
+            }
+        }
         Set-YakuExcelWritebackProgress -ProgressState $ProgressState -SheetDone $applySheetTotal -SheetTotal $applySheetTotal -DetailPrefix '保存中'
         $saveStarted = Get-Date
         Set-YakuExcelAutomaticCalculationForOutput -Application $excel -Workbook $workbook
@@ -4118,7 +4143,8 @@ function Test-YakuCandidateOutput {
         [int]$WrittenCount,
         [int]$SkippedCount = 0,
         [bool]$ContentModified = $true,
-        [AllowNull()]$ProgressState = $null
+        [AllowNull()]$ProgressState = $null,
+        [switch]$AllowDraftMarker
     )
     $validationStarted = Get-Date
     Set-YakuFileTranslationProgress -ProgressState $ProgressState -Phase 'validating' -Label '検証中' -Progress 99 -Detail '保存したファイルの完全性を検証しています' -Fields @{}
@@ -4174,7 +4200,7 @@ function Test-YakuCandidateOutput {
                         } catch {}
                     }
                     if ($classification -eq 'destroyed') { $destroyed++ } elseif ($classification -eq 'representation') { $representation++ } else { $modified++ }
-                    if ($diffCount -lt 100) { Write-YakuLog "Formula difference. location=$key classification=$classification input=$bf output=$af translatedConstantHint=$((Test-YakuOpenXmlCellLooksTranslatedConstant -Path $CandidatePath -Entry ([string]$b.Entry) -Cell ([string]$b.Cell)))" 'ERROR' }
+                    if ($diffCount -lt 100) { Write-YakuLog "Formula difference. location=$key classification=$classification inputLength=$($bf.Length) outputLength=$($af.Length) translatedConstantHint=$((Test-YakuOpenXmlCellLooksTranslatedConstant -Path $CandidatePath -Entry ([string]$b.Entry) -Cell ([string]$b.Cell)))" 'ERROR' }
                     $diffCount++
                 }
             }
@@ -4187,8 +4213,15 @@ function Test-YakuCandidateOutput {
     if ([string]$before.DefinedNamesSha256 -ne [string]$after.DefinedNamesSha256) {
         if ([string]$before.NormalizedDefinedNamesSha256 -eq [string]$after.NormalizedDefinedNamesSha256) { Write-YakuLog 'Defined-name representation changed, but normalized values are equivalent.' 'WARN' }
         else {
-            Write-YakuLog ("Defined names differ. input=" + (@($before.DefinedNames) -join ' || ') + " output=" + (@($after.DefinedNames) -join ' || ')) 'ERROR'
+            $beforeComparable = @($before.DefinedNames | Where-Object { [string]$_ -notmatch '^_YakuLingoArtifactStatus\|' } | ForEach-Object { ($_ -replace '\s+', '').Replace('"', "'") } | Sort-Object)
+            $afterComparable = @($after.DefinedNames | Where-Object { [string]$_ -notmatch '^_YakuLingoArtifactStatus\|' } | ForEach-Object { ($_ -replace '\s+', '').Replace('"', "'") } | Sort-Object)
+            $draftMarkerPresent = @($after.DefinedNames | Where-Object { [string]$_ -match '^_YakuLingoArtifactStatus\|' }).Count -eq 1
+            if ($AllowDraftMarker -and $draftMarkerPresent -and ($beforeComparable -join [char]31) -eq ($afterComparable -join [char]31)) {
+                Write-YakuLog 'Defined names differ only by the required CAT DRAFT marker.' 'INFO'
+            } else {
+            Write-YakuLog "Defined names differ. inputCount=$(@($before.DefinedNames).Count) outputCount=$(@($after.DefinedNames).Count)" 'ERROR'
             throw 'OUTPUT_VALIDATION_DEFINED_NAMES: 定義名の数式が実質的に一致しません。'
+            }
         }
     }
     if ($before.HasMacro -and (-not $after.HasMacro -or $before.MacroSha256 -ne $after.MacroSha256)) {
@@ -4233,7 +4266,9 @@ function Write-YakuFileTranslations {
         [Parameter(Mandatory=$true)][hashtable]$TranslationByBlockId,
         [Parameter(Mandatory=$true)]$Settings,
         [Parameter(Mandatory=$true)]$Warnings,
-        [AllowNull()]$ProgressState = $null
+        [AllowNull()]$ProgressState = $null,
+        [switch]$DraftMarker,
+        [switch]$FailOnIncomplete
     )
     $kind = Get-YakuSupportedFileKind -Path $InputPath
     Add-YakuInputReadOnlyNotice -Path $InputPath -Warnings $Warnings
@@ -4256,7 +4291,7 @@ function Write-YakuFileTranslations {
             Clear-YakuOutputReadOnlyAttribute -Path $candidatePath | Out-Null
             try { Write-YakuLog "Writeback copy done. seconds=$([Math]::Round(((Get-Date) - $copyStarted).TotalSeconds, 2)) jobId=$jobId" 'INFO' } catch {}
             if ($hasWriteTargets) {
-                $writeResult = Write-YakuExcelTranslations -OutputPath $candidatePath -Blocks $Blocks -TranslationByBlockId $TranslationByBlockId -Warnings $Warnings -Settings $Settings -BaselinePath $baselinePath -ProgressState $ProgressState
+                $writeResult = Write-YakuExcelTranslations -OutputPath $candidatePath -Blocks $Blocks -TranslationByBlockId $TranslationByBlockId -Warnings $Warnings -Settings $Settings -BaselinePath $baselinePath -ProgressState $ProgressState -DraftMarker:$DraftMarker
             } else {
                 try { Write-YakuLog "Writeback skipped; no translated blocks. jobId=$jobId" 'INFO' } catch {}
                 $writeResult = [pscustomobject]@{ WriteTargetCount=0; WrittenCount=0; SkippedCount=0 }
@@ -4265,8 +4300,9 @@ function Write-YakuFileTranslations {
         Assert-YakuJobNotCancelled -ProgressState $ProgressState
         $skippedCount = 0; try { $skippedCount = [int]$writeResult.SkippedCount } catch {}
         $contentModified = if ($kind -eq 'csv') { $true } else { $hasWriteTargets }
-        $validation = Test-YakuCandidateOutput -InputPath $InputPath -CandidatePath $candidatePath -BaselinePath $baselinePath -Kind $kind -Blocks $Blocks -WriteTargetCount ([int]$writeResult.WriteTargetCount) -WrittenCount ([int]$writeResult.WrittenCount) -SkippedCount $skippedCount -ContentModified:$contentModified -ProgressState $ProgressState
+        $validation = Test-YakuCandidateOutput -InputPath $InputPath -CandidatePath $candidatePath -BaselinePath $baselinePath -Kind $kind -Blocks $Blocks -WriteTargetCount ([int]$writeResult.WriteTargetCount) -WrittenCount ([int]$writeResult.WrittenCount) -SkippedCount $skippedCount -ContentModified:$contentModified -ProgressState $ProgressState -AllowDraftMarker:$DraftMarker
         $incomplete = Test-YakuIncompleteWarnings -Warnings $Warnings
+        if ($FailOnIncomplete -and $incomplete) { throw 'CAT_EXPORT_WRITE_INCOMPLETE: 一部を書き込めなかったため、DRAFTファイルを公開しませんでした。' }
         Set-YakuFileTranslationProgress -ProgressState $ProgressState -Phase 'publishing' -Label '保存完了処理中' -Progress 99 -Detail '検証済みファイルを出力先へ移動しています' -Fields @{}
         $publishedPath = ''
         for ($publishAttempt = 0; $publishAttempt -lt 100; $publishAttempt++) {

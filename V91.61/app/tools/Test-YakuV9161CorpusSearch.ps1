@@ -25,7 +25,7 @@ $prevCorpus = [string]$env:YAKULINGO_CORPUS_DIR
 $env:YAKULINGO_DATA_DIR = Join-Path $work 'data'
 
 try {
-foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','FileTranslation.ps1','Corpus.ps1','CorpusSearch.ps1')) {
+foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','CatBatch.ps1','Corpus.ps1','CorpusSearch.ps1')) {
     . (Join-Path (Join-Path $root 'src') $n)
 }
 
@@ -235,7 +235,7 @@ Chk ($indexHtml -notmatch '(?i)corpus[-_]?(build|rebuild|index|import|ingest|adm
 Write-Host '翻訳経路への影響'
 $translation = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Translation.ps1'))
 Chk ($translation -notmatch 'Search-YakuCorpus') '段階2 では翻訳経路へ差し込まない（差し込みは段階3）'
-$fileTranslation = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'FileTranslation.ps1'))
+$fileTranslation = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CatBatch.ps1'))
 Chk ($fileTranslation -notmatch 'Search-YakuCorpus') 'ファイル翻訳経路にも差し込まない'
 
 } finally {

@@ -1,0 +1,88 @@
+﻿<# .SYNOPSIS Horizon 3 Word adapter and DRAFT round-trip regression. #>
+[CmdletBinding()]
+param()
+$ErrorActionPreference='Stop'
+$toolsRoot=Split-Path -Parent $MyInvocation.MyCommand.Path
+$root=Split-Path -Parent $toolsRoot
+$script:failed=0
+function Check-YakuWord { param([bool]$Condition,[string]$Message) if($Condition){Write-Host ('  ok   '+$Message) -ForegroundColor Green}else{Write-Host ('  FAIL '+$Message) -ForegroundColor Red;$script:failed++} }
+foreach($name in @('Paths.ps1','Runtime.ps1','Settings.ps1','PromptBuilder.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1','ProperNoun.ps1','CellSegments.ps1','CellAlign.ps1','WordAdapter.ps1','CatProject.ps1')){. (Join-Path (Join-Path $root 'src') $name)}
+$tempRoot=Join-Path ([IO.Path]::GetTempPath()) ('yaku-word-'+[guid]::NewGuid().ToString('N'))
+$null=New-Item -ItemType Directory -Path $tempRoot -Force
+function Get-YakuCatProjectStoreDir { return (Join-Path $tempRoot 'cat') }
+function Add-YakuTranslationMemoryEntry { return [pscustomobject]@{Added=$true;Reason='test'} }
+
+function New-TestDocx {
+    param([string]$Path,[switch]$Complex)
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $stream=[IO.File]::Open($Path,[IO.FileMode]::CreateNew,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+    $zip=New-Object IO.Compression.ZipArchive($stream,[IO.Compression.ZipArchiveMode]::Create,$false)
+    try {
+        $parts=[ordered]@{
+            '[Content_Types].xml'='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'
+            '_rels/.rels'='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>'
+        }
+        $complexXml=if($Complex){'<w:hyperlink><w:r><w:t>リンク付き本文</w:t></w:r></w:hyperlink>'}else{'<w:r><w:t>売上について説明します。</w:t></w:r>'}
+        $parts['word/document.xml']='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>'+$complexXml+'</w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>今後の見通しです。</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr/></w:body></w:document>'
+        foreach($name in $parts.Keys){
+            $entry=$zip.CreateEntry($name,[IO.Compression.CompressionLevel]::Optimal)
+            $writer=New-Object IO.StreamWriter($entry.Open(),(New-Object Text.UTF8Encoding($false)))
+            try{$writer.Write([string]$parts[$name])}finally{$writer.Dispose()}
+        }
+    } finally {$zip.Dispose();$stream.Dispose()}
+}
+
+try {
+    $source=Join-Path $tempRoot 'quarter.docx'; New-TestDocx -Path $source
+    $settings=[pscustomobject]@{}
+    $inventory=Get-YakuWordDocumentInventory -Path $source
+    Check-YakuWord ($inventory.SupportedBlockCount -eq 2 -and $inventory.DraftStructureEligible) 'simple heading and table paragraph are inventoried'
+    Check-YakuWord ([string]$inventory.Blocks[0].Location -like '見出し*' -and [string]$inventory.Blocks[1].Meta.Kind -eq 'word_table') 'heading and table locations stay distinct'
+
+    $project=New-YakuCatProject -Root $root -Path $source -Settings $settings -Direction to_en
+    Check-YakuWord ([string]$project.DocumentFormat -eq 'docx' -and @($project.Segments).Count -eq 2) 'generic CAT open dispatches DOCX to Word adapter'
+    Check-YakuWord (Save-YakuCatProject -Project $project) 'Word project and owned source persist'
+    Check-YakuWord ([string]$project.Path -match 'source\\original\.docx$' -and (Test-Path -LiteralPath $project.Path)) 'Word source is copied into the project'
+    Check-YakuWord ([string]$project.FileName -eq 'quarter.docx') 'owned source keeps the user-facing original file name'
+    $suggestedOutput=Get-YakuCatDraftOutputPath -Project $project -OutputDirectory $tempRoot
+    Check-YakuWord ([IO.Path]::GetFileName($suggestedOutput) -eq 'DRAFT_quarter_translated.docx') 'DRAFT output name uses the imported file name instead of original.docx'
+    $null=New-Item -ItemType File -Path $suggestedOutput
+    $nextSuggestedOutput=Get-YakuCatDraftOutputPath -Project $project -OutputDirectory $tempRoot
+    Check-YakuWord ([IO.Path]::GetFileName($nextSuggestedOutput) -eq 'DRAFT_quarter_translated(2).docx') 'an existing DRAFT is not overwritten'
+    $project.Segments[0].Translation='About net sales.'; $project.Segments[0].Origin='human'
+    $project.Segments[1].Translation='This is the outlook.'; $project.Segments[1].Origin='human'
+    $null=Set-YakuCatSegmentConfirmed -Project $project -Index 0
+    $null=Set-YakuCatSegmentConfirmed -Project $project -Index 1
+    Check-YakuWord (Save-YakuCatProject -Project $project) 'review and QC state persist before restart'
+    $eligible=Get-YakuCatOutputEligibility -Project $project
+    Check-YakuWord ($eligible.WordDraftEligible -and -not $eligible.ExcelDraftEligible) 'reviewed Word uses a separate Word DRAFT release gate'
+    $output=$nextSuggestedOutput
+    $result=Export-YakuCatProject -Project $project -OutputPath $output -Settings $settings
+    Check-YakuWord ((Test-Path -LiteralPath $output) -and $result.Written -eq 2) 'DRAFT DOCX is written only after review'
+    $after=Get-YakuWordDocumentInventory -Path $output
+    $afterText=@($after.Blocks | ForEach-Object {[string]$_.Text}) -join '|'
+    Check-YakuWord ($afterText -match 'DRAFT — YakuLingo' -and $afterText -match 'About net sales' -and $afterText -match 'This is the outlook') 'DRAFT marker and reviewed translations are visible'
+    Check-YakuWord ([string]$after.StructureHash -eq [string]$inventory.StructureHash -and (Compare-Object @($after.EntryNames) @($inventory.EntryNames)).Count -eq 0) 'OOXML structure and package graph survive round trip'
+    $id=[string]$project.Id; Remove-YakuCatProject -Id $id
+    $restored=Restore-YakuCatProject -Id $id
+    Check-YakuWord ([string]$restored.DocumentFormat -eq 'docx' -and [string]$restored.WordInventory.ContractVersion -eq 'word-adapter-v1') 'Word capability inventory survives restart'
+    $restartOutput=Join-Path $tempRoot 'DRAFT_quarter_restart.docx'
+    $restartResult=Export-YakuCatProject -Project $restored -OutputPath $restartOutput -Settings $settings
+    Check-YakuWord ((Test-Path -LiteralPath $restartOutput) -and $restartResult.Written -eq 2) 'restored Word project can still produce a verified DRAFT'
+
+    $complex=Join-Path $tempRoot 'complex.docx'; New-TestDocx -Path $complex -Complex
+    $complexProject=New-YakuCatProject -Root $root -Path $complex -Settings $settings -Direction to_en
+    Check-YakuWord (-not [bool]$complexProject.WordInventory.DraftStructureEligible -and @($complexProject.WordInventory.UnsupportedReasons).Count -gt 0) 'hyperlinked text is inventoried as unsupported'
+    Check-YakuWord (-not [bool](Get-YakuCatOutputEligibility -Project $complexProject).WordDraftEligible) 'unsupported Word structure fails closed for file output'
+    $complexProject.Segments[0].Translation='Linked body text.'; $complexProject.Segments[0].Origin='human'
+    $complexProject.Segments[1].Translation='This is the outlook.'; $complexProject.Segments[1].Origin='human'
+    $null=Set-YakuCatSegmentConfirmed -Project $complexProject -Index 0
+    $null=Set-YakuCatSegmentConfirmed -Project $complexProject -Index 1
+    $fallback=Export-YakuCatProject -Project $complexProject -OutputPath (Join-Path $tempRoot 'must-not-exist.docx') -Settings $settings
+    Check-YakuWord ([string]$fallback.OutputPath -eq '' -and [string]$fallback.Text -eq "Linked body text.`nThis is the outlook." -and -not (Test-Path -LiteralPath (Join-Path $tempRoot 'must-not-exist.docx'))) 'unsupported Word keeps complex text in the reviewed translation list without creating a partial file'
+    $serverSource=[IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Server.ps1'))
+    $uiSource=[IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'index.html'))
+    Check-YakuWord ($serverSource -match "'\.docx','\.xlsx','\.xlsm','\.csv'" -and $uiSource -match 'accept="\.docx,\.xlsx,\.xlsm"') 'upload and direct-path entry both accept DOCX'
+} finally { try{Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue}catch{} }
+if($script:failed -gt 0){throw("Word adapter tests failed: $script:failed")}
+Write-Host 'V91.63 Word adapter regression passed.' -ForegroundColor Green

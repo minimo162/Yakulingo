@@ -34,6 +34,8 @@ function Chk { param([bool]$c, [string]$m) if ($c) { Write-Host ('  ok   ' + $m)
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ('yaku-tm-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 $null = New-Item -ItemType Directory -Path $tmp -Force
 $tm = Join-Path $tmp 'tm-to_en.jsonl'
+$oldDataDir = $env:YAKULINGO_DATA_DIR
+$env:YAKULINGO_DATA_DIR = Join-Path $tmp 'data'
 try {
     Write-Host '貯める' -ForegroundColor Cyan
     $r = Add-YakuTranslationMemoryEntry -Source '当社は電動化を進めます。' -Target 'We will advance electrification.' -Path $tm
@@ -76,7 +78,8 @@ try {
 
     Write-Host '確定と結びついているか' -ForegroundColor Cyan
     $cat = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'CatProject.ps1') -Raw -Encoding UTF8
-    Chk ($cat -match 'Add-YakuTranslationMemoryEntry') '訳を確定すると翻訳メモリへ貯まる'
+    $server = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'Server.ps1') -Raw -Encoding UTF8
+    Chk ($server -match 'Add-YakuTranslationMemoryEntry' -and $server -match 'Save-YakuCatProject') 'プロジェクト保存後に確認訳を翻訳メモリへ貯める'
     Chk ($cat -match 'Find-YakuTranslationMemory') '候補ペインが翻訳メモリを引く'
     Chk ($cat -match "Kind\s*=\s*'memory'") '翻訳メモリの候補に印を付ける'
     # 自分が確定した訳を先頭に置く。公表訳より自分の文体に合うため。
@@ -86,7 +89,7 @@ try {
     Chk ($cat -match "Project\.Source -ne 'align'") '文例は突き合わせからだけ保存できる'
 
     Write-Host '確定の状態' -ForegroundColor Cyan
-    foreach ($mod in @('Paths.ps1', 'Runtime.ps1', 'PromptBuilder.ps1', 'CellSegments.ps1', 'Corpus.ps1', 'CorpusPairs.ps1', 'CatProject.ps1')) {
+    foreach ($mod in @('Paths.ps1', 'Runtime.ps1', 'Settings.ps1', 'PromptBuilder.ps1', 'Translation.ps1', 'ProperNoun.ps1', 'CatTranslation.ps1', 'CellSegments.ps1', 'Corpus.ps1', 'CorpusPairs.ps1', 'CatProject.ps1')) {
         . (Join-Path (Join-Path $root 'src') $mod)
     }
     $proj = New-YakuCatTextProject -Root $root -Settings $null -Direction 'to_en' `
@@ -118,7 +121,7 @@ try {
 
     Write-Host '作業内容の保存と復元' -ForegroundColor Cyan
     Chk (Save-YakuCatProject -Project $proj) 'ディスクへ保存できる'
-    $file = Join-Path (Get-YakuCatProjectStoreDir) ([string]$proj.Id + '.json')
+    $file = Join-Path (Join-Path (Get-YakuCatProjectStoreDir) ([string]$proj.Id)) 'project.json'
     Chk (Test-Path -LiteralPath $file -PathType Leaf) '保存先にファイルができる'
 
     # メモリから消したうえで復元する。再起動を模している。
@@ -140,6 +143,7 @@ try {
     try { Remove-Item -LiteralPath $file -Force } catch {}
 }
 finally {
+    $env:YAKULINGO_DATA_DIR = $oldDataDir
     try { Remove-Item -LiteralPath $tmp -Recurse -Force } catch {}
 }
 

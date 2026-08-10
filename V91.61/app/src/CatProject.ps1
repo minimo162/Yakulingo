@@ -27,6 +27,429 @@
 
 $script:YakuCatProjects = [hashtable]::Synchronized(@{})
 
+function Get-YakuCatSourceIntegrityHash {
+    param([AllowNull()][string]$Text)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes([string]$Text)
+        return [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-','').ToLowerInvariant()
+    } finally { $sha.Dispose() }
+}
+
+function Get-YakuCatQcContractVersion {
+    return 'cat-qc-v2'
+}
+
+function ConvertTo-YakuCanonicalNumericScalar {
+    param([AllowNull()][string]$Text)
+    $s = (ConvertTo-YakuMaskNormalizedText -Text ([string]$Text)).Trim()
+    [decimal]$number = 0
+    if ([decimal]::TryParse($s.Replace(',',''), [Globalization.NumberStyles]::Number -bor [Globalization.NumberStyles]::AllowLeadingSign, [Globalization.CultureInfo]::InvariantCulture, [ref]$number)) {
+        return [pscustomobject]@{ Ok=$true; Value=$number; IncludesScale=$false }
+    }
+    $jp = ConvertFrom-YakuJapaneseNumberText -Text $s
+    if ([bool]$jp.Ok) { return [pscustomobject]@{ Ok=$true; Value=[decimal]$jp.Value; IncludesScale=$true } }
+    $en = ConvertFrom-YakuEnglishNumberText -Text $s
+    if ([bool]$en.Ok) {
+        $hasScale = ($s -match '(?i)\b(?:hundred|thousand|million|billion|trillion)\b')
+        return [pscustomobject]@{ Ok=$true; Value=[decimal]$en.Value; IncludesScale=$hasScale }
+    }
+    return [pscustomobject]@{ Ok=$false; Value=[decimal]0; IncludesScale=$false }
+}
+
+function Get-YakuCanonicalNumericFacts {
+    <#
+      数値マスキングと同じ分類器で対象を拾い、値・単位・通貨・符号を比較可能な
+      形へする。漢数字、大字、英語の綴り数も同じ入口を通る。
+    #>
+    param(
+        [AllowNull()][string]$Text,
+        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
+        [string]$Location = 'cat-qc'
+    )
+    $source = [string]$Text
+    $mask = New-YakuNumericMaskMap -Text $source -Direction $Direction -Location $Location
+    $masked = [string]$mask.Text
+    $facts = New-Object System.Collections.Generic.List[object]
+    foreach ($token in @($mask.Map.Keys | Sort-Object { [int]([regex]::Match([string]$_, '\d+').Value) })) {
+        $raw = [string]$mask.Map[$token]
+        $scalar = ConvertTo-YakuCanonicalNumericScalar -Text $raw
+        if (-not [bool]$scalar.Ok) { throw ('CAT_NUMERIC_FACT_UNPARSEABLE:' + $raw) }
+        $at = $masked.IndexOf([string]$token, [StringComparison]::Ordinal)
+        if ($at -lt 0) { throw ('CAT_NUMERIC_FACT_TOKEN_MISSING:' + [string]$token) }
+        $before = $masked.Substring([Math]::Max(0,$at-24), [Math]::Min(24,$at))
+        $afterStart = $at + ([string]$token).Length
+        $after = $masked.Substring($afterStart, [Math]::Min(40,$masked.Length-$afterStart))
+        $context = ($before + '|' + $after)
+        $descriptor=Get-YakuNumericContextDescriptor -Text $masked -Token ([string]$token) -Start $at
+        [decimal]$scale = $(if([bool]$scalar.IncludesScale){[decimal]1}else{[decimal]$descriptor.Scale})
+        [decimal]$value = [decimal]$scalar.Value * $scale
+        $category = 'number'
+        if ([string]$descriptor.Currency -eq 'yen') { $category='currency:yen' }
+        elseif ([string]$descriptor.Currency -eq 'dollar') { $category='currency:dollar' }
+        elseif ([string]$descriptor.Currency -eq 'euro') { $category='currency:euro' }
+        elseif ([string]$descriptor.Currency -eq 'pound') { $category='currency:pound' }
+        elseif ($after -match '^\s*\)?\s*(?:%|％|percent\b|percentage\b)') { $category='ratio:percent' }
+        elseif ($after -match '(?i)^\s*\)?\s*(?:k\s+)?units?\b|^\s*\)?\s*(?:台|件|人|名|株|個|本|回|ポイント)') { $category='count' }
+        $negative = ($before -match '(?:[-−△▲]\s*|\(\s*)$')
+        if ($negative -and $value -gt 0) { $value = -$value }
+        $canonical = $value.ToString('0.############################', [Globalization.CultureInfo]::InvariantCulture)
+        $magnitude=[Math]::Abs($value).ToString('0.############################', [Globalization.CultureInfo]::InvariantCulture)
+        # 金額の絶対量と、△・括弧・minus/decrease等で表す方向は別に検査する。
+        # Keyへ符号を混ぜると「△100」→"decreased by 100"を誤って拒否する。
+        $facts.Add([pscustomobject]@{ Token=[string]$token; Raw=$raw; Category=$category; Value=$canonical; Magnitude=$magnitude; ExplicitNegative=[bool]$negative; Key=($category + '|' + $magnitude) }) | Out-Null
+    }
+    return @($facts.ToArray())
+}
+
+function Reset-YakuCatSegmentQc {
+    param([Parameter(Mandatory=$true)]$Segment, [switch]$KeepState)
+    $Segment | Add-Member -NotePropertyName QcStatus -NotePropertyValue 'not_run' -Force
+    $Segment | Add-Member -NotePropertyName QcSourceRevision -NotePropertyValue 0 -Force
+    $Segment | Add-Member -NotePropertyName QcSourceHash -NotePropertyValue '' -Force
+    $Segment | Add-Member -NotePropertyName QcTargetHash -NotePropertyValue '' -Force
+    $Segment | Add-Member -NotePropertyName QcContractVersion -NotePropertyValue '' -Force
+    $Segment | Add-Member -NotePropertyName QcFindings -NotePropertyValue @() -Force
+    $Segment | Add-Member -NotePropertyName Confirmed -NotePropertyValue $false -Force
+    if (-not $KeepState -and [string]$Segment.State -eq 'reviewed') {
+        $Segment.State = if ([string]::IsNullOrWhiteSpace([string]$Segment.Translation)) { 'untranslated' } elseif ([string]$Segment.Origin -eq 'manual') { 'human_edited' } else { 'machine_draft' }
+    }
+}
+
+function Test-YakuCatSegmentQcCurrent {
+    param([Parameter(Mandatory=$true)]$Segment)
+    if ([string]$Segment.QcStatus -ne 'passed') { return $false }
+    if ([int]$Segment.QcSourceRevision -ne [int]$Segment.SourceRevision) { return $false }
+    if ([string]$Segment.QcContractVersion -ne (Get-YakuCatQcContractVersion)) { return $false }
+    if ([string]$Segment.QcSourceHash -ne (Get-YakuCatSourceIntegrityHash -Text ([string]$Segment.Text))) { return $false }
+    if ([string]$Segment.QcTargetHash -ne (Get-YakuCatSourceIntegrityHash -Text ([string]$Segment.Translation))) { return $false }
+    return $true
+}
+
+function Test-YakuCatTranslationInvalid {
+    param(
+        [Parameter(Mandatory=$true)][string]$Source,
+        [AllowNull()][string]$Translation,
+        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction
+    )
+    if ([string]::IsNullOrWhiteSpace($Translation)) { return $true }
+    $target = ([string]$Translation).Trim()
+    if ($target -eq ([string]$Source).Trim()) { return $true }
+    if ($target -match '(?i)\b(i\s+cannot|i\s+can''t|unable\s+to|as\s+an\s+ai|sign\s+in|log\s*in|required\s+login|content\s+policy|against\s+(?:the\s+)?policy|due\s+to\s+(?:the\s+)?policy|policy\s+(?:prevents|does\s+not\s+allow))\b|申し訳|ログインしてください|対応できません') { return $true }
+    if ($Direction -eq 'to_en') {
+        $jp = [regex]::Matches($target, '[ぁ-んァ-ヶ一-龯]').Count
+        $latin = [regex]::Matches($target, '[A-Za-z]').Count
+        if ($jp -gt 0 -and ($latin -le 0 -or ($jp / [double][Math]::Max(1, $jp + $latin)) -gt 0.20)) { return $true }
+        if ($target -match '[가-힣]') { return $true }
+    }
+    if ($Direction -eq 'to_jp' -and $Source -match '[A-Za-z]' -and $target -notmatch '[ぁ-んァ-ヶ一-龯]' -and [regex]::Matches($target, '[A-Za-z]').Count -ge 4) { return $true }
+    return $false
+}
+
+function Get-YakuCatAuditableNumericValueCount {
+    param(
+        [AllowNull()][string]$Text,
+        [ValidateSet('source','target')][string]$Side = 'target'
+    )
+    $normalized = ConvertTo-YakuMaskNormalizedText -Text ([string]$Text)
+    $protected = @()
+    if ($Side -eq 'source') {
+        # 決算期・年度・四半期・条番号などは翻訳後に別表記となり得る。
+        # 数値機密の監査対象とは分け、金額・比率・数量の欠落だけを数える。
+        $protected = @(Get-YakuNumericMaskProtectedSpans -Text ([string]$Text) -Direction 'to_en')
+    }
+    $count = 0
+    foreach ($match in [regex]::Matches($normalized, '(?<![A-Za-z0-9])\d[\d,]*(?:\.\d+)?')) {
+        if ($Side -eq 'source' -and (Test-YakuMaskSpanCovered -Spans $protected -Start $match.Index -End ($match.Index + $match.Length))) { continue }
+        $count++
+    }
+    return $count
+}
+
+function Get-YakuCatAuditableNumericValues {
+    param(
+        [AllowNull()][string]$Text,
+        [ValidateSet('source','target')][string]$Side,
+        [ValidateSet('to_en','to_jp')][string]$Direction
+    )
+    $value = ConvertTo-YakuMaskNormalizedText -Text ([string]$Text)
+    if ($Side -eq 'source' -or $Side -eq 'target') {
+        try {
+            $chars = $value.ToCharArray()
+            foreach ($span in @(Get-YakuNumericMaskProtectedSpans -Text $value -Direction $Direction)) {
+                for ($i = [int]$span.Start; $i -lt [int]$span.End -and $i -lt $chars.Length; $i++) { $chars[$i] = ' ' }
+            }
+            $value = -join $chars
+        } catch {}
+        if ($Side -eq 'source' -and $Direction -eq 'to_en') {
+            try { $value = [string](Convert-YakuNumericUnits -Text $value -Location 'cat-review-values').Text } catch {}
+        }
+    }
+    $out = New-Object System.Collections.Generic.List[string]
+    foreach ($match in [regex]::Matches($value, '(?<![A-Za-z0-9])[-+]?(?:\d[\d,]*)(?:\.\d+)?')) {
+        $canonical = ([string]$match.Value).Replace(',','')
+        $number = [decimal]0
+        if ([decimal]::TryParse($canonical, [Globalization.NumberStyles]::Number -bor [Globalization.NumberStyles]::AllowLeadingSign, [Globalization.CultureInfo]::InvariantCulture, [ref]$number)) {
+            $out.Add($number.ToString('0.############################', [Globalization.CultureInfo]::InvariantCulture)) | Out-Null
+        }
+    }
+    return @($out.ToArray())
+}
+
+function Initialize-YakuCatProjectState {
+    param([Parameter(Mandatory=$true)]$Project)
+    if (-not ($Project.PSObject.Properties.Name -contains 'Revision')) { $Project | Add-Member -NotePropertyName Revision -NotePropertyValue 0 -Force }
+    if (-not ($Project.PSObject.Properties.Name -contains 'SchemaVersion')) { $Project | Add-Member -NotePropertyName SchemaVersion -NotePropertyValue 2 -Force }
+    foreach ($segment in @($Project.Segments)) {
+        if (-not ($segment.PSObject.Properties.Name -contains 'SegmentId') -or [string]::IsNullOrWhiteSpace([string]$segment.SegmentId)) {
+            $segment | Add-Member -NotePropertyName SegmentId -NotePropertyValue ([guid]::NewGuid().ToString('N')) -Force
+        }
+        if (-not ($segment.PSObject.Properties.Name -contains 'SourceRevision')) { $segment | Add-Member -NotePropertyName SourceRevision -NotePropertyValue 1 -Force }
+        $hash = Get-YakuCatSourceIntegrityHash -Text ([string]$segment.Text)
+        if (-not ($segment.PSObject.Properties.Name -contains 'SourceIntegrityHash') -or [string]::IsNullOrWhiteSpace([string]$segment.SourceIntegrityHash)) { $segment | Add-Member -NotePropertyName SourceIntegrityHash -NotePropertyValue $hash -Force }
+        elseif ([string]$segment.SourceIntegrityHash -ne $hash) {
+            $segment.SourceRevision = [int]$segment.SourceRevision + 1
+            $segment.SourceIntegrityHash = $hash
+            $segment | Add-Member -NotePropertyName State -NotePropertyValue 'stale' -Force
+            $segment | Add-Member -NotePropertyName QcStatus -NotePropertyValue 'not_run' -Force
+        }
+        if (-not ($segment.PSObject.Properties.Name -contains 'State') -or [string]::IsNullOrWhiteSpace([string]$segment.State)) {
+            $state = if ([string]::IsNullOrWhiteSpace([string]$segment.Translation)) { 'untranslated' } elseif ([bool]$segment.Confirmed) { 'reviewed' } elseif ([string]$segment.Origin -eq 'manual') { 'human_edited' } else { 'machine_draft' }
+            $segment | Add-Member -NotePropertyName State -NotePropertyValue $state -Force
+        }
+        if (-not ($segment.PSObject.Properties.Name -contains 'QcStatus') -or [string]::IsNullOrWhiteSpace([string]$segment.QcStatus)) { $segment | Add-Member -NotePropertyName QcStatus -NotePropertyValue 'not_run' -Force }
+        if (-not ($segment.PSObject.Properties.Name -contains 'QcSourceRevision')) { $segment | Add-Member -NotePropertyName QcSourceRevision -NotePropertyValue 0 -Force }
+        if (-not ($segment.PSObject.Properties.Name -contains 'QcSourceHash')) { $segment | Add-Member -NotePropertyName QcSourceHash -NotePropertyValue '' -Force }
+        if (-not ($segment.PSObject.Properties.Name -contains 'QcTargetHash')) { $segment | Add-Member -NotePropertyName QcTargetHash -NotePropertyValue '' -Force }
+        if (-not ($segment.PSObject.Properties.Name -contains 'QcContractVersion')) { $segment | Add-Member -NotePropertyName QcContractVersion -NotePropertyValue '' -Force }
+        if (-not ($segment.PSObject.Properties.Name -contains 'QcFindings')) { $segment | Add-Member -NotePropertyName QcFindings -NotePropertyValue @() -Force }
+        if ([string]$segment.QcStatus -eq 'passed' -and -not (Test-YakuCatSegmentQcCurrent -Segment $segment)) {
+            Reset-YakuCatSegmentQc -Segment $segment
+        }
+        $segment | Add-Member -NotePropertyName Confirmed -NotePropertyValue ([string]$segment.State -eq 'reviewed') -Force
+    }
+    return $Project
+}
+
+function Copy-YakuCatProjectForMutation {
+    <# Project は入れ子の可変 PSObject であるため、浅い Select-Object では
+       Segments/Blocks を共有してしまう。PowerShell 自身の serializer で完全に
+       独立した candidate を作り、保存成功前の共有状態を触らない。 #>
+    param([Parameter(Mandatory=$true)]$Project)
+    $serialized = [System.Management.Automation.PSSerializer]::Serialize($Project, 50)
+    $candidate = [System.Management.Automation.PSSerializer]::Deserialize($serialized)
+    return (Initialize-YakuCatProjectState -Project $candidate)
+}
+
+function Invoke-YakuCatProjectLock {
+    param(
+        [Parameter(Mandatory=$true)][string]$ProjectId,
+        [Parameter(Mandatory=$true)][scriptblock]$Operation,
+        [object[]]$Arguments = @()
+    )
+    if ([string]::IsNullOrWhiteSpace($ProjectId)) { throw 'CAT_PROJECT_ID_REQUIRED' }
+    $safeId = [regex]::Replace($ProjectId, '[^A-Za-z0-9_.-]', '_')
+    $mutex = New-Object Threading.Mutex($false, ('Local\YakuLingo.CatProject.' + $safeId))
+    $owned = $false
+    try {
+        try { $owned = $mutex.WaitOne(30000) }
+        catch [Threading.AbandonedMutexException] { $owned = $true }
+        if (-not $owned) { throw 'CAT_PROJECT_LOCK_TIMEOUT: 作業の更新待ちがタイムアウトしました。' }
+        return (& $Operation @Arguments)
+    } finally {
+        if ($owned) { try { $mutex.ReleaseMutex() } catch {} }
+        $mutex.Dispose()
+    }
+}
+
+function Invoke-YakuCatProjectMutation {
+    <# ExpectedRevision の確認、candidate への変更、世代/manifest 保存、registry
+       差替えを同じ project lock 内で行う。Mutation は共有 Project を受け取らない。 #>
+    param(
+        [Parameter(Mandatory=$true)][string]$ProjectId,
+        [Parameter(Mandatory=$true)][int]$ExpectedRevision,
+        [Parameter(Mandatory=$true)][scriptblock]$Mutation,
+        [object[]]$Arguments = @()
+    )
+    $state = [pscustomobject]@{
+        ProjectId = $ProjectId
+        ExpectedRevision = $ExpectedRevision
+        Mutation = $Mutation
+        Arguments = @($Arguments)
+    }
+    $operation = {
+        param($innerState)
+        $id = [string]$innerState.ProjectId
+        if (-not $script:YakuCatProjects.ContainsKey($id)) {
+            throw 'CAT_PROJECT_NOT_FOUND: 作業が見つかりません。'
+        }
+        $committed = $script:YakuCatProjects[$id]
+        if ([int]$committed.Revision -ne [int]$innerState.ExpectedRevision) {
+            throw 'CAT_PROJECT_REVISION_CONFLICT: 別の操作で作業内容が更新されました。最新状態を読み込んでからやり直してください。'
+        }
+        $candidate = Copy-YakuCatProjectForMutation -Project $committed
+        $mutationArguments = @($innerState.Arguments)
+        $mutationResult = & $innerState.Mutation $candidate @mutationArguments
+        if (-not (Save-YakuCatProject -Project $candidate)) {
+            throw 'CAT_PROJECT_SAVE_FAILED: 作業内容を保存できませんでした。'
+        }
+        $script:YakuCatProjects[$id] = $candidate
+        return [pscustomobject]@{ Project=$candidate; Result=$mutationResult }
+    }
+    return (Invoke-YakuCatProjectLock -ProjectId $ProjectId -Operation $operation -Arguments @($state))
+}
+
+function Commit-YakuNewCatProject {
+    <# 旧factoryは互換性のため生成時登録を続けるが、Serverからの新規作成は
+       この境界を使い、永続化できなかったProjectをregistryへ残さない。 #>
+    param([Parameter(Mandatory=$true)]$Project)
+    $projectId = [string]$Project.Id
+    $state = [pscustomobject]@{ Project=$Project; ProjectId=$projectId }
+    $operation = {
+        param($innerState)
+        $id = [string]$innerState.ProjectId
+        $newProject = $innerState.Project
+        if ($script:YakuCatProjects.ContainsKey($id)) {
+            $registered = $script:YakuCatProjects[$id]
+            if (-not [object]::ReferenceEquals($registered, $newProject)) {
+                throw 'CAT_PROJECT_ID_CONFLICT: 同じIDの作業がすでにあります。'
+            }
+            $script:YakuCatProjects.Remove($id)
+        }
+        $candidate = Copy-YakuCatProjectForMutation -Project $newProject
+        if (-not (Save-YakuCatProject -Project $candidate)) {
+            # newProject は未コミットなので戻さない。呼出側へIDを返す前に破棄する。
+            throw 'CAT_PROJECT_SAVE_FAILED: 作業内容を保存できませんでした。'
+        }
+        $script:YakuCatProjects[$id] = $candidate
+        return $candidate
+    }
+    return (Invoke-YakuCatProjectLock -ProjectId $projectId -Operation $operation -Arguments @($state))
+}
+
+function Invoke-YakuCatSegmentValidation {
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [Parameter(Mandatory=$true)]$Segment
+    )
+    $findings = New-Object System.Collections.Generic.List[object]
+    $source = [string]$Segment.Text
+    $target = [string]$Segment.Translation
+    if ([string]::IsNullOrWhiteSpace($target)) { $findings.Add([pscustomobject]@{ Code='empty'; Severity='error' }) | Out-Null }
+    elseif (Test-YakuCatTranslationInvalid -Source $source -Translation $target -Direction ([string]$Project.Direction)) {
+        $findings.Add([pscustomobject]@{ Code='invalid-or-source-fallback'; Severity='error' }) | Out-Null
+    }
+    if ($target -match '\[\[(?:N|P)\d+\]\]') { $findings.Add([pscustomobject]@{ Code='placeholder-residue'; Severity='error' }) | Out-Null }
+    if (-not [string]::IsNullOrWhiteSpace($target)) {
+        try {
+            $normalizedSource = if ([string]$Project.Direction -eq 'to_en') { [string](Convert-YakuNumericUnits -Text $source -Location ('cat-review-' + [string]$Segment.SegmentId)).Text } else { $source }
+            $audit = Test-YakuNumericIntegrity -SourceText $normalizedSource -TranslatedText $target -Location ('cat-review-' + [string]$Segment.SegmentId)
+            if (-not [bool]$audit.Ok) { $findings.Add([pscustomobject]@{ Code='numeric-integrity'; Severity='error'; Detail=[string]$audit.Detail }) | Out-Null }
+            $sourceValues = @(Get-YakuCanonicalNumericFacts -Text $source -Direction ([string]$Project.Direction) -Location ('cat-review-source-' + [string]$Segment.SegmentId) | ForEach-Object { [string]$_.Key })
+            $targetDirection = if ([string]$Project.Direction -eq 'to_en') { 'to_jp' } else { 'to_en' }
+            $targetValues = @(Get-YakuCanonicalNumericFacts -Text $target -Direction $targetDirection -Location ('cat-review-target-' + [string]$Segment.SegmentId) | ForEach-Object { [string]$_.Key })
+            $remaining = New-Object System.Collections.Generic.List[string]
+            foreach ($v in $targetValues) { $remaining.Add([string]$v) | Out-Null }
+            $missing = New-Object System.Collections.Generic.List[string]
+            foreach ($v in $sourceValues) {
+                $pos = $remaining.IndexOf([string]$v)
+                if ($pos -ge 0) { $remaining.RemoveAt($pos) } else { $missing.Add([string]$v) | Out-Null }
+            }
+            if ($missing.Count -gt 0) { $findings.Add([pscustomobject]@{ Code='numeric-value-mismatch'; Severity='error'; Detail=('missing=' + ($missing.ToArray() -join ',')) }) | Out-Null }
+            if ($remaining.Count -gt 0) { $findings.Add([pscustomobject]@{ Code='numeric-value-extra'; Severity='error'; Detail=('extra=' + ($remaining.ToArray() -join ',')) }) | Out-Null }
+            if($missing.Count -eq 0 -and $remaining.Count -eq 0 -and $sourceValues.Count -gt 1 -and $sourceValues.Count -eq $targetValues.Count){
+                $sameOrder=$true
+                for($i=0;$i -lt $sourceValues.Count;$i++){
+                    if([string]$sourceValues[$i] -ne [string]$targetValues[$i]){$sameOrder=$false;break}
+                }
+                if(-not $sameOrder){$findings.Add([pscustomobject]@{Code='numeric-value-order-mismatch';Severity='error';Detail='数値の順序が原文と一致しません。'})|Out-Null}
+            }
+        } catch { $findings.Add([pscustomobject]@{ Code='numeric-validation-error'; Severity='error' }) | Out-Null }
+    }
+    if (($source -match '[△▲]' -or $source -match '\(\s*[-+]?\d[\d,.]*\s*\)') -and $target -notmatch '(?i)(?:^|[\s(])[-−]|loss|decrease|decline|deficit|negative|損失|減少|赤字|マイナス|△|▲') {
+        $findings.Add([pscustomobject]@{ Code='numeric-sign-missing'; Severity='error' }) | Out-Null
+    }
+    if ([string]$Project.Direction -eq 'to_jp') {
+        foreach ($match in [regex]::Matches($source, '(?i)(?<num>\d[\d,]*(?:\.\d+)?)\s+(?<unit>million|billion)\b')) {
+            $n = [decimal]0
+            if (-not [decimal]::TryParse(([string]$match.Groups['num'].Value).Replace(',',''), [Globalization.NumberStyles]::Number, [Globalization.CultureInfo]::InvariantCulture, [ref]$n)) { continue }
+            $expectedMillion = if ([string]$match.Groups['unit'].Value -ieq 'billion') { $n * 1000 } else { $n }
+            $magnitudeMatches = @([regex]::Matches($target, '(?<num>\d[\d,]*(?:\.\d+)?)\s*(?<unit>億|百万)'))
+            $hasExpected = $false
+            foreach ($magnitude in $magnitudeMatches) {
+                $actual = [decimal]0
+                if (-not [decimal]::TryParse(([string]$magnitude.Groups['num'].Value).Replace(',',''), [Globalization.NumberStyles]::Number, [Globalization.CultureInfo]::InvariantCulture, [ref]$actual)) { continue }
+                $actualMillion = if ([string]$magnitude.Groups['unit'].Value -eq '億') { $actual * 100 } else { $actual }
+                if ($actualMillion -eq $expectedMillion) { $hasExpected = $true; break }
+            }
+            if (-not $hasExpected) { $findings.Add([pscustomobject]@{ Code='numeric-scale-mismatch'; Severity='error'; Detail=('expected_million=' + $expectedMillion) }) | Out-Null }
+        }
+    }
+    $sourceNegative = $source -match '(?i)\b(?:loss|deficit|decrease|decline|decreased|declined|fell)\b|損失|赤字|減少|減益|下落'
+    $sourcePositive = $source -match '(?i)\b(?:profit|surplus|increase|increased|gain|gained|rose)\b|利益|黒字|増加|増益|上昇'
+    $targetNegative = $target -match '(?i)\b(?:loss|deficit|decrease|decline|decreased|declined|fell)\b|損失|赤字|減少|減益|下落'
+    $targetPositive = $target -match '(?i)\b(?:profit|surplus|increase|increased|gain|gained|rose)\b|利益|黒字|増加|増益|上昇'
+    if (($sourceNegative -and $targetPositive -and -not $targetNegative) -or ($sourcePositive -and $targetNegative -and -not $targetPositive)) {
+        $findings.Add([pscustomobject]@{ Code='accounting-polarity-mismatch'; Severity='error' }) | Out-Null
+    }
+    if ($source -match '(?i)(?:円|\byen\b)' -and $target -notmatch '(?i)(?:円|\byen\b)') { $findings.Add([pscustomobject]@{ Code='currency-mismatch'; Severity='error'; Detail='yen' }) | Out-Null }
+    if ($source -match '(?i)(?:ドル|\bdollars?\b|\$)' -and $target -notmatch '(?i)(?:ドル|\bdollars?\b|\$)') { $findings.Add([pscustomobject]@{ Code='currency-mismatch'; Severity='error'; Detail='dollar' }) | Out-Null }
+    try {
+        $root = Split-Path -Parent $PSScriptRoot
+        foreach ($entry in @(Get-YakuProperNounEntries -Root $root)) {
+            $expected = ''; $needle = ''
+            if ([string]$Project.Direction -eq 'to_en') { $needle = [string]$entry.Source; $expected = [string]$entry.Target }
+            else { $needle = [string]$entry.Target; $expected = [string]$entry.Source }
+            if (-not [string]::IsNullOrWhiteSpace($needle) -and $source.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+                ($target.IndexOf($expected, [StringComparison]::OrdinalIgnoreCase) -lt 0)) {
+                $findings.Add([pscustomobject]@{ Code='proper-noun-missing'; Severity='error'; Detail=$expected }) | Out-Null
+            }
+        }
+    } catch { $findings.Add([pscustomobject]@{ Code='proper-noun-validation-error'; Severity='error' }) | Out-Null }
+    try {
+        $structure = Test-YakuTextStructureIntegrity -SourceText $source -FullText $target -BriefText $target
+        if (-not [bool]$structure.Ok) { $findings.Add([pscustomobject]@{ Code='structure-integrity'; Severity='error'; Detail=[string]$structure.Detail }) | Out-Null }
+    } catch { $findings.Add([pscustomobject]@{ Code='structure-validation-error'; Severity='error' }) | Out-Null }
+    $status = if ($findings.Count -eq 0) { 'passed' } else { 'failed' }
+    $Segment.QcStatus = $status
+    $Segment.QcSourceRevision = [int]$Segment.SourceRevision
+    $Segment | Add-Member -NotePropertyName QcSourceHash -NotePropertyValue (Get-YakuCatSourceIntegrityHash -Text $source) -Force
+    $Segment | Add-Member -NotePropertyName QcTargetHash -NotePropertyValue (Get-YakuCatSourceIntegrityHash -Text $target) -Force
+    $Segment | Add-Member -NotePropertyName QcContractVersion -NotePropertyValue (Get-YakuCatQcContractVersion) -Force
+    $Segment.QcFindings = @($findings.ToArray())
+    return [pscustomobject]@{ Passed=($status -eq 'passed'); Status=$status; Findings=@($findings.ToArray()) }
+}
+
+function Get-YakuCatOutputEligibility {
+    param([Parameter(Mandatory=$true)]$Project)
+    $null = Initialize-YakuCatProjectState -Project $Project
+    $reasons = New-Object System.Collections.Generic.List[string]
+    if (@($Project.Segments).Count -eq 0) { $reasons.Add('project-empty') | Out-Null }
+    foreach ($segment in @($Project.Segments)) {
+        if ([string]$segment.State -ne 'reviewed') { $reasons.Add('segment-not-reviewed') | Out-Null; break }
+        if (-not (Test-YakuCatSegmentQcCurrent -Segment $segment)) { $reasons.Add('segment-qc-not-current') | Out-Null; break }
+        if ([string]::IsNullOrWhiteSpace([string]$segment.Translation)) { $reasons.Add('segment-untranslated') | Out-Null; break }
+    }
+    $translationList = ($reasons.Count -eq 0)
+    $sourceReady = [string]$Project.Source -eq 'file' -and (Test-Path -LiteralPath ([string]$Project.Path) -PathType Leaf)
+    $documentFormat = $(try { [string]$Project.DocumentFormat } catch { '' })
+    if ([string]::IsNullOrWhiteSpace($documentFormat) -and [string]$Project.Source -eq 'file') { $documentFormat = [IO.Path]::GetExtension([string]$Project.Path).TrimStart('.').ToLowerInvariant() }
+    $excelDraft = $translationList -and $sourceReady -and $documentFormat -in @('xlsx','xlsm','csv')
+    $wordStructureReady = $false
+    if ($documentFormat -eq 'docx') {
+        try { $wordStructureReady = [bool]$Project.WordInventory.DraftStructureEligible -and [string]$Project.WordInventory.ContractVersion -eq 'word-adapter-v1' } catch {}
+    }
+    $wordDraft = $translationList -and $sourceReady -and $documentFormat -eq 'docx' -and $wordStructureReady
+    if ($translationList -and [string]$Project.Source -eq 'file' -and -not $sourceReady) { $reasons.Add('source-file-missing') | Out-Null }
+    if ($translationList -and $documentFormat -eq 'docx' -and -not $wordStructureReady) { $reasons.Add('word-unsupported-structure') | Out-Null }
+    return [pscustomobject]@{
+        TranslationListEligible = $translationList
+        ExcelDraftEligible = $excelDraft
+        WordDraftEligible = $wordDraft
+        Reasons = @($reasons.ToArray() | Select-Object -Unique)
+    }
+}
+
 function New-YakuCatSegmentView {
     <#
       画面へ渡すセグメント1件分。中身は保持しているものの写しである。
@@ -57,8 +480,14 @@ function New-YakuCatProject {
         [Parameter(Mandatory=$true)]$Settings,
         [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
         [AllowNull()][string[]]$Sheets,
-        [AllowNull()]$ProgressState
+        [AllowNull()]$ProgressState,
+        [bool]$Register = $true
     )
+    if ([IO.Path]::GetExtension($Path).ToLowerInvariant() -eq '.docx') {
+        $wordProject = New-YakuCatWordProject -Root $Root -Path $Path -Settings $Settings -Direction $Direction
+        if ($Register) { $script:YakuCatProjects[$wordProject.Id] = $wordProject }
+        return $wordProject
+    }
     $extract = Get-YakuExcelTextBlocks -Path $Path -Direction $Direction -Settings $Settings -Sheets $Sheets -ProgressState $ProgressState
     $blocks = @($extract.Blocks)
 
@@ -99,7 +528,8 @@ function New-YakuCatProject {
         Source    = 'file'
         CreatedAt = (Get-Date).ToString('s')
     }
-    $script:YakuCatProjects[$project.Id] = $project
+    $null = Initialize-YakuCatProjectState -Project $project
+    if ($Register) { $script:YakuCatProjects[$project.Id] = $project }
     return $project
 }
 
@@ -121,7 +551,8 @@ function New-YakuCatTextProject {
         [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
         # 簡易翻訳から持ってきた訳文。原文と同じ規則で分けて並べる。
         # 空のまま渡すと、渡した先で「さっきの訳が消えた」ことになる。
-        [AllowNull()][string]$Translation
+        [AllowNull()][string]$Translation,
+        [bool]$Register = $true
     )
     $sources = @(Split-YakuTextIntoSegments -Text $Text)
     $targets = @()
@@ -156,9 +587,11 @@ function New-YakuCatTextProject {
         Segments  = @($segments.ToArray())
         Warnings  = @()
         Source    = 'text'
+        PromotionReferenceTranslation = [string]$(if (-not $useTargets) { $Translation } else { '' })
         CreatedAt = (Get-Date).ToString('s')
     }
-    $script:YakuCatProjects[$project.Id] = $project
+    $null = Initialize-YakuCatProjectState -Project $project
+    if ($Register) { $script:YakuCatProjects[$project.Id] = $project }
     return $project
 }
 
@@ -225,7 +658,8 @@ function New-YakuCatProjectFromPairs {
         [string]$FileName = '対訳の突き合わせ',
         [AllowNull()][string[]]$Warnings,
         [double]$JaCoverage = 1.0,
-        [int]$Dropped = 0
+        [int]$Dropped = 0,
+        [bool]$Register = $true
     )
     $toEn = ([string]$Direction -eq 'to_en')
     $warn = New-Object System.Collections.Generic.List[string]
@@ -266,7 +700,8 @@ function New-YakuCatProjectFromPairs {
         Source    = 'align'
         CreatedAt = (Get-Date).ToString('s')
     }
-    $script:YakuCatProjects[$project.Id] = $project
+    $null = Initialize-YakuCatProjectState -Project $project
+    if ($Register) { $script:YakuCatProjects[$project.Id] = $project }
     return $project
 }
 
@@ -281,7 +716,8 @@ function Save-YakuCatProjectToCorpus {
         [string]$Source = '',
         # 保存先。既定は管理者の取り込み場所。試験は別の場所を指す。
         [AllowNull()][string]$Dir,
-        [switch]$Public
+        [switch]$Public,
+        [switch]$PublicAttested
     )
     if ([string]::IsNullOrWhiteSpace($Dir)) { $Dir = Get-YakuCorpusBuildDir }
     # 文例を作るのは開発者であって、日々の利用者ではない
@@ -292,21 +728,19 @@ function Save-YakuCatProjectToCorpus {
     if ([string]$Project.Source -ne 'align') {
         throw '文例は、公表済みの資料を突き合わせたときだけ保存できます。'
     }
+    if (-not $Public -or -not $PublicAttested) {
+        throw 'CAT_CORPUS_PUBLIC_ATTESTATION_REQUIRED: 公表実績を別途確認した資料だけを文例へ登録できます。'
+    }
     $toEn = ([string]$Project.Direction -eq 'to_en')
+    $null = Initialize-YakuCatProjectState -Project $Project
     $pairs = New-Object System.Collections.Generic.List[object]
     foreach ($seg in @($Project.Segments)) {
-        # 機械が作った対応を、人が見ないまま公開対訳へ入れない。
-        # 手直しした行は Set-YakuCatSegmentTranslation が確定済みにし、
-        # 直さない行も「これでよい」を押したものだけがここを通る。
-        $confirmed = $false
-        try { $confirmed = [bool]$seg.Confirmed } catch { $confirmed = $false }
-        if (-not $confirmed) { continue }
+        if ([string]$seg.State -ne 'reviewed' -or -not (Test-YakuCatSegmentQcCurrent -Segment $seg)) { continue }
         $a = [string]$seg.Text; $b = [string]$seg.Translation
         if ([string]::IsNullOrWhiteSpace($a) -or [string]::IsNullOrWhiteSpace($b)) { continue }
         [void]$pairs.Add([pscustomobject]@{
             JaText        = [string]$(if ($toEn) { $a } else { $b })
             EnText        = [string]$(if ($toEn) { $b } else { $a })
-            # 人が直した対は、機械の数値照合を通していなくても信用してよい。
             NumberChecked = $true
             NumberAgree   = $true
         })
@@ -320,6 +754,90 @@ function Get-YakuCatProjectStoreDir {
     return (Get-YakuSubDir 'cat')
 }
 
+function Get-YakuCatOwnedSourceArtifactPath {
+    param(
+        [Parameter(Mandatory=$true)][string]$ProjectId,
+        [Parameter(Mandatory=$true)][string]$Extension
+    )
+    if ($ProjectId -notmatch '^[a-fA-F0-9]{32}$') { throw 'CAT_PROJECT_ID_INVALID' }
+    $ext = ([string]$Extension).ToLowerInvariant()
+    if (@('.xlsx','.xlsm','.csv','.docx') -notcontains $ext) { throw 'CAT_SOURCE_ARTIFACT_TYPE_UNSUPPORTED' }
+    $store = [System.IO.Path]::GetFullPath((Get-YakuCatProjectStoreDir)).TrimEnd('\')
+    $projectDir = [System.IO.Path]::GetFullPath((Join-Path $store $ProjectId))
+    if (-not $projectDir.StartsWith($store + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'CAT_SOURCE_ARTIFACT_PATH_INVALID' }
+    return (Join-Path (Join-Path $projectDir 'source') ('original' + $ext))
+}
+
+function Initialize-YakuCatProjectSourceArtifact {
+    <#
+      ファイル型CATが参照する原本を、一時アップロード領域や利用者の元ファイル
+      から切り離してproject配下へ固定する。以後の再開・出力はこの不変コピーだけ
+      を読む。利用者の元ファイルを移動・削除することはない。
+    #>
+    param([Parameter(Mandatory=$true)]$Project)
+    if ([string]$Project.Source -ne 'file') { return $Project }
+    $sourcePath = [string]$Project.Path
+    if ([string]::IsNullOrWhiteSpace($sourcePath) -or -not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+        throw 'CAT_SOURCE_ARTIFACT_SOURCE_MISSING'
+    }
+    $sourceFull = [System.IO.Path]::GetFullPath($sourcePath)
+    $ext = [System.IO.Path]::GetExtension($sourceFull).ToLowerInvariant()
+    $destination = [System.IO.Path]::GetFullPath((Get-YakuCatOwnedSourceArtifactPath -ProjectId ([string]$Project.Id) -Extension $ext))
+    $sourceDir = Split-Path -Parent $destination
+    if (-not (Test-Path -LiteralPath $sourceDir -PathType Container)) { $null = New-Item -ItemType Directory -Path $sourceDir -Force }
+
+    $sourceHash = (Get-FileHash -LiteralPath $sourceFull -Algorithm SHA256).Hash.ToLowerInvariant()
+    if (-not $sourceFull.Equals($destination, [StringComparison]::OrdinalIgnoreCase)) {
+        if (Test-Path -LiteralPath $destination -PathType Leaf) {
+            $existingHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($existingHash -ne $sourceHash) { throw 'CAT_SOURCE_ARTIFACT_CONFLICT' }
+        } else {
+            $tempPath = Join-Path $sourceDir ('.source-' + [guid]::NewGuid().ToString('N') + '.tmp')
+            try {
+                [System.IO.File]::Copy($sourceFull, $tempPath, $false)
+                $copiedHash = (Get-FileHash -LiteralPath $tempPath -Algorithm SHA256).Hash.ToLowerInvariant()
+                if ($copiedHash -ne $sourceHash) { throw 'CAT_SOURCE_ARTIFACT_COPY_MISMATCH' }
+                [System.IO.File]::Move($tempPath, $destination)
+            } finally {
+                if (Test-Path -LiteralPath $tempPath -PathType Leaf) { Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue }
+            }
+        }
+    }
+
+    $artifactHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
+    $artifactSize = [int64](Get-Item -LiteralPath $destination).Length
+    if ($Project.PSObject.Properties.Name -contains 'SourceArtifactSha256' -and
+        -not [string]::IsNullOrWhiteSpace([string]$Project.SourceArtifactSha256) -and
+        [string]$Project.SourceArtifactSha256 -ne $artifactHash) { throw 'CAT_SOURCE_ARTIFACT_INTEGRITY_FAILED' }
+    if ([string]::IsNullOrWhiteSpace([string]$Project.FileName)) { $Project.FileName = [System.IO.Path]::GetFileName($sourceFull) }
+    $Project.Path = $destination
+    $Project | Add-Member -NotePropertyName SourceArtifactRelativePath -NotePropertyValue ('source/original' + $ext) -Force
+    $Project | Add-Member -NotePropertyName SourceArtifactSha256 -NotePropertyValue $artifactHash -Force
+    $Project | Add-Member -NotePropertyName SourceArtifactSize -NotePropertyValue $artifactSize -Force
+    $Project | Add-Member -NotePropertyName SourceArtifactContractVersion -NotePropertyValue 'cat-source-v1' -Force
+    return $Project
+}
+
+function Resolve-YakuCatSavedSourceArtifact {
+    param(
+        [Parameter(Mandatory=$true)][string]$ProjectDir,
+        [Parameter(Mandatory=$true)]$Record
+    )
+    $relative = [string]$Record.source_artifact_relative_path
+    if ([string]::IsNullOrWhiteSpace($relative)) { return [string]$Record.path }
+    if ([string]$Record.source_artifact_contract_version -ne 'cat-source-v1') { throw 'CAT_SOURCE_ARTIFACT_CONTRACT_UNSUPPORTED' }
+    if ($relative -notmatch '^source/original\.(?:xlsx|xlsm|csv|docx)$') { throw 'CAT_SOURCE_ARTIFACT_PATH_INVALID' }
+    $projectFull = [System.IO.Path]::GetFullPath($ProjectDir).TrimEnd('\')
+    $artifactPath = [System.IO.Path]::GetFullPath((Join-Path $projectFull ($relative.Replace('/','\'))))
+    if (-not $artifactPath.StartsWith($projectFull + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'CAT_SOURCE_ARTIFACT_PATH_INVALID' }
+    if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) { throw 'CAT_SOURCE_ARTIFACT_MISSING' }
+    $expectedHash = ([string]$Record.source_artifact_sha256).ToLowerInvariant()
+    $actualHash = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($expectedHash) -or $actualHash -ne $expectedHash) { throw 'CAT_SOURCE_ARTIFACT_INTEGRITY_FAILED' }
+    if ([int64]$Record.source_artifact_size -ne [int64](Get-Item -LiteralPath $artifactPath).Length) { throw 'CAT_SOURCE_ARTIFACT_INTEGRITY_FAILED' }
+    return $artifactPath
+}
+
 function Get-YakuCatCheckpointPath {
     param([Parameter(Mandatory=$true)][string]$ProjectId)
     $safeId = [regex]::Replace($ProjectId, '[^A-Za-z0-9_.-]', '_')
@@ -330,10 +848,22 @@ function Get-YakuCatCheckpointPath {
     return (Join-Path $dir ($safeId + '.json'))
 }
 
+function Get-YakuCatTombstonePath {
+    param([Parameter(Mandatory=$true)][string]$ProjectId)
+    $safeId = [regex]::Replace($ProjectId, '[^A-Za-z0-9_.-]', '_')
+    if ([string]::IsNullOrWhiteSpace($safeId)) { throw 'CAT_PROJECT_ID_INVALID' }
+    $dir = Join-Path (Get-YakuCatProjectStoreDir) 'deleted'
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
+        $null = New-Item -ItemType Directory -Path $dir -Force
+    }
+    return (Join-Path $dir ($safeId + '.tombstone'))
+}
+
 function Invoke-YakuCatCheckpointLock {
     param(
         [Parameter(Mandatory=$true)][string]$ProjectId,
-        [Parameter(Mandatory=$true)][scriptblock]$Operation
+        [Parameter(Mandatory=$true)][scriptblock]$Operation,
+        [AllowEmptyCollection()][object[]]$Arguments = @()
     )
     $safeId = [regex]::Replace($ProjectId, '[^A-Za-z0-9_.-]', '_')
     $mutex = New-Object Threading.Mutex($false, ('Local\YakuLingo.CatCheckpoint.' + $safeId))
@@ -342,7 +872,7 @@ function Invoke-YakuCatCheckpointLock {
         try { $entered = $mutex.WaitOne(30000) }
         catch [Threading.AbandonedMutexException] { $entered = $true }
         if (-not $entered) { throw 'CAT_CHECKPOINT_LOCK_TIMEOUT: 途中保存の排他待ちがタイムアウトしました。' }
-        return (& $Operation)
+        return (& $Operation @Arguments)
     } finally {
         if ($entered) { try { $mutex.ReleaseMutex() } catch {} }
         try { $mutex.Dispose() } catch {}
@@ -354,20 +884,29 @@ function Save-YakuCatBatchCheckpoint {
        Project全体を書かないので、待機中の手修正を古いスナップショットで踏まない。 #>
     param(
         [Parameter(Mandatory=$true)][string]$ProjectId,
+        [Parameter(Mandatory=$true)][int]$ProjectRevision,
         [Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Translations
     )
     if (@($Translations).Count -eq 0) { return 0 }
+    $operationState = [pscustomobject]@{ ProjectId=$ProjectId; ProjectRevision=$ProjectRevision; Translations=@($Translations) }
     $operation = {
-        $path = Get-YakuCatCheckpointPath -ProjectId $ProjectId
+        param($state)
+        $tombstone = Get-YakuCatTombstonePath -ProjectId ([string]$state.ProjectId)
+        if (Test-Path -LiteralPath $tombstone -PathType Leaf) {
+            throw 'CAT_PROJECT_DELETED: 削除済みの作業には途中結果を保存できません。'
+        }
+        $path = Get-YakuCatCheckpointPath -ProjectId ([string]$state.ProjectId)
         $byKey = [ordered]@{}
         try {
             $old = Read-YakuJsonFile -Path $path
-            foreach ($row in @($old.translations)) {
-                $key = [string]([int]$row.index) + '|' + [string]$row.source
-                $byKey[$key] = $row
+            if ([int]$old.project_revision -eq [int]$state.ProjectRevision) {
+                foreach ($row in @($old.translations)) {
+                    $key = [string]([int]$row.index) + '|' + [string]$row.source
+                    $byKey[$key] = $row
+                }
             }
         } catch {}
-        foreach ($row in @($Translations)) {
+        foreach ($row in @($state.Translations)) {
             if ($null -eq $row) { continue }
             $source = [string]$row.source
             $text = [string]$row.text
@@ -380,53 +919,73 @@ function Save-YakuCatBatchCheckpoint {
             }
         }
         Write-YakuJsonAtomic -Path $path -Value ([ordered]@{
-                project_id = $ProjectId; translations = @($byKey.Values)
+                project_id = [string]$state.ProjectId; project_revision = [int]$state.ProjectRevision
+                translations = @($byKey.Values)
             }) -Depth 8
         return @($byKey.Values).Count
-    }.GetNewClosure()
-    return (Invoke-YakuCatCheckpointLock -ProjectId $ProjectId -Operation $operation)
+    }
+    return (Invoke-YakuCatCheckpointLock -ProjectId $ProjectId -Operation $operation -Arguments @($operationState))
 }
 
 function Apply-YakuCatBatchCheckpoint {
     <# mainランスペースでだけProjectへ取り込む。行番号に加えて原文一致と空欄を
-       必須にし、結合・分割・手修正が待ち時間中に行われても上書きしない。 #>
+       必須にし、結合・分割・手修正が待ち時間中に行われても上書きしない。
+       Project本体と同じcopy-on-write境界を使い、保存失敗時は共有メモリも
+       checkpointも変更しない。 #>
     param([Parameter(Mandatory=$true)]$Project)
     $projectId = [string]$Project.Id
+    $operationState = [pscustomobject]@{ Project=$Project; ProjectId=$projectId }
     $operation = {
-        $path = Get-YakuCatCheckpointPath -ProjectId $projectId
+        param($state)
+        $innerProject = $state.Project
+        $path = Get-YakuCatCheckpointPath -ProjectId ([string]$state.ProjectId)
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return 0 }
         $checkpoint = Read-YakuJsonFile -Path $path
         if ($null -eq $checkpoint) { return 0 }
-        $segments = @($Project.Segments)
-        $applied = 0
-        $requiresSave = $false
-        foreach ($row in @($checkpoint.translations)) {
-            $index = [int]$row.index
-            if ($index -lt 0 -or $index -ge $segments.Count) { continue }
-            $segment = $segments[$index]
-            if ([string]$segment.Text -ne [string]$row.source) { continue }
-            if (-not [string]::IsNullOrWhiteSpace([string]$segment.Translation)) {
-                # 前回はメモリへ適用できたが、Project JSON の保存だけ失敗した可能性が
-                # ある。同じcheckpoint由来の値なら再保存し、成功するまで消さない。
-                if ([string]$segment.Translation -eq [string]$row.text -and
-                    [string]$segment.MaskedTranslation -eq [string]$row.masked -and
-                    [string]$segment.Origin -eq 'copilot') { $requiresSave = $true }
-                continue
-            }
-            $segment.Translation = [string]$row.text
-            $segment | Add-Member -NotePropertyName 'MaskedTranslation' -NotePropertyValue ([string]$row.masked) -Force
-            $segment.Origin = 'copilot'
-            $segment.Confirmed = $false
-            $applied++
-            $requiresSave = $true
+        $wasRegistered = $script:YakuCatProjects.ContainsKey([string]$state.ProjectId)
+        if (-not $wasRegistered) { $script:YakuCatProjects[[string]$state.ProjectId] = $innerProject }
+        $committed = $script:YakuCatProjects[[string]$state.ProjectId]
+        if ([int]$checkpoint.project_revision -ne [int]$committed.Revision) {
+            Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+            if (-not $wasRegistered) { $script:YakuCatProjects.Remove([string]$state.ProjectId) }
+            return 0
         }
-        if ($requiresSave -and -not (Save-YakuCatProject -Project $Project)) { return 0 }
+        $mutation = {
+            param($candidate,$rows)
+            $segments = @($candidate.Segments)
+            $applied = 0
+            foreach ($row in @($rows)) {
+                $index = [int]$row.index
+                if ($index -lt 0 -or $index -ge $segments.Count) { continue }
+                $segment = $segments[$index]
+                if ([string]$segment.Text -ne [string]$row.source) { continue }
+                if (-not [string]::IsNullOrWhiteSpace([string]$segment.Translation)) { continue }
+                $segment.Translation = [string]$row.text
+                $segment | Add-Member -NotePropertyName 'MaskedTranslation' -NotePropertyValue ([string]$row.masked) -Force
+                $segment.Origin = 'copilot'
+                $segment.Confirmed = $false
+                $segment | Add-Member -NotePropertyName State -NotePropertyValue 'machine_draft' -Force
+                Reset-YakuCatSegmentQc -Segment $segment -KeepState
+                $applied++
+            }
+            if ($applied -eq 0) { throw 'CAT_PROJECT_MUTATION_NO_CHANGES' }
+            return $applied
+        }
+        try {
+            $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$state.ProjectId) -ExpectedRevision ([int]$checkpoint.project_revision) -Mutation $mutation -Arguments @(,@($checkpoint.translations))
+        } catch {
+            if ([string]$_.Exception.Message -eq 'CAT_PROJECT_MUTATION_NO_CHANGES') {
+                Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+            }
+            if (-not $wasRegistered) { $script:YakuCatProjects.Remove([string]$state.ProjectId) }
+            return 0
+        }
         # 適用できなかった行も古い編集状態に属する。保持すると毎回再評価され、
         # 将来たまたま同じ行番号になったときに誤適用されるため、ここで破棄する。
         Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
-        return $applied
-    }.GetNewClosure()
-    return (Invoke-YakuCatCheckpointLock -ProjectId $projectId -Operation $operation)
+        return $(if ($wasRegistered) { [int]$commit.Result } else { 0 })
+    }
+    return (Invoke-YakuCatCheckpointLock -ProjectId $projectId -Operation $operation -Arguments @($operationState))
 }
 
 function Save-YakuCatProject {
@@ -444,15 +1003,30 @@ function Save-YakuCatProject {
       対応付ける。スナップショットは「何が同じ原文か」を判断するためのもの。
     #>
     param([Parameter(Mandatory=$true)]$Project)
+    $null = Initialize-YakuCatProjectState -Project $Project
+    $oldRevision = [int]$Project.Revision
+    $generationDir = ''
     try {
+        if ([string]$Project.Source -eq 'file') { $null = Initialize-YakuCatProjectSourceArtifact -Project $Project }
         $dir = Get-YakuCatProjectStoreDir
         if (-not (Test-Path -LiteralPath $dir -PathType Container)) { $null = New-Item -ItemType Directory -Path $dir -Force }
+        $nextRevision = $oldRevision + 1
         $segs = @($Project.Segments | ForEach-Object {
                 [ordered]@{
+                    segment_id = [string]$_.SegmentId
                     text = [string]$_.Text
+                    source_revision = [int]$_.SourceRevision
+                    source_integrity_hash = [string]$_.SourceIntegrityHash
                     translation = [string]$_.Translation
                     masked_translation = [string]$_.MaskedTranslation
                     origin = [string]$_.Origin
+                    state = [string]$_.State
+                    qc_status = [string]$_.QcStatus
+                    qc_source_revision = [int]$_.QcSourceRevision
+                    qc_source_hash = [string]$_.QcSourceHash
+                    qc_target_hash = [string]$_.QcTargetHash
+                    qc_contract_version = [string]$_.QcContractVersion
+                    qc_findings = @($_.QcFindings)
                     confirmed = [bool]$_.Confirmed
                     joined = [bool]$_.Joined
                     kind = [string]$_.Kind
@@ -460,6 +1034,11 @@ function Save-YakuCatProject {
                     location = [string]$_.Location
                     block_ids = @($_.BlockIds)
                     cells = @($_.Cells)
+                    change_kind = $(try { [string]$_.ChangeKind } catch { '' })
+                    prior_source_text = $(try { [string]$_.PriorSourceText } catch { '' })
+                    prior_translation = $(try { [string]$_.PriorTranslation } catch { '' })
+                    reuse_evidence = $(try { [string]$_.ReuseEvidence } catch { '' })
+                    prior_index = $(try { [int]$_.PriorIndex } catch { -1 })
                 }
             })
         $blocks = @($Project.Blocks | ForEach-Object {
@@ -471,22 +1050,68 @@ function Save-YakuCatProject {
                 }
             })
         $record = [ordered]@{
+            schema_version = 2
+            revision = $nextRevision
             id = [string]$Project.Id
             path = [string]$Project.Path
             file_name = [string]$Project.FileName
             direction = [string]$Project.Direction
             source = [string]$Project.Source
+            document_format = $(try { [string]$Project.DocumentFormat } catch { '' })
+            word_inventory = $(try { $Project.WordInventory } catch { $null })
             created = [string]$Project.CreatedAt
             corpus_section = [string]$Project.CorpusSection
             corpus_examples = @($Project.CorpusExamples)
+            promotion_reference_translation = $(try { [string]$Project.PromotionReferenceTranslation } catch { '' })
+            source_artifact_relative_path = $(try { [string]$Project.SourceArtifactRelativePath } catch { '' })
+            source_artifact_sha256 = $(try { [string]$Project.SourceArtifactSha256 } catch { '' })
+            source_artifact_size = $(try { [int64]$Project.SourceArtifactSize } catch { [int64]0 })
+            source_artifact_contract_version = $(try { [string]$Project.SourceArtifactContractVersion } catch { '' })
+            prior_version = $(try { $Project.PriorVersion } catch { $null })
+            version_update_summary = $(try { $Project.VersionUpdateSummary } catch { $null })
             saved = (Get-Date).ToString('s')
-            segments = $segs
-            blocks = $blocks
         }
-        $file = Join-Path $dir ([string]$Project.Id + '.json')
-        Write-YakuJsonAtomic -Path $file -Value $record -Depth 10
+        $projectDir = Join-Path $dir ([string]$Project.Id)
+        $generationId = [guid]::NewGuid().ToString('N')
+        $generationRoot = Join-Path $projectDir 'generations'
+        $generationDir = Join-Path $generationRoot $generationId
+        foreach ($needed in @($projectDir,$generationRoot,$generationDir)) { if (-not (Test-Path -LiteralPath $needed -PathType Container)) { $null = New-Item -ItemType Directory -Path $needed -Force } }
+        $segmentLines = @($segs | ForEach-Object { $_ | ConvertTo-Json -Depth 10 -Compress }) -join "`n"
+        $blockLines = @($blocks | ForEach-Object { $_ | ConvertTo-Json -Depth 10 -Compress }) -join "`n"
+        $qcLines = @($segs | ForEach-Object { [ordered]@{
+                    segment_id=$_.segment_id; source_revision=$_.source_revision; status=$_.qc_status
+                    source_hash=$_.qc_source_hash; target_hash=$_.qc_target_hash; contract_version=$_.qc_contract_version
+                    findings=@($_.qc_findings)
+                } | ConvertTo-Json -Depth 8 -Compress }) -join "`n"
+        # 1 revision を構成する全ファイルを新しい世代へ先に書く。project.json は
+        # コミットmanifestであり、全書込みが成功した最後にだけ差し替える。
+        Write-YakuTextAtomic -Path (Join-Path $generationDir 'segments.jsonl') -Text $segmentLines
+        Write-YakuTextAtomic -Path (Join-Path $generationDir 'blocks.jsonl') -Text $blockLines
+        Write-YakuTextAtomic -Path (Join-Path $generationDir 'qc.jsonl') -Text $qcLines
+        $record['generation_id'] = $generationId
+        $record['segment_count'] = @($segs).Count
+        $record['block_count'] = @($blocks).Count
+        $record['segments_sha256'] = Get-YakuCatSourceIntegrityHash -Text $segmentLines
+        $record['blocks_sha256'] = Get-YakuCatSourceIntegrityHash -Text $blockLines
+        $record['qc_sha256'] = Get-YakuCatSourceIntegrityHash -Text $qcLines
+        Write-YakuJsonAtomic -Path (Join-Path $projectDir 'project.json') -Value $record -Depth 10
+        $Project.Revision = $nextRevision
+        # manifest 差し替え後は旧世代を残さない。行ごとの保存で全量スナップ
+        # が無制限に増えると、長い資料ほど開く・保存する操作が劣化する。
+        try {
+            foreach ($oldGeneration in @(Get-ChildItem -LiteralPath $generationRoot -Directory -ErrorAction SilentlyContinue)) {
+                if ([string]$oldGeneration.Name -eq $generationId) { continue }
+                Remove-Item -LiteralPath $oldGeneration.FullName -Recurse -Force -ErrorAction Stop
+            }
+        } catch { try { Write-YakuLog ('CAT generation cleanup failed: ' + $_.Exception.Message) 'WARN' } catch {} }
         return $true
     } catch {
+        $Project.Revision = $oldRevision
+        # manifest が指していない未コミット世代は復元に使わない。
+        # 失敗するたびに残すと障害時ほど容量が増えるため、ここで回収する。
+        if (-not [string]::IsNullOrWhiteSpace($generationDir) -and (Test-Path -LiteralPath $generationDir -PathType Container)) {
+            try { Remove-Item -LiteralPath $generationDir -Recurse -Force -ErrorAction Stop } catch {}
+        }
         try { Write-YakuLog ('CAT project save failed: ' + $_.Exception.Message) 'WARN' } catch {}
         return $false
     }
@@ -501,10 +1126,23 @@ function Get-YakuCatSavedProjects {
     $dir = Get-YakuCatProjectStoreDir
     if (-not (Test-Path -LiteralPath $dir -PathType Container)) { return @() }
     $out = New-Object System.Collections.Generic.List[object]
-    foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.json' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First $Limit)) {
+    $files = New-Object System.Collections.Generic.List[object]
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter 'project.json' -File -Recurse -ErrorAction SilentlyContinue)) { $files.Add($f) | Out-Null }
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.json' -File -ErrorAction SilentlyContinue)) { $files.Add($f) | Out-Null }
+    foreach ($f in @($files.ToArray() | Sort-Object LastWriteTime -Descending | Select-Object -First $Limit)) {
         try {
             $o = Get-Content -LiteralPath $f.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
             $segs = @($o.segments)
+            if ([int]$o.schema_version -ge 2) {
+                $generationId = [string]$o.generation_id
+                $segPath = if ($generationId -match '^[a-f0-9]{32}$') { Join-Path (Join-Path (Join-Path $f.DirectoryName 'generations') $generationId) 'segments.jsonl' } else { Join-Path $f.DirectoryName 'segments.jsonl' }
+                if (Test-Path -LiteralPath $segPath -PathType Leaf) { $segs = @(Get-Content -LiteralPath $segPath -Encoding UTF8 | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_ | ConvertFrom-Json }) }
+            }
+            $savedSourcePath = [string]$o.path
+            if ([string]$o.source -eq 'file' -and -not [string]::IsNullOrWhiteSpace([string]$o.source_artifact_relative_path)) {
+                try { $savedSourcePath = Resolve-YakuCatSavedSourceArtifact -ProjectDir $f.DirectoryName -Record $o }
+                catch { $savedSourcePath = '' }
+            }
             [void]$out.Add([pscustomobject]@{
                     Id = [string]$o.id
                     FileName = [string]$o.file_name
@@ -515,7 +1153,7 @@ function Get-YakuCatSavedProjects {
                     Source = [string]$o.source
                     # ファイル型は元ファイルが残っていれば、出力時に読み直して
                     # 原文を再対応付けできる。無い場合だけ押す前に止める。
-                    ExportBlocked = ([string]$o.source -ne 'text' -and -not (Test-Path -LiteralPath ([string]$o.path) -PathType Leaf))
+                    ExportBlocked = ([string]$o.source -eq 'file' -and -not (Test-Path -LiteralPath $savedSourcePath -PathType Leaf))
                 })
         } catch {
             try { Write-YakuLog ('CAT project unreadable, skipped. file=' + $f.Name) 'WARN' } catch {}
@@ -571,16 +1209,67 @@ function Restore-YakuCatProject {
       現在の元ファイルから再抽出したブロックと対応付けるために使う。
     #>
     param([Parameter(Mandatory=$true)][string]$Id)
-    $file = Join-Path (Get-YakuCatProjectStoreDir) ($Id + '.json')
+    $store = Get-YakuCatProjectStoreDir
+    $projectDir = Join-Path $store $Id
+    $file = Join-Path $projectDir 'project.json'
+    $isV2 = Test-Path -LiteralPath $file -PathType Leaf
+    if (-not $isV2) { $file = Join-Path $store ($Id + '.json') }
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return $null }
     $o = Get-Content -LiteralPath $file -Raw -Encoding UTF8 | ConvertFrom-Json
+    $savedSourcePath = [string]$o.path
+    if ([string]$o.source -eq 'file' -and -not [string]::IsNullOrWhiteSpace([string]$o.source_artifact_relative_path)) {
+        $savedSourcePath = Resolve-YakuCatSavedSourceArtifact -ProjectDir $projectDir -Record $o
+    }
+    $savedSegmentRows = @($o.segments)
+    $savedBlockRows = @($o.blocks)
+    if ($isV2) {
+        $generationId = [string]$o.generation_id
+        if (-not [string]::IsNullOrWhiteSpace($generationId)) {
+            if ($generationId -notmatch '^[a-f0-9]{32}$') { throw 'CAT_PROJECT_SNAPSHOT_INCOMPLETE: 保存世代IDが不正です。' }
+            $generationDir = Join-Path (Join-Path $projectDir 'generations') $generationId
+            $segPath = Join-Path $generationDir 'segments.jsonl'
+            $blockPath = Join-Path $generationDir 'blocks.jsonl'
+            $qcPath = Join-Path $generationDir 'qc.jsonl'
+            foreach ($requiredPath in @($segPath,$blockPath,$qcPath)) {
+                if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) { throw 'CAT_PROJECT_SNAPSHOT_INCOMPLETE: 保存世代を構成するファイルが不足しています。' }
+            }
+            $segmentRaw = Get-Content -LiteralPath $segPath -Raw -Encoding UTF8
+            $blockRaw = Get-Content -LiteralPath $blockPath -Raw -Encoding UTF8
+            $qcRaw = Get-Content -LiteralPath $qcPath -Raw -Encoding UTF8
+            if ((Get-YakuCatSourceIntegrityHash -Text $segmentRaw) -ne [string]$o.segments_sha256 -or
+                (Get-YakuCatSourceIntegrityHash -Text $blockRaw) -ne [string]$o.blocks_sha256 -or
+                (Get-YakuCatSourceIntegrityHash -Text $qcRaw) -ne [string]$o.qc_sha256) {
+                throw 'CAT_PROJECT_SNAPSHOT_INCOMPLETE: 保存世代の整合性検査に失敗しました。'
+            }
+            $savedSegmentRows = @($segmentRaw -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_ | ConvertFrom-Json })
+            $savedBlockRows = @($blockRaw -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_ | ConvertFrom-Json })
+            if ($savedSegmentRows.Count -ne [int]$o.segment_count -or $savedBlockRows.Count -ne [int]$o.block_count) { throw 'CAT_PROJECT_SNAPSHOT_INCOMPLETE: 保存世代の件数がmanifestと一致しません。' }
+        } else {
+            # schema v2初期版との後方互換。新しい保存は必ず generation_id を持つ。
+            $segPath = Join-Path $projectDir 'segments.jsonl'
+            $blockPath = Join-Path (Join-Path $projectDir 'snapshots') 'blocks.jsonl'
+            if (-not (Test-Path -LiteralPath $segPath -PathType Leaf)) { throw 'CAT_PROJECT_SNAPSHOT_INCOMPLETE: セグメント保存ファイルがありません。' }
+            $savedSegmentRows = @(Get-Content -LiteralPath $segPath -Encoding UTF8 | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_ | ConvertFrom-Json })
+            if (Test-Path -LiteralPath $blockPath -PathType Leaf) { $savedBlockRows = @(Get-Content -LiteralPath $blockPath -Encoding UTF8 | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_ | ConvertFrom-Json }) }
+        }
+    }
     $segments = New-Object System.Collections.Generic.List[object]
-    foreach ($s in @($o.segments)) {
+    foreach ($s in @($savedSegmentRows)) {
         [void]$segments.Add([pscustomobject]@{
+                SegmentId = [string]$s.segment_id
                 Text = [string]$s.text
+                SourceRevision = $(if ([int]$s.source_revision -gt 0) { [int]$s.source_revision } else { 1 })
+                SourceIntegrityHash = [string]$s.source_integrity_hash
                 Translation = [string]$s.translation
                 MaskedTranslation = [string]$s.masked_translation
                 Origin = [string]$s.origin
+                State = [string]$s.state
+                QcStatus = [string]$s.qc_status
+                QcSourceRevision = [int]$s.qc_source_revision
+                QcSourceHash = [string]$s.qc_source_hash
+                QcTargetHash = [string]$s.qc_target_hash
+                QcContractVersion = [string]$s.qc_contract_version
+                QcFindings = @($s.qc_findings)
                 Confirmed = [bool]$s.confirmed
                 Joined = [bool]$s.joined
                 Kind = [string]$s.kind
@@ -588,10 +1277,15 @@ function Restore-YakuCatProject {
                 Location = [string]$s.location
                 BlockIds = @($s.block_ids)
                 Cells = @($s.cells)
+                ChangeKind = [string]$s.change_kind
+                PriorSourceText = [string]$s.prior_source_text
+                PriorTranslation = [string]$s.prior_translation
+                ReuseEvidence = [string]$s.reuse_evidence
+                PriorIndex = $(if ($null -ne $s.prior_index) { [int]$s.prior_index } else { -1 })
             })
     }
     $savedBlocks = New-Object System.Collections.Generic.List[object]
-    foreach ($b in @($o.blocks)) {
+    foreach ($b in @($savedBlockRows)) {
         if ($null -eq $b -or [string]::IsNullOrWhiteSpace([string]$b.id)) { continue }
         [void]$savedBlocks.Add([pscustomobject]@{
             Id = [string]$b.id; Text = [string]$b.text
@@ -605,46 +1299,84 @@ function Restore-YakuCatProject {
     }
     $project = [pscustomobject]@{
         Id        = [string]$o.id
-        Path      = [string]$o.path
+        Path      = $savedSourcePath
         FileName  = [string]$o.file_name
         Direction = [string]$o.direction
         Blocks    = @($savedBlocks.ToArray())
         Segments  = @($segments.ToArray())
         Warnings  = @()
         Source    = [string]$o.source
+        DocumentFormat = [string]$o.document_format
+        WordInventory = $o.word_inventory
         CreatedAt = [string]$o.created
+        Revision  = [int]$o.revision
+        SchemaVersion = $(if ([int]$o.schema_version -gt 0) { [int]$o.schema_version } else { 1 })
         Restored  = $true
+        PromotionReferenceTranslation = [string]$o.promotion_reference_translation
+        SourceArtifactRelativePath = [string]$o.source_artifact_relative_path
+        SourceArtifactSha256 = [string]$o.source_artifact_sha256
+        SourceArtifactSize = [int64]$o.source_artifact_size
+        SourceArtifactContractVersion = [string]$o.source_artifact_contract_version
+        PriorVersion = $o.prior_version
+        VersionUpdateSummary = $o.version_update_summary
     }
     if (-not [string]::IsNullOrWhiteSpace([string]$o.corpus_section)) {
         $project | Add-Member -NotePropertyName 'CorpusSection' -NotePropertyValue ([string]$o.corpus_section) -Force
         $project | Add-Member -NotePropertyName 'CorpusExamples' -NotePropertyValue @($o.corpus_examples) -Force
     }
+    $null = Initialize-YakuCatProjectState -Project $project
+    if ([string]$project.Source -eq 'file' -and [string]::IsNullOrWhiteSpace([string]$project.SourceArtifactRelativePath) -and
+        (Test-Path -LiteralPath ([string]$project.Path) -PathType Leaf)) {
+        if (-not (Save-YakuCatProject -Project $project)) { throw 'CAT_SOURCE_ARTIFACT_MIGRATION_FAILED' }
+    }
     $script:YakuCatProjects[$project.Id] = $project
     $null = Apply-YakuCatBatchCheckpoint -Project $project
-    return $project
+    return $script:YakuCatProjects[[string]$project.Id]
 }
 
 function Get-YakuCatProject {
     param([Parameter(Mandatory=$true)][string]$Id)
     if (-not $script:YakuCatProjects.ContainsKey($Id)) { return $null }
-    $project = $script:YakuCatProjects[$Id]
-    $null = Apply-YakuCatBatchCheckpoint -Project $project
-    return $project
+    return $script:YakuCatProjects[$Id]
 }
 
 function Remove-YakuCatProject {
-    param([Parameter(Mandatory=$true)][string]$Id)
+    param([Parameter(Mandatory=$true)][string]$Id, [switch]$DeleteStored)
     try { $script:YakuCatProjects.Remove($Id) } catch {}
+    if (-not $DeleteStored) { return }
+    if ($Id -notmatch '^[a-fA-F0-9]{32}$') { throw 'CAT_PROJECT_ID_INVALID' }
+    $store = [System.IO.Path]::GetFullPath((Get-YakuCatProjectStoreDir))
+    $projectDir = [System.IO.Path]::GetFullPath((Join-Path $store $Id))
+    if (-not $projectDir.StartsWith($store.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'CAT_PROJECT_DELETE_PATH_INVALID' }
+    # 実行中workerと同じlock内でtombstoneを先にコミットする。
+    # 削除後に遅れて終了したbatchがcheckpointを復活させる競合を防ぐ。
+    $deleteOperation = {
+        param($innerId)
+        $tombstone = Get-YakuCatTombstonePath -ProjectId $innerId
+        Write-YakuTextAtomic -Path $tombstone -Text ((Get-Date).ToString('o'))
+        $checkpoint = Get-YakuCatCheckpointPath -ProjectId $innerId
+        if (Test-Path -LiteralPath $checkpoint -PathType Leaf) { Remove-Item -LiteralPath $checkpoint -Force }
+    }
+    $null = Invoke-YakuCatCheckpointLock -ProjectId $Id -Operation $deleteOperation -Arguments @($Id)
+    if (Test-Path -LiteralPath $projectDir -PathType Container) { Remove-Item -LiteralPath $projectDir -Recurse -Force }
+    $legacyPath = [System.IO.Path]::GetFullPath((Join-Path $store ($Id + '.json')))
+    if (-not $legacyPath.StartsWith($store.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'CAT_PROJECT_DELETE_PATH_INVALID' }
+    if (Test-Path -LiteralPath $legacyPath -PathType Leaf) { Remove-Item -LiteralPath $legacyPath -Force }
+    # キャッシュはproject IDを鍵に含まないため、対象projectの行だけを
+    # 安全に特定できない。削除契約を優先し、process-wide cacheを全削除する。
+    if (Get-Command Clear-YakuTranslationCache -ErrorAction SilentlyContinue) { $null = Clear-YakuTranslationCache }
 }
 
 function Get-YakuCatProjectSummary {
     param([Parameter(Mandatory=$true)]$Project)
+    $null = Initialize-YakuCatProjectState -Project $Project
     $segs = @($Project.Segments)
     $done = @($segs | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.Translation) }).Count
     # 進捗は「人が確認した数」で数える。機械が埋めた数だと、翻訳ボタンを
     # 押した瞬間に 100% になり、以後どれだけ確認しても動かない。
     # 数百行を何時間もかけて見る作業では、それは進捗表示として役に立たない。
-    $confirmed = @($segs | Where-Object { [bool]$_.Confirmed }).Count
+    $confirmed = @($segs | Where-Object { [string]$_.State -eq 'reviewed' }).Count
+    $eligibility = Get-YakuCatOutputEligibility -Project $Project
     return [pscustomobject]@{
         Id        = [string]$Project.Id
         FileName  = [string]$Project.FileName
@@ -655,6 +1387,11 @@ function Get-YakuCatProjectSummary {
         Joined    = @($segs | Where-Object { [bool]$_.Joined }).Count
         Confirmed = $confirmed
         Unconfirmed = ($segs.Count - $confirmed)
+        Revision = [int]$Project.Revision
+        TranslationListEligible = [bool]$eligibility.TranslationListEligible
+        ExcelDraftEligible = [bool]$eligibility.ExcelDraftEligible
+        WordDraftEligible = [bool]$eligibility.WordDraftEligible
+        EligibilityReasons = @($eligibility.Reasons)
     }
 }
 
@@ -667,11 +1404,14 @@ function ConvertTo-YakuCatProjectJson {
     $segs = @($Project.Segments)
     # 元ファイルが無ければ再抽出できない。存在する場合は、出力時に原文を
     # 再対応付けし、曖昧・欠落があればコピーを作る前に安全停止する。
-    $exportBlocked = ([string]$Project.Source -ne 'text' -and -not (Test-Path -LiteralPath ([string]$Project.Path) -PathType Leaf))
+    $eligibility = Get-YakuCatOutputEligibility -Project $Project
+    $documentFormat = $(try { [string]$Project.DocumentFormat } catch { '' })
+    $exportBlocked = if ([string]$Project.Source -ne 'file') { -not [bool]$eligibility.TranslationListEligible } elseif ($documentFormat -eq 'docx') { -not [bool]$eligibility.TranslationListEligible } else { -not [bool]$eligibility.ExcelDraftEligible }
     $rows = New-Object System.Collections.Generic.List[object]
     for ($i = 0; $i -lt $segs.Count; $i++) {
         [void]$rows.Add([ordered]@{
             index       = $i
+            segment_id  = [string]$segs[$i].SegmentId
             source      = [string]$segs[$i].Text
             translation = [string]$segs[$i].Translation
             origin      = [string]$segs[$i].Origin
@@ -680,6 +1420,13 @@ function ConvertTo-YakuCatProjectJson {
             kind        = [string]$segs[$i].Kind
             location    = [string]$segs[$i].Location
             confirmed   = [bool]$segs[$i].Confirmed
+            state       = [string]$segs[$i].State
+            qc_status   = [string]$segs[$i].QcStatus
+            qc_findings = @($segs[$i].QcFindings)
+            change_kind = $(try { [string]$segs[$i].ChangeKind } catch { '' })
+            prior_source = $(try { [string]$segs[$i].PriorSourceText } catch { '' })
+            prior_translation = $(try { [string]$segs[$i].PriorTranslation } catch { '' })
+            reuse_evidence = $(try { [string]$segs[$i].ReuseEvidence } catch { '' })
             can_revise  = (-not [string]::IsNullOrWhiteSpace([string]$segs[$i].Translation) -and -not [string]::IsNullOrWhiteSpace([string]$segs[$i].MaskedTranslation))
             status      = Get-YakuCatSegmentStatus -Segment $segs[$i]
             # 次と繋げるか。シートが違う・図形が挟まる場合は繋げない。
@@ -713,12 +1460,29 @@ function ConvertTo-YakuCatProjectJson {
     }
     return ([ordered]@{
         id         = [string]$Project.Id
-        source     = $(try { if ([string]$Project.Source -eq 'text') { 'text' } else { 'file' } } catch { 'file' })
+        revision   = [int]$Project.Revision
+        source     = $(try { [string]$Project.Source } catch { 'file' })
         # 出力できない状態かどうか。押す前に画面へ出す。
         export_blocked = [bool]$exportBlocked
+        translation_list_eligibility = [bool]$eligibility.TranslationListEligible
+        excel_draft_eligibility = [bool]$eligibility.ExcelDraftEligible
+        word_draft_eligibility = [bool]$eligibility.WordDraftEligible
+        word_file_output_supported = $(try { [bool]$Project.WordInventory.DraftStructureEligible } catch { $false })
+        eligibility_reasons = @($eligibility.Reasons)
         corpus_ready = $(try { -not [string]::IsNullOrWhiteSpace([string]$Project.CorpusSection) } catch { $false })
         corpus     = @($corpusRows.ToArray())
+        promotion_reference_translation = $(try { [string]$Project.PromotionReferenceTranslation } catch { '' })
+        version_update = $(try { $Project.VersionUpdateSummary } catch { $null })
+        word_inventory = $(try {
+            [ordered]@{
+                draft_structure_eligible = [bool]$Project.WordInventory.DraftStructureEligible
+                unsupported_reasons = @($Project.WordInventory.UnsupportedReasons)
+                supported_blocks = [int]$Project.WordInventory.SupportedBlockCount
+                total_blocks = [int]$Project.WordInventory.TotalBlockCount
+            }
+        } catch { $null })
         file_name  = [string]$Project.FileName
+        document_format = $documentFormat
         direction  = [string]$Project.Direction
         total      = [int]$summary.Total
         translated = [int]$summary.Translated
@@ -728,7 +1492,7 @@ function ConvertTo-YakuCatProjectJson {
         unconfirmed = [int]$summary.Unconfirmed
         untranslated = @($segs | Where-Object { (Get-YakuCatSegmentStatus -Segment $_) -eq 'untranslated' }).Count
         glossary_candidates = $(try { [int]$Project.GlossaryCandidates } catch { 0 })
-        draft        = @($segs | Where-Object { (Get-YakuCatSegmentStatus -Segment $_) -eq 'draft' }).Count
+        draft        = @($segs | Where-Object { @('machine_draft','human_edited') -contains (Get-YakuCatSegmentStatus -Segment $_) }).Count
         segments   = @($rows.ToArray())
     } | ConvertTo-Json -Depth 6 -Compress)
 }
@@ -765,6 +1529,8 @@ function Invoke-YakuCatGlossaryPass {
         if ($i -lt 0 -or $i -ge $segs.Count) { continue }
         $segs[$i].Translation = [string]$map[$k]
         $segs[$i].Origin = 'glossary'
+        $segs[$i] | Add-Member -NotePropertyName State -NotePropertyValue 'machine_draft' -Force
+        Reset-YakuCatSegmentQc -Segment $segs[$i] -KeepState
         $hits++
     }
     return [pscustomobject]@{ Applied = $hits; Remaining = @($segs | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.Translation) }).Count }
@@ -807,18 +1573,14 @@ function Get-YakuCatSegmentStatus {
       用語集で埋めた行も、目を通すまでは終わっていない。
     #>
     param([Parameter(Mandatory=$true)]$Segment)
-    if ([bool]$Segment.Confirmed) { return 'confirmed' }
+    if ($Segment.PSObject.Properties.Name -contains 'State' -and -not [string]::IsNullOrWhiteSpace([string]$Segment.State)) { return [string]$Segment.State }
+    if ([bool]$Segment.Confirmed) { return 'reviewed' }
     if ([string]::IsNullOrWhiteSpace([string]$Segment.Translation)) { return 'untranslated' }
-    return 'draft'
+    return 'machine_draft'
 }
 
 function Get-YakuCatCacheStyle {
-    param([AllowNull()][string]$CorpusSection)
-    $hash = 'none'
-    if (-not [string]::IsNullOrWhiteSpace($CorpusSection)) {
-        $hash = Get-YakuTextSha256 -Text $CorpusSection
-    }
-    return ('concise|corpus:' + $hash)
+    return 'canonical-v1|reference:none|mask:numeric-v1|validation:cat-v1'
 }
 
 function ConvertTo-YakuCatCheckpointRows {
@@ -827,7 +1589,8 @@ function ConvertTo-YakuCatCheckpointRows {
     param(
         [Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Items,
         [Parameter(Mandatory=$true)]$Translations,
-        [AllowNull()]$Warnings
+        [AllowNull()]$Warnings,
+        [ValidateSet('auto','to_en','to_jp')][string]$Direction='auto'
     )
     $copies = New-Object System.Collections.Generic.List[object]
     foreach ($item in @($Items)) {
@@ -837,13 +1600,13 @@ function ConvertTo-YakuCatCheckpointRows {
                 Index = $idx; Text = [string]$item.Text
                 OriginalText = [string]$item.OriginalText
                 MaskedText = [string]$item.MaskedText
-                NumericMaskMap = $item.NumericMaskMap; ProperMaskMap = $item.ProperMaskMap
+                NumericMaskMap = $item.NumericMaskMap
                 Targets = @($item.Targets); SegmentIndexes = @($item.SegmentIndexes)
             }) | Out-Null
     }
     $copyMap = @{}
     foreach ($copy in @($copies.ToArray())) { $copyMap[[int]$copy.Index] = [string]$Translations[[int]$copy.Index] }
-    Restore-YakuCatItemTranslations -Items @($copies.ToArray()) -Map $copyMap -Warnings $Warnings
+    Restore-YakuCatItemTranslations -Items @($copies.ToArray()) -Map $copyMap -Warnings $Warnings -Direction $Direction
     $rows = New-Object System.Collections.Generic.List[object]
     foreach ($copy in @($copies.ToArray())) {
         $targets = @($copy.Targets)
@@ -876,13 +1639,13 @@ function Get-YakuCatCopilotUsage {
         $byText[$text] = $item; $items.Add($item) | Out-Null
     }
     $null = Protect-YakuCatItems -Items @($items.ToArray()) -Root $Root -Direction ([string]$Project.Direction)
-    $style = Get-YakuCatCacheStyle -CorpusSection ([string]$Project.CorpusSection)
+    $style = Get-YakuCatCacheStyle
     $pending = New-Object System.Collections.Generic.List[object]
     $hits = 0
     foreach ($item in @($items.ToArray())) {
         $key = Get-YakuTranslationCacheKey -Kind 'cat' -Direction ([string]$Project.Direction) -Text ([string]$item.Text) -Style $style -Root $Root -Settings $Settings
         $cached = Get-YakuTranslationCacheValue -Key $key -Settings $Settings
-        if ($null -ne $cached -and -not (Test-YakuFileTranslationInvalid -Source ([string]$item.Text) -Translation ([string]$cached) -Direction ([string]$Project.Direction))) { $hits++ }
+        if ($null -ne $cached -and (Test-YakuCatCachedTranslation -Item $item -Translation ([string]$cached) -Direction ([string]$Project.Direction))) { $hits++ }
         else { $pending.Add($item) | Out-Null }
     }
     $maxChars = Get-YakuMaxCharsPerFileBatch -Settings $Settings
@@ -913,8 +1676,7 @@ function Protect-YakuCatItems {
       同じ失敗を繰り返さないため、マスクは**items だけを受け取る形**にする。
       これならジョブからも、プロジェクトを持つ経路からも同じものを呼べる。
 
-      順序は翻訳経路と同じ。単位変換 → 固有名詞 → 数値（住所の全角数字を
-      数値マスクに取られないため）。表は項目へ持たせ、復元で使う。
+      順序は翻訳経路と同じ。単位変換 → 数値。表は項目へ持たせ、復元で使う。
     #>
     param(
         [Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Items,
@@ -922,47 +1684,36 @@ function Protect-YakuCatItems {
         [Parameter(Mandatory=$true)][string]$Direction
     )
     $maskedItems = 0
-    $properItems = 0
     foreach ($item in @($Items)) {
         if ($null -eq $item) { continue }
         $text = [string]$item.Text
         $item | Add-Member -NotePropertyName OriginalText -NotePropertyValue $text -Force
-        # CAT は一括翻訳の外側を通らず Invoke-YakuFileTranslationItems を直接
+        # CAT translation uses the dedicated canonical contract and protects every unit here.
         # 呼ぶため、ここで単位変換を済ませる。先に数値を伏せると
         # 18万6千台 が [[N1]]万[[N2]]千台 に割れ、1つの数量へ戻せない。
         $numericPre = Convert-YakuNumericUnits -Text $text -Location ("cat-ID-" + [string]$item.Index)
         $text = [string]$numericPre.Text
-        $properMap = $null
-        if (Get-Command New-YakuProperNounMaskMap -ErrorAction SilentlyContinue) {
-            $properResult = New-YakuProperNounMaskMap -Text $text -Root $Root
-            $properMap = $properResult.Map
-            $text = [string]$properResult.Text
-            if ($null -ne $properMap -and $properMap.Count -gt 0) { $properItems++ }
-        }
         $maskResult = New-YakuNumericMaskMap -Text $text -Root $Root -Direction $Direction -Location ("cat-ID-" + [string]$item.Index)
-        $item | Add-Member -NotePropertyName ProperMaskMap -NotePropertyValue $properMap -Force
         $item | Add-Member -NotePropertyName NumericMaskMap -NotePropertyValue $maskResult.Map -Force
         $item | Add-Member -NotePropertyName MaskedText -NotePropertyValue ([string]$maskResult.Text) -Force
+        $item | Add-Member -NotePropertyName ProtectionContractVersion -NotePropertyValue 'cat-protection-v1' -Force
         $item.Text = [string]$maskResult.Text
         if ([int]$maskResult.MaskedCount -gt 0) { $maskedItems++ }
     }
-    try { Write-YakuLog "CAT masking. items=$(@($Items).Count) maskedItems=$maskedItems properItems=$properItems" 'INFO' } catch {}
-    return [pscustomobject]@{ MaskedItems = [int]$maskedItems; ProperItems = [int]$properItems }
+    try { Write-YakuLog "CAT numeric masking. items=$(@($Items).Count) maskedItems=$maskedItems" 'INFO' } catch {}
+    return [pscustomobject]@{ MaskedItems = [int]$maskedItems }
 }
 
 function Restore-YakuCatItemTranslations {
     <#
       訳文の伏せ字を実値へ戻す。個数が合わなければ警告する。
-      無言で数値や人名が消えるのを避ける。
-
-      数値と固有名詞は別々に有無を見る。まとめて「マスクが無ければ次へ」と
-      すると、数字を含まない行（「毛籠社長」）で固有名詞が戻らず、
-      画面へ [[P1]] が出る。簡易翻訳側で実際に起きていた形である。
+      無言で数値が消えるのを避ける。
     #>
     param(
         [Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Items,
         [Parameter(Mandatory=$true)]$Map,
-        [AllowNull()]$Warnings
+        [AllowNull()]$Warnings,
+        [ValidateSet('auto','to_en','to_jp')][string]$Direction='auto'
     )
     foreach ($item in @($Items)) {
         if ($null -eq $item) { continue }
@@ -970,15 +1721,12 @@ function Restore-YakuCatItemTranslations {
         if (-not $Map.ContainsKey($idx)) { continue }
         $maskMap = $null
         try { $maskMap = $item.NumericMaskMap } catch { $maskMap = $null }
-        $properMap = $null
-        try { $properMap = $item.ProperMaskMap } catch { $properMap = $null }
         $hasNumeric = ($null -ne $maskMap -and $maskMap.Count -gt 0)
-        $hasProper = ($null -ne $properMap -and $properMap.Count -gt 0)
         $translated = [string]$Map[$idx]
         # 修正の往復では、実値へ戻す前の訳文だけを Copilot へ送り返す。
         # 画面に出す実値入り訳文とは分けて、セグメントへ引き継げるよう残す。
         $item | Add-Member -NotePropertyName 'MaskedTranslation' -NotePropertyValue $translated -Force
-        if (-not $hasNumeric -and -not $hasProper) { continue }
+        if (-not $hasNumeric) { continue }
         if ($hasNumeric) {
             try {
                 $integrity = Test-YakuNumericMaskIntegrity -MaskedSource ([string]$item.MaskedText) -Translated $translated -Location ("cat-ID-" + [string]$idx)
@@ -987,106 +1735,15 @@ function Restore-YakuCatItemTranslations {
                         -Details @{ Detail = [string]$integrity.Detail } `
                         -Message "数値の個数が原文と一致しません。該当箇所の数値を必ずご確認ください。($([string]$integrity.Detail))"
                 }
-            } catch {}
-            $translated = Restore-YakuNumericMask -Text $translated -Map $maskMap
-            try { $item.Text = Restore-YakuNumericMask -Text ([string]$item.Text) -Map $maskMap } catch {}
-        }
-        if ($hasProper) {
-            try {
-                $pInt = Test-YakuProperNounMaskIntegrity -MaskedSource ([string]$item.MaskedText) -Translated $translated -Map $properMap
-                if (-not [bool]$pInt.Ok -and $null -ne $Warnings) {
-                    $lost = @(@($pInt.Missing) | ForEach-Object { [string]$properMap[[string]$_] })
-                    Add-YakuWarning -Warnings $Warnings -Location ("ID $idx") -Category 'proper-noun-dropped' `
-                        -Details @{ Missing = @($pInt.Missing) } `
-                        -Message ("固有名詞が訳文から抜けています: " + (@($lost) -join '、') + "。必ずご確認ください。")
+                if (-not [bool]$integrity.Ok) {
+                    $Map.Remove($idx)
+                    continue
                 }
             } catch {}
-            $translated = Restore-YakuProperNounMask -Text $translated -Map $properMap
-            try { $item.Text = Restore-YakuProperNounMask -Text ([string]$item.Text) -Map $properMap } catch {}
+            $translated = Restore-YakuNumericMask -Text $translated -Map $maskMap -Direction $Direction -SourceText ([string]$item.MaskedText)
+            try { $item.Text = Restore-YakuNumericMask -Text ([string]$item.Text) -Map $maskMap -Direction 'auto' -SourceText ([string]$item.MaskedText) } catch {}
         }
         $Map[$idx] = $translated
-    }
-}
-
-function Invoke-YakuCatCopilotPass {
-    <#
-      用語集で埋まらなかったセグメントを Copilot で訳す。
-
-      同じ原文が何度出ても1回しか送らない。ファイル翻訳と同じ扱いである。
-      既に訳が入っているものは送らない。
-
-      **この関数はいま呼ばれていない。** 実際に走るのは Server.ps1 の
-      ジョブ側（Kind='cat'）である。プロジェクトを受け取る形なので、
-      別ランスペースのジョブから呼べないためである。
-      残してあるのは、プロジェクトを直接持つ経路（回帰テスト）で使うため。
-      マスクは Protect-YakuCatItems / Restore-YakuCatItemTranslations に
-      切り出し、両方の経路が同じものを呼ぶようにした。
-    #>
-    param(
-        [Parameter(Mandatory=$true)][string]$Root,
-        [Parameter(Mandatory=$true)]$Project,
-        [Parameter(Mandatory=$true)]$Settings,
-        [AllowNull()]$ProgressState,
-        [AllowNull()]$Warnings
-    )
-    $segs = @($Project.Segments)
-    if ($null -eq $Warnings) { $Warnings = New-Object System.Collections.Generic.List[object] }
-
-    # 同じ原文をまとめる。送る回数を減らすためで、割り戻しは後で行う。
-    $byText = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([System.StringComparer]::Ordinal)
-    $items = New-Object System.Collections.Generic.List[object]
-    for ($i = 0; $i -lt $segs.Count; $i++) {
-        if (-not [string]::IsNullOrWhiteSpace([string]$segs[$i].Translation)) { continue }
-        $text = [string]$segs[$i].Text
-        if ([string]::IsNullOrWhiteSpace($text)) { continue }
-        if (-not $byText.ContainsKey($text)) {
-            $item = [pscustomobject]@{ Index = ($items.Count + 1); Text = $text; BlockIds = (New-Object System.Collections.Generic.List[string]); SegmentIndexes = (New-Object System.Collections.Generic.List[int]) }
-            $byText[$text] = $item
-            [void]$items.Add($item)
-        }
-        [void]$byText[$text].SegmentIndexes.Add($i)
-    }
-    if ($items.Count -eq 0) { return [pscustomobject]@{ Translated = 0; Remaining = 0; Sent = 0 } }
-
-    $maxChars = Get-YakuMaxCharsPerFileBatch -Settings $Settings
-    $cacheStyle = Get-YakuCatCacheStyle -CorpusSection ([string]$Project.CorpusSection)
-    $context = @{ BatchOrdinal = 0; TotalBatches = 0; MaxRetryDepth = 0; CachePerBatch=$true; CacheKind='cat'; CacheStyle=$cacheStyle; CacheRoot=$Root }
-    $batches = @(Split-YakuFileTranslationItems -Items @($items.ToArray()) -MaxChars $maxChars)
-    $context['TotalBatches'] = [int]$batches.Count
-    # 送る前に数値を伏せる。
-    #
-    # これは一括翻訳の経路（Invoke-YakuFileTranslation）にしか無く、CAT は
-    # その内側の Invoke-YakuFileTranslationItems を直接呼んでいたため、
-    # 実数値のまま Copilot へ送っていた（2026-08-08 に判明）。
-    #
-    # マスクと復元は Protect-YakuCatItems / Restore-YakuCatItemTranslations へ
-    # 切り出した。ここに直接書いていたため、ジョブ側（Server.ps1）が同じ処理を
-    # 書き直したときにマスクが落ち、それに気づけなかった。
-    # 完全一致置換のあとにマスクする。先にマスクすると見出し語と一致しない。
-    $null = Protect-YakuCatItems -Items @($items.ToArray()) -Root $Root -Direction ([string]$Project.Direction)
-
-    $map = Invoke-YakuFileTranslationItems -Root $Root -Items @($items.ToArray()) -Settings $Settings `
-        -Direction ([string]$Project.Direction) -MaxChars $maxChars -Warnings $Warnings `
-        -ProgressState $ProgressState -Context $context
-
-    Restore-YakuCatItemTranslations -Items @($items.ToArray()) -Map $map -Warnings $Warnings
-    $filled = 0
-    foreach ($item in @($items.ToArray())) {
-        $idx = [int]$item.Index
-        if (-not $map.ContainsKey($idx)) { continue }
-        $translation = [string]$map[$idx]
-        if ([string]::IsNullOrWhiteSpace($translation)) { continue }
-        foreach ($si in @($item.SegmentIndexes)) {
-            $segs[[int]$si].Translation = $translation
-            $segs[[int]$si] | Add-Member -NotePropertyName 'MaskedTranslation' -NotePropertyValue ([string]$item.MaskedTranslation) -Force
-            $segs[[int]$si].Origin = 'copilot'
-            $filled++
-        }
-    }
-    return [pscustomobject]@{
-        Translated = $filled
-        Sent = $items.Count
-        Remaining = @($segs | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.Translation) }).Count
     }
 }
 
@@ -1352,6 +2009,7 @@ function Set-YakuCatSegmentTranslation {
         [Parameter(Mandatory=$true)][int]$Index,
         [AllowNull()][string]$Text
     )
+    $null = Initialize-YakuCatProjectState -Project $Project
     $segs = @($Project.Segments)
     if ($Index -lt 0 -or $Index -ge $segs.Count) { throw ('セグメントが見つかりません: ' + $Index) }
     $translation = [string]$Text
@@ -1360,21 +2018,8 @@ function Set-YakuCatSegmentTranslation {
     # 人が書き換えた訳文は、以前のマスク後訳文ともう対応しない。
     $segs[$Index] | Add-Member -NotePropertyName 'MaskedTranslation' -NotePropertyValue '' -Force
     $segs[$Index].Origin = $(if ($hasTranslation) { 'manual' } else { '' })
-    # 手で直したものは、その時点で人が見たということなので確定にする。
-    # ただし空に戻した行は未翻訳であり、確認済みにはできない。
-    if ($segs[$Index].PSObject.Properties.Name -contains 'Confirmed') { $segs[$Index].Confirmed = $hasTranslation }
-    else { $segs[$Index] | Add-Member -NotePropertyName 'Confirmed' -NotePropertyValue $hasTranslation -Force }
-    # 確定した訳を翻訳メモリへ貯める。次に同じ文が来たら候補に出る。
-    # 市販ツールの Ctrl+Enter と同じ作法で、確定＝記憶にする。
-    # 失敗しても訳の確定は妨げない。貯め損ねより、直せないほうが困る。
-    if ($hasTranslation) {
-        try {
-            $null = Add-YakuTranslationMemoryEntry -Source ([string]$segs[$Index].Text) -Target $translation `
-                -Direction ([string]$Project.Direction) -Origin 'cat'
-        } catch {
-            try { Write-YakuLog ('Translation memory save failed: ' + $_.Exception.Message) 'WARN' } catch {}
-        }
-    }
+    $segs[$Index] | Add-Member -NotePropertyName State -NotePropertyValue $(if ($hasTranslation) { 'human_edited' } else { 'untranslated' }) -Force
+    Reset-YakuCatSegmentQc -Segment $segs[$Index] -KeepState
     return $segs[$Index]
 }
 
@@ -1393,23 +2038,25 @@ function Set-YakuCatSegmentConfirmed {
         [Parameter(Mandatory=$true)][int]$Index,
         [bool]$Confirmed = $true
     )
+    $null = Initialize-YakuCatProjectState -Project $Project
     $segs = @($Project.Segments)
     if ($Index -lt 0 -or $Index -ge $segs.Count) { throw ('セグメントが見つかりません: ' + $Index) }
     if ($Confirmed -and [string]::IsNullOrWhiteSpace([string]$segs[$Index].Translation)) {
         throw '訳文が空の行は確定できません。'
     }
-    if ($segs[$Index].PSObject.Properties.Name -contains 'Confirmed') { $segs[$Index].Confirmed = $Confirmed }
-    else { $segs[$Index] | Add-Member -NotePropertyName 'Confirmed' -NotePropertyValue $Confirmed -Force }
-    # 確定した訳は翻訳メモリへ入れる。直さずに確定したものも、
-    # 「この訳で良い」という判断が入っている以上、次に使える。
-    if ($Confirmed) {
-        try {
-            $null = Add-YakuTranslationMemoryEntry -Source ([string]$segs[$Index].Text) -Target ([string]$segs[$Index].Translation) `
-                -Direction ([string]$Project.Direction) -Origin 'cat'
-        } catch {
-            try { Write-YakuLog ('Translation memory save failed: ' + $_.Exception.Message) 'WARN' } catch {}
-        }
+    if (-not $Confirmed) {
+        $fallback = if ([string]$segs[$Index].Origin -eq 'manual') { 'human_edited' } elseif ([string]::IsNullOrWhiteSpace([string]$segs[$Index].Translation)) { 'untranslated' } else { 'machine_draft' }
+        $segs[$Index].State = $fallback
+        $segs[$Index].Confirmed = $false
+        return $segs[$Index]
     }
+    $validation = Invoke-YakuCatSegmentValidation -Project $Project -Segment $segs[$Index]
+    if (-not [bool]$validation.Passed) {
+        $segs[$Index].Confirmed = $false
+        throw ('CAT_REVIEW_QC_FAILED: ' + (@($validation.Findings | ForEach-Object { [string]$_.Code }) -join ','))
+    }
+    $segs[$Index].State = 'reviewed'
+    $segs[$Index].Confirmed = $true
     return $segs[$Index]
 }
 
@@ -1587,7 +2234,7 @@ function Resolve-YakuCatExportBlocks {
                 if ($oldHits.Count -eq 1 -and $newHits.Count -eq 1) { $newIndex = [int]$newHits[0] }
             }
             if ($newIndex -lt 0 -or $newIndex -ge $rightAll.Count) {
-                [void]$errors.Add(('source-missing-or-ambiguous: ' + [string]$b.Id + ' / ' + [string]$b.Location + ' / ' + [string]$b.Text))
+                [void]$errors.Add(('source-missing-or-ambiguous: ' + [string]$b.Id + ' / ' + [string]$b.Location))
                 continue
             }
             $currentBlock = $rightAll[$newIndex]
@@ -1598,7 +2245,7 @@ function Resolve-YakuCatExportBlocks {
             }
             # 書込直前の最後の門。対応付け結果でも原文が一致しなければ使わない。
             if (-not (Test-YakuCatSourceTextExact -Left ([string]$b.Text) -Right ([string]$currentBlock.Text))) {
-                [void]$errors.Add(('source-changed: ' + [string]$b.Id + ' / ' + [string]$b.Text))
+                [void]$errors.Add(('source-changed: ' + [string]$b.Id))
                 continue
             }
             $usedCurrent[$currentId] = $true
@@ -1635,14 +2282,15 @@ function Export-YakuCatProject {
         [AllowNull()]$ProgressState
     )
     if ($null -eq $Warnings) { $Warnings = New-Object System.Collections.Generic.List[object] }
+    $eligibility = Get-YakuCatOutputEligibility -Project $Project
+    if (-not [bool]$eligibility.TranslationListEligible) {
+        throw ('CAT_TRANSLATION_LIST_BLOCKED: 確認済み訳文一覧を出力できません。' + (@($eligibility.Reasons) -join ','))
+    }
     $segs = @($Project.Segments)
     # 貼り付けたテキストは書き戻す元のファイルが無い。訳文を繋いで返すだけ。
     # 簡易翻訳と同じ終わり方（画面でコピーする）にして、覚えることを増やさない。
-    if ([string]$Project.Source -eq 'text') {
-        $lines = @($segs | ForEach-Object {
-            $t = [string]$_.Translation
-            if ([string]::IsNullOrWhiteSpace($t)) { [string]$_.Text } else { $t }
-        })
+    if ([string]$Project.Source -in @('text','align','prior_version')) {
+        $lines = @($segs | ForEach-Object { [string]$_.Translation })
         return [pscustomobject]@{
             OutputPath = ''
             OutputName = ''
@@ -1650,6 +2298,28 @@ function Export-YakuCatProject {
             Written    = @($segs | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.Translation) }).Count
             Skipped    = @($segs | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.Translation) }).Count
         }
+    }
+    $documentFormat = $(try { [string]$Project.DocumentFormat } catch { '' })
+    if ($documentFormat -eq 'docx') {
+        if (-not [bool]$eligibility.WordDraftEligible) {
+            # 体裁を保証できないWordは、ファイルを作らず確認済み訳文だけを返す。
+            # 「一部だけ書けたWord」を完成物らしく見せないための縮退経路。
+            $lines = @($segs | ForEach-Object { [string]$_.Translation })
+            return [pscustomobject]@{
+                OutputPath=''; OutputName=''; Text=(@($lines) -join "`n")
+                Written=@($segs).Count; Skipped=0
+            }
+        }
+        $writeResult = Export-YakuWordDraft -Project $Project -OutputPath $OutputPath
+        return [pscustomobject]@{
+            OutputPath = [string]$writeResult.PublishedPath
+            OutputName = [IO.Path]::GetFileName([string]$writeResult.PublishedPath)
+            Written = [int]$writeResult.WrittenCount
+            Skipped = [int]$writeResult.SkippedCount
+        }
+    }
+    if (-not [bool]$eligibility.ExcelDraftEligible) {
+        throw ('CAT_EXCEL_DRAFT_BLOCKED: DRAFT Excelを安全に出力できません。' + (@($eligibility.Reasons) -join ','))
     }
     $bySegment = @{}
     for ($i = 0; $i -lt $segs.Count; $i++) {
@@ -1684,18 +2354,16 @@ function Export-YakuCatProject {
         $newBlock = $resolved.Map[[string]$oldId]
         $currentByBlock[[string]$newBlock.Id] = [string]$byBlock[$oldId]
     }
-    Copy-Item -LiteralPath ([string]$Project.Path) -Destination $OutputPath -Force
-    Clear-YakuOutputReadOnlyAttribute -Path $OutputPath
-    $copiedHash = (Get-FileHash -LiteralPath $OutputPath -Algorithm SHA256).Hash
-    if ($copiedHash -ne $hashAfter) {
+    $sourceHashBeforeWrite = (Get-FileHash -LiteralPath ([string]$Project.Path) -Algorithm SHA256).Hash
+    if ($sourceHashBeforeWrite -ne $hashAfter) {
         throw 'CAT_EXPORT_SOURCE_CHANGED_BEFORE_COPY: 元の Excel が出力直前に変更されました。訳文はまだ書き込んでいません。もう一度出力してください。'
     }
-    $null = Write-YakuExcelTranslations -OutputPath $OutputPath -Blocks @($currentExtract.Blocks) `
-        -TranslationByBlockId $currentByBlock -Warnings $Warnings -Settings $Settings -ProgressState $ProgressState
+    $writeResult = Write-YakuFileTranslations -InputPath ([string]$Project.Path) -OutputPath $OutputPath -Blocks @($currentExtract.Blocks) `
+        -TranslationByBlockId $currentByBlock -Warnings $Warnings -Settings $Settings -ProgressState $ProgressState -DraftMarker -FailOnIncomplete
     return [pscustomobject]@{
-        OutputPath = $OutputPath
-        OutputName = [System.IO.Path]::GetFileName($OutputPath)
-        Written    = $currentByBlock.Count
-        Skipped    = (@($segs).Count - $bySegment.Count)
+        OutputPath = [string]$writeResult.PublishedPath
+        OutputName = [System.IO.Path]::GetFileName([string]$writeResult.PublishedPath)
+        Written    = [int]$writeResult.WrittenCount
+        Skipped    = [int]$writeResult.SkippedCount
     }
 }
