@@ -81,7 +81,18 @@
             <span id="cat-save-status" class="cat-save-status" role="status" aria-live="polite">保存済み</span>
           </div>
           <label class="cat-toolbar-search" for="cat-search"><span>検索</span><input id="cat-search" type="search" placeholder="原文・訳文を検索"></label>
-          <div id="cat-actions" class="cat-actions"><span id="cat-copilot-usage" class="cat-copilot-usage" role="status" aria-live="polite" hidden></span><button id="cat-translate" type="button">残りの訳案を作る</button><button id="cat-export" type="button" class="secondary-button">訳文を取り出す（確認画面が出ます）</button><details class="cat-more-actions"><summary>そのほか</summary><div class="cat-more-actions-list"><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みの行だけコピー</button><button id="cat-switch-project" type="button" class="secondary-button">ほかの資料に切り替える</button></div></details></div>
+          <div id="cat-actions" class="cat-actions"><span id="cat-copilot-usage" class="cat-copilot-usage" role="status" aria-live="polite" hidden></span><button id="cat-translate" type="button">残りの訳案を作る</button><button id="cat-export" type="button" class="secondary-button">訳文を取り出す（確認画面が出ます）</button><details class="cat-more-actions"><summary>そのほか</summary><div class="cat-more-actions-list"><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みの行だけコピー</button><button id="cat-switch-project" type="button" class="secondary-button">ほかの資料に切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>右の候補を上から順に訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や右側から訳文欄へ戻る</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
+          <section aria-labelledby="cat-personal-glossary-title">
+            <h3 id="cat-personal-glossary-title">今後の資料でも使うと登録した訳</h3>
+            <p class="muted">ここにあるものは、これからのすべての資料で自動的に使われます。間違えて登録したものは取り消せます。取り消しても、すでに訳した文章はそのまま残ります。</p>
+            <div id="cat-personal-glossary-list" class="cat-personal-glossary-list"><p class="muted">読み込んでいます…</p></div>
+          </section>
+          <section aria-labelledby="cat-delete-title">
+            <h3 id="cat-delete-title">この作業を削除する</h3>
+            <p class="muted">不要になった作業だけを削除できます。元のファイルは削除しません。</p>
+            <button id="cat-delete" type="button" class="danger-button">この作業を削除</button>
+          </section>
+        </details></div></details></div>
         </header>
 
         <div id="cat-status" class="cat-status muted" role="status" aria-live="polite" tabindex="-1"></div>
@@ -111,7 +122,6 @@
               </div>
             </section>
             <section aria-labelledby="cat-location-title"><h2 id="cat-location-title">資料内の場所</h2><div id="cat-location-list" class="cat-location-list"></div></section>
-            <details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>右の候補を上から順に訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や右側から訳文欄へ戻る</dd></div></dl></details>
           </nav>
 
           <section id="cat-editor-pane" class="cat-editor-pane" aria-label="原文と訳文の確認">
@@ -137,20 +147,8 @@
 
         <div id="cat-output-row" class="cat-output-row" hidden><span>社内確認用のファイルを作りました：<strong id="cat-output-name"></strong></span><button id="cat-open-folder" type="button">フォルダを開く</button></div>
         <div id="cat-draft-warning" class="draft-warning" tabindex="-1" hidden>できあがるファイルは、社内で確認するためのものです。ファイル名の先頭に「DRAFT_」が付きます。完成版ではありませんので、お客様や社外へはそのままお送りにならないでください。</div>
-        <section id="cat-text-output" class="cat-text-output" hidden><h2>確認済み訳文</h2><p id="cat-text-output-note" class="cat-text-output-note" role="status" aria-live="polite"></p><p class="muted">コピーできない場合も全文はここに残ります。</p><textarea id="cat-text-output-value" readonly></textarea><div class="cat-text-output-actions"><button id="cat-copy-again" type="button">もう一度コピー</button><button id="cat-select-all" type="button" class="secondary-button">全文を選ぶ（このあとCtrl+Cでコピー）</button></div></section>
-        <details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
-          <section aria-labelledby="cat-personal-glossary-title">
-            <h3 id="cat-personal-glossary-title">今後の資料でも使うと登録した訳</h3>
-            <p class="muted">ここにあるものは、これからのすべての資料で自動的に使われます。間違えて登録したものは取り消せます。取り消しても、すでに訳した文章はそのまま残ります。</p>
-            <div id="cat-personal-glossary-list" class="cat-personal-glossary-list"><p class="muted">読み込んでいます…</p></div>
-          </section>
-          <section aria-labelledby="cat-delete-title">
-            <h3 id="cat-delete-title">この作業を削除する</h3>
-            <p class="muted">不要になった作業だけを削除できます。元のファイルは削除しません。</p>
-            <button id="cat-delete" type="button" class="danger-button">この作業を削除</button>
-          </section>
-        </details>
-      </section>
+        <dialog id="cat-text-output" class="cat-text-output"><h2>確認済み訳文</h2><p id="cat-text-output-note" class="cat-text-output-note" role="status" aria-live="polite"></p><p class="muted">コピーできない場合も全文はここに残ります。</p><textarea id="cat-text-output-value" readonly></textarea><div class="cat-text-output-actions"><button id="cat-copy-again" type="button">もう一度コピー</button><button id="cat-select-all" type="button" class="secondary-button">全文を選ぶ（このあとCtrl+Cでコピー）</button><button id="cat-text-output-close" type="button" class="secondary-button">閉じる</button></div></dialog>
+              </section>
     </section>
   </main>
   <dialog id="cat-export-dialog" class="confirm-dialog cat-export-dialog"><form method="dialog"><h2 id="cat-export-title">取り出す前のご確認</h2><p id="cat-export-mode"></p><p id="cat-export-name" class="muted"></p><div id="cat-export-checks" role="status"></div><p class="cat-human-review-note">自動で点検しているのは、数字と単位の写しちがいだけです。言い回しが適切かどうかは、ご自身でお確かめください。</p><p id="cat-export-notice" class="draft-warning">できあがるファイルは、社内で確認するためのものです。ファイル名の先頭に「DRAFT_」が付きます。完成版ではありませんので、お客様や社外へはそのままお送りにならないでください。</p><div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>戻って確認する</button><button id="cat-export-confirm" value="export">これで取り出す</button></div></form></dialog>

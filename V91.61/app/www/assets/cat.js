@@ -45,7 +45,7 @@
   function clearOutputDisplay() {
     outputScope = null;
     el('cat-output-row').hidden = true; el('cat-output-row').removeAttribute('data-cat-output-project');
-    el('cat-text-output').hidden = true; el('cat-text-output').removeAttribute('data-cat-output-project');
+    closeTextOutput(); el('cat-text-output').removeAttribute('data-cat-output-project');
     el('cat-output-name').textContent = ''; el('cat-text-output-value').value = ''; el('cat-text-output-note').textContent = '';
   }
   function post(action, body, mutate, scope) {
@@ -305,7 +305,7 @@
       var target = isActive ? '<textarea rows="3" data-cat-input="' + index + '" data-cat-project-id="' + esc(project.id) + '" data-original="' + esc(segment.translation || '') + '" aria-label="' + row + '行目の訳文" aria-invalid="' + (findings.length ? 'true' : 'false') + '"' + (findings.length ? ' aria-describedby="' + findingId + '"' : '') + '>' + esc(segment.translation || '') + '</textarea>' + prior + referenceTrace + generatedTerms + '<div class="cat-ops">' + ops + '</div><div class="cat-row-actions">' + (segment.confirmed ? '<button type="button" class="cat-op secondary-button" data-cat-unconfirm="' + index + '">確認を取り消す</button>' : '<button type="button" class="cat-op cat-op-ok" data-cat-confirm="' + index + '">確認済みにする</button>') + '<button type="button" class="cat-op secondary-button" data-cat-revert="' + index + '" hidden>編集を取り消す</button>' + (segment.translation ? '<button type="button" class="cat-op secondary-button" data-cat-term-open="' + index + '">用語を登録</button>' : '') + ((segment.kind === 'cell' && segment.translation && String(segment.source).length <= 40) ? '<button type="button" class="cat-op secondary-button" data-cat-glossary="' + index + '">このセルの訳を今後も自動で使う</button>' : '') + '</div>' + qc + compare + (segment.can_revise ? '<form class="revise-form" data-cat-revise="' + index + '"><button class="secondary-button" type="button" data-cat-shorten="' + index + '">短くする</button><label class="revise-label">または、どこをどう直すか入力</label><div class="revise-row"><input class="revise-input" type="text" placeholder="例：「increase」を「rise」に変える"><button class="secondary-button" type="submit">この指示で直す</button></div></form>' : '') : '<button type="button" class="cat-row-activate" data-cat-activate="' + index + '"><span class="cat-target-preview">' + esc(segment.translation || '') + '</span></button>';
       var change = changeLabel(segment);
       return '<tr class="' + (isActive ? 'is-active' : '') + '" data-cat-row="' + index + '" data-cat-segment-id="' + esc(segment.segment_id || '') + '" data-cat-confirmed="' + (segment.confirmed ? '1' : '0') + '" data-yaku-cat-state="' + esc(state) + '">' +
-        '<td class="cat-col-no"><span class="cat-card-label">行番号・状態</span>' + row + '<span class="cat-state cat-state-' + esc(state) + '" title="' + esc(stateTitle(state)) + '">' + esc(stateLabel(state)) + '</span>' + (change ? '<span class="cat-change-badge cat-change-' + esc(changeGroup(segment)) + '" title="' + esc(changeTitle(segment)) + '">' + esc(change) + '</span>' : '') + '</td>' +
+        '<td class="cat-col-no"><span class="cat-card-label">行番号・状態</span>' + row + '<span class="cat-state cat-state-' + esc(state) + '" title="' + esc(stateTitle(state)) + '">' + esc(stateLabel(state)) + '</span>' + ((change && isActive) ? '<span class="cat-change-badge cat-change-' + esc(changeGroup(segment)) + '" title="' + esc(changeTitle(segment)) + '">' + esc(change) + '</span>' : '') + '</td>' +
         '<td class="cat-col-loc"><span class="cat-card-label">場所</span><span class="cat-location-main">' + esc(segment.location || '本文') + '</span><span class="cat-location-kind">' + esc(kind) + '</span>' + (origin ? '<span class="cat-origin">' + esc(origin) + '</span>' : '') + '</td>' +
         /* 開いている行は、原文を上・訳文を下に積んで表の全幅を使う。左右2列は視線が
            横へ飛ぶうえ、「文字を大きく」だと1列が日本語11文字まで痩せる。上下配置の
@@ -579,6 +579,17 @@
     });
   }
 
+  /* 全文の退避はダイアログで出す。器の中に居座らせると、取り出した直後だけ
+     スクロールする場所が6つに増え、一覧が1.5行まで潰れる（実測）。 */
+  function openTextOutput() {
+    var dialog = el('cat-text-output');
+    if (dialog && !dialog.open) { try { dialog.showModal(); } catch (_) { dialog.setAttribute('open', 'open'); } }
+  }
+  function closeTextOutput() {
+    var dialog = el('cat-text-output');
+    if (dialog && dialog.open) { try { dialog.close(); } catch (_) { dialog.removeAttribute('open'); } }
+  }
+
   function bindFileDrop(drop, input) {
     if (!drop || !input) return;
     drop.addEventListener('keydown', function (event) { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); input.click(); } });
@@ -782,7 +793,7 @@
     return flush().then(function () { requestScope = currentScope(); if (!requestScope) throw new Error('資料が開かれていません。「ほかの資料に切り替える」から選び直してください。'); setBusy(true); status('出力しています…'); return post('export', {}, true, requestScope); }).then(function (data) {
       if (!project || String(project.id || '') !== requestScope.id) { setBusy(false); return; }
       setBusy(false); outputScope = requestScope;
-      if (data.text) { el('cat-text-output').hidden = false; el('cat-text-output').setAttribute('data-cat-output-project', requestScope.id); el('cat-text-output-value').value = data.text; el('cat-text-output-note').textContent = ''; return YakuCommon.copyText(data.text, el('cat-text-output-value'), el('cat-status')); }
+      if (data.text) { openTextOutput(); el('cat-text-output').setAttribute('data-cat-output-project', requestScope.id); el('cat-text-output-value').value = data.text; el('cat-text-output-note').textContent = ''; return YakuCommon.copyText(data.text, el('cat-text-output-value'), el('cat-status')); }
       el('cat-output-row').hidden = false; el('cat-output-row').setAttribute('data-cat-output-project', requestScope.id); el('cat-output-name').textContent = data.output_name || data.output_path; el('cat-draft-warning').hidden = false; el('cat-draft-warning').textContent = '社内確認用のファイルを作りました。ファイル名の先頭に「DRAFT_」が付いています。完成版ではありませんので、社外へはそのままお送りにならないでください。'; YakuCommon.focus(el('cat-draft-warning'));
     }).catch(function (error) { setBusy(false); status(error.message, true); });
   }
@@ -805,7 +816,7 @@
     }).then(function (data) {
       setBusy(false);
       if (!data || !scopeIsCurrent(requestScope, true)) return;
-      el('cat-text-output').hidden = false;
+      openTextOutput();
       el('cat-text-output').setAttribute('data-cat-output-project', requestScope.id);
       el('cat-text-output-value').value = data.text || '';
       var note = data.partial
@@ -1055,6 +1066,7 @@
     document.querySelector('[data-cat-term-exception-cancel]').addEventListener('click', function () { el('cat-term-exception-dialog').close(); });
     el('cat-next-qc').addEventListener('click', goToNextQc);
     el('cat-copy-again').addEventListener('click', function () { YakuCommon.copyText(el('cat-text-output-value').value, el('cat-text-output-value'), el('cat-status')); });
+    el('cat-text-output-close').addEventListener('click', closeTextOutput);
     el('cat-select-all').addEventListener('click', function () { el('cat-text-output-value').focus(); el('cat-text-output-value').select(); status('全文を選択しました。Ctrl+Cでコピーできます。'); });
     el('cat-open-folder').addEventListener('click', function () { if (!outputScope || !project || outputScope.id !== String(project.id || '')) { status('この作業の出力をもう一度作成してください。', true); return; } YakuCommon.post('/api/open-output', { project_id: outputScope.id }).then(function () { status('フォルダを開きました。'); }).catch(function (error) { status(error.message, true); }); });
     el('cat-delete').addEventListener('click', function () {
