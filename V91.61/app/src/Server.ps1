@@ -2580,7 +2580,7 @@ function Invoke-YakuRoute {
             }
             if ($null -eq $project) { throw '取り込んだファイルが見つかりません。もう一度「取り込んで確認を始める」を押してください。' }
 
-            $revisionActions = @('delete','glossary','merge','split','glossary-add','term-add','term-deactivate','term-insert','term-exception','tm-delete','confirm','save-corpus','segment','translate','apply','preflight','export','export-reviewed','personal-glossary-list','personal-glossary-remove')
+            $revisionActions = @('delete','glossary','merge','split','glossary-add','term-add','term-deactivate','term-insert','term-exception','tm-delete','confirm','confirm-bulk','save-corpus','segment','translate','apply','preflight','export','export-reviewed','personal-glossary-list','personal-glossary-remove')
             if ($revisionActions -contains $action) {
                 $expectedRevision = -1
                 try { $expectedRevision = [int]$payload['expected_revision'] } catch { $expectedRevision = -1 }
@@ -2893,6 +2893,43 @@ function Invoke-YakuRoute {
                         $json = $body | ConvertTo-Json -Depth 8 -Compress
                     }
                     Send-YakuTextResponse -Context $Context -Text $json -ContentType 'application/json; charset=utf-8'
+                }
+                'confirm-bulk' {
+                    # 表示中の行をまとめて確認済みにする。市販CATは12本すべてが
+                    # 一括確定を持つ。ここも Ctrl+Enter を押し続ければ同じことが
+                    # 起きるので、押下回数だけを利用者に負わせる理由が無い。
+                    #
+                    # QC は Set-YakuCatSegmentConfirmed の内側にあるので、1行ずつと
+                    # 同じ検査が全行で走る。通らなかった行は確定せずに数えて返し、
+                    # 利用者が絞り込んで直せるようにする。
+                    $indexes = @()
+                    try { $indexes = @($payload['indexes'] | ForEach-Object { [int]$_ }) } catch { $indexes = @() }
+                    if ($indexes.Count -eq 0) { throw 'CAT_BULK_CONFIRM_NO_TARGET: 対象の行がありません。' }
+                    $mutation = {
+                        param($candidate,$innerIndexes,$root,$innerSettings)
+                        $done = 0; $failed = New-Object System.Collections.ArrayList
+                        foreach ($one in $innerIndexes) {
+                            $blocked = $false
+                            try { $null = Set-YakuCatSegmentConfirmed -Project $candidate -Index $one -Confirmed $true }
+                            catch {
+                                if ([string]$_.Exception.Message -like 'CAT_REVIEW_QC_FAILED:*') { $blocked = $true }
+                                else { throw }
+                            }
+                            if ($blocked) { $null = $failed.Add([int]$one); continue }
+                            $done++
+                            $reviewed = @($candidate.Segments)[$one]
+                            $null = Add-YakuCatTranslationMemoryOutboxEvent -Project $candidate -Segment $reviewed
+                        }
+                        try { $candidate | Add-Member -NotePropertyName 'GlossaryCandidates' -NotePropertyValue (Measure-YakuCatGlossaryCandidates -Root $root -Project $candidate -Settings $innerSettings) -Force } catch {}
+                        return [pscustomobject]@{ Confirmed=$done; Blocked=@($failed.ToArray()) }
+                    }
+                    $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($indexes,$script:YakuRoot,$settings)
+                    $project = $commit.Project
+                    if ([int]$commit.Result.Confirmed -gt 0) { $null = Sync-YakuCatTranslationMemoryOutbox -Project $project }
+                    $body = (ConvertTo-YakuCatProjectJson -Project $project) | ConvertFrom-Json
+                    $body | Add-Member -NotePropertyName bulk_confirmed -NotePropertyValue ([int]$commit.Result.Confirmed) -Force
+                    $body | Add-Member -NotePropertyName bulk_blocked -NotePropertyValue @($commit.Result.Blocked) -Force
+                    Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 8 -Compress) -ContentType 'application/json; charset=utf-8'
                 }
                 'save-corpus' {
                     # グリッドで確かめた対訳をコーパスへ入れる。人が一度見てから
