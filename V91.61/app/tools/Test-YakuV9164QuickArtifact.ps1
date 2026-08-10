@@ -63,6 +63,13 @@ Write-Host 'Quick artifact memory contract' -ForegroundColor Cyan
     $view = ConvertTo-YakuQuickArtifactView -Artifact $artifact -IncludeContent
     Check-YakuQuick ([string]$view.PSObject.Properties.Name -notcontains 'Prompt') 'artifact view never exposes prompt'
     Check-YakuQuick ([string]$view.PSObject.Properties.Name -notcontains 'MaskedTranslation') 'artifact view never exposes the protected current translation'
+    # 伏せた数値の一覧。-Root を渡したときだけ、原文から作り直して添える。
+    # 対応表そのものは結果オブジェクトへ載せない契約（Translation.ps1 §8）を保つため。
+    Check-YakuQuick (@($view.masked_values).Count -eq 0) 'view without a root reports the count only'
+    $viewWithValues = ConvertTo-YakuQuickArtifactView -Artifact $artifact -IncludeContent -Root $root
+    Check-YakuQuick (@($viewWithValues.masked_values).Count -eq [int]$artifact.MaskedCount) '伏せた数値の件数と一覧の件数が一致する'
+    Check-YakuQuick (@($viewWithValues.masked_values) -contains '100') '伏せた実値そのものを画面へ返す'
+    Check-YakuQuick ([string]$viewWithValues.PSObject.Properties.Name -notcontains 'Map') 'view never exposes the placeholder map itself'
 
     Write-Host 'In-memory Quick revision' -ForegroundColor Cyan
     $revisionJobId = [guid]::NewGuid().ToString('N')

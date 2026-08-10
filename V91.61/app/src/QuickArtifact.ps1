@@ -210,7 +210,21 @@ function Complete-YakuQuickArtifactFromJobState {
 }
 
 function ConvertTo-YakuQuickArtifactView {
-    param([AllowNull()]$Artifact, [switch]$IncludeContent)
+    <#
+      画面へ渡す形。
+
+      -Root を渡すと、伏せた数値の一覧（masked_values）も添える。
+      「2件伏せました」だけでは、利用者は自分の未公開の数字が本当に伏せられたのか
+      確かめられない。1件取りこぼしても気づけない。
+
+      対応表(Map)は結果オブジェクトへ載せない契約（Translation.ps1 §8）なので運ばない。
+      代わりにここで原文から作り直す。割り当ては原文と方向だけで決まり、
+      再依頼経路（Invoke-YakuTextRevision）も同じ前提で作り直している。
+
+      作り直した件数が保存してある件数と食い違ったら、値は出さない。
+      「伏せました」と書いた値が実際は伏せられていない、という状態を作らないため。
+    #>
+    param([AllowNull()]$Artifact, [switch]$IncludeContent, [AllowNull()][string]$Root)
     if ($null -eq $Artifact) { return $null }
     $view = [ordered]@{
         artifact_id = [string]$Artifact.Id
@@ -231,6 +245,21 @@ function ConvertTo-YakuQuickArtifactView {
         $view['source_text'] = [string]$Artifact.SourceText
         $view['translation'] = [string]$Artifact.Translation
     }
+    $maskedValues = New-Object System.Collections.Generic.List[string]
+    if ($IncludeContent -and -not [string]::IsNullOrWhiteSpace($Root) -and [int]$Artifact.MaskedCount -gt 0) {
+        try {
+            $recomputed = New-YakuNumericMaskMap -Text ([string]$Artifact.SourceText) -Root $Root `
+                -Direction ([string]$Artifact.Direction) -Location 'quick-view'
+            if ([int]$recomputed.MaskedCount -eq [int]$Artifact.MaskedCount) {
+                for ($i = 1; $i -le [int]$recomputed.MaskedCount; $i++) {
+                    $token = '[[N' + $i + ']]'
+                    if ($recomputed.Map.Contains($token)) { $maskedValues.Add([string]$recomputed.Map[$token]) | Out-Null }
+                }
+                if ($maskedValues.Count -ne [int]$Artifact.MaskedCount) { $maskedValues.Clear() }
+            }
+        } catch { $maskedValues.Clear() }
+    }
+    $view['masked_values'] = @($maskedValues.ToArray())
     return [pscustomobject]$view
 }
 

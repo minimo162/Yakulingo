@@ -465,8 +465,16 @@ function Invoke-YakuCatSegmentValidation {
             foreach($v in $sourceValues){$orderSource.Add([string]$v)|Out-Null}
             foreach($v in $targetValues){$orderTarget.Add([string]$v)|Out-Null}
             if([string]$Project.Direction -eq 'to_en'){
-                foreach($periodMatch in [regex]::Matches($source,'(?<year>\d{4})\s*年度\s*第\s*(?<quarter>[1-4])\s*四半期')){
+                # 会計期は英語で語順が変わる。「2027年度第1四半期」だけでなく
+                # 「2027年3月期 第1四半期」も同じ形なので、両方を順序比較から外す。
+                # マスク側（Get-YakuFiscalPeriodMaskTokens）と対になる規則。
+                $periodPatterns=@(
+                    '(?<year>\d{4})\s*年度\s*第\s*(?<quarter>[1-4])\s*四半期',
+                    '(?<year>\d{4})\s*年\s*(?:\d{1,2})\s*月期\s*第\s*(?<quarter>[1-4])\s*四半期'
+                )
+                foreach($periodMatch in @($periodPatterns | ForEach-Object { [regex]::Matches($source,$_) } | ForEach-Object { $_ })){
                     $year=[string]$periodMatch.Groups['year'].Value;$quarter=[string]$periodMatch.Groups['quarter'].Value
+                    if([string]::IsNullOrWhiteSpace($year) -or [string]::IsNullOrWhiteSpace($quarter)){continue}
                     $hasYear=($target -match ('(?i)(?:\bFY\s*'+[regex]::Escape($year)+'\b|\b'+[regex]::Escape($year)+'\s+(?:fiscal\s+year|fiscal-year)\b)'))
                     $hasQuarter=($target -match ('(?i)(?:\bQ\s*'+[regex]::Escape($quarter)+'\b|\b'+[regex]::Escape($quarter)+'(?:st|nd|rd|th)?\s+quarter\b)'))
                     if($hasYear -and $hasQuarter){
@@ -2025,11 +2033,21 @@ function Restore-YakuCatItemTranslations {
                 if (-not [bool]$integrity.Ok -and $null -ne $Warnings) {
                     Add-YakuWarning -Warnings $Warnings -Location ("ID $idx") -Category 'numeric-mask-integrity' `
                         -Details @{ Detail = [string]$integrity.Detail } `
-                        -Message "数値の個数が原文と一致しません。該当箇所の数値を必ずご確認ください。($([string]$integrity.Detail))"
+                        -Message "数値の個数が原文と一致しないため、この行の訳文は取り込みませんでした。もう一度「残りの訳案を作る」を押してください。($([string]$integrity.Detail))"
                 }
                 if (-not [bool]$integrity.Ok) {
+                    # 数値が欠けた・重複した・原文に無い数値が増えた。§8「数値が抜けた訳は
+                    # 警告ではなく欠陥」に従い、この訳文は取り込まない。
                     $Map.Remove($idx)
                     continue
+                }
+                if ([bool]$integrity.OutOfOrder -and $null -ne $Warnings) {
+                    # 順序だけの違いでは捨てない。日英では語順が変わるのが自然で、
+                    # 捨てると再実行しても同じ判定になり、その行は永久に埋まらなくなる。
+                    # 実値の取り違えが疑わしい行は、確認時のQCが確定を止める。
+                    Add-YakuWarning -Warnings $Warnings -Location ("ID $idx") -Category 'numeric-order-review' `
+                        -Details @{ Detail = [string]$integrity.Detail } `
+                        -Message "数値の並び順が原文と違います。訳文は取り込みましたので、どの数値がどこに掛かるかをご確認ください。"
                 }
             } catch {}
             $translated = Restore-YakuNumericMask -Text $translated -Map $maskMap -Direction $Direction -SourceText ([string]$item.MaskedText)

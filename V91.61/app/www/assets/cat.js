@@ -10,9 +10,20 @@
   function esc(value) { return YakuCommon.escape(value); }
   /* 失敗の知らせは画面のいちばん上に出る。長い一覧の下を編集していると視界に入らず、
      「押したのに何も起きない」と受け取られるので、必ずそこまで運ぶ。 */
+  /* 画面の不具合そのもの（TypeError など）を、そのまま利用者へ見せない。
+     「Cannot read properties of null」と出ても、利用者にできることは何も無い。
+     記録には残し、画面には次にやれることを書く。 */
+  function humanMessage(text) {
+    var raw = String(text || '');
+    if (/^(?:Type|Reference|Syntax|Range)Error\b|Cannot read propert|is not a function|is not defined|undefined is not/i.test(raw)) {
+      try { console.error('YakuLingo internal error: ' + raw); } catch (_) {}
+      return '画面を表示できませんでした。画面を読み込み直してください（Ctrl+R）。作業内容は保存されています。';
+    }
+    return raw;
+  }
   function status(text, error) {
     var node = el('cat-status');
-    node.textContent = text || '';
+    node.textContent = error ? humanMessage(text) : (text || '');
     node.classList.toggle('alert-inline', !!error);
     if (error && text) YakuCommon.focus(node);
   }
@@ -111,10 +122,10 @@
     };
     return (segment.qc_findings || []).map(function (finding) { var code = String(finding.code || finding.Code || '').toLowerCase().replace(/_/g, '-'); return labels[code] || '自動点検で気になる点が見つかりました。左の原文と見比べてください。'; });
   }
-  function stateLabel(state) { return state === 'reviewed' ? '確認済み' : state === 'human_edited' ? '手直し済み・未確認' : state === 'machine_draft' ? 'AI訳・未確認' : state === 'stale' ? '再確認が必要' : '未翻訳'; }
+  function stateLabel(state) { return state === 'reviewed' ? '確認済み' : state === 'human_edited' ? '手直し済み・未確認' : state === 'machine_draft' ? 'Copilot訳・未確認' : state === 'stale' ? '再確認が必要' : '未翻訳'; }
   function originLabel(origin) {
     if (origin === 'glossary') return '用語集';
-    if (origin === 'copilot') return 'AI訳';
+    if (origin === 'copilot') return 'Copilot訳';
     if (origin === 'manual') return '手直し';
     if (origin === 'carried_forward' || origin === 'numeric_update') return '自分が確認した訳';
     return '';
@@ -237,7 +248,7 @@
       var usage = segment.reference_usage || null;
       var referenceTrace = usage ? '<div class="cat-example-trace"><p>この参考訳から挿入（その後編集' + (usage.edited_after_insert ? 'あり' : 'なし') + '）・' + esc(usage.source_name || '資料名なし') + (usage.location ? '・' + esc(usage.location) : '') + (Number(usage.page) > 0 ? '・ページ ' + Number(usage.page) : '') + '</p>' +
         ((usage.source || usage.translation) ? '<details><summary>使った参考訳を確認</summary>' + (usage.source ? '<div><strong>原文</strong><br>' + esc(usage.source) + '</div>' : '') + (usage.translation ? '<div><strong>訳文</strong><br>' + esc(usage.translation) + '</div>' : '') + '</details>' : '') + '</div>' : '';
-      var generatedTerms = (segment.terminology_generation || []).length ? '<details class="cat-term-trace"><summary>訳案作成時に指定した用語 ' + segment.terminology_generation.length + '件</summary>' + segment.terminology_generation.map(function (term) { return '<div><strong>' + esc(term.source || '') + '</strong> → ' + esc(term.preferred || '') + '</div>'; }).join('') + '</details>' : '';
+      var generatedTerms = (segment.terminology_generation || []).filter(Boolean).length ? '<details class="cat-term-trace"><summary>訳案作成時に指定した用語 ' + segment.terminology_generation.filter(Boolean).length + '件</summary>' + segment.terminology_generation.filter(Boolean).map(function (term) { return '<div><strong>' + esc(term.source || '') + '</strong> → ' + esc(term.preferred || '') + '</div>'; }).join('') + '</details>' : '';
       var compare = revisionComparison && revisionComparison.projectId === String(project.id || '') && Number(revisionComparison.index) === index ? '<section class="cat-revision-compare" aria-labelledby="cat-revision-title-' + index + '"><h4 id="cat-revision-title-' + index + '">修正結果を確認</h4><div class="cat-revision-pair"><div><strong>変更前</strong><p>' + esc(revisionComparison.before) + '</p></div><div><strong>変更後</strong><p>' + esc(segment.translation || '') + '</p></div></div><p class="muted">数字と単位は自動で点検しました。言い回しが適切かどうかは、ご自身でお確かめください。</p><div class="cat-revision-actions"><button type="button" data-cat-accept-revision="' + index + '">この案を使う</button><button type="button" class="secondary-button" data-cat-revert-revision="' + index + '">元に戻す</button></div></section>' : '';
       var kind = segment.kind === 'cell' ? 'セル' : /^word_/.test(segment.kind || '') ? 'Word' : '文';
       var target = isActive ? '<textarea data-cat-input="' + index + '" data-cat-project-id="' + esc(project.id) + '" data-original="' + esc(segment.translation || '') + '" aria-label="' + row + '行目の訳文" aria-invalid="' + (findings.length ? 'true' : 'false') + '"' + (findings.length ? ' aria-describedby="' + findingId + '"' : '') + '>' + esc(segment.translation || '') + '</textarea>' + prior + referenceTrace + generatedTerms + '<div class="cat-row-actions">' + (segment.confirmed ? '' : '<button type="button" class="cat-op cat-op-ok" data-cat-confirm="' + index + '">確認済みにする</button>') + (segment.translation ? '<button type="button" class="cat-op secondary-button" data-cat-term-open="' + index + '">用語を登録</button>' : '') + ((segment.kind === 'cell' && segment.translation && String(segment.source).length <= 40) ? '<button type="button" class="cat-op secondary-button" data-cat-glossary="' + index + '">このセルの訳を今後も自動で使う</button>' : '') + '</div>' + qc + compare + (segment.can_revise ? '<form class="revise-form" data-cat-revise="' + index + '"><button class="secondary-button" type="button" data-cat-shorten="' + index + '">短くする</button><label class="revise-label">または、どこをどう直すか入力</label><div class="revise-row"><input class="revise-input" type="text" placeholder="例：「increase」を「rise」に変える"><button class="secondary-button" type="submit">この指示で直す</button></div></form>' : '') : '<button type="button" class="cat-row-activate" data-cat-activate="' + index + '"><span class="cat-target-preview">' + esc(segment.translation || '') + '</span></button>';

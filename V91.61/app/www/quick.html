@@ -69,7 +69,14 @@
           </form>
           <p id="quick-revise-status" class="muted" role="status" aria-live="polite"></p>
           <p id="quick-result-note" class="muted"></p>
-          <p id="quick-mask-summary" class="privacy-note" hidden></p>
+          <div id="quick-mask-summary" class="privacy-note mask-summary" hidden>
+            <p class="mask-summary-line"><strong id="quick-mask-count"></strong>を伏せてCopilotへ送り、訳案では元の数値に戻しました。</p>
+            <details id="quick-mask-detail" class="mask-detail" hidden>
+              <summary>伏せた数値を確かめる</summary>
+              <ul id="quick-mask-list" class="mask-list"></ul>
+              <p class="mask-detail-note">この一覧はこのパソコンの中だけで作っています。Copilotへは記号で送りました。</p>
+            </details>
+          </div>
           <p id="quick-copy-status" class="muted" role="status" aria-live="polite"></p>
           <textarea id="quick-copy-fallback" class="quick-copy-fallback" readonly hidden aria-label="コピー用の訳文"></textarea>
         </div>

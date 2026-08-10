@@ -309,13 +309,15 @@ try {
     try { $null = Set-YakuCatSegmentConfirmed -Project $hyphenBad -Index 0 } catch { $hyphenBadBlocked = ($_.Exception.Message -match 'CAT_REVIEW_QC_FAILED') }
     Check-YakuH1 $hyphenBadBlocked 'QC rejects a multiplied hyphenated financial amount'
 
-    # Counts alone are insufficient: N1 and N2 still exist after a swap, but
-    # restoring them assigns the figures to the wrong financial metrics.
+    # 個数だけでは足りない。入れ替わってもN1/N2は両方あるので、意味の取り違えは
+    # 個数検査では見えない。ただし復元はトークン名で行うため実値は取り違えない。
+    # よってマスク検査は「順序が違う」と報告するに留め、確定を止めるのは確認時のQC。
     $swapItem = [pscustomobject]@{ Index=91; Text='売上高は100百万円、営業利益は10百万円でした。' }
     $null = Protect-YakuCatItems -Items @($swapItem) -Root $root -Direction to_en
     $swappedMaskedTarget = 'Net sales were [[N2]] million yen and operating profit was [[N1]] million yen.'
     $swapIntegrity = Test-YakuNumericMaskIntegrity -MaskedSource ([string]$swapItem.MaskedText) -Translated $swappedMaskedTarget -Location 'h1-token-swap'
-    Check-YakuH1 (-not [bool]$swapIntegrity.Ok) 'numeric placeholder order swap is rejected before restoration'
+    Check-YakuH1 ([bool]$swapIntegrity.OutOfOrder) 'numeric placeholder order swap is reported as out of order'
+    Check-YakuH1 ([bool]$swapIntegrity.Ok) 'order swap alone keeps the translation restorable'
     $swappedManual = New-YakuCatTextProject -Root $root -Text '売上高は100百万円、営業利益は10百万円でした。' -Settings $null -Direction to_en `
         -Translation 'Net sales were 10 million yen and operating profit was 100 million yen.'
     $swappedManualBlocked = $false

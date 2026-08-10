@@ -92,16 +92,41 @@
     el('quick-result-title').textContent = toEnglish ? '英語の訳案（未確認）' : '日本語の訳案（内容確認用）';
     el('quick-result-text').textContent = artifact.translation;
     el('quick-result-note').textContent = toEnglish ? '外部へ配布する資料に使う場合は、資料翻訳で1文ずつ確認してください。' : '内容確認用の訳案です。';
+    /* 件数だけでは「自分のあの数字が伏せられたか」が確かめられない。
+       伏せた値そのものを並べる。値はこのパソコンの中で作り直したもので、
+       Copilotへは記号として送っている。 */
     var maskCount = Number(artifact.masked_count || 0);
+    var maskValues = Array.isArray(artifact.masked_values) ? artifact.masked_values : [];
     el('quick-mask-summary').hidden = maskCount < 1;
-    el('quick-mask-summary').textContent = maskCount < 1 ? '' : maskCount.toLocaleString('ja-JP') + '件の数値を伏せてCopilotへ送り、訳案では元の数値に戻しました。';
+    if (maskCount > 0) {
+      el('quick-mask-count').textContent = maskCount.toLocaleString('ja-JP') + '件の数値';
+      var maskDetail = el('quick-mask-detail');
+      var maskList = el('quick-mask-list');
+      maskList.innerHTML = '';
+      maskDetail.hidden = maskValues.length < 1;
+      maskValues.forEach(function (value, index) {
+        var item = document.createElement('li');
+        item.className = 'mask-item';
+        var token = document.createElement('span');
+        token.className = 'mask-token';
+        token.textContent = '[[N' + (index + 1) + ']]';
+        var shown = document.createElement('span');
+        shown.className = 'mask-value';
+        shown.textContent = value;
+        item.appendChild(token);
+        item.appendChild(shown);
+        maskList.appendChild(item);
+      });
+      /* 少なければ開いたまま見せ、多いときは畳んで画面を埋めない。 */
+      maskDetail.open = maskValues.length > 0 && maskValues.length <= 6;
+    }
     el('quick-promote').hidden = !toEnglish;
     el('quick-result').hidden = false;
     if (wasRevision) {
       if (artifact.revision_error) {
         el('quick-revise-status').textContent = '直せませんでした。現在の訳案は変わっていません。' + artifact.revision_error;
       } else {
-        el('quick-revise-status').textContent = '指示に合わせて訳案を更新しました。AIによる未確認の訳案です。';
+        el('quick-revise-status').textContent = '指示に合わせて訳案を更新しました。Copilotが作った、まだ確認していない訳案です。';
         el('quick-revise-instruction').value = '';
         el('quick-revise-form').hidden = true;
         el('quick-revise-open').setAttribute('aria-expanded', 'false');

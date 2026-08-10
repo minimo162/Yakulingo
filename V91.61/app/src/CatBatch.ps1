@@ -979,7 +979,8 @@ function Invoke-YakuTranslationBatchItems {
             $nextPct = [Math]::Min(90, [Math]::Max($pct + 1, [int](8 + [Math]::Floor((($Context['TranslatedSoFar'] + @($batch.Items).Count) / [double][Math]::Max(1, $Context['UniqueTotal'])) * 82))))
             $ProgressState['batch_progress_start'] = $pct
             $ProgressState['batch_progress_end'] = $nextPct
-            $ProgressState['file_progress_prefix'] = "$phaseLabel（$ord/$total 回目）"
+            # 1回で終わるときに「（1/1 回目）」と出しても意味が無く、雑音になる。
+            $ProgressState['file_progress_prefix'] = if ($total -gt 1) { "$phaseLabel（$ord/$total 回目）" } else { $phaseLabel }
         }
 
         $sourceList = New-YakuFileSourceList -Items @($batch.Items)

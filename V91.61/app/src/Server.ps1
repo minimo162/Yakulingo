@@ -1861,7 +1861,7 @@ function Convert-YakuQuickJobResultJson {
         detail = [string]$State['detail']
         progress = [int]$State['progress']
         error_code = [string]$State['error_code']
-        artifact = ConvertTo-YakuQuickArtifactView -Artifact $artifact -IncludeContent
+        artifact = ConvertTo-YakuQuickArtifactView -Artifact $artifact -IncludeContent -Root $script:YakuRoot
     } | ConvertTo-Json -Depth 12 -Compress)
 }
 
@@ -2310,7 +2310,7 @@ function Invoke-YakuRoute {
             Update-YakuTranslationJobs
             $artifact = Complete-YakuQuickArtifactFromJobState -JobState $script:YakuTranslateJobs[$artifactJobId]
         }
-        Send-YakuTextResponse -Context $Context -Text ((ConvertTo-YakuQuickArtifactView -Artifact $artifact -IncludeContent) | ConvertTo-Json -Depth 10 -Compress) -ContentType 'application/json; charset=utf-8'
+        Send-YakuTextResponse -Context $Context -Text ((ConvertTo-YakuQuickArtifactView -Artifact $artifact -IncludeContent -Root $script:YakuRoot) | ConvertTo-Json -Depth 10 -Compress) -ContentType 'application/json; charset=utf-8'
         return
     }
     if ($method -eq 'POST' -and $path -eq '/api/cat/promote') {

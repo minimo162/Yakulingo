@@ -875,6 +875,40 @@ function Restore-YakuNumericMask {
     return $result
 }
 
+function Get-YakuFiscalPeriodMaskTokens {
+    <#
+      会計期を指すマスクトークンを集める。
+
+      英語では「2027年3月期 第1四半期」が "the first quarter of the fiscal year
+      ending March 2027" のように語順が変わる。これは訳として正しいので、
+      順序の比較から外す。
+
+      年度・年月期・四半期の書き方は資料ごとに揺れるため、ここ1箇所に集める。
+      以前は年度だけを見る実装が Translation.ps1 と CatProject.ps1 に別々にあり、
+      「2027年3月期」を両方とも取りこぼしていた。
+    #>
+    param([AllowNull()][string]$MaskedSource)
+    $tokens = @{}
+    if ([string]::IsNullOrEmpty($MaskedSource)) { return $tokens }
+    $patterns = @(
+        # 2027年度第1四半期
+        '(?<a>\[\[N\d+\]\])\s*年度\s*第\s*(?<b>\[\[N\d+\]\])\s*四半期',
+        # 2027年3月期 第1四半期 / 2027年3月期
+        '(?<a>\[\[N\d+\]\])\s*年\s*(?<b>\[\[N\d+\]\])\s*月期(?:\s*第\s*(?<c>\[\[N\d+\]\])\s*四半期)?',
+        # 2027年度
+        '(?<a>\[\[N\d+\]\])\s*年度'
+    )
+    foreach ($pattern in $patterns) {
+        foreach ($match in [regex]::Matches([string]$MaskedSource, $pattern)) {
+            foreach ($name in @('a','b','c')) {
+                $value = [string]$match.Groups[$name].Value
+                if (-not [string]::IsNullOrWhiteSpace($value)) { $tokens[$value] = $true }
+            }
+        }
+    }
+    return $tokens
+}
+
 function Test-YakuNumericMaskIntegrity {
     <#
       復元の安全のため、プレースホルダーが過不足なく1対1であることを確認する。
@@ -901,8 +935,16 @@ function Test-YakuNumericMaskIntegrity {
     foreach ($key in @($targetCounts.Keys)) {
         if (-not $sourceCounts.ContainsKey($key)) { $unexpected.Add($key) | Out-Null }
     }
-    # 個数が同じでもN1/N2の順序を入れ替えると、売上高と利益など別の勘定へ
-    # 実値を戻してしまう。正本訳ではtoken列そのものが原文と同じ必要がある。
+    # 順序の食い違いを見る。ただしこれは復元の安全とは関係がない。
+    # Restore-YakuNumericMask はトークン名で置換するので（861行）、[[N2]] は
+    # 文中のどこにあっても N2 の実値に戻る。順序が変わっても実値は取り違えない。
+    #
+    # ここで見ているのは「モデルが勘定と数値の対応を取り違えたかもしれない」という
+    # 意味の疑いである。日英では語順が変わるのが自然で（「138億円から10.1%増」→
+    # "up 10.1% from 138 oku"）、トークン列だけでは自然な語順変更と取り違えを区別できない。
+    # したがって OutOfOrder は戻り値として返すだけにし、Ok には含めない。
+    # 疑わしい行を止めるのは確認時のQC（numeric-value-order-mismatch）の役目で、
+    # そちらは訳文を残したまま確定を止めるので、人が見て直せる。
     $sourceSequence=@(Get-YakuNumericMaskTokens -Text $MaskedSource)
     $targetSequence=@(Get-YakuNumericMaskTokens -Text $Translated)
     $outOfOrder=$false
@@ -910,11 +952,7 @@ function Test-YakuNumericMaskIntegrity {
         # 英語では「2027年度第1四半期」が "FY2027 ... in Q1" のように
         # 文頭と文末へ分かれる。原文で年度・四半期に直接結び付いたtokenだけを
         # 順序比較から外し、売上高・利益など残りの数値順序は厳密に維持する。
-        $fiscalTokens=@{}
-        foreach($m in [regex]::Matches([string]$MaskedSource,'(?<year>\[\[N\d+\]\])\s*年度\s*第\s*(?<quarter>\[\[N\d+\]\])\s*四半期')){
-            $fiscalTokens[[string]$m.Groups['year'].Value]=$true
-            $fiscalTokens[[string]$m.Groups['quarter'].Value]=$true
-        }
+        $fiscalTokens=Get-YakuFiscalPeriodMaskTokens -MaskedSource $MaskedSource
         $sourceComparable=@($sourceSequence | Where-Object { -not $fiscalTokens.ContainsKey([string]$_) })
         $targetComparable=@($targetSequence | Where-Object { -not $fiscalTokens.ContainsKey([string]$_) })
         if($sourceComparable.Count -ne $targetComparable.Count){$outOfOrder=$true}
@@ -924,7 +962,8 @@ function Test-YakuNumericMaskIntegrity {
             }
         }
     }
-    $ok = ($missing.Count -eq 0 -and $duplicated.Count -eq 0 -and $unexpected.Count -eq 0 -and -not $outOfOrder)
+    # Ok は「実値へ戻して安全か」だけを表す。順序は含めない（上のコメント）。
+    $ok = ($missing.Count -eq 0 -and $duplicated.Count -eq 0 -and $unexpected.Count -eq 0)
     $detail = "placeholders source=$($sourceCounts.Count) missing=$($missing.Count) duplicated=$($duplicated.Count) unexpected=$($unexpected.Count) outOfOrder=$outOfOrder"
     if (-not $ok) {
         $parts = New-Object System.Collections.Generic.List[string]
