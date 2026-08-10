@@ -5,8 +5,10 @@
   --cat-toolbar-h: 76px;
   /* 主役は中央（原文と訳文）。脇役2つを可変にして、主役に幅を回す。
      固定220+380では、1240のウィンドウで主役が半分を切っていた。 */
-  --pane-nav: clamp(11rem, 15vw, 15rem);
-  --pane-inspector: clamp(18rem, 24vw, 25rem);
+  /* 脇役の2ペインで窓の39%を使い、原文と訳文が39%しか残っていなかった。
+     MateCat は原文・訳文に45%ずつ割いている。器を詰めて主役へ回す。 */
+  --pane-nav: clamp(9rem, 11vw, 11.5rem);
+  --pane-inspector: clamp(15rem, 19vw, 20rem);
 }
 
 .app-cat .shell {
@@ -170,10 +172,12 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* 印は行の高さを決める側に回らせない。番号・状態と横に並べて1行に収める。 */
 .cat-change-badge {
-  display: block;
+  display: inline-block;
   width: fit-content;
-  margin-top: 6px;
+  margin-top: var(--space-0);
+  white-space: nowrap;
   padding: 2px 7px;
   border: 1px solid var(--line-strong);
   border-radius: 999px;

@@ -260,8 +260,8 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 /* 番号・場所は脇役。ここを rem にすると「文字を大きく」で脇役の列だけが太り、
    原文・訳文が痩せる（実測 番号109+場所189 に対し本文は各222px しかなかった）。
    増えた幅は主役へ回す。中の文字は --font-meta のまま拡大する。 */
-.cat-col-no { width: 92px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.cat-col-loc { width: 136px; }
+.cat-col-no { width: 78px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.cat-col-loc { width: 112px; }
 .cat-source { width: 42%; white-space: pre-wrap; }
 .cat-target { width: 42%; }
 /* 開いている行の訳文が、この画面の主役。92px は行間1.75で実質2行弱しかなく、
@@ -272,7 +272,7 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .cat-loc { display: block; color: var(--muted); }
 /* 確認済みの印。番号の隣に小さく出す。一覧を眺めたときに、どこまで見たかが分かる。 */
 /* 行の印。狭い列から溢れて隣に重ならないよう、番号の下に1行で置く。 */
-.cat-state { display: block; width: fit-content; max-width: 100%; margin-top: var(--space-0); padding: 1px 8px; border-radius: 999px; font-size: var(--font-meta); font-weight: 700; white-space: normal; overflow-wrap: anywhere; }
+.cat-state { display: inline-block; width: fit-content; max-width: 100%; margin-top: var(--space-0); padding: 1px 8px; border-radius: 999px; font-size: var(--font-meta); font-weight: 700; white-space: nowrap; }
 .cat-state-untranslated { background: color-mix(in srgb, var(--bg) 70%, #d33 30%); }
 .cat-state-machine_draft { background: color-mix(in srgb, var(--bg) 70%, #e8a 30%); }
 .cat-state-human_edited { background: color-mix(in srgb, var(--bg) 70%, #d9a441 30%); }
@@ -324,7 +324,7 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
    隣の列に重なる（文字を大きくすると実測 50-87px はみ出していた）。 */
 .cat-ops { display: flex; gap: var(--space-1); margin: 0 0 var(--space-1); flex-wrap: wrap; }
 .cat-ops > .cat-op, .cat-row-actions > .cat-op, .cat-ops > *, .cat-row-actions > * { max-width: 100%; white-space: normal; text-align: center; }
-.cat-op { min-height: 44px; padding: 7px 12px; font-size: var(--font-meta); background: transparent; border: 1px solid var(--line-strong); color: var(--text); white-space: nowrap; }
+.cat-op { min-height: 36px; padding: 7px 12px; font-size: var(--font-meta); background: transparent; border: 1px solid var(--line-strong); color: var(--text); white-space: nowrap; }
 .cat-op-ok { min-height: 48px; font-size: var(--font-ui); background: var(--accent); border-color: var(--accent); color: #fff; }
 .cat-op:hover { background: var(--soft); }
 

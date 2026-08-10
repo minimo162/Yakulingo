@@ -143,9 +143,15 @@
     if (kind === 'new') return 'new';
     return '';
   }
+  /* 92px の列に「前回と同じ」を入れると2行に折り返し、原文が73pxしかないのに
+     行が140pxになる。印は短くして1行に収め、意味は title で補う。 */
   function changeLabel(segment) {
     var group = changeGroup(segment);
-    return group === 'unchanged' ? '前回と同じ' : group === 'changed' ? '前回から変更' : group === 'new' ? '今回追加' : '';
+    return group === 'unchanged' ? '同じ' : group === 'changed' ? '変更' : group === 'new' ? '追加' : '';
+  }
+  function changeTitle(segment) {
+    var group = changeGroup(segment);
+    return group === 'unchanged' ? '前回と同じ原文です' : group === 'changed' ? '前回から原文が変わりました' : group === 'new' ? '今回追加された原文です' : '';
   }
   function locationGroup(segment) {
     var location = String(segment.location || '').trim();
@@ -248,6 +254,14 @@
     var shown = visibleSegments(), current = activeSegment();
     renderNavigation(); renderInspector();
     el('cat-filter-count').textContent = shown.length + ' / ' + all.length + '件';
+    /* 表示中の未確認行をまとめて確認済みにする。市販CATは12本すべて一括確定を持つ。
+       いまも Ctrl+Enter を押し続ければ同じ結果になるので、押下回数だけを負わせない。
+       QC は1行ずつと同じ検査が全行で走り、通らない行は確定しない。 */
+    var bulkTargets = shown.filter(function (segment) { return !segment.confirmed && String(segment.translation || '').trim(); });
+    var bulkButton = el('cat-confirm-bulk');
+    bulkButton.hidden = bulkTargets.length < 2;
+    bulkButton.textContent = '表示中の' + bulkTargets.length + '行をまとめて確認済みにする';
+    bulkButton.setAttribute('data-cat-bulk-indexes', bulkTargets.map(function (segment) { return Number(segment.index); }).join(','));
     el('cat-complete-state').hidden = !(all.length && !all.some(segmentActionable));
     el('cat-empty-state').hidden = shown.length > 0;
     el('cat-grid-wrap').hidden = shown.length === 0;
@@ -270,7 +284,7 @@
       var target = isActive ? '<textarea rows="3" data-cat-input="' + index + '" data-cat-project-id="' + esc(project.id) + '" data-original="' + esc(segment.translation || '') + '" aria-label="' + row + '行目の訳文" aria-invalid="' + (findings.length ? 'true' : 'false') + '"' + (findings.length ? ' aria-describedby="' + findingId + '"' : '') + '>' + esc(segment.translation || '') + '</textarea>' + prior + referenceTrace + generatedTerms + '<div class="cat-ops">' + ops + '</div><div class="cat-row-actions">' + (segment.confirmed ? '<button type="button" class="cat-op secondary-button" data-cat-unconfirm="' + index + '">確認を取り消す</button>' : '<button type="button" class="cat-op cat-op-ok" data-cat-confirm="' + index + '">確認済みにする</button>') + '<button type="button" class="cat-op secondary-button" data-cat-revert="' + index + '" hidden>編集を取り消す</button>' + (segment.translation ? '<button type="button" class="cat-op secondary-button" data-cat-term-open="' + index + '">用語を登録</button>' : '') + ((segment.kind === 'cell' && segment.translation && String(segment.source).length <= 40) ? '<button type="button" class="cat-op secondary-button" data-cat-glossary="' + index + '">このセルの訳を今後も自動で使う</button>' : '') + '</div>' + qc + compare + (segment.can_revise ? '<form class="revise-form" data-cat-revise="' + index + '"><button class="secondary-button" type="button" data-cat-shorten="' + index + '">短くする</button><label class="revise-label">または、どこをどう直すか入力</label><div class="revise-row"><input class="revise-input" type="text" placeholder="例：「increase」を「rise」に変える"><button class="secondary-button" type="submit">この指示で直す</button></div></form>' : '') : '<button type="button" class="cat-row-activate" data-cat-activate="' + index + '"><span class="cat-target-preview">' + esc(segment.translation || '') + '</span></button>';
       var change = changeLabel(segment);
       return '<tr class="' + (isActive ? 'is-active' : '') + '" data-cat-row="' + index + '" data-cat-segment-id="' + esc(segment.segment_id || '') + '" data-cat-confirmed="' + (segment.confirmed ? '1' : '0') + '" data-yaku-cat-state="' + esc(state) + '">' +
-        '<td class="cat-col-no"><span class="cat-card-label">行番号・状態</span>' + row + '<span class="cat-state cat-state-' + esc(state) + '" title="' + esc(stateTitle(state)) + '">' + esc(stateLabel(state)) + '</span>' + (change ? '<span class="cat-change-badge cat-change-' + esc(changeGroup(segment)) + '">' + esc(change) + '</span>' : '') + '</td>' +
+        '<td class="cat-col-no"><span class="cat-card-label">行番号・状態</span>' + row + '<span class="cat-state cat-state-' + esc(state) + '" title="' + esc(stateTitle(state)) + '">' + esc(stateLabel(state)) + '</span>' + (change ? '<span class="cat-change-badge cat-change-' + esc(changeGroup(segment)) + '" title="' + esc(changeTitle(segment)) + '">' + esc(change) + '</span>' : '') + '</td>' +
         '<td class="cat-col-loc"><span class="cat-card-label">場所</span><span class="cat-location-main">' + esc(segment.location || '本文') + '</span><span class="cat-location-kind">' + esc(kind) + '</span>' + (origin ? '<span class="cat-origin">' + esc(origin) + '</span>' : '') + '</td>' +
         /* 開いている行は、原文を上・訳文を下に積んで表の全幅を使う。左右2列は視線が
            横へ飛ぶうえ、「文字を大きく」だと1列が日本語11文字まで痩せる。上下配置の
@@ -521,6 +535,25 @@
         return data;
       }
       window.setTimeout(function () { focusAfter(index); }, 0);
+      return data;
+    });
+  }
+
+  /* 一括確定。取り消せること・翻訳メモリに残ること・点検を通らない行は確定
+     されないことを、押す前に伝える。あとから気づいても戻せる操作だが、
+     何が起きるか知らずに押させない。 */
+  function confirmBulk(button) {
+    var indexes = String(button.getAttribute('data-cat-bulk-indexes') || '').split(',').filter(Boolean).map(Number);
+    if (!indexes.length) return;
+    if (!window.confirm('表示中の' + indexes.length + '行を、まとめて確認済みにします。\n\n・数字の自動点検を通らない行は、確認済みになりません\n・確認済みにした訳は、次の資料の候補としてこのパソコンに記録されます\n・あとから1行ずつ「確認を取り消す」で戻せます\n\n進めますか？')) return;
+    return mutate('confirm-bulk', { indexes: indexes }, '表示中の行をまとめて確認しています…').then(function (data) {
+      if (!data) return null;
+      var done = Number(data.bulk_confirmed || 0), blocked = (data.bulk_blocked || []).length;
+      if (blocked) {
+        status(done + '行を確認済みにしました。' + blocked + '行は数字の自動点検を通らなかったので、確認済みにしていません。左の「点検で気になる点」で絞り込めます。', true);
+      } else {
+        status(done + '行を確認済みにしました。');
+      }
       return data;
     });
   }
@@ -877,7 +910,7 @@
     el('cat-danger-zone').addEventListener('toggle', function () { if (this.open) loadPersonalGlossary(); });
     document.addEventListener('click', function (event) {
       var button = event.target.closest('button'); if (!button) return;
-      if (busy && (button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-shorten') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
+      if (busy && (button.id === 'cat-confirm-bulk' || button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-shorten') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
       if (button.hasAttribute('data-cat-activate')) return activateIndex(Number(button.getAttribute('data-cat-activate')), true);
       if (button.hasAttribute('data-cat-filter')) { currentFilter = button.getAttribute('data-cat-filter') || 'actionable'; return redrawAfterFlush(); }
       if (button.hasAttribute('data-cat-location')) { currentLocation = button.getAttribute('data-cat-location') || 'all'; return redrawAfterFlush(); }
@@ -891,6 +924,7 @@
       }
       if (button.hasAttribute('data-cat-personal-remove')) return removePersonalGlossary(button);
       if (button.hasAttribute('data-cat-resume')) return resume(button.getAttribute('data-cat-resume'));
+      if (button.id === 'cat-confirm-bulk') return confirmBulk(button);
       if (button.hasAttribute('data-cat-confirm')) return confirmRow(Number(button.getAttribute('data-cat-confirm')));
       /* 押し間違えた確認を戻す道。サーバは以前から confirmed:false を受け付けていたが、
          画面に入口が無く、訳文を書き換える以外に戻す方法が無かった。 */
