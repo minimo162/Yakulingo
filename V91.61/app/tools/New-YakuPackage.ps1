@@ -27,6 +27,22 @@ if ($forbidden.Count -gt 0) {
     throw "PACKAGE_FORBIDDEN_FILE: 配布物に含められないファイルがあります: $names"
 }
 
+# A release starts with an empty termbase and translation memory.  Historical
+# company vocabulary, proper names, and disclosure corpora are user data, not
+# application defaults.  Reject them by path instead of relying on a maintainer
+# to remember to remove their contents before each build.
+$seedAssets = @(Get-ChildItem -LiteralPath $source -Recurse -File -Force | Where-Object {
+    $relative = $_.FullName.Substring($source.Length).TrimStart([char[]]@('\','/')).Replace('\','/')
+    $relative -match '(?i)(^|/)(glossary|propernouns)\.csv$' -or
+    $relative -match '(?i)(^|/)corpus(/|$)' -or
+    $relative -match '(?i)(^|/)_docs(/|$)' -or
+    $relative -match '(^|/)管理者用_コーパス作成\.cmd$'
+})
+if ($seedAssets.Count -gt 0) {
+    $names = ($seedAssets | ForEach-Object { $_.FullName.Substring($source.Length).TrimStart([char[]]@('\','/')).Replace('\','/') }) -join ', '
+    throw "PACKAGE_BUNDLED_LANGUAGE_ASSET: 配布版へ同梱できない用語・固有名詞・コーパス資産があります: $names"
+}
+
 # manifest.json は自分自身を一覧へ含めないため、列挙より前に消しておく。
 $manifestPath = Join-Path $source 'manifest.json'
 if (Test-Path -LiteralPath $manifestPath) { Remove-Item -LiteralPath $manifestPath -Force }

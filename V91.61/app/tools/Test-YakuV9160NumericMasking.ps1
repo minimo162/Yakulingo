@@ -164,12 +164,11 @@ Assert-YakuMask (-not ([string]$signCase.Masked.Text -match '(?<!N)\d')) '送信
 $parenCase = Invoke-YakuMaskPipeline -Text '前年差は(50)億円。'
 Assert-YakuMask ([string]$parenCase.Masked.Text -match ([regex]::Escape('([[N1]])億円'))) "半角括弧の負数を壊さない: $($parenCase.Masked.Text)"
 
-# ---------------------------------------------------------------- 用語集保護
-Write-Host 'CASE 5: 用語集に一致した範囲は保護される'
+# ---------------------------------------------------------------- 数値以外の本文保護
+Write-Host 'CASE 5: 数値以外の本文はマスキングで壊さない'
 $glossaryCase = Invoke-YakuMaskPipeline -Text 'FY26/3 1Q の単価改善は120億円。'
-Assert-YakuMask ([string]$glossaryCase.Masked.Text -like '*単価改善*') '用語集の語が壊れない'
-$glossaryMatches = @(Get-YakuRelevantGlossaryMatches -Root $root -InputText ([string]$glossaryCase.Masked.Text) -Direction 'to_en' -Limit 48)
-Assert-YakuMask (@($glossaryMatches | Where-Object { [string]$_.Source -eq '単価改善' }).Count -gt 0) 'マスク後も用語集が一致する'
+Assert-YakuMask ([string]$glossaryCase.Masked.Text -like '*単価改善*') '数値以外の語句が壊れない'
+Assert-YakuMask (-not (Test-Path -LiteralPath (Join-Path $root 'glossary.csv'))) '同梱用語集に依存しない'
 
 # ---------------------------------------------------------------- 漏洩
 Write-Host 'CASE 6: 送信テキストに平文の機密数値が残らない'

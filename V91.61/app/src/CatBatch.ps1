@@ -466,35 +466,16 @@ function Get-YakuFileExactGlossaryTranslation {
         [Parameter(Mandatory=$true)][string]$Root,
         [AllowNull()][string]$Term,
         [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
-        [AllowNull()]$Settings
+        [AllowNull()]$Settings,
+        [AllowNull()][object[]]$TerminologyEntries,
+        [AllowNull()][string]$ProjectId
     )
-    $useGlossary = $true
-    try { $useGlossary = [bool]$Settings.use_bundled_glossary } catch { $useGlossary = $true }
-    if (-not $useGlossary) { return [pscustomobject]@{ Found = $false; Value = '' } }
-
-    $cleanTerm = ConvertTo-YakuGlossaryField -Value $Term
-    if ([string]::IsNullOrWhiteSpace($cleanTerm)) { return [pscustomobject]@{ Found = $false; Value = '' } }
-    $cleanKey = ConvertTo-YakuGlossaryMatchKey -Value $cleanTerm
-    if ([string]::IsNullOrWhiteSpace($cleanKey)) { return [pscustomobject]@{ Found = $false; Value = '' } }
-
-    foreach ($entry in @(Get-YakuGlossaryEntries -Root $Root -IncludeDuplicates | Sort-Object Row)) {
-        $from = ''
-        $to = ''
-        if ($Direction -eq 'to_jp') {
-            $from = ConvertTo-YakuGlossaryField -Value $entry.Target
-            $to = ConvertTo-YakuGlossaryField -Value $entry.Source
-        } else {
-            $from = ConvertTo-YakuGlossaryField -Value $entry.Source
-            $to = ConvertTo-YakuGlossaryField -Value $entry.Target
-        }
-        if ([string]::IsNullOrWhiteSpace($from) -or [string]::IsNullOrWhiteSpace($to)) { continue }
-        $fromKey = ConvertTo-YakuGlossaryMatchKey -Value $from
-        if ([string]::Equals($fromKey, $cleanKey, [System.StringComparison]::Ordinal)) {
-            return [pscustomobject]@{ Found = $true; Value = [string]$to }
-        }
+    if (-not (Get-Command Find-YakuCellExactTerminologyMatch -ErrorAction SilentlyContinue)) {
+        return [pscustomobject]@{ Found = $false; Value = '' }
     }
-
-    return [pscustomobject]@{ Found = $false; Value = '' }
+    $match = Find-YakuCellExactTerminologyMatch -Text $Term -Direction $Direction -Entries $TerminologyEntries -ProjectId $ProjectId
+    if ($null -eq $match) { return [pscustomobject]@{ Found = $false; Value = '' } }
+    return [pscustomobject]@{ Found = $true; Value = [string]$match.Target; Entry=$match.Entry; ReferenceId=[string]$match.ReferenceId }
 }
 
 function Add-YakuFileAppliedGlossaryContext {
@@ -520,29 +501,10 @@ function Resolve-YakuFileExactGlossaryTranslations {
         [Parameter(Mandatory=$true)][object[]]$Items,
         [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
         [Parameter(Mandatory=$true)]$Settings,
-        [Parameter(Mandatory=$true)][hashtable]$TranslationByIndex
+        [Parameter(Mandatory=$true)][hashtable]$TranslationByIndex,
+        [AllowNull()][object[]]$TerminologyEntries,
+        [AllowNull()][string]$ProjectId
     )
-    $useGlossary = $true
-    try { $useGlossary = [bool]$Settings.use_bundled_glossary } catch { $useGlossary = $true }
-    if (-not $useGlossary) { return [pscustomobject]@{ Count=0; AppliedGlossary=@() } }
-
-    $map = @{}
-    foreach ($entry in @(Get-YakuGlossaryEntries -Root $Root | Sort-Object Row)) {
-        $from = ''
-        $to = ''
-        if ($Direction -eq 'to_jp') {
-            $from = ConvertTo-YakuGlossaryField -Value $entry.Target
-            $to = ConvertTo-YakuGlossaryField -Value $entry.Source
-        } else {
-            $from = ConvertTo-YakuGlossaryField -Value $entry.Source
-            $to = ConvertTo-YakuGlossaryField -Value $entry.Target
-        }
-        if ([string]::IsNullOrWhiteSpace($from) -or [string]::IsNullOrWhiteSpace($to)) { continue }
-        $key = ConvertTo-YakuGlossaryMatchKey -Value $from
-        if ([string]::IsNullOrWhiteSpace($key)) { continue }
-        $map[$key] = [pscustomobject]@{ Source=[string]$entry.Source; Target=[string]$entry.Target; From=[string]$from; To=[string]$to; Row=[int]$entry.Row; Via='exact' }
-    }
-
     $hits = 0
     $applied = New-Object System.Collections.Generic.List[object]
     foreach ($item in @($Items)) {
@@ -550,18 +512,20 @@ function Resolve-YakuFileExactGlossaryTranslations {
         if ($TranslationByIndex.ContainsKey($idx)) { continue }
         $cleanText = ConvertTo-YakuGlossaryField -Value ([string]$item.Text)
         if ([string]::IsNullOrWhiteSpace($cleanText)) { continue }
-        $key = ConvertTo-YakuGlossaryMatchKey -Value $cleanText
-        if ([string]::IsNullOrWhiteSpace($key)) { continue }
-        if (-not $map.ContainsKey($key)) { continue }
-        $entry = $map[$key]
-        $candidate = Convert-YakuFileTranslationBrackets -Text ([string]$entry.To)
+        $entry = Find-YakuCellExactTerminologyMatch -Text $cleanText -Direction $Direction -Entries $TerminologyEntries -ProjectId $ProjectId
+        if ($null -eq $entry) { continue }
+        $candidate = Convert-YakuFileTranslationBrackets -Text ([string]$entry.Target)
         if (Test-YakuFileTranslationInvalid -Source ([string]$item.Text) -Translation $candidate -Direction $Direction) { continue }
         $TranslationByIndex[$idx] = [string]$candidate
         $hits++
-        $applied.Add([pscustomobject]@{ Source=[string]$entry.Source; Target=[string]$entry.Target; From=[string]$entry.From; To=[string]$candidate; Row=[int]$entry.Row; Via='exact'; ItemIndex=$idx }) | Out-Null
+        $applied.Add([pscustomobject]@{
+            Source=[string]$entry.Source; Target=[string]$entry.Target; From=[string]$entry.Source; To=[string]$candidate
+            Row=0; Via='terminology-cell-exact'; ItemIndex=$idx; ReferenceId=[string]$entry.ReferenceId
+            TermId=[string]$entry.TermId; TermVersion=[int]$entry.Version; Scope=[string]$entry.Scope
+        }) | Out-Null
     }
     if ($hits -gt 0) {
-        try { Write-YakuLog "File glossary exact hits: count=$hits" 'INFO' } catch {}
+        try { Write-YakuLog "CAT terminology cell-exact hits: count=$hits" 'INFO' } catch {}
     }
     return [pscustomobject]@{ Count=[int]$hits; AppliedGlossary=@($applied.ToArray()) }
 }
@@ -741,75 +705,11 @@ function Resolve-YakuFileBracketGlossaryTranslation {
         [AllowNull()]$Settings,
         [int]$Id = 0
     )
-    $innerText = ConvertTo-YakuGlossaryField -Value $Inner
-    if ([string]::IsNullOrWhiteSpace($innerText)) { return [pscustomobject]@{ Found=$false; Value=''; Matches=@() } }
-
-    $exact = Get-YakuFileExactGlossaryTranslation -Root $Root -Term $innerText -Direction $Direction -Settings $Settings
-    if ($exact.Found) {
-        return [pscustomobject]@{ Found=$true; Value=[string]$exact.Value; Matches=@([pscustomobject]@{ Source=[string]$innerText; Target=[string]$exact.Value; From=[string]$innerText; To=[string]$exact.Value; Row=0 }) }
-    }
-
-    $matches = @(Get-YakuRelevantGlossaryMatches -Root $Root -InputText $innerText -Direction $Direction -Limit 12)
-    if ($matches.Count -le 0) { return [pscustomobject]@{ Found=$false; Value=''; Matches=@() } }
-
-    $normalizedInner = ConvertTo-YakuGlossaryField -Value $innerText
-    try { $normalizedInner = $normalizedInner.Normalize([System.Text.NormalizationForm]::FormKC) } catch {}
-    if ([string]::IsNullOrWhiteSpace($normalizedInner)) { return [pscustomobject]@{ Found=$false; Value=''; Matches=@() } }
-
-    $intervals = New-Object System.Collections.Generic.List[object]
-    foreach ($match in @($matches | Sort-Object -Property @{ Expression = { 999999 - [int]$_.NormLength } }, Row)) {
-        $from = ConvertTo-YakuGlossaryField -Value ([string]$match.From)
-        if ([string]::IsNullOrWhiteSpace($from)) { continue }
-        $fromNorm = $from
-        try { $fromNorm = $fromNorm.Normalize([System.Text.NormalizationForm]::FormKC) } catch {}
-        $positions = @(Find-YakuExactTermIndexes -InputText $normalizedInner -Term $fromNorm)
-        foreach ($pos in @($positions)) {
-            $start = [int]$pos
-            $end = [int]($start + [int]$fromNorm.Length)
-            $overlap = $false
-            foreach ($existing in @($intervals.ToArray())) {
-                if ($start -lt [int]$existing.End -and [int]$existing.Start -lt $end) { $overlap = $true; break }
-            }
-            if ($overlap) { continue }
-            $intervals.Add([pscustomobject]@{ Start=$start; End=$end; To=(Convert-YakuFileTranslationBrackets -Text ([string]$match.To)); Match=$match }) | Out-Null
-        }
-    }
-    if ($intervals.Count -le 0) { return [pscustomobject]@{ Found=$false; Value=''; Matches=@() } }
-
-    $segments = New-Object System.Collections.Generic.List[object]
-    $applied = New-Object System.Collections.Generic.List[object]
-    $cursor = 0
-    foreach ($interval in @($intervals.ToArray() | Sort-Object Start)) {
-        $start = [int]$interval.Start
-        $end = [int]$interval.End
-        if ($start -gt $cursor) { $segments.Add([pscustomobject]@{ Text=$normalizedInner.Substring($cursor, $start - $cursor); Replacement=$false }) | Out-Null }
-        $segments.Add([pscustomobject]@{ Text=[string]$interval.To; Replacement=$true }) | Out-Null
-        $m = $interval.Match
-        $row = 0
-        try { $row = [int]$m.Row } catch { $row = 0 }
-        $applied.Add([pscustomobject]@{ Source=[string]$m.Source; Target=[string]$m.Target; From=[string]$m.From; To=[string]$m.To; Row=$row }) | Out-Null
-        $cursor = $end
-    }
-    if ($cursor -lt $normalizedInner.Length) { $segments.Add([pscustomobject]@{ Text=$normalizedInner.Substring($cursor); Replacement=$false }) | Out-Null }
-
-    $uncoveredText = (@($segments.ToArray() | Where-Object { -not [bool]$_.Replacement } | ForEach-Object { [string]$_.Text }) -join '')
-    $partialCoverage = if ($Direction -eq 'to_en') {
-        Test-YakuHasJapaneseChars -Text $uncoveredText
-    } else {
-        [regex]::IsMatch($uncoveredText, '[A-Za-z]{4,}')
-    }
-    if ($partialCoverage) {
-        try {
-            $innerPreview = (Get-YakuShortTextPreview -Text $normalizedInner -MaxLength 120).Replace("'", "''")
-            $uncoveredPreview = (Get-YakuShortTextPreview -Text $uncoveredText -MaxLength 120).Replace("'", "''")
-            Write-YakuLog "Bracket-glossary fallback skipped (partial coverage). id=$Id inner='$innerPreview' uncovered='$uncoveredPreview'" 'INFO'
-        } catch {}
-        return [pscustomobject]@{ Found=$false; Value=''; Matches=@() }
-    }
-
-    $candidate = Join-YakuFileGlossaryTranslatedSegments -Segments @($segments.ToArray())
-    if ([string]::IsNullOrWhiteSpace($candidate)) { return [pscustomobject]@{ Found=$false; Value=''; Matches=@() } }
-    return [pscustomobject]@{ Found=$true; Value=[string]$candidate; Matches=@($applied.ToArray()) }
+    # Bundled glossary composition is retired.  Whole-cell terminology is
+    # applied only by the explicit CAT project pass, where project scope and
+    # provenance are available.  Bracket recovery therefore falls through to
+    # the normal protected translation request.
+    return [pscustomobject]@{ Found=$false; Value=''; Matches=@() }
 }
 
 function Invoke-YakuFileBracketFallback {

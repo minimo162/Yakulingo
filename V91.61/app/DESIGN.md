@@ -2,7 +2,7 @@
 
 ## Product intent
 
-YakuLingo is a single-purpose local translation tool for ECM materials. The default screen keeps text/file input, one primary action, job progress, and the latest result visible. History, glossary, settings, and data deletion remain in collapsed disclosure panels.
+YakuLingo is a local translation tool with two experiences: Quick Translation for transient understanding and drafting, and Document Translation for source/target review, terminology control, translation-memory reuse, QC, and DRAFT output. Quick Translation never reads or writes reusable language assets. Document Translation exposes the provenance of every reusable candidate and requires human confirmation before a segment becomes translation memory.
 
 ## Architecture
 
@@ -52,11 +52,18 @@ Normal operation never persists source text, translated text, or full prompts. F
 - Send actions accept only a verified `aria-label="送信"` or `aria-label="Send"` control; voice-chat controls remain excluded.
 - YakuLingo does not move, foreground, maximize, minimize, or resize Edge during translation. The sole exception is a one-time normalization immediately after YakuLingo newly starts its dedicated Edge profile. The default is 1280x900, `edge_window_size=none` disables it, and an already-running Edge window is never changed.
 
-## V91.56 FULL/BRIEF terminology contract
+## Zero-seed reusable-language contract
 
-FULL and BRIEF share one semantic rendering, but differ in compression. For ordinary words and internal shorthand, glossary rows place the spelled-out FULL candidate first and the approved BRIEF abbreviation later. Established financial acronyms, formal metric names, proper nouns, and source-defined abbreviations remain protected. Candidate order alone never makes an ordinary abbreviation valid in FULL.
+The distribution contains no company- or document-specific glossary, terminology, translation memory, corpus, or proper-noun list. This prevents an internal-document convention from silently affecting an external disclosure, and prevents a public-document expression from being presented as an internal standard. Runtime candidates come only from:
 
+- project or personal terminology explicitly registered by the user;
+- segments that the user passed through QC and explicitly marked reviewed on the same device; and
+- a prior version explicitly supplied for the current project.
 
-## V91.57 promotion-cost terminology contract
+Project terminology never leaks into another project. Personal terminology may be reused in later projects. A term record controls a word or short expression; a `cell_exact` record may pretranslate only an entirely matching cell. In-sentence terms are constraints and QA evidence, never blind search-and-replace instructions.
 
-Promotion costs are mode-specific: FULL uses `sales promotion costs` and `fixed sales promotion costs`; BRIEF and file-label exact matches use `Promo. Costs`, `Fixed Promo. Costs`, and `Subs. Fixed Promo. Costs`. `MKT` remains available only where it genuinely means marketing, not as an abbreviation for promotion costs. Exact table-label matches run before shorter glossary composition.
+Marking a segment reviewed is the user's intent to add that segment to translation memory. Machine drafts, candidate insertion, and prior-version import do not add translation memory by themselves. Translation-memory and prior-version candidates are never silently injected into the Copilot prompt and never inherit reviewed status after insertion.
+
+An empty termbase or translation memory is a normal first-run state, not an error. The UI explains how each resource grows at the point where its empty candidate list appears. Application updates preserve user terminology, translation memory, legacy personal-glossary migration data, projects, and existing reference traces.
+
+Numeric masking and deterministic notation conversions such as `億円` to `oku` are application rules, not seed terminology. They remain available in an otherwise empty reusable-language state.

@@ -78,30 +78,15 @@ try {
     Chk ($none.Count -eq 0) '語が取れなければ空を返す（落ちない）'
     Chk ((@(Find-YakuCorpusPairsByTerms -Dir (Join-Path $tmp 'no-such-dir') -Text '電動化')).Count -eq 0) 'コーパスが無くても落ちない'
 
-    Write-Host '過去の英訳を画面へ出す' -ForegroundColor Cyan
-    # 利用者の課題は「過去の翻訳例が見れない」であって「使えない」ではない。
-    # プロンプトへ埋めるのは使うことであって、見せることではない。
-    . (Join-Path (Join-Path $root 'src') 'Html.ps1')
-    $shown = @(Find-YakuCorpusPairsByTerms -Dir $tmp -Text '当社は電動化の黎明期に向けた投資を進めます。' -Limit 3)
-    $pastHtml = New-YakuPastTranslationsHtml -Pairs $shown
-    Chk ($pastHtml -match '過去に公表した英訳') '見出しが出る'
-    Chk ($pastHtml -match 'past-pair-ja' -and $pastHtml -match 'past-pair-en') '日英そろえて出す（英文だけでは確かめようがない）'
-    Chk ($pastHtml -match '当たった語') 'なぜこの文が出たのかを添える'
-    Chk ($pastHtml -match '<details') '畳んで置く（要らない人の邪魔をしない）'
-    Chk ((New-YakuPastTranslationsHtml -Pairs @()) -eq '') '引けなければ何も出さない'
-    Chk ((New-YakuPastTranslationsHtml -Pairs $null) -eq '') 'null でも落ちない'
-    # 往復を増やさないことが要点。翻訳側が Copilot を呼ばずに引いているか。
+    Write-Host '旧コーパス対訳を製品経路へ接続しない' -ForegroundColor Cyan
+    # 低レベルの読取り関数は既存データの保守用として単体検証するが、
+    # Quick/CAT候補へは出さない。利用者が確認した訳は翻訳メモリへ入る。
     $trSrc = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'Translation.ps1') -Raw -Encoding UTF8
-    $lookupAt = $trSrc.IndexOf('Find-YakuCorpusPairsByTerms')
-    Chk ($lookupAt -ge 0) '翻訳の結果に過去の英訳を載せている'
-    $lookupBlock = $trSrc.Substring([Math]::Max(0, $lookupAt - 900), 1400)
-    Chk ($lookupBlock -notmatch 'Invoke-YakuCopilotPrompt') '引くのに Copilot を呼ばない（往復を増やさない）'
-    Chk ($trSrc -match 'PastPairs') '結果に PastPairs として載る'
-    Chk ($trSrc -match 'Get-YakuCorpusSearchDir') '簡易翻訳の過去訳は配布済みコーパスを読む'
     $catSrc = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'CatProject.ps1') -Raw -Encoding UTF8
     $serverSrc = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'Server.ps1') -Raw -Encoding UTF8
-    Chk ($catSrc -match 'Get-YakuCorpusSearchDir') 'CAT 候補も配布済みコーパスを読む'
-    Chk ($serverSrc -match "pairsDir = Get-YakuCorpusSearchDir") '候補 API が配布先を CAT へ渡す'
+    Chk ($trSrc -notmatch '(?m)^\s*\$pastPairs\s*=.*Find-YakuCorpusPairsByTerms') 'Quick/通常翻訳は旧コーパス対訳を読まない'
+    Chk ($catSrc -notmatch 'Find-YakuCorpusPairsForSegment') 'CAT候補は旧コーパス対訳を読まない'
+    Chk ($serverSrc -notmatch 'pairsDir\s*=\s*Get-YakuCorpusSearchDir') '候補APIは旧コーパス場所を渡さない'
 
     $hits = @(Find-YakuCorpusPairs -Dir $tmp -Query '電動化' -VerifiedOnly)
     Chk ($hits.Count -eq 1 -and $hits[0].Ja -match '黎明期') '裏取りの通った対だけに絞れる'

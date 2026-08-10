@@ -37,7 +37,7 @@
         <div id="cat-resume" class="cat-resume" hidden><h3>保存した作業</h3><div id="cat-resume-list"></div></div>
         <details class="entry-more"><summary>そのほかの始め方</summary><div class="entry-more-actions">
           <button type="button" class="secondary-button" data-cat-source-show="prior">前回版を参考に更新する</button>
-          <button type="button" class="secondary-button" data-cat-source-show="align">過去の日英資料を翻訳例として取り込む</button>
+          <button type="button" class="secondary-button" data-cat-source-show="align">対応する前回の日英版を読み込む</button>
         </div></details>
 
         <div id="cat-source-file" class="cat-start-panel" hidden>
@@ -50,7 +50,7 @@
           <h3>長い文章を貼り付ける</h3><label for="cat-text" class="sr-only">翻訳したい文章</label><textarea id="cat-text" rows="9" placeholder="翻訳したい文章を貼り付け"></textarea><button type="button" data-cat-open="text">確認を始める</button>
         </div>
         <div id="cat-source-prior" class="cat-start-panel" hidden>
-          <p class="muted">前回の英語は過去の翻訳例として表示し、自動では反映しません。ここでは3つの文章を貼り付け、出力は確認済み訳文のコピーです。3つのWordを体裁付きで更新する機能ではありません。</p>
+          <p class="muted">前回の英語は「前回版」と出所を明示して表示し、自動では反映しません。ここでは3つの文章を貼り付け、出力は確認済み訳文のコピーです。3つのWordを体裁付きで更新する機能ではありません。</p>
           <label class="field-label" for="cat-prior-ja">前回の日本語<textarea id="cat-prior-ja" rows="4"></textarea></label>
           <label class="field-label" for="cat-prior-en">前回の英語<textarea id="cat-prior-en" rows="4"></textarea></label>
           <label class="field-label" for="cat-current-ja">今回の日本語<textarea id="cat-current-ja" rows="4"></textarea></label>
@@ -58,11 +58,11 @@
           <button type="button" id="cat-prior-open">貼り付けた文章で始める</button>
         </div>
         <div id="cat-source-align" class="cat-start-panel" hidden>
-          <p class="muted">左に日本語版、右に対応する英語版を貼り付けます。取り込んだ訳は「過去の翻訳例」です。</p>
+          <p class="muted">左に前回の日本語、右に対応する前回の英語を貼り付けます。取り込んだ訳は「前回版」として、この作業だけで参照できます。</p>
           <label class="field-label" for="cat-align-source">日本語版<textarea id="cat-align-source" rows="5"></textarea></label>
           <label class="field-label" for="cat-align-target">英語版<textarea id="cat-align-target" rows="5"></textarea></label>
           <label class="field-label" for="cat-align-name">資料名<input id="cat-align-name" type="text"></label>
-          <button type="button" id="cat-align-open">過去の翻訳例として取り込む</button>
+          <button type="button" id="cat-align-open">前回版として取り込む</button>
         </div>
         <fieldset id="cat-direction-choice" class="direction-choice" hidden><legend>どちらに訳しますか？</legend><p class="muted">入力内容だけでは自動で決められません。</p><div class="direction-choice-grid"><button type="button" class="secondary-button" data-cat-direction="to_en">英語に訳す</button><button type="button" class="secondary-button" data-cat-direction="to_jp">日本語に訳す</button></div></fieldset>
         <p class="privacy-note">金額などの数値は、Copilotへ送る前に自動で伏せます。社名・人名・文章はそのまま送信されます。</p>
@@ -109,7 +109,7 @@
               </div>
             </section>
             <section aria-labelledby="cat-location-title"><h2 id="cat-location-title">資料内の場所</h2><div id="cat-location-list" class="cat-location-list"></div></section>
-            <details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>翻訳例を挿入</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div></dl></details>
+            <details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>翻訳メモリまたは前回版を挿入</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div></dl></details>
           </nav>
 
           <section id="cat-editor-pane" class="cat-editor-pane" aria-label="原文と訳文の確認">
@@ -120,13 +120,13 @@
 
           <aside id="cat-inspector-pane" class="cat-inspector-pane" aria-label="選択中の行の情報">
             <div class="cat-inspector-tabs" role="tablist" aria-label="行の参考情報">
-              <button id="cat-tab-candidates" type="button" role="tab" aria-selected="true" aria-controls="cat-panel-candidates" data-cat-inspector="candidates">翻訳例 <span id="cat-candidate-count">0</span></button>
+              <button id="cat-tab-candidates" type="button" role="tab" aria-selected="true" aria-controls="cat-panel-candidates" data-cat-inspector="candidates">用語・参考訳 <span id="cat-candidate-count">0</span></button>
               <button id="cat-tab-qc" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-qc" data-cat-inspector="qc">機械チェック <span id="cat-qc-count">0</span></button>
               <button id="cat-tab-context" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-context" data-cat-inspector="context">文脈</button>
             </div>
             <section id="cat-panel-candidates" role="tabpanel" aria-labelledby="cat-tab-candidates"><div id="cat-candidates" class="cat-candidates">
               <section aria-labelledby="cat-terms-title"><div class="cat-candidates-title" id="cat-terms-title">この行で使う用語</div><div id="cat-terms-list"><p class="muted">行を選ぶと用語を探します。</p></div></section>
-              <section aria-labelledby="cat-segment-matches-title"><div class="cat-candidates-title" id="cat-segment-matches-title">文全体の翻訳例</div><div id="cat-candidates-list"><p class="muted">行を選ぶと翻訳例を探します。</p></div></section>
+              <section aria-labelledby="cat-segment-matches-title"><div class="cat-candidates-title" id="cat-segment-matches-title">翻訳メモリ・前回版</div><div id="cat-candidates-list"><p class="muted">行を選ぶと、この端末で確認した訳と、この作業へ読み込んだ前回版を探します。</p></div></section>
             </div></section>
             <section id="cat-panel-qc" role="tabpanel" aria-labelledby="cat-tab-qc" hidden><div id="cat-qc-list"></div><button id="cat-next-qc" type="button" class="secondary-button">次の問題へ</button></section>
             <section id="cat-panel-context" role="tabpanel" aria-labelledby="cat-tab-context" hidden><div id="cat-context"></div></section>

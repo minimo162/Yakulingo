@@ -492,18 +492,6 @@ function Invoke-YakuCatSegmentValidation {
     if ($source -match '(?i)(?:円|\byen\b|\boku\b)' -and $target -notmatch '(?i)(?:円|\byen\b|\boku\b)') { $findings.Add([pscustomobject]@{ Code='currency-mismatch'; Severity='error'; Detail='yen' }) | Out-Null }
     if ($source -match '(?i)(?:ドル|\bdollars?\b|\$)' -and $target -notmatch '(?i)(?:ドル|\bdollars?\b|\$)') { $findings.Add([pscustomobject]@{ Code='currency-mismatch'; Severity='error'; Detail='dollar' }) | Out-Null }
     try {
-        $root = Split-Path -Parent $PSScriptRoot
-        foreach ($entry in @(Get-YakuProperNounEntries -Root $root)) {
-            $expected = ''; $needle = ''
-            if ([string]$Project.Direction -eq 'to_en') { $needle = [string]$entry.Source; $expected = [string]$entry.Target }
-            else { $needle = [string]$entry.Target; $expected = [string]$entry.Source }
-            if (-not [string]::IsNullOrWhiteSpace($needle) -and $source.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
-                ($target.IndexOf($expected, [StringComparison]::OrdinalIgnoreCase) -lt 0)) {
-                $findings.Add([pscustomobject]@{ Code='proper-noun-missing'; Severity='error'; Detail=$expected }) | Out-Null
-            }
-        }
-    } catch { $findings.Add([pscustomobject]@{ Code='proper-noun-validation-error'; Severity='error' }) | Out-Null }
-    try {
         $structure = Test-YakuTextStructureIntegrity -SourceText $source -FullText $target -BriefText $target
         if (-not [bool]$structure.Ok) { $findings.Add([pscustomobject]@{ Code='structure-integrity'; Severity='error'; Detail=[string]$structure.Detail }) | Out-Null }
     } catch { $findings.Add([pscustomobject]@{ Code='structure-validation-error'; Severity='error' }) | Out-Null }
@@ -1777,15 +1765,36 @@ function Invoke-YakuCatGlossaryPass {
         [void]$items.Add([pscustomobject]@{ Index = $i; Text = [string]$segs[$i].Text; BlockIds = (New-Object System.Collections.Generic.List[string]) })
     }
     $map = @{}
+    $resolved = [pscustomobject]@{ Count=0; AppliedGlossary=@() }
     if ($items.Count -gt 0) {
-        $null = Resolve-YakuFileExactGlossaryTranslations -Root $Root -Items @($items.ToArray()) -Direction ([string]$Project.Direction) -Settings $Settings -TranslationByIndex $map
+        $terminologyEntries = @(Get-YakuCatTerminologyEntries -Project $Project)
+        $resolved = Resolve-YakuFileExactGlossaryTranslations -Root $Root -Items @($items.ToArray()) -Direction ([string]$Project.Direction) `
+            -Settings $Settings -TranslationByIndex $map -TerminologyEntries $terminologyEntries -ProjectId ([string]$Project.Id)
     }
+    $appliedByIndex = @{}
+    foreach ($appliedTerm in @($resolved.AppliedGlossary)) { $appliedByIndex[[int]$appliedTerm.ItemIndex] = $appliedTerm }
     $hits = 0
     foreach ($k in @($map.Keys)) {
         $i = [int]$k
         if ($i -lt 0 -or $i -ge $segs.Count) { continue }
         $segs[$i].Translation = [string]$map[$k]
         $segs[$i].Origin = 'glossary'
+        if ($appliedByIndex.ContainsKey($i)) {
+            $appliedTerm = $appliedByIndex[$i]
+            $usages = New-Object System.Collections.Generic.List[object]
+            foreach ($oldUsage in @($(try { $segs[$i].TerminologyUsages } catch { @() }))) { $usages.Add($oldUsage) | Out-Null }
+            $scope = [string]$appliedTerm.Scope
+            $usages.Add([pscustomobject]@{
+                reference_id=[string]$appliedTerm.ReferenceId; term_id=[string]$appliedTerm.TermId
+                term_version=[int]$appliedTerm.TermVersion; source=[string]$appliedTerm.Source
+                preferred_target=[string]$appliedTerm.To
+                source_name=$(if($scope -eq 'project'){'この資料の用語集'}else{'個人用語集'})
+                scope=$scope; action='cell-exact-applied'
+                target_hash=Get-YakuCatSourceIntegrityHash -Text ([string]$map[$k])
+                edited_after_insert=$false; created=(Get-Date).ToString('s')
+            }) | Out-Null
+            $segs[$i] | Add-Member -NotePropertyName TerminologyUsages -NotePropertyValue @($usages.ToArray()) -Force
+        }
         $segs[$i] | Add-Member -NotePropertyName State -NotePropertyValue 'machine_draft' -Force
         Reset-YakuCatSegmentQc -Segment $segs[$i] -KeepState
         $hits++
@@ -1814,7 +1823,11 @@ function Measure-YakuCatGlossaryCandidates {
     }
     if ($items.Count -eq 0) { return 0 }
     $map = @{}
-    try { $null = Resolve-YakuFileExactGlossaryTranslations -Root $Root -Items @($items.ToArray()) -Direction ([string]$Project.Direction) -Settings $Settings -TranslationByIndex $map } catch { return 0 }
+    try {
+        $terminologyEntries = @(Get-YakuCatTerminologyEntries -Project $Project)
+        $null = Resolve-YakuFileExactGlossaryTranslations -Root $Root -Items @($items.ToArray()) -Direction ([string]$Project.Direction) `
+            -Settings $Settings -TranslationByIndex $map -TerminologyEntries $terminologyEntries -ProjectId ([string]$Project.Id)
+    } catch { return 0 }
     return @($map.Keys).Count
 }
 
@@ -2188,13 +2201,14 @@ function Get-YakuCatSegmentCandidates {
         [Parameter(Mandatory=$true)]$Project,
         [Parameter(Mandatory=$true)][int]$Index,
         [int]$Max = 8,
+        # Read compatibility only. Corpus candidates are retired and this
+        # value is intentionally ignored.
         [AllowNull()][string]$PairsDir
     )
     $segs = @($Project.Segments)
     if ($Index -lt 0 -or $Index -ge $segs.Count) { return @() }
     $text = [string]$segs[$Index].Text
     if ([string]::IsNullOrWhiteSpace($text)) { return @() }
-    $toEn = ([string]$Project.Direction -eq 'to_en')
     $sourceKey = ConvertTo-YakuGlossaryMatchKey -Value (ConvertTo-YakuGlossaryField -Value $text)
 
     $out = New-Object System.Collections.Generic.List[object]
@@ -2242,39 +2256,6 @@ function Get-YakuCatSegmentCandidates {
             Ratio=$(if($priorExact){1.0}else{0.0}); Weight=29000
         })
     }
-    foreach ($entry in @(Get-YakuGlossaryEntries -Root $Root)) {
-        $from = if ($toEn) { ConvertTo-YakuGlossaryField -Value $entry.Source } else { ConvertTo-YakuGlossaryField -Value $entry.Target }
-        $to   = if ($toEn) { ConvertTo-YakuGlossaryField -Value $entry.Target } else { ConvertTo-YakuGlossaryField -Value $entry.Source }
-        if ([string]::IsNullOrWhiteSpace($from) -or [string]::IsNullOrWhiteSpace($to)) { continue }
-        $exact = [string]::Equals((ConvertTo-YakuGlossaryMatchKey -Value $from), $sourceKey, [System.StringComparison]::Ordinal)
-        if (-not $exact) {
-            # 部分一致。1文字の語で拾いすぎないよう、ある程度の長さを求める。
-            if ($from.Length -lt 2) { continue }
-            $at = $text.IndexOf($from, [System.StringComparison]::Ordinal)
-            if ($at -lt 0) { continue }
-            # 短い漢字語が、前の漢字と続いて別の語になっている場合は拾わない。
-            # 「四半期」の中の「半期」が Half-year として出ると、かえって誤らせる。
-            # 日本語には語の切れ目が無いので、これ以上のことは字面から分からない。
-            if ($from.Length -le 2 -and $from -match '^[一-鿿]' -and $at -gt 0 -and [string]$text[$at - 1] -match '[一-鿿]') { continue }
-        }
-        $key = $from + [string][char]31 + $to
-        if ($seen.ContainsKey($key)) { continue }
-        $seen[$key] = $true
-        [void]$out.Add([pscustomobject]@{
-            Kind   = 'glossary'
-            Source = $from
-            Target = $to
-            Exact  = $exact
-            ReferenceId = Get-YakuCatSourceIntegrityHash -Text ('glossary|' + $from + '|' + $to)
-            SourceName = '用語集'
-            Location = '用語集'
-            Page = 0
-            MatchedTerms = @($from)
-            # 長い語ほど手掛かりとして強い。並べ替えに使う。
-            Weight = $(if ($exact) { 10000 } else { $from.Length })
-        })
-    }
-
     # 翻訳メモリ。自分が確定した訳なので、どれよりも先に出す。
     # 公表訳は「読ませる訳」で意訳が多いが、これは自分の文体で、
     # 自分が正しいと判断したものだけが入っている。そのまま差し込める。
@@ -2311,46 +2292,11 @@ function Get-YakuCatSegmentCandidates {
         try { Write-YakuLog ('Translation memory candidates unavailable: ' + $_.Exception.Message) 'WARN' } catch {}
     }
 
-    # 過去の対訳。用語集より上、翻訳メモリより下に出す。
-    # 語の対応より文まるごとの前例のほうが強いが、自分が確定した訳には劣る。
-    try {
-        # 置き場所は呼び出し側から渡せるようにする。要求を捌く runspace は
-        # 読み込む一式が違うことがあり、Get-YakuCorpusSearchDir が見えないと
-        # 対訳が丸ごと出なくなる。実機のログで気づいた（2026-08-07）。
-        $pairsDir = [string]$PairsDir
-        if ([string]::IsNullOrWhiteSpace($pairsDir)) { $pairsDir = Get-YakuCorpusSearchDir }
-        foreach ($hit in @(Find-YakuCorpusPairsForSegment -Dir $pairsDir -Text $text -SourceLanguage $(if ($toEn) { 'ja' } else { 'en' }) -Limit 5)) {
-            $key = 'pair' + [string][char]31 + [string]$hit.Source + [string][char]31 + [string]$hit.Target
-            if ($seen.ContainsKey($key)) { continue }
-            $seen[$key] = $true
-            [void]$out.Add([pscustomobject]@{
-                Kind     = 'corpus'
-                Source   = [string]$hit.Source
-                Target   = [string]$hit.Target
-                Exact    = [bool]$hit.Exact
-                ReferenceId = [string]$hit.ReferenceId
-                SourceName = [string]$hit.SourceName
-                Location = $(if ([int]$hit.Page -gt 0) { 'ページ ' + [string]([int]$hit.Page) } else { '' })
-                Page = [int]$hit.Page
-                MatchedTerms = @($hit.MatchedTerms)
-                Database = [string]$hit.Database
-                # 数値の裏取りが通っていない対は、通ったものより下に置く。
-                Verified = [bool]$hit.Verified
-                Ratio    = [double]$hit.Ratio
-                # 会社が公表した言い方。倣う値打ちがあるが、自分の確定訳には劣る。
-                Weight   = 20000 + [int]([double]$hit.Ratio * 1000) + $(if ($hit.Verified) { 100 } else { 0 })
-            })
-        }
-    } catch {
-        # コーパスが無い環境でも用語集は出す。候補ペインごと落ちるほうが困る。
-        try { Write-YakuLog ('Corpus pair candidates unavailable: ' + $_.Exception.Message) 'WARN' } catch {}
-    }
-
     $ordered = @($out.ToArray() | Sort-Object -Property @{ Expression = { [int]$_.Weight }; Descending = $true })
     # 用語と全文候補は別の作業なので、同じ上限を奪い合わせない。多数の
     # 用語がある行でも、TMや前回版の全文候補を最低限同じ件数まで探せる。
-    $terms = @($ordered | Where-Object { [string]$_.Kind -in @('term','glossary') } | Select-Object -First $Max)
-    $segments = @($ordered | Where-Object { [string]$_.Kind -notin @('term','glossary') } | Select-Object -First $Max)
+    $terms = @($ordered | Where-Object { [string]$_.Kind -eq 'term' } | Select-Object -First $Max)
+    $segments = @($ordered | Where-Object { [string]$_.Kind -ne 'term' } | Select-Object -First $Max)
     return @($terms + $segments)
 }
 

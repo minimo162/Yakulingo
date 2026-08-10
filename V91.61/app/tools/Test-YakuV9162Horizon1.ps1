@@ -273,8 +273,7 @@ try {
         @{ Source='売上高は一億二千万円でした。'; Target='Revenue was 999 million yen.'; Direction='to_en'; Label='Japanese written amount' },
         @{ Source='Revenue was two billion yen.'; Target='売上高は100億円でした。'; Direction='to_jp'; Label='English written amount' },
         @{ Source='The company recorded a loss of 100 million yen.'; Target='当社は100百万円の利益を計上しました。'; Direction='to_jp'; Label='accounting polarity' },
-        @{ Source='売上高は100百万円でした。'; Target='Revenue was 100 million yen and profit was 100 million yen.'; Direction='to_en'; Label='invented extra number' },
-        @{ Source='マツダは新工場を建設します。'; Target='The company will build a new plant.'; Direction='to_en'; Label='registered organization alias' }
+        @{ Source='売上高は100百万円でした。'; Target='Revenue was 100 million yen and profit was 100 million yen.'; Direction='to_en'; Label='invented extra number' }
     )) {
         $p = New-YakuCatTextProject -Root $root -Text $case.Source -Settings $null -Direction $case.Direction -Translation $case.Target
         $blocked = $false

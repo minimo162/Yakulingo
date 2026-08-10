@@ -12,7 +12,8 @@
   バージョンフォルダは除外リスト方式で、利用者データ・作業ファイル・OSのゴミ・
   開発ノートを除いて複製する。複製後、各バージョンの manifest.json を作り直す。
 
-  保持するバージョンは既定で「current.txt の現行版」と「その1つ前」の2世代。
+  保持するバージョンは既定で current.txt の現行版だけ。旧版に過去の同梱
+  用語・コーパスが含まれる可能性があるため、自動では共有配布へ戻さない。
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\New-YakuUploadFolder.ps1
@@ -26,7 +27,7 @@ param(
     [string]$Destination = '',
     [string]$DestinationParent = '',
     [string[]]$Versions = @(),
-    [int]$KeepGenerations = 2,
+    [int]$KeepGenerations = 1,
     [switch]$Force
 )
 
@@ -40,7 +41,7 @@ $rootAllowList = @(
     'current.txt',
     '共有フォルダ配置手順.md'
 )
-$rootAllowDirs = @('_docs')
+$rootAllowDirs = @()
 
 # バージョンフォルダから除外するもの。
 $excludeFilePatterns = @(
@@ -244,15 +245,6 @@ foreach ($name in $rootAllowList) {
     }
 }
 
-# ---- 共有ルートの _docs ----
-foreach ($dirName in $rootAllowDirs) {
-    $sourceDir = Join-Path $source $dirName
-    if (!(Test-Path -LiteralPath $sourceDir -PathType Container)) { continue }
-    $result = Copy-YakuVersionFolder -Source $sourceDir -Target (Join-Path $destinationFull $dirName) -Label $dirName
-    $totalFiles += $result.Files
-    $totalBytes += $result.Bytes
-}
-
 # ---- バージョンフォルダ ----
 foreach ($version in $selected) {
     $target = Join-Path $destinationFull $version.Name
@@ -287,6 +279,16 @@ if ($leaks.Count -gt 0) {
 }
 if (Test-Path -LiteralPath (Join-Path $destinationFull '.git')) {
     throw 'UPLOAD_LEAK_DETECTED: .git が残っています。'
+}
+$languageAssetLeaks = @(Get-ChildItem -LiteralPath $destinationFull -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object {
+    $relative = $_.FullName.Substring($destinationFull.Length).TrimStart([char[]]@('\','/')).Replace('\','/')
+    $relative -match '(?i)(^|/)(glossary|propernouns)\.csv$' -or
+    $relative -match '(?i)(^|/)corpus(/|$)' -or
+    $relative -match '(?i)(^|/)_docs(/|$)' -or
+    $relative -match '(^|/)管理者用_コーパス作成\.cmd$'
+})
+if ($languageAssetLeaks.Count -gt 0) {
+    throw ("UPLOAD_BUNDLED_LANGUAGE_ASSET: 配布できない用語・固有名詞・コーパス資産があります: " + (($languageAssetLeaks | ForEach-Object { $_.FullName }) -join ', '))
 }
 
 Write-Host ''
