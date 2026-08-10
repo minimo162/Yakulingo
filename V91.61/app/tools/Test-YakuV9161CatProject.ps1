@@ -276,16 +276,13 @@ Chk ([string]$texported.Text -match 'We will continue to monitor market conditio
 Chk ([string]$texported.Text -notmatch '今後も市場環境を注視してまいります。') '未訳原文を訳文一覧へ混ぜない'
 Remove-YakuCatProject -Id ([string]$tp.Id)
 
-# 画面に導線があること。押した先に見慣れた文が並ぶようにする。
-$textResult = [pscustomobject]@{
-    Direction='to_en'; SourceText='当第1四半期の営業利益は増益となりました。'; InputLength=20; Warnings=@()
-    Options=@([pscustomobject]@{ Style='full'; Label='FULL'; Translation='Q1 operating profit increased.'; MaskedTranslation='Q1 operating profit increased.' })
-}
-$handoff = Convert-YakuTextResultToHtml -Result $textResult -IncludeStatusOob:$false
-Chk ($handoff -match 'data-yaku-to-cat') '簡易翻訳の結果から CAT へ渡す導線がある'
-$appJsText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'assets\app.js'))
-Chk ($appJsText.Contains("name=`"cat_source`"")) '取り込み元を切り替えられる'
-$indexText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'index.html'))
+# 画面に導線があること。ちょっと翻訳の本文をDOM経由で再POSTせず、
+# server内の一時artifactだけを資料翻訳へ昇格する。
+$appJsText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'assets\cat.js'))
+$quickJsText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'assets\quick.js'))
+Chk ($quickJsText.Contains('/api/cat/promote') -and $quickJsText.Contains('artifact_id')) 'ちょっと翻訳から資料翻訳へserver artifactで昇格できる'
+$indexText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'cat.html'))
+Chk ($indexText.Contains('data-cat-source-show="file"') -and $indexText.Contains('data-cat-source-show="text"')) '取り込み元を切り替えられる'
 Chk ($indexText -match 'id="cat-text"') 'CAT に貼り付け欄がある'
 
 # ---------------------------------------------------------------- 一覧の作法
@@ -299,19 +296,20 @@ Chk ($cssText -match 'data-yaku-cat-state="human_edited"') '手直しの行を�
 Chk ($cssText -match '\.cat-grid tbody tr\.is-active') 'いま見ている行を強調する'
 Chk ($cssText -match '\.cat-ops \{[^}]*visibility: hidden') '繋ぎ直しのボタンは常には出さない（全行に並ぶと目が滑る）'
 Chk ($appJsText.Contains("addEventListener('focusin'")) '現在行を追う'
-Chk ($appJsText.Contains("event.key !== 'Enter'")) 'Ctrl+Enter で次へ進める'
-Chk ($appJsText.Contains('yakuCatUpdateProgress')) '進み具合を出す'
+Chk ($appJsText.Contains("event.key === 'Enter'") -and $appJsText.Contains('confirmRow(')) 'Ctrl+Enter で保存・確認して次へ進める'
+Chk ($appJsText.Contains("status('処理中は確認できません")) '処理中のCtrl+Enterを止める'
+Chk ($appJsText.Contains("el('cat-progress-bar').style.width")) '進み具合を出す'
 Chk ($indexText -match 'id="cat-progress-bar"') '進捗バーがある'
 # 触っただけのセグメントを「手直し」にしない。以前は離れるたびに保存して
 # いたので、一覧を上から見ていくだけで全部が手直し扱いになっていた。
-Chk ($appJsText.Contains("data-yaku-original")) '変更が無ければ保存しない（触っただけで手直しにしない）'
-Chk ($appJsText.Contains("yakuBindFileDropTarget(document.getElementById('cat-drop'), catFileInput)")) 'CAT のファイル欄へドロップとキーボード操作を結線する'
-Chk ($appJsText.Contains('aria-label="'' + rowNumber + ''行目の訳文"')) '動的な訳文欄に行ごとの読み上げ名がある'
-Chk ($appJsText.Contains("data-yaku-cat-loss")) '結合・解除ボタンが訳文消失の有無を持つ'
+Chk ($appJsText.Contains("data-original")) '変更が無ければ保存しない（触っただけで手直しにしない）'
+Chk ($appJsText.Contains("bindFileDrop(el('cat-drop'), el('cat-file-input'))") -and $appJsText.Contains("event.key === 'Enter' || event.key === ' '")) 'CAT のファイル欄へドロップとキーボード操作を結線する'
+Chk ($appJsText.Contains("'行目の訳文`"")) '動的な訳文欄に行ごとの読み上げ名がある'
+Chk ($appJsText.Contains("data-cat-loss")) '結合・解除ボタンが訳文消失の有無を持つ'
 Chk ($appJsText.Contains("window.confirm('結合すると、対象行の訳文が消えます。結合しますか？')")) '訳文がある行の結合前に確認する'
 Chk ($appJsText.Contains("window.confirm('解除すると、この行の訳文が消えます。解除しますか？')")) '訳文がある行の解除前に確認する'
 Chk ($cssText -match '--focus:\s*#5E6AD2') 'フォーカスリングは白地で見える不透明色を使う'
-Chk ($appJsText.Contains('data-yaku-cat-revise')) 'CAT の訳文行に自由入力の修正欄を出す'
+Chk ($appJsText.Contains('data-cat-revise')) 'CAT の訳文行に自由入力の修正欄を出す'
 Chk ($appJsText.Contains("mode: 'revise'")) '修正指示を CAT ジョブとして送る'
 $serverText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Server.ps1'))
 Chk ($serverText.Contains("Mode = 'revise'")) '修正結果を同じ CAT 行へ戻す経路がある'
@@ -320,16 +318,17 @@ $revSeg = [pscustomobject]@{ Text='売上高は1,234百万円'; Translation='Net
 $revProject = [pscustomobject]@{ Id='rev1'; Path=''; FileName='貼り付け'; Direction='to_en'; Blocks=@(); Segments=@($revSeg); Source='text' }
 $revView = (ConvertTo-YakuCatProjectJson -Project $revProject) | ConvertFrom-Json
 Chk ([bool]$revView.segments[0].can_revise) 'マスク後訳文を持つ行だけ修正を依頼できる'
-Chk ($indexText -match 'id="cat-copilot-usage"') '翻訳前に使用回数の目安を置く場所がある'
-Chk ($appJsText.Contains('直近3時間の使用は')) '概算回数と直近3時間の使用回数を押す前に表示する'
-Chk ($appJsText.Contains("yakuCatPost('estimate'")) '概算はサーバーの実分割結果を取得する'
+Chk ($appJsText.Contains('scopeIsCurrent(packet.scope, true)') -and $appJsText.Contains('data-cat-project-id')) '遅延保存応答を開始時の作業とrevisionへ束縛する'
+Chk ($appJsText.Contains('deleteTarget = currentScope()') -and $appJsText.Contains('表示中の作業が変わったため、削除を中止しました')) '削除dialogは開いた時の作業を固定する'
+Chk ($appJsText.Contains("type: 'translate', scope: jobScope") -and $appJsText.Contains("post('apply', { job_id: jobId }, true, context.scope)")) '翻訳jobの結果を開始時の作業へだけ適用する'
+Chk ($appJsText.Contains('data.review_blocked') -and $appJsText.Contains('var same = document.querySelector')) 'QCで確認できない時は同じ行へ戻す'
+Chk ($appJsText.Contains('function redrawAfterFlush()') -and $appJsText.Contains("radio.addEventListener('change', redrawAfterFlush)")) '絞り込み再描画の前に未保存編集を保存する'
 Chk ($serverText.Contains('Get-YakuCopilotCallCount -WindowHours 3')) '画面へ直近3時間の実測回数を返す'
 $fileTranslationText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CatBatch.ps1'))
 Chk ($fileTranslationText.Contains("Context.ContainsKey('CompletedMap')")) '各バッチ完了時にCATへ途中結果を公開する'
-Chk ($fileTranslationText.Contains("Context.ContainsKey('CachePerBatch')")) '各バッチ完了時にキャッシュへ保存する'
+Chk (-not $fileTranslationText.Contains("Context.ContainsKey('CachePerBatch')")) '機械下訳を別project向けcacheへ保存しない'
 Chk ($fileTranslationText.Contains("Context.ContainsKey('OnBatchCompleted')")) '各成功バッチの耐障害保存コールバックを呼ぶ'
-Chk ($serverText.Contains("CacheHits = 0; TranslatedSoFar = 0")) 'CAT がキャッシュ命中数を持って開始する'
-Chk ($serverText.Contains('Get-YakuTranslationCacheValue -Key $cacheKey')) 'CAT が送信前にキャッシュを読む'
+Chk (-not $serverText.Contains('Get-YakuTranslationCacheValue -Key $cacheKey')) 'CAT が別projectの機械下訳cacheを読まない'
 Chk ($serverText.Contains("Category 'cat-partial'")) '途中停止でも完了済みの訳文をグリッドへ戻す'
 
 Write-Host '成功バッチをapplyなしで復元する'
@@ -382,10 +381,10 @@ $cacheKeyA = Get-YakuTranslationCacheKey -Kind 'cat' -Direction 'to_en' -Text ([
 Set-YakuTranslationCacheValue -Key $cacheKeyA -Value 'Cached CAT translation.' -Settings $usageSettings
 $cacheUsageProject = [pscustomobject]@{ Id='cache1'; Direction='to_en'; CorpusSection='文例A'; Segments=@([pscustomobject]@{ Text=$cacheSource; Translation='' }) }
 $cacheHitUsage = Get-YakuCatCopilotUsage -Root $root -Project $cacheUsageProject -Settings $usageSettings
-Chk ([int]$cacheHitUsage.CacheHits -eq 1 -and [int]$cacheHitUsage.EstimatedCalls -eq 0) '同じ文例コンテキストならCATキャッシュを読み、送信0回と見積もる'
+Chk ([int]$cacheHitUsage.CacheHits -eq 0 -and [int]$cacheHitUsage.EstimatedCalls -eq 1) '別projectの機械下訳cacheを読まず送信1回と見積もる'
 $cacheUsageProject.CorpusSection = '文例B'
 $cacheSamePromptUsage = Get-YakuCatCopilotUsage -Root $root -Project $cacheUsageProject -Settings $usageSettings
-Chk ([int]$cacheSamePromptUsage.CacheHits -eq 1 -and [int]$cacheSamePromptUsage.EstimatedCalls -eq 0) '候補文例が変わっても外部送信プロンプトが同一ならCATキャッシュを再利用する'
+Chk ([int]$cacheSamePromptUsage.CacheHits -eq 0 -and [int]$cacheSamePromptUsage.EstimatedCalls -eq 1) '候補表示と無関係に別projectの機械下訳cacheを再利用しない'
 
 # ---------------------------------------------------------------- 候補ペイン
 # CAT エディタの中核にあたる部分（利用者の指摘 2026-08-06）。
@@ -401,10 +400,10 @@ Chk ([bool](& $flag $missingFileProj)) '専用原本が無ければ押す前に�
 $textProj = Copy-YakuCatProjectForMutation -Project $restored
 $textProj.Source = 'text'; $textProj.Path = ''; $textProj.Blocks = @(); $textProj.FileName = '貼り付けたテキスト'
 Chk (-not [bool](& $flag $textProj)) '貼り付けたテキストは最新QCがあれば再開後も出せる（Blocks を使わない）'
-$jsSrcX = Get-Content -LiteralPath (Join-Path (Join-Path $root 'www\assets') 'app.js') -Raw -Encoding UTF8
+$jsSrcX = Get-Content -LiteralPath (Join-Path (Join-Path $root 'www\assets') 'cat.js') -Raw -Encoding UTF8
 Chk ($jsSrcX -match 'export_blocked') '画面が受け取っている'
-Chk ($jsSrcX -match 'exportBtn\.disabled') '出力ボタンを押せなくする'
-Chk ($jsSrcX -match 'yakuCatOutputGuidance' -and $jsSrcX -match 'eligibility_reasons') '出力できない理由を具体的な次操作として表示する'
+Chk ($jsSrcX -match "el\('cat-export'\)\.disabled") '出力ボタンを押せなくする'
+Chk ($jsSrcX -match 'outputGuidance' -and $jsSrcX -match 'eligibility_reasons') '出力できない理由を具体的な次操作として表示する'
 
 Write-Host '候補ペイン'
 $cp = New-YakuCatTextProject -Root $root -Text '上期営利' -Settings $settings -Direction 'to_en'
@@ -429,8 +428,8 @@ $c3 = @(Get-YakuCatSegmentCandidates -Root $root -Project $cp3 -Index 0)
 Chk (@($c3 | Where-Object { [string]$_.Source -eq '半期' }).Count -eq 0) '四半期 の中の 半期 を拾わない'
 Remove-YakuCatProject -Id ([string]$cp3.Id)
 
-Chk ($appJsText.Contains('yakuCatLoadCandidates')) '行を移るたびに候補を出す'
-Chk ($appJsText.Contains('data-yaku-cat-insert')) '候補を訳文へ差し込める'
+Chk ($appJsText.Contains('function candidates(index)')) '行を移るたびに候補を出す'
+Chk ($appJsText.Contains('data-cat-insert')) '候補を訳文へ差し込める'
 Chk ($indexText -match 'id="cat-candidates"') '候補ペインがある'
 
 # ---------------------------------------------------------------- 片付け

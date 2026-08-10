@@ -42,6 +42,70 @@ function ConvertTo-YakuTranslationMemoryKey {
     return $sb.ToString().ToLowerInvariant()
 }
 
+function Get-YakuTranslationMemoryHash {
+    param([AllowNull()][string]$Text)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes([string]$Text)
+        return [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant()
+    } finally { $sha.Dispose() }
+}
+
+function Get-YakuTranslationMemoryReferenceId {
+    param(
+        [Parameter(Mandatory=$true)][string]$OriginProjectId,
+        [Parameter(Mandatory=$true)][string]$OriginFileName,
+        [Parameter(Mandatory=$true)][string]$OriginSegmentId,
+        [Parameter(Mandatory=$true)][string]$OriginLocation,
+        [Parameter(Mandatory=$true)][int]$OriginPage,
+        [Parameter(Mandatory=$true)][int]$ReviewRevision,
+        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
+        [Parameter(Mandatory=$true)][string]$SourceHash,
+        [Parameter(Mandatory=$true)][string]$TargetHash
+    )
+    $separator = [string][char]31
+    return (Get-YakuTranslationMemoryHash -Text ('tm-v2' + $separator + $OriginProjectId + $separator +
+            $OriginFileName + $separator + $OriginSegmentId + $separator + $OriginLocation + $separator +
+            [string]$OriginPage + $separator + [string]$ReviewRevision + $separator + $Direction + $separator +
+            $SourceHash + $separator + $TargetHash))
+}
+
+function Test-YakuTranslationMemoryProvenance {
+    <#
+      候補として挿入できるTM行かを検査する。旧形式や出典の欠けた行は読み込み
+      自体は妨げないが、候補には出さない。内容を書き換えたJSONL行もハッシュと
+      reference_idの再計算で拒否する。
+    #>
+    param([AllowNull()]$Entry)
+    if ($null -eq $Entry) { return $false }
+    if ([int]$Entry.schema_version -ne 2) { return $false }
+    $projectId = [string]$Entry.origin_project_id
+    $segmentId = [string]$Entry.origin_segment_id
+    $fileName = [string]$Entry.origin_file_name
+    $location = [string]$Entry.origin_location
+    $source = [string]$Entry.source
+    $target = [string]$Entry.target
+    $sourceHash = [string]$Entry.source_hash
+    $targetHash = [string]$Entry.target_hash
+    $direction = [string]$Entry.direction
+    $revision = 0
+    try { $revision = [int]$Entry.review_revision } catch { return $false }
+    $page = 0
+    try { $page = [int]$Entry.origin_page } catch { return $false }
+    if ($projectId -notmatch '^[a-f0-9]{32}$' -or $segmentId -notmatch '^[a-f0-9]{32}$') { return $false }
+    if ([string]::IsNullOrWhiteSpace($fileName) -or [string]::IsNullOrWhiteSpace($location)) { return $false }
+    if ($revision -lt 1 -or $page -lt 0) { return $false }
+    if ($sourceHash -notmatch '^[a-f0-9]{64}$' -or $targetHash -notmatch '^[a-f0-9]{64}$') { return $false }
+    if ($direction -notin @('to_en', 'to_jp')) { return $false }
+    if ([string]$Entry.key -ne (ConvertTo-YakuTranslationMemoryKey -Text $source)) { return $false }
+    if ($sourceHash -ne (Get-YakuTranslationMemoryHash -Text $source)) { return $false }
+    if ($targetHash -ne (Get-YakuTranslationMemoryHash -Text $target)) { return $false }
+    $expectedReferenceId = Get-YakuTranslationMemoryReferenceId -OriginProjectId $projectId -OriginFileName $fileName `
+        -OriginSegmentId $segmentId -OriginLocation $location -OriginPage $page -ReviewRevision $revision `
+        -Direction $direction -SourceHash $sourceHash -TargetHash $targetHash
+    return ([string]$Entry.reference_id -eq $expectedReferenceId)
+}
+
 function Read-YakuTranslationMemory {
     <#
       壊れた行は黙って捨てる。1行の破損で全部読めなくなるほうが困る。
@@ -79,6 +143,12 @@ function Add-YakuTranslationMemoryEntry {
         [AllowNull()][string]$Target,
         [ValidateSet('to_en', 'to_jp')][string]$Direction = 'to_en',
         [string]$Origin = 'manual',
+        [AllowNull()][string]$OriginProjectId,
+        [AllowNull()][string]$OriginFileName,
+        [AllowNull()][string]$OriginSegmentId,
+        [AllowNull()][string]$OriginLocation,
+        [int]$OriginPage = 0,
+        [int]$ReviewRevision = 0,
         [AllowNull()][string]$Path
     )
     $src = ([string]$Source).Trim()
@@ -86,24 +156,61 @@ function Add-YakuTranslationMemoryEntry {
     if ([string]::IsNullOrWhiteSpace($src) -or [string]::IsNullOrWhiteSpace($tgt)) {
         return [pscustomobject]@{ Added = $false; Reason = 'empty' }
     }
+    $projectId = ([string]$OriginProjectId).Trim().ToLowerInvariant()
+    $fileName = ([string]$OriginFileName).Trim()
+    $segmentId = ([string]$OriginSegmentId).Trim().ToLowerInvariant()
+    $location = ([string]$OriginLocation).Trim()
+    if ($projectId -notmatch '^[a-f0-9]{32}$' -or $segmentId -notmatch '^[a-f0-9]{32}$' -or
+        [string]::IsNullOrWhiteSpace($fileName) -or [string]::IsNullOrWhiteSpace($location) -or
+        $OriginPage -lt 0 -or $ReviewRevision -lt 1) {
+        return [pscustomobject]@{ Added = $false; Reason = 'provenance-required' }
+    }
     $target = if ([string]::IsNullOrWhiteSpace($Path)) { Get-YakuTranslationMemoryPath -Direction $Direction } else { $Path }
     $key = ConvertTo-YakuTranslationMemoryKey -Text $src
-    $existing = Read-YakuTranslationMemory -Direction $Direction -Path $target
-    if ($existing.Contains($key) -and [string]$existing[$key].target -eq $tgt) {
-        return [pscustomobject]@{ Added = $false; Reason = 'same' }
+    $sourceHash = Get-YakuTranslationMemoryHash -Text $src
+    $targetHash = Get-YakuTranslationMemoryHash -Text $tgt
+    $referenceId = Get-YakuTranslationMemoryReferenceId -OriginProjectId $projectId -OriginFileName $fileName `
+        -OriginSegmentId $segmentId -OriginLocation $location -OriginPage $OriginPage -ReviewRevision $ReviewRevision `
+        -Direction $Direction -SourceHash $sourceHash -TargetHash $targetHash
+    $fullTarget = [IO.Path]::GetFullPath($target)
+    $lockKey = (Get-YakuTranslationMemoryHash -Text $fullTarget).Substring(0, 24)
+    $mutex = New-Object Threading.Mutex($false, ('Local\YakuLingo.TranslationMemory.' + $lockKey))
+    $owned = $false
+    try {
+        try { $owned = $mutex.WaitOne(30000) } catch [Threading.AbandonedMutexException] { $owned = $true }
+        if (-not $owned) { throw 'TRANSLATION_MEMORY_LOCK_TIMEOUT' }
+        $existing = Read-YakuTranslationMemory -Direction $Direction -Path $target
+        if ($existing.Contains($key) -and [string]$existing[$key].target -eq $tgt -and
+            (Test-YakuTranslationMemoryProvenance -Entry $existing[$key]) -and
+            [string]$existing[$key].reference_id -eq $referenceId) {
+            return [pscustomobject]@{ Added = $false; Reason = 'same'; Key = $key; ReferenceId = $referenceId }
+        }
+        $parent = Split-Path -Parent $target
+        if (-not (Test-Path -LiteralPath $parent -PathType Container)) { $null = New-Item -ItemType Directory -Path $parent -Force }
+        $record = [ordered]@{
+            schema_version    = 2
+            key               = $key
+            source            = $src
+            target            = $tgt
+            direction         = $Direction
+            origin            = $Origin
+            reference_id      = $referenceId
+            origin_project_id = $projectId
+            origin_file_name  = $fileName
+            origin_segment_id = $segmentId
+            origin_location   = $location
+            origin_page       = [int]$OriginPage
+            source_hash       = $sourceHash
+            target_hash       = $targetHash
+            review_revision   = [int]$ReviewRevision
+            saved             = (Get-Date).ToString('s')
+        }
+        [IO.File]::AppendAllLines($target, [string[]]@(($record | ConvertTo-Json -Compress -Depth 4)), [Text.UTF8Encoding]::new($false))
+        return [pscustomobject]@{ Added = $true; Reason = $(if ($existing.Contains($key)) { 'updated' } else { 'new' }); Key = $key; ReferenceId = $referenceId }
+    } finally {
+        if ($owned) { try { $mutex.ReleaseMutex() } catch {} }
+        $mutex.Dispose()
     }
-    $parent = Split-Path -Parent $target
-    if (-not (Test-Path -LiteralPath $parent -PathType Container)) { $null = New-Item -ItemType Directory -Path $parent -Force }
-    $record = [ordered]@{
-        key       = $key
-        source    = $src
-        target    = $tgt
-        direction = $Direction
-        origin    = $Origin
-        saved     = (Get-Date).ToString('s')
-    }
-    [IO.File]::AppendAllLines($target, [string[]]@(($record | ConvertTo-Json -Compress -Depth 3)), [Text.UTF8Encoding]::new($false))
-    return [pscustomobject]@{ Added = $true; Reason = $(if ($existing.Contains($key)) { 'updated' } else { 'new' }); Key = $key }
 }
 
 function Find-YakuTranslationMemory {
@@ -130,6 +237,9 @@ function Find-YakuTranslationMemory {
     $hits = New-Object System.Collections.Generic.List[object]
     foreach ($k in $entries.Keys) {
         $e = $entries[$k]
+        # 出典が追跡できない旧形式、または内容と証明が一致しない行は表示も
+        # 挿入もさせない。移行時に「翻訳メモリ」とだけ見せるのは誤誘導になる。
+        if (-not (Test-YakuTranslationMemoryProvenance -Entry $e)) { continue }
         $sn = [string]$k
         if ($sn.Length -lt $MinLength) { continue }
         $exact = [string]::Equals($sn, $tn, [StringComparison]::Ordinal)
@@ -144,6 +254,15 @@ function Find-YakuTranslationMemory {
                 Exact  = $exact
                 Ratio  = $ratio
                 Saved  = [string]$e.saved
+                ReferenceId = [string]$e.reference_id
+                SourceName = [string]$e.origin_file_name
+                Location = [string]$e.origin_location
+                Page = [int]$e.origin_page
+                OriginProjectId = [string]$e.origin_project_id
+                OriginSegmentId = [string]$e.origin_segment_id
+                ReviewRevision = [int]$e.review_revision
+                SourceHash = [string]$e.source_hash
+                TargetHash = [string]$e.target_hash
             })
     }
     return @(@($hits.ToArray()) | Sort-Object -Property Ratio -Descending | Select-Object -First $Limit)

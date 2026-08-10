@@ -5294,18 +5294,17 @@ function Initialize-YakuProtectedPromptBoundary {
 
         # callerのmapを信用せず、元fieldをもう一度分類して禁止値を作る。
         $scan = New-YakuNumericMaskMap -Text $OriginalText -Root $Root -Direction $Direction -Location 'protected-receipt'
-        $protectedScan = New-YakuNumericMaskMap -Text $ProtectedText -Root $Root -Direction $Direction -Location 'protected-receipt-final'
+        $protectedScan = New-YakuNumericMaskMap -Text $ProtectedText -Root $Root -Direction $Direction -Location 'protected-receipt-final' -AllowExistingTokens
         if ([int]$protectedScan.MaskedCount -gt 0) { throw 'PROTECTION_RECEIPT_PROTECTED_TEXT_NOT_MASKED' }
         $forbidden = New-Object System.Collections.Generic.List[string]
         foreach ($value in @($scan.Map.Values)) {
             $s = [string]$value
             if (-not [string]::IsNullOrEmpty($s) -and -not $forbidden.Contains($s)) { $forbidden.Add($s) | Out-Null }
         }
-        foreach ($value in @($forbidden.ToArray())) {
-            # 境界regexは使わない。A123Bの123もmaskerが対象にするため、完全な
-            # substring不在をreceiptの条件にする。
-            if ($ProtectedText.IndexOf([string]$value, [StringComparison]::Ordinal) -ge 0) { throw 'PROTECTION_RECEIPT_UNMASKED_VALUE' }
-        }
+        # ProtectedText は同じ canonical scanner で再走査済みであり、既存の
+        # [[Nn]] 以外に数字が1つでもあれば上で拒否される。元値のsubstringを
+        # さらに探すと、元値 "8" とtoken番号 [[N8]] のような安全な一致まで
+        # 未マスクと誤認するため、ここでは行わない。
 
         $id = [guid]::NewGuid().ToString('N')
         $protectedHash = Get-YakuProtectedPromptSha256 -Text $ProtectedText

@@ -3,7 +3,7 @@
   V91.60: 数値マスキングの回帰テスト。
 
 .DESCRIPTION
-  分類（マスクされる／されない）、往復、符号・単位の保持、用語集保護、
+  全ユーザー入力数値のマスク、往復、符号・単位の保持、非数値語の保持、
   平文の漏洩、異常系を検証する。ケースはデータで持ち、後から足せる形にする
   （_docs/設計方針_翻訳アーキテクチャ見直し.md §4-E の評価基盤の一部）。
 
@@ -41,7 +41,7 @@ function Invoke-YakuMaskPipeline {
 }
 
 # ---------------------------------------------------------------- 分類
-Write-Host 'CASE 1: 非マスクにする形'
+Write-Host 'CASE 1: 年度・日付・電話・コードを含む全入力数値をマスクする'
 $keepCases = @(
     @{ Text = '2027年３月期第１四半期の営業利益は296億円でした。'; Keep = @('2027年３月期', '第１四半期') },
     @{ Text = 'FY26/3 1Q の固定費改善は248億円。';                  Keep = @('FY26/3', '1Q') },
@@ -54,9 +54,9 @@ $keepCases = @(
 )
 foreach ($c in $keepCases) {
     $r = Invoke-YakuMaskPipeline -Text ([string]$c.Text)
-    foreach ($k in @($c.Keep)) {
-        Assert-YakuMask ([string]$r.Masked.Text -like ('*' + $k + '*')) ("非マスク: $k")
-    }
+    Assert-YakuMask ([int]$r.Masked.MaskedCount -gt 0 -and
+        -not ([string]$r.Masked.Text -match '(?<!\[\[N)\d')) ("全数値をマスク: " + [string]$c.Text)
+    Assert-YakuMask ((Restore-YakuNumericMask -Text ([string]$r.Masked.Text) -Map $r.Masked.Map) -eq [string]$r.Pre) ("全数値を復元: " + [string]$c.Text)
 }
 
 Write-Host 'CASE 2: マスクする形'
@@ -202,10 +202,12 @@ $bracketed = Invoke-YakuMaskPipeline -Text '【営業利益 296億円】は前�
 Assert-YakuMask (-not ([string]$bracketed.Masked.Text -like '*296*')) '【】の中の数値もマスクする'
 Assert-YakuMask ([string]$bracketed.Masked.Text -match ([regex]::Escape('【営業利益 [[N1]] oku】'))) '【】自体は残す'
 
-# 自分が入れた[[N1]]は二重マスクしない
-$twice = New-YakuNumericMaskMap -Text ([string]$bracketed.Masked.Text) -Root $root -Direction 'to_en' -Location 'test'
-Assert-YakuMask ([int]$twice.MaskedCount -eq 0) '[[N1]]を二重にマスクしない'
-Assert-YakuMask ([string]$twice.Text -eq [string]$bracketed.Masked.Text) '二度掛けても変わらない'
+# 内部で保護済みと明示した[[N1]]だけは二重マスクしない。
+$twice = New-YakuNumericMaskMap -Text ([string]$bracketed.Masked.Text) -Root $root -Direction 'to_en' -Location 'test' -AllowExistingTokens
+Assert-YakuMask ([int]$twice.MaskedCount -eq 0) '内部の[[N1]]を二重にマスクしない'
+Assert-YakuMask ([string]$twice.Text -eq [string]$bracketed.Masked.Text) '保護済み欄への二度掛けは変わらない'
+$literalToken = New-YakuNumericMaskMap -Text '利用者入力 [[N1234]]' -Root $root -Direction 'to_en' -Location 'test'
+Assert-YakuMask (-not ([string]$literalToken.Text).Contains('1234') -and [int]$literalToken.MaskedCount -eq 1) '生入力の予約token記法でも数字を迂回できない'
 
 # ---------------------------------------------------------------- 括弧の選び方
 # 【】へ戻してはいけない。M365 Copilot は自身の引用参照に【】を使っており、
@@ -308,14 +310,15 @@ function Invoke-YakuProtectedTransportTestHook {
     param([string]$Prompt, $Settings, [switch]$SkipFreshChatWait, [switch]$PreserveEndMarker, $ProgressState, $Warnings)
     $script:SentPrompts.Add([string]$Prompt) | Out-Null
     $id = [string]([regex]::Match([string]$Prompt, 'YAKULINGO_END:([0-9a-fA-F]{32})').Groups[1].Value)
-    $body = [string]([regex]::Match([string]$Prompt, '(?s)SOURCE_TEXT:\s*\n(.*?)\n\s*(?:GLOSSARY|OUTPUT|FORMAT|RULES)').Groups[1].Value)
+    $body = [string]([regex]::Match([string]$Prompt, '(?s)SOURCE_BEGIN:[0-9a-fA-F]{32}\s*\n(.*?)\nSOURCE_END:[0-9a-fA-F]{32}').Groups[1].Value)
     $tokens = @(Get-YakuNumericMaskTokens -Text ([string]$Prompt) | Select-Object -Unique | Sort-Object { [int]([regex]::Match([string]$_, '\d+').Value) })
     if (@($tokens).Count -eq 0) { $tokens = @('115.77', '8.32') }
     if ([string]$Prompt -match 'JAPANESE_TEXT:') {
-        $jp = 'FY2026/3の売上高は' + ([string]$tokens[0]) + '億円でした。'
+        $jp = '日本語訳: 売上高はFY' + ([string]$tokens[0]) + '/' + ([string]$tokens[1]) + 'に' + ([string]$tokens[-1]) + '億円でした。'
         return ("JAPANESE_TEXT: $jp" + "`n" + "YAKULINGO_END:$id")
     }
-    $line = 'FY2026/3 net sales ' + ([string]$tokens[0]) + ' oku, operating profit ' + ([string]$tokens[-1]) + ' oku.'
+    $safeBody = [regex]::Replace($body, '[ぁ-んァ-ヶ一-龯]+', ' ')
+    $line = 'Translated data: ' + $safeBody
     return ("FULL_TEXT: $line" + "`n" + "YAKULINGO_END:$id")
 }
 
@@ -330,7 +333,7 @@ $sent = [string]$script:SentPrompts[$script:SentPrompts.Count - 1]
 Assert-YakuMask ($sent -match ([regex]::Escape('[[N1]]'))) 'プロンプトにプレースホルダーが入る'
 Assert-YakuMask (-not ($sent -like '*115.77*')) 'プロンプトに換算後の売上高が出ない'
 Assert-YakuMask (-not ($sent -like '*8.32*')) 'プロンプトに換算後の営業利益が出ない'
-Assert-YakuMask ($sent -like '*2026年3月期*') '年度は伏せずに送る'
+Assert-YakuMask (-not ($sent -like '*2026年3月期*') -and -not ($sent -like '*FY2026*')) '年度も伏せて送る'
 Assert-YakuMask ($sent -like '*NUMBER PLACEHOLDERS*') 'プロンプトに保護規則が入る'
 Assert-YakuMask ($wired.Options.Count -eq 1) '通常翻訳は FULL だけ返る'
 Assert-YakuMask (([string]$wired.Options[0].Translation) -like '*115.77*') '訳文は実値へ復元されている'
@@ -375,7 +378,7 @@ $jpResult = Invoke-YakuSingleTranslationBatch -Root $root -InputText $jpInput -S
 $jpSent = [string]$script:SentPrompts[$script:SentPrompts.Count - 1]
 Assert-YakuMask ($jpSent -match ([regex]::Escape('[[N1]]'))) 'to_jp のプロンプトにもプレースホルダーが入る'
 Assert-YakuMask (-not ($jpSent -like '*115.77*')) 'to_jp のプロンプトに実値が出ない'
-Assert-YakuMask ($jpSent -like '*FY2026/3*') 'to_jp でも会計期は伏せない'
+Assert-YakuMask (-not ($jpSent -like '*FY2026/3*')) 'to_jp でも会計期を伏せる'
 Assert-YakuMask ($jpSent -like '*oku -> 億円*') 'to_jp のプロンプトに単位表記の指示が入る'
 Assert-YakuMask (@($jpResult.Options).Count -eq 1) 'JAPANESE の1件が返る'
 Assert-YakuMask (([string]$jpResult.Options[0].Translation) -like '*115.77*') 'to_jp でも実値へ復元する'
@@ -394,7 +397,7 @@ $filePrompt = New-YakuCatPrompt -Root $root -Items $fileItems -Settings $setting
 Assert-YakuMask ($filePrompt -match ([regex]::Escape('[[N1]]'))) 'CAT用プロンプトにプレースホルダーが入る'
 Assert-YakuMask (-not ($filePrompt -like '*115.77*')) 'CAT用プロンプトに実値が出ない'
 Assert-YakuMask (-not ($filePrompt -like '*8.3%*')) 'CAT用プロンプトに比率の実値が出ない'
-Assert-YakuMask ($filePrompt -like '*2026年3月期*') 'CATでも会計期は伏せない'
+Assert-YakuMask (-not ($filePrompt -like '*2026年3月期*')) 'CATでも会計期を伏せる'
 Assert-YakuMask ($filePrompt -like '*NUMBER PLACEHOLDERS*') 'CAT用プロンプトに保護規則が入る'
 Assert-YakuMask ($filePrompt -match 'complete|省略') 'CAT用プロンプトは正本の完全訳を要求する'
 Assert-YakuMask (-not ($filePrompt -like '*{numeric_rules}*')) 'テンプレート変数が残らない'
@@ -405,12 +408,12 @@ Assert-YakuMask ($filePromptJp -like '*oku -> 億円*') 'to_jp のCAT用プロ�
 Assert-YakuMask (-not ($filePromptJp -like '*{numeric_rules}*')) 'to_jp でもテンプレート変数が残らない'
 
 # 復元
-$fileTranslations = @{ 1 = 'Net sales for FY2026/3 were [[N1]] oku'; 2 = 'OPM [[N1]]%' }
+$fileTranslations = @{ 1 = 'Net sales for FY[[N1]]/[[N2]] were [[N3]] oku'; 2 = 'OPM [[N1]]%' }
 foreach ($fi in $fileItems) {
     $fi | Add-Member -NotePropertyName Targets -NotePropertyValue @([int]$fi.Index - 1) -Force
 }
 Restore-YakuCatItemTranslations -Items $fileItems -Map $fileTranslations -Warnings $null
-Assert-YakuMask ($fileTranslations[1] -eq 'Net sales for FY2026/3 were 115.77 oku') 'CAT訳文を実値へ復元する'
+Assert-YakuMask ($fileTranslations[1] -eq 'Net sales for FY2026/3 were 115.77 oku') 'CAT訳文の年度と金額を実値へ復元する'
 Assert-YakuMask ($fileTranslations[2] -eq 'OPM 8.3%') '項目ごとに別のマップで復元する'
 
 Write-Host 'CASE 18: 契約フィンガープリントがマスク状態を含む'
@@ -578,10 +581,10 @@ $script:SentPrompts.Clear()
 $countWarnings = New-Object System.Collections.Generic.List[object]
 $countInput = (Convert-YakuNumericUnits -Text '2026年3月期の売上は318.2億円、営業利益は27.4億円、比率は8.6%でした。' -Location 'test').Text
 $countResult = Invoke-YakuTextTranslation -Root $root -InputText $countInput -Settings $settings -ProgressState $null -DirectionOverride 'to_en'
-Assert-YakuMask ([int]$countResult.MaskedCount -eq 3) ('マスク件数が結果に載る: ' + [string]$countResult.MaskedCount)
-Assert-YakuMask ([int]$countResult.KeptCount -ge 1) '非マスク件数も結果に載る（年度）'
+Assert-YakuMask ([int]$countResult.MaskedCount -eq 5) ('年度を含むマスク件数が結果に載る: ' + [string]$countResult.MaskedCount)
+Assert-YakuMask ([int]$countResult.KeptCount -eq 0) '入力数値の非マスク例外はない'
 $resultHtml = Convert-YakuTextResultToHtml -Result $countResult
-Assert-YakuMask ($resultHtml -like '*数値 3 件をマスクして送信しました*') '結果画面へ告知が出る'
+Assert-YakuMask ($resultHtml -like '*数値 5 件をマスクして送信しました*') '結果画面へ年度を含む件数が出る'
 
 # 警告カテゴリの表示名
 
@@ -598,15 +601,12 @@ foreach ($c in @(@{ Text='取引先は151件です。'; Gone='151' }, @{ Text='�
     Assert-YakuMask (-not ([string]$r.Masked.Text -like ('*' + $c.Gone + '*'))) ("決算期に似た形はマスク: " + $c.Text + ' -> ' + $r.Masked.Text)
 }
 
-# §10-4 / §10-19-c 用語集に一致した範囲は数字ごと無傷
-# 仕様書は CX-90 を例示しているが、同梱用語集の実エントリは MTMUS製(CX-50)。
+# 数字を含む用語でも数字だけを伏せ、非数値部分は保持する。
 $cx = Invoke-YakuMaskPipeline -Text 'MTMUS製(CX-50)の単価改善は120億円。'
-Assert-YakuMask ([string]$cx.Masked.Text -like '*MTMUS製(CX-50)*') ('用語の中の数字を壊さない: ' + $cx.Masked.Text)
+Assert-YakuMask (([string]$cx.Masked.Text).Contains('MTMUS製(CX-[[N1]])')) ('用語の数字だけを伏せる: ' + $cx.Masked.Text)
 Assert-YakuMask (-not ([string]$cx.Masked.Text -like '*120*')) '同じ文の金額はマスクする'
-$cxMatches = @(Get-YakuRelevantGlossaryMatches -Root $root -InputText ([string]$cx.Masked.Text) -Direction 'to_en' -Limit 200 -Path (Get-YakuGlossaryPath -Root $root))
-Assert-YakuMask (@($cxMatches | Where-Object { [string]$_.Source -eq 'MTMUS製(CX-50)' }).Count -gt 0) 'マスク後も用語集が一致する'
 $fyq = Invoke-YakuMaskPipeline -Text 'FY26/3 1Q の AAT 営業利益(50%)は堅調。'
-Assert-YakuMask ([string]$fyq.Masked.Text -like '*FY26/3 1Q*') 'FY26/3 1Q が無傷'
+Assert-YakuMask (-not (([string]$fyq.Masked.Text).Contains('FY26/3 1Q')) -and ([string]$fyq.Masked.Text).Contains('FY[[N1]]/[[N2]] [[N3]]Q')) 'FY・四半期の数字も伏せる'
 
 # §10-19-b 変換後の単位トークンがマスクされ、復元で戻る
 foreach ($t22 in @('出荷台数は659千台。', '生産は2万台。')) {

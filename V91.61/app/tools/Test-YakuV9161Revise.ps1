@@ -102,7 +102,8 @@ $html = Convert-YakuTextResultToHtml -Result $result -IncludeStatusOob:$false
 # （利用者の方針 2026-08-08「簡易翻訳は簡易翻訳、CAT は CAT でベストにする」）。
 # 直す機能が両方にあると、どちらでやるべきか毎回考えることになる。
 Chk (-not ($html -match 'data-yaku-revise')) 'すぐ訳すには修正の依頼口を置かない'
-Chk ($html -match 'data-yaku-to-cat') '直したいときの行き先は用意する'
+$quickClientText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'assets\quick.js'))
+Chk ($quickClientText.Contains('/api/cat/promote')) '直したいときはserver artifactから資料翻訳へ移れる'
 # 内部の英字ラベルを画面に出さない。利用者が読む言葉にする。
 Chk (-not ($html -match '>FULL<|>BRIEF<')) '内部の英字ラベルを画面に出さない'
 Chk (-not ($html -match 'STYLE_REFERENCE')) 'プロンプト内部の語を画面に出さない'
@@ -125,9 +126,9 @@ Chk ((Convert-YakuTextResultToHtml -Result $noSource -IncludeStatusOob:$false) -
 # 「別の原文と現訳」を突き合わせることになる。
 $translationText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Translation.ps1'))
 Chk ($translationText.Contains('SourceText = [string]$InputText')) '翻訳結果が原文を持つ'
-$appJs = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'assets\app.js'))
-Chk ($appJs.Contains('/api/revise-text')) '画面から修正を依頼できる'
-Chk ($appJs.Contains("data-yaku-current")) '送るのは札の現訳（入力欄の訳文ではない）'
+$appJs = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'assets\cat.js'))
+Chk ($appJs.Contains("mode: 'revise'") -and $appJs.Contains('data-cat-revise')) '資料翻訳の現在行から修正を依頼できる'
+Chk (-not $appJs.Contains('data-yaku-current')) 'ブラウザー属性へ現訳を複製せず、保存済みproject revisionを使う'
 
 if ($script:fail -gt 0) {
     Write-Host "V91.61 revise regression failed. failures=$script:fail" -ForegroundColor Red

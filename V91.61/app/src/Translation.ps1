@@ -496,7 +496,7 @@ function ConvertTo-YakuNumericRestoreValue {
         $canRenderFinancial=(($includesScale -and -not [bool]$sourceDescriptor.Found -and [bool]$targetDescriptor.IsCurrency) -or
             ([bool]$sourceDescriptor.IsCurrency -and [bool]$targetDescriptor.IsCurrency))
         if($Direction -eq 'to_en' -and $canRenderFinancial -and $null -ne $targetDescriptor){
-            if([decimal]$targetDescriptor.Scale -gt 1){return (ConvertTo-YakuInvariantNumberText -Value ($absolute/[decimal]$targetDescriptor.Scale))}
+            if([decimal]$targetDescriptor.Scale -gt 1){return (ConvertTo-YakuInvariantNumberText -Value ($absolute/[decimal]$targetDescriptor.Scale) -UseGrouping)}
             if([bool]$targetDescriptor.IsCurrency -and [Math]::Abs($absolute) -ge [decimal]1000000){
                 $scaleName='million';[decimal]$scale=[decimal]1000000
                 if([Math]::Abs($absolute) -ge [decimal]1000000000000){$scaleName='trillion';$scale=[decimal]1000000000000}
@@ -507,6 +507,54 @@ function ConvertTo-YakuNumericRestoreValue {
         if($includesScale){return (ConvertTo-YakuInvariantNumberText -Value $value -UseGrouping)}
     }
     return $raw
+}
+
+function ConvertTo-YakuNaturalEnglishNotation {
+    <# 数値を伏せたためモデルから見えなかった「四半期・年度・時刻」の役割を、
+       復元後に原文へ拘束してローカル整形する。金額・数量の値は変えない。 #>
+    param([AllowNull()][string]$SourceText,[AllowNull()][string]$Translation)
+    $result=[string]$Translation
+    if([string]::IsNullOrWhiteSpace($result)){return $result}
+    $normalizedSource=ConvertTo-YakuMaskNormalizedText -Text ([string]$SourceText)
+    foreach($match in [regex]::Matches($normalizedSource,'第\s*(?<quarter>[1-4])\s*四半期')){
+        $quarter=[string]$match.Groups['quarter'].Value
+        $pattern='(?i)\b(?:the\s+)?'+[regex]::Escape($quarter)+'(?:st|nd|rd|th)?\s+quarter\b'
+        $result=[regex]::Replace($result,$pattern,('Q'+$quarter))
+    }
+    foreach($match in [regex]::Matches($normalizedSource,'(?<year>\d{4})\s*年度')){
+        $year=[string]$match.Groups['year'].Value
+        $escapedYear=[regex]::Escape($year)
+        $yearFirst='(?i)\b(?:the\s+)?'+$escapedYear+'\s+(?:fiscal\s+year|fiscal-year)\b'
+        $fiscalFirst='(?i)\bfiscal\s+year\s+'+$escapedYear+'\b'
+        $result=[regex]::Replace($result,$yearFirst,('FY'+$year),1)
+        $result=[regex]::Replace($result,$fiscalFirst,('FY'+$year),1)
+    }
+    foreach($match in [regex]::Matches($normalizedSource,'(?:(?<meridiem>午前|午後)\s*)?(?<hour>[01]?\d|2[0-3])\s*時(?:\s*(?<minute>[0-5]?\d)\s*分)?')){
+        $hour=[int]$match.Groups['hour'].Value
+        $minute=if($match.Groups['minute'].Success){[int]$match.Groups['minute'].Value}else{0}
+        $meridiem=[string]$match.Groups['meridiem'].Value
+        $suffix=if($meridiem -eq '午後'){'p.m.'}elseif($meridiem -eq '午前'){'a.m.'}elseif($hour -lt 12){'a.m.'}else{'p.m.'}
+        $hour12=$hour%12;if($hour12 -eq 0){$hour12=12}
+        $natural=('{0}:{1:00} {2}' -f $hour12,$minute,$suffix)
+        $minutePattern=if($minute -eq 0){'0{1,2}'}else{[regex]::Escape([string]$minute)}
+        $hourPattern=if($hour12 -ne $hour){'(?:'+[regex]::Escape([string]$hour)+'|'+[regex]::Escape([string]$hour12)+')'}else{[regex]::Escape([string]$hour)}
+        $marker='(?:a\.?m\.?|p\.?m\.?|hours?|o''clock)'
+        $end='(?=\s|[.,;:!?)\]]|$)'
+        # まず、コロンまたは午前・午後などにより時刻と分かる候補を探す。
+        # 同じ15が「15 points」「15 oku」として先に出ても、その数量を触らない。
+        $colonPattern='(?i)(?<prefix>\b(?:at|by)\s+)'+$hourPattern+'(?:(?::|\.)\s*'+$minutePattern+')(?:(?:\s*'+$marker+')){0,2}'+$end
+        $markedPattern='(?i)(?<prefix>\b(?:at|by)\s+)'+$hourPattern+'(?:(?::|\.)\s*'+$minutePattern+')?(?:(?:\s*'+$marker+')){1,2}'+$end
+        $before=$result
+        $result=[regex]::Replace($result,$colonPattern,{param($m)([string]$m.Groups['prefix'].Value+$natural)},1)
+        if($result -eq $before){$result=[regex]::Replace($result,$markedPattern,{param($m)([string]$m.Groups['prefix'].Value+$natural)},1)}
+        if($result -eq $before){
+            # 裸の「by 15」は tomorrow/today 等が直後にある期限表現だけを許す。
+            # 文末や数量単位の前は曖昧なので、誤変換するより人の確認へ残す。
+            $barePattern='(?i)(?<prefix>\b(?:at|by)\s+)'+$hourPattern+'(?=\s+(?:today|tomorrow|tonight|this\s+(?:morning|afternoon|evening)|at\s+the\s+latest)\b)'
+            $result=[regex]::Replace($result,$barePattern,{param($m)([string]$m.Groups['prefix'].Value+$natural)},1)
+        }
+    }
+    return $result
 }
 
 function Convert-YakuNumericUnits {
@@ -605,7 +653,12 @@ function Test-YakuNumericMaskingEnabled {
 }
 
 function Assert-YakuNumericPromptProtected {
-    <# 数値マップの実値がpromptに1つでも残れば、Copilot呼び出し前に停止する。 #>
+    <#
+      legacyの追加検査。canonical package は各可変fieldを再scanして全数字を
+      fail-closedにする。ここで1桁値まで最終prompt全体とsubstring比較すると、
+      固定指示の番号や [[N8]] のtoken番号を元値8と誤認するため、3桁以上の
+      値だけを補助的に検査する。
+    #>
     param(
         [Parameter(Mandatory=$true)][AllowEmptyString()][string]$Prompt,
         [AllowNull()][hashtable]$MaskMap
@@ -614,6 +667,8 @@ function Assert-YakuNumericPromptProtected {
     foreach ($token in @($(if ($null -ne $MaskMap) { $MaskMap.Keys }))) {
         $rawValue = [string]$MaskMap[$token]
         if ([string]::IsNullOrWhiteSpace($rawValue)) { continue }
+        $rawDigits = [regex]::Replace((ConvertTo-YakuMaskNormalizedText -Text $rawValue), '\D', '')
+        if ($rawDigits.Length -lt 3) { continue }
         $pattern = '(?<![0-9A-Za-z])' + [regex]::Escape($rawValue) + '(?![0-9A-Za-z])'
         if ([regex]::IsMatch($Prompt, $pattern)) { throw 'EXTERNAL_SEND_UNMASKED_NUMERIC_VALUE' }
     }
@@ -627,11 +682,12 @@ function Protect-YakuPromptField {
         [Parameter(Mandatory=$true)][string]$Root,
         [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
         [Parameter(Mandatory=$true)]$NumericMap,
-        [Parameter(Mandatory=$true)][string]$Location
+        [Parameter(Mandatory=$true)][string]$Location,
+        [switch]$AllowExistingTokens
     )
     if ([string]::IsNullOrEmpty([string]$Text)) { return '' }
     $protected = [string]$Text
-    $numericResult = New-YakuNumericMaskMap -Text $protected -Root $Root -Direction $Direction -Location $Location
+    $numericResult = New-YakuNumericMaskMap -Text $protected -Root $Root -Direction $Direction -Location $Location -AllowExistingTokens:$AllowExistingTokens
     $protected = [string]$numericResult.Text
     $numericOffset = [int]$NumericMap.Count
     # N1→N2 を先にすると元の N2 も後続置換の対象になる。同じ金額tokenへ
@@ -663,36 +719,11 @@ function ConvertTo-YakuMaskNormalizedText {
 }
 
 function Get-YakuNumericMaskExemptPatterns {
-    # 非マスクにする形。§1-2 / §1-5 のとおり、実サンプルでは全角と半角が
-    # 混在するため、判定は正規化後のテキストに対して行う。
-    # 例外は狭く厳密に書く。広い例外は機密数値を素通しする。
-    return @(
-        # --- 決算期・年度・年月日・四半期 ---
-        '\d{2,4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日',
-        '\d{2,4}\s*年\s*\d{1,2}\s*月期',
-        '\d{2,4}\s*年\s*\d{1,2}\s*月',
-        '\d{2,4}\s*年度',
-        '(?:令和|平成|昭和)\s*\d{1,2}\s*年',
-        '\d{2,4}\s*年',
-        'FY\s?\d{2,4}(?:\s?/\s?\d{1,2})?',
-        '\d{2,4}\s?/\s?\d{1,2}\s?期',
-        '第\s*\d{1,3}\s*期',
-        '第\s*\d\s*四半期',
-        '(?<![0-9])\d\s?[Qq](?![0-9A-Za-z])',
-        '(?<![0-9A-Za-z])[Qq]\s?\d(?![0-9])',
-        '(?<![0-9])\d{1,2}\s*月(?!期)',
-        '第\s*\d{1,3}\s*(?:章|条|項|号)',
-        # --- 「1株当たり」型の定型句。直後の金額はマスクされる ---
-        '(?:\d|一)\s*株\s*(?:当たり|あたり)',
-        '(?:\d|一)\s*(?:台|人|件|名)\s*(?:当たり|あたり)',
-        # --- 電話番号 ---
-        '(?:\+\d{1,3}[-\s])?\d{2,4}-\d{2,4}-\d{4}',
-        # --- 証券コード。ラベルが付く形だけを除外する。
-        #     裸の (7261) は負数表記 (50) と区別できないためマスクする。 ---
-        '(?:コード番号|証券コード)\s*\d{4}',
-        # --- バージョン番号 ---
-        '(?<![0-9A-Za-z])[Vv]\d+(?:\.\d+)*'
-    )
+    # 外部送信する利用者入力の数字には例外を設けない。年度、日付、四半期、
+    # 電話番号、証券コード、バージョン、用語中の数字もすべて token 化する。
+    # 非数値部分（FY、区切り記号、会社名等）はそのまま残るため、翻訳文脈は
+    # 維持できる。既存 token の二重マスクだけは ProtectedSpans 側で防ぐ。
+    return @()
 }
 
 function Test-YakuMaskSpanCovered {
@@ -712,50 +743,26 @@ function Get-YakuNumericMaskProtectedSpans {
     param(
         [AllowNull()][string]$Text,
         [AllowNull()][string]$Root,
-        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en'
+        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
+        [switch]$AllowExistingTokens
     )
     $spans = New-Object System.Collections.Generic.List[object]
     $normalized = ConvertTo-YakuMaskNormalizedText -Text $Text
     if ([string]::IsNullOrEmpty($normalized)) { return @() }
 
     # ヘルパー関数へ List を渡すと、空のときにパラメータ束縛が失敗する。直接追加する。
-    foreach ($pattern in (Get-YakuNumericMaskExemptPatterns)) {
-        foreach ($m in [regex]::Matches($normalized, $pattern)) {
-            if ($m.Length -gt 0) { $spans.Add([pscustomobject]@{ Start = [int]$m.Index; End = [int]($m.Index + $m.Length) }) | Out-Null }
-        }
-    }
-
-    # 行頭の箇条書き番号。全角の「１．」も正規化後は「1.」になる。
-    # 直後が数字なら箇条書きではなく小数(0.7 など)。除外しない。
-    foreach ($m in [regex]::Matches($normalized, '(?m)^[ \t]*\(?\d{1,2}\)?[\.\)、](?!\d)')) {
-        if ($m.Length -gt 0) { $spans.Add([pscustomobject]@{ Start = [int]$m.Index; End = [int]($m.Index + $m.Length) }) | Out-Null }
-    }
-
     # V91.60(決定事項#7): 手動マスク【…非開示】は廃止した。数値は自動でマスクされる
     # ため手で伏せる必要がなく、二重の仕組みを残すと保護範囲の判断が分かれる。
     # 【】は強調・見出しの括弧として扱い、中の数値は通常どおりマスクする。
-    # 自分が入れた[[N1]]だけは保護する。二重マスクを避けるため。
-    foreach ($m in [regex]::Matches([string]$Text, '\[\[N\d+\]\]')) {
-        if ($m.Length -gt 0) { $spans.Add([pscustomobject]@{ Start = [int]$m.Index; End = [int]($m.Index + $m.Length) }) | Out-Null }
-    }
-    # 用語集に一致した範囲。数字を含む語(FY26/3 1Q、AAT 営業利益(50%)、
-    # MTMUS製(CX-50) 等)を壊さないため、マスク前のテキストから求める。
-    # 件数制限は掛けない。制限すると上限を超えた用語が保護されない。
-    if (-not [string]::IsNullOrWhiteSpace($Root) -and (Get-Command Get-YakuRelevantGlossaryMatches -ErrorAction SilentlyContinue)) {
-        # prompt_glossary.csv は廃止したので glossary.csv だけを見る。
-        foreach ($path in @((Get-YakuGlossaryPath -Root $Root))) {
-            if ([string]::IsNullOrWhiteSpace($path)) { continue }
-            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
-            try {
-                $matches = @(Get-YakuRelevantGlossaryMatches -Root $Root -InputText $Text -Direction $Direction -Limit ([int]::MaxValue) -Path $path)
-            } catch { $matches = @() }
-            foreach ($g in $matches) {
-                $len = [int]$g.MatchLength
-                if ($len -le 0) { continue }
-                foreach ($pos in @($g.Positions)) { $spans.Add([pscustomobject]@{ Start = [int]$pos; End = [int]$pos + $len }) | Out-Null }
-            }
+    # 内部で保護済みと明示された[[N1]]だけは保護する。生入力の予約記法は
+    # 迂回に使えないよう、その中の数字も通常どおりマスクする。
+    if ($AllowExistingTokens) {
+        foreach ($m in [regex]::Matches([string]$Text, '\[\[N\d+\]\]')) {
+            if ($m.Length -gt 0) { $spans.Add([pscustomobject]@{ Start = [int]$m.Index; End = [int]($m.Index + $m.Length) }) | Out-Null }
         }
     }
+    # 用語集一致も例外にしない。例えば CX-50 は CX-[[N1]] とし、数字以外は
+    # 保ったまま復元する。用語の完全一致より外部送信境界を優先する。
     return @($spans.ToArray())
 }
 
@@ -768,7 +775,8 @@ function New-YakuNumericMaskMap {
         [AllowNull()][string]$Text,
         [AllowNull()][string]$Root,
         [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
-        [string]$Location = 'unknown'
+        [string]$Location = 'unknown',
+        [switch]$AllowExistingTokens
     )
     $source = [string]$Text
     $map = @{}
@@ -776,7 +784,7 @@ function New-YakuNumericMaskMap {
         return [pscustomobject]@{ Text = $source; Map = $map; MaskedCount = 0; KeptCount = 0 }
     }
 
-    $protected = @(Get-YakuNumericMaskProtectedSpans -Text $source -Root $Root -Direction $Direction)
+    $protected = @(Get-YakuNumericMaskProtectedSpans -Text $source -Root $Root -Direction $Direction -AllowExistingTokens:$AllowExistingTokens)
     $normalized = ConvertTo-YakuMaskNormalizedText -Text $source
 
     $targets = New-Object System.Collections.Generic.List[object]
@@ -899,8 +907,21 @@ function Test-YakuNumericMaskIntegrity {
     $targetSequence=@(Get-YakuNumericMaskTokens -Text $Translated)
     $outOfOrder=$false
     if($sourceSequence.Count -eq $targetSequence.Count -and $sourceSequence.Count -gt 1){
-        for($i=0;$i -lt $sourceSequence.Count;$i++){
-            if([string]$sourceSequence[$i] -ne [string]$targetSequence[$i]){$outOfOrder=$true;break}
+        # 英語では「2027年度第1四半期」が "FY2027 ... in Q1" のように
+        # 文頭と文末へ分かれる。原文で年度・四半期に直接結び付いたtokenだけを
+        # 順序比較から外し、売上高・利益など残りの数値順序は厳密に維持する。
+        $fiscalTokens=@{}
+        foreach($m in [regex]::Matches([string]$MaskedSource,'(?<year>\[\[N\d+\]\])\s*年度\s*第\s*(?<quarter>\[\[N\d+\]\])\s*四半期')){
+            $fiscalTokens[[string]$m.Groups['year'].Value]=$true
+            $fiscalTokens[[string]$m.Groups['quarter'].Value]=$true
+        }
+        $sourceComparable=@($sourceSequence | Where-Object { -not $fiscalTokens.ContainsKey([string]$_) })
+        $targetComparable=@($targetSequence | Where-Object { -not $fiscalTokens.ContainsKey([string]$_) })
+        if($sourceComparable.Count -ne $targetComparable.Count){$outOfOrder=$true}
+        else{
+            for($i=0;$i -lt $sourceComparable.Count;$i++){
+                if([string]$sourceComparable[$i] -ne [string]$targetComparable[$i]){$outOfOrder=$true;break}
+            }
         }
     }
     $ok = ($missing.Count -eq 0 -and $duplicated.Count -eq 0 -and $unexpected.Count -eq 0 -and -not $outOfOrder)
@@ -1499,6 +1520,7 @@ function Invoke-YakuSingleTranslationBatch {
         [AllowNull()]$Warnings,
         # V91.61 段階3: ジョブごとに1回だけ引いた文例。バッチ間で共通。
         [AllowNull()][string]$CorpusSection,
+        [ValidateSet('default','none')][string]$CachePolicy = 'default',
         [ValidateSet('full','brief')][string]$Mode = 'full'
     )
     $requestId = ''
@@ -1539,8 +1561,12 @@ function Invoke-YakuSingleTranslationBatch {
     $cacheSw = [System.Diagnostics.Stopwatch]::StartNew()
     # マスク状態は Get-YakuTranslationContractFingerprint が持つ(§7)。
     # ここは版だけ上げ、マスクなし時代のキーと衝突しないようにする。
-    $cacheKey = Get-YakuTranslationCacheKey -Kind 'text' -Direction $Direction -Text $sourceText -Style ('plain-v9160|' + $styleReferenceHash + '|corpus-v9161:' + $corpusHash + '|mode-v9161:' + [string]$Mode) -Root $Root -Settings $Settings
-    $cachedRaw = Get-YakuTranslationCacheValue -Key $cacheKey -Settings $Settings
+    $cacheKey = ''
+    $cachedRaw = $null
+    if ($CachePolicy -ne 'none') {
+        $cacheKey = Get-YakuTranslationCacheKey -Kind 'text' -Direction $Direction -Text $sourceText -Style ('plain-v9160|' + $styleReferenceHash + '|corpus-v9161:' + $corpusHash + '|mode-v9161:' + [string]$Mode) -Root $Root -Settings $Settings
+        $cachedRaw = Get-YakuTranslationCacheValue -Key $cacheKey -Settings $Settings
+    }
     $cacheSw.Stop()
     Write-YakuLog "Translation preparation timings. glossary-load elapsedMs=$($glossarySw.ElapsedMilliseconds) prompt-build elapsedMs=$($promptSw.ElapsedMilliseconds) cache-lookup elapsedMs=$($cacheSw.ElapsedMilliseconds)" 'INFO'
     if ($null -ne $cachedRaw -and -not [string]::IsNullOrWhiteSpace([string]$cachedRaw)) {
@@ -1572,7 +1598,7 @@ function Invoke-YakuSingleTranslationBatch {
             $optionsCached = @(Restore-YakuMaskedTranslationOptions -Options $optionsCached -MaskedSource $sourceText -Map $maskMap -Warnings $Warnings -Location 'text-cache' -Direction $Direction)
             return [pscustomobject]@{ Direction=$Direction; Options=$optionsCached; Raw=[string]$cachedEnvelope.raw; Prompt=$built.Prompt; CacheHit=$true; RequestId=$cachedRequestId; MaskedCount=[int]$maskResult.MaskedCount; KeptCount=[int]$maskResult.KeptCount }
         } catch {
-            try { (Get-YakuTranslationCacheStore).Remove($cacheKey) } catch {}
+            if ($CachePolicy -ne 'none') { try { (Get-YakuTranslationCacheStore).Remove($cacheKey) } catch {} }
         }
     }
     $maxAttempts = 2
@@ -1694,7 +1720,7 @@ function Invoke-YakuSingleTranslationBatch {
         }
     }
     if ($lastError) { throw $lastError }
-    if (-not $structureMismatchAccepted) {
+    if (-not $structureMismatchAccepted -and $CachePolicy -ne 'none') {
         $cacheEnvelope = [ordered]@{ request_id=$requestId; raw=$raw } | ConvertTo-Json -Depth 4 -Compress
         Set-YakuTranslationCacheValue -Key $cacheKey -Value $cacheEnvelope -Settings $Settings
     }
@@ -1766,7 +1792,7 @@ function Invoke-YakuTextRevision {
     $maskMap = $maskResult.Map
 
     # 現訳と自由入力の修正指示も最終promptの一部なので、原文と同じmapへ統合する。
-    $protectedCurrentText = Protect-YakuPromptField -Text $CurrentText -Root $Root -Direction $Direction -NumericMap $maskMap -Location 'text-revise-current'
+    $protectedCurrentText = Protect-YakuPromptField -Text $CurrentText -Root $Root -Direction $Direction -NumericMap $maskMap -Location 'text-revise-current' -AllowExistingTokens
     $maskedInstruction = Protect-YakuPromptField -Text $Instruction -Root $Root -Direction $Direction -NumericMap $maskMap -Location 'text-revise-instruction'
     $protectedFields = @(
         [pscustomobject]@{ Name='source'; OriginalText=$InputText; ProtectedText=$sourceText; NumericMaskMaps=@($maskMap) },
@@ -1862,7 +1888,7 @@ function Invoke-YakuTextShorten {
         }
     }
 
-    $protectedCurrentText = Protect-YakuPromptField -Text $MaskedCurrentText -Root $Root -Direction 'to_en' -NumericMap $maskMap -Location 'text-shorten-current'
+    $protectedCurrentText = Protect-YakuPromptField -Text $MaskedCurrentText -Root $Root -Direction 'to_en' -NumericMap $maskMap -Location 'text-shorten-current' -AllowExistingTokens
     $protectedFields = @(
         [pscustomobject]@{ Name='source'; OriginalText=$InputText; ProtectedText=$sourceText; NumericMaskMaps=@($maskMap) },
         [pscustomobject]@{ Name='current'; OriginalText=$MaskedCurrentText; ProtectedText=$protectedCurrentText; NumericMaskMaps=@($maskMap) }
@@ -1963,10 +1989,11 @@ function Invoke-YakuTextTranslationRequests {
         [switch]$SkipFreshChatWait,
         [AllowNull()]$ProgressState,
         [AllowNull()]$Warnings,
-        [AllowNull()][string]$CorpusSection
+        [AllowNull()][string]$CorpusSection,
+        [ValidateSet('default','none')][string]$CachePolicy = 'default'
     )
     if ($Direction -ne 'to_en') {
-        return (Invoke-YakuSingleTranslationBatch -Root $Root -InputText $InputText -Settings $Settings -Direction $Direction -StyleReference $StyleReference -SkipFreshChatWait:$SkipFreshChatWait -ProgressState $ProgressState -Warnings $Warnings -CorpusSection $CorpusSection)
+        return (Invoke-YakuSingleTranslationBatch -Root $Root -InputText $InputText -Settings $Settings -Direction $Direction -StyleReference $StyleReference -SkipFreshChatWait:$SkipFreshChatWait -ProgressState $ProgressState -Warnings $Warnings -CorpusSection $CorpusSection -CachePolicy $CachePolicy)
     }
 
     # 1本だけ訳す。短くするのは押されたときだけ走る（Invoke-YakuTextShorten）。
@@ -1983,7 +2010,7 @@ function Invoke-YakuTextTranslationRequests {
     $results = @(
         Invoke-YakuSingleTranslationBatch -Root $Root -InputText $InputText -Settings $Settings -Direction $Direction `
             -StyleReference $StyleReference -SkipFreshChatWait:$SkipFreshChatWait -ProgressState $ProgressState `
-            -Warnings $Warnings -CorpusSection $CorpusSection -Mode 'full'
+            -Warnings $Warnings -CorpusSection $CorpusSection -CachePolicy $CachePolicy -Mode 'full'
     )
     $sw.Stop()
 
@@ -2038,7 +2065,10 @@ function Invoke-YakuTextTranslation {
         [Parameter(Mandatory=$true)][string]$InputText,
         [Parameter(Mandatory=$true)]$Settings,
         [AllowNull()]$ProgressState,
-        [AllowNull()][string]$DirectionOverride = ''
+        [AllowNull()][string]$DirectionOverride = '',
+        # Quick はその場限りの翻訳であり、過去例/TM/コーパス候補を返さない。
+        [ValidateSet('display','none')][string]$ReferencePolicy = 'display',
+        [ValidateSet('default','none')][string]$CachePolicy = 'default'
     )
     if ([string]::IsNullOrWhiteSpace($InputText)) {
         return [pscustomobject]@{ Error='翻訳するテキストを入力してください。' }
@@ -2093,7 +2123,8 @@ function Invoke-YakuTextTranslation {
     #
     # 仕組みは消していない。腰を据えて訳す CAT 側へ移した。
     # 参照する価値があるのは、資料をまとめて仕上げるときである。
-    $corpusReference = [pscustomobject]@{ Section = ''; Terms = @(); Examples = @(); Count = 0; Reason = 'text-mode-disabled'; Used = $false }
+    # Experience quick/none: skip CorpusSection, Find-YakuCorpusPairsByTerms, and TM reuse.
+    $corpusReference = [pscustomobject]@{ Section = ''; Terms = @(); Examples = @(); Count = 0; Reason = $(if ($ReferencePolicy -eq 'none') { 'quick-no-reuse' } else { 'text-mode-disabled' }); Used = $false }
     $corpusSw.Stop()
     $corpusSection = [string]$corpusReference.Section
     # 検索語の生成で新規チャットを1度使っているなら、最初のバッチは短い待ちでよい。
@@ -2138,7 +2169,7 @@ function Invoke-YakuTextTranslation {
             $detail = "入力 $($batch.CharCount)字"
             Set-YakuTranslationProgress -ProgressState $ProgressState -Mode 'working' -Label ($batchPrefix + '準備中') -Progress $startPct -Detail $detail -Phase 'preparing'
             $batchStyleReference = [string]$styleReference
-            $br = Invoke-YakuTextTranslationRequests -Root $Root -InputText ([string]$batch.Text) -Settings $Settings -Direction $direction -StyleReference $batchStyleReference -SkipFreshChatWait:($i -gt 0 -or $corpusQueryUsed) -ProgressState $ProgressState -Warnings $warnings -CorpusSection $corpusSection
+            $br = Invoke-YakuTextTranslationRequests -Root $Root -InputText ([string]$batch.Text) -Settings $Settings -Direction $direction -StyleReference $batchStyleReference -SkipFreshChatWait:($i -gt 0 -or $corpusQueryUsed) -ProgressState $ProgressState -Warnings $warnings -CorpusSection $corpusSection -CachePolicy $CachePolicy
             $batchResults += [pscustomobject]@{
                 Index = $batch.Index
                 Total = $batch.Total
@@ -2196,7 +2227,7 @@ function Invoke-YakuTextTranslation {
         # 引けなくても翻訳は成立する。CorpusPairs.ps1 を読み込んでいない経路や
         # コーパスを配っていない環境でも止めない。
         $pastPairs = @()
-        if ($direction -eq 'to_en') {
+        if ($ReferencePolicy -eq 'display' -and $direction -eq 'to_en') {
             $pastSw = [System.Diagnostics.Stopwatch]::StartNew()
             try {
                 if (Get-Command Find-YakuCorpusPairsByTerms -ErrorAction SilentlyContinue) {

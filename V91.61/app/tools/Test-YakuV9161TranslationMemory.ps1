@@ -36,23 +36,47 @@ $null = New-Item -ItemType Directory -Path $tmp -Force
 $tm = Join-Path $tmp 'tm-to_en.jsonl'
 $oldDataDir = $env:YAKULINGO_DATA_DIR
 $env:YAKULINGO_DATA_DIR = Join-Path $tmp 'data'
+function Add-TestTranslationMemoryEntry {
+    param(
+        [AllowNull()][string]$Source,
+        [AllowNull()][string]$Target,
+        [string]$Path,
+        [int]$ReviewRevision = 7,
+        [string]$Location = 'Sheet1, A1',
+        [int]$Page = 3
+    )
+    $segmentId = (Get-YakuTranslationMemoryHash -Text ([string]$Source)).Substring(0, 32)
+    return (Add-YakuTranslationMemoryEntry -Source $Source -Target $Target -Path $Path `
+        -OriginProjectId '11111111111111111111111111111111' -OriginFileName 'FY2025-results.xlsx' `
+        -OriginSegmentId $segmentId -OriginLocation $Location -OriginPage $Page -ReviewRevision $ReviewRevision)
+}
 try {
     Write-Host '貯める' -ForegroundColor Cyan
-    $r = Add-YakuTranslationMemoryEntry -Source '当社は電動化を進めます。' -Target 'We will advance electrification.' -Path $tm
+    $r = Add-TestTranslationMemoryEntry -Source '当社は電動化を進めます。' -Target 'We will advance electrification.' -Path $tm
     Chk ([bool]$r.Added -and $r.Reason -eq 'new') '確定した訳を貯める'
-    $r = Add-YakuTranslationMemoryEntry -Source '当社は電動化を進めます。' -Target 'We will advance electrification.' -Path $tm
+    $r = Add-TestTranslationMemoryEntry -Source '当社は電動化を進めます。' -Target 'We will advance electrification.' -Path $tm
     Chk (-not [bool]$r.Added -and $r.Reason -eq 'same') '同じ内容は二度貯めない'
-    $r = Add-YakuTranslationMemoryEntry -Source '' -Target 'x' -Path $tm
+    $r = Add-TestTranslationMemoryEntry -Source '' -Target 'x' -Path $tm
     Chk (-not [bool]$r.Added -and $r.Reason -eq 'empty') '原文が空なら貯めない'
-    $r = Add-YakuTranslationMemoryEntry -Source 'x' -Target '  ' -Path $tm
+    $r = Add-TestTranslationMemoryEntry -Source 'x' -Target '  ' -Path $tm
     Chk (-not [bool]$r.Added) '訳文が空白だけなら貯めない'
+    $r = Add-YakuTranslationMemoryEntry -Source '出典の無い文です。' -Target 'No provenance.' -Path $tm
+    Chk (-not [bool]$r.Added -and $r.Reason -eq 'provenance-required') '出典の無い新規TM行を作らない'
+
+    $stored = (Get-Content -LiteralPath $tm -Encoding UTF8 | Select-Object -Last 1) | ConvertFrom-Json
+    Chk ([int]$stored.schema_version -eq 2 -and [string]$stored.origin_project_id -eq '11111111111111111111111111111111') 'origin project idを永続化する'
+    Chk ([string]$stored.origin_file_name -eq 'FY2025-results.xlsx' -and [string]$stored.origin_location -eq 'Sheet1, A1' -and [int]$stored.origin_page -eq 3) '資料名・箇所・ページを永続化する'
+    Chk ([string]$stored.origin_segment_id -match '^[a-f0-9]{32}$' -and [int]$stored.review_revision -eq 7) 'stable segment id・確認revisionを永続化する'
+    Chk ([string]$stored.source_hash -eq (Get-YakuTranslationMemoryHash -Text ([string]$stored.source)) -and [string]$stored.target_hash -eq (Get-YakuTranslationMemoryHash -Text ([string]$stored.target))) '原文・訳文ハッシュを永続化する'
 
     Write-Host '訳し直し' -ForegroundColor Cyan
-    $r = Add-YakuTranslationMemoryEntry -Source '当社は電動化を進めます。' -Target 'We will promote electrification.' -Path $tm
+    $r = Add-TestTranslationMemoryEntry -Source '当社は電動化を進めます。' -Target 'We will promote electrification.' -Path $tm -ReviewRevision 8
     Chk ([bool]$r.Added -and $r.Reason -eq 'updated') '訳し直しは上書きとして貯まる'
     $h = @(Find-YakuTranslationMemory -Text '当社は電動化を進めます。' -Path $tm)
     Chk ($h.Count -eq 1) '同じ原文の候補は1件にまとまる'
     Chk ($h[0].Target -eq 'We will promote electrification.') 'あとから確定した訳が出る'
+    Chk ($h[0].SourceName -eq 'FY2025-results.xlsx' -and $h[0].Location -eq 'Sheet1, A1' -and [int]$h[0].Page -eq 3) '候補へ資料名・箇所・ページを返す'
+    Chk ([int]$h[0].ReviewRevision -eq 8 -and [string]$h[0].ReferenceId -match '^[a-f0-9]{64}$') '候補を確認revisionと安定reference idへ束縛する'
 
     Write-Host '引く' -ForegroundColor Cyan
     Chk ([bool]$h[0].Exact -and [Math]::Abs([double]$h[0].Ratio - 1.0) -lt 0.001) '完全一致は一致率1.0'
@@ -67,7 +91,7 @@ try {
     Write-Host '完全一致を先に出す' -ForegroundColor Cyan
     # 3文字以下は最小長に届かず引かない（語は用語集の役目）。
     # ここは文として成り立つ長さで試す。
-    $null = Add-YakuTranslationMemoryEntry -Source '電動化を進めます。' -Target 'We advance electrification.' -Path $tm
+    $null = Add-TestTranslationMemoryEntry -Source '電動化を進めます。' -Target 'We advance electrification.' -Path $tm -Location 'Sheet1, A2'
     $h = @(Find-YakuTranslationMemory -Text '電動化を進めます。' -Path $tm)
     Chk ($h.Count -ge 1 -and [bool]$h[0].Exact -and $h[0].Target -eq 'We advance electrification.') '完全一致が先頭に来る'
     Chk (@(Find-YakuTranslationMemory -Text '電動化' -Path $tm).Count -eq 0) '語は翻訳メモリでは引かない（用語集の役目）'
@@ -76,10 +100,28 @@ try {
     [IO.File]::AppendAllLines($tm, [string[]]@('{壊れた行', ''), [Text.UTF8Encoding]::new($false))
     Chk ((Read-YakuTranslationMemory -Path $tm).Count -eq 2) '壊れた行を捨てて残りを読む'
 
+    Write-Host '出典不明を閉じる' -ForegroundColor Cyan
+    $legacy = Join-Path $tmp 'legacy.jsonl'
+    [IO.File]::WriteAllLines($legacy, [string[]]@('{"key":"旧形式の文です。","source":"旧形式の文です。","target":"Legacy entry","direction":"to_en"}'), [Text.UTF8Encoding]::new($false))
+    Chk ((Read-YakuTranslationMemory -Path $legacy).Count -eq 1) '旧形式は移行調査のため読み取れる'
+    Chk (@(Find-YakuTranslationMemory -Text '旧形式の文です。' -Path $legacy).Count -eq 0) '出典不明の旧形式は候補に表示しない'
+    $tampered = Join-Path $tmp 'tampered.jsonl'
+    $tamperedRecord = (Get-Content -LiteralPath $tm -Encoding UTF8 | Select-Object -First 1) | ConvertFrom-Json
+    $tamperedRecord.target = 'Tampered target'
+    [IO.File]::WriteAllLines($tampered, [string[]]@(($tamperedRecord | ConvertTo-Json -Compress -Depth 4)), [Text.UTF8Encoding]::new($false))
+    Chk (@(Find-YakuTranslationMemory -Text ([string]$tamperedRecord.source) -Path $tampered).Count -eq 0) '内容とハッシュが違うTM行は候補に表示しない'
+    $tamperedOrigin = Join-Path $tmp 'tampered-origin.jsonl'
+    $tamperedOriginRecord = (Get-Content -LiteralPath $tm -Encoding UTF8 | Select-Object -First 1) | ConvertFrom-Json
+    $tamperedOriginRecord.origin_location = '偽の出典箇所'
+    [IO.File]::WriteAllLines($tamperedOrigin, [string[]]@(($tamperedOriginRecord | ConvertTo-Json -Compress -Depth 4)), [Text.UTF8Encoding]::new($false))
+    Chk (@(Find-YakuTranslationMemory -Text ([string]$tamperedOriginRecord.source) -Path $tamperedOrigin).Count -eq 0) '出典表示だけを書き換えたTM行も候補に表示しない'
+
     Write-Host '確定と結びついているか' -ForegroundColor Cyan
     $cat = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'CatProject.ps1') -Raw -Encoding UTF8
     $server = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'Server.ps1') -Raw -Encoding UTF8
     Chk ($server -match 'Add-YakuTranslationMemoryEntry' -and $server -match 'Save-YakuCatProject') 'プロジェクト保存後に確認訳を翻訳メモリへ貯める'
+    Chk ($server -match 'OriginProjectId' -and $server -match 'OriginFileName' -and $server -match 'OriginSegmentId' -and $server -match 'OriginLocation' -and $server -match 'ReviewRevision') '確定時に出典契約をTMへ渡す'
+    Chk ($server -match 'location\s*=\s*\[string\]\$_\.Location') '候補APIがlocationを返す'
     Chk ($cat -match 'Find-YakuTranslationMemory') '候補ペインが翻訳メモリを引く'
     Chk ($cat -match "Kind\s*=\s*'memory'") '翻訳メモリの候補に印を付ける'
     # 自分が確定した訳を先頭に置く。公表訳より自分の文体に合うため。
@@ -123,6 +165,22 @@ try {
     Chk (Save-YakuCatProject -Project $proj) 'ディスクへ保存できる'
     $file = Join-Path (Join-Path (Get-YakuCatProjectStoreDir) ([string]$proj.Id)) 'project.json'
     Chk (Test-Path -LiteralPath $file -PathType Leaf) '保存先にファイルができる'
+
+    Write-Host 'CAT候補の出典' -ForegroundColor Cyan
+    $reviewedSegment = @($proj.Segments)[0]
+    $tmSaved = Add-YakuTranslationMemoryEntry -Source ([string]$reviewedSegment.Text) -Target ([string]$reviewedSegment.Translation) `
+        -Direction ([string]$proj.Direction) -Origin 'cat-reviewed-qc-v1' `
+        -OriginProjectId ([string]$proj.Id) -OriginFileName 'FY2025-results.docx' `
+        -OriginSegmentId ([string]$reviewedSegment.SegmentId) -OriginLocation '本文 段落 12' `
+        -OriginPage 4 -ReviewRevision ([int]$proj.Revision)
+    Chk ([bool]$tmSaved.Added) '保存済みCAT revisionから出典付きTMを作る'
+    $candidateProject = New-YakuCatTextProject -Root $root -Settings $null -Direction 'to_en' -Text ([string]$reviewedSegment.Text)
+    $memoryCandidates = @(Get-YakuCatSegmentCandidates -Root $root -Project $candidateProject -Index 0 -PairsDir (Join-Path $tmp 'no-pairs') | Where-Object { [string]$_.Kind -eq 'memory' })
+    Chk ($memoryCandidates.Count -eq 1) '出典付きTMだけがCAT候補へ出る'
+    Chk ([string]$memoryCandidates[0].SourceName -eq 'FY2025-results.docx' -and [string]$memoryCandidates[0].Location -eq '本文 段落 12' -and [int]$memoryCandidates[0].Page -eq 4) 'CAT候補がどの資料のどの箇所かを返す'
+    $null = Set-YakuCatSegmentTranslation -Project $candidateProject -Index 0 -Text ([string]$memoryCandidates[0].Target)
+    $null = Set-YakuCatSegmentReferenceUsage -Project $candidateProject -Index 0 -Candidate $memoryCandidates[0]
+    Chk ([string]@($candidateProject.Segments)[0].ReferenceUsage.location -eq '本文 段落 12') '明示挿入の記録にも出典箇所を残す'
 
     # メモリから消したうえで復元する。再起動を模している。
     Remove-YakuCatProject -Id ([string]$proj.Id)

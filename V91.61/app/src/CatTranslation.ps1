@@ -50,14 +50,12 @@ function Assert-YakuCatPromptHasNoUnmaskedValues {
         [Parameter(Mandatory=$true)][object[]]$Items
     )
     foreach ($item in @($Items)) {
-        $numericMap = $null
-        try { $numericMap = $item.NumericMaskMap } catch {}
-        foreach ($token in @($(if ($null -ne $numericMap) { $numericMap.Keys }))) {
-            $value = [string]$numericMap[$token]
-            if ([string]::IsNullOrWhiteSpace($value)) { continue }
-            $pattern = '(?<![0-9A-Za-z])' + [regex]::Escape($value) + '(?![0-9A-Za-z])'
-            if ([regex]::IsMatch($Prompt, $pattern)) { throw 'CAT_PROMPT_CONTAINS_UNMASKED_NUMERIC_VALUE' }
-        }
+        # final prompt全体には固定の手順番号やtoken番号がある。元値との
+        # substring比較では値8と[[N8]]が衝突するため、可変fieldをcanonical
+        # scannerで再走査し、既存token以外の数字が残っていないことを確認する。
+        $scan = New-YakuNumericMaskMap -Text ([string]$item.Text) -Direction 'to_en' -Location 'cat-final-prompt-field' -AllowExistingTokens
+        if ([int]$scan.MaskedCount -gt 0) { throw 'CAT_PROMPT_CONTAINS_UNMASKED_NUMERIC_VALUE' }
+        if ($Prompt.IndexOf([string]$item.Text, [StringComparison]::Ordinal) -lt 0) { throw 'CAT_PROMPT_PROTECTED_FIELD_MISSING' }
     }
 }
 

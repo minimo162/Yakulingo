@@ -1,0 +1,78 @@
+﻿<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="yaku-session" content="__YAKU_SESSION_TOKEN__">
+  <title>はじめに - YakuLingo</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/tutorial.css">
+  <script src="/assets/common.js" defer></script>
+  <script src="/assets/tutorial.js" defer></script>
+</head>
+<body class="app-tutorial">
+  <main class="tutorial-shell" aria-labelledby="tutorial-title">
+    <header class="tutorial-header">
+      <a class="brand tutorial-brand" href="/">YakuLingo</a>
+      <div class="tutorial-header-actions">
+        <button id="text-size-toggle" type="button" class="secondary-button compact" aria-pressed="false">文字を大きく</button>
+        <button id="tutorial-skip" type="button" class="tutorial-skip">説明を飛ばして設定へ</button>
+      </div>
+    </header>
+
+    <div class="tutorial-progress" aria-label="全4画面">
+      <p id="tutorial-progress-text" aria-live="polite">1 / 4</p>
+      <div class="tutorial-progress-track" aria-hidden="true"><span id="tutorial-progress-bar"></span></div>
+    </div>
+
+    <section class="tutorial-step" data-step="0" aria-labelledby="tutorial-title">
+      <p class="tutorial-kicker">使い分け</p>
+      <h1 id="tutorial-title" tabindex="-1">YakuLingoでできること</h1>
+      <p class="tutorial-lead">数文なら「ちょっと翻訳」。WordやExcelなどの資料は「資料翻訳」で、1文ずつ確認しながら進めます。</p>
+      <div class="tutorial-example-grid" aria-label="翻訳方法の使い分け">
+        <div class="tutorial-example"><strong>ちょっと翻訳</strong><span>メール・Web・数文</span></div>
+        <div class="tutorial-example"><strong>資料翻訳</strong><span>Word・Excel・長い文章</span></div>
+      </div>
+    </section>
+
+    <section class="tutorial-step" data-step="1" aria-labelledby="tutorial-hotkey-title" hidden>
+      <p class="tutorial-kicker">すぐ開く</p>
+      <h1 id="tutorial-hotkey-title" tabindex="-1">ちょっと翻訳をすぐ開く</h1>
+      <p class="tutorial-lead"><kbd>Ctrl</kbd>＋<kbd>Alt</kbd>＋<kbd>J</kbd>で、どの画面からでも入力欄を開けます。文章は自動では読み取りません。</p>
+      <p class="tutorial-note">文章を貼り付けて「翻訳」を押すまで、Copilotには送信されません。</p>
+    </section>
+
+    <section class="tutorial-step" data-step="2" aria-labelledby="tutorial-safety-title" hidden>
+      <p class="tutorial-kicker">送信前の確認</p>
+      <h1 id="tutorial-safety-title" tabindex="-1">送信される内容</h1>
+      <p class="tutorial-lead">金額などの数値は、Copilotへ送る前に自動で伏せます。社名・人名・文章はそのまま送信されます。</p>
+      <div class="tutorial-safety-box"><strong>自動では送信しません</strong><span>貼り付けて「翻訳」を押した文章だけを送信します。</span></div>
+    </section>
+
+    <section class="tutorial-step" data-step="3" aria-labelledby="tutorial-settings-title" hidden>
+      <p class="tutorial-kicker">起動の設定</p>
+      <h1 id="tutorial-settings-title" tabindex="-1">次回からすぐ使う</h1>
+      <p class="tutorial-lead">内容を確認してから「この設定で始める」を押してください。それまではパソコンの設定を変更しません。</p>
+
+      <form id="tutorial-preferences" class="tutorial-preferences">
+        <label class="tutorial-check-row" for="startup-enabled">
+          <input id="startup-enabled" name="startup_enabled" type="checkbox" checked>
+          <span><strong>WindowsにサインインしたらYakuLingoを準備する（おすすめ）</strong><small>画面を閉じても通知領域で準備を続けます。文章の監視や自動送信はしません。</small></span>
+        </label>
+        <label class="tutorial-check-row" for="desktop-shortcut">
+          <input id="desktop-shortcut" name="desktop_shortcut" type="checkbox" checked>
+          <span><strong>デスクトップにYakuLingoのショートカットを作る</strong><small>スタートメニューからは、いつでも「YakuLingo」で検索できます。</small></span>
+        </label>
+        <div id="tutorial-setting-response" class="tutorial-response" role="status" aria-live="polite" tabindex="-1" hidden></div>
+        <button id="tutorial-confirm" type="submit" class="tutorial-confirm">この設定で始める</button>
+      </form>
+    </section>
+
+    <nav class="tutorial-navigation" aria-label="使い方の画面移動">
+      <button id="tutorial-back" type="button" class="secondary-button" hidden>戻る</button>
+      <button id="tutorial-next" type="button">次へ</button>
+      <a id="tutorial-home" class="button" href="/" hidden>開始画面へ</a>
+    </nav>
+  </main>
+</body>
+</html>

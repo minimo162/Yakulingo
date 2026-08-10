@@ -355,6 +355,11 @@ function Find-YakuCorpusPairsForSegment {
     if (-not (Test-Path -LiteralPath $Dir -PathType Container)) { return @() }
     $norm = { param($s) return (([string]$s) -replace '\s+', '') }
     $tn = & $norm $t
+    $queryTerms = if ($SourceLanguage -eq 'ja') {
+        @(Get-YakuJapaneseTerms -Text $t -Limit 12)
+    } else {
+        @([regex]::Matches($t.ToLowerInvariant(), '[a-z][a-z0-9-]{3,}') | ForEach-Object { [string]$_.Value } | Select-Object -Unique)
+    }
     $dbs = @($Databases)
     if ($dbs.Count -eq 0) {
         $dbs = @(Get-ChildItem -LiteralPath $Dir -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
@@ -373,10 +378,15 @@ function Find-YakuCorpusPairsForSegment {
             elseif ($tn.IndexOf($sn, [StringComparison]::Ordinal) -ge 0) { $ratio = [double]$sn.Length / $tn.Length }
             else { continue }
             if ($ratio -lt 0.3) { continue }
+            $matchedTerms = @($queryTerms | Where-Object { $src.IndexOf([string]$_, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
             [void]$hits.Add([pscustomobject]@{
                     Database = [string]$p.database
                     Source   = $src
                     Target   = $tgt
+                    ReferenceId = $(if (-not [string]::IsNullOrWhiteSpace([string]$p.key)) { [string]$p.key } else { Get-YakuCorpusPairKey -Ja ([string]$p.ja) -En ([string]$p.en) })
+                    SourceName = [string]$p.source
+                    Page = $(try { [int]$p.page } catch { 0 })
+                    MatchedTerms = @($matchedTerms)
                     Verified = [bool]$p.verified
                     Exact    = $exact
                     Ratio    = $ratio

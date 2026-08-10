@@ -1,0 +1,143 @@
+﻿<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="yaku-session" content="__YAKU_SESSION_TOKEN__">
+  <meta name="yaku-file-max-bytes" content="__YAKU_MAX_UPLOAD_BYTES__">
+  <title>資料翻訳 - YakuLingo</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/cat-workspace.css">
+  <script src="/assets/common.js" defer></script>
+  <script src="/assets/cat.js" defer></script>
+</head>
+<body class="app-cat">
+  <main class="shell">
+    <header class="hero">
+      <div class="brand-block"><a class="brand home-link" href="/">YakuLingo</a><span class="version-label">資料翻訳</span></div>
+      <div class="header-actions">
+        <button id="text-size-toggle" type="button" class="secondary-button compact" aria-pressed="false">文字を大きく</button>
+        <div id="copilot-status" class="status" aria-live="polite"><span class="status-dot warn"></span><span>準備中</span></div>
+      </div>
+    </header>
+
+    <section class="tab-panel" aria-labelledby="cat-page-title">
+      <div class="workspace-heading"><div><h1 id="cat-page-title">資料翻訳</h1><p class="muted">Word・Excelや長い文章を、途中保存しながら1文ずつ確認します。</p></div><a class="button secondary-button compact" href="/">最初の画面へ戻る</a></div>
+
+      <section id="cat-current-summary" class="sr-only" hidden aria-live="polite">
+        <h2 id="cat-current-title"></h2><p id="cat-current-progress"></p><span id="cat-current-save">保存済み</span>
+      </section>
+
+      <section id="cat-picker" class="translate-form cat-picker" aria-labelledby="cat-start-title">
+        <h2 id="cat-start-title">新しい資料を始める</h2>
+        <div class="entry-actions cat-entry-actions">
+          <button type="button" data-cat-source-show="file">Word・Excelを取り込む</button>
+          <button type="button" class="secondary-button" data-cat-source-show="text">長い文章を貼り付ける</button>
+        </div>
+        <div id="cat-resume" class="cat-resume" hidden><h3>保存した作業</h3><div id="cat-resume-list"></div></div>
+        <details class="entry-more"><summary>そのほかの始め方</summary><div class="entry-more-actions">
+          <button type="button" class="secondary-button" data-cat-source-show="prior">前回版を参考に更新する</button>
+          <button type="button" class="secondary-button" data-cat-source-show="align">過去の日英資料を翻訳例として取り込む</button>
+        </div></details>
+
+        <div id="cat-source-file" class="cat-start-panel" hidden>
+          <h3>Word・Excelを選ぶ</h3>
+          <label class="file-drop" for="cat-file-input" id="cat-drop" role="button" tabindex="0"><input id="cat-file-input" type="file" accept=".docx,.xlsx,.xlsm" hidden><span>ここにファイルをドロップ、またはクリックして選択</span><span id="cat-file-name" class="muted">.docx / .xlsx / .xlsm</span></label>
+          <details><summary>ファイルを選べない場合</summary><label class="field-label" for="cat-path">ファイルの保存場所<input id="cat-path" type="text" placeholder="例: C:\Documents\資料.docx"></label></details>
+          <button type="button" data-cat-open="file">取り込んで確認を始める</button>
+        </div>
+        <div id="cat-source-text" class="cat-start-panel" hidden>
+          <h3>長い文章を貼り付ける</h3><label for="cat-text" class="sr-only">翻訳したい文章</label><textarea id="cat-text" rows="9" placeholder="翻訳したい文章を貼り付け"></textarea><button type="button" data-cat-open="text">確認を始める</button>
+        </div>
+        <div id="cat-source-prior" class="cat-start-panel" hidden>
+          <p class="muted">前回の英語は過去の翻訳例として表示し、自動では反映しません。ここでは3つの文章を貼り付け、出力は確認済み訳文のコピーです。3つのWordを体裁付きで更新する機能ではありません。</p>
+          <label class="field-label" for="cat-prior-ja">前回の日本語<textarea id="cat-prior-ja" rows="4"></textarea></label>
+          <label class="field-label" for="cat-prior-en">前回の英語<textarea id="cat-prior-en" rows="4"></textarea></label>
+          <label class="field-label" for="cat-current-ja">今回の日本語<textarea id="cat-current-ja" rows="4"></textarea></label>
+          <label class="field-label" for="cat-prior-name">資料名<input id="cat-prior-name" type="text"></label>
+          <button type="button" id="cat-prior-open">貼り付けた文章で始める</button>
+        </div>
+        <div id="cat-source-align" class="cat-start-panel" hidden>
+          <p class="muted">左に日本語版、右に対応する英語版を貼り付けます。取り込んだ訳は「過去の翻訳例」です。</p>
+          <label class="field-label" for="cat-align-source">日本語版<textarea id="cat-align-source" rows="5"></textarea></label>
+          <label class="field-label" for="cat-align-target">英語版<textarea id="cat-align-target" rows="5"></textarea></label>
+          <label class="field-label" for="cat-align-name">資料名<input id="cat-align-name" type="text"></label>
+          <button type="button" id="cat-align-open">過去の翻訳例として取り込む</button>
+        </div>
+        <fieldset id="cat-direction-choice" class="direction-choice" hidden><legend>どちらに訳しますか？</legend><p class="muted">入力内容だけでは自動で決められません。</p><div class="direction-choice-grid"><button type="button" class="secondary-button" data-cat-direction="to_en">英語に訳す</button><button type="button" class="secondary-button" data-cat-direction="to_jp">日本語に訳す</button></div></fieldset>
+        <p class="privacy-note">金額などの数値は、Copilotへ送る前に自動で伏せます。社名・人名・文章はそのまま送信されます。</p>
+      </section>
+
+      <section id="cat-workspace" class="cat-workspace" hidden>
+        <header id="cat-editor-toolbar" class="cat-editor-toolbar">
+          <div class="cat-toolbar-document">
+            <span class="cat-current-kicker">現在の確認作業</span>
+            <strong id="cat-toolbar-title"></strong>
+            <span id="cat-toolbar-direction" class="muted"></span>
+          </div>
+          <div class="cat-toolbar-progress">
+            <div id="cat-progress-row" class="cat-progress-row"><div class="cat-progress" role="progressbar" aria-label="確認の進捗" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="cat-progress-bar" class="cat-progress-bar"></span></div><span id="cat-progress-text"></span></div>
+            <span id="cat-save-status" class="cat-save-status" role="status" aria-live="polite">保存済み</span>
+          </div>
+          <label class="cat-toolbar-search" for="cat-search"><span>検索</span><input id="cat-search" type="search" placeholder="原文・訳文を検索"></label>
+          <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">残りの訳案を作る</button><button id="cat-export" type="button">確認済み訳文をコピー</button><button id="cat-switch-project" type="button" class="secondary-button">別の資料</button></div>
+        </header>
+
+        <div id="cat-status" class="cat-status muted" role="status" aria-live="polite"></div>
+        <div id="cat-job" class="result-target" aria-live="polite"></div>
+        <p id="cat-output-help" class="sr-only"></p><p id="cat-export-blocked" class="cat-export-blocked" role="status"></p>
+
+        <div id="cat-editor-layout" class="cat-editor-layout">
+          <nav id="cat-nav-pane" class="cat-nav-pane" aria-label="資料内の移動">
+            <section aria-labelledby="cat-state-filter-title"><h2 id="cat-state-filter-title">表示する行</h2>
+              <div id="cat-state-filters" class="cat-state-filters">
+                <button type="button" data-cat-filter="actionable" aria-pressed="true">要対応 <span data-cat-count="actionable">0</span></button>
+                <button type="button" data-cat-filter="untranslated" aria-pressed="false">未翻訳 <span data-cat-count="untranslated">0</span></button>
+                <button type="button" data-cat-filter="unconfirmed" aria-pressed="false">未確認 <span data-cat-count="unconfirmed">0</span></button>
+                <button type="button" data-cat-filter="qc" aria-pressed="false">機械チェックで要確認 <span data-cat-count="qc">0</span></button>
+                <button type="button" data-cat-filter="reviewed" aria-pressed="false">確認済み <span data-cat-count="reviewed">0</span></button>
+                <button type="button" data-cat-filter="all" aria-pressed="false">すべて <span data-cat-count="all">0</span></button>
+              </div>
+              <span id="cat-filter-count" class="muted"></span>
+            </section>
+            <section id="cat-change-filter" aria-labelledby="cat-change-filter-title" hidden><h2 id="cat-change-filter-title">前回からの変更</h2>
+              <div class="cat-state-filters">
+                <button type="button" data-cat-change="all" aria-pressed="true">すべて</button>
+                <button type="button" data-cat-change="unchanged" aria-pressed="false">前回と同じ <span data-cat-change-count="unchanged">0</span></button>
+                <button type="button" data-cat-change="changed" aria-pressed="false">変更あり <span data-cat-change-count="changed">0</span></button>
+                <button type="button" data-cat-change="new" aria-pressed="false">今回追加 <span data-cat-change-count="new">0</span></button>
+              </div>
+            </section>
+            <section aria-labelledby="cat-location-title"><h2 id="cat-location-title">資料内の場所</h2><div id="cat-location-list" class="cat-location-list"></div></section>
+            <details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>翻訳例を挿入</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div></dl></details>
+          </nav>
+
+          <section id="cat-editor-pane" class="cat-editor-pane" aria-label="原文と訳文の確認">
+            <div id="cat-complete-state" class="cat-complete-state" hidden><strong>全行を確認済みにしました</strong><span>機械チェックは数値・単位などが対象です。表現の適切さは、出力前にご自身で確認してください。</span></div>
+            <div id="cat-empty-state" class="cat-empty-state" hidden>この条件に当てはまる行はありません。</div>
+            <div id="cat-grid-wrap" class="cat-grid-wrap"><table class="cat-grid"><caption class="sr-only">原文と訳案を1行ずつ確認する一覧</caption><thead><tr><th class="cat-col-no">#</th><th class="cat-col-loc">場所</th><th>原文</th><th>訳文</th></tr></thead><tbody id="cat-grid-body"></tbody></table></div>
+          </section>
+
+          <aside id="cat-inspector-pane" class="cat-inspector-pane" aria-label="選択中の行の情報">
+            <div class="cat-inspector-tabs" role="tablist" aria-label="行の参考情報">
+              <button id="cat-tab-candidates" type="button" role="tab" aria-selected="true" aria-controls="cat-panel-candidates" data-cat-inspector="candidates">翻訳例 <span id="cat-candidate-count">0</span></button>
+              <button id="cat-tab-qc" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-qc" data-cat-inspector="qc">機械チェック <span id="cat-qc-count">0</span></button>
+              <button id="cat-tab-context" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-context" data-cat-inspector="context">文脈</button>
+            </div>
+            <section id="cat-panel-candidates" role="tabpanel" aria-labelledby="cat-tab-candidates"><div id="cat-candidates" class="cat-candidates"><div class="cat-candidates-title">この行の翻訳例</div><div id="cat-candidates-list"><p class="muted">行を選ぶと翻訳例を探します。</p></div></div></section>
+            <section id="cat-panel-qc" role="tabpanel" aria-labelledby="cat-tab-qc" hidden><div id="cat-qc-list"></div><button id="cat-next-qc" type="button" class="secondary-button">次の問題へ</button></section>
+            <section id="cat-panel-context" role="tabpanel" aria-labelledby="cat-tab-context" hidden><div id="cat-context"></div></section>
+          </aside>
+        </div>
+
+        <div id="cat-output-row" class="cat-output-row" hidden><span>確認用DRAFTを作成しました：<strong id="cat-output-name"></strong></span><button id="cat-open-folder" type="button">フォルダを開く</button></div>
+        <div id="cat-draft-warning" class="draft-warning" tabindex="-1" hidden>作成するファイルは確認用DRAFTです。完成版ではなく、社外配布できません。</div>
+        <section id="cat-text-output" class="cat-text-output" hidden><h2>確認済み訳文</h2><p class="muted">コピーできない場合も全文はここに残ります。</p><textarea id="cat-text-output-value" readonly></textarea><div class="cat-text-output-actions"><button id="cat-copy-again" type="button">もう一度コピー</button><button id="cat-select-all" type="button" class="secondary-button">全文を選択</button></div></section>
+        <details id="cat-danger-zone" class="cat-danger-zone"><summary>作業の管理</summary><p class="muted">不要になった作業だけを削除できます。元のファイルは削除しません。</p><button id="cat-delete" type="button" class="danger-button">この作業を削除</button></details>
+      </section>
+    </section>
+  </main>
+  <dialog id="cat-export-dialog" class="confirm-dialog cat-export-dialog"><form method="dialog"><h2 id="cat-export-title">出力前の確認</h2><p id="cat-export-mode"></p><p id="cat-export-name" class="muted"></p><div id="cat-export-checks" role="status"></div><p class="cat-human-review-note">機械チェックは数値・単位などの明らかな破損を確認するものです。表現の適切さはご自身で確認してください。</p><p id="cat-export-notice" class="draft-warning">作成するファイルは確認用DRAFTです。完成版ではなく、社外配布できません。</p><div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>戻って確認する</button><button id="cat-export-confirm" value="export">出力する</button></div></form></dialog>
+  <dialog id="cat-delete-dialog" class="confirm-dialog"><form method="dialog"><h2>この作業を削除しますか</h2><p><strong id="cat-delete-name">この作業</strong> の途中保存を削除します。この操作は取り消せません。元のファイルは削除しません。</p><div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>削除しない</button><button value="delete" class="danger-button">削除する</button></div></form></dialog>
+</body>
+</html>

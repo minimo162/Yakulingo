@@ -370,6 +370,7 @@ $startScript = Join-YakuPath -Base $runDir -Relative 'app/Start-YakuLingo.ps1'
 if (!(Test-Path -LiteralPath $startScript -PathType Leaf)) {
     throw "START_SCRIPT_NOT_FOUND: 起動スクリプトがありません: $startScript"
 }
+$desktopShell = Join-YakuPath -Base $runDir -Relative 'app/desktop/YakuLingo.exe'
 
 $env:YAKULINGO_SHARED_ROOT = $SharedRoot
 
@@ -383,4 +384,11 @@ Write-YakuBootstrapInfo ("起動します: {0}{1}" -f (Split-Path -Leaf $runDir)
 Write-Host ''
 
 if ($NoLaunch) { return $runDir }
-& $startScript -NoBrowser:$NoBrowser -Admin:$Admin
+if ($Admin -or $NoBrowser) {
+    & $startScript -NoBrowser:$NoBrowser -Admin:$Admin
+    return
+}
+if (!(Test-Path -LiteralPath $desktopShell -PathType Leaf)) {
+    throw "DESKTOP_SHELL_MISSING: YakuLingo.exe がありません: $desktopShell"
+}
+Start-Process -FilePath $desktopShell -WorkingDirectory (Split-Path -Parent $desktopShell) | Out-Null

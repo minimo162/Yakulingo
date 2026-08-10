@@ -40,7 +40,9 @@ $directionCases = @(
     @{ Text='通常の日本語ビジネス文です。'; Direction='to_en'; Confidence='high' },
     @{ Text='我们将在下季度调整经营计划'; Direction='to_jp'; Confidence='high' },
     @{ Text='営業利益増減要因'; Direction='to_en'; Confidence='low' },
-    @{ Text='経済対策関連'; Direction='to_en'; Confidence='high' },
+    # 漢字だけの短い見出しは日本語と中国語を安全に区別できないため、
+    # 新しい方向契約では送信前に利用者へ確認する。
+    @{ Text='経済対策関連'; Direction='to_en'; Confidence='low' },
     @{ Text='This is an English business sentence.'; Direction='to_jp'; Confidence='high' }
 )
 foreach ($case in $directionCases) {
@@ -217,12 +219,28 @@ try {
     Assert-Yaku -Condition $mock.TrimEnd().EndsWith("YAKULINGO_END:$requestId") -Message 'mock must echo the contract ID'
 } finally { Remove-Item Env:YAKULINGO_MOCK -ErrorAction SilentlyContinue }
 
-$catIndex = Get-Content -LiteralPath (Join-Path $root 'www\index.html') -Raw -Encoding UTF8
-Assert-Yaku -Condition $catIndex.Contains('確認済み訳文一覧をコピー') -Message 'CAT output must be presented as a reviewed translation list rather than legacy incomplete-file output'
+$catIndex = Get-Content -LiteralPath (Join-Path $root 'www\cat.html') -Raw -Encoding UTF8
+$catClient = Get-Content -LiteralPath (Join-Path $root 'www\assets\cat.js') -Raw -Encoding UTF8
+$homeIndex = Get-Content -LiteralPath (Join-Path $root 'www\index.html') -Raw -Encoding UTF8
+$quickIndex = Get-Content -LiteralPath (Join-Path $root 'www\quick.html') -Raw -Encoding UTF8
+$quickClient = Get-Content -LiteralPath (Join-Path $root 'www\assets\quick.js') -Raw -Encoding UTF8
+$commonClient = Get-Content -LiteralPath (Join-Path $root 'www\assets\common.js') -Raw -Encoding UTF8
+Assert-Yaku -Condition (($catIndex + $catClient).Contains('確認済み訳文をコピー')) -Message 'CAT output must be presented as a reviewed translation list rather than legacy incomplete-file output'
 
-$appJs = Get-Content -LiteralPath (Join-Path $root 'www\assets\app.js') -Raw -Encoding UTF8
-$indexSource = Get-Content -LiteralPath (Join-Path $root 'www\index.html') -Raw -Encoding UTF8
-$stylesSource = Get-Content -LiteralPath (Join-Path $root 'www\assets\styles.css') -Raw -Encoding UTF8
+$appJs = @(
+    $commonClient
+    $quickClient
+    $catClient
+) -join "`n"
+$indexSource = @(
+    $homeIndex
+    $quickIndex
+    $catIndex
+) -join "`n"
+$stylesSource = @(
+    Get-Content -LiteralPath (Join-Path $root 'www\assets\styles.css') -Raw -Encoding UTF8
+    Get-Content -LiteralPath (Join-Path $root 'www\assets\cat-workspace.css') -Raw -Encoding UTF8
+) -join "`n"
 $server = Get-Content -LiteralPath (Join-Path $root 'src\Server.ps1') -Raw -Encoding UTF8
 $settingsSource = Get-Content -LiteralPath (Join-Path $root 'src\Settings.ps1') -Raw -Encoding UTF8
 $fileWorkerPresent = Test-Path -LiteralPath (Join-Path $root 'src\FileWorker.ps1') -PathType Leaf
@@ -235,36 +253,43 @@ $edgeLaunch = Get-Content -LiteralPath (Join-Path $root 'src\EdgeLaunch.ps1') -R
 $warmupWorker = Get-Content -LiteralPath (Join-Path $root 'tools\Prepare-Copilot.ps1') -Raw -Encoding UTF8
 $copilotAutomationTest = Get-Content -LiteralPath (Join-Path $root 'tools\Test-CopilotAutomation.ps1') -Raw -Encoding UTF8
 Assert-Yaku -Condition ($appJs -match 'X-Yaku-Session' -and $appJs -match 'application/octet-stream' -and $appJs -match '/api/jobs/') -Message 'browser client must use token, binary upload, and per-job polling'
-Assert-Yaku -Condition ($appJs -match "sessionStorage\.setItem\('yaku-job-id'" -and $appJs -notmatch 'yakuMaybeRestoreJobFromReadyState') -Message 'job restoration must remain scoped to the originating browser tab'
+Assert-Yaku -Condition (-not ($appJs -match "localStorage\.setItem\([^\r\n]*(job|artifact)|sessionStorage\.setItem\([^\r\n]*(job|artifact)")) -Message 'Quick and CAT job or artifact identifiers must not leak into cross-session browser persistence'
 Assert-Yaku -Condition ($appJs -notmatch 'readAsDataURL|file_b64|application/x-www-form-urlencoded') -Message 'browser client must not Base64/urlencode file uploads'
-Assert-Yaku -Condition ($indexSource.Contains('<h1>文章を訳す</h1>') -and $indexSource.Contains('訳案を作ります')) -Message 'text translation must be the single primary entry'
-Assert-Yaku -Condition (-not ($indexSource -match 'role="tablist"|data-yaku-tab|>すぐ訳す<|>確認しながら訳す<')) -Message 'users must not choose Quick versus CAT before translating'
-Assert-Yaku -Condition ($indexSource.Contains('Excelを取り込んで確認する') -and $indexSource.Contains('前回の翻訳作業を続ける') -and $indexSource.Contains('最初から1文ずつ確認する')) -Message 'Excel, resume, and direct review must remain reachable as secondary entries'
-Assert-Yaku -Condition ($indexSource.Contains('過去の日英資料を取り込む') -and $indexSource.Contains('そのほかの始め方')) -Message 'past bilingual import must remain available without appearing as a primary mode choice'
-Assert-Yaku -Condition ($indexSource.Contains('先ほど作った訳案（AI訳・未確認）') -and -not $indexSource.Contains('すぐ訳した完成訳')) -Message 'unreviewed Quick output must consistently be called a draft translation'
-Assert-Yaku -Condition ($indexSource.Contains('前回の英語は参考として表示し、自動再利用しません') -and -not $indexSource.Contains('cat-prior-evidence') -and -not $appJs.Contains('prior_evidence:')) -Message 'prior English must stay reference-only without a self-attested approval selector or evidence payload'
-Assert-Yaku -Condition ($appJs.Contains('data-yaku-open-workspace') -and $appJs.Contains('yakuCatFocusFirstAfterRender')) -Message 'secondary entries and Quick handoff must open the existing review workspace without losing focus'
-Assert-Yaku -Condition ($indexSource.Contains('aria-labelledby="cat-promotion-reference-title"') -and $indexSource.Contains('aria-describedby="cat-promotion-reference-help"')) -Message 'mismatched Quick draft reference must have an accessible name and explanation when focused'
-Assert-Yaku -Condition ($appJs.Contains('function yakuPlainErrorText') -and $appJs.Contains("box.textContent || box.innerText") -and $appJs.Contains('return yakuPlainErrorText(raw)')) -Message 'HTML API errors must be reduced to readable text before rendering'
-Assert-Yaku -Condition ($appJs.Contains('function yakuCatMarkDirty') -and $appJs.Contains('data-yaku-dirty') -and $appJs.Contains('function yakuCatFlushDirtyEdits') -and $appJs.Contains('yakuCatAfterFlush')) -Message 'CAT edits must become dirty on input and pass through the shared save barrier before commands'
-Assert-Yaku -Condition ($appJs.Contains("var saveKey = projectId + ':' + index") -and $appJs.Contains('yakuCatProjectId !== projectId') -and $appJs.Contains('data.id !== projectId')) -Message 'late CAT save responses must remain scoped to their originating project'
-Assert-Yaku -Condition ($appJs.Contains("yakuCatRecentProjects.length === 1") -and $appJs.Contains('保存した作業を選ぶ（') -and $appJs.Contains('yakuCatSavedLabel')) -Message 'one saved CAT project must resume directly while multiple projects use a labelled chooser'
-Assert-Yaku -Condition ($appJs.Contains('function yakuCatClearOutputDisplay') -and $appJs.Contains('data-yaku-output-project') -and $appJs.Contains('function yakuCatOutputGuidance') -and -not $appJs.Contains("'出力条件を満たしていません: '")) -Message 'CAT output display and blockers must be project-scoped and actionable without internal reason codes'
+Assert-Yaku -Condition ($homeIndex.Contains('<h1 id="home-title">何を訳しますか</h1>') -and $homeIndex.Contains('ちょっと翻訳') -and $homeIndex.Contains('資料翻訳') -and $homeIndex.Contains('href="/quick"') -and $homeIndex.Contains('href="/cat"')) -Message 'the single launcher must open a large, explained Quick-or-document landing screen'
+Assert-Yaku -Condition (-not ($homeIndex -match '<textarea|type="file"|data-cat-|quick-form')) -Message 'the landing screen must ask only for the work experience, not contain a hidden translator'
+Assert-Yaku -Condition ($quickIndex.Contains('この画面の文章と訳文は保存されません') -and $quickIndex.Contains('id="quick-form"') -and -not ($quickIndex -match 'Word・Excelを選ぶ|保存した作業|過去の翻訳例')) -Message 'Quick must be a dedicated no-save text experience without file or reference features'
+Assert-Yaku -Condition ($catIndex.Contains('Word・Excelを取り込む') -and $catIndex.Contains('長い文章を貼り付ける') -and $catIndex.Contains('保存した作業')) -Message 'document translation must keep file, long-text, and resume entries together'
+Assert-Yaku -Condition ($catIndex.Contains('過去の日英資料を翻訳例として取り込む') -and $catIndex.Contains('そのほかの始め方')) -Message 'past bilingual import must remain available without appearing as a primary mode choice'
+Assert-Yaku -Condition ($quickIndex.Contains('<span class="eyebrow">訳案</span>') -and -not $indexSource.Contains('すぐ訳した完成訳')) -Message 'unreviewed Quick output must consistently be called a draft translation'
+Assert-Yaku -Condition ($catIndex.Contains('前回の英語は過去の翻訳例として表示し、自動では反映しません') -and -not $catIndex.Contains('cat-prior-evidence') -and -not $catClient.Contains('prior_evidence:')) -Message 'prior English must stay reference-only without a self-attested approval selector or evidence payload'
+Assert-Yaku -Condition ($quickClient.Contains('/api/cat/promote') -and $quickClient.Contains('artifact_id') -and -not $quickClient.Contains('source_text:') -and -not $quickClient.Contains('translation:')) -Message 'Quick handoff must promote one server artifact without reposting source or target text from the browser'
+Assert-Yaku -Condition ($commonClient.Contains('function plainError') -and $commonClient.Contains("box.textContent || box.innerText") -and $commonClient.Contains('new Error(plainError(body)')) -Message 'HTML API errors must be reduced to readable text before rendering'
+Assert-Yaku -Condition ($catClient.Contains('dirty = new Map()') -and $catClient.Contains('function flush()') -and $catClient.Contains('return flush().then') -and $catClient.Contains('dirty.set(dirtyKey(')) -Message 'CAT edits must become dirty on input and pass through the shared save barrier before commands'
+Assert-Yaku -Condition ($catClient.Contains('var projectId = input.getAttribute(') -and $catClient.Contains('scopeIsCurrent(packet.scope, true)') -and $catClient.Contains("String(packet.data.id || '') !== projectId")) -Message 'late CAT save responses must remain scoped to their originating project and revision'
+Assert-Yaku -Condition ($catClient.Contains('data-cat-resume') -and $catClient.Contains('前回開いた作業') -and $catClient.Contains('保存した作業')) -Message 'saved CAT projects must use a labelled chooser with the most recent project clearly identified'
+Assert-Yaku -Condition ($catClient.Contains('function clearOutputDisplay()') -and $catClient.Contains('data-cat-output-project') -and $catClient.Contains('function outputGuidance()') -and -not $catClient.Contains("'出力条件を満たしていません: '")) -Message 'CAT output display and blockers must be project-scoped and actionable without internal reason codes'
 Assert-Yaku -Condition ($indexSource.Contains('cat-save-status') -and $indexSource.Contains('cat-output-help') -and $indexSource.Contains('role="status"')) -Message 'CAT save and output readiness must be announced accessibly'
 Assert-Yaku -Condition ($indexSource.Contains('id="text-size-toggle"') -and $appJs.Contains("localStorage.setItem('yaku-text-size'") -and $stylesSource.Contains(':root[data-yaku-text-size="large"]')) -Message 'large text preference must be visible and persist across restarts'
 Assert-Yaku -Condition ($stylesSource.Contains('min-height: 44px') -and $stylesSource.Contains('@media (max-width: 900px)') -and $stylesSource.Contains('.cat-card-label')) -Message 'primary controls must retain large targets and CAT rows must reflow to labelled cards'
-Assert-Yaku -Condition ($indexSource.Contains('cat-current-summary') -and $indexSource.Contains('cat-switch-project') -and $appJs.Contains('function yakuCatSetFocusedMode') -and $appJs.Contains('function yakuCatWithOperation')) -Message 'active CAT work must use a focused summary and reject duplicate commands'
+Assert-Yaku -Condition ($indexSource.Contains('cat-current-summary') -and $indexSource.Contains('cat-switch-project') -and $catClient.Contains("el('cat-workspace').hidden = false") -and $catClient.Contains('if (busy) return')) -Message 'active CAT work must use a focused summary and reject duplicate commands'
 Assert-Yaku -Condition ($indexSource.Contains('作成するファイルは確認用DRAFTです') -and $appJs.Contains('確認用DRAFTを作成しました。完成版ではありません。社外配布しないでください') -and $appJs.Contains('確認用Word DRAFT（外部配布不可）を作る') -and -not $appJs.Contains('成果物を作成できます')) -Message 'DRAFT output must never be presented as a complete external deliverable'
 Assert-Yaku -Condition ($indexSource.Contains('id="cat-delete-dialog"') -and $indexSource.Contains('autofocus>削除しない') -and -not $appJs.Contains("window.confirm('この翻訳作業")) -Message 'project deletion must use a cancel-first named confirmation dialog'
-Assert-Yaku -Condition ($indexSource.Contains('id="cat-text-output-value"') -and $appJs.Contains('下の「確認済み訳文」に全文を残しました') -and $appJs.Contains('catTextOutput.select()')) -Message 'clipboard failure must preserve the assembled translation and provide a keyboard recovery path'
-Assert-Yaku -Condition ($appJs.Contains('aria-describedby="' + "' + findingId + '" + '" aria-invalid="true"') -and $appJs.Contains('function yakuCatFocusAfterConfirm') -and -not $appJs.Contains('var pos = inputs.indexOf(input)')) -Message 'QC findings must be tied to the editor and confirmation focus must advance by segment index'
+Assert-Yaku -Condition ($indexSource.Contains('id="cat-text-output-value"') -and $commonClient.Contains('コピーできませんでした。全文を選択したので、Ctrl+Cでコピーしてください') -and $catClient.Contains("el('cat-text-output-value').select()")) -Message 'clipboard failure must preserve the assembled translation and provide a keyboard recovery path'
+Assert-Yaku -Condition ($catClient.Contains('aria-describedby="' + "' + findingId + '" + '"') -and $catClient.Contains('data.review_blocked') -and $catClient.Contains('function focusAfter(index)')) -Message 'QC findings must be tied to the editor and confirmation focus must advance by segment index'
 Assert-Yaku -Condition ($indexSource.Contains('<caption class="sr-only">') -and $stylesSource.Contains('@media (prefers-reduced-motion: reduce)') -and -not $indexSource.Contains('class="input-meta" aria-live="polite"')) -Message 'CAT semantics and reduced-motion support must remain accessible without noisy character-count announcements'
-Assert-Yaku -Condition ($appJs.Contains('yakuCatJobProjectId = yakuCatProjectId') -and $appJs.Contains('yakuCatApply(catJobId, catJobProjectId, catJobProjectRevision)') -and $server.Contains('CAT_JOB_PROJECT_MISMATCH') -and $server.Contains('CAT_JOB_SOURCE_MISMATCH')) -Message 'CAT job results must stay bound to their starting project, revision, and source text'
-Assert-Yaku -Condition ($appJs.Contains('yakuCatDeleteTarget = { id: yakuCatProjectId') -and $appJs.Contains('if (yakuCatProjectId !== deleteTarget.id)') -and $appJs.Contains('var deletingId = deleteTarget.id')) -Message 'delete confirmation must remain bound to the project name and ID shown in the dialog'
-Assert-Yaku -Condition ($appJs.Contains('var yakuCatSaveQueue = Promise.resolve()') -and $appJs.Contains('var saveRequest = yakuCatSaveQueue.catch') -and $appJs.Contains('yakuCatAfterFlush(function () { yakuCatRender(null)')) -Message 'CAT saves and local filter redraws must be serialized behind the project save barrier'
-Assert-Yaku -Condition ($appJs.Contains('if (data.review_blocked || (reviewedSegment && !reviewedSegment.confirmed))') -and $appJs.Contains('検索条件の外に未確認の行があります')) -Message 'failed review and filtered confirmation must retain a logical keyboard focus target'
-Assert-Yaku -Condition ($indexSource.Contains('id="cat-workspace" hidden') -and $appJs.Contains('if (workspace) workspace.hidden = !active') -and $appJs.Contains('if (workspace) workspace.hidden = true')) -Message 'opening another project must hide the current workspace instead of mixing two work contexts'
-Assert-Yaku -Condition ($appJs.Contains('#panel-cat [data-yaku-cat-insert]') -and $appJs.Contains('if (yakuTranslating) yakuSetButtonEnabled(false)') -and $appJs.Contains('if (yakuTranslating || yakuCatOperationBusy)') -and $appJs.Contains('未保存の編集があるため、翻訳結果の取り込みを停止しました')) -Message 'CAT job lock must survive redraws, shortcuts, candidate insertion, and defensive apply checks'
+Assert-Yaku -Condition ($catClient.Contains("type: 'translate', scope: jobScope") -and $catClient.Contains("post('apply', { job_id: jobId }, true, context.scope)") -and $server.Contains('CAT_JOB_PROJECT_MISMATCH') -and $server.Contains('CAT_JOB_SOURCE_MISMATCH')) -Message 'CAT job results must stay bound to their starting project, revision, and source text'
+Assert-Yaku -Condition ($catClient.Contains('deleteTarget = currentScope()') -and $catClient.Contains('if (!scopeIsCurrent(target, true))') -and $catClient.Contains("post('delete', { id: target.id }, true, target)")) -Message 'delete confirmation must remain bound to the project name and ID shown in the dialog'
+Assert-Yaku -Condition ($catClient.Contains('saveChain = saveChain.catch') -and $catClient -match 'function redrawAfterFlush\(\)[\s\S]*?return flush\(\)\.then' -and $catClient -match "button\.hasAttribute\('data-cat-filter'\)[\s\S]{0,180}redrawAfterFlush\(\)") -Message 'CAT saves and local filter redraws must be serialized behind the project save barrier'
+Assert-Yaku -Condition ($catClient.Contains('data.review_blocked') -and $catClient.Contains('検索条件の外に未確認の行があります')) -Message 'failed review and filtered confirmation must retain a logical keyboard focus target'
+Assert-Yaku -Condition ($catIndex -match 'id="cat-workspace"[^>]*\shidden(?:\s|>)' -and $catClient.Contains("el('cat-workspace').hidden = false") -and $catClient.Contains("el('cat-workspace').hidden = true")) -Message 'opening another project must hide the current workspace instead of mixing two work contexts'
+Assert-Yaku -Condition ($catClient.Contains("document.querySelectorAll('textarea[data-cat-input], input.revise-input')") -and $catClient.Contains('処理中は翻訳例を挿入できません') -and $catClient.Contains('scopeIsCurrent(context.scope, true)')) -Message 'CAT job lock must survive redraws, shortcuts, candidate insertion, and defensive apply checks'
+Assert-Yaku -Condition ($catIndex.Contains('id="cat-editor-toolbar"') -and $catIndex.Contains('id="cat-nav-pane"') -and $catIndex.Contains('id="cat-editor-pane"') -and $catIndex.Contains('id="cat-inspector-pane"') -and $stylesSource -match '(?s)\.cat-editor-toolbar\s*\{[^}]*position:\s*sticky') -Message 'CAT review must use the sticky three-region focused workspace'
+Assert-Yaku -Condition ($catClient.Contains('activeSegmentId') -and $catClient.Contains('data-cat-segment-id') -and $catClient.Contains("esc(segment.location || '本文')") -and $catClient.Contains('function locationGroup(segment)')) -Message 'CAT active row and actual document location must survive redraw and drive navigation'
+Assert-Yaku -Condition ($catClient.Contains('cat-candidate-number') -and $catClient.Contains('itemIndex + 1') -and $catClient.Contains('data-cat-reference-id')) -Message 'CAT candidates must be visibly numbered without weakening explicit reference insertion'
+Assert-Yaku -Condition ($catClient.Contains('event.isComposing') -and $catClient.Contains("event.key === 'ArrowUp'") -and $catClient.Contains("event.key.toLowerCase() === 'f'")) -Message 'CAT keyboard workflow must be IME-safe and include row movement and local search'
+Assert-Yaku -Condition ($catIndex.Contains('id="cat-complete-state"') -and $catClient.Contains("currentFilter = 'all'")) -Message 'completed CAT work must show its reviewed rows instead of an empty actionable grid'
+Assert-Yaku -Condition ($catIndex.Contains('id="cat-export-dialog"') -and $catClient.Contains("post('preflight', {}, true, requestScope)") -and $catClient.Contains("String(data.project_id || '') !== requestScope.id") -and $catClient.Contains('Number(data.revision) !== requestScope.revision')) -Message 'CAT output dialog must consume server preflight for the exact project revision'
+Assert-Yaku -Condition ($catClient.Contains("el('cat-export-dialog').addEventListener('close'") -and $catClient.Contains('if (!scopeIsCurrent(scope, true))') -and $catClient.Contains('exportProject();')) -Message 'CAT export must recheck the preflight scope before producing a DRAFT or copied text'
 Assert-Yaku -Condition (-not ($indexSource -match 'amount-notation|122 oku|設定とデータ管理|直近の翻訳|用語集（読取専用）')) -Message 'technical amount and unused utility controls must be absent from the main screen'
 Assert-Yaku -Condition ($server -match 'INVALID_SESSION_TOKEN' -and $server -match 'UNSUPPORTED_CONTENT_TYPE' -and $server -match 'Local\\YakuLingo') -Message 'server boundary and single-instance controls must be present'
 Assert-Yaku -Condition ($server -notmatch 'ProcessStopper\.ps1|Type\s*=\s*''Process''') -Message 'legacy process-backed file jobs must be absent'
@@ -334,8 +359,8 @@ Assert-Yaku -Condition ($copilot.Contains('voiceChatButtonInfo') -and $copilot.C
 Assert-Yaku -Condition ($copilot.Contains('unverified-send-aria-label:') -and $copilot.Contains('/^(送信|Send)$/i.test(sendAriaLabel)')) -Message 'voice-chat controls must be rejected by exact send aria-label verification'
 Assert-Yaku -Condition ($copilot.Contains('switcherWaitedMs += 500') -and $copilot.Contains('i < 10 && !btn')) -Message 'model switcher must be allowed five seconds to appear after navigation'
 Assert-Yaku -Condition ($copilotAutomationTest.Contains('V83_TEST_REAL_SEND_BUTTON_NOT_FOUND_AFTER_FILL') -and $copilotAutomationTest.Contains('obf-YakuRegression') -and $copilotAutomationTest.Contains('V83_TEST_SURVEY_SEND_BUTTON_NOT_REJECTED') -and $copilotAutomationTest.Contains('V83_TEST_VOICE_CHAT_BUTTON_NOT_REJECTED')) -Message 'live automation gate must verify real send discovery and reject injected survey and voice-chat buttons'
-Assert-Yaku -Condition ($appJs.Contains('yakuScrollCompletionIntoView') -and $appJs.Contains('prefers-reduced-motion: reduce') -and $appJs.Contains('yakuLastManualScrollAt < 2000')) -Message 'terminal results must auto-scroll accessibly without overriding recent manual scrolling'
-Assert-Yaku -Condition ($appJs.Contains('yakuResultByTab') -and $appJs.Contains('if (!yakuTranslating)') -and $appJs.Contains('yakuActiveJobKind')) -Message 'text and file results must be retained separately while active job progress remains shared'
+Assert-Yaku -Condition ($catIndex.Contains('id="cat-job"') -and $catIndex.Contains('aria-live="polite"') -and $commonClient.Contains('prefers-reduced-motion: reduce') -and $catClient.Contains('render(data, true)')) -Message 'terminal CAT results must be announced and return focus without forced motion'
+Assert-Yaku -Condition ($quickIndex.Contains('id="quick-job"') -and $catIndex.Contains('id="cat-job"') -and $quickClient.Contains('/api/quick/jobs/') -and $catClient.Contains('/api/jobs/')) -Message 'Quick and CAT results and job progress must stay in their separate experience state'
 Assert-Yaku -Condition ($copilot.Contains("`$sliceLimit = if (`$firstActivitySeen) { 3 } else { 2 }")) -Message 'active response completion polling must use three-second slices'
 Assert-Yaku -Condition ($copilot.Contains("reason:'already-fresh'") -and $copilot.Contains('const seenCandidatesThisRound = new Set();')) -Message 'fresh-chat and watcher duplicate work must be eliminated'
 Assert-Yaku -Condition ($copilot.Contains('FRESH_MAIN_TEXT_MAX = 4000') -and $copilot.Contains("reason:freshVerified ? 'fresh-state-confirmed' : 'fresh-state-not-confirmed'")) -Message 'fresh-chat acceptance must reject stale main content even when response selectors report zero'
