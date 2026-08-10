@@ -297,6 +297,54 @@
   padding-top: 42px;
 }
 
+.cat-candidates-title {
+  margin: 16px 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 2px solid var(--line);
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.cat-candidates section:first-child .cat-candidates-title { margin-top: 0; }
+
+.cat-term-card {
+  padding-top: 14px;
+  border-left: 4px solid var(--accent);
+  background: var(--accent-soft);
+}
+
+.cat-term-card .cat-candidate-meta { margin-bottom: 4px; }
+
+.cat-term-trace {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--soft);
+}
+
+.cat-term-dialog .field-label,
+#cat-term-exception-dialog .field-label {
+  margin-top: 12px;
+}
+
+.cat-term-dialog fieldset {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: 12px;
+}
+
+.cat-term-dialog fieldset label,
+#cat-term-exception-dialog form > label:not(.field-label) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+}
+
 .cat-candidate-number {
   position: absolute;
   top: 10px;

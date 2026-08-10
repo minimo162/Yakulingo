@@ -25,6 +25,14 @@
     あとで移行が要る。
 #>
 
+# CatProject.ps1 is also loaded directly by focused regression tests and by
+# maintenance scripts. Keep terminology QA available outside Server.ps1 too;
+# merely having no registered terms must never turn into a blocking
+# "terminology checker unavailable" result.
+if (-not (Get-Command Test-YakuTerminologyCompliance -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'Terminology.ps1')
+}
+
 $script:YakuCatProjects = [hashtable]::Synchronized(@{})
 
 function Get-YakuCatSourceIntegrityHash {
@@ -37,7 +45,42 @@ function Get-YakuCatSourceIntegrityHash {
 }
 
 function Get-YakuCatQcContractVersion {
-    return 'cat-qc-v2'
+    return 'cat-qc-v3-terminology'
+}
+
+function Get-YakuCatTerminologyEntries {
+    param([Parameter(Mandatory=$true)]$Project)
+    if (-not (Get-Command Read-YakuTerminologyEntries -ErrorAction SilentlyContinue)) { return @() }
+    # Reading a project that has never used terminology is side-effect free.
+    # In particular, focused tests and read-only recovery must not create the
+    # per-user data directory merely to discover that there are no terms.
+    $dataRoot = [string]$env:YAKULINGO_DATA_DIR
+    if ([string]::IsNullOrWhiteSpace($dataRoot)) {
+        $profile = [Environment]::GetFolderPath('UserProfile')
+        if ([string]::IsNullOrWhiteSpace($profile)) { $profile = [string]$env:USERPROFILE }
+        if (-not [string]::IsNullOrWhiteSpace($profile)) { $dataRoot = Join-Path $profile '.yakulingo-ps' }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($dataRoot)) {
+        $termStore = Join-Path $dataRoot 'terminology\personal-v2.jsonl'
+        $legacyStore = Join-Path $dataRoot 'glossary\personal.csv'
+        if (-not (Test-Path -LiteralPath $termStore -PathType Leaf) -and -not (Test-Path -LiteralPath $legacyStore -PathType Leaf)) {
+            $emptyTerminologyHash = Get-YakuTerminologySnapshotHash -Entries @()
+            if (-not [string]::IsNullOrWhiteSpace([string]$Project.TerminologySnapshotHash) -and [string]$Project.TerminologySnapshotHash -ne [string]$emptyTerminologyHash) { throw 'CAT_TERMINOLOGY_STORE_MISSING' }
+            return @()
+        }
+    }
+    try {
+        if (Get-Command Read-YakuPersonalTerminologyEntries -ErrorAction SilentlyContinue) {
+            return @(Read-YakuPersonalTerminologyEntries -ProjectId ([string]$Project.Id) -Strict)
+        }
+        return @(Read-YakuTerminologyEntries -ProjectId ([string]$Project.Id) -Strict)
+    } catch { throw ('CAT_TERMINOLOGY_STORE_UNAVAILABLE:' + [string]$_.Exception.Message) }
+}
+
+function Get-YakuCatTerminologySnapshotHash {
+    param([Parameter(Mandatory=$true)]$Project)
+    if (-not (Get-Command Get-YakuTerminologySnapshotHash -ErrorAction SilentlyContinue)) { return '' }
+    return [string](Get-YakuTerminologySnapshotHash -Entries @(Get-YakuCatTerminologyEntries -Project $Project))
 }
 
 function ConvertTo-YakuCanonicalNumericScalar {
@@ -109,6 +152,7 @@ function Reset-YakuCatSegmentQc {
     $Segment | Add-Member -NotePropertyName QcSourceHash -NotePropertyValue '' -Force
     $Segment | Add-Member -NotePropertyName QcTargetHash -NotePropertyValue '' -Force
     $Segment | Add-Member -NotePropertyName QcContractVersion -NotePropertyValue '' -Force
+    $Segment | Add-Member -NotePropertyName QcTerminologyHash -NotePropertyValue '' -Force
     $Segment | Add-Member -NotePropertyName QcFindings -NotePropertyValue @() -Force
     $Segment | Add-Member -NotePropertyName Confirmed -NotePropertyValue $false -Force
     if (-not $KeepState -and [string]$Segment.State -eq 'reviewed') {
@@ -117,12 +161,13 @@ function Reset-YakuCatSegmentQc {
 }
 
 function Test-YakuCatSegmentQcCurrent {
-    param([Parameter(Mandatory=$true)]$Segment)
+    param([Parameter(Mandatory=$true)]$Segment, [AllowNull()][string]$TerminologySnapshotHash)
     if ([string]$Segment.QcStatus -ne 'passed') { return $false }
     if ([int]$Segment.QcSourceRevision -ne [int]$Segment.SourceRevision) { return $false }
     if ([string]$Segment.QcContractVersion -ne (Get-YakuCatQcContractVersion)) { return $false }
     if ([string]$Segment.QcSourceHash -ne (Get-YakuCatSourceIntegrityHash -Text ([string]$Segment.Text))) { return $false }
     if ([string]$Segment.QcTargetHash -ne (Get-YakuCatSourceIntegrityHash -Text ([string]$Segment.Translation))) { return $false }
+    if (-not [string]::IsNullOrWhiteSpace($TerminologySnapshotHash) -and [string]$Segment.QcTerminologyHash -ne $TerminologySnapshotHash) { return $false }
     return $true
 }
 
@@ -204,6 +249,8 @@ function Initialize-YakuCatProjectState {
     if (-not ($Project.PSObject.Properties.Name -contains 'DirectionConfidence')) { $Project | Add-Member -NotePropertyName DirectionConfidence -NotePropertyValue 'not_applicable' -Force }
     if (-not ($Project.PSObject.Properties.Name -contains 'DirectionSourceFingerprint')) { $Project | Add-Member -NotePropertyName DirectionSourceFingerprint -NotePropertyValue '' -Force }
     if (-not ($Project.PSObject.Properties.Name -contains 'QuickArtifactId')) { $Project | Add-Member -NotePropertyName QuickArtifactId -NotePropertyValue '' -Force }
+    if (-not ($Project.PSObject.Properties.Name -contains 'TerminologySnapshotHash')) { $Project | Add-Member -NotePropertyName TerminologySnapshotHash -NotePropertyValue '' -Force }
+    if (-not ($Project.PSObject.Properties.Name -contains 'TmOutbox')) { $Project | Add-Member -NotePropertyName TmOutbox -NotePropertyValue @() -Force }
     foreach ($segment in @($Project.Segments)) {
         if (-not ($segment.PSObject.Properties.Name -contains 'SegmentId') -or [string]::IsNullOrWhiteSpace([string]$segment.SegmentId)) {
             $segment | Add-Member -NotePropertyName SegmentId -NotePropertyValue ([guid]::NewGuid().ToString('N')) -Force
@@ -226,12 +273,32 @@ function Initialize-YakuCatProjectState {
         if (-not ($segment.PSObject.Properties.Name -contains 'QcSourceHash')) { $segment | Add-Member -NotePropertyName QcSourceHash -NotePropertyValue '' -Force }
         if (-not ($segment.PSObject.Properties.Name -contains 'QcTargetHash')) { $segment | Add-Member -NotePropertyName QcTargetHash -NotePropertyValue '' -Force }
         if (-not ($segment.PSObject.Properties.Name -contains 'QcContractVersion')) { $segment | Add-Member -NotePropertyName QcContractVersion -NotePropertyValue '' -Force }
+        if (-not ($segment.PSObject.Properties.Name -contains 'QcTerminologyHash')) { $segment | Add-Member -NotePropertyName QcTerminologyHash -NotePropertyValue '' -Force }
         if (-not ($segment.PSObject.Properties.Name -contains 'QcFindings')) { $segment | Add-Member -NotePropertyName QcFindings -NotePropertyValue @() -Force }
         if (-not ($segment.PSObject.Properties.Name -contains 'ReferenceUsage')) { $segment | Add-Member -NotePropertyName ReferenceUsage -NotePropertyValue $null -Force }
+        if (-not ($segment.PSObject.Properties.Name -contains 'ReferenceEvents')) { $segment | Add-Member -NotePropertyName ReferenceEvents -NotePropertyValue @() -Force }
+        if (-not ($segment.PSObject.Properties.Name -contains 'TerminologyUsages')) { $segment | Add-Member -NotePropertyName TerminologyUsages -NotePropertyValue @() -Force }
+        if (-not ($segment.PSObject.Properties.Name -contains 'TerminologyExceptions')) { $segment | Add-Member -NotePropertyName TerminologyExceptions -NotePropertyValue @() -Force }
+        if (-not ($segment.PSObject.Properties.Name -contains 'TerminologyGeneration')) { $segment | Add-Member -NotePropertyName TerminologyGeneration -NotePropertyValue @() -Force }
         if ([string]$segment.QcStatus -eq 'passed' -and -not (Test-YakuCatSegmentQcCurrent -Segment $segment)) {
             Reset-YakuCatSegmentQc -Segment $segment
         }
         $segment | Add-Member -NotePropertyName Confirmed -NotePropertyValue ([string]$segment.State -eq 'reviewed') -Force
+    }
+    $currentTerminologyHash = Get-YakuCatTerminologySnapshotHash -Project $Project
+    if (-not [string]::IsNullOrWhiteSpace($currentTerminologyHash)) {
+        $storedTerminologyHash = [string]$Project.TerminologySnapshotHash
+        if (-not [string]::IsNullOrWhiteSpace($storedTerminologyHash) -and $storedTerminologyHash -ne $currentTerminologyHash) {
+            $currentEntries = @(Get-YakuCatTerminologyEntries -Project $Project)
+            foreach ($segment in @($Project.Segments)) {
+                if ([string]$segment.QcStatus -ne 'passed' -and -not [bool]$segment.Confirmed) { continue }
+                $matches = @(Find-YakuTerminologyMatches -Text ([string]$segment.Text) -Direction ([string]$Project.Direction) -Entries $currentEntries -ProjectId ([string]$Project.Id))
+                if ($matches.Count -eq 0) { continue }
+                Reset-YakuCatSegmentQc -Segment $segment
+                $segment.State = 'stale'
+            }
+        }
+        $Project.TerminologySnapshotHash = $currentTerminologyHash
     }
     return $Project
 }
@@ -440,12 +507,28 @@ function Invoke-YakuCatSegmentValidation {
         $structure = Test-YakuTextStructureIntegrity -SourceText $source -FullText $target -BriefText $target
         if (-not [bool]$structure.Ok) { $findings.Add([pscustomobject]@{ Code='structure-integrity'; Severity='error'; Detail=[string]$structure.Detail }) | Out-Null }
     } catch { $findings.Add([pscustomobject]@{ Code='structure-validation-error'; Severity='error' }) | Out-Null }
-    $status = if ($findings.Count -eq 0) { 'passed' } else { 'failed' }
+    $terminologyHash = ''
+    try {
+        $entries = @(Get-YakuCatTerminologyEntries -Project $Project)
+        $terminology = Test-YakuTerminologyCompliance -SourceText $source -TargetText $target -Direction ([string]$Project.Direction) `
+            -Entries $entries -Exceptions @($Segment.TerminologyExceptions) -ProjectId ([string]$Project.Id)
+        $terminologyHash = [string]$terminology.SnapshotHash
+        foreach ($finding in @($terminology.Findings)) {
+            # 有効な明示例外は監査情報としてsegmentに残すが、QC blockerにはしない。
+            if ([string]$finding.Severity -eq 'info') { continue }
+            $findings.Add($finding) | Out-Null
+        }
+    } catch {
+        $findings.Add([pscustomobject]@{ Code='terminology-check-unavailable'; Severity='error'; Detail=[string]$_.Exception.Message }) | Out-Null
+    }
+    $blocking = @($findings.ToArray() | Where-Object { [string]$_.Severity -eq 'error' })
+    $status = if ($blocking.Count -eq 0) { 'passed' } else { 'failed' }
     $Segment.QcStatus = $status
     $Segment.QcSourceRevision = [int]$Segment.SourceRevision
     $Segment | Add-Member -NotePropertyName QcSourceHash -NotePropertyValue (Get-YakuCatSourceIntegrityHash -Text $source) -Force
     $Segment | Add-Member -NotePropertyName QcTargetHash -NotePropertyValue (Get-YakuCatSourceIntegrityHash -Text $target) -Force
     $Segment | Add-Member -NotePropertyName QcContractVersion -NotePropertyValue (Get-YakuCatQcContractVersion) -Force
+    $Segment | Add-Member -NotePropertyName QcTerminologyHash -NotePropertyValue $terminologyHash -Force
     $Segment.QcFindings = @($findings.ToArray())
     return [pscustomobject]@{ Passed=($status -eq 'passed'); Status=$status; Findings=@($findings.ToArray()) }
 }
@@ -457,7 +540,7 @@ function Get-YakuCatOutputEligibility {
     if (@($Project.Segments).Count -eq 0) { $reasons.Add('project-empty') | Out-Null }
     foreach ($segment in @($Project.Segments)) {
         if ([string]$segment.State -ne 'reviewed') { $reasons.Add('segment-not-reviewed') | Out-Null; break }
-        if (-not (Test-YakuCatSegmentQcCurrent -Segment $segment)) { $reasons.Add('segment-qc-not-current') | Out-Null; break }
+        if (-not (Test-YakuCatSegmentQcCurrent -Segment $segment -TerminologySnapshotHash ([string]$Project.TerminologySnapshotHash))) { $reasons.Add('segment-qc-not-current') | Out-Null; break }
         if ([string]::IsNullOrWhiteSpace([string]$segment.Translation)) { $reasons.Add('segment-untranslated') | Out-Null; break }
     }
     $translationList = ($reasons.Count -eq 0)
@@ -1165,6 +1248,7 @@ function Save-YakuCatProject {
                     qc_source_hash = [string]$_.QcSourceHash
                     qc_target_hash = [string]$_.QcTargetHash
                     qc_contract_version = [string]$_.QcContractVersion
+                    qc_terminology_hash = [string]$_.QcTerminologyHash
                     qc_findings = @($_.QcFindings)
                     confirmed = [bool]$_.Confirmed
                     joined = [bool]$_.Joined
@@ -1179,6 +1263,10 @@ function Save-YakuCatProject {
                     reuse_evidence = $(try { [string]$_.ReuseEvidence } catch { '' })
                     prior_index = $(try { [int]$_.PriorIndex } catch { -1 })
                     reference_usage = $(try { $_.ReferenceUsage } catch { $null })
+                    reference_events = @($(try { $_.ReferenceEvents } catch { @() }))
+                    terminology_usages = @($(try { $_.TerminologyUsages } catch { @() }))
+                    terminology_exceptions = @($(try { $_.TerminologyExceptions } catch { @() }))
+                    terminology_generation = @($(try { $_.TerminologyGeneration } catch { @() }))
                 }
             })
         $blocks = @($Project.Blocks | ForEach-Object {
@@ -1200,6 +1288,8 @@ function Save-YakuCatProject {
             direction_confidence = [string]$Project.DirectionConfidence
             direction_source_fingerprint = [string]$Project.DirectionSourceFingerprint
             quick_artifact_id = [string]$Project.QuickArtifactId
+            terminology_snapshot_hash = [string]$Project.TerminologySnapshotHash
+            tm_outbox = @($Project.TmOutbox)
             source = [string]$Project.Source
             document_format = $(try { [string]$Project.DocumentFormat } catch { '' })
             word_inventory = $(try { $Project.WordInventory } catch { $null })
@@ -1413,6 +1503,7 @@ function Restore-YakuCatProject {
                 QcSourceHash = [string]$s.qc_source_hash
                 QcTargetHash = [string]$s.qc_target_hash
                 QcContractVersion = [string]$s.qc_contract_version
+                QcTerminologyHash = [string]$s.qc_terminology_hash
                 QcFindings = @($s.qc_findings)
                 Confirmed = [bool]$s.confirmed
                 Joined = [bool]$s.joined
@@ -1427,6 +1518,10 @@ function Restore-YakuCatProject {
                 ReuseEvidence = [string]$s.reuse_evidence
                 PriorIndex = $(if ($null -ne $s.prior_index) { [int]$s.prior_index } else { -1 })
                 ReferenceUsage = $s.reference_usage
+                ReferenceEvents = @($s.reference_events)
+                TerminologyUsages = @($s.terminology_usages)
+                TerminologyExceptions = @($s.terminology_exceptions)
+                TerminologyGeneration = @($s.terminology_generation)
             })
     }
     $savedBlocks = New-Object System.Collections.Generic.List[object]
@@ -1451,6 +1546,8 @@ function Restore-YakuCatProject {
         DirectionConfidence = $(if (-not [string]::IsNullOrWhiteSpace([string]$o.direction_confidence)) { [string]$o.direction_confidence } else { 'not_applicable' })
         DirectionSourceFingerprint = [string]$o.direction_source_fingerprint
         QuickArtifactId = [string]$o.quick_artifact_id
+        TerminologySnapshotHash = [string]$o.terminology_snapshot_hash
+        TmOutbox = @($o.tm_outbox)
         Blocks    = @($savedBlocks.ToArray())
         Segments  = @($segments.ToArray())
         Warnings  = @()
@@ -1479,6 +1576,7 @@ function Restore-YakuCatProject {
         if (-not (Save-YakuCatProject -Project $project)) { throw 'CAT_SOURCE_ARTIFACT_MIGRATION_FAILED' }
     }
     $script:YakuCatProjects[$project.Id] = $project
+    $null = Sync-YakuCatTranslationMemoryOutbox -Project $project
     $null = Apply-YakuCatBatchCheckpoint -Project $project
     return $script:YakuCatProjects[[string]$project.Id]
 }
@@ -1574,11 +1672,16 @@ function ConvertTo-YakuCatProjectJson {
             state       = [string]$segs[$i].State
             qc_status   = [string]$segs[$i].QcStatus
             qc_findings = @($segs[$i].QcFindings)
+            qc_terminology_hash = [string]$segs[$i].QcTerminologyHash
             change_kind = $(try { [string]$segs[$i].ChangeKind } catch { '' })
             prior_source = $(try { [string]$segs[$i].PriorSourceText } catch { '' })
             prior_translation = $(try { [string]$segs[$i].PriorTranslation } catch { '' })
             reuse_evidence = $(try { [string]$segs[$i].ReuseEvidence } catch { '' })
             reference_usage = $(try { $segs[$i].ReferenceUsage } catch { $null })
+            reference_events = @($(try { $segs[$i].ReferenceEvents } catch { @() }))
+            terminology_usages = @($(try { $segs[$i].TerminologyUsages } catch { @() }))
+            terminology_exceptions = @($(try { $segs[$i].TerminologyExceptions } catch { @() }))
+            terminology_generation = @($(try { $segs[$i].TerminologyGeneration } catch { @() }))
             can_revise  = (-not [string]::IsNullOrWhiteSpace([string]$segs[$i].Translation) -and -not [string]::IsNullOrWhiteSpace([string]$segs[$i].MaskedTranslation))
             status      = Get-YakuCatSegmentStatus -Segment $segs[$i]
             # 次と繋げるか。シートが違う・図形が挟まる場合は繋げない。
@@ -1636,6 +1739,8 @@ function ConvertTo-YakuCatProjectJson {
         file_name  = [string]$Project.FileName
         document_format = $documentFormat
         direction  = [string]$Project.Direction
+        terminology_snapshot_hash = [string]$Project.TerminologySnapshotHash
+        tm_pending = $(try { [int]$Project.TmPendingCount } catch { 0 })
         total      = [int]$summary.Total
         translated = [int]$summary.Translated
         remaining  = [int]$summary.Remaining
@@ -2095,6 +2200,28 @@ function Get-YakuCatSegmentCandidates {
     $out = New-Object System.Collections.Generic.List[object]
     $seen = @{}
 
+    # 翻訳用語集。全文候補とは別種であり、UIでは訳文のカーソル位置へ
+    # 語だけを挿入する。Candidate.Targetで訳文全体を上書きしてはならない。
+    try {
+        $termEntries = @(Get-YakuCatTerminologyEntries -Project $Project)
+        foreach ($term in @(Find-YakuTerminologyMatches -Text $text -Direction ([string]$Project.Direction) -Entries $termEntries -ProjectId ([string]$Project.Id))) {
+            $termKey = 'term' + [char]31 + [string]$term.ReferenceId
+            if ($seen.ContainsKey($termKey)) { continue }
+            $seen[$termKey] = $true
+            $sourceName = if ([string]$term.Scope -eq 'project') { 'この資料の用語集' } else { '個人用語集' }
+            [void]$out.Add([pscustomobject]@{
+                Kind='term'; Source=[string]$term.SourceTerm; Target=[string]$term.PreferredTarget; Exact=$false
+                ReferenceId=[string]$term.ReferenceId; SourceName=$sourceName; Location=[string]$term.Entry.origin_location
+                Page=0; MatchedTerms=@([string]$term.SourceTerm); Database=$sourceName; Verified=$false
+                Ratio=0.0; Weight=40000 + [int]$term.Length; TermId=[string]$term.TermId; TermVersion=[int]$term.Version
+                Scope=[string]$term.Scope; Enforcement=[string]$term.Enforcement
+                AllowedTargets=@($term.AllowedTargets); ForbiddenTargets=@($term.ForbiddenTargets)
+            })
+        }
+    } catch {
+        try { Write-YakuLog ('Terminology candidates unavailable: ' + $_.Exception.Message) 'WARN' } catch {}
+    }
+
     # このprojectに結び付いた前回版の対応行。貼り付けた日英は承認済みと
     # 自己申告させず、自動適用もしないが、出典付き候補として明示的に
     # 挿入できるようにする。これが3-way更新で前回英語を下敷きにする入口。
@@ -2169,7 +2296,13 @@ function Get-YakuCatSegmentCandidates {
                 Database = '翻訳メモリ'
                 Verified = $true
                 Ratio    = [double]$tm.Ratio
-                # 自分が確定した訳。そのまま差し込めるので先頭に置く。
+                MatchType = [string]$tm.MatchType
+                Score = [double]$tm.Score
+                Saved = [string]$tm.Saved
+                OriginProjectId = [string]$tm.OriginProjectId
+                OriginSegmentId = [string]$tm.OriginSegmentId
+                ReviewRevision = [int]$tm.ReviewRevision
+                # この端末で確認した訳。候補挿入後にも再QC・再確認が必要。
                 Weight   = 30000 + [int]([double]$tm.Ratio * 1000)
             })
         }
@@ -2213,7 +2346,12 @@ function Get-YakuCatSegmentCandidates {
         try { Write-YakuLog ('Corpus pair candidates unavailable: ' + $_.Exception.Message) 'WARN' } catch {}
     }
 
-    return @(@($out.ToArray()) | Sort-Object -Property @{ Expression = { [int]$_.Weight }; Descending = $true } | Select-Object -First $Max)
+    $ordered = @($out.ToArray() | Sort-Object -Property @{ Expression = { [int]$_.Weight }; Descending = $true })
+    # 用語と全文候補は別の作業なので、同じ上限を奪い合わせない。多数の
+    # 用語がある行でも、TMや前回版の全文候補を最低限同じ件数まで探せる。
+    $terms = @($ordered | Where-Object { [string]$_.Kind -in @('term','glossary') } | Select-Object -First $Max)
+    $segments = @($ordered | Where-Object { [string]$_.Kind -notin @('term','glossary') } | Select-Object -First $Max)
+    return @($terms + $segments)
 }
 
 function Update-YakuCatSegmentReferenceEditState {
@@ -2225,6 +2363,14 @@ function Update-YakuCatSegmentReferenceEditState {
     $newHash = Get-YakuCatSourceIntegrityHash -Text ([string]$Text)
     if ([string]$Segment.ReferenceUsage.target_hash -ne $newHash) {
         $Segment.ReferenceUsage.edited_after_insert = $true
+    }
+    foreach ($event in @($Segment.ReferenceEvents)) {
+        if ([string]$event.action -eq 'inserted' -and [string]$event.target_hash -ne $newHash) {
+            $event.edited_after_insert = $true
+        }
+    }
+    foreach ($usage in @($Segment.TerminologyUsages)) {
+        if ([string]$usage.target_hash -ne $newHash) { $usage.edited_after_insert = $true }
     }
     return $Segment
 }
@@ -2278,7 +2424,133 @@ function Set-YakuCatSegmentReferenceUsage {
         source = [string]$Candidate.Source
         translation = [string]$Candidate.Target
     }
+    $events = New-Object System.Collections.Generic.List[object]
+    foreach ($existing in @($segs[$Index].ReferenceEvents)) { $events.Add($existing) | Out-Null }
+    $events.Add([pscustomobject]@{
+        event_id=[guid]::NewGuid().ToString('N'); reference_id=[string]$Candidate.ReferenceId
+        kind=[string]$Candidate.Kind; action='inserted'; source_name=[string]$Candidate.SourceName
+        location=[string]$Candidate.Location; page=[int]$Candidate.Page
+        source=[string]$Candidate.Source; translation=[string]$Candidate.Target
+        match_score=$(try { [double]$Candidate.Score } catch { [double]$Candidate.Ratio })
+        target_hash=Get-YakuCatSourceIntegrityHash -Text ([string]$segs[$Index].Translation)
+        project_revision=[int]$Project.Revision; created=(Get-Date).ToString('s'); edited_after_insert=$false
+    }) | Out-Null
+    $segs[$Index].ReferenceEvents = @($events.ToArray())
     return $segs[$Index]
+}
+
+function Set-YakuCatSegmentTerminologyUsage {
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [Parameter(Mandatory=$true)][int]$Index,
+        [Parameter(Mandatory=$true)]$Candidate
+    )
+    $null = Initialize-YakuCatProjectState -Project $Project
+    $segs = @($Project.Segments)
+    if ($Index -lt 0 -or $Index -ge $segs.Count) { throw 'CAT_TERM_SEGMENT_NOT_FOUND' }
+    if ([string]$Candidate.Kind -notin @('term','glossary')) { throw 'CAT_TERM_REFERENCE_KIND_INVALID' }
+    $target = [string]$Candidate.Target
+    if ([string]::IsNullOrWhiteSpace($target) -or ([string]$segs[$Index].Translation).IndexOf($target, [StringComparison]::Ordinal) -lt 0) {
+        throw 'CAT_TERM_TARGET_NOT_PRESENT'
+    }
+    $usages = New-Object System.Collections.Generic.List[object]
+    foreach ($usage in @($segs[$Index].TerminologyUsages)) { $usages.Add($usage) | Out-Null }
+    $usages.Add([pscustomobject]@{
+        reference_id=[string]$Candidate.ReferenceId; term_id=$(try { [string]$Candidate.TermId } catch { '' })
+        term_version=$(try { [int]$Candidate.TermVersion } catch { 0 }); source=[string]$Candidate.Source
+        preferred_target=$target; source_name=[string]$Candidate.SourceName; action='inserted'
+        target_hash=Get-YakuCatSourceIntegrityHash -Text ([string]$segs[$Index].Translation)
+        edited_after_insert=$false; created=(Get-Date).ToString('s')
+    }) | Out-Null
+    $segs[$Index].TerminologyUsages = @($usages.ToArray())
+    return $segs[$Index]
+}
+
+function Add-YakuCatTerminologyException {
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [Parameter(Mandatory=$true)][int]$Index,
+        [Parameter(Mandatory=$true)][string]$TermId,
+        [Parameter(Mandatory=$true)][int]$TermVersion,
+        [ValidateSet('not-applicable','approved-alternative')][string]$ReasonCode='not-applicable',
+        [AllowNull()][string]$Alternative,
+        [AllowNull()][string]$Note
+    )
+    $null = Initialize-YakuCatProjectState -Project $Project
+    $segs = @($Project.Segments)
+    if ($Index -lt 0 -or $Index -ge $segs.Count) { throw 'CAT_TERM_SEGMENT_NOT_FOUND' }
+    $entries = @(Get-YakuCatTerminologyEntries -Project $Project | Where-Object { [string]$_.term_id -eq $TermId -and [int]$_.version -eq $TermVersion })
+    if ($entries.Count -ne 1) { throw 'CAT_TERM_REFERENCE_NOT_AVAILABLE' }
+    $alternativeText = ([string]$Alternative).Trim()
+    if ($ReasonCode -eq 'approved-alternative') {
+        if ([string]::IsNullOrWhiteSpace($alternativeText)) { throw 'CAT_TERM_ALTERNATIVE_REQUIRED' }
+        if (([string]$segs[$Index].Translation).IndexOf($alternativeText, [StringComparison]::OrdinalIgnoreCase) -lt 0) { throw 'CAT_TERM_ALTERNATIVE_NOT_PRESENT' }
+    }
+    $exceptions = New-Object System.Collections.Generic.List[object]
+    foreach ($exception in @($segs[$Index].TerminologyExceptions)) { $exceptions.Add($exception) | Out-Null }
+    $exceptions.Add([pscustomobject]@{
+        term_id=$TermId; term_version=$TermVersion; reference_id=[string]$entries[0].reference_id
+        source_hash=Get-YakuTerminologyHash -Text ([string]$segs[$Index].Text)
+        target_hash=Get-YakuTerminologyHash -Text ([string]$segs[$Index].Translation)
+        reason_code=$ReasonCode; alternative=$alternativeText; note=([string]$Note).Trim()
+        active=$true; created=(Get-Date).ToString('s')
+    }) | Out-Null
+    $segs[$Index].TerminologyExceptions = @($exceptions.ToArray())
+    Reset-YakuCatSegmentQc -Segment $segs[$Index] -KeepState
+    return $segs[$Index]
+}
+
+function Add-YakuCatTranslationMemoryOutboxEvent {
+    param([Parameter(Mandatory=$true)]$Project, [Parameter(Mandatory=$true)]$Segment)
+    $eventId = Get-YakuCatSourceIntegrityHash -Text ('tm-outbox-v1|' + [string]$Project.Id + '|' + [string]$Segment.SegmentId + '|' + [string]$Project.Revision + '|' + [string]$Segment.SourceIntegrityHash + '|' + (Get-YakuCatSourceIntegrityHash -Text ([string]$Segment.Translation)))
+    if (@($Project.TmOutbox | Where-Object { [string]$_.event_id -eq $eventId }).Count -gt 0) { return $eventId }
+    $outbox = New-Object System.Collections.Generic.List[object]
+    foreach ($event in @($Project.TmOutbox)) { $outbox.Add($event) | Out-Null }
+    $outbox.Add([pscustomobject]@{
+        event_id=$eventId; source=[string]$Segment.Text; target=[string]$Segment.Translation
+        direction=[string]$Project.Direction; origin_project_id=[string]$Project.Id
+        origin_file_name=[string]$Project.FileName; origin_segment_id=[string]$Segment.SegmentId
+        origin_location=[string]$Segment.Location; origin_page=Get-YakuCatSegmentOriginPage -Project $Project -Segment $Segment
+        review_revision=[int]$Project.Revision + 1; created=(Get-Date).ToString('s')
+    }) | Out-Null
+    $Project.TmOutbox = @($outbox.ToArray())
+    return $eventId
+}
+
+function Sync-YakuCatTranslationMemoryOutbox {
+    param([Parameter(Mandatory=$true)]$Project)
+    $pending = 0
+    foreach ($event in @($Project.TmOutbox)) {
+        try {
+            $result = Add-YakuTranslationMemoryEntry -Source ([string]$event.source) -Target ([string]$event.target) `
+                -Direction ([string]$event.direction) -Origin 'cat-reviewed-qc-v1' `
+                -OriginProjectId ([string]$event.origin_project_id) -OriginFileName ([string]$event.origin_file_name) `
+                -OriginSegmentId ([string]$event.origin_segment_id) -OriginLocation ([string]$event.origin_location) `
+                -OriginPage ([int]$event.origin_page) -ReviewRevision ([int]$event.review_revision)
+            if ($null -eq $result) { $pending++ }
+        } catch {
+            $pending++
+            try { Write-YakuLog ('Translation memory outbox pending. event=' + [string]$event.event_id + ' error=' + $_.Exception.Message) 'WARN' } catch {}
+        }
+    }
+    $Project | Add-Member -NotePropertyName TmPendingCount -NotePropertyValue ([int]$pending) -Force
+    return [int]$pending
+}
+
+function Update-YakuCatProjectForTerminologyChange {
+    param([Parameter(Mandatory=$true)]$Project, [Parameter(Mandatory=$true)]$Entry)
+    $affected = 0
+    foreach ($segment in @($Project.Segments)) {
+        $matches = @(Find-YakuTerminologyMatches -Text ([string]$segment.Text) -Direction ([string]$Project.Direction) -Entries @($Entry) -ProjectId ([string]$Project.Id))
+        if ($matches.Count -eq 0) { continue }
+        $affected++
+        if ([bool]$segment.Confirmed -or [string]$segment.QcStatus -eq 'passed') {
+            Reset-YakuCatSegmentQc -Segment $segment
+            $segment.State = 'stale'
+        }
+    }
+    $Project.TerminologySnapshotHash = Get-YakuCatTerminologySnapshotHash -Project $Project
+    return $affected
 }
 
 function Set-YakuCatSegmentConfirmed {

@@ -19,6 +19,9 @@ Rules:
 - If an item has multiple lines, keep it as one numbered item and indent continuation lines.
 - Use consistent terminology across items. Keep product names, account codes, URLs, email addresses, and obvious identifiers unchanged.
 {numeric_rules}
+===TERMINOLOGY_DATA:{request_id}===
+{terminology_rules}
+===END_TERMINOLOGY_DATA:{request_id}===
 ===INPUT_TEXT:{request_id}===
 {source_list}
 ===END_INPUT_TEXT:{request_id}===

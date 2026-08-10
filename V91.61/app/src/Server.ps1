@@ -29,6 +29,7 @@ $script:YakuRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyComman
 . (Join-Path $PSScriptRoot 'AlignMask.ps1')
 . (Join-Path $PSScriptRoot 'Alignment.ps1')
 . (Join-Path $PSScriptRoot 'ProperNoun.ps1')
+. (Join-Path $PSScriptRoot 'Terminology.ps1')
 . (Join-Path $PSScriptRoot 'PersonalGlossary.ps1')
 . (Join-Path $PSScriptRoot 'TranslationMemory.ps1')
 . (Join-Path $PSScriptRoot 'CorpusPairs.ps1')
@@ -1078,7 +1079,7 @@ function Start-YakuTranslationJob {
                         $text = [string]$it.text
                         if ([string]::IsNullOrWhiteSpace($text)) { continue }
                         if (-not $byText.ContainsKey($text)) {
-                            $entry = [pscustomobject]@{ Index = ($items.Count + 1); Text = $text; BlockIds = (New-Object System.Collections.Generic.List[string]); Targets = (New-Object System.Collections.Generic.List[int]) }
+                            $entry = [pscustomobject]@{ Index = ($items.Count + 1); Text = $text; BlockIds = (New-Object System.Collections.Generic.List[string]); Targets = (New-Object System.Collections.Generic.List[int]); Terminology=@($it.terminology) }
                             $byText[$text] = $entry
                             [void]$items.Add($entry)
                         }
@@ -1135,6 +1136,7 @@ function Start-YakuTranslationJob {
                                 index = [int]$t; text = $translation
                                 masked = [string]$entry.MaskedTranslation
                                 source = [string](Get-YakuFileItemOriginalText -Item $entry)
+                                terminology = @($entry.Terminology)
                             })
                         }
                     }
@@ -2571,7 +2573,7 @@ function Invoke-YakuRoute {
             }
             if ($null -eq $project) { throw '取り込んだファイルが見つかりません。もう一度「取り込む」を押してください。' }
 
-            $revisionActions = @('delete','glossary','merge','split','glossary-add','confirm','save-corpus','segment','translate','apply','preflight','export')
+            $revisionActions = @('delete','glossary','merge','split','glossary-add','term-add','term-deactivate','term-insert','term-exception','tm-delete','confirm','save-corpus','segment','translate','apply','preflight','export')
             if ($revisionActions -contains $action) {
                 $expectedRevision = -1
                 try { $expectedRevision = [int]$payload['expected_revision'] } catch { $expectedRevision = -1 }
@@ -2638,10 +2640,27 @@ function Invoke-YakuRoute {
                         target = [string]$_.Target
                         exact = [bool]$_.Exact
                         ratio = [double]$_.Ratio
+                        match_type = [string]$_.MatchType
+                        score = $(try { [double]$_.Score } catch { [double]$_.Ratio })
+                        saved = [string]$_.Saved
                         database = [string]$_.Database
                         verified = [bool]$_.Verified
+                        term_id = [string]$_.TermId
+                        term_version = $(try { [int]$_.TermVersion } catch { 0 })
+                        scope = [string]$_.Scope
+                        enforcement = [string]$_.Enforcement
+                        allowed_targets = @($_.AllowedTargets)
+                        forbidden_targets = @($_.ForbiddenTargets)
+                        origin_project_id = [string]$_.OriginProjectId
+                        origin_segment_id = [string]$_.OriginSegmentId
+                        review_revision = $(try { [int]$_.ReviewRevision } catch { 0 })
                     } })
-                    Send-YakuTextResponse -Context $Context -Text (([ordered]@{ index = $index; candidates = @($rows) } | ConvertTo-Json -Depth 5 -Compress)) -ContentType 'application/json; charset=utf-8'
+                    $termRows = @($rows | Where-Object { [string]$_.kind -in @('term','glossary') })
+                    $segmentRows = @($rows | Where-Object { [string]$_.kind -notin @('term','glossary') })
+                    Send-YakuTextResponse -Context $Context -Text (([ordered]@{
+                        index = $index; terms = @($termRows); segment_matches = @($segmentRows)
+                        candidates = @($rows) # 旧UI/テストの読取互換
+                    } | ConvertTo-Json -Depth 7 -Compress)) -ContentType 'application/json; charset=utf-8'
                 }
                 'glossary-add' {
                     # 行から個人用の用語集へ足す。これが無いと「用語集を直す」という
@@ -2655,6 +2674,167 @@ function Invoke-YakuRoute {
                     if (-not [bool]$added.Added -and [string]$added.Reason -eq 'too-long') { throw '用語集は表の項目のための一覧です。文章は追加できません。' }
                     $msg = if ([bool]$added.Added) { '用語集に追加しました。次から自動で入ります。' } else { 'すでに同じ内容が用語集にあります。' }
                     Send-YakuTextResponse -Context $Context -Text (([ordered]@{ ok = [bool]$added.Added; message = $msg } | ConvertTo-Json -Compress)) -ContentType 'application/json; charset=utf-8'
+                }
+                'term-add' {
+                    $index = -1; try { $index = [int]$payload['index'] } catch {}
+                    $segs2 = @($project.Segments)
+                    if ($index -lt 0 -or $index -ge $segs2.Count) { throw '用語を登録する行が見つかりません。' }
+                    $sourceTerm = ([string]$payload['source_term']).Trim()
+                    $preferred = ([string]$payload['preferred_target']).Trim()
+                    if ([string]::IsNullOrWhiteSpace($sourceTerm) -or [string]::IsNullOrWhiteSpace($preferred)) { throw '原文の用語と推奨訳を入力してください。' }
+                    if ($sourceTerm.Length -gt 80 -or $preferred.Length -gt 80 -or $sourceTerm -match "[`r`n]" -or $preferred -match "[`r`n]") { throw '用語は改行を含まない80文字以内で登録してください。' }
+                    $scope = if ([string]$payload['scope'] -eq 'personal') { 'personal' } else { 'project' }
+                    $allowed = @([string]$payload['allowed_targets'] -split '[|｜]' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+                    $forbidden = @([string]$payload['forbidden_targets'] -split '[|｜]' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+                    if ($allowed.Count -gt 20 -or $forbidden.Count -gt 20) { throw '許容訳と使用しない訳は、それぞれ20件以内にしてください。' }
+                    foreach ($variant in @($allowed + $forbidden)) {
+                        if ($variant.Length -gt 80 -or $variant -match '[\x00-\x1F\x7F]') { throw '用語の各表現は制御文字を含まない80文字以内にしてください。' }
+                    }
+                    $overlap = @($allowed | Where-Object { $forbidden -contains $_ })
+                    if ($overlap.Count -gt 0) { throw '同じ表現を「許容する別訳」と「使用しない訳」の両方には登録できません。' }
+                    if ([string]$payload['note'] -match '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]' -or ([string]$payload['note']).Length -gt 200) { throw '補足は制御文字を含まない200文字以内にしてください。' }
+                    $segment = $segs2[$index]
+                    $originPage = Get-YakuCatSegmentOriginPage -Project $project -Segment $segment
+                    $params = @{
+                        Scope=$scope; ProjectId=$(if($scope -eq 'project'){[string]$project.Id}else{''}); Kind='occurrence'; Enforcement='required'
+                        Note=[string]$payload['note']; OriginProjectId=[string]$project.Id; OriginFileName=[string]$project.FileName
+                        OriginSegmentId=[string]$segment.SegmentId; OriginLocation=[string]$segment.Location; OriginRevision=[int]$project.Revision
+                    }
+                    if ([string]$project.Direction -eq 'to_en') {
+                        $params.JapanesePreferred=$sourceTerm; $params.EnglishPreferred=$preferred
+                        $params.EnglishAllowed=$allowed; $params.EnglishForbidden=$forbidden
+                    } else {
+                        $params.EnglishPreferred=$sourceTerm; $params.JapanesePreferred=$preferred
+                        $params.JapaneseAllowed=$allowed; $params.JapaneseForbidden=$forbidden
+                    }
+                    $termId = ([string]$payload['term_id']).Trim()
+                    $termVersion = 0; try { $termVersion = [int]$payload['term_version'] } catch {}
+                    $previousEntry = $null
+                    if (-not [string]::IsNullOrWhiteSpace($termId)) {
+                        if ($termId -notmatch '^[a-f0-9]{32}$') { throw 'TERMINOLOGY_REFERENCE_INVALID' }
+                        $currentTerms = @(Get-YakuCatTerminologyEntries -Project $project | Where-Object { [string]$_.term_id -eq $termId })
+                        if ($currentTerms.Count -ne 1 -or [int]$currentTerms[0].version -ne $termVersion) { throw 'TERMINOLOGY_REVISION_CONFLICT' }
+                        $previousEntry = $currentTerms[0]
+                        $params['TermId'] = $termId
+                        $added = Update-YakuTerminologyEntry @params
+                    } else {
+                        $added = Add-YakuTerminologyEntry @params
+                    }
+                    $entry = $added.Entry
+                    $mutation = {
+                        param($candidate,$innerEntry)
+                        $count = Update-YakuCatProjectForTerminologyChange -Project $candidate -Entry $innerEntry
+                        return [int]$count
+                    }
+                    try {
+                        $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($entry)
+                    } catch {
+                        $commitError = $_
+                        # The terminology store is append-only and lives outside the
+                        # project snapshot. If the project commit fails after a new
+                        # record was appended, immediately add an inactive revision so
+                        # the orphan never becomes a candidate in this or another job.
+                        if ([bool]$added.Added) {
+                            try {
+                                if ($null -ne $previousEntry) {
+                                    $null = Update-YakuTerminologyEntry -TermId ([string]$entry.term_id) -Scope ([string]$previousEntry.scope) -ProjectId ([string]$previousEntry.project_id) `
+                                        -Kind ([string]$previousEntry.kind) -Enforcement ([string]$previousEntry.enforcement) `
+                                        -JapanesePreferred ([string]$previousEntry.ja.preferred) -EnglishPreferred ([string]$previousEntry.en.preferred) `
+                                        -JapaneseAllowed @($previousEntry.ja.allowed) -JapaneseForbidden @($previousEntry.ja.forbidden) `
+                                        -EnglishAllowed @($previousEntry.en.allowed) -EnglishForbidden @($previousEntry.en.forbidden) -Note ([string]$previousEntry.note) `
+                                        -OriginProjectId ([string]$project.Id) -OriginFileName ([string]$project.FileName) -OriginSegmentId ([string]$segment.SegmentId) `
+                                        -OriginLocation ([string]$segment.Location) -OriginRevision ([int]$project.Revision)
+                                } else {
+                                    $null = Disable-YakuTerminologyEntry -TermId ([string]$entry.term_id) `
+                                        -OriginProjectId ([string]$project.Id) -OriginFileName ([string]$project.FileName) `
+                                        -OriginSegmentId ([string]$segment.SegmentId) -OriginLocation ([string]$segment.Location) `
+                                        -OriginRevision ([int]$project.Revision)
+                                }
+                            } catch {
+                                try { Write-YakuLog ('Terminology compensation failed. term=' + [string]$entry.term_id) 'ERROR' } catch {}
+                            }
+                        }
+                        throw $commitError.Exception
+                    }
+                    $project = $commit.Project
+                    $body = (ConvertTo-YakuCatProjectJson -Project $project) | ConvertFrom-Json
+                    $body | Add-Member -NotePropertyName term_affected_count -NotePropertyValue ([int]$commit.Result) -Force
+                    Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 9 -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                'term-deactivate' {
+                    $index = -1; try { $index = [int]$payload['index'] } catch {}
+                    $termId = ([string]$payload['term_id']).Trim()
+                    if ($termId -notmatch '^[a-f0-9]{32}$') { throw 'TERMINOLOGY_REFERENCE_INVALID' }
+                    $segs2 = @($project.Segments)
+                    if ($index -lt 0 -or $index -ge $segs2.Count) { throw '用語を変更する行が見つかりません。' }
+                    $currentTerms = @(Get-YakuCatTerminologyEntries -Project $project | Where-Object { [string]$_.term_id -eq $termId })
+                    if ($currentTerms.Count -ne 1) { throw 'TERMINOLOGY_ENTRY_NOT_FOUND' }
+                    $oldEntry = $currentTerms[0]; $segment = $segs2[$index]
+                    $disabled = Disable-YakuTerminologyEntry -TermId $termId `
+                        -OriginProjectId ([string]$project.Id) -OriginFileName ([string]$project.FileName) `
+                        -OriginSegmentId ([string]$segment.SegmentId) -OriginLocation ([string]$segment.Location) `
+                        -OriginRevision ([int]$project.Revision)
+                    $mutation = {
+                        param($candidate,$innerEntry)
+                        return (Update-YakuCatProjectForTerminologyChange -Project $candidate -Entry $innerEntry)
+                    }
+                    try {
+                        $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($oldEntry)
+                    } catch {
+                        $deactivateCommitError = $_
+                        try {
+                            $null = Update-YakuTerminologyEntry -TermId $termId -Scope ([string]$oldEntry.scope) -ProjectId ([string]$oldEntry.project_id) `
+                                -Kind ([string]$oldEntry.kind) -Enforcement ([string]$oldEntry.enforcement) `
+                                -JapanesePreferred ([string]$oldEntry.ja.preferred) -EnglishPreferred ([string]$oldEntry.en.preferred) `
+                                -JapaneseAllowed @($oldEntry.ja.allowed) -JapaneseForbidden @($oldEntry.ja.forbidden) `
+                                -EnglishAllowed @($oldEntry.en.allowed) -EnglishForbidden @($oldEntry.en.forbidden) `
+                                -Note ([string]$oldEntry.note) -OriginProjectId ([string]$project.Id) -OriginFileName ([string]$project.FileName) `
+                                -OriginSegmentId ([string]$segment.SegmentId) -OriginLocation ([string]$segment.Location) -OriginRevision ([int]$project.Revision)
+                        } catch { try { Write-YakuLog ('Terminology restore failed. term=' + $termId) 'ERROR' } catch {} }
+                        throw ('TERMINOLOGY_PROJECT_COMMIT_FAILED:' + [string]$deactivateCommitError.Exception.Message)
+                    }
+                    $project = $commit.Project
+                    $body = (ConvertTo-YakuCatProjectJson -Project $project) | ConvertFrom-Json
+                    $body | Add-Member -NotePropertyName term_affected_count -NotePropertyValue ([int]$commit.Result) -Force
+                    Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 9 -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                'term-insert' {
+                    $index = -1; try { $index = [int]$payload['index'] } catch {}
+                    $text = [string]$payload['text']; $referenceId = [string]$payload['reference_id']
+                    $pairsDir = ''; try { $pairsDir = Get-YakuCorpusSearchDir } catch {}
+                    $matches = @(Get-YakuCatSegmentCandidates -Root $script:YakuRoot -Project $project -Index $index -PairsDir $pairsDir | Where-Object { [string]$_.ReferenceId -eq $referenceId -and [string]$_.Kind -in @('term','glossary') })
+                    if ($matches.Count -ne 1) { throw 'CAT_TERM_REFERENCE_NOT_AVAILABLE' }
+                    $mutation = {
+                        param($candidate,$innerIndex,$innerText,$innerCandidate)
+                        $null = Set-YakuCatSegmentTranslation -Project $candidate -Index $innerIndex -Text $innerText
+                        $null = Set-YakuCatSegmentTerminologyUsage -Project $candidate -Index $innerIndex -Candidate $innerCandidate
+                    }
+                    $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($index,$text,$matches[0])
+                    $project = $commit.Project
+                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
+                }
+                'term-exception' {
+                    $index=-1; $version=0; try{$index=[int]$payload['index']}catch{}; try{$version=[int]$payload['term_version']}catch{}
+                    $mutation = {
+                        param($candidate,$innerIndex,$termId,$termVersion,$reason,$alternative,$note)
+                        $null = Add-YakuCatTerminologyException -Project $candidate -Index $innerIndex -TermId $termId -TermVersion $termVersion -ReasonCode $reason -Alternative $alternative -Note $note
+                    }
+                    $reasonCode = if ([string]$payload['reason_code'] -eq 'approved-alternative') { 'approved-alternative' } else { 'not-applicable' }
+                    $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($index,[string]$payload['term_id'],$version,$reasonCode,[string]$payload['alternative'],[string]$payload['note'])
+                    $project=$commit.Project
+                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
+                }
+                'tm-delete' {
+                    $referenceId = [string]$payload['reference_id']
+                    if ($referenceId -notmatch '^[a-f0-9]{64}$') { throw 'TRANSLATION_MEMORY_REFERENCE_INVALID' }
+                    $index=-1; try{$index=[int]$payload['index']}catch{}
+                    $pairsDir=''; try{$pairsDir=Get-YakuCorpusSearchDir}catch{}
+                    $matches=@(Get-YakuCatSegmentCandidates -Root $script:YakuRoot -Project $project -Index $index -PairsDir $pairsDir | Where-Object { [string]$_.Kind -eq 'memory' -and [string]$_.ReferenceId -eq $referenceId })
+                    if($matches.Count -ne 1){throw 'TRANSLATION_MEMORY_REFERENCE_NOT_AVAILABLE'}
+                    $deleted = Add-YakuTranslationMemoryTombstone -Direction ([string]$project.Direction) `
+                        -OriginProjectId ([string]$matches[0].OriginProjectId) -OriginSegmentId ([string]$matches[0].OriginSegmentId) `
+                        -ReviewRevision ([int]$matches[0].ReviewRevision) -Reason 'withdrawn-by-user'
+                    Send-YakuTextResponse -Context $Context -Text (([ordered]@{ deleted=[bool]$deleted.Added; reason=[string]$deleted.Reason } | ConvertTo-Json -Compress)) -ContentType 'application/json; charset=utf-8'
                 }
                 'confirm' {
                     # 「この行は見た」を記録する。訳文が変わっていなくても押せる。
@@ -2670,6 +2850,10 @@ function Invoke-YakuRoute {
                             if ([string]$_.Exception.Message -like 'CAT_REVIEW_QC_FAILED:*') { $blocked = $true }
                             else { throw }
                         }
+                        if ($innerFlag -and -not $blocked) {
+                            $reviewed = @($candidate.Segments)[$innerIndex]
+                            $null = Add-YakuCatTranslationMemoryOutboxEvent -Project $candidate -Segment $reviewed
+                        }
                         try { $candidate | Add-Member -NotePropertyName 'GlossaryCandidates' -NotePropertyValue (Measure-YakuCatGlossaryCandidates -Root $root -Project $candidate -Settings $innerSettings) -Force } catch {}
                         return [pscustomobject]@{ ReviewBlocked=$blocked }
                     }
@@ -2677,17 +2861,9 @@ function Invoke-YakuRoute {
                     $project = $commit.Project
                     $reviewBlocked = [bool]$commit.Result.ReviewBlocked
                     if ($flag -and -not $reviewBlocked) {
-                        # Invoke-YakuCatProjectMutation 内の Save-YakuCatProject が成功した
-                        # 後だけTMへ副作用を出す。保存前に候補を公開してはいけない。
-                        try {
-                            $reviewedSegment = @($project.Segments)[$index]
-                            $originPage = Get-YakuCatSegmentOriginPage -Project $project -Segment $reviewedSegment
-                            $null = Add-YakuTranslationMemoryEntry -Source ([string]$reviewedSegment.Text) -Target ([string]$reviewedSegment.Translation) `
-                                -Direction ([string]$project.Direction) -Origin 'cat-reviewed-qc-v1' `
-                                -OriginProjectId ([string]$project.Id) -OriginFileName ([string]$project.FileName) `
-                                -OriginSegmentId ([string]$reviewedSegment.SegmentId) -OriginLocation ([string]$reviewedSegment.Location) `
-                                -OriginPage $originPage -ReviewRevision ([int]$project.Revision)
-                        } catch { try { Write-YakuLog ('Translation memory save failed after CAT commit: ' + $_.Exception.Message) 'WARN' } catch {} }
+                        # projectと同じ世代に保存したoutboxを、commit後に冪等反映する。
+                        # 失敗しても再開時に再試行でき、確認訳が黙って失われない。
+                        $null = Sync-YakuCatTranslationMemoryOutbox -Project $project
                     }
                     $json = ConvertTo-YakuCatProjectJson -Project $project
                     if ($reviewBlocked) {
@@ -2715,6 +2891,7 @@ function Invoke-YakuRoute {
                         if (-not [string]::IsNullOrWhiteSpace($innerReferenceId)) {
                             $matches = @(Get-YakuCatSegmentCandidates -Root $root -Project $candidate -Index $innerIndex -PairsDir $pairsDir | Where-Object { [string]$_.ReferenceId -eq $innerReferenceId })
                             if ($matches.Count -ne 1) { throw 'CAT_REFERENCE_NOT_AVAILABLE' }
+                            if ([string]$matches[0].Kind -in @('term','glossary')) { throw 'CAT_TERM_CANNOT_REPLACE_SEGMENT' }
                             $null = Set-YakuCatSegmentReferenceUsage -Project $candidate -Index $innerIndex -Candidate $matches[0]
                         }
                         try { $candidate | Add-Member -NotePropertyName 'GlossaryCandidates' -NotePropertyValue (Measure-YakuCatGlossaryCandidates -Root $root -Project $candidate -Settings $innerSettings) -Force } catch {}
@@ -2771,7 +2948,15 @@ function Invoke-YakuRoute {
                     } else {
                         for ($i = 0; $i -lt $segs.Count; $i++) {
                             if (-not [string]::IsNullOrWhiteSpace([string]$segs[$i].Translation)) { continue }
-                            $pending += ,([ordered]@{ index = $i; text = [string]$segs[$i].Text })
+                            $termRows=@()
+                            try {
+                                $termRows=@(Find-YakuTerminologyMatches -Text ([string]$segs[$i].Text) -Direction ([string]$project.Direction) `
+                                    -Entries @(Get-YakuCatTerminologyEntries -Project $project) -ProjectId ([string]$project.Id) | ForEach-Object {
+                                        $row = [ordered]@{ term_id=[string]$_.TermId; version=[int]$_.Version; reference_id=[string]$_.ReferenceId; scope=[string]$_.Scope; source=[string]$_.SourceTerm; preferred=[string]$_.PreferredTarget; allowed=@($_.AllowedTargets); forbidden=@($_.ForbiddenTargets); enforcement=[string]$_.Enforcement }
+                                        if (Test-YakuCatPromptTerminologyEligible -Term ([pscustomobject]$row) -Direction ([string]$project.Direction)) { $row }
+                                    } | Where-Object { $null -ne $_ })
+                            } catch { throw ('CAT_TERMINOLOGY_UNAVAILABLE: ' + $_.Exception.Message) }
+                            $pending += ,([ordered]@{ index = $i; text = [string]$segs[$i].Text; terminology=@($termRows) })
                         }
                     }
                     if (@($pending).Count -eq 0) {
@@ -2830,6 +3015,7 @@ function Invoke-YakuRoute {
                             $segs[$i].Translation = $appliedText
                             $segs[$i] | Add-Member -NotePropertyName 'MaskedTranslation' -NotePropertyValue ([string]$pair.masked) -Force
                             $segs[$i].Origin = 'copilot'
+                            $segs[$i].TerminologyGeneration = @($pair.terminology)
                             $segs[$i] | Add-Member -NotePropertyName State -NotePropertyValue 'machine_draft' -Force
                             Reset-YakuCatSegmentQc -Segment $segs[$i] -KeepState
                         }
