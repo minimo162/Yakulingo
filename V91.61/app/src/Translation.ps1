@@ -53,6 +53,27 @@ function Get-YakuTranslationCacheStore {
     }
 }
 
+function Get-YakuProcessHmacKey {
+    $name = 'YakuLingoProcessHmacKeyV1'
+    $key = [AppDomain]::CurrentDomain.GetData($name)
+    if ($null -eq $key -or @($key).Count -ne 32) {
+        $key = New-Object byte[] 32
+        $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+        try { $rng.GetBytes($key) } finally { $rng.Dispose() }
+        [AppDomain]::CurrentDomain.SetData($name, $key)
+    }
+    return [byte[]]$key
+}
+
+function Get-YakuTextHmacSha256 {
+    param([AllowNull()][string]$Text)
+    $hmac = New-Object System.Security.Cryptography.HMACSHA256 (,(Get-YakuProcessHmacKey))
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes([string]$Text)
+        return [BitConverter]::ToString($hmac.ComputeHash($bytes)).Replace('-','').ToLowerInvariant()
+    } finally { $hmac.Dispose() }
+}
+
 function Test-YakuTranslationCacheEnabled {
     param([AllowNull()]$Settings)
     try {
@@ -75,7 +96,7 @@ function Get-YakuTranslationContractFingerprint {
     if ([string]::IsNullOrWhiteSpace($Root)) {
         try { $Root = Get-YakuRoot } catch { $Root = '' }
     }
-    $names = @('glossary.csv','prompts\text_translate_to_en.txt','prompts\text_translate_to_jp.txt','prompts\file_translate_to_en.txt','prompts\file_translate_to_jp.txt','prompts\style_brief_rules.txt')
+    $names = @('glossary.csv','prompts\text_translate_full_to_en.txt','prompts\text_translate_brief_to_en.txt','prompts\text_translate_to_jp.txt','prompts\cat_translate_to_en.txt','prompts\cat_translate_to_jp.txt','prompts\style_brief_rules.txt')
     $settingParts = New-Object System.Collections.Generic.List[string]
     foreach ($key in @('copilot_model','use_bundled_glossary','glossary_prompt_limit','max_chars_per_batch','max_chars_per_batch_file')) {
         try { $settingParts.Add($key + '=' + [string]$Settings.$key) | Out-Null } catch { $settingParts.Add($key + '=') | Out-Null }
@@ -128,10 +149,9 @@ function Get-YakuTranslationCacheKey {
         [AllowNull()][string]$Root,
         [AllowNull()]$Settings
     )
-    $hash = if (Get-Command Get-YakuTextSha256 -ErrorAction SilentlyContinue) { Get-YakuTextSha256 -Text $Text } else {
-        $sha = [System.Security.Cryptography.SHA256]::Create()
-        try { [BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Text))).Replace('-','').ToLowerInvariant() } finally { $sha.Dispose() }
-    }
+    # Cache keys are process-local because the cache itself is process-local. Use a
+    # keyed digest so a leaked key cannot be used as a dictionary of source text.
+    $hash = Get-YakuTextHmacSha256 -Text $Text
     $contract = Get-YakuTranslationContractFingerprint -Root $Root -Settings $Settings
     return ($Kind + '|' + $Direction + '|' + $Style + '|' + $contract + '|' + $hash)
 }
@@ -184,19 +204,17 @@ function Get-YakuTextRequiredLabels {
 
       V91.61（2026-08-06）: 完全訳と開示用の電文体を別々の依頼にした。
       電文体は完全訳を短くしたものではなく、同じ原文に対する別の成果物である。
-      Mode を指定すると、その依頼のラベルだけを求める。
-      Mode が空なら従来どおり両方（1依頼で2つ返す旧経路との互換のため残す）。
+      通常は完全訳だけを求め、「短く」の専用処理だけが brief を求める。
     #>
     param(
         [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
-        [AllowNull()][string]$Mode
+        [ValidateSet('full','brief')][string]$Mode = 'full'
     )
     if ($Direction -ne 'to_en') { return @('JAPANESE_TEXT') }
     switch ([string]$Mode) {
         'full'  { return @('FULL_TEXT') }
-        'published' { return @('FULL_TEXT') }
         'brief' { return @('BRIEF_TEXT') }
-        default { return @('FULL_TEXT','BRIEF_TEXT') }
+        default { return @('FULL_TEXT') }
     }
 }
 
@@ -205,7 +223,7 @@ function Test-YakuTextResponseContract {
         [AllowNull()][string]$Text,
         [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
         [Parameter(Mandatory=$true)][string]$RequestId,
-        [AllowNull()][string]$Mode
+        [ValidateSet('full','brief')][string]$Mode = 'full'
     )
     $rawText = [string]$Text
     if ($rawText -match '(?s)^\s*```[^\r\n]*\r?\n.*\r?\n```\s*$') {
@@ -268,7 +286,13 @@ function Test-YakuTextResponseContract {
             return [pscustomobject]@{ Valid=$false; ErrorCode='RESPONSE_FIELD_EMPTY'; Message="$label が空です。" }
         }
     }
-    $unexpected = if ($Direction -eq 'to_en') { 'JAPANESE_TEXT' } else { 'FULL_TEXT|BRIEF_TEXT' }
+    $unexpected = if ($Direction -ne 'to_en') {
+        'FULL_TEXT|BRIEF_TEXT'
+    } elseif ($Mode -eq 'brief') {
+        'FULL_TEXT|JAPANESE_TEXT'
+    } else {
+        'BRIEF_TEXT|JAPANESE_TEXT'
+    }
     if ($clean -match ("(?im)^\s*(?:\*\*)?(?:$unexpected)(?:\*\*)?\s*:")) {
         return [pscustomobject]@{ Valid=$false; ErrorCode='RESPONSE_STYLE_UNEXPECTED'; Message='要求していない翻訳スタイルが含まれています。' }
     }
@@ -333,6 +357,156 @@ function ConvertTo-YakuInvariantNumberText {
     }
     $fmt = if ($UseGrouping) { '#,0.################' } else { '0.################' }
     return $Value.ToString($fmt, [Globalization.CultureInfo]::InvariantCulture)
+}
+
+function ConvertFrom-YakuJapaneseNumberText {
+    param([AllowNull()][string]$Text)
+    $s = (ConvertTo-YakuMaskNormalizedText -Text ([string]$Text)).Trim()
+    $s = $s.Replace('壱','一').Replace('弐','二').Replace('参','三').Replace('拾','十').Replace('零','〇')
+    if ($s -notmatch '^[〇一二三四五六七八九十百千万億兆]+$') { return [pscustomobject]@{ Ok=$false; Value=[decimal]0 } }
+    $digits = @{ '〇'=0; '一'=1; '二'=2; '三'=3; '四'=4; '五'=5; '六'=6; '七'=7; '八'=8; '九'=9 }
+    $small = @{ '十'=[decimal]10; '百'=[decimal]100; '千'=[decimal]1000 }
+    $large = @{ '万'=[decimal]10000; '億'=[decimal]100000000; '兆'=[decimal]1000000000000 }
+    [decimal]$total = 0; [decimal]$section = 0; [decimal]$current = 0
+    foreach ($ch in $s.ToCharArray()) {
+        $key = [string]$ch
+        if ($digits.ContainsKey($key)) { $current = [decimal]$digits[$key]; continue }
+        if ($small.ContainsKey($key)) {
+            if ($current -eq 0) { $current = 1 }
+            $section += $current * [decimal]$small[$key]
+            $current = 0
+            continue
+        }
+        if ($large.ContainsKey($key)) {
+            $section += $current
+            if ($section -eq 0) { $section = 1 }
+            $total += $section * [decimal]$large[$key]
+            $section = 0; $current = 0
+        }
+    }
+    return [pscustomobject]@{ Ok=$true; Value=($total + $section + $current) }
+}
+
+function ConvertFrom-YakuEnglishNumberText {
+    param([AllowNull()][string]$Text)
+    $s = ([string]$Text).ToLowerInvariant().Replace('-', ' ')
+    $words = @($s -split '\s+' | Where-Object { $_ -and $_ -ne 'and' })
+    if ($words.Count -eq 0) { return [pscustomobject]@{ Ok=$false; Value=[decimal]0 } }
+    $values = @{
+        a=1; zero=0; one=1; two=2; three=3; four=4; five=5; six=6; seven=7; eight=8; nine=9; ten=10
+        eleven=11; twelve=12; thirteen=13; fourteen=14; fifteen=15; sixteen=16; seventeen=17; eighteen=18; nineteen=19
+        twenty=20; thirty=30; forty=40; fifty=50; sixty=60; seventy=70; eighty=80; ninety=90
+    }
+    $large = @{ thousand=[decimal]1000; million=[decimal]1000000; billion=[decimal]1000000000; trillion=[decimal]1000000000000 }
+    [decimal]$total=0; [decimal]$current=0
+    foreach ($word in $words) {
+        if ($values.ContainsKey($word)) { $current += [decimal]$values[$word]; continue }
+        if ($word -eq 'hundred') { if ($current -eq 0) { $current=1 }; $current *= 100; continue }
+        if ($large.ContainsKey($word)) { if ($current -eq 0) { $current=1 }; $total += $current * [decimal]$large[$word]; $current=0; continue }
+        return [pscustomobject]@{ Ok=$false; Value=[decimal]0 }
+    }
+    return [pscustomobject]@{ Ok=$true; Value=($total + $current) }
+}
+
+function Get-YakuNumericContextDescriptor {
+    <#
+      [[N1]] の前後から、値に掛かる桁と通貨を一度だけ解釈する。
+      復元とCAT QCが別々の正規表現を持つと、同じ誤表記を同時に見逃すため、
+      `120 million yen` と `120-million-yen` をこの共通入口へ集約する。
+    #>
+    param(
+        [AllowNull()][string]$Text,
+        [AllowNull()][string]$Token,
+        [int]$Start = -1
+    )
+    $whole=[string]$Text; $marker=[string]$Token
+    $at=$Start
+    if($at -lt 0 -and -not [string]::IsNullOrEmpty($marker)){$at=$whole.IndexOf($marker,[StringComparison]::Ordinal)}
+    if($at -lt 0){return [pscustomobject]@{Scale=[decimal]1;ScaleName='';Currency='';Before='';After='';IsCurrency=$false;Found=$false}}
+    $markerLength=$(if([string]::IsNullOrEmpty($marker)){0}else{$marker.Length})
+    $before=$whole.Substring([Math]::Max(0,$at-32),[Math]::Min(32,$at))
+    $afterAt=$at+$markerLength
+    $after=$whole.Substring($afterAt,[Math]::Min(64,$whole.Length-$afterAt))
+    $join='[\s\-\u2010-\u2015]*'
+    $scaleName='';[decimal]$scale=1
+    $scaleMatch=$null
+    if($after -match ('(?i)^\s*\)?'+$join+'(?<scale>trillion|billion|million|thousand|oku|k(?=\s*(?:yen|units?)\b))\b')){$scaleMatch=$Matches['scale']}
+    elseif($after -match ('(?i)^\s*\)?'+$join+'(?<scale>oku)(?=\s|です|でした|[。、．,.]|$)')){$scaleMatch=$Matches['scale']}
+    elseif($after -match ('^\s*\)?'+$join+'(?<scale>兆|億|百万|万|千|百)')){$scaleMatch=$Matches['scale']}
+    if($null -ne $scaleMatch){
+        $scaleName=[string]$scaleMatch
+        switch -Regex ($scaleName.ToLowerInvariant()) {
+            '^(trillion|兆)$' {$scale=[decimal]1000000000000;break}
+            '^billion$' {$scale=[decimal]1000000000;break}
+            '^(million|百万)$' {$scale=[decimal]1000000;break}
+            '^oku$|^億$' {$scale=[decimal]100000000;break}
+            '^万$' {$scale=[decimal]10000;break}
+            '^(thousand|k|千)$' {$scale=[decimal]1000;break}
+            '^百$' {$scale=[decimal]100;break}
+        }
+    }
+    $currency=''
+    $scalePart='(?:(?:trillion|billion|million|thousand|oku|k|兆|億|百万|万|千|百)'+$join+')?'
+    if($after -match ('(?i)^\s*\)?'+$join+$scalePart+'yen\b') -or $after -match ('^\s*\)?'+$join+$scalePart+'円')){$currency='yen'}
+    elseif($after -match ('(?i)^\s*\)?'+$join+$scalePart+'dollars?\b') -or $after -match ('^\s*\)?'+$join+$scalePart+'ドル')){$currency='dollar'}
+    elseif($after -match ('(?i)^\s*\)?'+$join+$scalePart+'euros?\b') -or $after -match ('^\s*\)?'+$join+$scalePart+'ユーロ')){$currency='euro'}
+    elseif($after -match ('(?i)^\s*\)?'+$join+$scalePart+'pounds?\b') -or $after -match ('^\s*\)?'+$join+$scalePart+'ポンド')){$currency='pound'}
+    elseif($before -match '(?i)(?:\bJPY|¥)\s*$'){$currency='yen'}
+    elseif($before -match '(?i)(?:\bUSD|\$)\s*$'){$currency='dollar'}
+    elseif($before -match '(?i)(?:\bEUR|€)\s*$'){$currency='euro'}
+    elseif($before -match '(?i)(?:\bGBP|£)\s*$'){$currency='pound'}
+    elseif($scaleName -ieq 'oku'){$currency='yen'}
+    return [pscustomobject]@{Scale=$scale;ScaleName=$scaleName;Currency=$currency;Before=$before;After=$after;IsCurrency=(-not [string]::IsNullOrEmpty($currency));Found=$true}
+}
+
+function ConvertTo-YakuNumericRestoreValue {
+    <#
+      漢数字や英語綴り数は、そのまま異言語の文へ戻すと「一億 yen」や
+      「two billion円」になる。値を変えず、言語に依存しないアラビア数字へ
+      正規化してから復元する。
+    #>
+    param(
+        [AllowNull()][string]$Text,
+        [ValidateSet('auto','to_en','to_jp')][string]$Direction='auto',
+        [AllowNull()][string]$Context,
+        [AllowNull()][string]$Token,
+        [AllowNull()][string]$SourceContext
+    )
+    $raw = [string]$Text
+    [decimal]$value=0; $parsed=$false; $includesScale=$false
+    if ($raw -match '[〇零一二三四五六七八九十百千万億兆壱弐参拾]') {
+        $jp = ConvertFrom-YakuJapaneseNumberText -Text $raw
+        if ([bool]$jp.Ok) {
+            $value=[decimal]$jp.Value;$parsed=$true;$includesScale=$true
+        }
+    }
+    if (-not $parsed -and $raw -match '(?i)\b(?:a|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|trillion)\b') {
+        $en = ConvertFrom-YakuEnglishNumberText -Text $raw
+        if ([bool]$en.Ok) {$value=[decimal]$en.Value;$parsed=$true;$includesScale=$true}
+    }
+    if(-not $parsed){
+        $normalized=(ConvertTo-YakuMaskNormalizedText -Text $raw).Replace(',','')
+        $parsed=[decimal]::TryParse($normalized,[Globalization.NumberStyles]::Number -bor [Globalization.NumberStyles]::AllowLeadingSign,[Globalization.CultureInfo]::InvariantCulture,[ref]$value)
+    }
+    if($parsed){
+        $sourceDescriptor=Get-YakuNumericContextDescriptor -Text $SourceContext -Token $Token
+        [decimal]$absolute=$value
+        if(-not $includesScale -and $null -ne $sourceDescriptor){$absolute=$value*[decimal]$sourceDescriptor.Scale}
+        $targetDescriptor=Get-YakuNumericContextDescriptor -Text $Context -Token $Token
+        $canRenderFinancial=(($includesScale -and -not [bool]$sourceDescriptor.Found -and [bool]$targetDescriptor.IsCurrency) -or
+            ([bool]$sourceDescriptor.IsCurrency -and [bool]$targetDescriptor.IsCurrency))
+        if($Direction -eq 'to_en' -and $canRenderFinancial -and $null -ne $targetDescriptor){
+            if([decimal]$targetDescriptor.Scale -gt 1){return (ConvertTo-YakuInvariantNumberText -Value ($absolute/[decimal]$targetDescriptor.Scale))}
+            if([bool]$targetDescriptor.IsCurrency -and [Math]::Abs($absolute) -ge [decimal]1000000){
+                $scaleName='million';[decimal]$scale=[decimal]1000000
+                if([Math]::Abs($absolute) -ge [decimal]1000000000000){$scaleName='trillion';$scale=[decimal]1000000000000}
+                elseif([Math]::Abs($absolute) -ge [decimal]1000000000){$scaleName='billion';$scale=[decimal]1000000000}
+                return ((ConvertTo-YakuInvariantNumberText -Value ($absolute/$scale))+' '+$scaleName)
+            }
+        }
+        if($includesScale){return (ConvertTo-YakuInvariantNumberText -Value $value -UseGrouping)}
+    }
+    return $raw
 }
 
 function Convert-YakuNumericUnits {
@@ -414,7 +588,8 @@ function Convert-YakuNumericUnits {
 # ---------------------------------------------------------------------------
 # V91.60 数値マスキング
 #
-# Copilot は外部サーバーであるため、機密性のある数値の「大きさ」だけを
+# 未公開財務数値を含む文書はそのままでは「極秘」だが、社内規程上、数値を
+# 完全にマスクすれば「機密」としてCopilotへ送信できる。そのため大きさだけを
 # プレースホルダー[[N1]]へ置き換えて送信し、受信後に復元する。
 # 符号(+ / ▲ / △ / 括弧)と単位(oku / k yen / % など)は外に残す。依頼元の許可により
 # 符号は保持してよく、単位を残すとモデルが金額・数量・比率を区別できるため。
@@ -427,6 +602,47 @@ function Test-YakuNumericMaskingEnabled {
     # 常時有効。機密要件は利用者が個別に無効化できるべきではない。
     # 回帰テスト用の抜け道としてのみ環境変数を見る。設定画面には出さない。
     return (-not ([string]$env:YAKULINGO_NUMERIC_MASKING -eq 'off'))
+}
+
+function Assert-YakuNumericPromptProtected {
+    <# 数値マップの実値がpromptに1つでも残れば、Copilot呼び出し前に停止する。 #>
+    param(
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$Prompt,
+        [AllowNull()][hashtable]$MaskMap
+    )
+    if (-not (Test-YakuNumericMaskingEnabled)) { throw 'EXTERNAL_SEND_NUMERIC_PROTECTION_DISABLED' }
+    foreach ($token in @($(if ($null -ne $MaskMap) { $MaskMap.Keys }))) {
+        $rawValue = [string]$MaskMap[$token]
+        if ([string]::IsNullOrWhiteSpace($rawValue)) { continue }
+        $pattern = '(?<![0-9A-Za-z])' + [regex]::Escape($rawValue) + '(?![0-9A-Za-z])'
+        if ([regex]::IsMatch($Prompt, $pattern)) { throw 'EXTERNAL_SEND_UNMASKED_NUMERIC_VALUE' }
+    }
+    return $true
+}
+
+function Protect-YakuPromptField {
+    <# 最終promptへ差し込む補助欄の数値を、原文と同じmapへ衝突なく統合する。 #>
+    param(
+        [AllowNull()][string]$Text,
+        [Parameter(Mandatory=$true)][string]$Root,
+        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
+        [Parameter(Mandatory=$true)]$NumericMap,
+        [Parameter(Mandatory=$true)][string]$Location
+    )
+    if ([string]::IsNullOrEmpty([string]$Text)) { return '' }
+    $protected = [string]$Text
+    $numericResult = New-YakuNumericMaskMap -Text $protected -Root $Root -Direction $Direction -Location $Location
+    $protected = [string]$numericResult.Text
+    $numericOffset = [int]$NumericMap.Count
+    # N1→N2 を先にすると元の N2 も後続置換の対象になる。同じ金額tokenへ
+    # 潰れないよう、元tokenの番号を使って後ろから一度だけ振り替える。
+    foreach ($token in @($numericResult.Map.Keys | Sort-Object { [int]([regex]::Match([string]$_, '\d+').Value) } -Descending)) {
+        $tokenIndex = [int]([regex]::Match([string]$token, '\d+').Value)
+        $newToken = '[[N' + [string]($numericOffset + $tokenIndex) + ']]'
+        $protected = $protected.Replace([string]$token, $newToken)
+        $NumericMap[$newToken] = [string]$numericResult.Map[$token]
+    }
+    return $protected
 }
 
 function ConvertTo-YakuMaskNormalizedText {
@@ -522,20 +738,6 @@ function Get-YakuNumericMaskProtectedSpans {
     foreach ($m in [regex]::Matches([string]$Text, '\[\[N\d+\]\]')) {
         if ($m.Length -gt 0) { $spans.Add([pscustomobject]@{ Start = [int]$m.Index; End = [int]($m.Index + $m.Length) }) | Out-Null }
     }
-    # 固有名詞の記号も保護する。固有名詞は数値より先に伏せるので、ここへ来る
-    # ときには [[P1]] が本文に居る。保護しないと中の 1 が数字として伏せられ、
-    # [[P[[N2]]]] という壊れた形で Copilot へ出る（2026-08-08 に実際に確認）。
-    #
-    # 復元は数値→固有名詞の順なので、モデルが忠実に写せば偶然もとに戻る。
-    # だから今日まで気づかなかった。しかし
-    #   - 伏せた件数が水増しされる（名前の一部を数値として数える）
-    #   - 数値整合の警告が、実際には名前の一部について出る
-    #   - モデルが壊れた形を整えると名前が失われる
-    # ので、偶然に頼ってよい話ではない。
-    foreach ($m in [regex]::Matches([string]$Text, '\[\[P\d+\]\]')) {
-        if ($m.Length -gt 0) { $spans.Add([pscustomobject]@{ Start = [int]$m.Index; End = [int]($m.Index + $m.Length) }) | Out-Null }
-    }
-
     # 用語集に一致した範囲。数字を含む語(FY26/3 1Q、AAT 営業利益(50%)、
     # MTMUS製(CX-50) 等)を壊さないため、マスク前のテキストから求める。
     # 件数制限は掛けない。制限すると上限を超えた用語が保護されない。
@@ -578,11 +780,52 @@ function New-YakuNumericMaskMap {
     $normalized = ConvertTo-YakuMaskNormalizedText -Text $source
 
     $targets = New-Object System.Collections.Generic.List[object]
+    $targetKeys = @{}
     $kept = 0
-    foreach ($m in [regex]::Matches($normalized, '\d[\d,]*(?:\.\d+)?')) {
-        if (Test-YakuMaskSpanCovered -Spans $protected -Start $m.Index -End ($m.Index + $m.Length)) { $kept++; continue }
-        $targets.Add([pscustomobject]@{ Start = $m.Index; Length = $m.Length }) | Out-Null
+    $targetStats = @{ Kept = 0 }
+    $addTarget = {
+        param([int]$Start, [int]$Length, [bool]$Force = $false)
+        if ($Length -le 0) { return }
+        if (-not $Force -and (Test-YakuMaskSpanCovered -Spans $protected -Start $Start -End ($Start + $Length))) { $targetStats.Kept++; return }
+        $key = [string]$Start + ':' + [string]$Length
+        if ($targetKeys.ContainsKey($key)) { return }
+        $targetKeys[$key] = $true
+        $targets.Add([pscustomobject]@{ Start = $Start; Length = $Length }) | Out-Null
     }
+    foreach ($m in [regex]::Matches($normalized, '\d[\d,]*(?:\.\d+)?')) {
+        & $addTarget $m.Index $m.Length
+    }
+    # 漢数字も数値である。これを拾わないと「一億二千万円」のような未公開値が
+    # map空のまま外部へ出る。曖昧な「一方」「十分」は、金額・数量の単位が
+    # 直後にある場合だけ対象にして通常の文章を壊さない。
+    foreach ($m in [regex]::Matches($normalized, '(?<![\]0-9〇零一二三四五六七八九十百千万億兆壱弐参拾])[〇零一二三四五六七八九十百千万億兆壱弐参拾]+(?=(?:円|元|台|株|件|人|ポイント|％|%))')) {
+        # Arabic値や既存tokenの直後に残る「億」「百」等は単位であり、二重に
+        # token化しない。一方「十円」「百億円」は数量そのものなので伏せる。
+        if ($m.Length -eq 1 -and $m.Value -match '^[十百千万億兆]$') {
+            $prefixStart = [Math]::Max(0, $m.Index - 24)
+            $prefix = $normalized.Substring($prefixStart, $m.Index - $prefixStart)
+            if ($prefix -match '(?:\d|\[\[N\d+\]\])[^。．.!?！？]*$') { continue }
+        }
+        # 「億円」などの単位が用語集にあっても、数量本体を保護対象から外さない。
+        & $addTarget $m.Index $m.Length $true
+    }
+    # 英語の綴り数も同じ扱いにする。hundred 以上の位を含む並び、または
+    # 通貨・数量単位の直前にある並びだけを対象にし、ordinary “one way” 等は除く。
+    $cardinalWord = '(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)'
+    $numberWord = '(?:' + $cardinalWord + '|hundred|thousand|million|billion|trillion)'
+    $wordOptions = [Text.RegularExpressions.RegexOptions]::IgnoreCase
+    # scale語単独（Arabic値の後ろにある “1,111 million” の million）は
+    # 単位なので伏せない。必ず a/cardinal から始まる綴り数だけを対象にする。
+    $magnitudePattern = '\b(?:a|' + $cardinalWord + ')(?:[\s-]+(?:and[\s-]+)?' + $numberWord + ')*\b'
+    foreach ($m in [regex]::Matches($normalized, $magnitudePattern, $wordOptions)) {
+        if ($m.Value -notmatch '(?i)\b(?:hundred|thousand|million|billion|trillion)\b') { continue }
+        & $addTarget $m.Index $m.Length $true
+    }
+    $unitPattern = $magnitudePattern + '(?=\s+(?:yen|dollars?|euros?|pounds?|units?|shares?|vehicles?|cars?|points?|percent|percentage)\b)'
+    foreach ($m in [regex]::Matches($normalized, $unitPattern, $wordOptions)) {
+        & $addTarget $m.Index $m.Length $true
+    }
+    $kept = [int]$targetStats.Kept
     if ($targets.Count -eq 0) {
         try { Write-YakuLog "Numeric masking. location=$Location masked=0 kept=$kept" 'INFO' } catch {}
         return [pscustomobject]@{ Text = $source; Map = $map; MaskedCount = 0; KeptCount = $kept }
@@ -610,13 +853,16 @@ function Get-YakuNumericMaskTokens {
 function Restore-YakuNumericMask {
     param(
         [AllowNull()][string]$Text,
-        [AllowNull()][hashtable]$Map
+        [AllowNull()][hashtable]$Map,
+        [ValidateSet('auto','to_en','to_jp')][string]$Direction='auto',
+        [AllowNull()][string]$SourceText
     )
     $result = [string]$Text
     if ([string]::IsNullOrEmpty($result) -or $null -eq $Map -or $Map.Count -eq 0) { return $result }
     # 番号の大きい順に置換する。[[N1]]が[[N10]]の一部を壊さないため。
     foreach ($token in @($Map.Keys | Sort-Object { [int]([regex]::Match([string]$_, '\d+').Value) } -Descending)) {
-        $result = $result.Replace([string]$token, [string]$Map[$token])
+        $replacement=ConvertTo-YakuNumericRestoreValue -Text ([string]$Map[$token]) -Direction $Direction -Context $result -Token ([string]$token) -SourceContext $SourceText
+        $result = $result.Replace([string]$token, $replacement)
     }
     return $result
 }
@@ -647,25 +893,34 @@ function Test-YakuNumericMaskIntegrity {
     foreach ($key in @($targetCounts.Keys)) {
         if (-not $sourceCounts.ContainsKey($key)) { $unexpected.Add($key) | Out-Null }
     }
-    $ok = ($missing.Count -eq 0 -and $duplicated.Count -eq 0 -and $unexpected.Count -eq 0)
-    $detail = "placeholders source=$($sourceCounts.Count) missing=$($missing.Count) duplicated=$($duplicated.Count) unexpected=$($unexpected.Count)"
+    # 個数が同じでもN1/N2の順序を入れ替えると、売上高と利益など別の勘定へ
+    # 実値を戻してしまう。正本訳ではtoken列そのものが原文と同じ必要がある。
+    $sourceSequence=@(Get-YakuNumericMaskTokens -Text $MaskedSource)
+    $targetSequence=@(Get-YakuNumericMaskTokens -Text $Translated)
+    $outOfOrder=$false
+    if($sourceSequence.Count -eq $targetSequence.Count -and $sourceSequence.Count -gt 1){
+        for($i=0;$i -lt $sourceSequence.Count;$i++){
+            if([string]$sourceSequence[$i] -ne [string]$targetSequence[$i]){$outOfOrder=$true;break}
+        }
+    }
+    $ok = ($missing.Count -eq 0 -and $duplicated.Count -eq 0 -and $unexpected.Count -eq 0 -and -not $outOfOrder)
+    $detail = "placeholders source=$($sourceCounts.Count) missing=$($missing.Count) duplicated=$($duplicated.Count) unexpected=$($unexpected.Count) outOfOrder=$outOfOrder"
     if (-not $ok) {
         $parts = New-Object System.Collections.Generic.List[string]
         if ($missing.Count -gt 0)    { $parts.Add('missing=' + (@($missing.ToArray()) -join ',')) | Out-Null }
         if ($duplicated.Count -gt 0) { $parts.Add('duplicated=' + (@($duplicated.ToArray()) -join ',')) | Out-Null }
         if ($unexpected.Count -gt 0) { $parts.Add('unexpected=' + (@($unexpected.ToArray()) -join ',')) | Out-Null }
+        if ($outOfOrder) { $parts.Add('order=' + ($targetSequence -join ',')) | Out-Null }
         $detail = $detail + ' [' + (@($parts.ToArray()) -join '; ') + ']'
     }
     try { Write-YakuLog "Numeric mask integrity. location=$Location $detail" $(if ($ok) { 'DEBUG' } else { 'WARN' }) } catch {}
     return [pscustomobject]@{
         Ok = [bool]$ok; Detail = $detail
-        Missing = @($missing.ToArray()); Duplicated = @($duplicated.ToArray()); Unexpected = @($unexpected.ToArray())
+        Missing = @($missing.ToArray()); Duplicated = @($duplicated.ToArray()); Unexpected = @($unexpected.ToArray()); OutOfOrder=[bool]$outOfOrder
     }
 }
 
 function Restore-YakuMaskedTranslationOptions {
-    # 固有名詞も同じ場所で戻す。数値と同じく、消えていれば警告する。
-    # 別々に戻すと、どちらで壊れたかが分からなくなる。
     <#
       V91.60: 各訳文の[[N1]]を実値へ戻す。戻す前に1対1を確かめ、崩れていれば
       警告を立てる。無言で数値が消えるのを避けるのがここの目的。
@@ -681,12 +936,12 @@ function Restore-YakuMaskedTranslationOptions {
       [[N9]]のまま画面へ出すより取り除くほうが安全なので削除する。
     #>
     param(
-        [AllowNull()][hashtable]$ProperMap,
         [AllowNull()][object[]]$Options,
         [AllowNull()][string]$MaskedSource,
         [AllowNull()][hashtable]$Map,
         [AllowNull()]$Warnings,
-        [string]$Location = 'text'
+        [string]$Location = 'text',
+        [ValidateSet('auto','to_en','to_jp')][string]$Direction='auto'
     )
     if ($null -eq $Options) { return @() }
     # V91.61（2026-08-06）: 修正の依頼はマスク後の訳文を送り返してもらう。
@@ -696,13 +951,8 @@ function Restore-YakuMaskedTranslationOptions {
         if ($null -eq $o) { continue }
         try { $o | Add-Member -NotePropertyName 'MaskedTranslation' -NotePropertyValue ([string]$o.Translation) -Force } catch {}
     }
-    # 数値と固有名詞は別々に有無を見る。ひとまとめに「マスクが無ければ帰る」と
-    # していたため、数字を含まない文（「毛籠社長が就任しました。」）では
-    # 固有名詞の復元まで飛ばされ、画面へ [[P1]] がそのまま出ていた
-    # （2026-08-08 に再現）。片方だけあるほうが普通である。
     $hasNumeric = ($null -ne $Map -and $Map.Count -gt 0)
-    $hasProper = ($null -ne $ProperMap -and $ProperMap.Count -gt 0)
-    if (-not $hasNumeric -and -not $hasProper) { return @($Options) }
+    if (-not $hasNumeric) { return @($Options) }
     foreach ($option in $Options) {
         $style = [string]$option.Style
         $label = [string]$option.Label
@@ -714,22 +964,13 @@ function Restore-YakuMaskedTranslationOptions {
         }
         $restored = $translated
         if ($hasNumeric) {
-            $restored = Restore-YakuNumericMask -Text $restored -Map $Map
+            $restored = Restore-YakuNumericMask -Text $restored -Map $Map -Direction $Direction -SourceText $MaskedSource
             # 原文に無い番号は実値が無い。残すと画面へ内部トークンが出る。
             $leftover = @(Get-YakuNumericMaskTokens -Text $restored | Select-Object -Unique)
             if ($leftover.Count -gt 0) {
                 foreach ($token in $leftover) { $restored = $restored.Replace([string]$token, '') }
                 $restored = [regex]::Replace($restored, '[ \t]{2,}', ' ')
             }
-        }
-        # 固有名詞を戻す。数値より後で構わない（記号が別なので衝突しない）。
-        if ($hasProper) {
-            $pInt = Test-YakuProperNounMaskIntegrity -MaskedSource $MaskedSource -Translated $restored -Map $ProperMap
-            if (-not [bool]$pInt.Ok -and $null -ne $Warnings) {
-                $lost = @(@($pInt.Missing) | ForEach-Object { [string]$ProperMap[[string]$_] })
-                try { Add-YakuWarning -Warnings $Warnings -Category 'proper-noun-dropped' -Location $label -Details @{ Missing = @($pInt.Missing) } -Message ("固有名詞が訳文から抜けています: " + (@($lost) -join '、') + "。必ずご確認ください。") } catch {}
-            }
-            $restored = Restore-YakuProperNounMask -Text $restored -Map $ProperMap
         }
         $option.Translation = $restored
 
@@ -810,7 +1051,7 @@ function Test-YakuNumericIntegrity {
     }
     $checked=$expectedItems.Count;$missing=(@($mismatches.ToArray()|ForEach-Object{$_.MissingCount}|Measure-Object -Sum).Sum);if($null-eq$missing){$missing=0};$matched=$checked-[int]$missing
     $detail=(@($mismatches.ToArray()|ForEach-Object{"$($_.Source) -> expected $($_.Expected), observed $($_.Observed)"})-join '; ');$ok=($mismatches.Count-eq0)
-    try{Write-YakuLog "Numeric integrity audit. location=$Location checked=$checked matched=$matched scaleErrors=$scaleErrors corrected=0 detail=$detail" $(if($ok){'INFO'}else{'WARN'})}catch{}
+    try{Write-YakuLog "Numeric integrity audit. location=$Location checked=$checked matched=$matched scaleErrors=$scaleErrors corrected=0 mismatches=$($mismatches.Count)" $(if($ok){'INFO'}else{'WARN'})}catch{}
     return [pscustomobject]@{Ok=$ok;Checked=$checked;Matched=$matched;ScaleErrors=$scaleErrors;Mismatches=@($mismatches.ToArray());Detail=$detail}
 }
 
@@ -857,7 +1098,7 @@ function Parse-YakuV25PlainTranslationResponse {
         [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
         [Parameter(Mandatory=$true)][string]$RequestId,
         [AllowNull()]$Warnings,
-        [AllowNull()][string]$Mode
+        [ValidateSet('full','brief')][string]$Mode = 'full'
     )
     $contract = Test-YakuTextResponseContract -Text $Raw -Direction $Direction -RequestId $RequestId -Mode $Mode
     if (-not [bool]$contract.Valid) { throw "$($contract.ErrorCode): $($contract.Message)" }
@@ -898,10 +1139,9 @@ function Parse-YakuTextTranslationResponse {
         [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
         [Parameter(Mandatory=$true)][string]$RequestId,
         [AllowNull()]$Warnings,
-        [AllowNull()][string]$Mode
+        [ValidateSet('full','brief')][string]$Mode = 'full'
     )
     $options = @(Parse-YakuV25PlainTranslationResponse -Raw $Raw -Direction $Direction -RequestId $RequestId -Warnings $Warnings -Mode $Mode)
-    # 依頼を分けた場合は1件、1依頼で2つ返す旧経路では2件。求めたラベルの数で見る。
     $expected = @(Get-YakuTextRequiredLabels -Direction $Direction -Mode $Mode).Count
     if ($options.Count -ne $expected) { throw 'RESPONSE_FIELDS_MISSING: 必須の翻訳フィールドが不足しています。' }
     return $options
@@ -1009,6 +1249,7 @@ function Write-YakuTextResponseContractDiagnostic {
         [Parameter(Mandatory=$true)][string]$RequestId,
         [Parameter(Mandatory=$true)][string]$ErrorCode,
         [AllowNull()][string]$ErrorMessage,
+        [ValidateSet('full','brief')][string]$Mode = 'full',
         [int]$Attempt = 0
     )
     $path = ''
@@ -1018,7 +1259,7 @@ function Write-YakuTextResponseContractDiagnostic {
         $normalized = Normalize-YakuCopilotPlainResponse -Raw $rawText -RequestId $RequestId
         $signatureText = $normalized.Replace($RequestId, '<request-id>')
         $structure = Get-YakuTextResponseStructureMetadata -Raw $rawText -RequestId $RequestId
-        $requiredLabels = @(if ($Direction -eq 'to_en') { 'FULL_TEXT','BRIEF_TEXT' } else { 'JAPANESE_TEXT' })
+        $requiredLabels = @(Get-YakuTextRequiredLabels -Direction $Direction -Mode $Mode)
         $structure['required_labels'] = @($requiredLabels)
         # clean_head contains response text, so retain it only under the same
         # explicit full-text diagnostics gate as raw/normalized responses.
@@ -1217,7 +1458,7 @@ function Merge-YakuBatchTranslationResults {
     )
     $merged = @()
     if ($Direction -eq 'to_en') {
-        foreach ($spec in @(@{Style='full';Label='そのまま'}, @{Style='brief';Label='短く'})) {
+        foreach ($spec in @(@{Style='full';Label='そのまま'})) {
             $parts = New-Object System.Collections.Generic.List[string]
             foreach ($br in $BatchResults) {
                 $hit = @($br.Options | Where-Object { $_.Style -eq $spec.Style } | Select-Object -First 1)
@@ -1241,7 +1482,7 @@ function Merge-YakuBatchTranslationResults {
             $merged += [pscustomobject]@{ Style='jp'; Label='JAPANESE'; Translation=(($parts.ToArray()) -join "`n`n"); Explanation='' }
         }
     }
-    $expected = if ($Direction -eq 'to_en') { 2 } else { 1 }
+    $expected = 1
     if ($merged.Count -ne $expected) { throw 'RESPONSE_BATCH_INCOMPLETE: バッチ結果の必須スタイルが不足しています。' }
     return $merged
 }
@@ -1258,33 +1499,38 @@ function Invoke-YakuSingleTranslationBatch {
         [AllowNull()]$Warnings,
         # V91.61 段階3: ジョブごとに1回だけ引いた文例。バッチ間で共通。
         [AllowNull()][string]$CorpusSection,
-        # V91.61（2026-08-06）: 完全訳と開示用の電文体は別々の依頼になった。
-        # full / brief でこの1回が何を作る依頼かが決まる。
-        # 空なら 1依頼で2つ返す旧経路（EN→JA もこちら）。
-        [AllowNull()][string]$Mode
+        [ValidateSet('full','brief')][string]$Mode = 'full'
     )
-    $requestId = [guid]::NewGuid().ToString('N')
+    $requestId = ''
     # V91.60 段階3: 外部へ送る前に数値をマスクする。
     # バッチ分割の後にマスクするのは、分割が[[N12]]の途中を
     # 切ることを構造的に防ぐため。Split-YakuHardChunk は文境界が
     # 見つからなければ文字数で切るので、先にマスクすると壊れ得る。
     # 以降この関数の中では $sourceText(マスク後) を原文として扱う。
     # プロンプト・キャッシュキー・各監査を同じ土俵に乗せるため。
-    # 固有名詞を先に伏せる。住所に全角数字が入る（新地３番１号）ので、
-    # 数値マスクが先に走ると固有名詞の照合が壊れる。
-    $properResult = New-YakuProperNounMaskMap -Text $InputText -Root $Root
-    $properMap = $properResult.Map
-    $maskResult = New-YakuNumericMaskMap -Text ([string]$properResult.Text) -Root $Root -Direction $Direction -Location 'text'
+    $maskResult = New-YakuNumericMaskMap -Text $InputText -Root $Root -Direction $Direction -Location 'text'
     $sourceText = [string]$maskResult.Text
     $maskMap = $maskResult.Map
-    if ([int]$properResult.MaskedCount -gt 0) {
-        try { Write-YakuLog "Proper noun masking. location=text masked=$([int]$properResult.MaskedCount)" 'INFO' } catch {}
+    $protectedStyleReference = Protect-YakuPromptField -Text $StyleReference -Root $Root -Direction $Direction -NumericMap $maskMap -Location 'text-style-reference'
+    $protectedCorpusSection = Protect-YakuPromptField -Text $CorpusSection -Root $Root -Direction $Direction -NumericMap $maskMap -Location 'text-corpus-section'
+    $protectedFields = New-Object System.Collections.Generic.List[object]
+    $protectedFields.Add([pscustomobject]@{ Name='source'; OriginalText=$InputText; ProtectedText=$sourceText; NumericMaskMaps=@($maskMap) }) | Out-Null
+    if (-not [string]::IsNullOrEmpty([string]$StyleReference)) {
+        $protectedFields.Add([pscustomobject]@{ Name='style_reference'; OriginalText=[string]$StyleReference; ProtectedText=$protectedStyleReference; NumericMaskMaps=@($maskMap) }) | Out-Null
+    }
+    if (-not [string]::IsNullOrEmpty([string]$CorpusSection)) {
+        $protectedFields.Add([pscustomobject]@{ Name='corpus_section'; OriginalText=[string]$CorpusSection; ProtectedText=$protectedCorpusSection; NumericMaskMaps=@($maskMap) }) | Out-Null
     }
     $glossarySw = [System.Diagnostics.Stopwatch]::StartNew()
     $null = @(Get-YakuGlossaryEntries -Root $Root)
     $glossarySw.Stop()
     $promptSw = [System.Diagnostics.Stopwatch]::StartNew()
-    $built = New-YakuTextPrompt -Root $Root -InputText $sourceText -Settings $Settings -DirectionOverride $Direction -StyleReference $StyleReference -RequestId $requestId -CorpusSection $CorpusSection -Mode $Mode
+    $promptPackage = New-YakuProtectedPromptPackage -Kind text -Root $Root -Direction $Direction -Fields @($protectedFields.ToArray()) `
+        -Arguments ([pscustomobject]@{ Settings=$Settings; Mode=$Mode })
+    $requestId = [string]$promptPackage.RequestId
+    $built = $promptPackage.Built
+    $built.Prompt = [string]$promptPackage.Prompt
+    $null = Assert-YakuNumericPromptProtected -Prompt ([string]$built.Prompt) -MaskMap $maskMap
     $promptSw.Stop()
     $styleReferenceHash = if ([string]::IsNullOrEmpty([string]$StyleReference)) { '' } else { Get-YakuTextSha256 -Text ([string]$StyleReference) }
     # 文例が変われば訳文も変わる。鍵に入れないと、文例なしで作った訳文を
@@ -1323,7 +1569,7 @@ function Invoke-YakuSingleTranslationBatch {
             if (Get-Command Convert-YakuBriefTranslationOptions -ErrorAction SilentlyContinue) {
                 $optionsCached = @(Convert-YakuBriefTranslationOptions -Options $optionsCached)
             }
-            $optionsCached = @(Restore-YakuMaskedTranslationOptions -Options $optionsCached -MaskedSource $sourceText -Map $maskMap -ProperMap $properMap -Warnings $Warnings -Location 'text-cache')
+            $optionsCached = @(Restore-YakuMaskedTranslationOptions -Options $optionsCached -MaskedSource $sourceText -Map $maskMap -Warnings $Warnings -Location 'text-cache' -Direction $Direction)
             return [pscustomobject]@{ Direction=$Direction; Options=$optionsCached; Raw=[string]$cachedEnvelope.raw; Prompt=$built.Prompt; CacheHit=$true; RequestId=$cachedRequestId; MaskedCount=[int]$maskResult.MaskedCount; KeptCount=[int]$maskResult.KeptCount }
         } catch {
             try { (Get-YakuTranslationCacheStore).Remove($cacheKey) } catch {}
@@ -1339,12 +1585,19 @@ function Invoke-YakuSingleTranslationBatch {
     $numericCorrectionInstruction = ''
     for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
         if ($attempt -gt 1) {
-            $requestId = [guid]::NewGuid().ToString('N')
-            $built = New-YakuTextPrompt -Root $Root -InputText $sourceText -Settings $Settings -DirectionOverride $Direction -StyleReference $StyleReference -RequestId $requestId -CorpusSection $CorpusSection -Mode $Mode
-            if (-not [string]::IsNullOrWhiteSpace($numericCorrectionInstruction)) { $built.Prompt += "`n`n$numericCorrectionInstruction" }
+            $attemptFields = New-Object System.Collections.Generic.List[object]
+            foreach ($field in @($protectedFields.ToArray())) { $attemptFields.Add($field) | Out-Null }
+            if (-not [string]::IsNullOrWhiteSpace($numericCorrectionInstruction)) {
+                $attemptFields.Add([pscustomobject]@{ Name='additional_instruction'; OriginalText=$numericCorrectionInstruction; ProtectedText=$numericCorrectionInstruction }) | Out-Null
+            }
+            $promptPackage = New-YakuProtectedPromptPackage -Kind text -Root $Root -Direction $Direction -Fields @($attemptFields.ToArray()) `
+                -Arguments ([pscustomobject]@{ Settings=$Settings; Mode=$Mode })
+            $requestId = [string]$promptPackage.RequestId
+            $built = $promptPackage.Built
+            $built.Prompt = [string]$promptPackage.Prompt
         }
         try {
-            $raw = Invoke-YakuCopilotPrompt -Prompt $built.Prompt -Settings $Settings -SkipFreshChatWait:($SkipFreshChatWait -or $attempt -gt 1) -PreserveEndMarker -ProgressState $ProgressState -Warnings $Warnings
+            $raw = Invoke-YakuProtectedCopilotPrompt -Envelope $promptPackage.Envelope -Settings $Settings -SkipFreshChatWait:($SkipFreshChatWait -or $attempt -gt 1) -PreserveEndMarker -ProgressState $ProgressState -Warnings $Warnings
             $options = @(Parse-YakuTextTranslationResponse -Raw $raw -Direction $Direction -RequestId $requestId -Warnings $Warnings -Mode $Mode)
             $options = @(Repair-YakuTextResponsePostParse -SourceText $sourceText -Options $options -Direction $Direction)
             $numericFailures = New-Object System.Collections.Generic.List[object]
@@ -1429,7 +1682,7 @@ function Invoke-YakuSingleTranslationBatch {
                 $isContractError = ($attemptErrorCode -match '^(RESPONSE_|COPILOT_REFUSAL_OR_LOGIN)')
                 if ($isContractError) {
                     $rawHash = if ([string]::IsNullOrEmpty([string]$raw)) { '' } else { try { Get-YakuTextSha256 -Text ([string]$raw) } catch { '' } }
-                    $diagnosticPath = Write-YakuTextResponseContractDiagnostic -Raw $raw -Direction $Direction -RequestId $requestId -ErrorCode $attemptErrorCode -ErrorMessage $errorMessage -Attempt $attempt
+                    $diagnosticPath = Write-YakuTextResponseContractDiagnostic -Raw $raw -Direction $Direction -RequestId $requestId -ErrorCode $attemptErrorCode -ErrorMessage $errorMessage -Mode $Mode -Attempt $attempt
                     try { Write-YakuLog "Text response contract rejected. attempt=$attempt/$maxAttempts errorCode=$attemptErrorCode responseLength=$(([string]$raw).Length) responseHash=$rawHash diagnosticPath=$diagnosticPath" 'WARN' } catch {}
                     if ($attempt -lt $maxAttempts) {
                         Set-YakuCopilotProgressPhase -ProgressState $ProgressState -Phase 'retrying' -Label "応答形式エラーのため再試行します ($attempt/$maxAttempts)" -Detail "エラーコード: $attemptErrorCode" -Progress 42
@@ -1452,7 +1705,7 @@ function Invoke-YakuSingleTranslationBatch {
     if (Get-Command Convert-YakuBriefTranslationOptions -ErrorAction SilentlyContinue) {
         $options = @(Convert-YakuBriefTranslationOptions -Options $options)
     }
-    $options = @(Restore-YakuMaskedTranslationOptions -Options $options -MaskedSource $sourceText -Map $maskMap -ProperMap $properMap -Warnings $Warnings -Location 'text')
+    $options = @(Restore-YakuMaskedTranslationOptions -Options $options -MaskedSource $sourceText -Map $maskMap -Warnings $Warnings -Location 'text' -Direction $Direction)
     return [pscustomobject]@{
         Direction = $Direction
         Options = $options
@@ -1464,101 +1717,6 @@ function Invoke-YakuSingleTranslationBatch {
         # 対応表(Map)は結果オブジェクトへ載せない(§8)。
         MaskedCount = [int]$maskResult.MaskedCount
         KeptCount = [int]$maskResult.KeptCount
-    }
-}
-
-function Invoke-YakuTextRequestsInParallel {
-    <#
-      依頼を Copilot のタブ2枚へ振り分けて同時に流す。
-
-      ランスペースごとに $script: が分かれるので、それぞれ別のスロット
-      （= 別のタブ）を掴む。応答が混ざらないことは実測で確認済み。
-
-      揃わなければ $null を返す。呼び出し側が逐次でやり直す。
-      速さのための仕組みなので、ここでの失敗を翻訳の失敗にしない。
-
-      進捗は先頭の依頼だけが報告する。2つのランスペースから同じ入れ物へ
-      書くと、どちらの数字か分からなくなるため。
-      警告は依頼ごとに別の入れ物へ集め、呼び出し側で1つへまとめる。
-    #>
-    param(
-        [Parameter(Mandatory=$true)][string]$Root,
-        [Parameter(Mandatory=$true)][string]$InputText,
-        [Parameter(Mandatory=$true)]$Settings,
-        [Parameter(Mandatory=$true)][string]$Direction,
-        [AllowNull()][string]$StyleReference,
-        [AllowNull()][string]$CorpusSection,
-        [Parameter(Mandatory=$true)][string[]]$Modes,
-        [AllowNull()]$ProgressState
-    )
-    if (@($Modes).Count -lt 2) { return $null }
-    # モックのときは往復が無いので、並列にする意味も検証する意味も無い。
-    if ($env:YAKULINGO_MOCK -eq '1') { return $null }
-    # 既定で並列にする（利用者の判断 2026-08-06）。実測 13.7 秒 対 19.3 秒。
-    #
-    # 依頼ごとに Copilot を別の**ウィンドウ**で開く。タブでは駄目で、
-    # 裏に回ったタブへ打ち込むと入力がほとんど届かない
-    # （5,194 字送って 70 字。新規ウィンドウなら 10,886 字でも取りこぼさない）。
-    #
-    # 止めたいときは環境変数で切れる。何かあったときにコードを直さずに
-    # 逐次へ戻せるようにしておく。失敗すれば自動でも逐次へ落ちる。
-    if ($env:YAKULINGO_PARALLEL -eq '0') { return $null }
-
-    $work = {
-        param($Root, $InputText, $SettingsJson, $Direction, $StyleReference, $CorpusSection, $Mode, $Slot, $DataDir)
-        $ErrorActionPreference = 'Stop'
-        if (-not [string]::IsNullOrWhiteSpace($DataDir)) { $env:YAKULINGO_DATA_DIR = $DataDir }
-        foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotBudget.ps1','CopilotClient.ps1','ProperNoun.ps1','Translation.ps1','BriefStyle.ps1')) {
-            . (Join-Path $Root ('src\' + $n))
-        }
-        Set-YakuCopilotSlot -Slot $Slot
-        $settings = Read-YakuSettings -Root $Root
-        $warnings = New-Object System.Collections.Generic.List[object]
-        $r = Invoke-YakuSingleTranslationBatch -Root $Root -InputText $InputText -Settings $settings -Direction $Direction -StyleReference $StyleReference -Warnings $warnings -CorpusSection $CorpusSection -Mode $Mode
-        return [pscustomobject]@{
-            Options = @($r.Options); Raw = [string]$r.Raw; Prompt = [string]$r.Prompt
-            CacheHit = [bool]$r.CacheHit; RequestId = [string]$r.RequestId
-            MaskedCount = [int]$r.MaskedCount; KeptCount = [int]$r.KeptCount
-            Warnings = @($warnings.ToArray())
-        }
-    }
-
-    $pool = $null
-    $shells = @()
-    try {
-        $pool = [runspacefactory]::CreateRunspacePool(1, @($Modes).Count)
-        $pool.Open()
-        $slot = 0
-        foreach ($m in $Modes) {
-            $ps = [powershell]::Create()
-            $ps.RunspacePool = $pool
-            $null = $ps.AddScript($work).
-                AddArgument($Root).AddArgument($InputText).AddArgument('').AddArgument($Direction).
-                AddArgument([string]$StyleReference).AddArgument([string]$CorpusSection).
-                AddArgument([string]$m).AddArgument($slot).AddArgument([string]$env:YAKULINGO_DATA_DIR)
-            $shells += [pscustomobject]@{ Shell=$ps; Handle=$ps.BeginInvoke(); Mode=[string]$m }
-            $slot++
-        }
-        $out = New-Object System.Collections.Generic.List[object]
-        $failed = $false
-        foreach ($h in $shells) {
-            try {
-                $res = @($h.Shell.EndInvoke($h.Handle))
-                if (@($res).Count -lt 1 -or $null -eq $res[0]) { $failed = $true }
-                else { [void]$out.Add($res[0]) }
-            } catch {
-                try { Write-YakuLog "Parallel text request failed. mode=$($h.Mode) error=$($_.Exception.Message)" 'WARN' } catch {}
-                $failed = $true
-            }
-        }
-        if ($failed -or $out.Count -ne @($Modes).Count) { return $null }
-        return @($out.ToArray())
-    } catch {
-        try { Write-YakuLog "Parallel runspace setup failed. error=$($_.Exception.Message)" 'WARN' } catch {}
-        return $null
-    } finally {
-        foreach ($h in $shells) { try { $h.Shell.Dispose() } catch {} }
-        if ($null -ne $pool) { try { $pool.Close() } catch {}; try { $pool.Dispose() } catch {} }
     }
 }
 
@@ -1599,23 +1757,30 @@ function Invoke-YakuTextRevision {
         [AllowNull()]$ProgressState,
         [AllowNull()]$Warnings
     )
-    $requestId = [guid]::NewGuid().ToString('N')
+    $requestId = ''
     # 原文から同じ手順でマスク表を作り直す。割り当ては原文だけで決まるので、
     # 翻訳したときと同じトークンになり、現訳の[[N1]]とかみ合う。
     #
-    # 固有名詞のマスクも翻訳経路と同じ順序で掛ける。ここが抜けていたため、
-    # 直すたびに人名・法人名が素のまま Copilot へ出ていた。さらに現訳には
-    # [[P1]] が入っているのに復元へ渡していなかったので、直した訳文には
-    # [[P1]] がそのまま残っていた（2026-08-08 に再現）。
-    $properResult = New-YakuProperNounMaskMap -Text $InputText -Root $Root
-    $properMap = $properResult.Map
-    $maskResult = New-YakuNumericMaskMap -Text ([string]$properResult.Text) -Root $Root -Direction $Direction -Location 'text-revise'
+    $maskResult = New-YakuNumericMaskMap -Text $InputText -Root $Root -Direction $Direction -Location 'text-revise'
     $sourceText = [string]$maskResult.Text
     $maskMap = $maskResult.Map
 
-    $built = New-YakuRevisePrompt -Root $Root -InputText $sourceText -CurrentText $CurrentText -Instruction $Instruction -Direction $Direction -Style $Style -RequestId $requestId
+    # 現訳と自由入力の修正指示も最終promptの一部なので、原文と同じmapへ統合する。
+    $protectedCurrentText = Protect-YakuPromptField -Text $CurrentText -Root $Root -Direction $Direction -NumericMap $maskMap -Location 'text-revise-current'
+    $maskedInstruction = Protect-YakuPromptField -Text $Instruction -Root $Root -Direction $Direction -NumericMap $maskMap -Location 'text-revise-instruction'
+    $protectedFields = @(
+        [pscustomobject]@{ Name='source'; OriginalText=$InputText; ProtectedText=$sourceText; NumericMaskMaps=@($maskMap) },
+        [pscustomobject]@{ Name='current'; OriginalText=$CurrentText; ProtectedText=$protectedCurrentText; NumericMaskMaps=@($maskMap) },
+        [pscustomobject]@{ Name='instruction'; OriginalText=$Instruction; ProtectedText=$maskedInstruction; NumericMaskMaps=@($maskMap) }
+    )
+    $promptPackage = New-YakuProtectedPromptPackage -Kind revision -Root $Root -Direction $Direction -Fields $protectedFields `
+        -Arguments ([pscustomobject]@{ Style=$Style })
+    $requestId = [string]$promptPackage.RequestId
+    $built = $promptPackage.Built
+    $built.Prompt = [string]$promptPackage.Prompt
+    $null = Assert-YakuNumericPromptProtected -Prompt ([string]$built.Prompt) -MaskMap $maskMap
     $mode = if ($Direction -eq 'to_en') { $Style } else { '' }
-    $raw = Invoke-YakuCopilotPrompt -Prompt $built.Prompt -Settings $Settings -PreserveEndMarker -ProgressState $ProgressState -Warnings $Warnings
+    $raw = Invoke-YakuProtectedCopilotPrompt -Envelope $promptPackage.Envelope -Settings $Settings -PreserveEndMarker -ProgressState $ProgressState -Warnings $Warnings
     $options = @(Parse-YakuTextTranslationResponse -Raw $raw -Direction $Direction -RequestId $requestId -Warnings $Warnings -Mode $mode)
     if ($options.Count -eq 0) { throw 'RESPONSE_EMPTY: 修正後の訳文を取り出せませんでした。' }
 
@@ -1623,7 +1788,7 @@ function Invoke-YakuTextRevision {
     # 電文体でも見る（翻訳時は圧縮で落ちうるため見送っていた）。
     if ($maskMap.Count -gt 0) {
         foreach ($option in $options) {
-            $integrity = Test-YakuNumericMaskIntegrity -MaskedSource $CurrentText -Translated ([string]$option.Translation) -Location ('text-revise-' + [string]$option.Style)
+            $integrity = Test-YakuNumericMaskIntegrity -MaskedSource $protectedCurrentText -Translated ([string]$option.Translation) -Location ('text-revise-' + [string]$option.Style)
             if ([bool]$integrity.Ok) { continue }
             try {
                 if ($null -ne $Warnings -and (Get-Command Add-YakuWarning -ErrorAction SilentlyContinue)) {
@@ -1636,7 +1801,7 @@ function Invoke-YakuTextRevision {
     if (Get-Command Convert-YakuBriefTranslationOptions -ErrorAction SilentlyContinue) {
         $options = @(Convert-YakuBriefTranslationOptions -Options $options)
     }
-    $options = @(Restore-YakuMaskedTranslationOptions -Options $options -MaskedSource $sourceText -Map $maskMap -ProperMap $properMap -Warnings $Warnings -Location 'text-revise')
+    $options = @(Restore-YakuMaskedTranslationOptions -Options $options -MaskedSource $sourceText -Map $maskMap -Warnings $Warnings -Location 'text-revise' -Direction $Direction)
     return [pscustomobject]@{
         Direction   = $Direction
         Options     = $options
@@ -1682,11 +1847,8 @@ function Invoke-YakuTextShorten {
         [AllowNull()]$ProgressState,
         [AllowNull()]$Warnings
     )
-    $requestId = [guid]::NewGuid().ToString('N')
-    # 固有名詞 → 数値の順で伏せる。翻訳経路と同じ順序に揃える。
-    $properResult = New-YakuProperNounMaskMap -Text $InputText -Root $Root
-    $properMap = $properResult.Map
-    $maskResult = New-YakuNumericMaskMap -Text ([string]$properResult.Text) -Root $Root -Direction 'to_en' -Location 'text-shorten'
+    $requestId = ''
+    $maskResult = New-YakuNumericMaskMap -Text $InputText -Root $Root -Direction 'to_en' -Location 'text-shorten'
     $sourceText = [string]$maskResult.Text
     $maskMap = $maskResult.Map
 
@@ -1700,14 +1862,24 @@ function Invoke-YakuTextShorten {
         }
     }
 
-    $built = New-YakuShortenPrompt -Root $Root -InputText $sourceText -CurrentText $MaskedCurrentText -Settings $Settings -RequestId $requestId
-    $raw = Invoke-YakuCopilotPrompt -Prompt $built.Prompt -Settings $Settings -PreserveEndMarker -ProgressState $ProgressState -Warnings $Warnings
+    $protectedCurrentText = Protect-YakuPromptField -Text $MaskedCurrentText -Root $Root -Direction 'to_en' -NumericMap $maskMap -Location 'text-shorten-current'
+    $protectedFields = @(
+        [pscustomobject]@{ Name='source'; OriginalText=$InputText; ProtectedText=$sourceText; NumericMaskMaps=@($maskMap) },
+        [pscustomobject]@{ Name='current'; OriginalText=$MaskedCurrentText; ProtectedText=$protectedCurrentText; NumericMaskMaps=@($maskMap) }
+    )
+    $promptPackage = New-YakuProtectedPromptPackage -Kind shorten -Root $Root -Direction to_en -Fields $protectedFields `
+        -Arguments ([pscustomobject]@{ Settings=$Settings })
+    $requestId = [string]$promptPackage.RequestId
+    $built = $promptPackage.Built
+    $built.Prompt = [string]$promptPackage.Prompt
+    $null = Assert-YakuNumericPromptProtected -Prompt ([string]$built.Prompt) -MaskMap $maskMap
+    $raw = Invoke-YakuProtectedCopilotPrompt -Envelope $promptPackage.Envelope -Settings $Settings -PreserveEndMarker -ProgressState $ProgressState -Warnings $Warnings
     $options = @(Parse-YakuTextTranslationResponse -Raw $raw -Direction 'to_en' -RequestId $requestId -Warnings $Warnings -Mode 'brief')
     if ($options.Count -eq 0) { throw 'SHORTEN_RESPONSE_EMPTY: 短くした訳文を取り出せませんでした。' }
     $shortened = [string]$options[0].Translation
 
     # --- 門 ---
-    $rejected = Test-YakuShortenResult -MaskedCurrentText $MaskedCurrentText -Shortened $shortened -ProperMap $properMap
+    $rejected = Test-YakuShortenResult -MaskedCurrentText $protectedCurrentText -Shortened $shortened
     if (-not [string]::IsNullOrWhiteSpace($rejected)) {
         try { Write-YakuLog "Shorten rejected. reason=$rejected requestId=$requestId" 'WARN' } catch {}
         throw ('SHORTEN_REJECTED: ' + $rejected)
@@ -1717,7 +1889,7 @@ function Invoke-YakuTextShorten {
     if (Get-Command Convert-YakuBriefTranslationOptions -ErrorAction SilentlyContinue) {
         $options = @(Convert-YakuBriefTranslationOptions -Options $options)
     }
-    $options = @(Restore-YakuMaskedTranslationOptions -Options $options -MaskedSource $sourceText -Map $maskMap -ProperMap $properMap -Warnings $Warnings -Location 'text-shorten')
+    $options = @(Restore-YakuMaskedTranslationOptions -Options $options -MaskedSource $sourceText -Map $maskMap -Warnings $Warnings -Location 'text-shorten' -Direction 'to_en')
     foreach ($o in $options) {
         try { $o.Style = 'brief' } catch {}
         try { $o.Label = '短め' } catch {}
@@ -1743,8 +1915,7 @@ function Test-YakuShortenResult {
         [Parameter(Mandatory=$true)][string]$MaskedCurrentText,
         # 空の応答も検査させる。空文字を弾く形にすると、空を弾く枝へ
         # そもそも辿り着かない（2026-08-08 に実行して気づいた）。
-        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$Shortened,
-        [AllowNull()][hashtable]$ProperMap
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$Shortened
     )
     $cur = [string]$MaskedCurrentText
     $new = [string]$Shortened
@@ -1769,16 +1940,6 @@ function Test-YakuShortenResult {
     $newOrder = (@(Get-YakuNumericMaskTokens -Text $new)) -join ','
     if ($curOrder -ne $newOrder) { return '数値が増減または入れ替わっています。' }
 
-    # 固有名詞。人名・法人名が落ちるのは圧縮ではない。
-    if ($null -ne $ProperMap -and $ProperMap.Count -gt 0) {
-        foreach ($token in @($ProperMap.Keys)) {
-            $t = [string]$token
-            $cCount = ([regex]::Matches($cur, [regex]::Escape($t))).Count
-            $nCount = ([regex]::Matches($new, [regex]::Escape($t))).Count
-            if ($cCount -gt 0 -and $nCount -ne $cCount) { return '固有名詞が落ちています。' }
-        }
-    }
-
     # 短くなっていること。同じか長いなら、押した意味が無い。
     # 完全に同一なのは「これ以上短くできない」という正しい答えなので通す。
     if ($new.Length -gt $cur.Length) { return '短くなっていません。' }
@@ -1790,15 +1951,8 @@ function Invoke-YakuTextTranslationRequests {
     <#
       1つの原文に対して、必要な依頼を出して訳文を揃える。
 
-      V91.61（2026-08-06）: JA→EN は「完全訳」と「開示用の電文体」を
-      別々の依頼にした。電文体は完全訳を短くしたものではなく、同じ原文に
-      対する別の成果物である。1つの応答から2つ取り出す作りをやめ、
-      依頼ごとに1つずつ受け取る。
-
-      いまは逐次で呼ぶ。段階②で Copilot のタブを2枚使って並列にする。
-      その差し替えがここだけで済むよう、依頼の並びをこの関数に閉じ込める。
-
-      EN→JA は成果物が1つなので、従来どおり1回で終わる。
+      通常翻訳は成果物を1つだけ作る。JA→EN は完全訳、EN→JA は日本語訳。
+      短い英訳は、通常訳の後で利用者が「短く」を押したときだけ作る。
     #>
     param(
         [Parameter(Mandatory=$true)][string]$Root,
@@ -1815,8 +1969,6 @@ function Invoke-YakuTextTranslationRequests {
         return (Invoke-YakuSingleTranslationBatch -Root $Root -InputText $InputText -Settings $Settings -Direction $Direction -StyleReference $StyleReference -SkipFreshChatWait:$SkipFreshChatWait -ProgressState $ProgressState -Warnings $Warnings -CorpusSection $CorpusSection)
     }
 
-    # 簡易翻訳でも電文体は出す（利用者の判断 2026-08-06）。
-    # 並列にしてあるので、2つ作っても待ち時間はほとんど変わらない。
     # 1本だけ訳す。短くするのは押されたときだけ走る（Invoke-YakuTextShorten）。
     #
     # Copilot は短時間に集中して送ると弾かれる。毎回2本作れば往復が2倍になり、
@@ -1827,33 +1979,12 @@ function Invoke-YakuTextTranslationRequests {
     # 頼むと圧縮が「日本語を読みながら縮める」作業になり、実測で圧縮率が
     # 用語集のカバー有無で 0.55 と 0.75 に割れていた（要件整理 §5-A）。
     # できた英文から縮めれば、この語彙依存は原理的に消える。
-    $modes = @('full')
-    $results = $null
-    $mode2 = 'sequential'
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-
-    # 並列を先に試す。Copilot のタブを2枚使い、片方ずつ別のランスペースで流す。
-    # タブが用意できない・ランスペースが作れないなど、何かあれば逐次へ落とす。
-    # 逐次でも結果は同じで、遅くなるだけなので、失敗を翻訳の失敗にしない。
-    try {
-        $results = Invoke-YakuTextRequestsInParallel -Root $Root -InputText $InputText -Settings $Settings -Direction $Direction -StyleReference $StyleReference -CorpusSection $CorpusSection -Modes $modes -ProgressState $ProgressState
-        if ($null -ne $results) { $mode2 = 'parallel' }
-    } catch {
-        try { Write-YakuLog "Parallel text requests failed; falling back to sequential. error=$($_.Exception.Message)" 'WARN' } catch {}
-        $results = $null
-    }
-
-    if ($null -eq $results) {
-        $seq = New-Object System.Collections.Generic.List[object]
-        $index = 0
-        foreach ($m in $modes) {
-            # 1本目のあとはチャットが温まっている。2本目で待ち直さない。
-            $skipWait = ($SkipFreshChatWait -or $index -gt 0)
-            [void]$seq.Add((Invoke-YakuSingleTranslationBatch -Root $Root -InputText $InputText -Settings $Settings -Direction $Direction -StyleReference $StyleReference -SkipFreshChatWait:$skipWait -ProgressState $ProgressState -Warnings $Warnings -CorpusSection $CorpusSection -Mode $m))
-            $index++
-        }
-        $results = @($seq.ToArray())
-    }
+    $results = @(
+        Invoke-YakuSingleTranslationBatch -Root $Root -InputText $InputText -Settings $Settings -Direction $Direction `
+            -StyleReference $StyleReference -SkipFreshChatWait:$SkipFreshChatWait -ProgressState $ProgressState `
+            -Warnings $Warnings -CorpusSection $CorpusSection -Mode 'full'
+    )
     $sw.Stop()
 
     $options = New-Object System.Collections.Generic.List[object]
@@ -1863,7 +1994,6 @@ function Invoke-YakuTextTranslationRequests {
     $cacheHits = 0
     $maskedCount = 0
     $keptCount = 0
-    # 完全訳を先に並べる。画面の並びが依頼の順と一致していたほうが追いやすい。
     foreach ($r in @($results)) {
         if ($null -eq $r) { continue }
         foreach ($o in @($r.Options)) { [void]$options.Add($o) }
@@ -1871,16 +2001,14 @@ function Invoke-YakuTextTranslationRequests {
         [void]$prompts.Add([string]$r.Prompt)
         [void]$requestIds.Add([string]$r.RequestId)
         if ([bool]$r.CacheHit) { $cacheHits++ }
-        # 原文もマスクも依頼で変わらないので、件数はどちらでも同じ。上書きでよい。
         $maskedCount = [int]$r.MaskedCount
         $keptCount = [int]$r.KeptCount
-        # 並列側で集めた警告を、呼び出し元の一覧へ移す。
         if ($null -ne $Warnings -and $null -ne $r.PSObject.Properties['Warnings']) {
             foreach ($w in @($r.Warnings)) { if ($null -ne $w) { try { [void]$Warnings.Add($w) } catch {} } }
         }
     }
     $index = @($results).Count
-    try { Write-YakuLog "Text translation requests completed. direction=$Direction requests=$index options=$($options.Count) cacheHits=$cacheHits execution=$mode2 elapsedMs=$($sw.ElapsedMilliseconds)" 'INFO' } catch {}
+    try { Write-YakuLog "Text translation requests completed. direction=$Direction requests=$index options=$($options.Count) cacheHits=$cacheHits execution=sequential elapsedMs=$($sw.ElapsedMilliseconds)" 'INFO' } catch {}
     return [pscustomobject]@{
         Direction = $Direction
         Options = @($options.ToArray())
@@ -1895,122 +2023,6 @@ function Invoke-YakuTextTranslationRequests {
     }
 }
 
-function Save-YakuHistory {
-    param(
-        [Parameter(Mandatory=$true)][string]$InputText,
-        [Parameter(Mandatory=$true)]$Result
-    )
-    try {
-        $storeName = 'YakuLingoSessionHistoryV64'
-        $store = [AppDomain]::CurrentDomain.GetData($storeName)
-        if ($null -eq $store) {
-            $store = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
-            [AppDomain]::CurrentDomain.SetData($storeName, $store)
-        }
-        $sessionRecord = [pscustomobject]@{
-            timestamp = (Get-Date).ToString('s')
-            input = $InputText
-            direction = $Result.Direction
-            direction_label = $Result.DirectionLabel
-            options = $Result.Options
-        }
-        [void]$store.Add($sessionRecord)
-        while ($store.Count -gt 10) { $store.RemoveAt(0) }
-
-        $dir = Get-YakuSubDir 'history'
-        $path = Join-Path $dir 'history.jsonl'
-        $record = [ordered]@{
-            timestamp = (Get-Date).ToString('s')
-            input_sha256 = Get-YakuTextSha256 -Text $InputText
-            input_length = $InputText.Length
-            direction = $Result.Direction
-            option_count = @($Result.Options).Count
-            output_lengths = @($Result.Options | ForEach-Object { ([string]$_.Translation).Length })
-        }
-        $line = $record | ConvertTo-Json -Depth 8 -Compress
-        $mutex = New-Object System.Threading.Mutex($false, 'Local\YakuLingo-HistoryWrite')
-        $locked = $false
-        try {
-            $locked = $mutex.WaitOne(3000)
-            if ($locked) { Add-Content -LiteralPath $path -Value $line -Encoding UTF8 }
-        } finally {
-            if ($locked) { try { $mutex.ReleaseMutex() } catch {} }
-            $mutex.Dispose()
-        }
-    } catch {
-        Write-Warning "Failed to save history: $($_.Exception.Message)"
-    }
-}
-
-function Invoke-YakuHistoryRotation {
-    param([int]$RetentionDays = 30, [int64]$MaxBytes = 1048576)
-    $path = Join-Path (Get-YakuSubDir 'history') 'history.jsonl'
-    if (!(Test-Path -LiteralPath $path -PathType Leaf)) { return }
-    try {
-        $cutoff = (Get-Date).AddDays(-[Math]::Max(1, $RetentionDays))
-        $kept = New-Object System.Collections.Generic.List[string]
-        foreach ($line in @(Get-Content -LiteralPath $path -Encoding UTF8)) {
-            try {
-                $record = $line | ConvertFrom-Json
-                if ([datetime]::Parse([string]$record.timestamp) -ge $cutoff) { $kept.Add([string]$line) | Out-Null }
-            } catch {}
-        }
-        while (([System.Text.Encoding]::UTF8.GetByteCount(($kept.ToArray() -join "`n"))) -gt $MaxBytes -and $kept.Count -gt 1) { $kept.RemoveAt(0) }
-        $rotatedText = if ($kept.Count -gt 0) { (($kept.ToArray()) -join "`n") + "`n" } else { '' }
-        if (Get-Command Write-YakuTextAtomic -ErrorAction SilentlyContinue) { Write-YakuTextAtomic -Path $path -Text $rotatedText }
-        else { Set-Content -LiteralPath $path -Value $kept.ToArray() -Encoding UTF8 }
-    } catch {}
-}
-
-function Clear-YakuHistory {
-    $sessionCount = 0
-    $metadataCount = 0
-    try {
-        $store = [AppDomain]::CurrentDomain.GetData('YakuLingoSessionHistoryV64')
-        if ($store) { $sessionCount = [int]$store.Count; $store.Clear() }
-    } catch {}
-    $path = Join-Path (Get-YakuSubDir 'history') 'history.jsonl'
-    try {
-        if (Test-Path -LiteralPath $path -PathType Leaf) {
-            $metadataCount = @(Get-Content -LiteralPath $path -Encoding UTF8).Count
-            Remove-Item -LiteralPath $path -Force -ErrorAction Stop
-        }
-    } catch {}
-    Clear-YakuTranslationCache
-    return [pscustomobject]@{ Count=$metadataCount; SessionCount=$sessionCount; MetadataCount=$metadataCount; Path=$path }
-}
-
-function Get-YakuHistoryHtml {
-    param([int]$Limit = 10)
-    $store = [AppDomain]::CurrentDomain.GetData('YakuLingoSessionHistoryV64')
-    if ($null -eq $store -or $store.Count -eq 0) {
-        return New-YakuAlertHtml -Kind info -Message '履歴はまだありません。'
-    }
-    $records = @($store | Select-Object -Last $Limit)
-    [array]::Reverse($records)
-    $html = "<section class='history-list'>"
-    foreach ($r in $records) {
-        $first = @($r.options)[0]
-        $input = [string]$r.input
-        $output = if ($first) { [string]$first.Translation } else { '' }
-        $dir = if ($r.direction_label) { [string]$r.direction_label } else { [string]$r.direction }
-        $html += @"
-<article class='history-item'>
-  <div class='history-head'>
-  <div class='history-time'>$(ConvertTo-YakuHtml $r.timestamp) / $(ConvertTo-YakuHtml $dir) / $(ConvertTo-YakuHtml $input.Length)字</div>
-    <div class='history-actions'>
-      <button type='button' class='secondary-button history-fill-button' data-yaku-fill-b64="$(ConvertTo-YakuHtml (ConvertTo-YakuUtf8Base64 $input))">入力に戻す</button>
-      $(New-YakuCopyButtonHtml -Text $output -Label '出力をコピー')
-    </div>
-  </div>
-  <pre class='history-input'>$(ConvertTo-YakuHtml $input)</pre>
-  <pre class='history-output'>$(ConvertTo-YakuHtml $output)</pre>
-</article>
-"@
-    }
-    $html += "</section>"
-    return $html
-}
 
 function Test-YakuTextGlossaryDiagnosticContains {
     param([AllowNull()][string]$Text, [AllowNull()][string]$Term)
@@ -2225,8 +2237,7 @@ function Invoke-YakuTextTranslation {
             Warnings = @($warnings.ToArray())
             Timestamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
         }
-        Save-YakuHistory -InputText $InputText -Result $result
-        Set-YakuTranslationProgress -ProgressState $ProgressState -Mode 'working' -Label '仕上げ中' -Progress 99 -Detail '結果を保存しています' -Phase 'finalizing'
+        Set-YakuTranslationProgress -ProgressState $ProgressState -Mode 'working' -Label '仕上げ中' -Progress 99 -Detail '結果を表示しています' -Phase 'finalizing'
         return $result
     } catch {
         Set-YakuTranslationProgress -ProgressState $ProgressState -Mode 'working' -Label 'エラー処理中' -Progress 99 -Detail $_.Exception.Message -Phase 'finalizing'

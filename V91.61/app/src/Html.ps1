@@ -22,6 +22,15 @@ function New-YakuAlertHtml {
     return "<div class='alert alert-$Kind'>$(ConvertTo-YakuHtml $Message)</div>"
 }
 
+function ConvertTo-YakuUserFacingError {
+    param([AllowNull()][object]$Message)
+    $text = [string]$Message
+    if ($text -match '(?:EXTERNAL_SEND_|PROTECTION_RECEIPT_|PROTECTED_PROMPT_|CAT_PROTECTED_|SHORTEN_UNMASKED_CURRENT)') {
+        return '安全に送る準備を完了できなかったため、送信を中止しました。原文は送信されていません。再起動後も続く場合は管理者へ連絡してください。（YK-PROTECT-01）'
+    }
+    return $text
+}
+
 function New-YakuSpinnerHtml {
     param([string]$Text = '処理中です...')
     return "<div class='spinner-row'><span class='spinner'></span><span>$(ConvertTo-YakuHtml $Text)</span></div>"
@@ -88,31 +97,6 @@ function New-YakuPastTranslationsHtml {
     return $html
 }
 
-function New-YakuAmountNotationHtml {
-    <#
-      金額の書き方を選ぶ札。設定だが、設定パネルの奥に置くと誰も気づかない
-      （利用者の指摘 2026-08-08「簡単に目に入るところで設定できないと困る」）。
-      翻訳方向の隣に置く。同じ「どう訳してほしいか」の指定である。
-
-      名前ではなく実例を出す。「社内の書き方」のような名前は、どの社内かで
-      意味が変わって当てにならない。122 oku と ¥12.2 billion を並べれば、
-      説明を読まなくてもどちらが要るか分かる。
-    #>
-    param([AllowNull()]$Settings)
-    # billion は今は出さない。桁の換算コードが無く、122億円 が ¥122 billion に
-    # なる（10倍の誤り、2026-08-08 に確認）。押せる選択肢として出しておいて
-    # 壊れているのが最も悪い。換算が入るまで、いま何で書いているかだけを示す。
-    # 復活させるときは Settings.ps1 の Values と、ここの札を両方戻す。
-    $notation = 'oku'
-    try { if ([string]$Settings.amount_notation -eq 'billion') { $notation = 'billion' } } catch {}
-    if ($notation -ne 'oku') { $notation = 'oku' }
-    return @"
-<span class='row-label'>金額</span>
-<label><input type='radio' name='amount_notation' value='oku' checked disabled><span>122 oku</span></label>
-<span class='shorten-note'>いまは oku で書きます。&#165; billion は桁の換算を入れてから出します。</span>
-"@
-}
-
 function Convert-YakuTextResultToHtml {
     param(
         [Parameter(Mandatory=$true)]$Result,
@@ -121,7 +105,7 @@ function Convert-YakuTextResultToHtml {
 
     if ($Result -and ($Result.PSObject.Properties.Name -contains 'Error') -and $Result.Error) {
         $html = ''
-        $html += New-YakuAlertHtml -Kind error -Message $Result.Error
+        $html += New-YakuAlertHtml -Kind error -Message (ConvertTo-YakuUserFacingError $Result.Error)
         if ($Result.Prompt) {
             $html += "<details class='prompt-details'><summary>Copilotへ手動送信用のプロンプト</summary><textarea readonly rows='12'>$(ConvertTo-YakuHtml $Result.Prompt)</textarea></details>"
         }
@@ -223,6 +207,7 @@ function Convert-YakuTextResultToHtml {
         $style = ''
         try { $style = [string]$opt.Style } catch { $style = '' }
         if ($style -ne 'brief') { $style = 'full' }
+        if ($style -eq 'full') { $title = '標準訳案（AI訳・未確認）' }
         $masked = [string]$opt.Translation
         try { if (-not [string]::IsNullOrEmpty([string]$opt.MaskedTranslation)) { $masked = [string]$opt.MaskedTranslation } } catch {}
         # 修正指示のフォームは置かない。「すぐ訳す」は貼って押してコピーする
@@ -331,8 +316,8 @@ $altHtml  </div>
   <button type='button' class='secondary-button compact'
           data-yaku-to-cat='$(ConvertTo-YakuUtf8Base64 $sourceText)'
           data-yaku-to-cat-translation='$(ConvertTo-YakuUtf8Base64 $handoffTranslation)'
-          data-yaku-to-cat-direction='$(ConvertTo-YakuHtml $handoffDirection)'>1文ずつ見比べて直す</button>
-  <span class='muted'>原文と訳文を1文ずつ並べます。直したいところだけ直せます。</span>
+          data-yaku-to-cat-direction='$(ConvertTo-YakuHtml $handoffDirection)'>この訳案を1文ずつ確認する</button>
+  <span class='muted'>原文と訳案を並べます。確認した行を記録し、必要なところだけ直せます。</span>
 </div>
 "@
     }
@@ -402,209 +387,6 @@ function New-YakuMaskingNoticeHtml {
     if ($masked -le 0) { return '' }
     $suffix = if ($kept -gt 0) { "（年度・用語集の語など $kept 件はそのまま送信）" } else { '' }
     return "<div class='batch-note masking-note'>数値 $masked 件をマスクして送信しました。符号と単位は送信しています。$suffix</div>"
-}
-
-function Get-YakuWarningCategoryLabel {
-    param([AllowNull()][string]$Category)
-    $cat = [string]$Category
-    if ([string]::IsNullOrWhiteSpace($cat)) { return 'その他' }
-    switch -Wildcard ($cat) {
-        'cell-extract*' { return 'セル抽出スキップ' }
-        'shape-extract*' { return '図形抽出スキップ' }
-        'shape-list*' { return '図形一覧取得スキップ' }
-        'shape-group*' { return '図形グループスキップ' }
-        'shape-skip*' { return '図形スキップ' }
-        'chart-extract*' { return 'グラフ抽出スキップ' }
-        'smartart-skip' { return 'SmartArtスキップ' }
-        'batch-count' { return '応答件数不足・過剰' }
-        'batch-diagnostic' { return 'バッチ応答診断' }
-        'truncated-retry' { return '途中切れリトライ' }
-        'split-retry' { return '分割要求リトライ' }
-        'supplement-pass' { return '不足ID補完パス' }
-        'completion-pass' { return '不足ID補完パス' }
-        'needs-supplement' { return '未翻訳検出' }
-        'untranslated' { return '原文保持' }
-        'untranslated-retained' { return '原文保持' }
-        'hangul-retry' { return 'Hangul再翻訳' }
-        'glossary-compliance' { return '訳語の確認推奨' }
-        'label-not-in-glossary' { return '用語集に無いラベル' }
-        'numeric-placeholder-dropped-brief' { return 'BRIEFで省略された数値' }
-        'numeric-placeholder-unresolved' { return '数値プレースホルダー不一致' }
-        'numeric-mask-integrity' { return '数値プレースホルダー不一致' }
-        'writeback-count' { return '書き込み件数不一致' }
-        'writeback-rect' { return '矩形書き戻しスキップ' }
-        'writeback-sheet' { return 'シート書き戻しスキップ' }
-        'writeback*' { return '書き戻しスキップ' }
-        'write-back*' { return '書き戻しスキップ' }
-        default { return $cat }
-    }
-}
-
-
-function Convert-YakuFileWarningsToGroupedHtml {
-    param([AllowNull()][object[]]$Warnings)
-    $warnings = @($Warnings)
-    if ($warnings.Count -le 0) { return '' }
-    $groups = [ordered]@{}
-    foreach ($w in $warnings) {
-        $category = 'general'
-        $message = [string]$w
-        $location = ''
-        try {
-            if ($w -and ($w.PSObject.Properties.Name -contains 'Category')) { $category = [string]$w.Category }
-            if ($w -and ($w.PSObject.Properties.Name -contains 'Message')) { $message = [string]$w.Message }
-            if ($w -and ($w.PSObject.Properties.Name -contains 'Location')) { $location = [string]$w.Location }
-        } catch {}
-        if ([string]::IsNullOrWhiteSpace($category)) { $category = 'general' }
-        if (-not $groups.Contains($category)) { $groups[$category] = New-Object System.Collections.Generic.List[object] }
-        $groups[$category].Add([pscustomobject]@{ Message=$message; Location=$location }) | Out-Null
-    }
-    $kindCount = [int]$groups.Count
-    $totalCount = [int]$warnings.Count
-    $html = "<details class='file-warning-groups'><summary>警告 $kindCount種 · $totalCount件</summary><div class='warning-group-stack'>"
-    foreach ($category in $groups.Keys) {
-        $items = @($groups[$category].ToArray())
-        $label = Get-YakuWarningCategoryLabel -Category $category
-        # 見出しの件数表示は廃止した（利用者の指示 2026-08-06）。
-        # ここは警告メッセージの数であって、中身の件数ではない。
-        # 「用語集に無いラベル 1件」の本文が「20 件ありました」となり読み違える。
-        $html += "<section class='file-warning-group'><h3>$(ConvertTo-YakuHtml $label)</h3><ul>"
-        foreach ($item in ($items | Select-Object -First 80)) {
-            $line = [string]$item.Message
-            if (-not [string]::IsNullOrWhiteSpace([string]$item.Location) -and $line -notmatch [regex]::Escape([string]$item.Location)) {
-                $line = ([string]$item.Location) + ' - ' + $line
-            }
-            $html += '<li>' + (ConvertTo-YakuHtml $line) + '</li>'
-        }
-        if ($items.Count -gt 80) { $html += '<li>ほか ' + (ConvertTo-YakuHtml ($items.Count - 80)) + ' 件</li>' }
-        $html += '</ul></section>'
-    }
-    $html += '</div></details>'
-    return $html
-}
-
-
-function Convert-YakuFileResultToHtml {
-    param(
-        [Parameter(Mandatory=$true)]$Result,
-        [bool]$IncludeStatusOob = $true
-    )
-    if ($Result -and ($Result.PSObject.Properties.Name -contains 'Error') -and $Result.Error) {
-        $html = ''
-        $html += New-YakuAlertHtml -Kind error -Message $Result.Error
-        return $html
-    }
-
-    $html = ''
-    $jobId = [string]$Result.JobId
-    $stats = $Result.Stats
-    $cells = 0; $shapes = 0; $charts = 0; $formula = 0; $smartart = 0
-    try { $cells = [int]$stats.cells } catch {}
-    try { $shapes = [int]$stats.shapes } catch {}
-    try { $charts = [int]$stats.charts } catch {}
-    try { $formula = [int]$stats.skipped_formula_cells } catch {}
-    try { $smartart = [int]$stats.skipped_smartart } catch {}
-    $warnings = @()
-    try { $warnings = @($Result.Warnings) } catch { $warnings = @() }
-    $glossaryExactHits = 0
-    try { if ($Result.PSObject.Properties.Name -contains 'GlossaryExactHits') { $glossaryExactHits = [int]$Result.GlossaryExactHits } } catch {}
-    # 「適用された用語」の表示は廃止した（利用者の指示 2026-08-06）。
-    # 実際に置換したのは cell-exact だけで、occurrence は監査しかしていない。
-    # 並べると全て適用されたように読める。件数は下の「用語完全一致」で見る。
-    $glossaryHtml = ''
-
-    $maskingHtml = New-YakuMaskingNoticeHtml -Result $Result
-    $warningHtml = Convert-YakuFileWarningsToGroupedHtml -Warnings $warnings
-    $completionStatus = 'done'
-    try { if ($Result.PSObject.Properties.Name -contains 'CompletionStatus') { $completionStatus = [string]$Result.CompletionStatus } } catch {}
-    $incomplete = ($completionStatus -eq 'completed_with_warnings')
-    $stateAttr = if ($incomplete) { 'completed_with_warnings' } else { 'done' }
-    $downloadLabel = if ($incomplete) { '警告付きファイルをダウンロード' } else { 'ダウンロード' }
-    $downloadClass = if ($incomplete) { 'button download-button download-warning' } else { 'button download-button' }
-    $completionBanner = if ($incomplete) {
-        "<div class='alert alert-warning persistent-warning' role='alert'><strong>未翻訳またはスキップされた項目があります。</strong><br>出力名には <code>_INCOMPLETE</code> が付きます。警告一覧を確認してから利用してください。</div>"
-    } else { '' }
-    $validation = $Result.Validation
-    $validationText = ''
-    try {
-        if ($validation) {
-            $validationText = "<span>再オープン $(ConvertTo-YakuHtml $validation.Reopenable)</span><span>数式 $(ConvertTo-YakuHtml $validation.FormulaCount)件</span><span>マクロ保持 $(ConvertTo-YakuHtml $validation.MacroPreserved)</span>"
-        }
-    } catch { $validationText = '' }
-    $retained = 0
-    try {
-        if ($Result.PSObject.Properties.Name -contains 'BlocksRetainedOriginal') { $retained = [int]$Result.BlocksRetainedOriginal }
-        elseif ($Result.PSObject.Properties.Name -contains 'BlocksRetained') { $retained = [int]$Result.BlocksRetained }
-        elseif ($Result.PSObject.Properties.Name -contains 'OriginalKept') { $retained = [int]$Result.OriginalKept }
-    } catch { $retained = 0 }
-    $translated = 0
-    try { $translated = [int]$Result.BlocksTranslated } catch { $translated = [int]$Result.BlocksTotal }
-    $writeTarget = $translated
-    $written = $translated
-    try { if ($Result.PSObject.Properties.Name -contains 'BlocksWriteTarget') { $writeTarget = [int]$Result.BlocksWriteTarget } } catch {}
-    try { if ($Result.PSObject.Properties.Name -contains 'BlocksWritten') { $written = [int]$Result.BlocksWritten } } catch {}
-    $truncated = 0
-    $batchTotal = 0
-    $truncatedRateText = '0%'
-    try { if ($Result.PSObject.Properties.Name -contains 'TruncatedBatches') { $truncated = [int]$Result.TruncatedBatches } } catch {}
-    try { if ($Result.PSObject.Properties.Name -contains 'BatchTotal') { $batchTotal = [int]$Result.BatchTotal } elseif ($Result.PSObject.Properties.Name -contains 'BatchCount') { $batchTotal = [int]$Result.BatchCount } } catch {}
-    try { if ($batchTotal -gt 0) { $truncatedRateText = ([Math]::Round(($truncated / [double]$batchTotal) * 100, 1)).ToString() + '%' } } catch {}
-    $maxRetryDepth = 0
-    try { if ($Result.PSObject.Properties.Name -contains 'MaxRetryDepthReached') { $maxRetryDepth = [int]$Result.MaxRetryDepthReached } } catch {}
-    $extractSeconds = ''
-    try { if ($Result.PSObject.Properties.Name -contains 'ExtractSeconds') { $extractSeconds = [string]$Result.ExtractSeconds } } catch {}
-    $applySeconds = ''
-    try { if ($Result.PSObject.Properties.Name -contains 'ApplySeconds') { $applySeconds = [string]$Result.ApplySeconds } } catch {}
-    $durationDetail = [string]$Result.DurationSeconds + '秒'
-    if (-not [string]::IsNullOrWhiteSpace($extractSeconds) -or -not [string]::IsNullOrWhiteSpace($applySeconds)) {
-        $durationDetail += ' · 抽出 ' + $(if ([string]::IsNullOrWhiteSpace($extractSeconds)) { '-' } else { $extractSeconds }) + '秒 / 書き戻し ' + $(if ([string]::IsNullOrWhiteSpace($applySeconds)) { '-' } else { $applySeconds }) + '秒'
-    }
-
-    $html += @"
-<section class='result-stack file-result-stack' data-yaku-state='$(ConvertTo-YakuHtml $stateAttr)'>
-  $completionBanner
-  <article class='result-card file-result-card'>
-    <header class='result-card-header'>
-      <div class='result-title-block'>
-        <div class='eyebrow'>FILE TRANSLATION</div>
-        <h2>$(ConvertTo-YakuHtml $Result.OutputName)</h2>
-        <p class='result-subtitle'>$(ConvertTo-YakuHtml $Result.InputName) · $(ConvertTo-YakuHtml $Result.DirectionLabel)</p>
-      </div>
-      <div class='result-actions'>
-        <button type='button' class='$(ConvertTo-YakuHtml $downloadClass)' data-yaku-download-job='$(ConvertTo-YakuHtml $jobId)'>$(ConvertTo-YakuHtml $downloadLabel)</button>
-        <button type='button' class='secondary-button open-output-button' data-yaku-job-id='$(ConvertTo-YakuHtml $jobId)'>フォルダを開く</button>
-      </div>
-    </header>
-    <div class='stat-pills' aria-label='翻訳統計'>
-      <span class='stat-pill'>対象 <strong>$(ConvertTo-YakuHtml $Result.BlocksTotal)</strong></span>
-      <span class='stat-pill'>翻訳 <strong>$translated</strong></span>
-      <span class='stat-pill'>書込 <strong>$written/$writeTarget</strong></span>
-      <span class='stat-pill'>保持 <strong>$retained</strong></span>
-      <span class='stat-pill'>セル <strong>$cells</strong></span>
-      <span class='stat-pill'>図形 <strong>$shapes</strong></span>
-      <span class='stat-pill'>グラフ <strong>$charts</strong></span>
-      <span class='stat-pill'>時間 <strong>$(ConvertTo-YakuHtml $durationDetail)</strong></span>
-    </div>
-    <div class='file-result-meta'>
-      <span>ユニーク $(ConvertTo-YakuHtml $Result.UniqueTextCount)件</span>
-      <span>キャッシュ $(ConvertTo-YakuHtml $Result.CacheHits)件</span>
-      <span>用語完全一致 $(ConvertTo-YakuHtml $glossaryExactHits)件</span>
-      <span>Batch $(ConvertTo-YakuHtml $Result.BatchCount)</span>
-      <span>途中切れ $truncated/$batchTotal ($truncatedRateText)</span>
-      <span>最大リトライ深さ $maxRetryDepth</span>
-      <span>数式セル $formula件</span>
-      <span>SmartArt $smartart件</span>
-      $validationText
-    </div>
-    <p class='hint'>元ファイルは変更していません。翻訳を書き込んだセル・図形・グラフタイトルだけに設定フォントを適用します（既定 Arial、CSVは対象外）。原文保持セルには触れません。Excel図形内の部分書式は、Excel COM の制約により先頭ランの書式に均される場合があります。文字溢れの自動調整は行いません。</p>
-    <details class='output-path-details'><summary>出力先</summary><code>$(ConvertTo-YakuHtml $Result.OutputPath)</code></details>
-    $glossaryHtml
-    $maskingHtml
-    $warningHtml
-  </article>
-</section>
-"@
-    return $html
 }
 
 function Convert-YakuCopilotDiagnosticsToHtml {

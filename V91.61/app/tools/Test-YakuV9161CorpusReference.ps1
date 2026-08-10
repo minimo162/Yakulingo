@@ -17,6 +17,7 @@
 param()
 
 $ErrorActionPreference = 'Stop'
+$env:YAKULINGO_TEST_PROTECTED_TRANSPORT = '1'
 $toolsRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $toolsRoot
 $script:fail = 0
@@ -28,7 +29,7 @@ $env:YAKULINGO_DATA_DIR = Join-Path $work 'data'
 Remove-Item Env:\YAKULINGO_CORPUS_DIR -ErrorAction SilentlyContinue
 
 try {
-foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','FileTranslation.ps1','Corpus.ps1','CorpusSearch.ps1','CorpusReference.ps1')) {
+foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','CatBatch.ps1','ProperNoun.ps1','Corpus.ps1','CorpusSearch.ps1','CorpusReference.ps1')) {
     . (Join-Path (Join-Path $root 'src') $n)
 }
 
@@ -153,13 +154,13 @@ $env:YAKULINGO_CORPUS_DIR = $corpus
 
 # Copilot への往復を差し替える。実機の Edge には接続しない。
 $script:LastQueryPrompt = ''
-function Invoke-YakuCopilotPrompt {
+function Invoke-YakuProtectedTransportTestHook {
     param([string]$Prompt, $Settings, [switch]$SkipFreshChatWait, [string]$AnswerFormat = 'labeled', [switch]$PreserveEndMarker, $Warnings, $ProgressState)
     $script:LastQueryPrompt = [string]$Prompt
     return "SEARCH_TERMS: equity ratio retained earnings`nYAKULINGO_END:x"
 }
 
-$ref = Get-YakuCorpusReference -Root $root -InputText '当期の自己資本比率は45.6%となり、利益剰余金の積み上がりにより改善した。' -Settings $settings -Direction 'to_en' -Warnings $null -ProgressState $null
+$ref = Get-YakuCorpusReference -Root $root -InputText 'マツダ株式会社の当期の自己資本比率は45.6%となり、利益剰余金の積み上がりにより改善した。' -Settings $settings -Direction 'to_en' -Warnings $null -ProgressState $null
 Chk ($ref.Reason -eq 'ok') ('引けた: ' + $ref.Reason)
 Chk ($ref.Count -gt 0) '文例が返る'
 Chk ($ref.Used) 'Copilot への往復が発生したことが分かる（新規チャット待ちの判断に使う）'
@@ -170,6 +171,7 @@ Write-Host '検索語生成の依頼にも数値マスキングが効くこと'
 # ここを素通しにすると V91.60 の「数値を外部へ出さない」保証がこの経路だけ抜ける。
 Chk ($script:LastQueryPrompt -notmatch '45\.6') '原文の数値がそのまま送られていない'
 Chk ($script:LastQueryPrompt -match '\[\[N\d+\]\]') 'マスク済みの本文が送られている'
+Chk ($script:LastQueryPrompt -match 'マツダ株式会社' -and $script:LastQueryPrompt -notmatch '\[\[P\d+\]\]') '固有名詞は送信可なので変更しない'
 Chk ($script:LastQueryPrompt -match '自己資本比率') 'マスク以外の本文は送られている'
 
 Write-Host '使わない条件'
@@ -182,15 +184,15 @@ Chk ($refNone.Reason -eq 'no-corpus') 'コーパスが無ければ引かない'
 Chk (-not $refNone.Used) 'コーパスが無ければ往復も発生しない（無駄に1回増やさない）'
 $env:YAKULINGO_CORPUS_DIR = $corpus
 
-function Invoke-YakuCopilotPrompt { param([string]$Prompt, $Settings, [switch]$SkipFreshChatWait, [string]$AnswerFormat = 'labeled', [switch]$PreserveEndMarker, $Warnings, $ProgressState) return 'SEARCH_TERMS:' }
+function Invoke-YakuProtectedTransportTestHook { param([string]$Prompt, $Settings, [switch]$SkipFreshChatWait, [string]$AnswerFormat = 'labeled', [switch]$PreserveEndMarker, $Warnings, $ProgressState) return 'SEARCH_TERMS:' }
 $refNoTerms = Get-YakuCorpusReference -Root $root -InputText '自己資本比率' -Settings $settings -Direction 'to_en' -Warnings $null -ProgressState $null
 Chk ($refNoTerms.Reason -eq 'no-terms') '検索語が作れなければ素通し'
 
-function Invoke-YakuCopilotPrompt { param([string]$Prompt, $Settings, [switch]$SkipFreshChatWait, [string]$AnswerFormat = 'labeled', [switch]$PreserveEndMarker, $Warnings, $ProgressState) return 'SEARCH_TERMS: zzzznotpresent' }
+function Invoke-YakuProtectedTransportTestHook { param([string]$Prompt, $Settings, [switch]$SkipFreshChatWait, [string]$AnswerFormat = 'labeled', [switch]$PreserveEndMarker, $Warnings, $ProgressState) return 'SEARCH_TERMS: zzzznotpresent' }
 $refNoHits = Get-YakuCorpusReference -Root $root -InputText '自己資本比率' -Settings $settings -Direction 'to_en' -Warnings $null -ProgressState $null
 Chk ($refNoHits.Reason -eq 'no-hits') '当たらなければ素通し'
 
-function Invoke-YakuCopilotPrompt { param([string]$Prompt, $Settings, [switch]$SkipFreshChatWait, [string]$AnswerFormat = 'labeled', [switch]$PreserveEndMarker, $Warnings, $ProgressState) throw 'Copilot unreachable' }
+function Invoke-YakuProtectedTransportTestHook { param([string]$Prompt, $Settings, [switch]$SkipFreshChatWait, [string]$AnswerFormat = 'labeled', [switch]$PreserveEndMarker, $Warnings, $ProgressState) throw 'Copilot unreachable' }
 $refErr = Get-YakuCorpusReference -Root $root -InputText '自己資本比率' -Settings $settings -Direction 'to_en' -Warnings $null -ProgressState $null
 Chk ($refErr.Reason -eq 'error') '往復が失敗しても投げない'
 Chk ($refErr.Section -eq '') '失敗時は空を返す（従来どおり訳せる）'
@@ -234,7 +236,7 @@ Chk ($escaped -notmatch '<b>bold') '本文を逃がしている'
 
 Write-Host '引いた結果に参照した箇所が入る'
 $env:YAKULINGO_CORPUS_DIR = $corpus
-function Invoke-YakuCopilotPrompt { param([string]$Prompt, $Settings, [switch]$SkipFreshChatWait, [string]$AnswerFormat = 'labeled', [switch]$PreserveEndMarker, $Warnings, $ProgressState) return 'SEARCH_TERMS: equity ratio' }
+function Invoke-YakuProtectedTransportTestHook { param([string]$Prompt, $Settings, [switch]$SkipFreshChatWait, [string]$AnswerFormat = 'labeled', [switch]$PreserveEndMarker, $Warnings, $ProgressState) return 'SEARCH_TERMS: equity ratio' }
 $refEx = Get-YakuCorpusReference -Root $root -InputText '自己資本比率' -Settings $settings -Direction 'to_en' -Warnings $null -ProgressState $null
 Chk (@($refEx.Examples).Count -gt 0) '参照した一節が戻る'
 Chk (@($refEx.Examples)[0].Text -notmatch '\d') '画面へ出す本文も数字が伏せてある（送ったものと同じ）'
@@ -249,21 +251,20 @@ Chk (@($refNoneEx.Examples).Count -eq 0) '使わなかったときは空（呼�
 # 往復が1回増えるのは重すぎる（利用者の判断 2026-08-06）。
 # 腰を据えて資料を仕上げる CAT 側でこそ、過去の言い回しを参照する値打ちがある。
 #
-# CAT でも自動では引かない。文例の検索と AI 翻訳を別のボタンに分け、
-# 「検索だけ」「翻訳だけ」「検索してから翻訳」を利用者が選べるようにした。
+# CATでは文例を候補ペインへ表示するが、翻訳promptには混ぜない。
 Write-Host '文例を引く場所'
 $translationSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Translation.ps1'))
 Chk ($translationSrc -notmatch 'Get-YakuCorpusReference -Root \$Root -InputText \$processingInput') '簡易翻訳では引かない（重いので外した）'
 Chk ($translationSrc -match 'text-mode-disabled') '外したことが分かる印がある'
 $serverSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Server.ps1'))
 Chk ($serverSrc -match 'Get-YakuCorpusReference') 'CAT からは引ける'
-$fileTemplate = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'prompts') 'file_translate_to_en.txt'))
-Chk ($fileTemplate -match 'corpus_section') 'ファイル用テンプレートに差し込み口がある'
-$fileText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'FileTranslation.ps1'))
-Chk ($fileText -match 'CorpusSection') 'ファイル用プロンプトが文例を受け取れる'
-$filePromptCalls = @(($fileText -split "`r?`n") | Where-Object { [string]$_ -match '^\s*\$\w*Prompt\s*=\s*New-YakuFilePrompt\b' })
-Chk ($filePromptCalls.Count -eq 4) ('ファイル用プロンプトの生成経路をすべて見つける: ' + $filePromptCalls.Count)
-Chk (@($filePromptCalls | Where-Object { [string]$_ -notmatch '-CorpusSection\b' }).Count -eq 0) '通常・Hangul再試行・数値再試行・数値補完のすべてへ文例を渡す'
+$catTemplate = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'prompts') 'cat_translate_to_en.txt'))
+Chk ($catTemplate -notmatch 'corpus_section') 'CAT 用テンプレートに文例差し込み口を持たない'
+$fileText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CatBatch.ps1'))
+Chk ($fileText -notmatch 'CorpusSection') 'CAT の翻訳中継は参考文例を受け取らない'
+$catPromptCalls = @(($fileText -split '\r?\n') | Where-Object { [string]$_ -match 'New-YakuProtectedPromptPackage\s+-Kind\s+cat\b' })
+Chk ($catPromptCalls.Count -eq 3) ('CAT プロンプトの生成経路をすべて見つける: ' + $catPromptCalls.Count)
+Chk ($fileText -notmatch 'CorpusSection') '通常・再試行のいずれも文例をpromptへ渡さない'
 Chk ($fileText -notmatch 'Get-YakuCorpusReference') 'ファイル翻訳自身は引かない（渡されたものを使うだけ）'
 $jpTemplate = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'prompts') 'text_translate_to_jp.txt'))
 Chk ($jpTemplate -notmatch 'corpus_section') 'to_jp のテンプレートにも足していない'
@@ -272,11 +273,11 @@ Write-Host '設定項目を増やしていないこと'
 $settingsText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Settings.ps1'))
 Chk ($settingsText -notmatch 'corpus') '設定へコーパスの項目を足していない'
 $indexHtml = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'index.html'))
-# V91.61（2026-08-06）: CAT に「文例を検索」を置いたので、参照する側は
+# CAT に参考文例の表示を置いたので、参照する側は
 # 一般利用者の画面にも現れる。出してはいけないのは**作る側**である。
 # コーパスの取り込み・索引作りは管理画面（admin.html）にだけ置く。
 Chk ($indexHtml -notmatch '(?i)corpus[-_]?(build|rebuild|index|import|ingest|admin|manage)') 'コーパスを作る操作は一般利用者の画面に出さない'
-Chk ($indexHtml -match 'cat-corpus-button') 'CAT からは文例を検索できる'
+Chk ($indexHtml -match 'cat-corpus-button' -and $indexHtml -match '参考文例を表示') 'CAT から参考文例を表示できる'
 
 Write-Host 'キャッシュ鍵'
 $translationText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Translation.ps1'))

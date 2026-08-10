@@ -36,31 +36,28 @@ $cur = "Net sales amounted to [[N1]] oku, an increase of [[N2]] oku." + [Environ
 
 Write-Host '門（プロンプトの指示は保証にならないので、アプリ側で見る）' -ForegroundColor Cyan
 
-$ok = Test-YakuShortenResult -MaskedCurrentText $cur -Shortened ("Net sales [[N1]] oku, up [[N2]] oku." + [Environment]::NewLine + "Operating income [[N3]] oku.") -ProperMap $null
+$ok = Test-YakuShortenResult -MaskedCurrentText $cur -Shortened ("Net sales [[N1]] oku, up [[N2]] oku." + [Environment]::NewLine + "Operating income [[N3]] oku.")
 Chk ([string]::IsNullOrEmpty($ok)) '正しく短くしたものは通す'
 
-$merged = Test-YakuShortenResult -MaskedCurrentText $cur -Shortened 'Net sales [[N1]] oku, up [[N2]] oku; operating income [[N3]] oku.' -ProperMap $null
+$merged = Test-YakuShortenResult -MaskedCurrentText $cur -Shortened 'Net sales [[N1]] oku, up [[N2]] oku; operating income [[N3]] oku.'
 Chk ($merged -match '行の数') '行を統合したら弾く（見出しや箇条書きが潰れる）'
 
-$dropped = Test-YakuShortenResult -MaskedCurrentText $cur -Shortened ("Net sales [[N1]] oku, up." + [Environment]::NewLine + "Operating income [[N3]] oku.") -ProperMap $null
+$dropped = Test-YakuShortenResult -MaskedCurrentText $cur -Shortened ("Net sales [[N1]] oku, up." + [Environment]::NewLine + "Operating income [[N3]] oku.")
 Chk ($dropped -match '数値') '数値が落ちたら弾く（短い訳ではなく事実が欠けた訳）'
 
 # 最も危険な壊れ方。個数は合うので、並べ替えて比べると通ってしまう。
 # 復元すると営業利益の欄に売上高の数字が入る。
-$swapped = Test-YakuShortenResult -MaskedCurrentText $cur -Shortened ("Net sales [[N2]] oku, up [[N1]] oku." + [Environment]::NewLine + "Operating income [[N3]] oku.") -ProperMap $null
+$swapped = Test-YakuShortenResult -MaskedCurrentText $cur -Shortened ("Net sales [[N2]] oku, up [[N1]] oku." + [Environment]::NewLine + "Operating income [[N3]] oku.")
 Chk ($swapped -match '数値') '数値が入れ替わったら弾く（個数だけ見ていると通る）'
 
-$longer = Test-YakuShortenResult -MaskedCurrentText $cur -Shortened ("Net sales amounted to [[N1]] oku, representing an increase of [[N2]] oku over the prior period here." + [Environment]::NewLine + "Operating income for the period was [[N3]] oku in total.") -ProperMap $null
+$longer = Test-YakuShortenResult -MaskedCurrentText $cur -Shortened ("Net sales amounted to [[N1]] oku, representing an increase of [[N2]] oku over the prior period here." + [Environment]::NewLine + "Operating income for the period was [[N3]] oku in total.")
 Chk ($longer -match '短くなっていません') '長くなったら弾く（押した意味が無い）'
 
-$same = Test-YakuShortenResult -MaskedCurrentText $cur -Shortened $cur -ProperMap $null
+$same = Test-YakuShortenResult -MaskedCurrentText $cur -Shortened $cur
 Chk ([string]::IsNullOrEmpty($same)) '同じまま返すのは正しい答え（これ以上短くできない）'
 
-$empty = Test-YakuShortenResult -MaskedCurrentText $cur -Shortened '' -ProperMap $null
+$empty = Test-YakuShortenResult -MaskedCurrentText $cur -Shortened ''
 Chk ($empty -match '空') '空の応答を弾く'
-
-$lostName = Test-YakuShortenResult -MaskedCurrentText '[[P1]] reported [[N1]] oku.' -Shortened 'Reported [[N1]] oku.' -ProperMap @{ '[[P1]]' = 'Moro' }
-Chk ($lostName -match '固有名詞') '固有名詞が落ちたら弾く'
 
 Write-Host 'マスク後の訳文しか送らない' -ForegroundColor Cyan
 $trSrc = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'Translation.ps1') -Raw -Encoding UTF8
@@ -68,10 +65,10 @@ $fn = [regex]::Match($trSrc, '(?s)function Invoke-YakuTextShorten \{.*?\n\}\r?\n
 Chk ($fn.Length -gt 0) '短くする経路が見つかる'
 Chk ($fn -match 'MaskedCurrentText') '受け取る引数の名前がマスク後であることを示している'
 Chk ($fn -match 'SHORTEN_UNMASKED_CURRENT') '実値入りの訳文を渡されたら例外を投げる'
-$pAt = $fn.IndexOf('New-YakuProperNounMaskMap')
 $nAt = $fn.IndexOf('New-YakuNumericMaskMap')
-$sAt = $fn.IndexOf('Invoke-YakuCopilotPrompt')
-Chk ($pAt -ge 0 -and $nAt -ge 0 -and $sAt -ge 0 -and $pAt -lt $nAt -and $nAt -lt $sAt) '固有名詞→数値→送信の順'
+$sAt = $fn.IndexOf('Invoke-YakuProtectedCopilotPrompt')
+Chk ($nAt -ge 0 -and $sAt -ge 0 -and $nAt -lt $sAt) '数値マスク→送信の順'
+Chk ($fn -notmatch 'ProperNounMask|ProperMap|\[\[P') '短くする経路は固有名詞をマスクしない'
 $gateAt = $fn.IndexOf('Test-YakuShortenResult')
 $restoreAt = $fn.IndexOf('Restore-YakuMaskedTranslationOptions')
 Chk ($gateAt -ge 0 -and $restoreAt -ge 0 -and $gateAt -lt $restoreAt) '門を通してから実値へ戻す'
@@ -82,14 +79,15 @@ Chk ($abbrAt -gt $sAt) '略語を当てるのは送信より後（先に渡す�
 # 実値入りの訳文を渡したら本当に止まるか。条件が発火するかを一度確かめる。
 $threw = $false
 try {
-    $null = Invoke-YakuTextShorten -Root $root -InputText '売上高は11,577億円でした。' -MaskedCurrentText 'Net sales were 11,577 oku.' -Settings (Read-YakuSettings -Root $root) -ProgressState $null -Warnings $null
+    $null = Invoke-YakuTextShorten -Root $root -InputText '売上高は11,577億円でした。' -MaskedCurrentText 'Net sales were 11,577 oku.' -Settings ([pscustomobject]@{}) -ProgressState $null -Warnings $null
 } catch {
     $threw = ([string]$_.Exception.Message -match 'SHORTEN_UNMASKED_CURRENT')
 }
 Chk $threw '実値入りの訳文を渡すと、送信する前に止まる'
 
 Write-Host '既定では余分な往復を使わない' -ForegroundColor Cyan
-Chk ($trSrc -match "\`$modes = @\('full'\)") '既定の依頼は1本だけ（短くするのは押されたときだけ）'
+Chk ($trSrc -match "Invoke-YakuSingleTranslationBatch[\s\S]*-Mode 'full'") '既定の依頼は1本だけ（短くするのは押されたときだけ）'
+Chk ($trSrc -notmatch 'Invoke-YakuTextRequestsInParallel|YAKULINGO_PARALLEL') '休眠中の並列経路が残っていない'
 $htmlSrc = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'Html.ps1') -Raw -Encoding UTF8
 Chk ($htmlSrc -match 'data-yaku-shorten') '画面に短くする導線がある'
 Chk ($htmlSrc -match 'MaskedTranslation') '導線が持つのはマスク後の訳文'

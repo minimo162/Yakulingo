@@ -4611,7 +4611,16 @@ return { ok:true, changed:false, reason:'model_not_in_menu', current, tried:cand
     }
 }
 
-function Invoke-YakuCopilotPrompt {
+function Get-YakuProtectedPromptSha256 {
+    param([AllowNull()][string]$Text)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes([string]$Text)
+        return [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-','').ToLowerInvariant()
+    } finally { $sha.Dispose() }
+}
+
+function Invoke-YakuCopilotPromptUnsafe {
     param(
         [Parameter(Mandatory=$true)][string]$Prompt,
         [Parameter(Mandatory=$true)]$Settings,
@@ -5221,9 +5230,12 @@ function Invoke-YakuCopilotAutomationSelfTest {
     param([Parameter(Mandatory=$true)]$Settings)
     $started = Get-Date
     try {
-        $requestId = [guid]::NewGuid().ToString('N')
-        $prompt = "Reply in this exact plain-text contract and add nothing else:`nFULL_TEXT:`nYAKULINGO_OK`nBRIEF_TEXT:`nYAKULINGO_OK`nYAKULINGO_END:$requestId"
-        $raw = Invoke-YakuCopilotPrompt -Prompt $prompt -Settings $Settings -PreserveEndMarker
+        $appRoot = Split-Path -Parent $PSScriptRoot
+        $package = New-YakuProtectedPromptPackage -Kind selftest -Root $appRoot -Direction to_en `
+            -Fields @([pscustomobject]@{ Name='selftest_marker'; OriginalText='YAKULINGO_OK'; ProtectedText='YAKULINGO_OK' }) `
+            -Arguments ([pscustomobject]@{})
+        $requestId = [string]$package.RequestId
+        $raw = Invoke-YakuProtectedCopilotPrompt -Envelope $package.Envelope -Settings $Settings -PreserveEndMarker
         $normalized = ([string]$raw).Replace("`r`n", "`n").Replace("`r", "`n").Trim()
         $expected = "FULL_TEXT:`nYAKULINGO_OK`nBRIEF_TEXT:`nYAKULINGO_OK`nYAKULINGO_END:$requestId"
         $ok = [string]::Equals($normalized, $expected, [System.StringComparison]::Ordinal)
@@ -5244,3 +5256,277 @@ function Invoke-YakuCopilotAutomationSelfTest {
         }
     }
 }
+
+function Initialize-YakuProtectedPromptBoundary {
+    <#
+      外部送信のauthorityをこのclosure内へ閉じ込める。dot-source構成でもraw
+      transport名を公開したままにせず、独立再検査済みreceiptだけを最終promptへ
+      束縛する。公開SHAを書き直してもprivate HMAC/registryは作り直せない。
+    #>
+    $trustedRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
+    $rawCommand = Get-Command Invoke-YakuCopilotPromptUnsafe -ErrorAction Stop
+    $key = New-Object byte[] 32
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($key) } finally { $rng.Dispose() }
+    $registry = @{}
+
+    $hmacFor = {
+        param([AllowNull()][string]$Text)
+        $hmac = New-Object System.Security.Cryptography.HMACSHA256 (,$key)
+        try {
+            $bytes = [Text.Encoding]::UTF8.GetBytes([string]$Text)
+            return [BitConverter]::ToString($hmac.ComputeHash($bytes)).Replace('-','').ToLowerInvariant()
+        } finally { $hmac.Dispose() }
+    }.GetNewClosure()
+
+    $newReceipt = {
+        param(
+            [Parameter(Mandatory=$true)][AllowEmptyString()][string]$OriginalText,
+            [Parameter(Mandatory=$true)][AllowEmptyString()][string]$ProtectedText,
+            [AllowNull()][string]$Root,
+            [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
+            [AllowNull()][object[]]$NumericMaskMaps = @()
+        )
+        if (-not (Get-Command Test-YakuNumericMaskingEnabled -ErrorAction SilentlyContinue)) { throw 'EXTERNAL_SEND_NUMERIC_PROTECTION_UNKNOWN' }
+        if (-not (Test-YakuNumericMaskingEnabled)) { throw 'EXTERNAL_SEND_NUMERIC_PROTECTION_DISABLED' }
+        if (-not (Get-Command New-YakuNumericMaskMap -ErrorAction SilentlyContinue)) { throw 'PROTECTION_RECEIPT_SCANNER_UNAVAILABLE' }
+        if ([string]::IsNullOrEmpty($OriginalText) -and [string]::IsNullOrEmpty($ProtectedText)) { throw 'PROTECTION_RECEIPT_EMPTY' }
+
+        # callerのmapを信用せず、元fieldをもう一度分類して禁止値を作る。
+        $scan = New-YakuNumericMaskMap -Text $OriginalText -Root $Root -Direction $Direction -Location 'protected-receipt'
+        $protectedScan = New-YakuNumericMaskMap -Text $ProtectedText -Root $Root -Direction $Direction -Location 'protected-receipt-final'
+        if ([int]$protectedScan.MaskedCount -gt 0) { throw 'PROTECTION_RECEIPT_PROTECTED_TEXT_NOT_MASKED' }
+        $forbidden = New-Object System.Collections.Generic.List[string]
+        foreach ($value in @($scan.Map.Values)) {
+            $s = [string]$value
+            if (-not [string]::IsNullOrEmpty($s) -and -not $forbidden.Contains($s)) { $forbidden.Add($s) | Out-Null }
+        }
+        foreach ($value in @($forbidden.ToArray())) {
+            # 境界regexは使わない。A123Bの123もmaskerが対象にするため、完全な
+            # substring不在をreceiptの条件にする。
+            if ($ProtectedText.IndexOf([string]$value, [StringComparison]::Ordinal) -ge 0) { throw 'PROTECTION_RECEIPT_UNMASKED_VALUE' }
+        }
+
+        $id = [guid]::NewGuid().ToString('N')
+        $protectedHash = Get-YakuProtectedPromptSha256 -Text $ProtectedText
+        $forbiddenHashes = @($forbidden.ToArray() | ForEach-Object { Get-YakuProtectedPromptSha256 -Text ([string]$_) } | Sort-Object)
+        $payload = 'protected-receipt-v2|' + $id + '|' + $protectedHash + '|' + ($forbiddenHashes -join ',')
+        $signature = & $hmacFor $payload
+        $registry[$id] = [pscustomobject]@{
+            Id = $id
+            ProtectedText = [string]$ProtectedText
+            ProtectedSha256 = $protectedHash
+            ForbiddenValues = @($forbidden.ToArray())
+            Payload = $payload
+            Signature = $signature
+        }
+        return [pscustomobject]@{
+            ContractVersion = 'protected-receipt-v2'
+            ReceiptId = $id
+            ProtectedText = [string]$ProtectedText
+            ProtectedSha256 = $protectedHash
+            Signature = $signature
+        }
+    }.GetNewClosure()
+
+    $validateReceipt = {
+        param([Parameter(Mandatory=$true)]$Receipt)
+        if ($null -eq $Receipt -or [string]$Receipt.ContractVersion -ne 'protected-receipt-v2') { throw 'PROTECTION_RECEIPT_INVALID' }
+        $id = [string]$Receipt.ReceiptId
+        if ([string]::IsNullOrWhiteSpace($id) -or -not $registry.ContainsKey($id)) { throw 'PROTECTION_RECEIPT_UNKNOWN' }
+        $record = $registry[$id]
+        if ([string]$Receipt.ProtectedSha256 -ne [string]$record.ProtectedSha256 -or
+            [string]$Receipt.Signature -ne [string]$record.Signature -or
+            [string]$Receipt.ProtectedText -ne [string]$record.ProtectedText -or
+            [string]$record.Signature -ne [string](& $hmacFor ([string]$record.Payload))) { throw 'PROTECTION_RECEIPT_AUTHORITY_INVALID' }
+        return $record
+    }.GetNewClosure()
+
+    $newEnvelope = {
+        param(
+            [Parameter(Mandatory=$true)][string]$Prompt,
+            [Parameter(Mandatory=$true)][object[]]$ProtectionReceipts
+        )
+        if ([string]::IsNullOrWhiteSpace($Prompt)) { throw 'PROTECTED_PROMPT_EMPTY' }
+        if (-not (Get-Command Test-YakuNumericMaskingEnabled -ErrorAction SilentlyContinue)) { throw 'EXTERNAL_SEND_NUMERIC_PROTECTION_UNKNOWN' }
+        if (-not (Test-YakuNumericMaskingEnabled)) { throw 'EXTERNAL_SEND_NUMERIC_PROTECTION_DISABLED' }
+        if (@($ProtectionReceipts).Count -le 0) { throw 'PROTECTED_PROMPT_RECEIPT_REQUIRED' }
+        $ids = New-Object System.Collections.Generic.List[string]
+        $receiptSignatures = New-Object System.Collections.Generic.List[string]
+        foreach ($receipt in @($ProtectionReceipts)) {
+            $record = & $validateReceipt $receipt
+            if (-not [string]::IsNullOrEmpty([string]$record.ProtectedText) -and
+                $Prompt.IndexOf([string]$record.ProtectedText, [StringComparison]::Ordinal) -lt 0) { throw 'PROTECTED_PROMPT_RECEIPT_UNRELATED' }
+            $ids.Add([string]$record.Id) | Out-Null
+            $receiptSignatures.Add([string]$record.Signature) | Out-Null
+        }
+        $promptHash = Get-YakuProtectedPromptSha256 -Text $Prompt
+        $proofPayload = 'protected-prompt-v2|' + $promptHash + '|' + ($ids.ToArray() -join ',') + '|' + ($receiptSignatures.ToArray() -join ',')
+        return [pscustomobject]@{
+            ContractVersion = 'protected-prompt-v2'
+            Prompt = $Prompt
+            PromptSha256 = $promptHash
+            ReceiptIds = @($ids.ToArray())
+            ProofHmac = [string](& $hmacFor $proofPayload)
+        }
+    }.GetNewClosure()
+
+    $newPackage = {
+        param(
+            [Parameter(Mandatory=$true)][ValidateSet('text','revision','shorten','cat','corpus','alignment','selftest')][string]$Kind,
+            [Parameter(Mandatory=$true)][string]$Root,
+            [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
+            [Parameter(Mandatory=$true)][object[]]$Fields,
+            [Parameter(Mandatory=$true)]$Arguments
+        )
+        $resolvedRoot = [IO.Path]::GetFullPath([string]$Root)
+        if (-not [string]::Equals($resolvedRoot, $trustedRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'PROTECTED_PROMPT_ROOT_INVALID' }
+        if (@($Fields).Count -le 0) { throw 'PROTECTED_PROMPT_FIELDS_REQUIRED' }
+        # RequestIdも最終promptへ入る可変値である。caller値を構文検査するだけでは、
+        # 32桁hexの機密値をRequestIdとして混入できるため、authority側で生成する。
+        $requestIdArgument = [guid]::NewGuid().ToString('N')
+
+        $fieldByName = @{}
+        $receipts = New-Object System.Collections.Generic.List[object]
+        foreach ($field in @($Fields)) {
+            $name = [string]$field.Name
+            if ([string]::IsNullOrWhiteSpace($name) -or $fieldByName.ContainsKey($name)) { throw 'PROTECTED_PROMPT_FIELD_INVALID' }
+            $original = [string]$field.OriginalText
+            $protectedText = [string]$field.ProtectedText
+            if ([string]::IsNullOrEmpty($original) -and [string]::IsNullOrEmpty($protectedText)) { continue }
+            $receipt = & $newReceipt -OriginalText $original -ProtectedText $protectedText -Root $trustedRoot -Direction $Direction -NumericMaskMaps @($field.NumericMaskMaps)
+            $fieldByName[$name] = [pscustomobject]@{ OriginalText=$original; ProtectedText=$protectedText; Receipt=$receipt }
+            $receipts.Add($receipt) | Out-Null
+        }
+        if ($receipts.Count -le 0) { throw 'PROTECTED_PROMPT_FIELDS_REQUIRED' }
+
+        $getField = {
+            param([string]$Name, [switch]$Optional)
+            if ($fieldByName.ContainsKey($Name)) { return [string]$fieldByName[$Name].ProtectedText }
+            if ($Optional) { return '' }
+            throw ('PROTECTED_PROMPT_FIELD_MISSING:' + $Name)
+        }
+
+        $prompt = ''
+        $built = $null
+        switch ($Kind) {
+            'text' {
+                $built = New-YakuTextPrompt -Root $trustedRoot -InputText (& $getField 'source') -Settings $Arguments.Settings -DirectionOverride $Direction `
+                    -StyleReference (& $getField 'style_reference' -Optional) -RequestId $requestIdArgument `
+                    -CorpusSection (& $getField 'corpus_section' -Optional) -Mode ([string]$Arguments.Mode)
+                $prompt = [string]$built.Prompt
+                $additional = & $getField 'additional_instruction' -Optional
+                if (-not [string]::IsNullOrWhiteSpace($additional)) { $prompt += "`n`n$additional" }
+            }
+            'revision' {
+                $built = New-YakuRevisePrompt -Root $trustedRoot -InputText (& $getField 'source') -CurrentText (& $getField 'current') `
+                    -Instruction (& $getField 'instruction') -Direction $Direction -Style ([string]$Arguments.Style) -RequestId $requestIdArgument
+                $prompt = [string]$built.Prompt
+            }
+            'shorten' {
+                $built = New-YakuShortenPrompt -Root $trustedRoot -InputText (& $getField 'source') -CurrentText (& $getField 'current') `
+                    -Settings $Arguments.Settings -RequestId $requestIdArgument
+                $prompt = [string]$built.Prompt
+            }
+            'cat' {
+                $safeItems = New-Object System.Collections.Generic.List[object]
+                $itemIndex = 0
+                foreach ($item in @($Arguments.Items)) {
+                    $safeItem = [pscustomobject]@{}
+                    foreach ($property in @($item.PSObject.Properties)) { $safeItem | Add-Member -NotePropertyName $property.Name -NotePropertyValue $property.Value -Force }
+                    $safeItem.Text = & $getField ('item:' + [string]$itemIndex)
+                    $safeItems.Add($safeItem) | Out-Null
+                    $itemIndex++
+                }
+                $prompt = New-YakuTranslationBatchPrompt -Root $trustedRoot -Items @($safeItems.ToArray()) -Settings $Arguments.Settings -Direction $Direction `
+                    -RequestId $requestIdArgument -Workflow ([string]$Arguments.Workflow)
+                $additional = & $getField 'additional_instruction' -Optional
+                if (-not [string]::IsNullOrWhiteSpace($additional)) { $prompt += "`n`n$additional" }
+            }
+            'corpus' {
+                $prompt = New-YakuCorpusQueryPrompt -Root $trustedRoot -InputText (& $getField 'source') -RequestId $requestIdArgument
+            }
+            'alignment' {
+                $ja = New-Object System.Collections.Generic.List[string]
+                $en = New-Object System.Collections.Generic.List[string]
+                for ($i = 0; $i -lt [int]$Arguments.JaCount; $i++) { $ja.Add((& $getField ('ja:' + [string]$i))) | Out-Null }
+                for ($i = 0; $i -lt [int]$Arguments.EnCount; $i++) { $en.Add((& $getField ('en:' + [string]$i))) | Out-Null }
+                $prompt = New-YakuAlignmentPrompt -JaLines @($ja.ToArray()) -EnLines @($en.ToArray()) -RequestId $requestIdArgument
+            }
+            'selftest' {
+                $prompt = "Reply in this exact plain-text contract and add nothing else:`nFULL_TEXT:`nYAKULINGO_OK`nBRIEF_TEXT:`nYAKULINGO_OK`nYAKULINGO_END:$requestIdArgument"
+            }
+        }
+        $envelope = & $newEnvelope -Prompt $prompt -ProtectionReceipts @($receipts.ToArray())
+        return [pscustomobject]@{ Prompt=$prompt; Built=$built; Envelope=$envelope; RequestId=$requestIdArgument }
+    }.GetNewClosure()
+
+    $validateEnvelope = {
+        param([Parameter(Mandatory=$true)]$Envelope)
+        if ($null -eq $Envelope -or [string]$Envelope.ContractVersion -ne 'protected-prompt-v2') { throw 'PROTECTED_PROMPT_CONTRACT_INVALID' }
+        if (-not (Test-YakuNumericMaskingEnabled)) { throw 'EXTERNAL_SEND_NUMERIC_PROTECTION_DISABLED' }
+        $prompt = [string]$Envelope.Prompt
+        $promptHash = Get-YakuProtectedPromptSha256 -Text $prompt
+        if ([string]$Envelope.PromptSha256 -ne $promptHash) { throw 'PROTECTED_PROMPT_MUTATED' }
+        $ids = @($Envelope.ReceiptIds)
+        if ($ids.Count -le 0) { throw 'PROTECTED_PROMPT_RECEIPT_REQUIRED' }
+        $receiptSignatures = New-Object System.Collections.Generic.List[string]
+        foreach ($id in $ids) {
+            $sid = [string]$id
+            if (-not $registry.ContainsKey($sid)) { throw 'PROTECTION_RECEIPT_UNKNOWN' }
+            $record = $registry[$sid]
+            if ([string]$record.Signature -ne [string](& $hmacFor ([string]$record.Payload))) { throw 'PROTECTION_RECEIPT_AUTHORITY_INVALID' }
+            if (-not [string]::IsNullOrEmpty([string]$record.ProtectedText) -and $prompt.IndexOf([string]$record.ProtectedText, [StringComparison]::Ordinal) -lt 0) { throw 'PROTECTED_PROMPT_RECEIPT_UNRELATED' }
+            $receiptSignatures.Add([string]$record.Signature) | Out-Null
+        }
+        $proofPayload = 'protected-prompt-v2|' + $promptHash + '|' + ($ids -join ',') + '|' + ($receiptSignatures.ToArray() -join ',')
+        if ([string]$Envelope.ProofHmac -ne [string](& $hmacFor $proofPayload)) { throw 'PROTECTED_PROMPT_PROOF_INVALID' }
+        return $prompt
+    }.GetNewClosure()
+
+    # raw実装をScriptBlock変数としてclosureへ捕捉すると、公開FunctionInfoの
+    # DynamicModule.SessionStateからそのまま取得できる。既存実装の本文を、検証を
+    # 必須の先頭処理とする単一adapterへ字句的に埋め込み、raw callableを残さない。
+    # これは製品コードの送信口統制であり、同一runspaceで任意PowerShellを実行
+    # できる攻撃者を隔離するsecurity boundaryではない。その権限ならCDP等の
+    # 基盤関数自体を直接呼べるため、必要なら別プロセスbrokerで分離する。
+    $rawBody = $rawCommand.ScriptBlock.ToString()
+    $adapterSource = @'
+        param(
+            [Parameter(Mandatory=$true)]$Envelope,
+            [Parameter(Mandatory=$true)][AllowNull()]$Settings,
+            [switch]$SkipFreshChatWait,
+            [ValidateSet('labeled','numbered')][string]$AnswerFormat = 'labeled',
+            [switch]$PreserveEndMarker,
+            [AllowNull()]$Warnings,
+            [AllowNull()]$ProgressState
+        )
+        $prompt = & $validateProtectedEnvelope $Envelope
+        # 明示した回帰テストだけがcapture hookへ差し替えられる。製品経路では
+        # raw transportの名前もScriptBlockも公開しない。
+        if ($env:YAKULINGO_TEST_PROTECTED_TRANSPORT -eq '1' -and (Get-Command Invoke-YakuProtectedTransportTestHook -ErrorAction SilentlyContinue)) {
+            return Invoke-YakuProtectedTransportTestHook -Prompt $prompt -Settings $Settings -SkipFreshChatWait:$SkipFreshChatWait -AnswerFormat $AnswerFormat -PreserveEndMarker:$PreserveEndMarker -Warnings $Warnings -ProgressState $ProgressState
+        }
+        function Invoke-YakuBoundaryTransport {
+'@ + "`n" + $rawBody + "`n" + @'
+        }
+        return Invoke-YakuBoundaryTransport -Prompt $prompt -Settings $Settings -SkipFreshChatWait:$SkipFreshChatWait -AnswerFormat $AnswerFormat -PreserveEndMarker:$PreserveEndMarker -Warnings $Warnings -ProgressState $ProgressState
+'@
+    $adapterTemplate = [scriptblock]::Create($adapterSource)
+    $adapter = & {
+        param([scriptblock]$Template, [scriptblock]$EnvelopeValidator)
+        $validateProtectedEnvelope = $EnvelopeValidator
+        return $Template.GetNewClosure()
+    } $adapterTemplate $validateEnvelope
+
+    Set-Item -Path Function:script:New-YakuProtectedPromptPackage -Value $newPackage
+    Set-Item -Path Function:script:Invoke-YakuProtectedCopilotPrompt -Value $adapter
+    Remove-Item -Path Function:script:New-YakuPromptProtectionReceipt -ErrorAction SilentlyContinue
+    Remove-Item -Path Function:script:New-YakuProtectedPromptEnvelope -ErrorAction SilentlyContinue
+    Remove-Item -Path Function:script:Invoke-YakuCopilotPromptUnsafe -ErrorAction SilentlyContinue
+    Remove-Item -Path Function:global:Invoke-YakuCopilotPromptUnsafe -ErrorAction SilentlyContinue
+}
+
+Initialize-YakuProtectedPromptBoundary
+Remove-Item -Path Function:script:Initialize-YakuProtectedPromptBoundary -ErrorAction SilentlyContinue
+Remove-Item -Path Function:Invoke-YakuCopilotPromptUnsafe -ErrorAction SilentlyContinue

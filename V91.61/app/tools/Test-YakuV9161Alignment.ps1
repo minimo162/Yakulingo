@@ -20,6 +20,7 @@
 param()
 
 $ErrorActionPreference = 'Stop'
+$env:YAKULINGO_TEST_PROTECTED_TRANSPORT = '1'
 $toolsRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $toolsRoot
 $script:fail = 0
@@ -90,15 +91,20 @@ Chk ($c[1].Start -eq ($c[0].End + 1 - 5)) '隣り合う塊が5行重なる'
 Chk ($c[-1].End -eq 119) '最後の行まで届く'
 
 Write-Host '通しの駆動' -ForegroundColor Cyan
+. (Join-Path (Join-Path $root 'src') 'ProperNoun.ps1')
 . (Join-Path (Join-Path $root 'src') 'AlignMask.ps1')
+. (Join-Path (Join-Path $root 'src') 'CopilotClient.ps1')
+. (Join-Path (Join-Path $root 'src') 'Translation.ps1')
+function Test-YakuNumericMaskingEnabled { return $true }
 
 # Copilot の代役。実機の応答は別に確かめる。ここで見たいのは、
 # 塊に割って呼び、重なりを畳み、通し番号へ戻す側の振る舞い。
 $script:fakeCalls = 0
 $script:fakeCover = 1.0
-function Invoke-YakuCopilotPrompt {
-    param([string]$Prompt, $Settings, [string]$AnswerFormat, [switch]$PreserveEndMarker)
+function Invoke-YakuProtectedTransportTestHook {
+    param([string]$Prompt, $Settings, [switch]$SkipFreshChatWait, [string]$AnswerFormat, [switch]$PreserveEndMarker, $Warnings, $ProgressState)
     $script:fakeCalls++
+    $script:lastAlignmentPrompt = [string]$Prompt
     $n = ([regex]::Matches($Prompt, '(?m)^J\d+ ')).Count
     $m = ([regex]::Matches($Prompt, '(?m)^E\d+ ')).Count
     $k = [int][Math]::Floor([Math]::Min($n, $m) * $script:fakeCover)
@@ -129,6 +135,10 @@ $r = Invoke-YakuDocumentAlignment -JaLines $jaN -EnLines $enN -Settings $null
 Chk ([int]$r.Dropped -eq 1 -and @($r.Pairs).Count -eq 1) '数値が食い違う対を外す'
 $r = Invoke-YakuDocumentAlignment -JaLines $jaN -EnLines $enN -Settings $null -KeepNumberMismatch
 Chk (@($r.Pairs).Count -eq 2) '指示があれば食い違う対も残す'
+
+$null = Invoke-YakuDocumentAlignment -JaLines @('マツダ株式会社は新工場を建設します。') -EnLines @('Mazda Motor Corporation will build a new plant.') -Settings $null
+Chk ($script:lastAlignmentPrompt -match 'マツダ株式会社' -and $script:lastAlignmentPrompt -match 'Mazda Motor Corporation') 'アライメントでも固有名詞はマスクしない'
+Chk ($script:lastAlignmentPrompt -notmatch '〔名〕|\[NAME\]') '固有名詞tokenをpromptへ作らない'
 
 # マスクを迂回できないこと。Protect- を壊せば送信まで届かない。
 function ConvertTo-YakuAlignmentMaskedText { param([AllowNull()][string]$Text, [string]$Language = 'ja') return [string]$Text }

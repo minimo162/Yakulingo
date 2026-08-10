@@ -262,12 +262,21 @@ function Invoke-YakuAlignmentChunk {
     $enSlice = @($en[$EnStart..$EnEnd])
 
     # 送信はここだけを通る。マスクが働かなければ例外で止まる。
+    $appRoot = Split-Path -Parent $PSScriptRoot
     $jaMasked = Protect-YakuAlignmentLines -Lines $jaSlice -Language 'ja'
     $enMasked = Protect-YakuAlignmentLines -Lines $enSlice -Language 'en'
+    $protectedFields = New-Object System.Collections.Generic.List[object]
+    for ($receiptIndex = 0; $receiptIndex -lt $jaSlice.Count; $receiptIndex++) {
+        $protectedFields.Add([pscustomobject]@{ Name=('ja:' + [string]$receiptIndex); OriginalText=[string]$jaSlice[$receiptIndex]; ProtectedText=[string]$jaMasked[$receiptIndex] }) | Out-Null
+    }
+    for ($receiptIndex = 0; $receiptIndex -lt $enSlice.Count; $receiptIndex++) {
+        $protectedFields.Add([pscustomobject]@{ Name=('en:' + [string]$receiptIndex); OriginalText=[string]$enSlice[$receiptIndex]; ProtectedText=[string]$enMasked[$receiptIndex] }) | Out-Null
+    }
 
-    $rid = [guid]::NewGuid().ToString('N')
-    $prompt = New-YakuAlignmentPrompt -JaLines $jaMasked -EnLines $enMasked -RequestId $rid
-    $raw = Invoke-YakuCopilotPrompt -Prompt $prompt -Settings $Settings -AnswerFormat numbered -PreserveEndMarker
+    $promptPackage = New-YakuProtectedPromptPackage -Kind alignment -Root $appRoot -Direction to_en -Fields @($protectedFields.ToArray()) `
+        -Arguments ([pscustomobject]@{ JaCount=$jaSlice.Count; EnCount=$enSlice.Count })
+    $rid = [string]$promptPackage.RequestId
+    $raw = Invoke-YakuProtectedCopilotPrompt -Envelope $promptPackage.Envelope -Settings $Settings -AnswerFormat numbered -PreserveEndMarker
     $parsed = ConvertFrom-YakuAlignmentResponse -Raw $raw -JaCount $jaSlice.Count -EnCount $enSlice.Count
 
     $span = $JaEnd - $JaStart + 1
@@ -364,7 +373,7 @@ function Invoke-YakuDocumentAlignment {
             $stopReason = [string]$_.Exception.Message
             # 数値マスクの失敗だけは握り潰さない。統制なので、続けてはいけない。
             # 途中まで貯める仕組みを入れたとき、ここを分けずに一度緩めた。
-            if ($stopReason -match 'Alignment masking left a number') { throw }
+            if ($stopReason -match 'Alignment masking left a number|^(?:EXTERNAL_SEND_|PROTECTION_RECEIPT_|PROTECTED_PROMPT_)') { throw }
             $stoppedAt = $c.Start
             try { Write-YakuLog ("Alignment stopped mid-document. jaLine=$($c.Start) pairs=$($accepted.Count) reason=" + $stopReason) 'WARN' } catch {}
             break

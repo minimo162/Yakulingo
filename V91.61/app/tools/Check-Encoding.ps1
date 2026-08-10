@@ -223,6 +223,12 @@ if ($null -ne $parserType) {
             $invokedCommands[$key] += (Get-YakuCheckRelativePath -Root $rootPath -Path ([string]$file.FullName))
         }
     }
+    # 保護済み送信口はclosureへauthorityを閉じ込め、初期化時にFunction:へ公開する。
+    # FunctionDefinitionAstには現れないため、製品が意図的に公開する2コマンドだけを
+    # 動的定義として登録する。任意prompt/receiptのfactoryはここへ追加しない。
+    foreach ($dynamicCommand in @('New-YakuProtectedPromptPackage','Invoke-YakuProtectedCopilotPrompt')) {
+        $definedCommands[$dynamicCommand.ToLowerInvariant()] = $true
+    }
     # bootstrap.ps1 は app/ の外にあるが製品の一部である。
     # 回帰テストは共有フォルダ側の作法を検証するため、ここから関数本文を取り出して使う。
     # 定義側を数えないと、実在する関数を「未定義」と誤って咎める。

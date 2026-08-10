@@ -169,7 +169,7 @@ function Write-YakuProgressStateFile {
     if ([string]::IsNullOrWhiteSpace($path)) { return }
     $allowed = @(
         'id','kind','mode','label','class','detail','progress','phase','input_length','file_name',
-        'output_path','output_name','blocks_total','blocks_translated','blocks_retained','unique_done',
+        'output_path','output_name','unique_done',
         'unique_total','cells','shapes','charts','created_at','started_at','completed_at','updated_at',
         'worker_pid','worker_started_at','excel_pid','excel_started_at','error_code','completion_status',
         'result_path','cancel_path','uploaded_input','diagnostics_enabled','build_id'

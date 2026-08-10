@@ -12,6 +12,14 @@ function Get-YakuDataDir {
         $dir = [System.IO.Path]::GetFullPath($override)
     } else {
         $homeDir = [Environment]::GetFolderPath('UserProfile')
+        # Windows services and restricted test hosts can return an empty
+        # SpecialFolder value even though USERPROFILE is available.
+        if ([string]::IsNullOrWhiteSpace($homeDir)) {
+            $homeDir = [string]$env:USERPROFILE
+        }
+        if ([string]::IsNullOrWhiteSpace($homeDir)) {
+            throw 'YAKU_DATA_HOME_UNAVAILABLE'
+        }
         $dir = Join-Path $homeDir '.yakulingo-ps'
     }
     if (!(Test-Path -LiteralPath $dir)) {

@@ -190,19 +190,18 @@ function Get-YakuCorpusReference {
         # ここを素通しにすると、V91.60 の「数値を外部へ出さない」保証が
         # この経路だけ抜ける。マスク表は使わないので捨てる。
         #
-        # 固有名詞も同じ順序で伏せる（数値より先）。この経路は原文をそのまま
-        # 送るので、人名・法人名だけが素で出ていた。戻す必要は無い。
-        # 使うのは返ってきた検索語だけで、本文は返らない。
-        $properText = $InputText
-        if (Get-Command New-YakuProperNounMaskMap -ErrorAction SilentlyContinue) {
-            $properText = [string](New-YakuProperNounMaskMap -Text $InputText -Root $Root).Text
-        }
-        $masked = [string](New-YakuNumericMaskMap -Text $properText -Root $Root -Direction 'to_en' -Location 'corpus-query').Text
-        $requestId = [guid]::NewGuid().ToString('N')
-        $prompt = New-YakuCorpusQueryPrompt -Root $Root -InputText $masked -RequestId $requestId
+        $numericProtection = New-YakuNumericMaskMap -Text $InputText -Root $Root -Direction 'to_en' -Location 'corpus-query'
+        $masked = [string]$numericProtection.Text
+        $requestId = ''
+        $protectedFields = @([pscustomobject]@{ Name='source'; OriginalText=$InputText; ProtectedText=$masked; NumericMaskMaps=@($numericProtection.Map) })
+        $promptPackage = New-YakuProtectedPromptPackage -Kind corpus -Root $Root -Direction to_en -Fields $protectedFields `
+            -Arguments ([pscustomobject]@{})
+        $requestId = [string]$promptPackage.RequestId
+        $prompt = [string]$promptPackage.Prompt
+        $null = Assert-YakuNumericPromptProtected -Prompt $prompt -MaskMap $numericProtection.Map
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         $used = $true
-        $answer = Invoke-YakuCopilotPrompt -Prompt $prompt -Settings $Settings -AnswerFormat labeled -Warnings $Warnings -ProgressState $ProgressState
+        $answer = Invoke-YakuProtectedCopilotPrompt -Envelope $promptPackage.Envelope -Settings $Settings -AnswerFormat labeled -Warnings $Warnings -ProgressState $ProgressState
         $sw.Stop()
         $terms = @(Get-YakuCorpusQueryTerms -Answer $answer)
         if ($terms.Count -le 0) {

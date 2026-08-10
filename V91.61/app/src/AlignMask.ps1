@@ -127,11 +127,13 @@ function Protect-YakuAlignmentLines {
         [AllowNull()][string[]]$Lines,
         [ValidateSet('ja', 'en')][string]$Language = 'ja'
     )
-    $masked = @(@($Lines) | ForEach-Object { ConvertTo-YakuAlignmentMaskedText -Text ([string]$_) -Language $Language })
+    $masked = @(@($Lines) | ForEach-Object {
+        ConvertTo-YakuAlignmentMaskedText -Text ([string]$_) -Language $Language
+    })
     $check = Test-YakuAlignmentTextSafe -Lines $masked -Language $Language
     if (-not $check.Safe) {
         $first = @($check.Findings)[0]
-        $message = 'Alignment masking left a number in the text. Sending was stopped. language=' + $Language +
+        $message = 'PROTECTED_PROMPT_ALIGNMENT_MASK_FAILED: Alignment masking left a number in the text. Sending was stopped. language=' + $Language +
         ' line=' + [string]$first.Index + ' reason=' + [string]$first.Reason
         try { Write-YakuLog $message 'ERROR' } catch {}
         throw $message

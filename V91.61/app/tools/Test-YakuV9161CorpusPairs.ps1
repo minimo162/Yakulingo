@@ -18,6 +18,7 @@
 param()
 
 $ErrorActionPreference = 'Stop'
+$env:YAKULINGO_TEST_PROTECTED_TRANSPORT = '1'
 $toolsRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $toolsRoot
 $script:fail = 0
@@ -142,9 +143,12 @@ try {
     Write-Host '資料の取り込み' -ForegroundColor Cyan
     . (Join-Path (Join-Path $root 'src') 'AlignMask.ps1')
     . (Join-Path (Join-Path $root 'src') 'Alignment.ps1')
+    . (Join-Path (Join-Path $root 'src') 'CopilotClient.ps1')
+    . (Join-Path (Join-Path $root 'src') 'Translation.ps1')
+    function Test-YakuNumericMaskingEnabled { return $true }
     # Copilot の代役。実機の応答は別に確かめてある。
-    function Invoke-YakuCopilotPrompt {
-        param([string]$Prompt, $Settings, [string]$AnswerFormat, [switch]$PreserveEndMarker)
+    function Invoke-YakuProtectedTransportTestHook {
+        param([string]$Prompt, $Settings, [switch]$SkipFreshChatWait, [string]$AnswerFormat, [switch]$PreserveEndMarker, $Warnings, $ProgressState)
         $n = ([regex]::Matches($Prompt, '(?m)^J\d+ ')).Count
         $m = ([regex]::Matches($Prompt, '(?m)^E\d+ ')).Count
         $k = [Math]::Min($n, $m)
@@ -168,8 +172,8 @@ try {
     Write-Host '途中で止まっても捨てない' -ForegroundColor Cyan
     # Copilot が一定量で止まる状況を作る。3回答えたあとは必ず失敗させる。
     $script:stopAfter = 3
-    function Invoke-YakuCopilotPrompt {
-        param([string]$Prompt, $Settings, [string]$AnswerFormat, [switch]$PreserveEndMarker)
+    function Invoke-YakuProtectedTransportTestHook {
+        param([string]$Prompt, $Settings, [switch]$SkipFreshChatWait, [string]$AnswerFormat, [switch]$PreserveEndMarker, $Warnings, $ProgressState)
         if ($script:stopAfter -le 0) { throw 'Copilotの生成停止は検出しましたが、解析可能な回答を取得できませんでした。' }
         $script:stopAfter--
         $n = ([regex]::Matches($Prompt, '(?m)^J\d+ ')).Count
@@ -199,7 +203,7 @@ try {
     $script:stopAfter = 100000
 
     Write-Host 'CAT の画面から突き合わせる' -ForegroundColor Cyan
-    foreach ($mod in @('PromptBuilder.ps1', 'CellSegments.ps1', 'Corpus.ps1', 'CatProject.ps1')) {
+    foreach ($mod in @('Paths.ps1', 'Runtime.ps1', 'Settings.ps1', 'PromptBuilder.ps1', 'Translation.ps1', 'ProperNoun.ps1', 'CatTranslation.ps1', 'CellSegments.ps1', 'Corpus.ps1', 'CatProject.ps1')) {
         . (Join-Path (Join-Path $root 'src') $mod)
     }
     $proj = New-YakuCatAlignProject -Root $root -SourceText $jaDoc -TargetText $enDoc -Settings $null -Direction 'to_en'
@@ -213,16 +217,17 @@ try {
     Chk (@($ng.Segments).Count -eq 0 -and @($ng.Warnings).Count -eq 1) '片方が空なら注意を出して空で返す'
 
     # 機械が作った対応を、未確認のまま貯めない。
-    $unchecked = Save-YakuCatProjectToCorpus -Project $proj -Database '未確認' -Source '未確認の分' -Dir $tmp -Public
+    $unchecked = Save-YakuCatProjectToCorpus -Project $proj -Database '未確認' -Source '未確認の分' -Dir $tmp -Public -PublicAttested
     Chk ($unchecked.Added -eq 0) '未確認の機械アライメントはコーパスへ入れない'
 
     # グリッドで直すか「これでよい」と確定してから貯める、という順序を確かめる。
     $null = Set-YakuCatSegmentTranslation -Project $proj -Index 0 -Text 'We will promote electrification.'
-    for ($i = 1; $i -lt @($proj.Segments).Count; $i++) {
+    # 手編集は確認済みを意味しない。編集した行も明示的に確認する。
+    for ($i = 0; $i -lt @($proj.Segments).Count; $i++) {
         $null = Set-YakuCatSegmentConfirmed -Project $proj -Index $i
     }
     # 保存先は試験用の場所を指す。本番の取り込み場所を汚さない。
-    $saved = Save-YakuCatProjectToCorpus -Project $proj -Database '突合' -Source '手で直した分' -Dir $tmp -Public
+    $saved = Save-YakuCatProjectToCorpus -Project $proj -Database '突合' -Source '手で直した分' -Dir $tmp -Public -PublicAttested
     Chk ($saved.Added -eq 3) '確かめた対訳をコーパスへ入れる'
     $h = @(Find-YakuCorpusPairs -Dir $tmp -Query 'promote electrification' -Databases @('突合'))
     Chk ($h.Count -eq 1) '直した内容のほうが入る'

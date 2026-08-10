@@ -78,7 +78,7 @@ try {
     Write-Host 'CASE 5: 改ざんされた共有パッケージは導入しない'
     $tampered = Join-Path $sandbox 'shared-tampered'
     Copy-Item -LiteralPath $shared -Destination $tampered -Recurse -Force
-    $victim = Join-Path $tampered ($versionName + '\app\prompts\text_translate.txt')
+    $victim = Join-Path $tampered ($versionName + '\app\prompts\text_translate_full_to_en.txt')
     $bytes = [IO.File]::ReadAllBytes($victim)
     $bytes[100] = [byte]($bytes[100] -bxor 0x01)
     [IO.File]::WriteAllBytes($victim, $bytes)

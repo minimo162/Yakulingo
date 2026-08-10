@@ -5,7 +5,7 @@
 $ErrorActionPreference = 'Stop'
 $failures = New-Object System.Collections.Generic.List[string]
 $fileProcessors = Join-Path $Root 'src\FileProcessors.ps1'
-$fileTranslation = Join-Path $Root 'src\FileTranslation.ps1'
+$fileTranslation = Join-Path $Root 'src\CatBatch.ps1'
 foreach ($path in @($fileProcessors, $fileTranslation)) {
     if (-not (Test-Path -LiteralPath $path)) { $failures.Add("missing source: $path") | Out-Null }
 }

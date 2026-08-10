@@ -3,7 +3,7 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 
-foreach ($name in @('Paths.ps1','Runtime.ps1','Settings.ps1','FileProcessors.ps1','FileTranslation.ps1')) {
+foreach ($name in @('Paths.ps1','Runtime.ps1','Settings.ps1','EdgeLaunch.ps1','CopilotClient.ps1','FileProcessors.ps1','CatBatch.ps1')) {
     . (Join-Path $root ('src\' + $name))
 }
 

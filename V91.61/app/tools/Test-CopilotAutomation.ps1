@@ -56,9 +56,11 @@ return {
     $null = Invoke-YakuCdpEval -Page $page -Expression (New-YakuAsyncJsExpression -Body "document.getElementById('yaku-v81-obf-dialog-test')?.remove(); document.getElementById('yaku-v83-voice-chat-test')?.remove(); return true;") -TimeoutSeconds 10
     $null = Clear-YakuCopilotInputVerified -Page $page
 
-    $requestId = [guid]::NewGuid().ToString('N')
-    $prompt = "Reply in this exact plain-text contract and add nothing else:`nFULL_TEXT:`nYAKULINGO_OK`nBRIEF_TEXT:`nYAKULINGO_OK`nYAKULINGO_END:$requestId"
-    $reply = Invoke-YakuCopilotPrompt -Prompt $prompt -Settings $settings -PreserveEndMarker
+    $package = New-YakuProtectedPromptPackage -Kind selftest -Root $root -Direction to_en `
+        -Fields @([pscustomobject]@{ Name='source'; OriginalText='YAKULINGO_OK'; ProtectedText='YAKULINGO_OK' }) `
+        -Arguments ([pscustomobject]@{})
+    $requestId = [string]$package.RequestId
+    $reply = Invoke-YakuProtectedCopilotPrompt -Envelope $package.Envelope -Settings $settings -PreserveEndMarker
     $parsed = @(Parse-YakuTextTranslationResponse -Raw $reply -Direction 'to_en' -RequestId $requestId)
     Write-Host '--- Copilot response ---' -ForegroundColor Green
     Write-Host $reply

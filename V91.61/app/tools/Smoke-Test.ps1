@@ -3,7 +3,7 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 
-foreach ($name in @('Paths.ps1','Runtime.ps1','Settings.ps1','Html.ps1','EdgeLaunch.ps1','CopilotClient.ps1','PromptBuilder.ps1','FileProcessors.ps1','FileTranslation.ps1','Translation.ps1')) {
+foreach ($name in @('Paths.ps1','Runtime.ps1','Settings.ps1','Html.ps1','EdgeLaunch.ps1','CopilotClient.ps1','PromptBuilder.ps1','FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1','Translation.ps1','ProperNoun.ps1','CellSegments.ps1','CellAlign.ps1','CatProject.ps1')) {
     . (Join-Path $root ('src\' + $name))
 }
 
@@ -135,27 +135,27 @@ try {
     Set-Item Function:\Get-YakuCopilotState -Value $originalGetCopilotState
 }
 
-$textPrompt = New-YakuTextPrompt -Root $root -InputText 'これはテストです。' -Settings $settings -DirectionOverride 'to_en' -RequestId $requestId
+$textPrompt = New-YakuTextPrompt -Root $root -InputText 'これはテストです。' -Settings $settings -DirectionOverride 'to_en' -RequestId $requestId -Mode 'full'
 Assert-Yaku -Condition $textPrompt.Prompt.Contains("YAKULINGO_END:$requestId") -Message 'text prompt must carry random contract ID'
-$textRaw = "FULL_TEXT:`nThis is a test.`nBRIEF_TEXT:`nTest.`nYAKULINGO_END:$requestId"
-$textResult = @(Parse-YakuTextTranslationResponse -Raw $textRaw -Direction 'to_en' -RequestId $requestId)
-Assert-Yaku -Condition ($textResult.Count -eq 2) -Message 'valid two-style text response must parse'
+$textRaw = "FULL_TEXT:`nThis is a test.`nYAKULINGO_END:$requestId"
+$textResult = @(Parse-YakuTextTranslationResponse -Raw $textRaw -Direction 'to_en' -RequestId $requestId -Mode 'full')
+Assert-Yaku -Condition ($textResult.Count -eq 1) -Message 'valid full text response must parse'
 Assert-YakuThrows -Action { Parse-YakuTextTranslationResponse -Raw $textRaw -Direction 'to_en' -RequestId ('f' * 32) } -Pattern 'RESPONSE_END_MARKER_MISSING' -Message 'wrong text contract ID must fail'
-$inlineResult = @(Parse-YakuTextTranslationResponse -Raw ("FULL_TEXT:`nA`nBRIEF_TEXT:`nB YAKULINGO_END:$requestIdこの会話を停止しました。") -Direction 'to_en' -RequestId $requestId)
-Assert-Yaku -Condition ($inlineResult.Count -eq 2 -and [string]$inlineResult[1].Translation -eq 'B') -Message 'inline marker and trailing stopped UI text must normalize and parse'
-Assert-YakuThrows -Action { Parse-YakuTextTranslationResponse -Raw ("FULL_TEXT:`nA`nBRIEF_TEXT:`nB`nYAKULINGO_END:$requestId`nYAKULINGO_END:$requestId") -Direction 'to_en' -RequestId $requestId } -Pattern 'RESPONSE_END_MARKER_DUPLICATE' -Message 'duplicate exact request marker must remain invalid'
-Assert-YakuThrows -Action { Parse-YakuTextTranslationResponse -Raw ("FULL_TEXT:`nA`nFULL_TEXT:`nB`nBRIEF_TEXT:`nC`nYAKULINGO_END:$requestId") -Direction 'to_en' -RequestId $requestId } -Pattern 'RESPONSE_LABEL_COUNT_INVALID' -Message 'duplicate style must fail'
+$inlineResult = @(Parse-YakuTextTranslationResponse -Raw ("FULL_TEXT:`nA YAKULINGO_END:${requestId}この会話を停止しました。") -Direction 'to_en' -RequestId $requestId -Mode 'full')
+Assert-Yaku -Condition ($inlineResult.Count -eq 1 -and [string]$inlineResult[0].Translation -eq 'A') -Message 'inline marker and trailing stopped UI text must normalize and parse'
+Assert-YakuThrows -Action { Parse-YakuTextTranslationResponse -Raw ("FULL_TEXT:`nA`nYAKULINGO_END:$requestId`nYAKULINGO_END:$requestId") -Direction 'to_en' -RequestId $requestId -Mode 'full' } -Pattern 'RESPONSE_END_MARKER_DUPLICATE' -Message 'duplicate exact request marker must remain invalid'
+Assert-YakuThrows -Action { Parse-YakuTextTranslationResponse -Raw ("FULL_TEXT:`nA`nFULL_TEXT:`nB`nYAKULINGO_END:$requestId") -Direction 'to_en' -RequestId $requestId -Mode 'full' } -Pattern 'RESPONSE_LABEL_COUNT_INVALID' -Message 'duplicate style must fail'
 
-$actualV85Raw = ([char]0x200C) + "JAPANESE_TEXT：完全な翻訳です。 YAKULINGO_END:$requestIdこの会話を停止しました。"
+$actualV85Raw = ([char]0x200C) + "JAPANESE_TEXT：完全な翻訳です。 YAKULINGO_END:${requestId}この会話を停止しました。"
 $actualV85Result = @(Parse-YakuTextTranslationResponse -Raw $actualV85Raw -Direction 'to_jp' -RequestId $requestId)
 Assert-Yaku -Condition ($actualV85Result.Count -eq 1 -and [string]$actualV85Result[0].Translation -eq '完全な翻訳です。') -Message 'V85 invisible-prefix/fullwidth-colon/inline-marker response must parse'
-$decoratedRaw = "**FULL_TEXT:** Full.`n**BRIEF_TEXT**： Brief. **YAKULINGO_END:$requestId**"
-$decoratedResult = @(Parse-YakuTextTranslationResponse -Raw $decoratedRaw -Direction 'to_en' -RequestId $requestId)
-Assert-Yaku -Condition ($decoratedResult.Count -eq 2 -and [string]$decoratedResult[1].Translation -eq 'Brief.') -Message 'Markdown-decorated labels and fullwidth colon must parse'
-$recoveredContract = Test-YakuTextResponseContract -Text ("先頭UI文言`nFULL_TEXT: Full.`nBRIEF_TEXT: Brief.`nYAKULINGO_END:$requestId") -Direction 'to_en' -RequestId $requestId
+$decoratedRaw = "**FULL_TEXT:** Full. **YAKULINGO_END:$requestId**"
+$decoratedResult = @(Parse-YakuTextTranslationResponse -Raw $decoratedRaw -Direction 'to_en' -RequestId $requestId -Mode 'full')
+Assert-Yaku -Condition ($decoratedResult.Count -eq 1 -and [string]$decoratedResult[0].Translation -eq 'Full.') -Message 'Markdown-decorated label and fullwidth colon must parse'
+$recoveredContract = Test-YakuTextResponseContract -Text ("先頭UI文言`nFULL_TEXT: Full.`nYAKULINGO_END:$requestId") -Direction 'to_en' -RequestId $requestId -Mode 'full'
 Assert-Yaku -Condition ([bool]$recoveredContract.Valid -and [string]$recoveredContract.WarningCode -eq 'RESPONSE_PREFIX_RECOVERED') -Message 'leading junk rescue must be explicit and warning-bearing'
 $recoveryWarnings = New-Object System.Collections.Generic.List[object]
-$null = @(Parse-YakuTextTranslationResponse -Raw ("先頭UI文言`nFULL_TEXT: Full.`nBRIEF_TEXT: Brief.`nYAKULINGO_END:$requestId") -Direction 'to_en' -RequestId $requestId -Warnings $recoveryWarnings)
+$null = @(Parse-YakuTextTranslationResponse -Raw ("先頭UI文言`nFULL_TEXT: Full.`nYAKULINGO_END:$requestId") -Direction 'to_en' -RequestId $requestId -Warnings $recoveryWarnings -Mode 'full')
 Assert-Yaku -Condition ($recoveryWarnings.Count -eq 1 -and [string]$recoveryWarnings[0].Category -eq 'response-contract-recovery') -Message 'rescued prefix must be surfaced in the result warning list'
 $structure = Get-YakuTextResponseStructureMetadata -Raw $actualV85Raw -RequestId $requestId
 Assert-Yaku -Condition ($structure.leading_code_points.StartsWith('U+200C') -and $structure.end_marker_inline -and $structure.has_fullwidth_colon -and $structure.has_stopped_ui_text) -Message 'privacy-safe response structure metadata must expose contract-shape evidence'
@@ -193,8 +193,9 @@ $fileItems = @(
     [pscustomobject]@{ Index=11; Text='売上高'; BlockIds=@('a') },
     [pscustomobject]@{ Index=22; Text='営業利益'; BlockIds=@('b') }
 )
-$filePrompt = New-YakuFilePrompt -Root $root -Items $fileItems -Settings $settings -Direction 'to_en' -RequestId $requestId
-Assert-Yaku -Condition ($filePrompt.Contains('[[ID:1]] 1.') -and $filePrompt.Contains('[[ID:2]] 2.') -and $filePrompt.Contains("YAKULINGO_END:$requestId")) -Message 'file prompt must define ordered IDs and contract ID'
+$null = Protect-YakuCatItems -Items $fileItems -Root $root -Direction 'to_en'
+$filePrompt = New-YakuCatPrompt -Root $root -Items $fileItems -Settings $settings -Direction 'to_en' -RequestId $requestId
+Assert-Yaku -Condition ($filePrompt.Contains('[[ID:1]] 1.') -and $filePrompt.Contains('[[ID:2]] 2.') -and $filePrompt.Contains("YAKULINGO_END:$requestId")) -Message 'CAT prompt must define ordered IDs and contract ID'
 $fileRaw = "[[ID:1]] 1. Revenue`n[[ID:2]] 2. Operating profit`nYAKULINGO_END:$requestId"
 $fileResult = Parse-YakuNumberedBatchResponse -Raw $fileRaw -ExpectedIds @(1,2) -RequestId $requestId
 Assert-Yaku -Condition ($fileResult.ReceivedCount -eq 2 -and $fileResult.Items[2] -eq 'Operating profit') -Message 'valid file response must parse'
@@ -207,19 +208,6 @@ Assert-Yaku -Condition (-not (Test-YakuFileTranslationInvalid -Source '配当方
 Assert-Yaku -Condition (-not (Test-YakuFileTranslationInvalid -Source '123.4%' -Translation '123.4%' -Direction 'to_en')) -Message 'numeric-only text must remain unchanged without a false failure'
 Assert-Yaku -Condition (-not (Test-YakuFileTranslationInvalid -Source 'EBITDA' -Translation 'EBITDA' -Direction 'to_jp')) -Message 'protected abbreviation must remain unchanged without a false failure'
 
-# 文中の用語監査は廃止した（利用者の判断 2026-08-06）。
-# 用語集はレイアウトの保証のためのもので、文中の言い回しの統一には使わない。
-$scopeItems = @(
-    [pscustomobject]@{ Index=1; Text='タイ'; BlockIds=@('thai') },
-    [pscustomobject]@{ Index=2; Text='タイミング変更'; BlockIds=@('timing') },
-    [pscustomobject]@{ Index=3; Text='仕向地別営業利益 四半期推移'; BlockIds=@('quarter') }
-)
-$scopeMatches = @(
-    [pscustomobject]@{ From='タイ'; To='Thailand'; Row=173 },
-    [pscustomobject]@{ From='半期'; To='Half-year'; Row=90 }
-)
-$scopedMatches = @(ConvertTo-YakuFileItemScopedGlossaryMatches -Matches $scopeMatches -Items $scopeItems)
-Assert-Yaku -Condition ($scopedMatches.Count -eq 1 -and $scopedMatches[0].ItemIndex -eq 1 -and $scopedMatches[0].From -eq 'タイ') -Message 'glossary audit matches must be scoped to the item where the exact term occurs'
 Assert-Yaku -Condition (@(Find-YakuExactTermIndexes -InputText '四半期推移' -Term '半期').Count -eq 0) -Message 'half-year must not match inside quarter'
 Assert-Yaku -Condition (@(Find-YakuExactTermIndexes -InputText '上半期実績' -Term '半期').Count -eq 1) -Message 'half-year must still match valid half-year compounds'
 
@@ -229,30 +217,18 @@ try {
     Assert-Yaku -Condition $mock.TrimEnd().EndsWith("YAKULINGO_END:$requestId") -Message 'mock must echo the contract ID'
 } finally { Remove-Item Env:YAKULINGO_MOCK -ErrorAction SilentlyContinue }
 
-$warningResult = [pscustomobject]@{
-    JobId='0123456789abcdef0123456789abcdef'; OutputName='sample_INCOMPLETE.xlsx'; InputName='sample.xlsx'; DirectionLabel='日本語 → 英語'
-    OutputPath='C:\Temp\sample_INCOMPLETE.xlsx'; CompletionStatus='completed_with_warnings'
-    Validation=[pscustomobject]@{ Reopenable=$true; FormulaCount=4; MacroPreserved=$true }
-    Stats=[pscustomobject]@{ cells=2; shapes=0; charts=0; skipped_formula_cells=4; skipped_smartart=0 }
-    Warnings=@(
-        [pscustomobject]@{ Category='untranslated-retained'; Message='原文保持'; Location='A1' }
-        [pscustomobject]@{ Category='glossary-compliance'; Message='用語集の訳語が反映されていない箇所が 8 件あります（行: 90, 174, 189, 196, 210, 212）。'; Location='最終用語監査' }
-    )
-    BlocksTotal=2; BlocksTranslated=1; BlocksWriteTarget=1; BlocksWritten=1; BlocksRetainedOriginal=1
-    UniqueTextCount=2; CacheHits=0; GlossaryExactHits=0; AppliedGlossary=@(); BatchCount=1; BatchTotal=1
-    TruncatedBatches=0; MaxRetryDepthReached=0; DurationSeconds=1
-}
-$warningHtml = Convert-YakuFileResultToHtml -Result $warningResult
-Assert-Yaku -Condition ($warningHtml.Contains('completed_with_warnings') -and $warningHtml.Contains('_INCOMPLETE') -and $warningHtml.Contains('data-yaku-download-job')) -Message 'incomplete output must be visibly distinct'
-Assert-Yaku -Condition ($warningHtml.Contains('用語集最終監査') -and $warningHtml.Contains('行: 90, 174, 189, 196, 210, 212')) -Message 'final glossary compliance warning must be visible in result HTML'
+$catIndex = Get-Content -LiteralPath (Join-Path $root 'www\index.html') -Raw -Encoding UTF8
+Assert-Yaku -Condition $catIndex.Contains('確認済み訳文一覧をコピー') -Message 'CAT output must be presented as a reviewed translation list rather than legacy incomplete-file output'
 
 $appJs = Get-Content -LiteralPath (Join-Path $root 'www\assets\app.js') -Raw -Encoding UTF8
+$indexSource = Get-Content -LiteralPath (Join-Path $root 'www\index.html') -Raw -Encoding UTF8
+$stylesSource = Get-Content -LiteralPath (Join-Path $root 'www\assets\styles.css') -Raw -Encoding UTF8
 $server = Get-Content -LiteralPath (Join-Path $root 'src\Server.ps1') -Raw -Encoding UTF8
 $settingsSource = Get-Content -LiteralPath (Join-Path $root 'src\Settings.ps1') -Raw -Encoding UTF8
-$fileWorkerSource = Get-Content -LiteralPath (Join-Path $root 'src\FileWorker.ps1') -Raw -Encoding UTF8
+$fileWorkerPresent = Test-Path -LiteralPath (Join-Path $root 'src\FileWorker.ps1') -PathType Leaf
 $copilot = Get-Content -LiteralPath (Join-Path $root 'src\CopilotClient.ps1') -Raw -Encoding UTF8
 $translationSource = Get-Content -LiteralPath (Join-Path $root 'src\Translation.ps1') -Raw -Encoding UTF8
-$fileTranslationSource = Get-Content -LiteralPath (Join-Path $root 'src\FileTranslation.ps1') -Raw -Encoding UTF8
+$fileTranslationSource = Get-Content -LiteralPath (Join-Path $root 'src\CatBatch.ps1') -Raw -Encoding UTF8
 $fileProcessors = Get-Content -LiteralPath (Join-Path $root 'src\FileProcessors.ps1') -Raw -Encoding UTF8
 $promptBuilder = Get-Content -LiteralPath (Join-Path $root 'src\PromptBuilder.ps1') -Raw -Encoding UTF8
 $edgeLaunch = Get-Content -LiteralPath (Join-Path $root 'src\EdgeLaunch.ps1') -Raw -Encoding UTF8
@@ -261,20 +237,45 @@ $copilotAutomationTest = Get-Content -LiteralPath (Join-Path $root 'tools\Test-C
 Assert-Yaku -Condition ($appJs -match 'X-Yaku-Session' -and $appJs -match 'application/octet-stream' -and $appJs -match '/api/jobs/') -Message 'browser client must use token, binary upload, and per-job polling'
 Assert-Yaku -Condition ($appJs -match "sessionStorage\.setItem\('yaku-job-id'" -and $appJs -notmatch 'yakuMaybeRestoreJobFromReadyState') -Message 'job restoration must remain scoped to the originating browser tab'
 Assert-Yaku -Condition ($appJs -notmatch 'readAsDataURL|file_b64|application/x-www-form-urlencoded') -Message 'browser client must not Base64/urlencode file uploads'
-Assert-Yaku -Condition ($appJs.Contains('yakuConfirmUnsavedSettings') -and $appJs.Contains('data-yaku-settings-saved')) -Message 'unsaved settings must be visible and confirmed before translation'
-Assert-Yaku -Condition ($appJs.Contains('data[element.name] = !!element.checked;')) -Message 'checkbox settings must be sent as JSON Boolean values'
+Assert-Yaku -Condition ($indexSource.Contains('<h1>文章を訳す</h1>') -and $indexSource.Contains('訳案を作ります')) -Message 'text translation must be the single primary entry'
+Assert-Yaku -Condition (-not ($indexSource -match 'role="tablist"|data-yaku-tab|>すぐ訳す<|>確認しながら訳す<')) -Message 'users must not choose Quick versus CAT before translating'
+Assert-Yaku -Condition ($indexSource.Contains('Excelを取り込んで確認する') -and $indexSource.Contains('前回の翻訳作業を続ける') -and $indexSource.Contains('最初から1文ずつ確認する')) -Message 'Excel, resume, and direct review must remain reachable as secondary entries'
+Assert-Yaku -Condition ($indexSource.Contains('過去の日英資料を取り込む') -and $indexSource.Contains('そのほかの始め方')) -Message 'past bilingual import must remain available without appearing as a primary mode choice'
+Assert-Yaku -Condition ($indexSource.Contains('先ほど作った訳案（AI訳・未確認）') -and -not $indexSource.Contains('すぐ訳した完成訳')) -Message 'unreviewed Quick output must consistently be called a draft translation'
+Assert-Yaku -Condition ($indexSource.Contains('前回の英語は参考として表示し、自動再利用しません') -and -not $indexSource.Contains('cat-prior-evidence') -and -not $appJs.Contains('prior_evidence:')) -Message 'prior English must stay reference-only without a self-attested approval selector or evidence payload'
+Assert-Yaku -Condition ($appJs.Contains('data-yaku-open-workspace') -and $appJs.Contains('yakuCatFocusFirstAfterRender')) -Message 'secondary entries and Quick handoff must open the existing review workspace without losing focus'
+Assert-Yaku -Condition ($indexSource.Contains('aria-labelledby="cat-promotion-reference-title"') -and $indexSource.Contains('aria-describedby="cat-promotion-reference-help"')) -Message 'mismatched Quick draft reference must have an accessible name and explanation when focused'
+Assert-Yaku -Condition ($appJs.Contains('function yakuPlainErrorText') -and $appJs.Contains("box.textContent || box.innerText") -and $appJs.Contains('return yakuPlainErrorText(raw)')) -Message 'HTML API errors must be reduced to readable text before rendering'
+Assert-Yaku -Condition ($appJs.Contains('function yakuCatMarkDirty') -and $appJs.Contains('data-yaku-dirty') -and $appJs.Contains('function yakuCatFlushDirtyEdits') -and $appJs.Contains('yakuCatAfterFlush')) -Message 'CAT edits must become dirty on input and pass through the shared save barrier before commands'
+Assert-Yaku -Condition ($appJs.Contains("var saveKey = projectId + ':' + index") -and $appJs.Contains('yakuCatProjectId !== projectId') -and $appJs.Contains('data.id !== projectId')) -Message 'late CAT save responses must remain scoped to their originating project'
+Assert-Yaku -Condition ($appJs.Contains("yakuCatRecentProjects.length === 1") -and $appJs.Contains('保存した作業を選ぶ（') -and $appJs.Contains('yakuCatSavedLabel')) -Message 'one saved CAT project must resume directly while multiple projects use a labelled chooser'
+Assert-Yaku -Condition ($appJs.Contains('function yakuCatClearOutputDisplay') -and $appJs.Contains('data-yaku-output-project') -and $appJs.Contains('function yakuCatOutputGuidance') -and -not $appJs.Contains("'出力条件を満たしていません: '")) -Message 'CAT output display and blockers must be project-scoped and actionable without internal reason codes'
+Assert-Yaku -Condition ($indexSource.Contains('cat-save-status') -and $indexSource.Contains('cat-output-help') -and $indexSource.Contains('role="status"')) -Message 'CAT save and output readiness must be announced accessibly'
+Assert-Yaku -Condition ($indexSource.Contains('id="text-size-toggle"') -and $appJs.Contains("localStorage.setItem('yaku-text-size'") -and $stylesSource.Contains(':root[data-yaku-text-size="large"]')) -Message 'large text preference must be visible and persist across restarts'
+Assert-Yaku -Condition ($stylesSource.Contains('min-height: 44px') -and $stylesSource.Contains('@media (max-width: 900px)') -and $stylesSource.Contains('.cat-card-label')) -Message 'primary controls must retain large targets and CAT rows must reflow to labelled cards'
+Assert-Yaku -Condition ($indexSource.Contains('cat-current-summary') -and $indexSource.Contains('cat-switch-project') -and $appJs.Contains('function yakuCatSetFocusedMode') -and $appJs.Contains('function yakuCatWithOperation')) -Message 'active CAT work must use a focused summary and reject duplicate commands'
+Assert-Yaku -Condition ($indexSource.Contains('作成するファイルは確認用DRAFTです') -and $appJs.Contains('確認用DRAFTを作成しました。完成版ではありません。社外配布しないでください') -and $appJs.Contains('確認用Word DRAFT（外部配布不可）を作る') -and -not $appJs.Contains('成果物を作成できます')) -Message 'DRAFT output must never be presented as a complete external deliverable'
+Assert-Yaku -Condition ($indexSource.Contains('id="cat-delete-dialog"') -and $indexSource.Contains('autofocus>削除しない') -and -not $appJs.Contains("window.confirm('この翻訳作業")) -Message 'project deletion must use a cancel-first named confirmation dialog'
+Assert-Yaku -Condition ($indexSource.Contains('id="cat-text-output-value"') -and $appJs.Contains('下の「確認済み訳文」に全文を残しました') -and $appJs.Contains('catTextOutput.select()')) -Message 'clipboard failure must preserve the assembled translation and provide a keyboard recovery path'
+Assert-Yaku -Condition ($appJs.Contains('aria-describedby="' + "' + findingId + '" + '" aria-invalid="true"') -and $appJs.Contains('function yakuCatFocusAfterConfirm') -and -not $appJs.Contains('var pos = inputs.indexOf(input)')) -Message 'QC findings must be tied to the editor and confirmation focus must advance by segment index'
+Assert-Yaku -Condition ($indexSource.Contains('<caption class="sr-only">') -and $stylesSource.Contains('@media (prefers-reduced-motion: reduce)') -and -not $indexSource.Contains('class="input-meta" aria-live="polite"')) -Message 'CAT semantics and reduced-motion support must remain accessible without noisy character-count announcements'
+Assert-Yaku -Condition ($appJs.Contains('yakuCatJobProjectId = yakuCatProjectId') -and $appJs.Contains('yakuCatApply(catJobId, catJobProjectId, catJobProjectRevision)') -and $server.Contains('CAT_JOB_PROJECT_MISMATCH') -and $server.Contains('CAT_JOB_SOURCE_MISMATCH')) -Message 'CAT job results must stay bound to their starting project, revision, and source text'
+Assert-Yaku -Condition ($appJs.Contains('yakuCatDeleteTarget = { id: yakuCatProjectId') -and $appJs.Contains('if (yakuCatProjectId !== deleteTarget.id)') -and $appJs.Contains('var deletingId = deleteTarget.id')) -Message 'delete confirmation must remain bound to the project name and ID shown in the dialog'
+Assert-Yaku -Condition ($appJs.Contains('var yakuCatSaveQueue = Promise.resolve()') -and $appJs.Contains('var saveRequest = yakuCatSaveQueue.catch') -and $appJs.Contains('yakuCatAfterFlush(function () { yakuCatRender(null)')) -Message 'CAT saves and local filter redraws must be serialized behind the project save barrier'
+Assert-Yaku -Condition ($appJs.Contains('if (data.review_blocked || (reviewedSegment && !reviewedSegment.confirmed))') -and $appJs.Contains('検索条件の外に未確認の行があります')) -Message 'failed review and filtered confirmation must retain a logical keyboard focus target'
+Assert-Yaku -Condition ($indexSource.Contains('id="cat-workspace" hidden') -and $appJs.Contains('if (workspace) workspace.hidden = !active') -and $appJs.Contains('if (workspace) workspace.hidden = true')) -Message 'opening another project must hide the current workspace instead of mixing two work contexts'
+Assert-Yaku -Condition ($appJs.Contains('#panel-cat [data-yaku-cat-insert]') -and $appJs.Contains('if (yakuTranslating) yakuSetButtonEnabled(false)') -and $appJs.Contains('if (yakuTranslating || yakuCatOperationBusy)') -and $appJs.Contains('未保存の編集があるため、翻訳結果の取り込みを停止しました')) -Message 'CAT job lock must survive redraws, shortcuts, candidate insertion, and defensive apply checks'
+Assert-Yaku -Condition (-not ($indexSource -match 'amount-notation|122 oku|設定とデータ管理|直近の翻訳|用語集（読取専用）')) -Message 'technical amount and unused utility controls must be absent from the main screen'
 Assert-Yaku -Condition ($server -match 'INVALID_SESSION_TOKEN' -and $server -match 'UNSUPPORTED_CONTENT_TYPE' -and $server -match 'Local\\YakuLingo') -Message 'server boundary and single-instance controls must be present'
-Assert-Yaku -Condition ($server -match 'ProcessStopper\.ps1' -and $server -match 'cancel_requested') -Message 'file cancellation must be delegated asynchronously'
+Assert-Yaku -Condition ($server -notmatch 'ProcessStopper\.ps1|Type\s*=\s*''Process''') -Message 'legacy process-backed file jobs must be absent'
 Assert-Yaku -Condition ($server -notmatch 'Save-YakuIncomingFileFromForm|Parse-YakuUrlEncodedForm') -Message 'legacy Base64/form upload path must be removed'
-Assert-Yaku -Condition ($server.Contains("`$method -eq 'GET' -and `$path -eq '/api/glossary'") -and -not $server.Contains("`$method -eq 'POST' -and `$path -eq '/api/glossary'") -and -not $server.Contains('/api/glossary-delete')) -Message 'glossary API must be read-only with no add/delete routes'
-Assert-Yaku -Condition ($server.Contains('fullTextDiagnosticsRequested=') -and $server.Contains('fullTextDiagnosticsEffective=') -and $server.Contains('settingsSnapshot=job-start')) -Message 'saved and per-job diagnostic setting values must be logged and verified'
-Assert-Yaku -Condition ($server.Contains('verificationSource=disk-readback') -and $server.Contains('SETTINGS_DIAGNOSTICS_VALUE_MISSING') -and $server.Contains('SETTINGS_SAVE_READBACK_FAILED')) -Message 'settings save must distinguish missing input and verify the disk readback'
-Assert-Yaku -Condition ($settingsSource.Contains('data-yaku-dirty=') -and $settingsSource.Contains('全文診断：有効（保存済み）')) -Message 'settings form must display the persisted diagnostic state'
+Assert-Yaku -Condition (-not ($server -match '/api/glossary|/api/settings-form|/api/settings''|/api/amount-notation|/api/history|/api/privacy-status')) -Message 'removed utility panels must have no public UI endpoints'
+Assert-Yaku -Condition ($server.Contains('diagnosticsLevel=') -and $server.Contains('settingsSnapshot=job-start')) -Message 'per-job diagnostic setting value must remain traceable internally'
 Assert-Yaku -Condition ($settingsSource.Contains('Read-YakuUserSettingsStrict') -and $settingsSource.Contains('SETTINGS_SAVE_RESULT_INVALID') -and $settingsSource.Contains('SETTINGS_SAVE_VERIFY_FAILED')) -Message 'settings save must enforce strict disk readback and a single verified result object'
 $pathsSource = Get-Content -LiteralPath (Join-Path $root 'src\Paths.ps1') -Raw -Encoding UTF8
 Assert-Yaku -Condition (-not $settingsSource.Contains('Join-Path $Root ''config\user_settings.json''')) -Message 'user settings must never be written inside the app folder'
 Assert-Yaku -Condition ($pathsSource.Contains('function Get-YakuUserSettingsPath') -and $settingsSource.Contains('Resolve-YakuUserSettingsPath')) -Message 'user settings path must resolve through the user data directory with one-time legacy migration'
-Assert-Yaku -Condition ($fileWorkerSource.Contains('File worker settings snapshot.') -and $fileWorkerSource.Contains('YakuFullTextDiagnosticsEnabled')) -Message 'file worker must apply the job diagnostic snapshot before extraction and audit logging'
+Assert-Yaku -Condition (-not $fileWorkerPresent -and -not $server.Contains('Start-YakuFileProcessJob')) -Message 'legacy file worker must remain removed and unreachable'
 Assert-Yaku -Condition ($copilot -notmatch '--remote-allow-origins=\*') -Message 'CDP wildcard origin switch must be absent'
 Assert-Yaku -Condition ($copilot -match 'Get-NetTCPConnection' -and $copilot -match 'OwningProcess') -Message 'CDP port owner PID must be verified'
 Assert-Yaku -Condition ($edgeLaunch.Contains('Get-Process -Name') -and $edgeLaunch.Contains("if (`$hasAnyEdge)") -and $edgeLaunch.Contains("if (`$stopped -gt 0) { Start-Sleep -Milliseconds 700 }")) -Message 'cold Edge startup must skip WMI and the fixed sleep when no Edge process exists'
@@ -290,12 +291,12 @@ Assert-Yaku -Condition ($server.LastIndexOf('Start-YakuCopilotWarmup') -lt $serv
 Assert-Yaku -Condition ($translationSource.Contains('Math]::Max($currentPct, $pct)')) -Message 'text translation progress must remain monotonic across multiple batches'
 Assert-Yaku -Condition ($translationSource.Contains('Get-YakuTextResponseStructureMetadata') -and $translationSource.Contains('leading_code_points') -and $translationSource.Contains("event = 'text-response-contract-rejected'")) -Message 'contract errors must always retain privacy-safe response structure metadata'
 Assert-Yaku -Condition ($translationSource.Contains("'RESPONSE_PREFIX_RECOVERED'") -and $translationSource.Contains("Category 'response-contract-recovery'")) -Message 'leading response junk may only be rescued with a visible warning'
-Assert-Yaku -Condition ($translationSource.Contains("`$required = @(if (`$Direction -eq 'to_en')") -and $translationSource.Contains('CONTRACT_INTERNAL: $required must be an array.')) -Message 'to_jp required labels must not be unwrapped into a scalar string'
+Assert-Yaku -Condition ($translationSource.Contains('$required = @(Get-YakuTextRequiredLabels -Direction $Direction -Mode $Mode)') -and $translationSource.Contains('CONTRACT_INTERNAL: $required must be an array.')) -Message 'to_jp required labels must not be unwrapped into a scalar string'
 Assert-Yaku -Condition ($translationSource.Contains("`$structure['required_labels']") -and $translationSource.Contains("`$structure['clean_head']") -and $translationSource.Contains('Test-YakuFullTextDiagnosticsEnabled')) -Message 'contract diagnostics must record required labels while gating clean response text'
 Assert-Yaku -Condition ($translationSource.Contains("Phase 'retrying'") -and $translationSource.Contains('応答形式エラーのため再試行します')) -Message 'contract retries must be visible in progress state'
 Assert-Yaku -Condition ($translationSource.Contains('function Get-YakuTextStructureCounts') -and $translationSource.Contains('function Test-YakuTextStructureIntegrity') -and $translationSource.Contains('RESPONSE_STRUCTURE_MISMATCH')) -Message 'text heading and bullet integrity must be validated through the existing response retry path'
 Assert-Yaku -Condition ($translationSource.Contains("Category 'structure-integrity'") -and $translationSource.Contains('原文の見出し・箇条書きの一部が訳文から欠落している可能性')) -Message 'final structure mismatch must return a visible warning instead of failing the translation'
-Assert-Yaku -Condition ($translationSource.Contains('function ConvertFrom-YakuTextFullWidthAngle') -and $translationSource.Contains("Replace('＜', '<').Replace('＞', '>')") -and $translationSource.IndexOf('ConvertFrom-YakuTextFullWidthAngle -Text $fullText') -lt $translationSource.IndexOf('Test-YakuTextStructureIntegrity -SourceText $InputText')) -Message 'to_en angle restoration must occur before structure integrity validation'
+Assert-Yaku -Condition ($translationSource.Contains('function ConvertFrom-YakuTextFullWidthAngle') -and $translationSource.Contains("Replace('＜', '<').Replace('＞', '>')") -and $translationSource.IndexOf('ConvertFrom-YakuTextFullWidthAngle -Text $fullText') -lt $translationSource.IndexOf('Test-YakuTextStructureIntegrity -SourceText $sourceText')) -Message 'to_en angle restoration must occur before structure integrity validation'
 Assert-Yaku -Condition ($copilot.Contains("`$ProgressState['batch_progress_start']") -and $copilot.Contains('入力 $($batchInputLength)字')) -Message 'Copilot phase progress must map into overall batch ranges using input length'
 Assert-Yaku -Condition ($settingsSource.Contains("Default=3000") -and $settingsSource.Contains("max_chars_per_batch=1000 -> 3000")) -Message 'text batch default and legacy-default migration must be 3000'
 Assert-Yaku -Condition ($copilot.Contains('let rootsCache = null;') -and $copilot.Contains('(now - rootsCacheAt) < 250')) -Message 'Copilot DOM roots must be reused within a polling tick'
@@ -315,8 +316,8 @@ Assert-Yaku -Condition ($promptBuilder.Contains('[AllowNull()][string]$Path') -a
 # 戻っていないことと、レイアウトの保証（セル完全一致）が残っていることを見る。
 Assert-Yaku -Condition (-not $promptBuilder.Contains('GLOSSARY (mandatory)') -and -not $promptBuilder.Contains('function Get-YakuPromptGlossaryPath') -and -not $promptBuilder.Contains('function Get-YakuReferenceSection')) -Message 'prompt glossary injection must stay removed'
 Assert-Yaku -Condition (-not $fileTranslationSource.Contains('function Get-YakuFileGlossaryOccurrenceAudit') -and -not $translationSource.Contains('function Write-YakuTextGlossaryDiagnosticLog')) -Message 'in-sentence glossary audit must stay removed'
-Assert-Yaku -Condition ($promptBuilder.Contains('表ラベル置換用 — glossary.csv') -and $fileTranslationSource.Contains('function Resolve-YakuFileExactGlossaryTranslations')) -Message 'cell-exact replacement must remain as the layout guarantee'
-Assert-Yaku -Condition ($promptBuilder.Contains('2万台 = 20 k units') -and $promptBuilder.Contains('never "ten thousand units"')) -Message 'man-unit conversion rule must be injected for text translation'
+Assert-Yaku -Condition ($fileTranslationSource.Contains('function Resolve-YakuFileExactGlossaryTranslations') -and $promptBuilder.Contains('function Get-YakuGlossaryEntries')) -Message 'cell-exact replacement must remain as the layout guarantee without a glossary management screen'
+Assert-Yaku -Condition ($translationSource.Contains("Unit='万台'; Out='k units'; Factor=10") -and $translationSource.Contains('function Convert-YakuNumericUnits')) -Message 'man-unit conversion must be performed deterministically before translation'
 Assert-Yaku -Condition (-not $promptBuilder.Contains('function Add-YakuGlossaryEntry') -and -not $promptBuilder.Contains('function Remove-YakuGlossaryEntryByRow') -and -not $promptBuilder.Contains('glossary-add-form') -and -not $promptBuilder.Contains('glossary-delete')) -Message 'glossary write functions and edit controls must be removed'
 Assert-Yaku -Condition ($copilot.Contains('Wait-YakuCopilotInputCondition') -and $copilot.Contains("Condition focused") -and $copilot.Contains("Condition empty")) -Message 'fixed fill sleeps must be replaced by focused and empty input condition waits'
 Assert-Yaku -Condition ($copilot.Contains('modelSwitcherLabel') -and $copilot.Contains('already_selected_from_ready_state')) -Message 'ready state must allow already-selected model work to be skipped'
@@ -343,13 +344,12 @@ Assert-Yaku -Condition ($copilot.Contains('[int]$FirstActivityTimeoutMs = 10000'
 Assert-Yaku -Condition ($copilot.Contains('[data-testid="loading-message"]') -and $copilot.Contains("kind:'stop-button-visible'") -and $copilot.Contains('misdetected:true')) -Message 'thinking UI and stop-button activity must prevent a false silent-start decision'
 Assert-Yaku -Condition ($copilot.Contains('Copilot fresh chat diagnostic:') -and $copilot.Contains('Copilot fresh chat accepted.') -and $copilot.Contains('beforeResponseCount=') -and $copilot.Contains('afterResponseCount=')) -Message 'fresh-chat decisions must log compact before/after evidence'
 Assert-Yaku -Condition ($translationSource.Contains('silentStartFailures') -and $translationSource.Contains('COPILOT_SILENT_START_TIMEOUT')) -Message 'text translation must retry silent start once with a new request ID'
-Assert-Yaku -Condition ($translationSource.Contains('Text glossary occurrence audit:') -and $translationSource.Contains("event = 'text-glossary-occurrence-violation'") -and $translationSource.Contains('copilot-glossary-diagnostic-')) -Message 'text glossary violations must expose safe summaries and gated full diagnostics'
+Assert-Yaku -Condition (-not $translationSource.Contains('Text glossary occurrence audit:') -and -not $translationSource.Contains("event = 'text-glossary-occurrence-violation'")) -Message 'removed in-sentence text glossary auditing must stay absent'
 Assert-Yaku -Condition ($fileTranslationSource.Contains('silentStartFailures') -and $fileTranslationSource.Contains('COPILOT_SILENT_START_TIMEOUT')) -Message 'file translation must retry the current silent batch once'
-Assert-Yaku -Condition ($fileTranslationSource.Contains('Glossary occurrence audit:') -and $fileTranslationSource.Contains("event = 'glossary-occurrence-violation'") -and $fileTranslationSource.Contains('Locations =')) -Message 'file glossary violations must expose occurrence and location diagnostics'
-Assert-Yaku -Condition ($fileTranslationSource.Contains('basis=item-occurrence') -and $fileTranslationSource.Contains('ExcludedContained') -and $fileTranslationSource.Contains("Reason = `$reason")) -Message 'batch and final glossary diagnostics must share the item-occurrence audit and reason classification'
+Assert-Yaku -Condition (-not $fileTranslationSource.Contains('Glossary occurrence audit:') -and -not $fileTranslationSource.Contains("event = 'glossary-occurrence-violation'") -and -not $fileTranslationSource.Contains('basis=item-occurrence')) -Message 'removed in-sentence CAT glossary auditing must stay absent'
 Assert-Yaku -Condition ($fileTranslationSource.Contains('Bracket-glossary fallback skipped (partial coverage).') -and $fileTranslationSource.Contains("[A-Za-z]{4,}")) -Message 'bracket glossary fallback must reject incomplete language coverage'
-Assert-Yaku -Condition ($fileTranslationSource.Contains("Category 'glossary-compliance'") -and $fileTranslationSource.Contains("'WARN' } else { 'INFO' }")) -Message 'final glossary violations must be user-visible and logged as warnings'
-Assert-Yaku -Condition ($server.Contains('detail=$errorText') -and $settingsSource.Contains('expected=$expectedPreview actual=$actualPreview')) -Message 'settings save failures must retain safe key/value mismatch details'
+Assert-Yaku -Condition (-not $fileTranslationSource.Contains("Category 'glossary-compliance'")) -Message 'removed final in-sentence glossary compliance warnings must stay absent'
+Assert-Yaku -Condition ($settingsSource.Contains('expected=$expectedPreview actual=$actualPreview')) -Message 'internal settings persistence must retain safe key/value mismatch details'
 Assert-Yaku -Condition ($fileProcessors.Contains('[System.Xml.XmlReader]::Create') -and -not $fileProcessors.Contains("[regex]::Matches(`$xml, '(?is)<c")) -Message 'saving validation must use linear XmlReader formula scanning'
 Assert-Yaku -Condition ($fileProcessors.Contains("Phase 'validating'") -and $fileProcessors.Contains("Phase 'publishing'")) -Message 'saving validation and publishing must expose distinct progress phases'
 Assert-Yaku -Condition (-not $fileProcessors.Contains('Test-YakuExcelCandidateReopen -Path')) -Message 'post-save validation must not launch a second unbounded Excel COM session'

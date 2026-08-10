@@ -21,7 +21,7 @@ $toolsRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $toolsRoot
 $script:fail = 0
 
-foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','BriefStyle.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','FileTranslation.ps1','CellSegments.ps1','CellAlign.ps1','CatProject.ps1')) {
+foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','BriefStyle.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1','ProperNoun.ps1','FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1','CellSegments.ps1','CellAlign.ps1','CatProject.ps1')) {
     . (Join-Path (Join-Path $root 'src') $n)
 }
 function Chk { param([bool]$c,[string]$m) if($c){Write-Host ('  ok   ' + $m) -ForegroundColor Green}else{Write-Host ('  FAIL ' + $m) -ForegroundColor Red;$script:fail++} }
@@ -151,6 +151,11 @@ Write-Host '元のコピーへ出力する'
 $proseIndex = 0
 for ($i = 0; $i -lt $segs.Count; $i++) { if ([bool]$segs[$i].Joined) { $proseIndex = $i } }
 $null = Set-YakuCatSegmentTranslation -Project $project -Index $proseIndex -Text 'In the first quarter, fixed costs were reduced through a review of production.'
+# Horizon 1: 手編集や用語置換だけでは出力できない。各訳文を明示確認し、
+# 現在の原文 revision に対する機械 QC を通してから出力する。
+for ($i = 0; $i -lt @($project.Segments).Count; $i++) {
+    $null = Set-YakuCatSegmentConfirmed -Project $project -Index $i
+}
 $exported = Export-YakuCatProject -Project $project -OutputPath $outPath -Settings $settings
 Chk (Test-Path -LiteralPath $outPath) '出力ファイルができる'
 Chk ([string]$exported.OutputName -eq 'out.xlsx') '出力名が返る'
@@ -174,14 +179,19 @@ Chk ($rejoined -eq 'In the first quarter, fixed costs were reduced through a rev
 Chk ([string]$read['A4'] -eq $knownTarget) '用語集で置換したラベルが出力される'
 Chk ([string]$read['B4'] -eq '1234') '数値セルは触らない'
 
-# ---------------------------------------------------------------- 保存→再開→原文の行挿入・シート改名後に出力
-Write-Host '保存後に再開し、移動した原文へ安全に書き戻す'
+# ---------------------------------------------------------------- 保存→再開→外部原本が変わってもproject専用原本から出力
+Write-Host '保存後に再開し、project専用原本から安全に書き戻す'
 Chk (Save-YakuCatProject -Project $project) '原文スナップショットを含めて保存できる'
+$ownedSourcePath = [string]$project.Path
+$ownedSourceHash = (Get-FileHash -LiteralPath $ownedSourcePath -Algorithm SHA256).Hash
+Chk ($ownedSourcePath -ne $srcPath -and $ownedSourcePath -match 'source\\original\.xlsx$') '取込原本をproject専用領域へ固定する'
+Chk ([string]$project.FileName -eq 'in.xlsx') 'project専用原本でも利用者の元ファイル名を保持する'
 $savedId = [string]$project.Id
 Remove-YakuCatProject -Id $savedId
 $restored = Restore-YakuCatProject -Id $savedId
 Chk ($null -ne $restored -and @($restored.Blocks).Count -eq @($project.Blocks).Count) '再開時に原文スナップショットが戻る'
 
+# 取込前の外部ファイルを後から変更しても、保存済み作業の原本と出力は変えない。
 $xlMove = New-Object -ComObject Excel.Application
 $xlMove.Visible = $false; $xlMove.DisplayAlerts = $false
 try {
@@ -196,31 +206,32 @@ try {
     try { [GC]::Collect(); [GC]::WaitForPendingFinalizers() } catch {}
 }
 
+Chk ((Get-FileHash -LiteralPath ([string]$restored.Path) -Algorithm SHA256).Hash -eq $ownedSourceHash) '外部ファイルを変更してもproject専用原本は不変'
+
 $restoredView = (ConvertTo-YakuCatProjectJson -Project $restored) | ConvertFrom-Json
-Chk (-not [bool]$restoredView.export_blocked) '元ファイルが残っていれば再開後も出力できる'
+Chk (-not [bool]$restoredView.export_blocked) 'project専用原本が残っていれば再開後も出力できる'
 $resumedPath = Join-Path $tmp 'resumed.xlsx'
 $resumedExport = Export-YakuCatProject -Project $restored -OutputPath $resumedPath -Settings $settings
-Chk ([int]$resumedExport.Written -gt 0 -and (Test-Path -LiteralPath $resumedPath)) '再対応付け後のファイルを出力できる'
+Chk ([int]$resumedExport.Written -gt 0 -and (Test-Path -LiteralPath $resumedPath)) '保存済みのproject専用原本から出力できる'
 
 $xlRead = New-Object -ComObject Excel.Application
 $xlRead.Visible = $false; $xlRead.DisplayAlerts = $false
 $movedRead = @{}
 try {
     $wbRead = $xlRead.Workbooks.Open($resumedPath, 0, $true)
-    $wsRead = $wbRead.Worksheets.Item('Overview')
-    foreach ($r in @(1,2,3,5)) { $movedRead["A$r"] = [string]$wsRead.Cells.Item($r,1).Value2 }
-    $movedRead['B5'] = [string]$wsRead.Cells.Item(5,2).Value2
+    $wsRead = $wbRead.Worksheets.Item('説明')
+    foreach ($r in @(1,2,4)) { $movedRead["A$r"] = [string]$wsRead.Cells.Item($r,1).Value2 }
+    $movedRead['B4'] = [string]$wsRead.Cells.Item(4,2).Value2
     $wbRead.Close($false)
 } finally {
     try { $xlRead.Quit() } catch {}
     Release-YakuComObject $xlRead
     try { [GC]::Collect(); [GC]::WaitForPendingFinalizers() } catch {}
 }
-$movedJoined = ((@($movedRead['A2'], $movedRead['A3']) -join ' ') -replace '\s+', ' ').Trim()
-Chk ([string]::IsNullOrWhiteSpace([string]$movedRead['A1'])) '挿入された行へは書かない'
-Chk ($movedJoined -eq 'In the first quarter, fixed costs were reduced through a review of production.') '行挿入後の原文セルへ訳文を再配置する'
-Chk ([string]$movedRead['A5'] -eq $knownTarget) 'シート改名と行移動後もラベルを正しいセルへ書く'
-Chk ([string]$movedRead['B5'] -eq '1234') '移動後も数値セルは触らない'
+$movedJoined = ((@($movedRead['A1'], $movedRead['A2']) -join ' ') -replace '\s+', ' ').Trim()
+Chk ($movedJoined -eq 'In the first quarter, fixed costs were reduced through a review of production.') '外部ファイルの行挿入を取り込まず、保存時の配置へ訳文を書き戻す'
+Chk ([string]$movedRead['A4'] -eq $knownTarget) '外部ファイルのシート改名を取り込まず、保存時のラベル位置へ書く'
+Chk ([string]$movedRead['B4'] -eq '1234') 'project専用原本の数値セルは触らない'
 
 # ---------------------------------------------------------------- 貼り付けから開く
 # 簡易翻訳を使っている人にも CAT のほうが便利だが、急に画面が変わると
@@ -250,15 +261,19 @@ $tsegs = @($tp.Segments)
 Chk ($tsegs.Count -eq 3) '解除すると元の文へ戻る'
 Chk ([string]$tsegs[1].Text -eq '為替の影響は限定的でした。') '元の切れ目で戻る'
 
-# 出口はコピー。書き戻す元のファイルが無い。
+# 出口は確認済み訳文一覧のコピー。書き戻す元のファイルが無い。
 $null = Set-YakuCatSegmentTranslation -Project $tp -Index 0 -Text 'Fixed costs were reduced.'
 $null = Set-YakuCatSegmentTranslation -Project $tp -Index 1 -Text 'FX impact was limited.'
+$null = Set-YakuCatSegmentTranslation -Project $tp -Index 2 -Text 'We will continue to monitor market conditions.'
+for ($i = 0; $i -lt @($tp.Segments).Count; $i++) {
+    $null = Set-YakuCatSegmentConfirmed -Project $tp -Index $i
+}
 $texported = Export-YakuCatProject -Project $tp -OutputPath '' -Settings $settings
 Chk ([string]::IsNullOrEmpty([string]$texported.OutputPath)) 'ファイルは作らない'
 Chk ([string]$texported.Text -match 'Fixed costs were reduced\.') '訳文が繋がって返る'
 Chk ([string]$texported.Text -match 'FX impact was limited\.') '2文目も入る'
-# 未訳のセグメントは原文のまま残す。抜け落ちると文書として使えない。
-Chk ([string]$texported.Text -match '今後も市場環境を注視してまいります。') '未訳は原文のまま残す'
+Chk ([string]$texported.Text -match 'We will continue to monitor market conditions\.') '確認済みの3文目も入る'
+Chk ([string]$texported.Text -notmatch '今後も市場環境を注視してまいります。') '未訳原文を訳文一覧へ混ぜない'
 Remove-YakuCatProject -Id ([string]$tp.Id)
 
 # 画面に導線があること。押した先に見慣れた文が並ぶようにする。
@@ -280,7 +295,7 @@ Chk ($indexText -match 'id="cat-text"') 'CAT に貼り付け欄がある'
 Write-Host '一覧の作法（市販ツールに合わせたもの）'
 $cssText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'assets\styles.css'))
 Chk ($cssText -match 'data-yaku-cat-state="untranslated"') '未訳の行を色で示す'
-Chk ($cssText -match 'data-yaku-cat-state="manual"') '手直しの行を色で示す'
+Chk ($cssText -match 'data-yaku-cat-state="human_edited"') '手直しの行を色で示す'
 Chk ($cssText -match '\.cat-grid tbody tr\.is-active') 'いま見ている行を強調する'
 Chk ($cssText -match '\.cat-ops \{[^}]*visibility: hidden') '繋ぎ直しのボタンは常には出さない（全行に並ぶと目が滑る）'
 Chk ($appJsText.Contains("addEventListener('focusin'")) '現在行を追う'
@@ -309,7 +324,7 @@ Chk ($indexText -match 'id="cat-copilot-usage"') '翻訳前に使用回数の目
 Chk ($appJsText.Contains('直近3時間の使用は')) '概算回数と直近3時間の使用回数を押す前に表示する'
 Chk ($appJsText.Contains("yakuCatPost('estimate'")) '概算はサーバーの実分割結果を取得する'
 Chk ($serverText.Contains('Get-YakuCopilotCallCount -WindowHours 3')) '画面へ直近3時間の実測回数を返す'
-$fileTranslationText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'FileTranslation.ps1'))
+$fileTranslationText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CatBatch.ps1'))
 Chk ($fileTranslationText.Contains("Context.ContainsKey('CompletedMap')")) '各バッチ完了時にCATへ途中結果を公開する'
 Chk ($fileTranslationText.Contains("Context.ContainsKey('CachePerBatch')")) '各バッチ完了時にキャッシュへ保存する'
 Chk ($fileTranslationText.Contains("Context.ContainsKey('OnBatchCompleted')")) '各成功バッチの耐障害保存コールバックを呼ぶ'
@@ -322,7 +337,7 @@ $checkpointSeg = [pscustomobject]@{ Text='境界テスト原文'; Translation=''
 $checkpointProject = [pscustomobject]@{ Id='checkpoint1'; Path=''; FileName='貼り付け'; Direction='to_en'; Blocks=@(); Segments=@($checkpointSeg); Source='text'; CreatedAt=(Get-Date).ToString('s') }
 $script:YakuCatProjects[$checkpointProject.Id] = $checkpointProject
 Chk (Save-YakuCatProject -Project $checkpointProject) 'チェックポイント前の空プロジェクトを保存する'
-$null = Save-YakuCatBatchCheckpoint -ProjectId $checkpointProject.Id -Translations @([ordered]@{ index=0; source='境界テスト原文'; text='Recovered translation'; masked='Recovered [[N1]]' })
+$null = Save-YakuCatBatchCheckpoint -ProjectId $checkpointProject.Id -ProjectRevision ([int]$checkpointProject.Revision) -Translations @([ordered]@{ index=0; source='境界テスト原文'; text='Recovered translation'; masked='Recovered [[N1]]' })
 Remove-YakuCatProject -Id $checkpointProject.Id
 $checkpointRestored = Restore-YakuCatProject -Id $checkpointProject.Id
 Chk ([string]$checkpointRestored.Segments[0].Translation -eq 'Recovered translation') 'apply を呼ばず成功バッチの訳文が戻る'
@@ -331,7 +346,7 @@ Chk ([string]$checkpointRestored.Segments[0].Origin -eq 'copilot' -and -not [boo
 
 $retrySeg = [pscustomobject]@{ Text='保存再試行原文'; Translation=''; MaskedTranslation=''; BlockIds=@(); Cells=@(); Joined=$false; Origin=''; Confirmed=$false; Kind='text'; Sheet=''; Location='本文' }
 $retryProject = [pscustomobject]@{ Id='checkpoint-retry'; Path=''; FileName='貼り付け'; Direction='to_en'; Blocks=@(); Segments=@($retrySeg); Source='text'; CreatedAt=(Get-Date).ToString('s') }
-$null = Save-YakuCatBatchCheckpoint -ProjectId $retryProject.Id -Translations @([ordered]@{ index=0; source='保存再試行原文'; text='Retry saved'; masked='Retry saved' })
+$null = Save-YakuCatBatchCheckpoint -ProjectId $retryProject.Id -ProjectRevision ([int]$retryProject.Revision) -Translations @([ordered]@{ index=0; source='保存再試行原文'; text='Retry saved'; masked='Retry saved' })
 $originalSaveFunction = (Get-Command Save-YakuCatProject).ScriptBlock
 Set-Item -LiteralPath Function:\Save-YakuCatProject -Value { param($Project) return $false }
 $firstApply = Apply-YakuCatBatchCheckpoint -Project $retryProject
@@ -358,37 +373,38 @@ $usageProject = [pscustomobject]@{
 $usage = Get-YakuCatCopilotUsage -Root $root -Project $usageProject -Settings $usageSettings
 Chk ([int]$usage.EstimatedCalls -eq 2) '1477字×2件は実分割（各+24字）どおり2回と見積もる'
 Chk ([int]$usage.MaxChars -eq 3000) 'max_chars_per_batch_file を単一の上限として使う'
-Chk ((Get-YakuCatCacheStyle -CorpusSection '文例A') -ne (Get-YakuCatCacheStyle -CorpusSection '文例B')) '文例が違うCATキャッシュを混ぜない'
+Chk ((Get-YakuCatCacheStyle) -match 'reference:none') '候補文例は参考表示だけで、キャッシュ契約に混ぜない'
 $cacheSource = 'この行はCATキャッシュの検査です。'
 $cacheSeed = [pscustomobject]@{ Index=1; Text=$cacheSource; BlockIds=(New-Object System.Collections.Generic.List[string]) }
 $null = Protect-YakuCatItems -Items @($cacheSeed) -Root $root -Direction 'to_en'
-$cacheStyleA = Get-YakuCatCacheStyle -CorpusSection '文例A'
+$cacheStyleA = Get-YakuCatCacheStyle
 $cacheKeyA = Get-YakuTranslationCacheKey -Kind 'cat' -Direction 'to_en' -Text ([string]$cacheSeed.Text) -Style $cacheStyleA -Root $root -Settings $usageSettings
 Set-YakuTranslationCacheValue -Key $cacheKeyA -Value 'Cached CAT translation.' -Settings $usageSettings
 $cacheUsageProject = [pscustomobject]@{ Id='cache1'; Direction='to_en'; CorpusSection='文例A'; Segments=@([pscustomobject]@{ Text=$cacheSource; Translation='' }) }
 $cacheHitUsage = Get-YakuCatCopilotUsage -Root $root -Project $cacheUsageProject -Settings $usageSettings
 Chk ([int]$cacheHitUsage.CacheHits -eq 1 -and [int]$cacheHitUsage.EstimatedCalls -eq 0) '同じ文例コンテキストならCATキャッシュを読み、送信0回と見積もる'
 $cacheUsageProject.CorpusSection = '文例B'
-$cacheMissUsage = Get-YakuCatCopilotUsage -Root $root -Project $cacheUsageProject -Settings $usageSettings
-Chk ([int]$cacheMissUsage.CacheHits -eq 0 -and [int]$cacheMissUsage.EstimatedCalls -eq 1) '別の文例コンテキストではCATキャッシュを再利用しない'
+$cacheSamePromptUsage = Get-YakuCatCopilotUsage -Root $root -Project $cacheUsageProject -Settings $usageSettings
+Chk ([int]$cacheSamePromptUsage.CacheHits -eq 1 -and [int]$cacheSamePromptUsage.EstimatedCalls -eq 0) '候補文例が変わっても外部送信プロンプトが同一ならCATキャッシュを再利用する'
 
 # ---------------------------------------------------------------- 候補ペイン
 # CAT エディタの中核にあたる部分（利用者の指摘 2026-08-06）。
 # いま出せるのは用語集だけ。翻訳メモリはまだ無く、コーパスの文例は英語でしか
 # 引けないため行ごとには出せない。
 Write-Host '再開したものも元ファイルを再確認して Excel へ出力できる'
-$seg1 = [pscustomobject]@{ Text = '売上高'; Translation = 'Net sales'; BlockIds = @('b1'); Cells = @(); Joined = $false; Origin = 'copilot'; Confirmed = $true; Kind = 'cell'; Location = '損益' }
-$restoredProj = [pscustomobject]@{ Id = 'r1'; Path = $srcPath; FileName = 'in.xlsx'; Direction = 'to_en'; Blocks = @($project.Blocks); Segments = @($seg1); Source = 'file'; Restored = $true }
+$restoredProj = Copy-YakuCatProjectForMutation -Project $restored
 $flag = { param($p) return ((ConvertTo-YakuCatProjectJson -Project $p) | ConvertFrom-Json).export_blocked }
-Chk (-not [bool](& $flag $restoredProj)) '元ファイルが残る再開プロジェクトは出力できる'
-$freshProj = [pscustomobject]@{ Id = 'f1'; Path = 'a.xlsx'; FileName = 'a.xlsx'; Direction = 'to_en'; Blocks = @([pscustomobject]@{ Id = 'b1' }); Segments = @($seg1); Source = 'file' }
-Chk ([bool](& $flag $freshProj)) '元ファイルが無ければ押す前に止める'
-$textProj = [pscustomobject]@{ Id = 't1'; Path = ''; FileName = '貼り付け'; Direction = 'to_en'; Blocks = @(); Segments = @($seg1); Source = 'text'; Restored = $true }
-Chk (-not [bool](& $flag $textProj)) '貼り付けたテキストは再開しても出せる（Blocks を使わない）'
+Chk (-not [bool](& $flag $restoredProj)) '専用原本と最新QCが残る再開プロジェクトは出力できる'
+$missingFileProj = Copy-YakuCatProjectForMutation -Project $restored
+$missingFileProj.Path = (Join-Path $tmp 'missing.xlsx')
+Chk ([bool](& $flag $missingFileProj)) '専用原本が無ければ押す前に止める'
+$textProj = Copy-YakuCatProjectForMutation -Project $restored
+$textProj.Source = 'text'; $textProj.Path = ''; $textProj.Blocks = @(); $textProj.FileName = '貼り付けたテキスト'
+Chk (-not [bool](& $flag $textProj)) '貼り付けたテキストは最新QCがあれば再開後も出せる（Blocks を使わない）'
 $jsSrcX = Get-Content -LiteralPath (Join-Path (Join-Path $root 'www\assets') 'app.js') -Raw -Encoding UTF8
 Chk ($jsSrcX -match 'export_blocked') '画面が受け取っている'
 Chk ($jsSrcX -match 'exportBtn\.disabled') '出力ボタンを押せなくする'
-Chk ($jsSrcX -match '出力不可') '再開の一覧でも、開く前に分かる'
+Chk ($jsSrcX -match 'yakuCatOutputGuidance' -and $jsSrcX -match 'eligibility_reasons') '出力できない理由を具体的な次操作として表示する'
 
 Write-Host '候補ペイン'
 $cp = New-YakuCatTextProject -Root $root -Text '上期営利' -Settings $settings -Direction 'to_en'

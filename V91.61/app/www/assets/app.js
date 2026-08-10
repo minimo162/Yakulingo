@@ -10,16 +10,15 @@
   var yakuActiveJobId = null;
   var yakuRestoredJobId = null;
   var yakuUploadedFile = null;
-  var yakuPrivacyStatus = null;
   var yakuSheetSelection = null;
   var yakuFileDirectionTouched = false;
   var yakuDetailsOpen = {};
-  var yakuSettingsSaving = false;
   var yakuActiveTab = 'text';
   var yakuActiveJobKind = 'text';
   var yakuCopilotCalls3h = 0;
   var yakuCatUsage = null;
   var yakuCatUsageRequest = 0;
+  var yakuCatFocusFirstAfterRender = false;
   // CAT の結果はグリッドへ出すので、共有の結果欄は常に空のままでよい。
   var yakuResultByTab = { text: '', file: '', cat: '' };
   var yakuLastManualScrollAt = 0;
@@ -35,7 +34,7 @@
   });
 
   function yakuEmptyResultHtml() {
-    return '<div class="empty-state">このタブの翻訳結果はまだありません</div>';
+    return '<div class="empty-state">翻訳結果はここに表示されます</div>';
   }
 
   function yakuScrollCompletionIntoView(container) {
@@ -81,8 +80,9 @@
 
   function yakuResponseJson(response) {
     return response.json().catch(function () { return {}; }).then(function (data) {
+      data = data || {};
       if (!response.ok) {
-        var error = new Error(data.error || data.detail || ('HTTP ' + response.status));
+        var error = new Error(yakuUserFacingError(data.error || data.detail || ('HTTP ' + response.status)));
         error.status = response.status;
         error.code = data.error_code || '';
         throw error;
@@ -93,9 +93,34 @@
 
   function yakuResponseText(response) {
     return response.text().then(function (text) {
-      if (!response.ok) throw new Error(text || ('HTTP ' + response.status));
+      if (!response.ok) throw new Error(yakuUserFacingError(text || ('HTTP ' + response.status)));
       return text;
     });
+  }
+
+  function yakuPlainErrorText(message) {
+    var text = String(message || '');
+    // 一部のAPIは警告HTMLを返す。Error.messageへそのまま入れてからescapeすると、
+    // 利用者には <div class=...> が文字として見えるため、表示用には本文だけを取る。
+    if (/<[a-z][\s\S]*>/i.test(text) && typeof document !== 'undefined' && document.createElement) {
+      var box = document.createElement('div');
+      box.innerHTML = text;
+      var plain = (box.textContent || box.innerText || '').trim();
+      if (plain) text = plain;
+    }
+    return text;
+  }
+
+  function yakuUserFacingError(message) {
+    var raw = String(message || '');
+    if (/(?:EXTERNAL_SEND_|PROTECTION_RECEIPT_|PROTECTED_PROMPT_|CAT_PROTECTED_|SHORTEN_UNMASKED_CURRENT)/.test(raw)) {
+      return '安全に送る準備を完了できなかったため、送信を中止しました。原文は送信されていません。再起動後も続く場合は管理者へ連絡してください。（YK-PROTECT-01）';
+    }
+    return yakuPlainErrorText(raw);
+  }
+
+  function yakuScrollBehavior() {
+    return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
   }
 
   function yakuFormatBytes(bytes) {
@@ -171,18 +196,51 @@
       button.disabled = !active;
       button.setAttribute('aria-disabled', active ? 'false' : 'true');
       button.setAttribute('data-ready', active ? '1' : '0');
-      button.textContent = yakuTranslating ? '翻訳中' : (enabled ? '翻訳' : '準備中');
+      button.textContent = yakuTranslating ? '訳案を作成中' : (enabled ? '訳案を作る' : '準備中');
     }
     // CAT の Copilot を使うボタンも同じ扱いにする。無効化していなかったので、
     // CAT から始めた人が押しても画面が完全に無反応になっていた。
     // 主役にしたい画面の入口で、押しても何も起きないのは致命的である。
     var catActive = !!enabled && !yakuTranslating;
-    [['cat-translate-button', '残りをCopilotで翻訳'], ['cat-corpus-button', '文例を検索']].forEach(function (pair) {
+    [['cat-run-button', '残りの訳案を作る'], ['cat-translate-button', '残りの訳案を作る'], ['cat-corpus-button', '参考文例を表示']].forEach(function (pair) {
       var b = document.getElementById(pair[0]);
       if (!b) return;
       b.disabled = !catActive;
       b.setAttribute('aria-disabled', catActive ? 'false' : 'true');
       b.textContent = yakuTranslating ? '実行中' : (enabled ? pair[1] : '準備中');
+    });
+    document.querySelectorAll('form[data-yaku-revise] button, [data-yaku-shorten]').forEach(function (b) {
+      b.disabled = !enabled || yakuTranslating;
+      b.title = '';
+    });
+    var catOpen = document.getElementById('cat-open-button');
+    if (catOpen && yakuCatSourceMode() === 'align') {
+      catOpen.disabled = !enabled || yakuTranslating;
+      catOpen.title = '';
+    } else if (catOpen) {
+      catOpen.disabled = yakuTranslating;
+      catOpen.title = '';
+    }
+    var catDelete = document.getElementById('cat-delete-button');
+    if (catDelete) {
+      catDelete.disabled = yakuTranslating;
+      catDelete.title = yakuTranslating ? '実行中の処理が終わってから削除できます。' : '';
+    }
+    // CATジョブ中はproject全体を固定する。別作業への切替や行編集を許すと、
+    // 開始時revisionの結果と現在画面が交差し、古い訳の混入や競合になる。
+    document.querySelectorAll('#panel-cat [data-yaku-cat-input]').forEach(function (input) {
+      input.readOnly = !!yakuTranslating;
+      input.setAttribute('aria-readonly', yakuTranslating ? 'true' : 'false');
+    });
+    document.querySelectorAll('#panel-cat [data-yaku-cat-ok], #panel-cat [data-yaku-cat-merge], #panel-cat [data-yaku-cat-split], #panel-cat [data-yaku-cat-toglossary], #panel-cat [data-yaku-cat-insert], #cat-switch-project, #cat-export-button, #cat-delete-button, [data-yaku-main-entry], [data-yaku-open-workspace]').forEach(function (control) {
+      if (yakuTranslating) {
+        if (!control.disabled) control.setAttribute('data-yaku-job-disabled', '1');
+        control.disabled = true;
+      } else if (control.hasAttribute('data-yaku-job-disabled')) {
+        control.removeAttribute('data-yaku-job-disabled');
+        if (control.id === 'cat-export-button') control.disabled = !!(yakuCatData && yakuCatData.export_blocked) || yakuCatDirtyInputs().length > 0;
+        else control.disabled = false;
+      }
     });
     yakuUpdateFileButton();
   }
@@ -267,8 +325,8 @@
     var analysis = yakuAnalyzeDirection(value);
     if (direction) {
       if (!value.trim()) direction.textContent = '-';
-      else if (selected !== 'auto') direction.textContent = (selected === 'to_en' ? '日→英' : '英他→日') + '（手動）';
-      else direction.textContent = analysis.dir === 'to_en' ? '日→英' : '英他→日';
+      else if (selected !== 'auto') direction.textContent = (selected === 'to_en' ? '日本語から英語' : '英語などから日本語') + '（指定済み）';
+      else direction.textContent = analysis.dir === 'to_en' ? '日本語から英語' : '英語などから日本語';
     }
     if (warning) warning.hidden = !(value.trim() && selected === 'auto' && analysis.conf === 'low');
   }
@@ -348,19 +406,36 @@
     // CAT は結果を共有の結果欄へ出さない。訳文はグリッドへ取り込む。
     if (yakuActiveJobKind === 'cat') {
       var catJobId = yakuActiveJobId;
-      yakuTranslating = false;
+      var catJobProjectId = yakuCatJobProjectId;
+      var catJobProjectRevision = yakuCatJobProjectRevision;
+      yakuCatJobProjectId = '';
+      yakuCatJobProjectRevision = -1;
       yakuActiveJobId = null;
       var catTarget = yakuGetResultTarget();
       if (catTarget) { catTarget.removeAttribute('aria-busy'); catTarget.innerHTML = '<div class="empty-state">実行中ジョブと翻訳結果はここに表示されます</div>'; }
-      yakuSetButtonEnabled(yakuReady);
-      yakuPollReadyState();
       // 突き合わせは訳文ではなく対応を返す。組み立てが違うので分ける。
-      if (yakuCatAligning) { yakuCatAligning = false; yakuCatAlignApply(catJobId); }
-      else { yakuCatApply(catJobId); }
+      var applyPromise;
+      if (yakuCatDirtyInputs().length || Object.keys(yakuCatSavePromises).length) {
+        yakuCatSetStatus('未保存の編集があるため、翻訳結果の取り込みを停止しました。編集内容を保存してから、もう一度「残りの訳案を作る」を実行してください。');
+        yakuTranslating = false;
+        yakuSetButtonEnabled(yakuReady);
+        return;
+      }
+      if (yakuCatAligning) { yakuCatAligning = false; applyPromise = yakuCatAlignApply(catJobId); }
+      else { applyPromise = yakuCatApply(catJobId, catJobProjectId, catJobProjectRevision); }
+      Promise.resolve(applyPromise).then(function () {
+        yakuTranslating = false;
+        yakuSetButtonEnabled(yakuReady);
+        yakuPollReadyState();
+      }, function () {
+        yakuTranslating = false;
+        yakuSetButtonEnabled(yakuReady);
+        yakuPollReadyState();
+      });
       return;
     }
     var result = yakuGetResultTarget();
-    var completedKind = yakuActiveJobKind === 'file' ? 'file' : 'text';
+    var completedKind = 'text';
     var completedHtml = data && data.html ? data.html : '<div class="alert alert-warning">翻訳結果を取得できませんでした。</div>';
     yakuResultByTab[completedKind] = completedHtml;
     yakuTranslating = false;
@@ -375,7 +450,6 @@
     }
     yakuSetButtonEnabled(yakuReady);
     yakuPollReadyState();
-    if (window.htmx) window.htmx.trigger(document.body, 'yaku-history-refresh');
   }
 
   function yakuPollJobStatus() {
@@ -412,7 +486,7 @@
     if (!jobId) return;
     yakuActiveJobId = jobId;
     // CAT も残す。ここで text へ丸めると、完了時にグリッドへ取り込む枝が通らない。
-    var normalizedKind = (kind === 'file' || kind === 'cat') ? kind : 'text';
+    var normalizedKind = kind === 'cat' ? 'cat' : 'text';
     yakuActiveJobKind = normalizedKind;
     yakuTranslating = true;
     try {
@@ -436,7 +510,7 @@
       return;
     }
     yakuRestoredJobId = jobId;
-    yakuActivateTab(kind === 'file' ? 'file' : 'text');
+    yakuActivateTab('text');
     yakuRenderJobLoading(jobId, 0, 'このタブのジョブを復元しています', '結果確認中');
     yakuStartJobPolling(jobId, kind);
   }
@@ -457,7 +531,7 @@
     var result = yakuGetResultTarget();
     if (result) {
       result.removeAttribute('aria-busy');
-      var errorHtml = '<div class="alert alert-error">' + yakuEscape(error && error.message ? error.message : fallback) + '</div>';
+      var errorHtml = '<div class="alert alert-error">' + yakuEscape(yakuUserFacingError(error && error.message ? error.message : fallback)) + '</div>';
       result.innerHTML = errorHtml;
       yakuResultByTab[yakuActiveJobKind] = errorHtml;
       window.setTimeout(function () { yakuScrollCompletionIntoView(result); }, 0);
@@ -474,7 +548,6 @@
     var text = input ? input.value : '';
     if (!text.trim()) return;
     if (!yakuReady || yakuTranslating) { yakuPollReadyState(); return; }
-    if (!yakuConfirmUnsavedSettings()) return;
     yakuTranslating = true;
     yakuActiveJobKind = 'text';
     yakuSetButtonEnabled(false);
@@ -546,10 +619,152 @@
   // ファイル翻訳と同じことを、押した分だけ進める。
   // 取り込む → 用語集で置換 → 残りをCopilotで訳す → 出力。
   var yakuCatProjectId = '';
+  var yakuCatSavePromises = {};
+  var yakuCatSaveQueue = Promise.resolve();
+  var yakuCatJobProjectId = '';
+  var yakuCatJobProjectRevision = -1;
+  var yakuCatDeleteTarget = null;
   // 走っているジョブが「突き合わせ」かどうか。終わったあとの組み立てが
   // 訳文の取り込みとは違うので、ここで区別する。
   var yakuCatAligning = false;
   var yakuCatUploaded = null;
+  var yakuCatViewRequest = 0;
+  var yakuCatAlignRequest = 0;
+  var yakuCatRecentProjects = [];
+  var yakuCatOutputProjectId = '';
+  var yakuCatOutputRevision = -1;
+  var yakuCatSaveStatusTimer = null;
+  var yakuCatOperationBusy = false;
+  var yakuCatCommit = function () { return Promise.resolve(false); };
+
+  function yakuCatSetSaveStatus(text, isError) {
+    var el = document.getElementById('cat-save-status');
+    var current = document.getElementById('cat-current-save');
+    window.clearTimeout(yakuCatSaveStatusTimer);
+    var persistent = text === '保存しました' ? '保存済み' : (text || '');
+    if (el) {
+      el.hidden = !persistent;
+      el.textContent = persistent;
+      el.classList.toggle('is-error', !!isError);
+    }
+    if (current) {
+      current.textContent = persistent || '保存済み';
+      current.classList.toggle('is-error', !!isError);
+      current.classList.toggle('is-saving', /保存しています/.test(persistent));
+    }
+  }
+
+  function yakuCatSetFocusedMode(active, data) {
+    var picker = document.getElementById('cat-picker');
+    var summary = document.getElementById('cat-current-summary');
+    var danger = document.getElementById('cat-danger-zone');
+    var workspace = document.getElementById('cat-workspace');
+    if (picker) picker.hidden = !!active;
+    if (summary) summary.hidden = !active;
+    if (danger) danger.hidden = !active;
+    if (workspace) workspace.hidden = !active;
+    if (!active || !data) return;
+    var title = document.getElementById('cat-current-title');
+    var progress = document.getElementById('cat-current-progress');
+    if (title) title.textContent = data.file_name || '翻訳作業';
+    if (progress) {
+      var total = Number(data.total) || 0;
+      var confirmed = Number(data.confirmed) || 0;
+      progress.textContent = '全 ' + total + ' 行のうち ' + confirmed + ' 行を確認済み・残り ' + Math.max(0, total - confirmed) + ' 行';
+    }
+  }
+
+  function yakuCatWithOperation(button, action) {
+    if (yakuCatOperationBusy) {
+      yakuCatSetStatus('処理中です。終わってから次の操作をしてください。');
+      return Promise.resolve(null);
+    }
+    yakuCatOperationBusy = true;
+    if (button) button.disabled = true;
+    var panel = document.getElementById('panel-cat');
+    if (panel) panel.setAttribute('aria-busy', 'true');
+    var result;
+    try { result = Promise.resolve(action()); }
+    catch (error) { result = Promise.reject(error); }
+    return result.then(function (value) {
+      yakuCatOperationBusy = false;
+      if (button) button.disabled = false;
+      if (panel) panel.removeAttribute('aria-busy');
+      return value;
+    }, function (error) {
+      yakuCatOperationBusy = false;
+      if (button) button.disabled = false;
+      if (panel) panel.removeAttribute('aria-busy');
+      throw error;
+    });
+  }
+
+  function yakuCatClearOutputDisplay() {
+    yakuCatOutputProjectId = '';
+    yakuCatOutputRevision = -1;
+    var row = document.getElementById('cat-output-row');
+    var name = document.getElementById('cat-output-name');
+    if (row) {
+      row.hidden = true;
+      row.removeAttribute('data-yaku-output-project');
+      row.removeAttribute('data-yaku-output-revision');
+    }
+    if (name) name.textContent = '';
+    var textPanel = document.getElementById('cat-text-output');
+    var textValue = document.getElementById('cat-text-output-value');
+    if (textPanel) textPanel.hidden = true;
+    if (textValue) textValue.value = '';
+    var draftWarning = document.getElementById('cat-draft-warning');
+    if (draftWarning && !draftWarning.hidden) {
+      draftWarning.textContent = '作成するファイルは確認用DRAFTです。完成版ではなく、社外配布できません。';
+    }
+  }
+
+  function yakuCatMarkDirty(input) {
+    if (!input || !input.hasAttribute('data-yaku-cat-input')) return;
+    input.setAttribute('data-yaku-dirty', '1');
+    var row = input.closest('[data-yaku-cat-row]');
+    if (row) {
+      row.classList.add('cat-dirty');
+      row.classList.remove('cat-unsaved');
+    }
+    yakuCatClearOutputDisplay();
+    yakuCatSetSaveStatus('変更を保存していません', false);
+    var exportBtn = document.getElementById('cat-export-button');
+    if (exportBtn) exportBtn.disabled = true;
+  }
+
+  function yakuCatDirtyInputs() {
+    return Array.prototype.slice.call(document.querySelectorAll('[data-yaku-cat-input][data-yaku-dirty="1"]'));
+  }
+
+  function yakuCatFlushDirtyEdits() {
+    function flushPass() {
+      var dirty = yakuCatDirtyInputs();
+      var pending = Object.keys(yakuCatSavePromises).map(function (key) { return yakuCatSavePromises[key]; });
+      if (!dirty.length && !pending.length) return Promise.resolve(true);
+      var chain = Promise.resolve();
+      dirty.forEach(function (input) {
+        chain = chain.then(function () { return yakuCatCommit(input); });
+      });
+      return chain.then(function () {
+        return Promise.all(Object.keys(yakuCatSavePromises).map(function (key) { return yakuCatSavePromises[key]; }));
+      }).then(flushPass);
+    }
+    if (!yakuCatDirtyInputs().length && !Object.keys(yakuCatSavePromises).length) return Promise.resolve(true);
+    yakuCatSetSaveStatus('保存しています…', false);
+    return flushPass().then(function () {
+      yakuCatSetSaveStatus('保存しました', false);
+      return true;
+    }).catch(function (error) {
+      yakuCatSetSaveStatus('保存できませんでした。赤い行を確認してください。', true);
+      throw error;
+    });
+  }
+
+  function yakuCatAfterFlush(action) {
+    return yakuCatFlushDirtyEdits().then(action).catch(function () { return null; });
+  }
 
   function yakuCatSetStatus(text) {
     var el = document.getElementById('cat-status');
@@ -558,8 +773,10 @@
 
   function yakuCatOriginLabel(origin) {
     if (origin === 'glossary') return '用語集';
-    if (origin === 'copilot') return 'Copilot';
+    if (origin === 'copilot') return 'AI訳';
     if (origin === 'manual') return '手直し';
+    if (origin === 'carried_forward') return '前回の確認済み訳';
+    if (origin === 'numeric_update') return '前回訳の数値更新';
     return '';
   }
 
@@ -582,11 +799,40 @@
     return true;
   }
 
+  function yakuCatEligibilityHas(data, reason) {
+    return (data.eligibility_reasons || []).indexOf(reason) >= 0;
+  }
+
+  function yakuCatOutputGuidance(data) {
+    var messages = [];
+    var untranslated = Number(data.untranslated) || 0;
+    var unconfirmed = Number(data.unconfirmed);
+    if (isNaN(unconfirmed)) unconfirmed = Math.max(0, (Number(data.total) || 0) - (Number(data.confirmed) || 0));
+    var failedQc = (data.segments || []).filter(function (segment) { return (segment.qc_findings || []).length > 0; }).length;
+    if (untranslated > 0) messages.push('残り ' + untranslated + ' 行の訳案を作ってください。');
+    if (failedQc > 0) messages.push('検査エラーのある ' + failedQc + ' 行を直し、もう一度「確認済みにする」を押してください。');
+    var needsReview = Math.max(0, unconfirmed - failedQc - untranslated);
+    if (needsReview > 0) messages.push('あと ' + needsReview + ' 行を確認済みにしてください。');
+    if (yakuCatEligibilityHas(data, 'source-file-missing')) messages.push('取り込んだ元ファイルが見つかりません。元の場所へ戻すか、訳文一覧を利用してください。');
+    if (yakuCatEligibilityHas(data, 'project-empty')) messages.push('確認する文章がありません。');
+    if (!messages.length && data.export_blocked) messages.push('未確認の行または最新でない検査結果があります。');
+    return messages.join(' ');
+  }
+
   function yakuCatRender(data) {
+    var previousProjectId = yakuCatProjectId;
     if (data) yakuCatData = data;
     data = yakuCatData;
     if (!data) return;
+    if ((previousProjectId && previousProjectId !== (data.id || '')) || (yakuCatOutputProjectId && yakuCatOutputProjectId !== (data.id || ''))) {
+      yakuCatClearOutputDisplay();
+      yakuCatSetSaveStatus('', false);
+    } else if (yakuCatOutputProjectId === (data.id || '') && yakuCatOutputRevision !== (Number(data.revision) || 0)) {
+      yakuCatClearOutputDisplay();
+    }
     yakuCatProjectId = data.id || '';
+    yakuCatSetFocusedMode(!!yakuCatProjectId, data);
+    yakuCatUpdateMainResume();
     var body = document.getElementById('cat-grid-body');
     if (!body) return;
     var mode = yakuCatFilterValue();
@@ -605,7 +851,7 @@
       var loc;
       if (s.kind === 'text') loc = s.joined ? '結合' : '文';
       else if (s.kind === 'cell') loc = s.joined ? (s.cells + 'セル結合') : 'セル';
-      else loc = (s.kind === 'shape') ? '図形' : (s.kind === 'chart' ? 'グラフ' : s.kind);
+      else loc = (s.kind === 'shape') ? '図形' : (s.kind === 'chart' ? 'グラフ' : (s.kind === 'word_paragraph' ? '段落' : (s.kind === 'word_table' ? '表内' : (s.kind.indexOf('word_') === 0 ? '文書付属領域' : s.kind))));
       var origin = yakuCatOriginLabel(s.origin);
       // 繋ぎ直しの操作。自動で完璧に分けるのは無理なので、外れたら人が直す。
       var ops = '';
@@ -618,23 +864,56 @@
       // 行の状態を色で示す。市販の CAT エディタは状態列を色で分けており、
       // 一覧を眺めたときに「どこが手つかずか」が一目で分かる。
       // 状態は3つ。訳が入っているかと、人が見たかは別物である。
-      var state = s.status || ((s.translation || '').trim() ? 'draft' : 'untranslated');
-      var stateLabel = state === 'confirmed' ? '確定' : (state === 'draft' ? '下訳' : '未翻訳');
+      var state = s.status || ((s.translation || '').trim() ? 'machine_draft' : 'untranslated');
+      var stateLabel = state === 'reviewed' ? '確認済み' :
+        (state === 'human_edited' ? '手編集・未確認' :
+        (state === 'machine_draft' ? 'AI訳・未確認' : (state === 'stale' ? '再確認必要' : '未翻訳')));
+      var findingLabels = {
+        'empty': '訳文が空です。',
+        'invalid-or-source-fallback': '訳文として成立していないか、原文のままです。',
+        'placeholder-residue': '保護用の記号が訳文に残っています。',
+        'numeric-integrity': '数値または単位が原文と一致しません。',
+        'numeric-value-mismatch': '原文と異なる数値、または不足している数値があります。',
+        'numeric-value-extra': '原文にない数値が訳文へ追加されています。',
+        'numeric-scale-mismatch': 'million / billion と億円の桁が一致しません。',
+        'numeric-sign-missing': '損失・減少を示す符号が訳文に反映されていません。',
+        'accounting-polarity-mismatch': '利益と損失、または増加と減少の向きが原文と一致しません。',
+        'currency-mismatch': '通貨単位が原文と一致しません。',
+        'proper-noun-missing': '固有名詞が訳文に反映されていません。',
+        'structure-integrity': '見出しまたは箇条書きの構造が原文と一致しません。',
+        'numeric-validation-error': '数値検査を完了できませんでした。',
+        'proper-noun-validation-error': '固有名詞検査を完了できませんでした。',
+        'structure-validation-error': '構造検査を完了できませんでした。'
+      };
+      var findings = (s.qc_findings || []).map(function (finding) {
+        finding = finding || {};
+        var code = String(finding.code || finding.Code || '').toLowerCase().replace(/_/g, '-');
+        return findingLabels[code] || '確認が必要な問題があります。';
+      });
+      var findingId = 'cat-qc-' + s.index;
+      var findingsHtml = findings.length ? '<div id="' + findingId + '" class="cat-qc-findings" role="alert">' + findings.map(function (message) { return '<div>' + yakuEscape(message) + '</div>'; }).join('') + '</div>' : '';
+      var describedBy = findings.length ? ' aria-describedby="' + findingId + '" aria-invalid="true"' : ' aria-invalid="false"';
       rows.push(
         '<tr data-yaku-cat-row="' + s.index + '" data-yaku-cat-state="' + yakuEscape(state) + '"' +
         ' data-yaku-confirmed="' + (s.confirmed ? '1' : '0') + '">' +
-        '<td class="cat-col-no">' + (s.index + 1) + '<span class="cat-state cat-state-' + state + '">' + stateLabel + '</span></td>' +
-        '<td class="cat-col-loc"><span class="cat-loc" title="' + yakuEscape(s.location || '') + '">' + yakuEscape(loc) + '</span>' +
+        '<td class="cat-col-no"><span class="cat-card-label" aria-hidden="true">行番号・状態</span>' + (s.index + 1) + '<span class="cat-state cat-state-' + state + '">' + stateLabel + '</span></td>' +
+        '<td class="cat-col-loc"><span class="cat-card-label" aria-hidden="true">場所</span><span class="cat-loc" title="' + yakuEscape(s.location || '') + '">' + yakuEscape(loc) + '</span>' +
         (origin ? '<span class="cat-origin cat-origin-' + yakuEscape(s.origin) + '">' + yakuEscape(origin) + '</span>' : '') +
         (ops ? '<span class="cat-ops">' + ops + '</span>' : '') + '</td>' +
-        '<td class="cat-source">' + yakuEscape(s.source) + '</td>' +
-        '<td class="cat-target"><textarea rows="2" aria-label="' + rowNumber + '行目の訳文" data-yaku-cat-input="' + s.index + '" data-yaku-original="' + yakuEscape(s.translation || '') + '">' + yakuEscape(s.translation || '') + '</textarea>' +
+        '<td class="cat-source"><span class="cat-card-label" aria-hidden="true">原文</span>' + yakuEscape(s.source) + '</td>' +
+        '<td class="cat-target"><span class="cat-card-label" aria-hidden="true">訳文</span><textarea rows="3" aria-label="' + rowNumber + '行目の訳文・' + yakuEscape(stateLabel) + '"' + describedBy + ' data-yaku-cat-input="' + s.index + '" data-yaku-original="' + yakuEscape(s.translation || '') + '">' + yakuEscape(s.translation || '') + '</textarea>' +
+          ((s.prior_translation || s.prior_source_text) ?
+            '<details class="cat-prior-reference"><summary>前回の文章と訳を見る</summary>' +
+              (s.prior_source_text ? '<div><strong>前回の日本語</strong><br>' + yakuEscape(s.prior_source_text) + '</div>' : '') +
+              (s.prior_translation ? '<div><strong>前回の英語</strong><br>' + yakuEscape(s.prior_translation) + '</div>' : '') +
+            '</details>' : '') +
           // キーボードだけでなくマウスでも進められるようにする。
           // 四半期に1回しか使わない人が Ctrl+Enter を覚えている前提は成り立たない。
           '<div class="cat-row-actions">' +
-          (s.confirmed ? '' : '<button type="button" class="cat-op cat-op-ok" aria-label="' + rowNumber + '行目をこれで確定" data-yaku-cat-ok="' + s.index + '">これでよい</button>') +
+          (s.confirmed ? '' : '<button type="button" class="cat-op cat-op-ok" aria-label="' + rowNumber + '行目を確認済みにする" data-yaku-cat-ok="' + s.index + '">確認済みにする</button>') +
           ((s.kind === 'cell' && (s.translation || '').trim() && s.source.length <= 40) ? '<button type="button" class="cat-op" aria-label="' + rowNumber + '行目を用語集に追加" data-yaku-cat-toglossary="' + s.index + '">用語集に追加</button>' : '') +
           '</div>' +
+          findingsHtml +
           (s.can_revise ? '<form class="revise-form" data-yaku-cat-revise="' + s.index + '">' +
             '<label class="revise-label" for="cat-revise-' + s.index + '">この訳をどう直すか</label>' +
             '<div class="revise-row"><input id="cat-revise-' + s.index + '" class="revise-input" type="text" autocomplete="off" placeholder="例：主語を省き、簡潔に">' +
@@ -700,26 +979,110 @@
       }
     }
     var translateBtn = document.getElementById('cat-translate-button');
-    if (translateBtn) translateBtn.textContent = data.corpus_ready ? '文例を使って残りを翻訳' : '残りをCopilotで翻訳';
+    if (translateBtn) {
+      translateBtn.textContent = '残りの訳案を作る';
+      translateBtn.disabled = !yakuReady || yakuTranslating;
+      translateBtn.title = '';
+    }
+    var promotionReference = document.getElementById('cat-promotion-reference');
+    var promotionReferenceText = document.getElementById('cat-promotion-reference-text');
+    if (promotionReference) promotionReference.hidden = !(data.promotion_reference_translation || '').trim();
+    if (promotionReferenceText) promotionReferenceText.value = data.promotion_reference_translation || '';
+    var runButton = document.getElementById('cat-run-button');
+    if (runButton) {
+      runButton.disabled = !yakuReady || yakuTranslating;
+      runButton.title = '';
+    }
+    var glossaryButton = document.getElementById('cat-glossary-button');
+    var glossaryCount = document.getElementById('cat-glossary-count');
+    if (glossaryButton) glossaryButton.disabled = !(Number(data.glossary_candidates) > 0);
+    if (glossaryCount) glossaryCount.textContent = Number(data.glossary_candidates) > 0 ? ('（' + data.glossary_candidates + ' 行）') : '';
+    var corpusButton = document.getElementById('cat-corpus-button');
+    if (corpusButton) corpusButton.disabled = !yakuReady || yakuTranslating;
+    document.querySelectorAll('[data-yaku-cat-revise] button').forEach(function (button) {
+      button.disabled = !yakuReady || yakuTranslating;
+      button.title = '';
+    });
     // 貼り付けたテキストは書き戻す元が無い。出口が違うので言葉も変える。
     var exportBtn = document.getElementById('cat-export-button');
+    var sourceMissing = yakuCatEligibilityHas(data, 'source-file-missing');
+    var wordFileReady = data.document_format === 'docx' && !!data.word_file_output_supported && !sourceMissing;
     if (exportBtn) {
-      exportBtn.textContent = (data.source === 'text') ? '訳文をコピー' : '出力';
+      exportBtn.textContent = (data.source === 'file')
+        ? ((data.document_format === 'docx') ? (wordFileReady ? '確認用Word DRAFT（外部配布不可）を作る' : '確認済み訳文一覧をコピー') : '確認用Excel DRAFT（外部配布不可）を作る')
+        : '確認済み訳文一覧をコピー';
       // 元ファイルが無ければ再抽出できない。存在する場合は出力時に
       // 原文を再対応付けし、曖昧なら書き込む前に停止する。
-      exportBtn.disabled = !!data.export_blocked;
-      exportBtn.title = data.export_blocked
-        ? '元の Excel が見つかりません。移動または削除されていないか確認してください。'
-        : '';
+      exportBtn.disabled = !!data.export_blocked || yakuCatDirtyInputs().length > 0;
+      exportBtn.title = data.export_blocked ? yakuCatOutputGuidance(data) : '';
     }
     var blockedNote = document.getElementById('cat-export-blocked');
-    if (blockedNote) blockedNote.hidden = !data.export_blocked;
-    // 突き合わせたときだけ「文例として保存」を出す。
+    if (blockedNote) {
+      blockedNote.hidden = !data.export_blocked;
+      blockedNote.textContent = data.export_blocked ? yakuCatOutputGuidance(data) : '';
+    }
+    var outputHelp = document.getElementById('cat-output-help');
+    var draftWarning = document.getElementById('cat-draft-warning');
+    var draftAvailable = data.source === 'file' && !sourceMissing && (data.document_format !== 'docx' || wordFileReady);
+    if (draftWarning) {
+      draftWarning.hidden = !draftAvailable;
+      var hasCurrentDraft = yakuCatOutputProjectId === (data.id || '') && yakuCatOutputRevision === (Number(data.revision) || 0);
+      draftWarning.textContent = hasCurrentDraft
+        ? '確認用DRAFTを作成しました。完成版ではありません。社外配布しないでください。'
+        : '作成するファイルは確認用DRAFTです。完成版ではなく、社外配布できません。';
+    }
+    if (outputHelp) {
+      if (data.source !== 'file') {
+        outputHelp.hidden = true;
+        outputHelp.textContent = '';
+      } else if (data.document_format === 'docx' && !wordFileReady) {
+        outputHelp.hidden = false;
+        outputHelp.textContent = sourceMissing
+          ? '元のWordが見つからないため、Wordファイルは作らず確認済み訳文一覧をコピーします。'
+          : 'このWordには未対応の体裁があるため、Wordファイルは作らず確認済み訳文一覧をコピーします。';
+      } else {
+        outputHelp.hidden = false;
+        outputHelp.textContent = '作成するファイルは確認作業用です。完成版・外部公表可能資料ではありません。ファイル名と文書内にDRAFTを表示します。';
+      }
+    }
+    // 公表実績を検証する取込経路ができるまで、公開コーパス登録は出さない。
     var saveBtn = document.getElementById('cat-save-corpus-button');
-    if (saveBtn) saveBtn.hidden = (data.source !== 'align');
-    yakuCatSetStatus(data.file_name + ' … ' + data.total + ' 行（訳あり ' + data.translated + ' / 残り ' + data.remaining + '、結合 ' + data.joined + '）');
+    if (saveBtn) saveBtn.hidden = true;
+    var deleteBtn = document.getElementById('cat-delete-button');
+    if (deleteBtn) {
+      deleteBtn.disabled = yakuTranslating;
+      deleteBtn.title = yakuTranslating ? '実行中の処理が終わってから削除できます。' : '';
+    }
+    var versionNote = '';
+    if (data.version_update) {
+      versionNote = '・前回から引継ぎ ' + (Number(data.version_update.CarriedForward) || 0) +
+        ' / 数値更新 ' + (Number(data.version_update.NumericUpdated) || 0) +
+        ' / 変更・新規 ' + ((Number(data.version_update.Changed) || 0) + (Number(data.version_update.New) || 0));
+    }
+    var wordWarning = (data.source === 'file' && data.document_format === 'docx' && data.word_inventory && !data.word_inventory.draft_structure_eligible)
+      ? '・このWordは未対応の体裁を含むため、訳文一覧で仕上げます（Wordファイルは出力しません）'
+      : '';
+    yakuCatSetStatus(data.review_blocked ? '確認できませんでした。赤く表示された検査結果を直してください。' : (data.file_name + ' … ' + data.total + ' 行（訳あり ' + data.translated + ' / 残り ' + data.remaining + '、結合 ' + data.joined + versionNote + '）' + wordWarning));
     yakuCatUpdateProgress(data);
     yakuCatRefreshUsage();
+    if (yakuTranslating) yakuSetButtonEnabled(false);
+    if (yakuCatFocusFirstAfterRender) {
+      yakuCatFocusFirstAfterRender = false;
+      window.setTimeout(function () {
+        var reference = (data.promotion_reference_translation || '').trim() ? document.getElementById('cat-promotion-reference-text') : null;
+        if (reference) {
+          yakuCatSetStatus('文数が合わないため、訳案を自動配置していません。下の訳案を見ながら1文ずつ確認してください。');
+          reference.focus();
+          reference.scrollIntoView({ behavior: yakuScrollBehavior(), block: 'center' });
+          return;
+        }
+        var first = document.querySelector('[data-yaku-cat-row][data-yaku-confirmed="0"] [data-yaku-cat-input]') || document.querySelector('[data-yaku-cat-input]');
+        if (!first) return;
+        first.focus();
+        try { first.setSelectionRange(first.value.length, first.value.length); } catch (e) {}
+        first.scrollIntoView({ behavior: yakuScrollBehavior(), block: 'center' });
+      }, 0);
+    }
   }
 
   function yakuCatUpdateUsage() {
@@ -770,14 +1133,22 @@
     if (text) text.textContent = left > 0
       ? ('全 ' + total + ' 行のうち ' + confirmed + ' 行を確認しました。残り ' + left + ' 行です。')
       : ('全 ' + total + ' 行の確認が終わりました。');
+    var currentProgress = document.getElementById('cat-current-progress');
+    if (currentProgress) currentProgress.textContent = left > 0
+      ? ('全 ' + total + ' 行のうち ' + confirmed + ' 行を確認済み・残り ' + left + ' 行')
+      : ('全 ' + total + ' 行の確認が終わりました');
   }
 
   function yakuCatPost(action, payload) {
+    payload = payload || {};
+    if (payload.id && yakuCatData && yakuCatData.id === payload.id && typeof payload.expected_revision === 'undefined') {
+      payload.expected_revision = Number(yakuCatData.revision) || 0;
+    }
     return yakuJsonPost('/api/cat/' + action, payload).then(function (response) {
       return response.text().then(function (text) {
         var data = null;
         try { data = JSON.parse(text); } catch (e) { data = null; }
-        if (!response.ok) throw new Error((data && data.error) ? data.error : text);
+        if (!response.ok) throw new Error(yakuUserFacingError((data && data.error) ? data.error : text));
         return data;
       });
     });
@@ -817,58 +1188,150 @@
     return Promise.reject(new Error('ファイルを選択するか、ローカルパスを入力してください。'));
   }
 
+  function yakuCatUpdateMainResume() {
+    var mainResume = document.getElementById('open-resume-workspace');
+    if (!mainResume) return;
+    if (yakuCatProjectId && yakuCatData) {
+      mainResume.hidden = false;
+      mainResume.textContent = '確認作業に戻る';
+      mainResume.setAttribute('data-yaku-current-project', yakuCatProjectId);
+      mainResume.removeAttribute('data-yaku-resume-id');
+      return;
+    }
+    mainResume.removeAttribute('data-yaku-current-project');
+    if (yakuCatRecentProjects.length === 1) {
+      mainResume.textContent = '前回の翻訳作業を続ける';
+      mainResume.setAttribute('data-yaku-resume-id', yakuCatRecentProjects[0].id || '');
+    } else {
+      mainResume.textContent = '保存した作業を選ぶ（' + yakuCatRecentProjects.length + '件）';
+      mainResume.removeAttribute('data-yaku-resume-id');
+    }
+  }
+
+  function yakuCatSavedLabel(project) {
+    var direction = project.direction === 'to_jp' ? '英語などから日本語' : '日本語から英語';
+    var remaining = Math.max(0, (Number(project.total) || 0) - (Number(project.confirmed) || 0));
+    var saved = '';
+    try {
+      var date = new Date(project.saved);
+      if (!isNaN(date.getTime())) saved = date.toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    } catch (e) {}
+    return (project.file_name || '名称未設定') + '・' + direction + '・' + (remaining ? ('あと' + remaining + '行') : '確認完了') + (saved ? ('・' + saved) : '');
+  }
+
   // 前回の続きを出す。閉じても再起動しても戻せることを、目に見える形にする。
   function yakuCatLoadRecent() {
     yakuCatPost('recent', {}).then(function (data) {
       var box = document.getElementById('cat-resume');
       var list = document.getElementById('cat-resume-list');
+      var mainResume = document.getElementById('open-resume-workspace');
       if (!box || !list) return;
       var items = (data.projects || []).filter(function (p) { return p.total > 0; });
-      if (!items.length) { box.hidden = true; return; }
+      yakuCatRecentProjects = items;
+      if (!items.length) {
+        box.hidden = true;
+        if (mainResume && !(yakuCatProjectId && yakuCatData)) mainResume.hidden = true;
+        yakuCatUpdateMainResume();
+        return;
+      }
       box.hidden = false;
-      list.innerHTML = items.slice(0, 3).map(function (p) {
-        var pct = p.total ? Math.round((p.confirmed / p.total) * 100) : 0;
-        // 元Excelが無いものは再対応付けできない。開く前に分かるようにする。
-        var note = p.export_blocked ? '・出力不可' : '';
-        return '<button type="button" class="cat-op" data-yaku-cat-resume="' + yakuEscape(p.id) + '">' +
-          yakuEscape(p.file_name) + '（確認 ' + pct + '%' + note + '）</button>';
-      }).join(' ');
-    }).catch(function () {});
+      if (mainResume) mainResume.hidden = false;
+      list.innerHTML = items.slice(0, 10).map(function (p, index) {
+        return '<button type="button" class="cat-resume-card" data-yaku-cat-resume="' + yakuEscape(p.id) + '">' +
+          (index === 0 ? '<span class="cat-resume-recent">前回開いた作業</span>' : '') + yakuEscape(yakuCatSavedLabel(p)) + '</button>';
+      }).join('');
+      yakuCatUpdateMainResume();
+    }).catch(function () {
+      var box = document.getElementById('cat-resume');
+      var list = document.getElementById('cat-resume-list');
+      if (box && list) {
+        box.hidden = false;
+        list.innerHTML = '<div class="alert alert-error">保存した作業を読み込めませんでした。少し待ってから「文章を訳す画面へ戻る」を押し、もう一度お試しください。</div>';
+      }
+    });
   }
 
-  function yakuCatResume(id) {
+  function yakuCatResume(id, editsFlushed) {
+    if (yakuTranslating) { yakuCatSetStatus('処理中は別の作業を開けません。'); return Promise.resolve(null); }
+    if (!editsFlushed) return yakuCatAfterFlush(function () { return yakuCatResume(id, true); });
+    var request = ++yakuCatViewRequest;
+    yakuCatFocusFirstAfterRender = true;
     yakuCatSetStatus('前回の作業を読み込んでいます…');
-    yakuCatPost('resume', { project_id: id }).then(yakuCatRender).catch(function (error) {
+    return yakuCatPost('resume', { project_id: id }).then(function (data) {
+      if (request !== yakuCatViewRequest) return;
+      yakuCatRender(data);
+    }).catch(function (error) {
+      if (request !== yakuCatViewRequest) return;
       yakuCatSetStatus('前回の作業を読み込めませんでした: ' + (error && error.message ? error.message : ''));
     });
   }
 
-  function yakuCatOpen(existingTranslation) {
+  function yakuCatOpen(existingTranslation, editsFlushed) {
+    if (yakuTranslating) { yakuCatSetStatus('処理中は新しい作業を始められません。'); return Promise.resolve(null); }
+    if (!editsFlushed) return yakuCatAfterFlush(function () { return yakuCatOpen(existingTranslation, true); });
+    var request = ++yakuCatViewRequest;
     var checked = document.querySelector('input[name="cat_direction"]:checked');
     yakuCatSetStatus('取り込んでいます…');
-    yakuCatSource().then(function (source) {
+    return yakuCatSource().then(function (source) {
       source.direction = checked ? checked.value : 'to_en';
       // 簡易翻訳から渡された訳文があれば一緒に送る。
       // 開いた瞬間に原文と訳文が並ぶので、押すボタンがゼロで確認に入れる。
       if (existingTranslation) { source.translation = existingTranslation; }
       return yakuCatPost('open', source);
-    }).then(yakuCatRender).catch(function (error) {
+    }).then(function (data) {
+      if (request !== yakuCatViewRequest) { yakuCatLoadRecent(); return; }
+      yakuCatRender(data);
+    }).catch(function (error) {
+      if (request !== yakuCatViewRequest) return;
       yakuCatSetStatus('取り込めませんでした: ' + (error && error.message ? error.message : ''));
     });
   }
 
-  function yakuCatGlossary() {
+  function yakuCatOpenPriorVersion(editsFlushed) {
+    if (yakuTranslating) { yakuCatSetStatus('処理中は新しい作業を始められません。'); return Promise.resolve(null); }
+    if (!editsFlushed) return yakuCatAfterFlush(function () { return yakuCatOpenPriorVersion(true); });
+    var request = ++yakuCatViewRequest;
+    var current = document.getElementById('cat-current-ja');
+    var priorJa = document.getElementById('cat-prior-ja');
+    var priorEn = document.getElementById('cat-prior-en');
+    var name = document.getElementById('cat-prior-name');
+    var currentText = current ? current.value : '';
+    var priorJaText = priorJa ? priorJa.value : '';
+    var priorEnText = priorEn ? priorEn.value : '';
+    if (!currentText.trim()) { yakuCatSetStatus('今回の日本語を貼り付けてください。'); if (current) current.focus(); return; }
+    if (!!priorJaText.trim() !== !!priorEnText.trim()) { yakuCatSetStatus('前回の資料は日本語と英語を両方貼り付けてください。'); return; }
+    yakuCatSetStatus('前回と今回を比べています…');
+    return yakuCatPost('from-prior-version', {
+      current_ja: currentText,
+      prior_ja: priorJaText,
+      prior_en: priorEnText,
+      document_name: name ? name.value.trim() : ''
+    }).then(function (data) {
+      if (request !== yakuCatViewRequest) { yakuCatLoadRecent(); return; }
+      yakuCatRender(data);
+    }).catch(function (error) {
+      if (request !== yakuCatViewRequest) return;
+      yakuCatSetStatus('前回の資料を使った作業を始められませんでした: ' + (error && error.message ? error.message : ''));
+    });
+  }
+
+  function yakuCatGlossary(editsFlushed) {
     if (!yakuCatProjectId) return;
+    if (yakuTranslating) { yakuCatSetStatus('処理中は用語集を適用できません。'); return Promise.resolve(null); }
+    if (!editsFlushed) return yakuCatAfterFlush(function () { return yakuCatGlossary(true); });
     yakuCatSetStatus('用語集で置換しています…');
-    yakuCatPost('glossary', { id: yakuCatProjectId }).then(yakuCatRender).catch(function (error) {
+    return yakuCatPost('glossary', { id: yakuCatProjectId }).then(yakuCatRender).catch(function (error) {
       yakuCatSetStatus('置換できませんでした: ' + (error && error.message ? error.message : ''));
     });
   }
 
-  function yakuCatTranslate(mode) {
+  function yakuCatTranslate(mode, editsFlushed) {
     if (!yakuCatProjectId) {
       yakuCatSetStatus('先に原文を取り込んでください。');
       return;
+    }
+    if (!editsFlushed) {
+      return yakuCatAfterFlush(function () { return yakuCatTranslate(mode, true); });
     }
     // 黙って戻らない。何も起きない画面は、壊れているのと区別が付かない。
     if (yakuTranslating) {
@@ -884,57 +1347,76 @@
     // 概算の再取得中も二重起動を防ぐ。応答を待つ数百msだけ無防備だと、
     // ダブルクリックで同じ残りを2ジョブへ送ってしまう。
     yakuTranslating = true;
+    yakuCatJobProjectId = yakuCatProjectId;
+    yakuCatJobProjectRevision = yakuCatData ? (Number(yakuCatData.revision) || 0) : 0;
     yakuActiveJobKind = 'cat';
     yakuSetButtonEnabled(false);
     var beforeStart = requestedMode === 'translate' ? yakuCatRefreshUsage() : Promise.resolve(null);
-    beforeStart.then(function () {
-      yakuRenderJobLoading('', 0, requestedMode === 'corpus' ? '文例を検索中' : 'Copilotで翻訳中', '準備中');
+    return beforeStart.then(function () {
+      yakuRenderJobLoading('', 0, requestedMode === 'corpus' ? '参考文例を準備中' : 'Copilotで翻訳中', '準備中');
       yakuScrollJobResultIntoView();
       // ジョブは別のランスペースで走る。各成功バッチはチェックポイントへ
       // 保存し、完了後の apply では最終結果を取り込む。
-      return yakuJsonPost('/api/cat/translate', { id: yakuCatProjectId, mode: requestedMode }).then(yakuResponseText).then(yakuStartFromHtml);
+      return yakuJsonPost('/api/cat/translate', { id: yakuCatJobProjectId, mode: requestedMode, expected_revision: yakuCatJobProjectRevision }).then(yakuResponseText).then(yakuStartFromHtml);
     }).catch(function (error) {
-      yakuShowStartError(error, requestedMode === 'corpus' ? '文例を検索できませんでした。' : 'Copilot翻訳を開始できませんでした。');
+      yakuCatJobProjectId = '';
+      yakuCatJobProjectRevision = -1;
+      yakuShowStartError(error, requestedMode === 'corpus' ? '参考文例を表示できませんでした。' : 'Copilot翻訳を開始できませんでした。');
     });
   }
 
-  function yakuCatRevise(form) {
+  function yakuCatRevise(form, editsFlushed) {
     if (!yakuCatProjectId || !form) return;
     var input = form.querySelector('.revise-input');
     var instruction = input ? input.value.trim() : '';
     var index = parseInt(form.getAttribute('data-yaku-cat-revise'), 10);
     if (!instruction) { if (input) input.focus(); return; }
+    if (!editsFlushed) {
+      return yakuCatAfterFlush(function () { return yakuCatRevise(form, true); });
+    }
     if (yakuTranslating) {
       yakuCatSetStatus('いま別の処理を実行しています。終わってからもう一度お試しください。');
       return;
     }
     if (!yakuReady) { yakuPollReadyState(); return; }
     yakuTranslating = true;
+    yakuCatJobProjectId = yakuCatProjectId;
+    yakuCatJobProjectRevision = yakuCatData ? (Number(yakuCatData.revision) || 0) : 0;
     yakuActiveJobKind = 'cat';
     yakuSetButtonEnabled(false);
     yakuRenderJobLoading('', 0, '修正を依頼中', '準備中');
     yakuScrollJobResultIntoView();
-    yakuJsonPost('/api/cat/translate', {
-      id: yakuCatProjectId,
+    return yakuJsonPost('/api/cat/translate', {
+      id: yakuCatJobProjectId,
       mode: 'revise',
       index: index,
-      instruction: instruction
+      instruction: instruction,
+      expected_revision: yakuCatJobProjectRevision
     }).then(yakuResponseText).then(yakuStartFromHtml).catch(function (error) {
+      yakuCatJobProjectId = '';
+      yakuCatJobProjectRevision = -1;
       yakuShowStartError(error, '修正を依頼できませんでした。');
     });
   }
 
-  function yakuCatApply(jobId) {
-    if (!yakuCatProjectId || !jobId) return;
+  function yakuCatApply(jobId, projectId, projectRevision) {
+    projectId = projectId || yakuCatProjectId;
+    if (!projectId || !jobId) return;
     yakuCatSetStatus('訳文を取り込んでいます…');
-    yakuCatPost('apply', { id: yakuCatProjectId, job_id: jobId }).then(yakuCatRender).catch(function (error) {
-      yakuCatSetStatus('訳文を取り込めませんでした: ' + (error && error.message ? error.message : ''));
+    return yakuCatPost('apply', { id: projectId, job_id: jobId, expected_revision: Number(projectRevision) || 0 }).then(function (data) {
+      if (yakuCatProjectId === projectId) yakuCatRender(data);
+      else yakuCatLoadRecent();
+      return data;
+    }).catch(function (error) {
+      if (yakuCatProjectId === projectId) yakuCatSetStatus('訳文を取り込めませんでした: ' + (error && error.message ? error.message : ''));
     });
   }
 
   // 既にある訳と突き合わせる。数分かかるのでジョブで走らせ、
   // 終わったら対を受け取ってグリッドを組み立てる。
-  function yakuCatAlign() {
+  function yakuCatAlign(editsFlushed) {
+    if (!editsFlushed) return yakuCatAfterFlush(function () { return yakuCatAlign(true); });
+    yakuCatAlignRequest = ++yakuCatViewRequest;
     var src = document.getElementById('cat-align-source');
     var tgt = document.getElementById('cat-align-target');
     var name = document.getElementById('cat-align-name');
@@ -951,7 +1433,7 @@
     // 存在しない関数名（yakuPostJson）と、HTML を jobId として渡す誤りを
     // 同時に入れていた。押した瞬間に落ち、しかも同期例外なので catch にも
     // 入らず「数分かかります」と出たまま止まっていた（2026-08-08 に判明）。
-    yakuJsonPost('/api/cat/align', {
+    return yakuJsonPost('/api/cat/align', {
       direction: dir ? dir.value : 'to_en',
       source_text: src.value,
       target_text: tgt.value,
@@ -967,21 +1449,28 @@
 
   function yakuCatAlignApply(jobId) {
     if (!jobId) return;
+    var request = yakuCatAlignRequest;
     var name = document.getElementById('cat-align-name');
     var dir = document.querySelector('input[name="cat_direction"]:checked');
     yakuCatSetStatus('対応を取り込んでいます…');
-    yakuCatPost('align-apply', {
+    return yakuCatPost('align-apply', {
       job_id: jobId,
       direction: dir ? dir.value : 'to_en',
       file_name: name ? name.value : ''
-    }).then(yakuCatRender).catch(function (error) {
+    }).then(function (data) {
+      if (request !== yakuCatViewRequest) { yakuCatLoadRecent(); return; }
+      yakuCatRender(data);
+    }).catch(function (error) {
+      if (request !== yakuCatViewRequest) return;
       yakuCatSetStatus('対応を取り込めませんでした: ' + (error && error.message ? error.message : ''));
     });
   }
 
   // 確かめた対訳を文例として貯める。押すまで貯まらない。
-  function yakuCatSaveCorpus() {
+  function yakuCatSaveCorpus(editsFlushed) {
     if (!yakuCatProjectId) return;
+    if (yakuTranslating) { yakuCatSetStatus('処理中は文例を保存できません。'); return Promise.resolve(null); }
+    if (!editsFlushed) return yakuCatAfterFlush(function () { return yakuCatSaveCorpus(true); });
     var name = document.getElementById('cat-align-name');
     var database = window.prompt('どの資料の文例として保存しますか（例: 有報、決算短信）', (name && name.value) ? name.value : '対訳');
     if (!database) return;
@@ -993,21 +1482,32 @@
     });
   }
 
-  function yakuCatExport() {
+  function yakuCatExport(editsFlushed) {
     if (!yakuCatProjectId) return;
+    if (yakuTranslating) { yakuCatSetStatus('処理中は出力できません。'); return Promise.resolve(null); }
+    if (!editsFlushed) {
+      return yakuCatAfterFlush(function () { return yakuCatExport(true); });
+    }
+    yakuCatClearOutputDisplay();
     yakuCatSetStatus('出力しています…');
-    yakuCatPost('export', { id: yakuCatProjectId }).then(function (data) {
+    return yakuCatPost('export', { id: yakuCatProjectId }).then(function (data) {
       // 貼り付けたテキストは書き戻す元が無いので、繋いだ訳文をクリップボードへ。
       // 簡易翻訳と同じ終わり方にして、覚えることを増やさない。
       if (data.text) {
+        var textPanel = document.getElementById('cat-text-output');
+        var textValue = document.getElementById('cat-text-output-value');
+        if (textPanel) textPanel.hidden = false;
+        if (textValue) textValue.value = data.text;
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(data.text).then(function () {
-            yakuCatSetStatus('訳文をコピーしました（' + data.written + '件）。');
+            yakuCatSetStatus('訳文をコピーしました（' + data.written + '件）。全文は下の欄にも残しています。');
           }, function () {
-            yakuCatSetStatus('訳文はできましたが、コピーできませんでした。訳文欄から選んでコピーしてください。');
+            yakuCatSetStatus('コピーできませんでした。下の「確認済み訳文」に全文を残しました。「もう一度コピー」または「全文を選択」を使ってください。');
+            if (textValue) { textValue.focus(); textValue.select(); }
           });
         } else {
-          yakuCatSetStatus('訳文はできましたが、コピーできませんでした。訳文欄から選んでコピーしてください。');
+          yakuCatSetStatus('コピー機能を使えません。下の「確認済み訳文」に全文を残しました。「全文を選択」を使ってください。');
+          if (textValue) { textValue.focus(); textValue.select(); }
         }
         return;
       }
@@ -1018,8 +1518,18 @@
       if (openRow && nameEl) {
         openRow.hidden = false;
         nameEl.textContent = data.output_name || data.output_path;
+        yakuCatOutputProjectId = yakuCatProjectId;
+        yakuCatOutputRevision = yakuCatData ? (Number(yakuCatData.revision) || 0) : 0;
+        openRow.setAttribute('data-yaku-output-project', yakuCatOutputProjectId);
+        openRow.setAttribute('data-yaku-output-revision', String(yakuCatOutputRevision));
       }
-      yakuCatSetStatus('出力しました。下の「フォルダを開く」でファイルの場所を開けます。');
+      yakuCatSetStatus('確認用DRAFTを作成しました。完成版ではなく、社外配布できません。下の「フォルダを開く」で場所を開けます。');
+      var warning = document.getElementById('cat-draft-warning');
+      if (warning) {
+        warning.hidden = false;
+        warning.textContent = '確認用DRAFTを作成しました。完成版ではありません。社外配布しないでください。';
+        warning.focus();
+      }
     }).catch(function (error) {
       yakuCatSetStatus('出力できませんでした: ' + (error && error.message ? error.message : ''));
     });
@@ -1057,18 +1567,24 @@
         } else {
           tag = c.exact ? '用語集（完全一致）' : '用語集（文中）';
         }
+        if (c.database) tag += ' / ' + String(c.database);
         return '<button type="button" class="cat-cand" data-yaku-cat-insert="' + yakuEscape(c.target) + '">' +
           '<span class="cat-cand-no">' + (i + 1) + '</span>' +
-          '<span class="cat-cand-tag' + (c.exact ? ' is-exact' : '') + '">' + tag + '</span>' +
+          '<span class="cat-cand-tag' + (c.exact ? ' is-exact' : '') + '">' + yakuEscape(tag) + '</span>' +
           '<span class="cat-cand-src">' + yakuEscape(c.source) + '</span>' +
           '<span class="cat-cand-tgt">' + yakuEscape(c.target) + '</span>' +
           '</button>';
       }).join('');
+      if (yakuTranslating) yakuSetButtonEnabled(false);
     }).catch(function () {});
   }
 
   function yakuCatInsert(input, text) {
     if (!input || !text) return;
+    if (yakuTranslating || yakuCatOperationBusy) {
+      yakuCatSetStatus('処理中は訳文を変更できません。完了してからお試しください。');
+      return;
+    }
     // 空なら丸ごと入れる。書きかけならカーソル位置へ差し込む。
     if (!input.value.trim()) { input.value = text; }
     else {
@@ -1076,20 +1592,26 @@
       input.value = input.value.slice(0, at) + text + input.value.slice(at);
       input.selectionStart = input.selectionEnd = at + text.length;
     }
+    yakuCatMarkDirty(input);
     input.focus();
   }
 
-  function yakuCatRegroup(action, index) {
+  function yakuCatRegroup(action, index, editsFlushed) {
     if (!yakuCatProjectId) return;
+    if (yakuTranslating) { yakuCatSetStatus('処理中は行を結合・解除できません。'); return Promise.resolve(null); }
+    if (!editsFlushed) return yakuCatAfterFlush(function () { return yakuCatRegroup(action, index, true); });
     yakuCatSetStatus(action === 'merge' ? '結合しています…' : '解除しています…');
-    yakuCatPost(action, { id: yakuCatProjectId, index: index }).then(yakuCatRender).catch(function (error) {
+    return yakuCatPost(action, { id: yakuCatProjectId, index: index }).then(yakuCatRender).catch(function (error) {
       yakuCatSetStatus('変更できませんでした: ' + (error && error.message ? error.message : ''));
     });
   }
 
-  function yakuCatSaveSegment(index, text) {
-    if (!yakuCatProjectId) return;
-    yakuCatPost('segment', { id: yakuCatProjectId, index: index, text: text }).then(function (data) {
+  function yakuCatSaveSegment(projectId, index, text) {
+    if (!projectId) return Promise.reject(new Error('作業が開かれていません。'));
+    return yakuCatPost('segment', { id: projectId, index: index, text: text }).then(function (data) {
+      // 別の作業へ移った後に届いた保存応答は、その作業の保存成功としてだけ扱う。
+      // 現在画面のproject、進捗、行表示へは絶対に混ぜない。
+      if (yakuCatProjectId !== projectId || !data || data.id !== projectId) return data;
       // 全体を描き直すと編集中のカーソルが飛ぶので、その行と件数だけ更新する。
       yakuCatData = data;
       yakuCatSetStatus(data.file_name + ' … ' + data.total + ' 行（訳あり ' + data.translated + ' / 残り ' + data.remaining + '、結合 ' + data.joined + '）');
@@ -1097,11 +1619,11 @@
       // 用語集で埋められる行数を、押す前に出す。
       var gcount = document.getElementById('cat-glossary-count');
       if (gcount) gcount.textContent = (data.glossary_candidates > 0) ? ('（' + data.glossary_candidates + ' 行）') : '';
-      var grun = document.getElementById('cat-glossary-run');
+      var grun = document.getElementById('cat-glossary-button');
       if (grun) grun.disabled = !(data.glossary_candidates > 0);
       var tr = document.querySelector('[data-yaku-cat-row="' + index + '"]');
       if (tr) {
-        tr.setAttribute('data-yaku-cat-state', text.trim() ? 'manual' : 'untranslated');
+        tr.setAttribute('data-yaku-cat-state', text.trim() ? 'human_edited' : 'untranslated');
         var badge = tr.querySelector('.cat-col-loc .cat-origin');
         if (text.trim()) {
           if (!badge) {
@@ -1113,10 +1635,19 @@
         } else if (badge) {
           badge.remove();
         }
-        tr.setAttribute('data-yaku-confirmed', '1');
-        tr.classList.remove('cat-unsaved');
+        tr.setAttribute('data-yaku-confirmed', '0');
+        var editedInput = tr.querySelector('[data-yaku-cat-input]');
+        if (editedInput) {
+          editedInput.setAttribute('aria-invalid', 'false');
+          editedInput.removeAttribute('aria-describedby');
+          editedInput.setAttribute('aria-label', (index + 1) + '行目の訳文・手編集・未確認');
+        }
+        var oldFinding = tr.querySelector('.cat-qc-findings');
+        if (oldFinding) oldFinding.remove();
       }
+      return data;
     }).catch(function (error) {
+      if (yakuCatProjectId !== projectId) throw error;
       // 黙って捨てない。捨てると、その行は「保存済み」と見なされて
       // 二度と送られない。直した内容が消えたことに誰も気づけない。
       var tr = document.querySelector('[data-yaku-cat-row="' + index + '"]');
@@ -1125,6 +1656,7 @@
       // 保存できていないので「元の値」を戻す。次の機会に送り直せるようにする。
       if (input) input.removeAttribute('data-yaku-original');
       yakuCatSetStatus((index + 1) + '行目を保存できませんでした: ' + (error && error.message ? error.message : '') + '（この行は赤く表示しています）');
+      throw error;
     });
   }
 
@@ -1187,7 +1719,7 @@
         var title = name + ' / UsedRange ' + (sheet.UsedRange || '-') + ' / 図形 ' + (sheet.ShapeCount || 0) + ' / グラフ ' + (sheet.ChartCount || 0);
         return '<button type="button" class="sheet-chip is-selected" aria-pressed="true" data-yaku-sheet="' + yakuEscape(name) + '" title="' + yakuEscape(title) + '">' + yakuEscape(name) + '</button>';
       }).join('');
-      var detected = data.DetectedDirection === 'to_en' ? '日→英' : (data.DetectedDirection === 'to_jp' ? '英他→日' : '-');
+      var detected = data.DetectedDirection === 'to_en' ? '日→英' : (data.DetectedDirection === 'to_jp' ? '英語など→日本語' : '-');
       var reflected = false;
       if (!yakuFileDirectionTouched && ['to_en', 'to_jp'].indexOf(data.DetectedDirection) >= 0) {
         var detectedRadio = document.querySelector('input[name="file_direction"][value="' + data.DetectedDirection + '"]');
@@ -1205,38 +1737,9 @@
     });
   }
 
-  function yakuSubmitFileTranslation(event) {
-    event.preventDefault();
-    if (!yakuReady || yakuTranslating || !yakuHasFileSource()) { yakuPollReadyState(); return; }
-    if (yakuHasExplicitEmptySheetSelection()) { yakuUpdateFileButton(); return; }
-    if (!yakuConfirmUnsavedSettings()) return;
-    yakuTranslating = true;
-    yakuActiveJobKind = 'file';
-    yakuSetButtonEnabled(false);
-    yakuRenderJobLoading('', 0, 'ファイル翻訳ジョブを開始中', '抽出準備中');
-    yakuScrollJobResultIntoView();
-    yakuBuildFilePayload().then(function (payload) {
-      return yakuJsonPost('/api/translate-file', payload).then(yakuResponseText);
-    }).then(function (html) {
-      yakuUploadedFile = null;
-      yakuStartFromHtml(html);
-    }).catch(function (error) {
-      yakuUploadedFile = null;
-      yakuShowStartError(error, 'ファイル翻訳を開始できませんでした。');
-    });
-  }
-
-  function yakuActivateTab(name, focus) {
+  function yakuActivateTab(name) {
     var target = (name === 'file' || name === 'cat') ? name : 'text';
     yakuActiveTab = target;
-    document.querySelectorAll('[data-yaku-tab]').forEach(function (button) {
-      var active = button.getAttribute('data-yaku-tab') === target;
-      button.classList.toggle('is-active', active);
-      button.classList.toggle('active', active);
-      button.setAttribute('aria-selected', active ? 'true' : 'false');
-      button.setAttribute('tabindex', active ? '0' : '-1');
-      if (active && focus) button.focus();
-    });
     document.querySelectorAll('[data-yaku-panel]').forEach(function (panel) {
       var active = panel.getAttribute('data-yaku-panel') === target;
       panel.hidden = !active;
@@ -1249,93 +1752,35 @@
     }
   }
 
-  function yakuFormDataToObject(form) {
-    var data = {};
-    Array.prototype.forEach.call(form.elements, function (element) {
-      if (!element.name || element.disabled || ['submit', 'button'].indexOf(element.type) >= 0) return;
-      if (element.type === 'checkbox') {
-        data[element.name] = !!element.checked;
-        return;
-      }
-      if (element.type === 'radio') {
-        if (!element.checked) return;
-      }
-      data[element.name] = element.value;
-    });
-    return data;
-  }
-
-  function yakuSettingsForm() {
-    return document.querySelector('form[data-yaku-settings-form]');
-  }
-
-  function yakuUpdateSettingsState(form, mode, level) {
-    if (!form) return;
-    var state = form.querySelector('[data-yaku-settings-state]');
-    if (!state) return;
-    state.classList.remove('is-enabled', 'is-disabled', 'is-dirty');
-    if (mode === 'dirty') {
-      state.classList.add('is-dirty');
-      state.textContent = '未保存の変更があります。保存するまで翻訳には反映されません。';
-      return;
+  function yakuOpenWorkspace(mode, editsFlushed) {
+    if (!editsFlushed) return yakuCatAfterFlush(function () { return yakuOpenWorkspace(mode, true); });
+    if (mode === 'resume' && !(yakuCatProjectId && yakuCatData) && yakuCatRecentProjects.length === 1) {
+      yakuActivateTab('cat');
+      return yakuCatResume(yakuCatRecentProjects[0].id, true);
     }
-    var normalized = ['minimal', 'standard', 'full'].indexOf(level) >= 0 ? level : 'standard';
-    state.classList.add(normalized === 'full' ? 'is-enabled' : 'is-disabled');
-    state.textContent = 'ログ診断レベル：' + normalized + '（保存済み）';
-  }
-
-  function yakuMarkSettingsDirty(form) {
-    if (!form) return;
-    form.setAttribute('data-yaku-dirty', 'true');
-    yakuUpdateSettingsState(form, 'dirty', false);
-  }
-
-  function yakuConfirmUnsavedSettings() {
-    if (yakuSettingsSaving) {
-      window.alert('設定を保存中です。「設定を保存しました」と表示されてから翻訳してください。');
-      return false;
-    }
-    var form = yakuSettingsForm();
-    if (!form || form.getAttribute('data-yaku-dirty') !== 'true') return true;
-    return window.confirm('設定に未保存の変更があります。\nこのまま翻訳すると、現在保存済みの設定を使用します。\n保存せずに続行しますか？');
-  }
-
-  function yakuSubmitJsonForm(form) {
-    var selector = form.getAttribute('data-yaku-target') || '';
-    var target = selector ? document.querySelector(selector) : null;
-    var button = form.querySelector('[type="submit"]');
-    var isSettingsForm = form.matches('[data-yaku-settings-form]');
-    if (isSettingsForm) yakuSettingsSaving = true;
-    if (button) button.disabled = true;
-    var payload = yakuFormDataToObject(form);
-    yakuJsonPost(form.getAttribute('data-yaku-json-post'), payload).then(yakuResponseText).then(function (html) {
-      if (target) target.innerHTML = html;
-      if (isSettingsForm) {
-        var saved = target && target.querySelector('[data-yaku-settings-saved="true"]');
-        if (saved) {
-          var level = saved.getAttribute('data-yaku-diagnostics-level') || 'standard';
-          form.setAttribute('data-yaku-dirty', 'false');
-          form.setAttribute('data-yaku-saved-diagnostics', level);
-          yakuUpdateSettingsState(form, 'saved', level);
-        }
+    if (mode !== 'resume') {
+      var radio = document.querySelector('input[name="cat_source"][value="' + mode + '"]');
+      if (radio) {
+        radio.checked = true;
+        radio.dispatchEvent(new Event('change', { bubbles: true }));
       }
-    }).catch(function (error) {
-      if (target) target.innerHTML = '<div class="alert alert-error">' + yakuEscape(error.message) + '</div>';
-    }).finally(function () {
-      if (isSettingsForm) yakuSettingsSaving = false;
-      if (button) button.disabled = false;
-    });
-  }
-
-  function yakuLoadPrivacyStatus() {
-    var target = document.getElementById('privacy-result');
-    return yakuFetch('/api/privacy-status').then(yakuResponseJson).then(function (data) {
-      yakuPrivacyStatus = data;
+    }
+    ++yakuCatViewRequest;
+    yakuActivateTab('cat');
+    window.setTimeout(function () {
+      var target = null;
+      if (mode === 'resume' && yakuCatProjectId && yakuCatData) {
+        target = document.querySelector('[data-yaku-cat-row][data-yaku-confirmed="0"] [data-yaku-cat-input]') || document.querySelector('[data-yaku-cat-input]');
+      } else if (mode === 'resume') target = document.querySelector('#cat-resume-list [data-yaku-cat-resume]');
+      else if (mode === 'file') target = document.getElementById('cat-drop');
+      else if (mode === 'align') target = document.getElementById('cat-align-source');
+      else if (mode === 'prior') target = document.getElementById('cat-prior-ja');
+      else target = document.getElementById('cat-text');
       if (target) {
-        target.innerHTML = '<div class="muted">履歴メタデータ ' + yakuEscape(String(data.history_count || 0)) + '件（' + yakuEscape(data.history_path || '-') + '）／全文診断 ' + yakuEscape(String(data.diagnostic_count || 0)) + '件（' + yakuEscape(data.diagnostic_path || '-') + '）</div>';
+        target.focus();
+        target.scrollIntoView({ behavior: yakuScrollBehavior(), block: 'center' });
       }
-      return data;
-    }).catch(function () { return null; });
+    }, 0);
   }
 
   function yakuDownload(jobId, button) {
@@ -1381,16 +1826,31 @@
     }
   }
 
+  function yakuApplyTextSize(large) {
+    document.documentElement.setAttribute('data-yaku-text-size', large ? 'large' : 'standard');
+    var button = document.getElementById('text-size-toggle');
+    if (button) {
+      button.setAttribute('aria-pressed', large ? 'true' : 'false');
+      button.textContent = large ? '標準の文字に戻す' : '文字を大きく';
+    }
+  }
+
   function yakuBindEvents() {
     var textForm = document.getElementById('text-form');
     var inputText = document.getElementById('input-text');
     var fileInput = document.getElementById('file-input');
     var filePath = document.getElementById('file-path');
     var fileSheets = document.getElementById('file-sheets');
-    var fileForm = document.getElementById('file-form');
     var fileInfoButton = document.getElementById('file-info-button');
     var fileDrop = document.getElementById('file-drop');
     var fileClearButton = document.getElementById('file-clear-button');
+    var textSizeToggle = document.getElementById('text-size-toggle');
+
+    if (textSizeToggle) textSizeToggle.addEventListener('click', function () {
+      var large = document.documentElement.getAttribute('data-yaku-text-size') !== 'large';
+      yakuApplyTextSize(large);
+      try { window.localStorage.setItem('yaku-text-size', large ? 'large' : 'standard'); } catch (e) {}
+    });
 
     function yakuBindFileDropTarget(dropTarget, input) {
       if (!dropTarget || !input) return;
@@ -1454,7 +1914,6 @@
       yakuFileDirectionTouched = false;
       yakuResetFileInfoMessage();
     });
-    if (fileForm) fileForm.addEventListener('submit', yakuSubmitFileTranslation);
     yakuBindFileDropTarget(fileDrop, fileInput);
 
     document.addEventListener('submit', function (event) {
@@ -1462,49 +1921,83 @@
       if (catRevise) { event.preventDefault(); yakuCatRevise(catRevise); return; }
       var revise = event.target.closest && event.target.closest('form[data-yaku-revise]');
       if (revise) { event.preventDefault(); yakuSubmitRevision(revise); return; }
-      var form = event.target.closest && event.target.closest('form[data-yaku-json-post]');
-      if (!form) return;
-      event.preventDefault();
-      yakuSubmitJsonForm(form);
-    });
-
-    document.addEventListener('input', function (event) {
-      var form = event.target.closest && event.target.closest('form[data-yaku-settings-form]');
-      if (form) yakuMarkSettingsDirty(form);
     });
 
     // CAT の操作。訳文欄は離れたときに保存する。打つたびに送ると往復が増える。
     var catOpen = document.getElementById('cat-open-button');
-    if (catOpen) catOpen.addEventListener('click', function () { if (yakuCatSourceMode() === 'align') yakuCatAlign(); else yakuCatOpen(); });
+    if (catOpen) catOpen.addEventListener('click', function () {
+      yakuCatWithOperation(catOpen, function () {
+        if (yakuCatSourceMode() === 'align') return yakuCatAlign();
+        if (yakuCatSourceMode() === 'prior') return yakuCatOpenPriorVersion();
+        return yakuCatOpen();
+      });
+    });
     var catSaveCorpus = document.getElementById('cat-save-corpus-button');
-    if (catSaveCorpus) catSaveCorpus.addEventListener('click', yakuCatSaveCorpus);
+    if (catSaveCorpus) catSaveCorpus.addEventListener('click', function () { yakuCatSaveCorpus(); });
+    var catDelete = document.getElementById('cat-delete-button');
+    var catDeleteDialog = document.getElementById('cat-delete-dialog');
+    if (catDelete) catDelete.addEventListener('click', function () {
+      if (!yakuCatProjectId || yakuCatOperationBusy || yakuTranslating) return;
+      yakuCatDeleteTarget = { id: yakuCatProjectId, name: (yakuCatData && yakuCatData.file_name) || 'この翻訳作業' };
+      var deleteName = document.getElementById('cat-delete-name');
+      if (deleteName) deleteName.textContent = yakuCatDeleteTarget.name;
+      if (catDeleteDialog && catDeleteDialog.showModal) {
+        catDeleteDialog.returnValue = 'cancel';
+        catDeleteDialog.showModal();
+        window.setTimeout(function () {
+          var cancel = document.getElementById('cat-delete-cancel');
+          if (cancel) cancel.focus();
+        }, 0);
+      }
+    });
+    if (catDeleteDialog) catDeleteDialog.addEventListener('close', function () {
+      var deleteTarget = yakuCatDeleteTarget;
+      yakuCatDeleteTarget = null;
+      if (catDeleteDialog.returnValue !== 'delete' || !deleteTarget) return;
+      if (yakuCatProjectId !== deleteTarget.id) {
+        yakuCatSetStatus('表示中の作業が切り替わったため、削除を中止しました。');
+        return;
+      }
+      yakuCatWithOperation(document.getElementById('cat-delete-confirm'), function () { return yakuCatAfterFlush(function () {
+        var deletingId = deleteTarget.id;
+        return yakuCatPost('delete', { id: deletingId }).then(function () {
+          if (yakuCatProjectId !== deletingId) return;
+          yakuCatProjectId = '';
+          yakuCatData = null;
+          yakuCatClearOutputDisplay();
+          var body = document.getElementById('cat-grid-body');
+          if (body) body.innerHTML = '';
+          var wrap = document.getElementById('cat-grid-wrap');
+          if (wrap) wrap.hidden = true;
+          var actions = document.getElementById('cat-actions');
+          if (actions) actions.hidden = true;
+          yakuCatSetFocusedMode(false, null);
+          yakuCatSetStatus('翻訳作業と途中保存を削除しました。元のファイルは残っています。');
+          yakuCatLoadRecent();
+          window.setTimeout(function () {
+            var start = document.getElementById('cat-open-button');
+            if (start) start.focus();
+          }, 0);
+        }).catch(function (error) { yakuCatSetStatus('作業を削除できませんでした: ' + (error && error.message ? error.message : '')); });
+      }); });
+    });
     document.addEventListener('click', function (event) {
       var resume = event.target.closest && event.target.closest('[data-yaku-cat-resume]');
-      if (resume) yakuCatResume(resume.getAttribute('data-yaku-cat-resume'));
+      if (resume) yakuCatWithOperation(resume, function () { return yakuCatResume(resume.getAttribute('data-yaku-cat-resume')); });
     });
     // 行のボタン。マウスだけで最後まで進められるようにする。
     document.addEventListener('click', function (event) {
       var ok = event.target.closest && event.target.closest('[data-yaku-cat-ok]');
-      if (ok) { yakuCatConfirm(parseInt(ok.getAttribute('data-yaku-cat-ok'), 10)); return; }
+      if (ok) { yakuCatWithOperation(ok, function () { return yakuCatConfirm(parseInt(ok.getAttribute('data-yaku-cat-ok'), 10)); }); return; }
       var toGlossary = event.target.closest && event.target.closest('[data-yaku-cat-toglossary]');
       if (!toGlossary) return;
       var idx = parseInt(toGlossary.getAttribute('data-yaku-cat-toglossary'), 10);
-      yakuCatPost('glossary-add', { id: yakuCatProjectId, index: idx }).then(function (data) {
-        yakuCatSetStatus(data.message || '用語集に追加しました。');
-      }).catch(function (error) {
-        yakuCatSetStatus('用語集に追加できませんでした: ' + (error && error.message ? error.message : ''));
-      });
-    });
-    // 用語集を当てる。押す前に件数が見えている。
-    var catGlossaryRun = document.getElementById('cat-glossary-run');
-    if (catGlossaryRun) catGlossaryRun.addEventListener('click', function () {
-      if (!yakuCatProjectId) { yakuCatSetStatus('先に原文を取り込んでください。'); return; }
-      yakuCatSetStatus('用語集を当てています…');
-      yakuCatPost('glossary', { id: yakuCatProjectId }).then(function (data) {
-        yakuCatRender(data);
-        yakuCatSetStatus('用語集で ' + (data.draft || 0) + ' 行が埋まりました。まだ ' + (data.untranslated || 0) + ' 行が空です。');
-      }).catch(function (error) {
-        yakuCatSetStatus('用語集を当てられませんでした: ' + (error && error.message ? error.message : ''));
+      yakuCatAfterFlush(function () {
+        return yakuCatPost('glossary-add', { id: yakuCatProjectId, index: idx }).then(function (data) {
+          yakuCatSetStatus(data.message || '用語集に追加しました。');
+        }).catch(function (error) {
+          yakuCatSetStatus('用語集に追加できませんでした: ' + (error && error.message ? error.message : ''));
+        });
       });
     });
     var catOpenFolder = document.getElementById('cat-open-folder-button');
@@ -1515,6 +2008,39 @@
       }).catch(function (error) {
         yakuCatSetStatus('フォルダを開けませんでした: ' + (error && error.message ? error.message : ''));
       });
+    });
+    var catSwitchProject = document.getElementById('cat-switch-project');
+    if (catSwitchProject) catSwitchProject.addEventListener('click', function () {
+      yakuCatAfterFlush(function () {
+        var picker = document.getElementById('cat-picker');
+        if (picker) picker.hidden = false;
+        var summary = document.getElementById('cat-current-summary');
+        if (summary) summary.hidden = true;
+        var workspace = document.getElementById('cat-workspace');
+        if (workspace) workspace.hidden = true;
+        var danger = document.getElementById('cat-danger-zone');
+        if (danger) danger.hidden = true;
+        var resume = document.querySelector('[data-yaku-cat-resume]') || document.querySelector('.cat-source-picker > summary');
+        if (resume) resume.focus();
+      });
+    });
+    var catCopyAgain = document.getElementById('cat-copy-again');
+    var catSelectAll = document.getElementById('cat-select-all');
+    var catTextOutput = document.getElementById('cat-text-output-value');
+    if (catCopyAgain) catCopyAgain.addEventListener('click', function () {
+      if (!catTextOutput) return;
+      var copied = navigator.clipboard && navigator.clipboard.writeText
+        ? navigator.clipboard.writeText(catTextOutput.value)
+        : Promise.reject(new Error('clipboard unavailable'));
+      copied.then(function () { yakuCatSetStatus('確認済み訳文をコピーしました。'); }, function () {
+        catTextOutput.focus(); catTextOutput.select();
+        yakuCatSetStatus('コピーできませんでした。全文を選択したので、Ctrl+Cでコピーしてください。');
+      });
+    });
+    if (catSelectAll) catSelectAll.addEventListener('click', function () {
+      if (!catTextOutput) return;
+      catTextOutput.focus(); catTextOutput.select();
+      yakuCatSetStatus('全文を選択しました。Ctrl+Cでコピーできます。');
     });
     // 主の訳と、下に添えた訳を入れ替える。
     // 選んだ種類は覚える。毎回押し直すのは面倒なので。
@@ -1571,7 +2097,7 @@
     });    yakuCatLoadRecent();
     // 保存できていない行がある状態で閉じようとしたら止める。
     window.addEventListener('beforeunload', function (event) {
-      if (!document.querySelector('.cat-unsaved')) return;
+      if (!document.querySelector('.cat-unsaved, .cat-dirty') && !Object.keys(yakuCatSavePromises).length) return;
       event.preventDefault();
       event.returnValue = '';
     });
@@ -1581,25 +2107,29 @@
     var catRun = document.getElementById('cat-run-button');
     if (catRun) catRun.addEventListener('click', function () {
       if (!yakuCatProjectId) { yakuCatSetStatus('先に原文を取り込んでください。'); return; }
-      yakuCatSetStatus('用語集で置換しています…');
-      yakuCatPost('glossary', { id: yakuCatProjectId }).then(function (data) {
-        yakuCatRender(data);
-        yakuCatTranslate('translate');
-      }).catch(function (error) {
-        yakuCatSetStatus('置換できませんでした: ' + (error && error.message ? error.message : ''));
-      });
+      yakuCatWithOperation(catRun, function () { return yakuCatAfterFlush(function () {
+        yakuCatSetStatus('用語集で置換しています…');
+        return yakuCatPost('glossary', { id: yakuCatProjectId }).then(function (data) {
+          yakuCatRender(data);
+          return yakuCatTranslate('translate', true);
+        }).catch(function (error) {
+          yakuCatSetStatus('置換できませんでした: ' + (error && error.message ? error.message : ''));
+        });
+      }); });
     });
     var catGlossary = document.getElementById('cat-glossary-button');
-    if (catGlossary) catGlossary.addEventListener('click', yakuCatGlossary);
+    if (catGlossary) catGlossary.addEventListener('click', function () { yakuCatWithOperation(catGlossary, function () { return yakuCatGlossary(); }); });
     var catTranslate = document.getElementById('cat-translate-button');
     if (catTranslate) catTranslate.addEventListener('click', function () { yakuCatTranslate('translate'); });
     var catCorpus = document.getElementById('cat-corpus-button');
     if (catCorpus) catCorpus.addEventListener('click', function () { yakuCatTranslate('corpus'); });
     var catExport = document.getElementById('cat-export-button');
-    if (catExport) catExport.addEventListener('click', yakuCatExport);
+    if (catExport) catExport.addEventListener('click', function () { yakuCatWithOperation(catExport, function () { return yakuCatExport(); }); });
     // 絞り込みは手元の一覧を描き直すだけ。サーバーへは問い合わせない。
     document.addEventListener('change', function (event) {
-      if (event.target && event.target.name === 'cat_filter') yakuCatRender(null);
+      if (event.target && event.target.name === 'cat_filter') {
+        yakuCatAfterFlush(function () { yakuCatRender(null); return Promise.resolve(true); });
+      }
     });
     // 打鍵のたびに一覧を作り直すと、数百行では入力が引っかかる。
     // 手が止まってから描き直す。
@@ -1607,7 +2137,9 @@
     var catSearchTimer = null;
     if (catSearch) catSearch.addEventListener('input', function () {
       window.clearTimeout(catSearchTimer);
-      catSearchTimer = window.setTimeout(function () { yakuCatRender(null); }, 200);
+      catSearchTimer = window.setTimeout(function () {
+        yakuCatAfterFlush(function () { yakuCatRender(null); return Promise.resolve(true); });
+      }, 200);
     });
     // 取り込み元の切り替え。貼り付けが既定で、Excel は選んだときだけ出す。
     document.addEventListener('change', function (event) {
@@ -1616,45 +2148,162 @@
       var textRow = document.getElementById('cat-text-row');
       var fileRow = document.getElementById('cat-file-row');
       var alignRow = document.getElementById('cat-align-row');
+      var priorRow = document.getElementById('cat-prior-row');
       if (textRow) textRow.hidden = (mode !== 'text');
       if (fileRow) fileRow.hidden = (mode !== 'file');
       if (alignRow) alignRow.hidden = (mode !== 'align');
+      if (priorRow) priorRow.hidden = (mode !== 'prior');
       var open = document.getElementById('cat-open-button');
-      if (open) open.textContent = (mode === 'align') ? '突き合わせる' : '取り込む';
-      yakuCatSetStatus(mode === 'text' ? 'テキストを貼り付けて「取り込む」を押してください。'
-        : mode === 'file' ? 'Excelを選択して「取り込む」を押してください。'
-        : '同じ資料の日本語版と英語版を貼り付けて「突き合わせる」を押してください。');
+      if (open) open.textContent = mode === 'align' ? '日英資料を取り込む' : (mode === 'prior' ? '前回と比べて始める' : (mode === 'file' ? 'Word・Excelを取り込む' : '確認を始める'));
+      yakuSetButtonEnabled(yakuReady);
+      yakuCatSetStatus(mode === 'text' ? '文章を貼り付けて「確認を始める」を押してください。'
+        : mode === 'file' ? 'WordまたはExcelを選択して「Word・Excelを取り込む」を押してください。'
+        : mode === 'prior' ? '前回の日英と今回の日本語を貼り付けて「前回と比べて始める」を押してください。'
+        : '同じ資料の日本語版と英語版を貼り付けて「日英資料を取り込む」を押してください。');
     });
     var catFileInput = document.getElementById('cat-file-input');
     if (catFileInput) catFileInput.addEventListener('change', function () {
       yakuCatUploaded = null;
       var name = document.getElementById('cat-file-name');
-      if (name) name.textContent = (catFileInput.files && catFileInput.files.length) ? catFileInput.files[0].name : 'ローカルパス指定も利用できます';
+      if (name) name.textContent = (catFileInput.files && catFileInput.files.length) ? catFileInput.files[0].name : 'ファイルを選択してください';
     });
     yakuBindFileDropTarget(document.getElementById('cat-drop'), catFileInput);
     // 触っただけの行を「手直し」にしない。以前は離れるたびに保存して
     // いたので、一覧を上から見ていくだけで全部が手直し扱いになっていた。
     // 「この行は見た」を記録する。訳文が変わっていなくても記録する。
-    function yakuCatConfirm(index) {
-      if (!yakuCatProjectId || isNaN(index)) return;
-      yakuCatPost('confirm', { id: yakuCatProjectId, index: index, confirmed: true })
-        .then(yakuCatRender)
+    function yakuCatFocusAfterConfirm(index, data) {
+      var allInputs = Array.prototype.slice.call(document.querySelectorAll('[data-yaku-cat-input]'));
+      var next = null;
+      for (var i = 0; i < allInputs.length; i++) {
+        var candidateIndex = parseInt(allInputs[i].getAttribute('data-yaku-cat-input'), 10);
+        var row = allInputs[i].closest('[data-yaku-cat-row]');
+        if (candidateIndex > index && (!row || row.getAttribute('data-yaku-confirmed') !== '1')) { next = allInputs[i]; break; }
+      }
+      if (!next) {
+        for (var j = 0; j < allInputs.length; j++) {
+          var fallbackRow = allInputs[j].closest('[data-yaku-cat-row]');
+          if (!fallbackRow || fallbackRow.getAttribute('data-yaku-confirmed') !== '1') { next = allInputs[j]; break; }
+        }
+      }
+      if (next) {
+        next.focus();
+        try { next.setSelectionRange(next.value.length, next.value.length); } catch (e) {}
+        next.scrollIntoView({ behavior: yakuScrollBehavior(), block: 'center' });
+        return;
+      }
+      var exportButton = document.getElementById('cat-export-button');
+      if (exportButton && !exportButton.disabled) {
+        exportButton.focus();
+        exportButton.scrollIntoView({ behavior: yakuScrollBehavior(), block: 'center' });
+        return;
+      }
+      if ((Number(data && data.confirmed) || 0) < (Number(data && data.total) || 0)) {
+        var search = document.getElementById('cat-search');
+        if (search) {
+          yakuCatSetStatus('検索条件の外に未確認の行があります。絞り込みを変更すると次の行を確認できます。');
+          search.focus();
+        }
+      }
+    }
+
+    function yakuCatConfirm(index, editsFlushed) {
+      if (!yakuCatProjectId || isNaN(index)) return Promise.resolve(null);
+      if (yakuTranslating) { yakuCatSetStatus('処理中は確認できません。完了してからお試しください。'); return Promise.resolve(null); }
+      if (!editsFlushed) return yakuCatAfterFlush(function () { return yakuCatConfirm(index, true); });
+      var input = document.querySelector('[data-yaku-cat-input="' + index + '"]');
+      return yakuCatCommit(input).then(function () {
+        return yakuCatPost('confirm', { id: yakuCatProjectId, index: index, confirmed: true });
+      }).then(function (data) {
+        yakuCatRender(data);
+        var reviewedSegment = (data.segments || []).filter(function (segment) { return Number(segment.index) === Number(index); })[0];
+        if (data.review_blocked || (reviewedSegment && !reviewedSegment.confirmed)) {
+          window.setTimeout(function () {
+            var blockedInput = document.querySelector('[data-yaku-cat-input="' + index + '"]');
+            if (blockedInput) {
+              blockedInput.focus();
+              blockedInput.scrollIntoView({ behavior: yakuScrollBehavior(), block: 'center' });
+            }
+          }, 0);
+          return data;
+        }
+        if ((Number(data.confirmed) || 0) === (Number(data.total) || 0) && (Number(data.total) || 0) > 0) {
+          yakuCatSetStatus(data.source === 'file'
+            ? 'すべての行を確認しました。確認用DRAFT（外部配布不可）を作れます。'
+            : 'すべての行を確認しました。確認済み訳文をコピーできます。');
+        }
+        window.setTimeout(function () { yakuCatFocusAfterConfirm(index, data); }, 0);
+        return data;
+      })
         .catch(function (error) {
           yakuCatSetStatus('確定できませんでした: ' + (error && error.message ? error.message : ''));
+          var sameInput = document.querySelector('[data-yaku-cat-input="' + index + '"]');
+          if (sameInput) {
+            sameInput.setAttribute('aria-invalid', 'true');
+            sameInput.focus();
+          }
+          return null;
         });
     }
-    function yakuCatCommit(input) {
-      if (!input) return false;
-      if (input.hasAttribute('data-yaku-original') && input.value === input.getAttribute('data-yaku-original')) return false;
+    yakuCatCommit = function (input) {
+      if (!input) return Promise.resolve(false);
+      if (yakuTranslating) return Promise.resolve(false);
+      var index = parseInt(input.getAttribute('data-yaku-cat-input'), 10);
+      if (isNaN(index)) return Promise.resolve(false);
+      var projectId = yakuCatProjectId;
+      var saveKey = projectId + ':' + index;
+      if (yakuCatSavePromises[saveKey]) {
+        return yakuCatSavePromises[saveKey].then(function () { return yakuCatCommit(input); });
+      }
+      if (input.hasAttribute('data-yaku-original') && input.value === input.getAttribute('data-yaku-original')) {
+        input.removeAttribute('data-yaku-dirty');
+        var unchangedRow = input.closest('[data-yaku-cat-row]');
+        if (unchangedRow) unchangedRow.classList.remove('cat-dirty');
+        var unchangedExport = document.getElementById('cat-export-button');
+        if (unchangedExport && yakuCatData) unchangedExport.disabled = !!yakuCatData.export_blocked;
+        return Promise.resolve(false);
+      }
       // 「元の値」を更新するのは保存が成功してから。先に更新すると、
       // 保存に失敗した行が「保存済み」と見なされて二度と送られない。
-      yakuCatSaveSegment(parseInt(input.getAttribute('data-yaku-cat-input'), 10), input.value);
-      input.setAttribute('data-yaku-original', input.value);
-      return true;
-    }
+      var desired = input.value;
+      var row = input.closest('[data-yaku-cat-row]');
+      if (row) row.classList.add('cat-dirty');
+      yakuCatSetSaveStatus('保存しています…', false);
+      // revisionはproject全体で増えるため、別行の保存も必ず直列にする。
+      // 2行を続けて離れたとき、同じrevisionで並行送信すると片方が競合する。
+      var saveRequest = yakuCatSaveQueue.catch(function () { return false; }).then(function () {
+        return yakuCatSaveSegment(projectId, index, desired);
+      });
+      yakuCatSaveQueue = saveRequest.catch(function () { return false; });
+      var pending = saveRequest.then(function () {
+        if (input.value === desired) {
+          input.setAttribute('data-yaku-original', desired);
+          input.removeAttribute('data-yaku-dirty');
+          if (row) {
+            row.classList.remove('cat-dirty');
+            row.classList.remove('cat-unsaved');
+          }
+        } else {
+          input.setAttribute('data-yaku-dirty', '1');
+        }
+        if (yakuCatProjectId === projectId && !yakuCatDirtyInputs().length) yakuCatSetSaveStatus('保存しました', false);
+        return true;
+      });
+      yakuCatSavePromises[saveKey] = pending;
+      return pending.then(function (changed) {
+        delete yakuCatSavePromises[saveKey];
+        return changed;
+      }, function (error) {
+        delete yakuCatSavePromises[saveKey];
+        throw error;
+      });
+    };
+    document.addEventListener('input', function (event) {
+      var input = event.target.closest && event.target.closest('[data-yaku-cat-input]');
+      if (input) yakuCatMarkDirty(input);
+    });
     document.addEventListener('focusout', function (event) {
       var input = event.target.closest && event.target.closest('[data-yaku-cat-input]');
-      if (input) yakuCatCommit(input);
+      if (input) yakuCatCommit(input).catch(function () {});
     });
     // いま見ている行を示す。市販の CAT エディタはどこも現在行を強調しており、
     // 長い一覧の中で自分の位置を見失わないようにしている。
@@ -1682,6 +2331,11 @@
       if (!(event.ctrlKey || event.metaKey) || event.key < '1' || event.key > '9') return;
       var input = event.target.closest && event.target.closest('[data-yaku-cat-input]');
       if (!input) return;
+      if (yakuTranslating || yakuCatOperationBusy) {
+        event.preventDefault();
+        yakuCatSetStatus('処理中は候補を挿入できません。完了してからお試しください。');
+        return;
+      }
       var buttons = document.querySelectorAll('#cat-candidates-list [data-yaku-cat-insert]');
       var pick = buttons[parseInt(event.key, 10) - 1];
       if (!pick) return;
@@ -1691,6 +2345,10 @@
     document.addEventListener('click', function (event) {
       var pick = event.target.closest && event.target.closest('[data-yaku-cat-insert]');
       if (!pick) return;
+      if (yakuTranslating || yakuCatOperationBusy) {
+        yakuCatSetStatus('処理中は候補を挿入できません。完了してからお試しください。');
+        return;
+      }
       var active = document.querySelector('[data-yaku-cat-row].is-active [data-yaku-cat-input]');
       if (active) yakuCatInsert(active, pick.getAttribute('data-yaku-cat-insert'));
     });
@@ -1701,24 +2359,17 @@
       var input = event.target.closest && event.target.closest('[data-yaku-cat-input]');
       if (!input) return;
       event.preventDefault();
+      if (yakuTranslating || yakuCatOperationBusy) {
+        yakuCatSetStatus('処理中は確認できません。完了してからお試しください。');
+        return;
+      }
       // 直していなくても「確定」にする。機械訳を読んで「これで良い」と
       // 判断したことは、直したことと同じくらい記録に値する。記録が無いと
       // 翌日再開したときに「どこまで見たか」が分からない。
-      var changed = yakuCatCommit(input);
       var index = parseInt(input.getAttribute('data-yaku-cat-input'), 10);
-      if (!changed) yakuCatConfirm(index);
-      var inputs = Array.prototype.slice.call(document.querySelectorAll('[data-yaku-cat-input]'));
-      var pos = inputs.indexOf(input);
-      // 次の未確認行へ飛ぶ。確認済みを飛ばせるので、途中から再開できる。
-      var next = null;
-      for (var i = pos + 1; i < inputs.length; i++) {
-        var row = inputs[i].closest('[data-yaku-cat-row]');
-        if (!row || row.getAttribute('data-yaku-confirmed') !== '1') { next = inputs[i]; break; }
-      }
-      if (!next) next = inputs[pos + 1];
-      // 全選択しない。次の行の訳が選ばれた状態だと、1打鍵で消えてしまう。
-      if (next) { next.focus(); try { next.setSelectionRange(next.value.length, next.value.length); } catch (e) {} }
-      else { input.blur(); }
+      yakuCatWithOperation(null, function () { return yakuCatConfirm(index); }).then(function (confirmedData) {
+        return confirmedData;
+      }).catch(function () {});
     });
     // 簡易翻訳の結果から CAT へ渡す。原文をそのまま持っていくので、
     // 押した先に見慣れた文が並ぶ。覚えることは「1文ずつ見える」だけになる。
@@ -1730,7 +2381,13 @@
       // 空になり、利用者から見れば「さっきの訳が消えた」うえに訳し直しを
       // 待たされていた。移行を促す導線が移行しない理由を作っていた。
       var translation = '';
-      try { translation = yakuDecodeBase64Utf8(toCat.getAttribute('data-yaku-to-cat-translation') || ''); } catch (e) { translation = ''; }
+      // 別案を上段へ入れ替えた場合は、生成時に属性へ入れた標準案ではなく、
+      // 利用者がいま見ている訳案を渡す。「この訳案」の指す内容を一致させる。
+      var visibleTranslation = document.querySelector('[data-yaku-main-text]');
+      if (visibleTranslation) translation = visibleTranslation.textContent || '';
+      if (!translation) {
+        try { translation = yakuDecodeBase64Utf8(toCat.getAttribute('data-yaku-to-cat-translation') || ''); } catch (e) { translation = ''; }
+      }
       var radio = document.querySelector('input[name="cat_source"][value="text"]');
       if (radio) { radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true })); }
       var area = document.getElementById('cat-text');
@@ -1747,39 +2404,40 @@
         var catDir = document.querySelector('input[name="cat_direction"][value="' + resolved + '"]');
         if (catDir) catDir.checked = true;
       }
+      yakuCatFocusFirstAfterRender = true;
       yakuActivateTab('cat');
-      yakuCatOpen(translation);
+      yakuCatWithOperation(toCat, function () { return yakuCatOpen(translation); });
     });
     document.addEventListener('click', function (event) {
       var merge = event.target.closest && event.target.closest('[data-yaku-cat-merge]');
       if (merge) {
         if (merge.getAttribute('data-yaku-cat-loss') === '1' && !window.confirm('結合すると、対象行の訳文が消えます。結合しますか？')) return;
-        yakuCatRegroup('merge', parseInt(merge.getAttribute('data-yaku-cat-merge'), 10));
+        yakuCatWithOperation(merge, function () { return yakuCatRegroup('merge', parseInt(merge.getAttribute('data-yaku-cat-merge'), 10)); });
         return;
       }
       var split = event.target.closest && event.target.closest('[data-yaku-cat-split]');
       if (split) {
         if (split.getAttribute('data-yaku-cat-loss') === '1' && !window.confirm('解除すると、この行の訳文が消えます。解除しますか？')) return;
-        yakuCatRegroup('split', parseInt(split.getAttribute('data-yaku-cat-split'), 10));
+        yakuCatWithOperation(split, function () { return yakuCatRegroup('split', parseInt(split.getAttribute('data-yaku-cat-split'), 10)); });
       }
     });
 
-    document.addEventListener('keydown', function (event) {
-      var tab = event.target.closest && event.target.closest('[role="tab"]');
-      if (!tab || ['ArrowLeft', 'ArrowRight', 'Home', 'End'].indexOf(event.key) < 0) return;
-      event.preventDefault();
-      var tabs = Array.prototype.slice.call(document.querySelectorAll('[role="tab"]'));
-      var index = tabs.indexOf(tab);
-      if (event.key === 'Home') index = 0;
-      else if (event.key === 'End') index = tabs.length - 1;
-      else index = (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
-      yakuActivateTab(tabs[index].getAttribute('data-yaku-tab'), true);
-    });
-
     document.addEventListener('click', function (event) {
-      var element = event.target.closest && event.target.closest('button, [data-yaku-tab]');
+      var element = event.target.closest && event.target.closest('button');
       if (!element) return;
-      if (element.matches('[data-yaku-tab]')) { yakuActivateTab(element.getAttribute('data-yaku-tab')); return; }
+      if (element.matches('[data-yaku-open-workspace]')) {
+        yakuCatWithOperation(element, function () { return yakuOpenWorkspace(element.getAttribute('data-yaku-open-workspace') || 'text'); });
+        return;
+      }
+      if (element.matches('[data-yaku-main-entry]')) {
+        yakuCatAfterFlush(function () {
+          ++yakuCatViewRequest;
+          yakuActivateTab('text');
+          var mainInput = document.getElementById('input-text');
+          if (mainInput) mainInput.focus();
+        });
+        return;
+      }
       if (element.matches('.sheet-chip')) {
         element.classList.toggle('is-selected');
         element.setAttribute('aria-pressed', element.classList.contains('is-selected') ? 'true' : 'false');
@@ -1821,32 +2479,6 @@
         }).finally(function () { element.disabled = false; });
         return;
       }
-      if (element.matches('.history-fill-button')) {
-        var input = document.getElementById('input-text');
-        if (input) {
-          input.value = element.getAttribute('data-yaku-fill-b64') ? yakuDecodeB64(element.getAttribute('data-yaku-fill-b64')) : '';
-          yakuActivateTab('text');
-          yakuUpdateInputMeta();
-          input.focus();
-        }
-        return;
-      }
-      if (element.matches('[data-yaku-clear-data]')) {
-        var kind = element.getAttribute('data-yaku-clear-data');
-        var url = kind === 'diagnostics' ? '/api/clear-diagnostics' : '/api/clear-history';
-        var target = document.getElementById('privacy-result');
-        var count = kind === 'diagnostics' ? (yakuPrivacyStatus && yakuPrivacyStatus.diagnostic_count) : (yakuPrivacyStatus && yakuPrivacyStatus.history_count);
-        var label = kind === 'diagnostics' ? '全文診断データ' : '履歴メタデータと画面内履歴';
-        if (!window.confirm(label + ' ' + String(count || 0) + '件を消去します。よろしいですか？')) return;
-        element.disabled = true;
-        yakuJsonPost(url, {}).then(yakuResponseJson).then(function (data) {
-          if (target) target.innerHTML = '<div class="alert alert-success">' + yakuEscape(String(data.count || 0)) + '件を消去しました。</div>';
-          if (kind === 'history' && window.htmx) window.htmx.trigger(document.body, 'yaku-history-refresh');
-          yakuLoadPrivacyStatus();
-        }).catch(function (error) {
-          if (target) target.innerHTML = '<div class="alert alert-error">' + yakuEscape(error.message) + '</div>';
-        }).finally(function () { element.disabled = false; });
-      }
     });
 
     Array.prototype.forEach.call(document.querySelectorAll('details[id]'), function (details) {
@@ -1868,12 +2500,14 @@
       document.body.innerHTML = '<main class="shell"><div class="alert alert-error">セッションを初期化できませんでした。YakuLingoを再起動してください。</div></main>';
       return;
     }
+    var savedTextSize = 'standard';
+    try { savedTextSize = window.localStorage.getItem('yaku-text-size') || 'standard'; } catch (e) {}
+    yakuApplyTextSize(savedTextSize === 'large');
     yakuBindEvents();
     yakuUpdateInputMeta();
     var shortcut = document.getElementById('shortcut-mod');
     if (shortcut) shortcut.textContent = /Mac|iPhone|iPad|iPod/.test(navigator.platform || '') ? '⌘' : 'Ctrl';
     yakuResetFileInfoMessage();
-    yakuLoadPrivacyStatus();
     yakuRestoreTabJob();
     yakuPollReadyState();
   }
