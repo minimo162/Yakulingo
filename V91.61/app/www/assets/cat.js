@@ -492,7 +492,7 @@
       if (!data) return null;
       var reviewed = (data.segments || []).find(function (segment) { return Number(segment.index) === Number(index); });
       if (data.review_blocked || (reviewed && !reviewed.confirmed)) {
-        status('確認できませんでした。赤く表示された検査結果を直してください。', true);
+        status('確認済みにできませんでした。右の「数字の自動点検」に出ている内容を直してから、もう一度お試しください。', true);
         inspectorTab = 'qc'; renderInspector();
         window.setTimeout(function () { var same = document.querySelector('[data-cat-input="' + index + '"]'); YakuCommon.focus(same); }, 0);
         return data;
