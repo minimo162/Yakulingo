@@ -231,7 +231,7 @@
 
 /* 主役の行だけ息をさせる。脇役は詰めて、一覧としての一望性を保つ。 */
 .cat-grid tbody tr.is-active > td {
-  padding-block: 1em;
+  padding-block: .6em;
 }
 
 .cat-grid tbody tr:not(.is-active) td {
@@ -247,7 +247,8 @@
 }
 
 /* 一覧の各行を開くための主要なクリック先。min-height:0 だと実効26px しかなく、
-   手が震える利用者には当たらない。 */
+   狙って当てないと外れる。行を開くのはこの画面で最も回数の多い操作なので、
+   ポインタでもタッチでも外さない大きさを確保する。 */
 .app-cat .cat-editor-pane button.cat-row-activate {
   display: block;
   width: 100%;
@@ -582,4 +583,53 @@
   .cat-grid tbody tr.is-active {
     scroll-behavior: auto;
   }
+}
+
+/* 開いている行だけ、原文と訳文を上下に積んで表の全幅を使う。左右2列は「文字を
+   大きく」で1列が日本語11文字まで痩せ、視線も横へ飛ぶ。上下配置のほうが速いこと
+   は Läubli et al.(arXiv:2011.05978) の統制実験で示されている。閉じている行は
+   一望性が要るので左右のまま残す。 */
+.cat-work {
+  padding-block: .6em;
+}
+
+.cat-work-source {
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--line);
+  white-space: pre-wrap;
+}
+
+.cat-work-target {
+  padding-top: var(--space-2);
+}
+
+.cat-work-label {
+  display: block;
+  margin-bottom: var(--space-0);
+  color: var(--muted);
+  font-size: var(--font-meta);
+  font-weight: 700;
+}
+
+/* 登録済みの用語がどこにあるかを原文の上で示す。塗りではなく下線にする。
+   訳文の面と競合させないため。 */
+.cat-term-hit {
+  background: transparent;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
+/* 1行おきに薄く色を変える。覚えることが増えず、横に目が滑るのを防ぐ。 */
+.cat-grid tbody tr:not(.is-active):nth-child(even) > td {
+  background: var(--surface-subtle);
+}
+
+/* 確認済みの行は、もう見なくてよい。番号と場所を一段沈める。
+   （旧 [data-yaku-confirmed] は JS が出す属性名と食い違っていて効いていなかった） */
+.cat-grid tbody tr[data-cat-confirmed="1"]:not(.is-active) .cat-col-no,
+.cat-grid tbody tr[data-cat-confirmed="1"]:not(.is-active) .cat-col-loc {
+  color: var(--faint);
 }

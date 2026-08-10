@@ -267,13 +267,19 @@
       var generatedTerms = (segment.terminology_generation || []).filter(Boolean).length ? '<details class="cat-term-trace"><summary>訳案作成時に指定した用語 ' + segment.terminology_generation.filter(Boolean).length + '件</summary>' + segment.terminology_generation.filter(Boolean).map(function (term) { return '<div><strong>' + esc(term.source || '') + '</strong> → ' + esc(term.preferred || '') + '</div>'; }).join('') + '</details>' : '';
       var compare = revisionComparison && revisionComparison.projectId === String(project.id || '') && Number(revisionComparison.index) === index ? '<section class="cat-revision-compare" aria-labelledby="cat-revision-title-' + index + '"><h4 id="cat-revision-title-' + index + '">修正結果を確認</h4><div class="cat-revision-pair"><div><strong>変更前</strong><p>' + esc(revisionComparison.before) + '</p></div><div><strong>変更後</strong><p>' + esc(segment.translation || '') + '</p></div></div><p class="muted">数字と単位は自動で点検しました。言い回しが適切かどうかは、ご自身でお確かめください。</p><div class="cat-revision-actions"><button type="button" data-cat-accept-revision="' + index + '">この案を使う</button><button type="button" class="secondary-button" data-cat-revert-revision="' + index + '">元に戻す</button></div></section>' : '';
       var kind = segment.kind === 'cell' ? 'セル' : /^word_/.test(segment.kind || '') ? 'Word' : '文';
-      var target = isActive ? '<textarea rows="5" data-cat-input="' + index + '" data-cat-project-id="' + esc(project.id) + '" data-original="' + esc(segment.translation || '') + '" aria-label="' + row + '行目の訳文" aria-invalid="' + (findings.length ? 'true' : 'false') + '"' + (findings.length ? ' aria-describedby="' + findingId + '"' : '') + '>' + esc(segment.translation || '') + '</textarea>' + prior + referenceTrace + generatedTerms + '<div class="cat-ops">' + ops + '</div><div class="cat-row-actions">' + (segment.confirmed ? '' : '<button type="button" class="cat-op cat-op-ok" data-cat-confirm="' + index + '">確認済みにする</button>') + (segment.translation ? '<button type="button" class="cat-op secondary-button" data-cat-term-open="' + index + '">用語を登録</button>' : '') + ((segment.kind === 'cell' && segment.translation && String(segment.source).length <= 40) ? '<button type="button" class="cat-op secondary-button" data-cat-glossary="' + index + '">このセルの訳を今後も自動で使う</button>' : '') + '</div>' + qc + compare + (segment.can_revise ? '<form class="revise-form" data-cat-revise="' + index + '"><button class="secondary-button" type="button" data-cat-shorten="' + index + '">短くする</button><label class="revise-label">または、どこをどう直すか入力</label><div class="revise-row"><input class="revise-input" type="text" placeholder="例：「increase」を「rise」に変える"><button class="secondary-button" type="submit">この指示で直す</button></div></form>' : '') : '<button type="button" class="cat-row-activate" data-cat-activate="' + index + '"><span class="cat-target-preview">' + esc(segment.translation || '') + '</span></button>';
+      var target = isActive ? '<textarea rows="3" data-cat-input="' + index + '" data-cat-project-id="' + esc(project.id) + '" data-original="' + esc(segment.translation || '') + '" aria-label="' + row + '行目の訳文" aria-invalid="' + (findings.length ? 'true' : 'false') + '"' + (findings.length ? ' aria-describedby="' + findingId + '"' : '') + '>' + esc(segment.translation || '') + '</textarea>' + prior + referenceTrace + generatedTerms + '<div class="cat-ops">' + ops + '</div><div class="cat-row-actions">' + (segment.confirmed ? '<button type="button" class="cat-op secondary-button" data-cat-unconfirm="' + index + '">確認を取り消す</button>' : '<button type="button" class="cat-op cat-op-ok" data-cat-confirm="' + index + '">確認済みにする</button>') + '<button type="button" class="cat-op secondary-button" data-cat-revert="' + index + '" hidden>編集を取り消す</button>' + (segment.translation ? '<button type="button" class="cat-op secondary-button" data-cat-term-open="' + index + '">用語を登録</button>' : '') + ((segment.kind === 'cell' && segment.translation && String(segment.source).length <= 40) ? '<button type="button" class="cat-op secondary-button" data-cat-glossary="' + index + '">このセルの訳を今後も自動で使う</button>' : '') + '</div>' + qc + compare + (segment.can_revise ? '<form class="revise-form" data-cat-revise="' + index + '"><button class="secondary-button" type="button" data-cat-shorten="' + index + '">短くする</button><label class="revise-label">または、どこをどう直すか入力</label><div class="revise-row"><input class="revise-input" type="text" placeholder="例：「increase」を「rise」に変える"><button class="secondary-button" type="submit">この指示で直す</button></div></form>' : '') : '<button type="button" class="cat-row-activate" data-cat-activate="' + index + '"><span class="cat-target-preview">' + esc(segment.translation || '') + '</span></button>';
       var change = changeLabel(segment);
       return '<tr class="' + (isActive ? 'is-active' : '') + '" data-cat-row="' + index + '" data-cat-segment-id="' + esc(segment.segment_id || '') + '" data-cat-confirmed="' + (segment.confirmed ? '1' : '0') + '" data-yaku-cat-state="' + esc(state) + '">' +
         '<td class="cat-col-no"><span class="cat-card-label">行番号・状態</span>' + row + '<span class="cat-state cat-state-' + esc(state) + '" title="' + esc(stateTitle(state)) + '">' + esc(stateLabel(state)) + '</span>' + (change ? '<span class="cat-change-badge cat-change-' + esc(changeGroup(segment)) + '">' + esc(change) + '</span>' : '') + '</td>' +
         '<td class="cat-col-loc"><span class="cat-card-label">場所</span><span class="cat-location-main">' + esc(segment.location || '本文') + '</span><span class="cat-location-kind">' + esc(kind) + '</span>' + (origin ? '<span class="cat-origin">' + esc(origin) + '</span>' : '') + '</td>' +
-        '<td class="cat-source"><span class="cat-card-label">原文</span>' + (isActive ? '<span class="cat-source-text">' + esc(segment.source) + '</span>' : '<button type="button" class="cat-row-activate" data-cat-activate="' + index + '"><span class="cat-source-text">' + esc(segment.source) + '</span></button>') + '</td>' +
-        '<td class="cat-target"><span class="cat-card-label">訳文</span>' + target + '<span class="cat-row-flag"></span></td></tr>';
+        /* 開いている行は、原文を上・訳文を下に積んで表の全幅を使う。左右2列は視線が
+           横へ飛ぶうえ、「文字を大きく」だと1列が日本語11文字まで痩せる。上下配置の
+           ほうが速いことは Läubli et al.(arXiv:2011.05978) の統制実験で示されている。
+           閉じている行は一望性が要るので、従来どおり左右のままにする。 */
+        (isActive
+          ? '<td class="cat-work" colspan="2"><div class="cat-work-source"><span class="cat-work-label">原文</span><span class="cat-source-text">' + esc(segment.source) + '</span></div><div class="cat-work-target"><span class="cat-work-label">訳文</span>' + target + '</div></td>'
+          : '<td class="cat-source"><span class="cat-card-label">原文</span><button type="button" class="cat-row-activate" data-cat-activate="' + index + '"><span class="cat-source-text">' + esc(segment.source) + '</span></button></td>') +
+        (isActive ? '' : '<td class="cat-target"><span class="cat-card-label">訳文</span>' + target + '<span class="cat-row-flag"></span></td>') + '</tr>';
     }).join('');
     /* 翻訳中に絞り込みを変えると行が作り直される。編集不可の状態を引き継ぐ。 */
     if (busy) body.querySelectorAll('textarea[data-cat-input], input.revise-input').forEach(function (input) { input.readOnly = true; });
@@ -542,16 +548,18 @@
       var items = (data.segment_matches || []).filter(function (item) { return item.kind === 'memory' || item.kind === 'prior'; });
       var panel = el('cat-candidates'); panel.hidden = false;
       el('cat-candidate-count').textContent = String(terms.length + items.length);
-      el('cat-terms-list').innerHTML = terms.length ? terms.map(function (item) {
+      el('cat-terms-list').innerHTML = terms.length ? terms.map(function (item, termIndex) {
+        var termNumber = termIndex + 1;
         var allowed = (item.allowed_targets || []).filter(Boolean), forbidden = (item.forbidden_targets || []).filter(Boolean);
         var scopeLabel = item.scope === 'project' ? 'この資料だけ' : '今後の資料でも使用';
-        return '<article class="cat-candidate-card cat-term-card"><div class="cat-candidate-meta"><span class="cat-cand-tag">登録用語</span><span>' + esc(item.source_name || '用語集') + '</span><span>' + esc(scopeLabel) + '</span></div>' +
+        return '<article class="cat-candidate-card cat-term-card">' + (termNumber <= 9 ? '<span class="cat-candidate-number">' + termNumber + '</span><span class="cat-candidate-shortcut"><kbd>Ctrl</kbd>+<kbd>' + termNumber + '</kbd></span>' : '') + '<div class="cat-candidate-meta"><span class="cat-cand-tag">登録用語</span><span>' + esc(item.source_name || '用語集') + '</span><span>' + esc(scopeLabel) + '</span></div>' +
           '<div><strong>原文の用語</strong><p class="cat-cand-src">' + esc(item.source) + '</p></div><div><strong>推奨訳</strong><p class="cat-cand-tgt">' + esc(item.translation || item.target) + '</p></div>' +
           (allowed.length ? '<p class="muted">許容する別訳: ' + esc(allowed.join('、')) + '</p>' : '') + (forbidden.length ? '<p class="muted">使用しない訳: ' + esc(forbidden.join('、')) + '</p>' : '') +
           '<div class="cat-row-actions"><button type="button" class="secondary-button" data-cat-term-insert="' + esc(item.translation || item.target) + '" data-cat-reference-id="' + esc(item.reference_id || '') + '" data-cat-project-id="' + esc(requestScope.id) + '" data-cat-index="' + index + '">この訳語を入力位置に入れる</button>' +
           '<button type="button" class="secondary-button" data-cat-term-edit data-cat-index="' + index + '" data-cat-term-id="' + esc(item.term_id || '') + '" data-cat-term-version="' + Number(item.term_version || 0) + '" data-cat-term-source="' + esc(item.source || '') + '" data-cat-term-target="' + esc(item.translation || item.target || '') + '" data-cat-term-allowed="' + esc(allowed.join('|')) + '" data-cat-term-forbidden="' + esc(forbidden.join('|')) + '" data-cat-term-scope="' + esc(item.scope || 'project') + '">用語を修正</button><button type="button" class="secondary-button" data-cat-term-deactivate="' + esc(item.term_id || '') + '" data-cat-index="' + index + '">この用語の登録を取りやめる</button></div></article>';
       }).join('') : '<p class="muted">この行で使う用語の登録はありません。</p>'
       + '<details class="pane-note"><summary>用語を登録するには</summary><p class="muted">原文と訳文から必要な語をマウスで選び、「用語を登録」を押します。この資料だけ、または今後の資料でも使えます。</p></details>';
+      markTermsInSource(terms);
       el('cat-candidates-list').innerHTML = items.length ? items.map(function (item, itemIndex) {
         var label = item.kind === 'memory' ? '過去に確認した訳' : '前回の資料の訳';
         var material = item.source_name || item.database || '資料名なし';
@@ -560,15 +568,51 @@
         var ratio = Number(item.score != null ? item.score : (item.source_match_ratio != null ? item.source_match_ratio : item.ratio)) || 0;
         var match = item.kind === 'prior' ? (item.exact ? '前回と原文が同じ' : '前回から原文に変更あり') : (ratio >= .999 || item.exact ? '前とまったく同じ原文です' : ('原文が ' + Math.round(ratio * 100) + '% 同じです'));
         var translation = item.translation != null ? item.translation : item.target;
-        var number = itemIndex + 1;
+        var number = terms.length + itemIndex + 1;
         var saved = item.saved ? ('・確認日: ' + String(item.saved)) : '';
         var deleteButton = item.kind === 'memory' ? '<button type="button" class="secondary-button" data-cat-tm-delete="' + esc(item.reference_id || '') + '" data-cat-index="' + index + '">この候補を今後は出さない</button>' : '';
-        return '<article class="cat-candidate-card"><span class="cat-candidate-number">' + number + '</span><span class="cat-candidate-shortcut"><kbd>Ctrl</kbd>+<kbd>' + number + '</kbd></span><div class="cat-candidate-meta"><span class="cat-cand-tag">' + esc(label) + '</span><span>' + esc(material) + '</span>' + (location ? '<span>' + esc(location) + '</span>' : '') + (place ? '<span>' + esc(place) + '</span>' : '') + '</div>' +
+        return '<article class="cat-candidate-card"><span class="cat-candidate-number">' + number + '</span>' + (number <= 9 ? '<span class="cat-candidate-shortcut"><kbd>Ctrl</kbd>+<kbd>' + number + '</kbd></span>' : '') + '<div class="cat-candidate-meta"><span class="cat-cand-tag">' + esc(label) + '</span><span>' + esc(material) + '</span>' + (location ? '<span>' + esc(location) + '</span>' : '') + (place ? '<span>' + esc(place) + '</span>' : '') + '</div>' +
           '<div><strong>原文</strong><p class="cat-cand-src">' + esc(item.source) + '</p></div><div><strong>訳文</strong><p class="cat-cand-tgt">' + esc(translation) + '</p></div>' +
           '<p class="muted">' + esc(match + saved) + '。原文が似ているというだけです。訳文が正しいかは、ご自身でお確かめください。</p>' +
           '<div class="cat-row-actions"><button type="button" class="secondary-button" data-cat-insert="' + esc(translation) + '" data-cat-reference-id="' + esc(item.reference_id || '') + '" data-cat-project-id="' + esc(requestScope.id) + '" data-cat-index="' + index + '">' + number + ' この訳を挿入</button>' + deleteButton + '</div></article>';
       }).join('') : '<p class="muted">この行に似た訳は、まだ見つかりません。訳文を「確認済みにする」と、このパソコンに記録され、次の資料から自動で候補に出ます。</p>';
     }).catch(function () { if (seq === candidateSeq) { el('cat-candidate-count').textContent = '0'; el('cat-terms-list').innerHTML = '<p class="muted">用語を読み込めませんでした。行を選び直すと、もう一度探します。</p>'; el('cat-candidates-list').innerHTML = '<p class="muted">似た訳を読み込めませんでした。行を選び直すと、もう一度探します。</p>'; } });
+  }
+
+  /* 原文のどこが登録済みの用語かを、その場で示す。市販CATはほぼ全社がこれを持つ
+     （Trados=赤い角括弧状の下線、MateCat=青い下線、Smartling=点線の下線、
+     OmegaT=下線）。サーバは以前から用語の一致を返していたが、画面が捨てていて、
+     利用者は右ペインの用語カードと左の原文を目で照合するしかなかった。 */
+  function markTermsInSource(terms) {
+    var host = document.querySelector('tr.is-active .cat-source-text');
+    if (!host) return;
+    var text = host.getAttribute('data-plain');
+    if (text === null) { text = host.textContent; host.setAttribute('data-plain', text); }
+    var words = [];
+    terms.forEach(function (item) {
+      var word = String(item.source || '');
+      if (word && words.indexOf(word) < 0) words.push(word);
+    });
+    if (!words.length) { host.textContent = text; return; }
+    /* 長いものから当てないと、短い語が長い語の内側を先に食う。 */
+    words.sort(function (a, b) { return b.length - a.length; });
+    var marks = [];
+    words.forEach(function (word) {
+      var from = 0, at;
+      while ((at = text.indexOf(word, from)) >= 0) {
+        var clash = marks.some(function (m) { return at < m.end && (at + word.length) > m.start; });
+        if (!clash) marks.push({ start: at, end: at + word.length, word: word });
+        from = at + word.length;
+      }
+    });
+    if (!marks.length) { host.textContent = text; return; }
+    marks.sort(function (a, b) { return a.start - b.start; });
+    var html = '', cursor = 0;
+    marks.forEach(function (m) {
+      html += esc(text.slice(cursor, m.start)) + '<mark class="cat-term-hit" title="登録した用語です">' + esc(m.word) + '</mark>';
+      cursor = m.end;
+    });
+    host.innerHTML = html + esc(text.slice(cursor));
   }
 
   function insertTerm(button) {
@@ -833,7 +877,7 @@
     el('cat-danger-zone').addEventListener('toggle', function () { if (this.open) loadPersonalGlossary(); });
     document.addEventListener('click', function (event) {
       var button = event.target.closest('button'); if (!button) return;
-      if (busy && (button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-shorten') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
+      if (busy && (button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-shorten') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
       if (button.hasAttribute('data-cat-activate')) return activateIndex(Number(button.getAttribute('data-cat-activate')), true);
       if (button.hasAttribute('data-cat-filter')) { currentFilter = button.getAttribute('data-cat-filter') || 'actionable'; return redrawAfterFlush(); }
       if (button.hasAttribute('data-cat-location')) { currentLocation = button.getAttribute('data-cat-location') || 'all'; return redrawAfterFlush(); }
@@ -848,6 +892,24 @@
       if (button.hasAttribute('data-cat-personal-remove')) return removePersonalGlossary(button);
       if (button.hasAttribute('data-cat-resume')) return resume(button.getAttribute('data-cat-resume'));
       if (button.hasAttribute('data-cat-confirm')) return confirmRow(Number(button.getAttribute('data-cat-confirm')));
+      /* 押し間違えた確認を戻す道。サーバは以前から confirmed:false を受け付けていたが、
+         画面に入口が無く、訳文を書き換える以外に戻す方法が無かった。 */
+      if (button.hasAttribute('data-cat-unconfirm')) {
+        var undoIndex = Number(button.getAttribute('data-cat-unconfirm'));
+        return mutate('confirm', { index: undoIndex, confirmed: false }, '確認を取り消しています…')
+          .then(function (data) { if (data) status('確認を取り消しました。もう一度直せます。'); return data; });
+      }
+      /* 訳文を打ち直したあと、保存はフォーカスが外れた時点で走る。undo が無いので、
+         この行を開いたときの訳文へ戻す道だけは用意する。 */
+      if (button.hasAttribute('data-cat-revert')) {
+        var revertIndex = Number(button.getAttribute('data-cat-revert'));
+        var revertInput = document.querySelector('[data-cat-input="' + revertIndex + '"]');
+        if (!revertInput) return;
+        revertInput.value = revertInput.getAttribute('data-original') || '';
+        revertInput.dispatchEvent(new Event('input', { bubbles: true }));
+        YakuCommon.focus(revertInput);
+        return commit(revertInput).then(function () { status('この行を開いたときの訳文に戻しました。'); });
+      }
       if (button.hasAttribute('data-cat-merge')) { if (button.getAttribute('data-cat-loss') === '1' && !window.confirm('この行と次の行をつなげて1文にします。\n\n両方の行に入っている訳文は消えます。消えた訳文は元に戻せません。\n\nつなげますか？')) return; return mutate('merge', { index: Number(button.getAttribute('data-cat-merge')) }, '行をつなげています…'); }
       if (button.hasAttribute('data-cat-split')) { if (button.getAttribute('data-cat-loss') === '1' && !window.confirm('つなげた行を元の2行に戻します。\n\nこの行に入っている訳文は消えます。消えた訳文は元に戻せません。\n\n戻しますか？')) return; return mutate('split', { index: Number(button.getAttribute('data-cat-split')) }, 'つなげた行を元に戻しています…'); }
       if (button.hasAttribute('data-cat-glossary')) {
@@ -876,7 +938,13 @@
       if (!event.target.hasAttribute('data-cat-input')) return;
       var index = Number(event.target.getAttribute('data-cat-input')); dirty.set(dirtyKey(event.target.getAttribute('data-cat-project-id'), index), true); event.target.closest('[data-cat-row]').classList.add('cat-dirty');
       autoGrow(event.target);
-      var note = event.target.closest('.cat-target').querySelector('.cat-example-trace');
+      /* 戻せるのは「開いたときの訳文と違うとき」だけ。常時出すと、押しても何も
+         起きないボタンになって信用を失う。 */
+      var revertButton = event.target.closest('.cat-work-target, .cat-target');
+      revertButton = revertButton && revertButton.querySelector('[data-cat-revert]');
+      if (revertButton) revertButton.hidden = event.target.value === (event.target.getAttribute('data-original') || '');
+      var note = event.target.closest('.cat-work-target, .cat-target');
+      note = note && note.querySelector('.cat-example-trace');
       if (note) note.textContent = note.textContent.replace('その後編集なし', 'その後編集あり');
       saveStatus('変更を保存していません', false); el('cat-export').disabled = true; clearOutputDisplay();
       if (!el('cat-draft-warning').hidden) el('cat-draft-warning').textContent = 'できあがるファイルは、社内で確認するためのものです。ファイル名の先頭に「DRAFT_」が付きます。完成版ではありませんので、お客様や社外へはそのままお送りにならないでください。';
@@ -923,8 +991,9 @@
       if (event.key < '1' || event.key > '9') return;
       event.preventDefault();
       if (busy) { status('処理中は参考訳を挿入できません。完了してからもう一度お試しください。'); return; }
-      var picks = document.querySelectorAll('#cat-candidates-list [data-cat-insert]');
-      var pick = picks[Number(event.key) - 1]; if (pick) insertReference(pick);
+      var picks = document.querySelectorAll('#cat-terms-list [data-cat-term-insert], #cat-candidates-list [data-cat-insert]');
+      var pick = picks[Number(event.key) - 1];
+      if (pick) { if (pick.hasAttribute('data-cat-term-insert')) insertTerm(pick); else insertReference(pick); }
     });
     el('cat-search').addEventListener('input', redrawAfterFlush);
     document.querySelector('[data-cat-term-cancel]').addEventListener('click', function () { el('cat-term-dialog').close(); });

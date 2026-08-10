@@ -113,7 +113,7 @@ textarea:focus, input:focus, select:focus { background: var(--surface); box-shad
 .shorten-note { color: var(--muted); font-size: var(--font-meta); }
 
 /* 過去に公表した英訳。畳んで置く。開いたときに日英が並んで見えること、
-   英文が原文より読みやすい大きさであることを優先する。老眼を想定するので
+   英文が原文より読みやすい大きさであることを優先する。読み違いが直接損害になるので
    本文は 16px を下回らせない。 */
 .past-translations { margin-top: 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
 .past-translations > summary { cursor: pointer; padding: 12px 16px; font-size: var(--font-body); font-weight: 600; }
@@ -159,7 +159,7 @@ button[disabled], .button[disabled] { cursor: not-allowed; opacity: 1; backgroun
 .secondary-button { background: transparent; border: 1px solid var(--line-strong); color: var(--text); }
 .secondary-button:hover { background: var(--soft); }
 .secondary-button.compact { min-height: 44px; padding: 6px 12px; font-size: var(--font-meta); }
-/* label[tabindex] のファイル選択領域も対象に含める。2px は老眼だと見落とす。 */
+/* label[tabindex] のファイル選択領域も対象に含める。2px の輪郭は視線が合っていないと見落とす。 */
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, label:focus-visible, [tabindex]:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 
 .startup-message { margin-top: var(--space-2); padding: 12px 14px; color: var(--muted); font-size: var(--font-meta); }
@@ -214,7 +214,7 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .eyebrow { color: var(--faint); font-size: var(--font-meta); font-weight: 600; letter-spacing: .06em; }
 .result-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 /* 訳文は画面でいちばん読まれる場所なので、いちばん大きくする。
-   老眼でも読める大きさ（18px）と、目が行を追いやすい行間（1.8）にする。
+   本文として無理なく読める大きさ（18px）と、行を追いやすい行間（1.8）にする。
    大きすぎると1行に入る語が減って読みにくくなるので、幅も制限する。 */
 .translation { margin: 0; white-space: pre-wrap; font-size: var(--font-input); line-height: 1.85; font-family: inherit; color: var(--text); background: var(--soft); border-radius: var(--radius-control); padding: 18px 20px; max-width: 62ch; }
 /* 主の訳。カードの中で最初に目に入る位置に置く。 */
@@ -266,8 +266,9 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .cat-target { width: 42%; }
 /* 開いている行の訳文が、この画面の主役。92px は行間1.75で実質2行弱しかなく、
    原文が4行とも見えているのに訳文だけ切れていた。em 基準にして「文字を大きく」でも
-   4行ぶんを保つ。実際の行数に合わせた高さは cat.js の自動伸長が上書きする。 */
-.cat-target textarea { width: 100%; min-height: calc(1.8em * 4 + 1.6em); padding: .8em .9em; resize: vertical; overflow-y: hidden; font-size: var(--font-segment); line-height: 1.8; }
+   3行ぶんを保つ。実際の行数に合わせた高さは cat.js の自動伸長が上書きする。
+   開いている行は原文の下に積むので、下限を厚くすると行が画面に収まらなくなる。 */
+.cat-target textarea, .cat-work-target textarea { width: 100%; min-height: calc(1.8em * 3 + 1.2em); padding: .7em .9em; resize: vertical; overflow-y: hidden; font-size: var(--font-segment); line-height: 1.8; }
 .cat-loc { display: block; color: var(--muted); }
 /* 確認済みの印。番号の隣に小さく出す。一覧を眺めたときに、どこまで見たかが分かる。 */
 /* 行の印。狭い列から溢れて隣に重ならないよう、番号の下に1行で置く。 */
@@ -281,7 +282,7 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .cat-op-ok { font-weight: 700; }
 .cat-confirmed { margin-left: 4px; color: var(--accent); font-weight: 700; }
 /* 保存できなかった行。黙って消えるより、目に見えて残るほうがよい。
-   色だけで示すと、通常行との差が 1.4:1 しかなく老眼では見えない。
+   色だけで示すと、通常行との差が 1.4:1 しかなく、環境によっては判別できない。
    文字と枠線を必ず添える。これを見落とすと訳した内容がそのまま消える。 */
 .cat-unsaved > td { background: #fdeceb; }
 .cat-unsaved { outline: 3px solid var(--error); outline-offset: -3px; }
@@ -299,7 +300,6 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .cat-resume { margin: 6px 0; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .cat-steps { margin-left: 8px; }
 .cat-actions-detail { display: flex; gap: 6px; flex-wrap: wrap; padding: 6px 0; }
-[data-yaku-confirmed="1"] .cat-col-no { opacity: 1; }
 .cat-origin { display: block; width: fit-content; max-width: 100%; margin-top: var(--space-0); border-radius: 999px; padding: 3px 8px; font-size: var(--font-meta); background: var(--soft); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cat-origin-manual { background: var(--accent-soft); border: 1px solid var(--accent); color: var(--accent-text); }
 
@@ -337,7 +337,7 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .cat-cand:hover { background: var(--soft); border-color: var(--line-strong); }
 .cat-cand-no { color: var(--muted); font-variant-numeric: tabular-nums; }
 /* 候補の出所（登録用語／過去に確認した訳／前回の資料）を示す唯一の表示。
-   11px にしていたが、老眼では読めないうえ、出所が読めないと候補を選べない。 */
+   11px にしていたが、出所が読めないと候補を選べないので本文と同格まで上げる。 */
 .cat-cand-tag { border-radius: 999px; padding: 2px 9px; background: var(--soft); color: var(--text); font-size: var(--font-meta); font-weight: 700; text-align: center; }
 .cat-cand-tag.is-exact { background: #6b5416; color: #fff; }
 .cat-cand-src { color: var(--muted); overflow-wrap: anywhere; }
@@ -424,7 +424,7 @@ summary { cursor: pointer; color: var(--text); font-size: var(--font-meta); min-
 .cat-text-output textarea { margin-top: 10px; min-height: 180px; }
 .cat-text-output-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
 .cat-qc-findings { font-size: var(--font-meta); }
-.cat-target textarea[aria-invalid="true"] { box-shadow: 0 0 0 3px var(--error); background: #fff7f5; }
+.cat-target textarea[aria-invalid="true"], .cat-work-target textarea[aria-invalid="true"] { box-shadow: 0 0 0 3px var(--error); background: #fff7f5; }
 .cat-card-label { display: none; }
 
 @media (max-width: 900px) {
@@ -438,7 +438,7 @@ summary { cursor: pointer; color: var(--text); font-size: var(--font-meta); min-
   .cat-card-label { display: block; margin-bottom: 6px; color: var(--muted); font-size: var(--font-meta); font-weight: 700; }
   .cat-col-no, .cat-col-loc, .cat-source, .cat-target { width: 100%; }
   .cat-source { font-size: var(--font-body); line-height: 1.75; }
-  .cat-target textarea { min-height: calc(1.8em * 6 + 1.6em); }
+  .cat-target textarea, .cat-work-target textarea { min-height: calc(1.8em * 5 + 1.2em); }
   .cat-row-actions { gap: 10px; flex-wrap: wrap; margin-top: 12px; }
   .cat-cand { grid-template-columns: 32px 1fr; }
   .cat-cand-src, .cat-cand-tgt { grid-column: 1 / -1; }
@@ -498,7 +498,7 @@ summary { cursor: pointer; color: var(--text); font-size: var(--font-meta); min-
 .privacy-summary, .privacy-note { max-width: 42em; margin: var(--space-3) 0 0; border-left: 4px solid var(--accent); background: var(--accent-soft); padding: 12px 14px; color: var(--text); }
 .cat-picker p.muted, .cat-start-panel > p.muted, .hint, .batch-note { max-width: 42em; }
 /* 伏せた数値の確認。件数だけでは「自分のあの数字が伏せられたか」に答えられない。
-   老眼を想定し、値そのものは本文サイズを下回らせない。 */
+   数値そのものは判断材料なので、本文サイズを下回らせない。 */
 .mask-summary-line { margin: 0; }
 .mask-detail { margin-top: 8px; }
 .mask-detail > summary { min-height: 44px; color: var(--text); font-size: var(--font-body); font-weight: 700; }
