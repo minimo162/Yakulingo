@@ -23,12 +23,12 @@
   --error: #b42318;
   --radius-card: 10px;
   --radius-control: 7px;
-  --space-1: 8px;
-  --space-2: 16px;
-  --space-3: 24px;
-  --space-4: 32px;
-  --space-5: 48px;
-  --space-6: 72px;
+  --space-1: .5rem;
+  --space-2: 1rem;
+  --space-3: 1.5rem;
+  --space-4: 2rem;
+  --space-5: 3rem;
+  --space-6: 4.5rem;
   --motion: 140ms;
   --ease: cubic-bezier(.25,.46,.45,.94);
   --shadow-card: 0 1px 2px rgba(16,24,40,.04);
@@ -38,6 +38,13 @@
   --font-input: 1.06rem;
   --font-meta: .88rem;
   --font-body: 1rem;
+  /* 資料翻訳の主役。原文と訳文だけ、本文より一段大きい。
+     比率で持つので「文字を大きく」しても主役と脇役の差が保たれる。 */
+  --font-segment: 1.12rem;
+
+  /* 余白も比率で持つ。px 固定だと文字だけ大きくなって、拡大したときのほうが
+     密に見える。段は3つ（要素間 / 節間 / ページ段）に絞って使う。 */
+  --space-0: .25rem;
 }
 
 html { font-size: 17px; }
@@ -78,10 +85,10 @@ a { color: inherit; }
 .tab-panel { margin-top: var(--space-5); opacity: 1; transition: opacity var(--motion) var(--ease); }
 .tab-panel[hidden] { opacity: 0; }
 .section-title-row { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-3); }
-h1 { margin: 0; font-size: calc(var(--font-ui) + 7px); line-height: 1.35; font-weight: 700; }
-h2 { margin: 0; font-size: calc(var(--font-ui) + 2px); line-height: 1.4; font-weight: 700; }
+h1 { margin: 0; font-size: 1.55rem; line-height: 1.3; font-weight: 700; }
+h2 { margin: 0; font-size: 1.24rem; line-height: 1.4; font-weight: 700; }
 /* h3 が本文より小さいと、画面の構造が読み取れなくなる。必ず本文より大きくする。 */
-h3 { margin: 0; font-size: calc(var(--font-ui) + 1px); line-height: 1.45; font-weight: 700; }
+h3 { margin: 0; font-size: 1.1rem; line-height: 1.45; font-weight: 700; }
 .muted, .hint, .result-subtitle { color: var(--muted); }
 .section-title-row .muted { margin: 6px 0 0; font-size: var(--font-meta); }
 
@@ -241,17 +248,19 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .cat-search-label { display: flex; gap: 6px; align-items: center; }
 .cat-search-label input { min-width: 220px; }
 .cat-grid-wrap { max-height: 60vh; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-control); }
-.cat-grid { width: 100%; border-collapse: collapse; font-size: var(--font-body); }
+/* 一覧の原文と訳文が、この画面の主役。本文より一段大きくする。 */
+.cat-grid { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: var(--font-segment); }
 .cat-grid thead th { position: sticky; top: 0; z-index: 1; background: var(--surface); border-bottom: 1px solid var(--line-strong); padding: 8px 10px; text-align: left; }
 .cat-grid td { border-bottom: 1px solid var(--line); padding: 6px 10px; vertical-align: top; }
-.cat-col-no { width: 46px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.cat-col-loc { width: 116px; }
-.cat-source { width: 40%; white-space: pre-wrap; }
-.cat-target { width: 40%; }
-.cat-target textarea { width: 100%; min-height: 92px; resize: vertical; font-size: var(--font-input); }
+.cat-col-no { width: 5.2rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.cat-col-loc { width: 9rem; }
+.cat-source { width: 42%; white-space: pre-wrap; }
+.cat-target { width: 42%; }
+.cat-target textarea { width: 100%; min-height: 92px; resize: vertical; font-size: var(--font-segment); line-height: 1.75; }
 .cat-loc { display: block; color: var(--muted); }
 /* 確認済みの印。番号の隣に小さく出す。一覧を眺めたときに、どこまで見たかが分かる。 */
-.cat-state { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 10px; font-size: var(--font-meta); font-weight: 700; }
+/* 行の印。狭い列から溢れて隣に重ならないよう、番号の下に1行で置く。 */
+.cat-state { display: block; width: fit-content; max-width: 100%; margin-top: var(--space-0); padding: 1px 8px; border-radius: 999px; font-size: var(--font-meta); font-weight: 700; white-space: nowrap; }
 .cat-state-untranslated { background: color-mix(in srgb, var(--bg) 70%, #d33 30%); }
 .cat-state-machine_draft { background: color-mix(in srgb, var(--bg) 70%, #e8a 30%); }
 .cat-state-human_edited { background: color-mix(in srgb, var(--bg) 70%, #d9a441 30%); }
@@ -281,7 +290,7 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .cat-actions-detail { display: flex; gap: 6px; flex-wrap: wrap; padding: 6px 0; }
 [data-yaku-confirmed="1"] .cat-col-no { opacity: 1; }
 [data-yaku-confirmed="0"] > td { background: color-mix(in srgb, var(--bg) 96%, var(--accent) 4%); }
-.cat-origin { display: inline-block; margin-top: 4px; border-radius: 999px; padding: 3px 8px; font-size: var(--font-meta); background: var(--soft); color: var(--muted); }
+.cat-origin { display: block; width: fit-content; max-width: 100%; margin-top: var(--space-0); border-radius: 999px; padding: 3px 8px; font-size: var(--font-meta); background: var(--soft); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cat-origin-manual { background: var(--accent); color: #fff; }
 
 /* 行の状態を左端の色で示す。一覧を眺めて「どこが手つかずか」が分かるように。 */
@@ -292,7 +301,10 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .cat-grid tbody tr[data-yaku-cat-state="reviewed"] { border-left-color: var(--accent); }
 .cat-grid tbody tr[data-yaku-cat-state="stale"] { border-left-color: #d33; }
 /* いま見ている行。長い一覧で自分の位置を見失わないようにする。 */
+/* いま見ている行。tr の背景は [data-yaku-confirmed="0"] > td に隠れるので td を塗る。
+   未確認の行こそ、いま作業している行である。 */
 .cat-grid tbody tr.is-active { background: var(--soft); }
+.cat-grid tbody tr.is-active > td { background: #dfe4fb; }
 
 /* 繋ぎ直しは開いている行にだけ描かれる（cat.js が訳文セルへ入れる）。 */
 /* 行の繋ぎ直し。116px の場所列に入れると日本語が1文字ずつ縦に折り返されるので、
@@ -325,9 +337,11 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 
 .revise-form { margin-top: var(--space-2); }
 .revise-label { display: block; margin-bottom: 6px; color: var(--muted); font-size: var(--font-meta); }
-.revise-row { display: flex; gap: 8px; align-items: center; }
+.revise-row { display: flex; gap: var(--space-1); align-items: center; flex-wrap: wrap; }
 .revise-input { flex: 1 1 auto; min-width: 0; }
 .revise-button { flex: 0 0 auto; white-space: nowrap; }
+.revise-form button { white-space: nowrap; }
+.revise-input { flex: 1 1 12rem; }
 .stat-pills { display: flex; flex-wrap: wrap; gap: 8px; margin: var(--space-2) 0; }
 .stat-pill, .term-pill { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; background: var(--soft); color: var(--muted); padding: 4px 9px; font-size: var(--font-meta); font-variant-numeric: tabular-nums; }
 .stat-pill strong { color: var(--text); font-weight: 600; }

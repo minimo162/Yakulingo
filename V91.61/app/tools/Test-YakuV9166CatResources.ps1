@@ -123,6 +123,22 @@ try {
     Chk (-not (Test-YakuAbbrevConfirm -SourceText '上期営利' -TermTarget '1H OP' -OverrideTarget '2H OP 999')) '登録があっても人が書き換えた訳は数値検査を通す'
     Chk (-not (Test-YakuAbbrevConfirm -SourceText '上期営利' -OverrideTarget '1H OP')) '登録が無い訳文に数字が増えていれば止める'
 
+    # 兆・万千を含む金額。単位変換は原文を訳文側の表記へ書き換える（1兆3,150億円 → 13,150 oku）。
+    # 突き合わせがその変換を通っていないと、アプリ自身が正しく換算した訳を
+    # アプリ自身が numeric-value-mismatch で拒否する。有報・短信で頻出する。
+    Write-Host 'composite magnitude units' -ForegroundColor Cyan
+    function Test-YakuUnitConfirm {
+        param([string]$SourceText, [string]$TargetText)
+        $unitProject = New-YakuCatTextProject -Root $root -Text $SourceText -Settings $null -Direction to_en -Register $false
+        $null = Set-YakuCatSegmentTranslation -Project $unitProject -Index 0 -Text $TargetText
+        try { $null = Set-YakuCatSegmentConfirmed -Project $unitProject -Index 0; return $true } catch { return $false }
+    }
+    Chk (Test-YakuUnitConfirm '当連結会計年度の売上高は1兆3,150億円となりました。' 'Net sales for the fiscal year were 13,150 oku.') '兆と億が混ざった金額を確認済みにできる'
+    Chk (Test-YakuUnitConfirm '売上高は1兆2,400億円に達しました。' 'Net sales reached 12,400 oku.') '語尾が変わっても単位を取り違えない'
+    Chk (Test-YakuUnitConfirm '販売台数は18万6千台でした。' 'Unit sales were 186 k units.') '万と千が混ざった台数を確認済みにできる'
+    Chk (-not (Test-YakuUnitConfirm '当連結会計年度の売上高は1兆3,150億円となりました。' 'Net sales for the fiscal year were 1,315 oku.')) '桁を10分の1にした訳は止める'
+    Chk (-not (Test-YakuUnitConfirm '販売台数は18万6千台でした。' 'Unit sales were 186 units.')) '千を落とした訳は止める'
+
     Write-Host 'UI and API separation' -ForegroundColor Cyan
     $server = [IO.File]::ReadAllText((Join-Path $src 'Server.ps1'))
     $client = [IO.File]::ReadAllText((Join-Path (Join-Path $root 'www\assets') 'cat.js'))

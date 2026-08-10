@@ -3,6 +3,10 @@
    固定値(旧 84px)ではペインの先頭と表の見出しがツールバーの下に隠れていた。 */
 :root {
   --cat-toolbar-h: 76px;
+  /* 主役は中央（原文と訳文）。脇役2つを可変にして、主役に幅を回す。
+     固定220+380では、1240のウィンドウで主役が半分を切っていた。 */
+  --pane-nav: clamp(11rem, 15vw, 15rem);
+  --pane-inspector: clamp(18rem, 24vw, 25rem);
 }
 
 .app-cat .shell {
@@ -79,6 +83,14 @@
   white-space: nowrap;
 }
 
+/* 主要な2つだけ常に見せ、残りは畳む。4つ並べると折り返してツールバーが
+   136px まで伸び、可視領域の 7% を器が食べていた。 */
+.cat-more-actions { position: relative; }
+.cat-more-actions > summary { min-height: 2.75rem; padding: var(--space-1) var(--space-2); border: 1px solid var(--line-strong); border-radius: var(--radius-control); color: var(--text); font-size: var(--font-meta); font-weight: 600; white-space: nowrap; }
+.cat-more-actions[open] > summary { border-color: var(--accent); }
+.cat-more-actions-list { position: absolute; right: 0; z-index: 30; display: grid; gap: var(--space-1); min-width: 16rem; margin-top: var(--space-1); border: 1px solid var(--line-strong); border-radius: var(--radius-card); background: var(--surface); box-shadow: 0 10px 30px rgba(24,24,27,.16); padding: var(--space-1); }
+.cat-more-actions-list button { width: 100%; justify-content: flex-start; }
+
 .cat-editor-toolbar .cat-save-status {
   display: block;
   margin: 5px 0 0;
@@ -88,7 +100,7 @@
 
 .cat-editor-layout {
   display: grid;
-  grid-template-columns: 220px minmax(560px, 1fr) 380px;
+  grid-template-columns: var(--pane-nav) minmax(0, 1fr) var(--pane-inspector);
   gap: 12px;
   align-items: start;
   min-height: 62vh;
@@ -110,8 +122,10 @@
 }
 
 .cat-nav-pane h2 {
-  margin-bottom: 8px;
-  font-size: var(--font-ui);
+  margin-bottom: var(--space-1);
+  color: var(--faint);
+  font-size: var(--font-meta);
+  letter-spacing: .06em;
 }
 
 .cat-nav-pane section + section {
@@ -209,7 +223,7 @@
 .cat-grid tbody tr.is-active {
   outline: 3px solid var(--accent);
   outline-offset: -3px;
-  background: #eef0fc;
+  box-shadow: inset 6px 0 0 0 var(--accent);
 }
 
 .cat-grid tbody tr:not(.is-active) td {
@@ -221,7 +235,7 @@
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
 }
 
 /* 一覧の各行を開くための主要なクリック先。min-height:0 だと実効26px しかなく、
@@ -240,7 +254,11 @@
 
 .cat-location-main {
   display: block;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
+  word-break: keep-all;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 700;
 }
 
@@ -250,6 +268,9 @@
   color: var(--muted);
   font-size: var(--font-meta);
 }
+
+/* 開いていない行は従属。付随する印まで出すと一覧で目が滑る。 */
+.cat-grid tbody tr:not(.is-active) .cat-origin { display: none; }
 
 .cat-target-preview:empty::before {
   content: "未翻訳";
@@ -300,8 +321,13 @@
 }
 
 .cat-inspector-pane [role="tabpanel"] {
-  padding: 12px;
+  padding: var(--space-2);
 }
+
+/* 行を選ぶ前の説明は脇役。幅を絞り、畳めるものは畳む。 */
+.cat-inspector-pane p.muted { max-width: 26em; }
+.cat-inspector-pane .pane-note { margin-top: var(--space-1); }
+.cat-inspector-pane .pane-note > summary { min-height: 2.75rem; color: var(--faint); font-size: var(--font-meta); }
 
 .cat-inspector-pane .cat-candidates {
   margin: 0;
@@ -472,9 +498,9 @@
 }
 
 @media (max-width: 1400px) {
-  /* ここでボタン列が2段目に落ちるので、ツールバーの実高もそのぶん増える。 */
+  /* ボタンを2つ＋畳みにしたので、ここで2段目へ落ちても伸びは小さい。 */
   :root {
-    --cat-toolbar-h: 136px;
+    --cat-toolbar-h: 116px;
   }
   .cat-editor-toolbar {
     grid-template-columns: minmax(210px, 1fr) auto minmax(180px, 260px);
@@ -486,7 +512,7 @@
 
 /* 3列（220 + 560 + 380 + gap 24）に必要なのは 1184px。.shell は画面幅 -32px なので
    ビューポート 1216px を下回ると横スクロールが出ていた。2列化をそこまで引き上げる。 */
-@media (max-width: 1219px) {
+@media (max-width: 1319px) {
   .cat-editor-layout {
     grid-template-columns: 190px minmax(0, 1fr);
   }

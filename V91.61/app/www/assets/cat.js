@@ -122,7 +122,10 @@
     };
     return (segment.qc_findings || []).map(function (finding) { var code = String(finding.code || finding.Code || '').toLowerCase().replace(/_/g, '-'); return labels[code] || '自動点検で気になる点が見つかりました。左の原文と見比べてください。'; });
   }
-  function stateLabel(state) { return state === 'reviewed' ? '確認済み' : state === 'human_edited' ? '手直し済み・未確認' : state === 'machine_draft' ? 'Copilot訳・未確認' : state === 'stale' ? '再確認が必要' : '未翻訳'; }
+  /* 一覧の印は短く。長い名前は狭い列から溢れて隣の列に重なる。
+   意味は title と、左の絞り込み（要対応・未翻訳・未確認…）が持つ。 */
+  function stateLabel(state) { return state === 'reviewed' ? '確認済' : state === 'human_edited' ? '手直し' : state === 'machine_draft' ? '未確認' : state === 'stale' ? '要再確認' : '未翻訳'; }
+  function stateTitle(state) { return state === 'reviewed' ? '確認済み' : state === 'human_edited' ? '手直し済み・未確認' : state === 'machine_draft' ? 'Copilotの訳案・未確認' : state === 'stale' ? '原文が変わったので再確認が必要' : 'まだ訳がありません'; }
   function originLabel(origin) {
     if (origin === 'glossary') return '用語集';
     if (origin === 'copilot') return 'Copilot訳';
@@ -254,7 +257,7 @@
       var target = isActive ? '<textarea data-cat-input="' + index + '" data-cat-project-id="' + esc(project.id) + '" data-original="' + esc(segment.translation || '') + '" aria-label="' + row + '行目の訳文" aria-invalid="' + (findings.length ? 'true' : 'false') + '"' + (findings.length ? ' aria-describedby="' + findingId + '"' : '') + '>' + esc(segment.translation || '') + '</textarea>' + prior + referenceTrace + generatedTerms + '<div class="cat-ops">' + ops + '</div><div class="cat-row-actions">' + (segment.confirmed ? '' : '<button type="button" class="cat-op cat-op-ok" data-cat-confirm="' + index + '">確認済みにする</button>') + (segment.translation ? '<button type="button" class="cat-op secondary-button" data-cat-term-open="' + index + '">用語を登録</button>' : '') + ((segment.kind === 'cell' && segment.translation && String(segment.source).length <= 40) ? '<button type="button" class="cat-op secondary-button" data-cat-glossary="' + index + '">このセルの訳を今後も自動で使う</button>' : '') + '</div>' + qc + compare + (segment.can_revise ? '<form class="revise-form" data-cat-revise="' + index + '"><button class="secondary-button" type="button" data-cat-shorten="' + index + '">短くする</button><label class="revise-label">または、どこをどう直すか入力</label><div class="revise-row"><input class="revise-input" type="text" placeholder="例：「increase」を「rise」に変える"><button class="secondary-button" type="submit">この指示で直す</button></div></form>' : '') : '<button type="button" class="cat-row-activate" data-cat-activate="' + index + '"><span class="cat-target-preview">' + esc(segment.translation || '') + '</span></button>';
       var change = changeLabel(segment);
       return '<tr class="' + (isActive ? 'is-active' : '') + '" data-cat-row="' + index + '" data-cat-segment-id="' + esc(segment.segment_id || '') + '" data-cat-confirmed="' + (segment.confirmed ? '1' : '0') + '" data-yaku-cat-state="' + esc(state) + '">' +
-        '<td class="cat-col-no"><span class="cat-card-label">行番号・状態</span>' + row + '<span class="cat-state cat-state-' + esc(state) + '">' + esc(stateLabel(state)) + '</span>' + (change ? '<span class="cat-change-badge cat-change-' + esc(changeGroup(segment)) + '">' + esc(change) + '</span>' : '') + '</td>' +
+        '<td class="cat-col-no"><span class="cat-card-label">行番号・状態</span>' + row + '<span class="cat-state cat-state-' + esc(state) + '" title="' + esc(stateTitle(state)) + '">' + esc(stateLabel(state)) + '</span>' + (change ? '<span class="cat-change-badge cat-change-' + esc(changeGroup(segment)) + '">' + esc(change) + '</span>' : '') + '</td>' +
         '<td class="cat-col-loc"><span class="cat-card-label">場所</span><span class="cat-location-main">' + esc(segment.location || '本文') + '</span><span class="cat-location-kind">' + esc(kind) + '</span>' + (origin ? '<span class="cat-origin">' + esc(origin) + '</span>' : '') + '</td>' +
         '<td class="cat-source"><span class="cat-card-label">原文</span>' + (isActive ? '<span class="cat-source-text">' + esc(segment.source) + '</span>' : '<button type="button" class="cat-row-activate" data-cat-activate="' + index + '"><span class="cat-source-text">' + esc(segment.source) + '</span></button>') + '</td>' +
         '<td class="cat-target"><span class="cat-card-label">訳文</span>' + target + '<span class="cat-row-flag"></span></td></tr>';
@@ -533,7 +536,8 @@
           (allowed.length ? '<p class="muted">許容する別訳: ' + esc(allowed.join('、')) + '</p>' : '') + (forbidden.length ? '<p class="muted">使用しない訳: ' + esc(forbidden.join('、')) + '</p>' : '') +
           '<div class="cat-row-actions"><button type="button" class="secondary-button" data-cat-term-insert="' + esc(item.translation || item.target) + '" data-cat-reference-id="' + esc(item.reference_id || '') + '" data-cat-project-id="' + esc(requestScope.id) + '" data-cat-index="' + index + '">この訳語を入力位置に入れる</button>' +
           '<button type="button" class="secondary-button" data-cat-term-edit data-cat-index="' + index + '" data-cat-term-id="' + esc(item.term_id || '') + '" data-cat-term-version="' + Number(item.term_version || 0) + '" data-cat-term-source="' + esc(item.source || '') + '" data-cat-term-target="' + esc(item.translation || item.target || '') + '" data-cat-term-allowed="' + esc(allowed.join('|')) + '" data-cat-term-forbidden="' + esc(forbidden.join('|')) + '" data-cat-term-scope="' + esc(item.scope || 'project') + '">用語を修正</button><button type="button" class="secondary-button" data-cat-term-deactivate="' + esc(item.term_id || '') + '" data-cat-index="' + index + '">この用語の登録を取りやめる</button></div></article>';
-      }).join('') : '<p class="muted">この行に合う用語はまだ登録されていません。必要な語を原文と訳文から選び、「用語を登録」すると、この資料または今後の資料で使えます。</p>';
+      }).join('') : '<p class="muted">この行で使う用語の登録はありません。</p>'
+      + '<details class="pane-note"><summary>用語を登録するには</summary><p class="muted">原文と訳文から必要な語をマウスで選び、「用語を登録」を押します。この資料だけ、または今後の資料でも使えます。</p></details>';
       el('cat-candidates-list').innerHTML = items.length ? items.map(function (item, itemIndex) {
         var label = item.kind === 'memory' ? '過去に確認した訳' : '前回の資料の訳';
         var material = item.source_name || item.database || '資料名なし';

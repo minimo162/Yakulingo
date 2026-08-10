@@ -17,6 +17,11 @@ $references = @(
     (Join-Path $desktop 'Microsoft.Web.WebView2.WinForms.dll')
 )
 $arguments = @('/nologo','/target:winexe','/platform:x64','/optimize+','/warn:4',('/out:' + (Join-Path $desktop 'YakuLingo.exe')))
+# exe 自身にアイコンを埋める。デスクトップとスタートメニューのショートカットは
+# exe を指すので、ここに入れておかないと Windows 既定の汎用アイコンのままになる。
+$iconPath = Join-Path $desktop 'YakuLingo.ico'
+if (-not (Test-Path -LiteralPath $iconPath -PathType Leaf)) { throw "APP_ICON_MISSING: $iconPath" }
+$arguments += ('/win32icon:' + $iconPath)
 foreach ($reference in $references) { $arguments += ('/reference:' + $reference) }
 $arguments += (Join-Path $desktop 'Program.cs')
 & $csc @arguments

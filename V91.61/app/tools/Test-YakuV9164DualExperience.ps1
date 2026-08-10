@@ -162,7 +162,7 @@ Check-YakuDual ($catClient -match 'function redrawAfterFlush\(\)[\s\S]*?return f
 
 Write-Host 'CAT H1 focused workspace contract' -ForegroundColor Cyan
 Check-YakuDual ($catPage -match 'cat-workspace\.css' -and $catPage -match 'id="cat-editor-toolbar"' -and $catPage -match 'id="cat-nav-pane"' -and $catPage -match 'id="cat-editor-pane"' -and $catPage -match 'id="cat-inspector-pane"') 'CAT uses one WebView workspace with sticky toolbar and three named regions'
-Check-YakuDual ($catWorkspaceStyle -match '(?s)\.cat-editor-toolbar\s*\{[^}]*position:\s*sticky' -and $catWorkspaceStyle -match 'grid-template-columns:\s*220px\s+minmax\(560px,\s*1fr\)\s+380px') 'desktop CAT workspace has the approved sticky three-region layout'
+Check-YakuDual ($catWorkspaceStyle -match '(?s)\.cat-editor-toolbar\s*\{[^}]*position:\s*sticky' -and $catWorkspaceStyle -match 'grid-template-columns:\s*var\(--pane-nav\)\s+minmax\(0,\s*1fr\)\s+var\(--pane-inspector\)' -and $catWorkspaceStyle -match '--pane-nav:\s*clamp\(' -and $catWorkspaceStyle -match '--pane-inspector:\s*clamp\(') 'desktop CAT workspace has the approved sticky three-region layout'
 Check-YakuDual ($catClient -match "activeSegmentId\s*=\s*''" -and $catClient -match 'data-cat-segment-id' -and $catClient -match 'String\(segment\.segment_id') 'active row survives redraws by stable segment_id'
 Check-YakuDual ($catClient -match "esc\(segment\.location \|\| '本文'\)" -and $catClient -match 'function locationGroup\(segment\)') 'rows display the actual source location and navigation groups it locally'
 Check-YakuDual ($catClient -match 'cat-candidate-number' -and $catClient -match 'itemIndex \+ 1' -and $catClient -match 'data-cat-reference-id') 'numbered candidate controls preserve explicit reference insertion'

@@ -174,6 +174,23 @@ namespace YakuLingo.Desktop
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
+        // 通知領域のバルーンは、アイコンが隠れた領域にあると Windows が出さない。
+        // 既定ではそこへ入るので、バルーンだけに頼ると完了に気づけない。
+        // タスクバーの点滅は、アイコンの可視状態にも応答不可設定にも左右されない。
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FLASHWINFO
+        {
+            public uint cbSize;
+            public IntPtr hwnd;
+            public uint dwFlags;
+            public uint uCount;
+            public uint dwTimeout;
+        }
+        [DllImport("user32.dll")]
+        private static extern bool FlashWindowEx(ref FLASHWINFO pwfi);
+        private const uint FlashAll = 3;
+        private const uint FlashTimerNoFg = 12;
+
         private readonly string appRoot;
         private readonly string dataRoot;
         private readonly string preferencesPath;
@@ -203,12 +220,15 @@ namespace YakuLingo.Desktop
         // 資料翻訳は ?project=<id> を持つ。desiredRoute と分けて覚えないと、
         // 画面サイズの判定（"/cat" との文字列比較）が壊れる。
         private string desiredQuery = "";
+        // 資料翻訳へ入るときの自動リサイズは1回だけ。以後は利用者の大きさを尊重する。
+        private bool catWindowResizedByUser;
         private string pendingQuickText = "";
         private bool pendingQuickSubmit;
         private Size quickWindowSize = new Size(650, 640);
         private Size catWindowSize = new Size(1400, 900);
         private Size homeWindowSize = new Size(1240, 840);
         private Process backendProcess;
+        private Icon appIcon;
 
         internal ShellForm(string pipeName, string initialCommand)
         {
@@ -221,7 +241,10 @@ namespace YakuLingo.Desktop
             StartCleanupWatcher();
 
             Text = "YakuLingo";
-            Icon = SystemIcons.Application;
+            // 通知領域に8個も並ぶ中で、Windows既定の汎用アイコンでは
+            // どれが YakuLingo か見分けられない。専用アイコンを使う。
+            appIcon = LoadAppIcon();
+            Icon = appIcon;
             StartPosition = FormStartPosition.CenterScreen;
             MinimumSize = new Size(520, 480);
             Size = new Size(1240, 840);
@@ -229,7 +252,7 @@ namespace YakuLingo.Desktop
             Controls.Add(webView);
             webView.Dock = DockStyle.Fill;
 
-            tray.Icon = SystemIcons.Application;
+            tray.Icon = appIcon;
             tray.Text = "YakuLingo";
             tray.Visible = true;
             // 通知領域のアイコンを両押しするのは「アプリを前に出す」動作。
@@ -361,6 +384,20 @@ namespace YakuLingo.Desktop
         {
             if (!e.IsSuccess || webView.Source == null || !IsTrustedOrigin(webView.Source)) return;
             InjectHotkeyStatus();
+            // 画面の中のカードから資料翻訳へ入ると OpenCat() を通らないので、
+            // ホームの窓（1240x840）のまま3列の作業画面が開き、原文と訳文の列が潰れていた。
+            // 資料翻訳に必要な広さへ広げる。利用者が自分で小さくした場合は尊重する。
+            if (webView.Source.AbsolutePath.StartsWith("/cat", StringComparison.OrdinalIgnoreCase))
+            {
+                desiredRoute = "/cat";
+                desiredQuery = webView.Source.Query;
+                if (WindowState == FormWindowState.Normal && Width < catWindowSize.Width && !catWindowResizedByUser)
+                {
+                    MinimumSize = new Size(900, 620);
+                    Size = catWindowSize;
+                    catWindowResizedByUser = true;
+                }
+            }
             if (webView.Source.AbsolutePath.Equals("/quick", StringComparison.OrdinalIgnoreCase) && !String.IsNullOrEmpty(pendingQuickText))
             {
                 string source = json.Serialize(pendingQuickText);
@@ -404,7 +441,7 @@ namespace YakuLingo.Desktop
                     // 画面を見ていれば分かるので、前に出ていないときだけ知らせる。
                     if (!Visible || WindowState == FormWindowState.Minimized || !ContainsFocus)
                     {
-                        tray.ShowBalloonTip(7000, "YakuLingo", "翻訳が終わりました。YakuLingoを開くと結果を確認できます。", ToolTipIcon.Info);
+                        NotifyTranslationFinished();
                     }
                 }
             }
@@ -560,6 +597,39 @@ namespace YakuLingo.Desktop
                 else { desiredRoute = "/"; desiredQuery = ""; }
             }
             catch { }
+        }
+
+        private void NotifyTranslationFinished()
+        {
+            // 手段を2つ出す。どちらか一方は利用者の設定で消えることがある。
+            // バルーンは通知領域のアイコンが隠れていると出ず、応答不可でも抑止される。
+            // タスクバーの点滅はどちらにも影響されないので、こちらを主にする。
+            try
+            {
+                FLASHWINFO info = new FLASHWINFO();
+                info.cbSize = (uint)Marshal.SizeOf(typeof(FLASHWINFO));
+                info.hwnd = Handle;
+                info.dwFlags = FlashAll | FlashTimerNoFg;
+                info.uCount = 3;
+                info.dwTimeout = 0;
+                FlashWindowEx(ref info);
+            }
+            catch { }
+            try { tray.ShowBalloonTip(7000, "YakuLingo", "翻訳が終わりました。YakuLingoを開くと結果を確認できます。", ToolTipIcon.Info); }
+            catch { }
+        }
+
+        private Icon LoadAppIcon()
+        {
+            // exe と同じ場所に置く。読めないときだけ既定へ落とす（起動は止めない）。
+            try
+            {
+                string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "YakuLingo.ico");
+                if (File.Exists(path)) return new Icon(path);
+            }
+            catch { }
+            try { return Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
+            return SystemIcons.Application;
         }
 
         private void ShowLocalWaitingPage(bool quick)
