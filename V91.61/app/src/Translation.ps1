@@ -96,9 +96,9 @@ function Get-YakuTranslationContractFingerprint {
     if ([string]::IsNullOrWhiteSpace($Root)) {
         try { $Root = Get-YakuRoot } catch { $Root = '' }
     }
-    $names = @('glossary.csv','prompts\text_translate_full_to_en.txt','prompts\text_translate_brief_to_en.txt','prompts\text_translate_to_jp.txt','prompts\cat_translate_to_en.txt','prompts\cat_translate_to_jp.txt','prompts\style_brief_rules.txt')
+    $names = @('prompts\text_translate_full_to_en.txt','prompts\text_translate_brief_to_en.txt','prompts\text_translate_to_jp.txt','prompts\cat_translate_to_en.txt','prompts\cat_translate_to_jp.txt','prompts\style_brief_rules.txt')
     $settingParts = New-Object System.Collections.Generic.List[string]
-    foreach ($key in @('copilot_model','use_bundled_glossary','glossary_prompt_limit','max_chars_per_batch','max_chars_per_batch_file')) {
+    foreach ($key in @('copilot_model','glossary_prompt_limit','max_chars_per_batch','max_chars_per_batch_file')) {
         try { $settingParts.Add($key + '=' + [string]$Settings.$key) | Out-Null } catch { $settingParts.Add($key + '=') | Out-Null }
     }
     # V91.60 §7: マスキング仕様の識別子と有効・無効の状態を契約へ含める。
@@ -2221,31 +2221,9 @@ function Invoke-YakuTextTranslation {
         $keptTotal = 0
         foreach ($br2 in $batchResults) { $maskedTotal += [int]$br2.MaskedCount; $keptTotal += [int]$br2.KeptCount }
 
-        # 過去に公表した英訳を引く。手元で完結するので往復は増えない。
-        #
-        # 利用者の課題は「過去の翻訳例が見れない」であり、プロンプトへ埋める
-        # ことではなかった（利用者 2026-08-08）。訳の下に日英そろえて出す。
-        #
-        # 引けなくても翻訳は成立する。CorpusPairs.ps1 を読み込んでいない経路や
-        # コーパスを配っていない環境でも止めない。
+        # Quick and generic text translation never consult corpus/TM/history.
+        # Deliberately keep the response shape empty for old clients.
         $pastPairs = @()
-        if ($ReferencePolicy -eq 'display' -and $direction -eq 'to_en') {
-            $pastSw = [System.Diagnostics.Stopwatch]::StartNew()
-            try {
-                if (Get-Command Find-YakuCorpusPairsByTerms -ErrorAction SilentlyContinue) {
-                    $pairsDir = ''
-                    try { $pairsDir = Get-YakuCorpusSearchDir } catch { $pairsDir = '' }
-                    if (-not [string]::IsNullOrWhiteSpace($pairsDir)) {
-                        $pastPairs = @(Find-YakuCorpusPairsByTerms -Dir $pairsDir -Text $InputText -Limit 3)
-                    }
-                }
-            } catch {
-                try { Write-YakuLog ('Past translations lookup failed: ' + $_.Exception.Message) 'WARN' } catch {}
-                $pastPairs = @()
-            }
-            $pastSw.Stop()
-            try { Write-YakuLog "Past translations lookup. hits=$(@($pastPairs).Count) elapsedMs=$($pastSw.ElapsedMilliseconds) roundTrips=0" 'INFO' } catch {}
-        }
 
         $result = [pscustomobject]@{
             Direction = $direction

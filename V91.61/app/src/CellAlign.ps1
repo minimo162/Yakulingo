@@ -5,7 +5,7 @@
 
     表の変わらない部分は AI を使うまでもなく、機械置換で足りる
     （利用者の判断 2026-08-06）。仕組みは既にある
-    （Resolve-YakuFileExactGlossaryTranslations のセル完全一致、glossary.csv 315件）。
+    （Resolve-YakuFileExactGlossaryTranslations の利用者登録cell_exact）。
     足りないのは**置換表そのものの供給**で、いまは開発者が一人で書いている。
 
     過去の ECM 資料には英訳がある。そこから対応を吸い出せれば、

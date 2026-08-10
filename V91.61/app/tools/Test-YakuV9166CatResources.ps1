@@ -83,6 +83,23 @@ try {
     $null = Update-YakuCatProjectForTerminologyChange -Project $project3 -Entry $scoped.Entry
     Chk ([string]$project3.Segments[0].State -eq 'stale' -and [string]$project3.Segments[1].State -eq 'reviewed') '用語変更では該当する確認済み行だけを再確認対象にする'
 
+    Write-Host 'Zero-seed cell-exact pass' -ForegroundColor Cyan
+    $resourceSettings = [pscustomobject]@{}
+    $fixedProject = New-YakuCatTextProject -Root $root -Text '売上高' -Settings $null -Direction to_en -Register $false
+    $emptyPass = Invoke-YakuCatGlossaryPass -Root $root -Project $fixedProject -Settings $resourceSettings
+    Chk ([int]$emptyPass.Applied -eq 0 -and [string]::IsNullOrWhiteSpace([string]$fixedProject.Segments[0].Translation)) '登録前は配布データから固定訳を補わない'
+    $fixedTerm = Add-YakuTerminologyEntry -Scope project -ProjectId ([string]$fixedProject.Id) -Kind cell_exact -Enforcement advisory `
+        -JapanesePreferred '売上高' -EnglishPreferred 'Net sales' -OriginProjectId ([string]$fixedProject.Id) `
+        -OriginFileName 'labels.xlsx' -OriginSegmentId ([string]$fixedProject.Segments[0].SegmentId) `
+        -OriginLocation 'Sheet1!A1' -OriginRevision ([int]$fixedProject.Revision)
+    $fixedPass = Invoke-YakuCatGlossaryPass -Root $root -Project $fixedProject -Settings $resourceSettings
+    Chk ([int]$fixedPass.Applied -eq 1 -and [string]$fixedProject.Segments[0].Translation -eq 'Net sales' -and [string]$fixedProject.Segments[0].Origin -eq 'glossary') '利用者登録の固定訳だけを明示適用する'
+    $fixedUsage = @($fixedProject.Segments[0].TerminologyUsages | Where-Object { [string]$_.reference_id -eq [string]$fixedTerm.Entry.reference_id })
+    Chk ($fixedUsage.Count -eq 1 -and [int]$fixedUsage[0].term_version -eq 1) '固定訳のreference idとversionを行へ記録する'
+    $otherFixedProject = New-YakuCatTextProject -Root $root -Text '売上高' -Settings $null -Direction to_en -Register $false
+    $otherPass = Invoke-YakuCatGlossaryPass -Root $root -Project $otherFixedProject -Settings $resourceSettings
+    Chk ([int]$otherPass.Applied -eq 0) 'この資料だけの固定訳を別projectへ漏らさない'
+
     Write-Host 'UI and API separation' -ForegroundColor Cyan
     $server = [IO.File]::ReadAllText((Join-Path $src 'Server.ps1'))
     $client = [IO.File]::ReadAllText((Join-Path (Join-Path $root 'www\assets') 'cat.js'))

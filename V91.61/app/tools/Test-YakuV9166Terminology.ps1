@@ -36,12 +36,13 @@ function Add-TestTerm {
         [string[]]$EnAllowed = @('non-recurring'),
         [string[]]$EnForbidden = @('one time'),
         [ValidateSet('required','advisory')][string]$Enforcement = 'required',
+        [ValidateSet('occurrence','cell_exact')][string]$Kind = 'occurrence',
         [string]$Path = $projectPath,
         [string]$Scope = 'project',
         [string]$TermId = ''
     )
     $args = @{
-        Scope=$Scope; ProjectId=$(if ($Scope -eq 'project') { $projectId } else { '' })
+        Scope=$Scope; ProjectId=$(if ($Scope -eq 'project') { $projectId } else { '' }); Kind=$Kind
         JapanesePreferred=$Ja; EnglishPreferred=$En; EnglishAllowed=$EnAllowed; EnglishForbidden=$EnForbidden
         Enforcement=$Enforcement; OriginProjectId=$projectId; OriginFileName='FY2026.xlsx'
         OriginSegmentId=$segmentId; OriginLocation='Sheet1!A1'; OriginRevision=3; Path=$Path
@@ -83,6 +84,23 @@ try {
     $entries = @(Read-YakuTerminologyEntries -Path $projectPath -ProjectId $projectId)
     $hits = @(Find-YakuTerminologyMatches -Text '一過性費用が発生しました。' -Direction to_en -Entries $entries -ProjectId $projectId)
     Chk ($hits.Count -eq 1 -and [string]$hits[0].SourceTerm -eq '一過性費用') '重なる語は長い用語を優先する'
+
+    Write-Host 'cell-exact / zero seed' -ForegroundColor Cyan
+    Chk ($null -eq (Find-YakuCellExactTerminologyMatch -Text '売上高' -Direction to_en -Entries @() -ProjectId $projectId)) '登録前は固定訳を返さない'
+    Chk ($null -eq (Find-YakuCellExactTerminologyMatch -Text '一過性' -Direction to_en -Entries @($entry) -ProjectId $projectId)) '文中用語をセル全体の固定訳に流用しない'
+    $cellPath = Join-Path $tmp 'cell-exact.jsonl'
+    $personalCell = Add-TestTerm -Ja '売上高' -En 'Net sales' -EnAllowed @() -EnForbidden @() -Kind cell_exact -Scope personal -Path $cellPath -TermId '88888888888888888888888888888888'
+    $cell = Find-YakuCellExactTerminologyMatch -Text ' 売上高 ' -Direction to_en -Entries @($personalCell.Entry) -ProjectId $projectId
+    Chk ([string]$cell.Target -eq 'Net sales' -and [string]$cell.Scope -eq 'personal' -and [string]$cell.ReferenceId -match '^[a-f0-9]{64}$') '利用者登録の固定訳だけを出典付きで返す'
+    $reverseCell = Find-YakuCellExactTerminologyMatch -Text 'NET SALES' -Direction to_jp -Entries @($personalCell.Entry) -ProjectId $projectId
+    Chk ([string]$reverseCell.Target -eq '売上高') '固定訳は和訳方向でも使える'
+    $projectCell = Add-TestTerm -Ja '売上高' -En 'Revenue' -EnAllowed @() -EnForbidden @() -Kind cell_exact -Path $cellPath -TermId '99999999999999999999999999999999'
+    $cell = Find-YakuCellExactTerminologyMatch -Text '売上高' -Direction to_en -Entries @($personalCell.Entry,$projectCell.Entry) -ProjectId $projectId
+    Chk ([string]$cell.Target -eq 'Revenue' -and [string]$cell.Scope -eq 'project') 'この資料の固定訳を個人用より優先する'
+    $peerCell = Add-TestTerm -Ja '売上高' -En 'Sales' -EnAllowed @() -EnForbidden @() -Kind cell_exact -Path $cellPath -TermId 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    $cellConflict = $false
+    try { $null = Find-YakuCellExactTerminologyMatch -Text '売上高' -Direction to_en -Entries @($projectCell.Entry,$peerCell.Entry) -ProjectId $projectId } catch { $cellConflict = ([string]$_.Exception.Message -eq 'TERMINOLOGY_CELL_EXACT_CONFLICT') }
+    Chk $cellConflict '同じ範囲の固定訳競合は順序で選ばず停止する'
 
     Write-Host 'terminology QA / exception' -ForegroundColor Cyan
     $baseEntries = @($entries | Where-Object { [string]$_.term_id -eq [string]$entry.term_id })

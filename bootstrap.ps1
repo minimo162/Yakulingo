@@ -374,12 +374,10 @@ $desktopShell = Join-YakuPath -Base $runDir -Relative 'app/desktop/YakuLingo.exe
 
 $env:YAKULINGO_SHARED_ROOT = $SharedRoot
 
-# V91.61: コーパスは取れなくてもよい。取れたときだけ場所をアプリへ渡す。
-# ここで例外を上げてアプリの起動を妨げない。
-$corpusDir = ''
-try { $corpusDir = Resolve-YakuCorpusDir -SharedRoot $SharedRoot -LocalRootPath $localRootPath } catch { $corpusDir = '' }
-if ([string]::IsNullOrWhiteSpace($corpusDir)) { Remove-Item Env:\YAKULINGO_CORPUS_DIR -ErrorAction SilentlyContinue }
-else { $env:YAKULINGO_CORPUS_DIR = $corpusDir }
+# Reference data is owned by the user from this release onward.  Do not
+# discover a shared corpus or silently reactivate a corpus copied by an older
+# release.  Old local files are intentionally left on disk for recovery.
+Remove-Item Env:\YAKULINGO_CORPUS_DIR -ErrorAction SilentlyContinue
 Write-YakuBootstrapInfo ("起動します: {0}{1}" -f (Split-Path -Leaf $runDir), $(if ($legacyMode) { '（共有フォルダ上・旧方式）' } else { '（ローカル）' }))
 Write-Host ''
 

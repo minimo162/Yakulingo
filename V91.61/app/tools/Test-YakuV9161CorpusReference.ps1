@@ -249,16 +249,15 @@ Chk (@($refNoneEx.Examples).Count -eq 0) '使わなかったときは空（呼�
 #
 # 簡易翻訳は「その場で1つ訳す」ためのもので、検索語を Copilot に作らせる
 # 往復が1回増えるのは重すぎる（利用者の判断 2026-08-06）。
-# 腰を据えて資料を仕上げる CAT 側でこそ、過去の言い回しを参照する値打ちがある。
-#
-# CATでは文例を候補ペインへ表示するが、翻訳promptには混ぜない。
-Write-Host '文例を引く場所'
+# 配布コーパスは廃止した。低レベル関数を保守用に残しても、Quick/CATの
+# 本番経路からは到達できず、promptにも候補にも混ざらない。
+Write-Host '旧文例を本番経路から引かない'
 $translationSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Translation.ps1'))
 Chk ($translationSrc -notmatch 'Get-YakuCorpusReference -Root \$Root -InputText \$processingInput') '簡易翻訳では引かない（重いので外した）'
 Chk ($translationSrc -match 'text-mode-disabled') '外したことが分かる印がある'
 $serverSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Server.ps1'))
 $catProjectSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CatProject.ps1'))
-Chk ($catProjectSrc -match 'Find-YakuCorpusPairsForSegment') 'CAT は外部往復せず候補一覧からだけ過去例を引ける'
+Chk ($catProjectSrc -notmatch 'Find-YakuCorpusPairsForSegment') 'CAT候補は旧配布コーパスを引かない'
 $catTemplate = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'prompts') 'cat_translate_to_en.txt'))
 Chk ($catTemplate -notmatch 'corpus_section') 'CAT 用テンプレートに文例差し込み口を持たない'
 $fileText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CatBatch.ps1'))
@@ -275,18 +274,15 @@ $settingsText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src')
 Chk ($settingsText -notmatch 'corpus') '設定へコーパスの項目を足していない'
 $indexHtml = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'cat.html'))
 $catClient = [System.IO.File]::ReadAllText((Join-Path (Join-Path (Join-Path $root 'www') 'assets') 'cat.js'))
-# CAT に参考文例の表示を置いたので、参照する側は
-# 一般利用者の画面にも現れる。出してはいけないのは**作る側**である。
-# コーパスの取り込み・索引作りは管理画面（admin.html）にだけ置く。
 Chk ($indexHtml -notmatch '(?i)corpus[-_]?(build|rebuild|index|import|ingest|admin|manage)') 'コーパスを作る操作は一般利用者の画面に出さない'
-Chk ($catClient -match '/api/cat/candidates' -and $catClient -match '過去の翻訳例' -and $catClient -match 'source_name' -and $catClient -match 'page') 'CAT から出典付きの過去の翻訳例を表示できる'
+Chk ($catClient -match '/api/cat/candidates' -and $catClient -notmatch "item\.kind === 'corpus'" -and $catClient -match "item\.kind === 'memory'") 'CAT候補は翻訳メモリと前回版だけを表示する'
 
 Write-Host 'キャッシュ鍵'
 $translationText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Translation.ps1'))
 # 文例なしで作った訳文を文例ありの依頼へ返さないため。
 Chk ($translationText -match "corpus-v9161:") 'キャッシュ鍵に文例が含まれる'
-# 旧corpus jobはreference_usageを残さず永続化できたため廃止する。
-Chk ($serverSrc -match "requestedMode -eq 'corpus'" -and $serverSrc -match 'CAT_CORPUS_MODE_RETIRED') 'CAT の過去例は候補一覧からの明示挿入以外では引かない'
+# 旧corpus jobはreference_usageを残さず永続化できたため廃止済み。
+Chk ($serverSrc -match "requestedMode -eq 'corpus'" -and $serverSrc -match 'CAT_CORPUS_MODE_RETIRED') '旧corpus jobを復活させない'
 
 } finally {
     if (-not [string]::IsNullOrWhiteSpace($prevData)) { $env:YAKULINGO_DATA_DIR = $prevData } else { Remove-Item Env:\YAKULINGO_DATA_DIR -ErrorAction SilentlyContinue }

@@ -33,15 +33,16 @@ if (-not (Test-YakuExcelAvailable)) {
 
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('yaku-cat-' + [guid]::NewGuid().ToString('N').Substring(0,8))
 $null = New-Item -ItemType Directory -Path $tmp -Force
+$previousDataDir = [string]$env:YAKULINGO_DATA_DIR
+$env:YAKULINGO_DATA_DIR = Join-Path $tmp 'user-data'
 $script:YakuCatTestStore = Join-Path $tmp 'cat-store'
 function Get-YakuCatProjectStoreDir { return $script:YakuCatTestStore }
 $srcPath = Join-Path $tmp 'in.xlsx'
 $outPath = Join-Path $tmp 'out.xlsx'
 
-# 用語集に載っているラベルと、載っていない文章を混ぜる。
-$glossaryFirst = @(Get-YakuGlossaryEntries -Root $root | Select-Object -First 1)
-$knownSource = [string]$glossaryFirst[0].Source
-$knownTarget = [string]$glossaryFirst[0].Target
+# 配布版に用語は入っていない。利用者が登録する固定訳と文章を混ぜる。
+$knownSource = '上期営利'
+$knownTarget = '1H OP'
 
 $xl = New-Object -ComObject Excel.Application
 $xl.Visible = $false; $xl.DisplayAlerts = $false
@@ -77,12 +78,18 @@ for ($i = 0; $i -lt $segs.Count; $i++) { if ([bool]$segs[$i].Joined) { $proseIdx
 Chk ((Get-YakuCatProject -Id ([string]$project.Id)) -ne $null) 'Id で取り出せる'
 
 # ---------------------------------------------------------------- 用語集で置換
-Write-Host '用語集で機械的に置換する'
+Write-Host '利用者が登録した固定訳を明示適用する'
+$labelBefore = @($segs | Where-Object { [string]$_.Text -eq $knownSource } | Select-Object -First 1)
+$null = Add-YakuTerminologyEntry -Scope project -ProjectId ([string]$project.Id) -Kind cell_exact -Enforcement advisory `
+    -JapanesePreferred $knownSource -EnglishPreferred $knownTarget -Origin 'cat-project-test' `
+    -OriginProjectId ([string]$project.Id) -OriginFileName ([string]$project.FileName) `
+    -OriginSegmentId ([string]$labelBefore[0].SegmentId) -OriginLocation ([string]$labelBefore[0].Location) `
+    -OriginRevision ([int]$project.Revision)
 $g = Invoke-YakuCatGlossaryPass -Root $root -Project $project -Settings $settings
-Chk ([int]$g.Applied -eq 1) ('用語集で1件埋まる: ' + $g.Applied)
+Chk ([int]$g.Applied -eq 1) ('登録した固定訳で1件埋まる: ' + $g.Applied)
 $labelSeg = @($segs | Where-Object { [string]$_.Text -eq $knownSource })
 Chk ($labelSeg.Count -eq 1 -and [string]$labelSeg[0].Translation -eq $knownTarget) ('ラベルが置換される: ' + $knownSource + ' -> ' + [string]$labelSeg[0].Translation)
-Chk ([string]$labelSeg[0].Origin -eq 'glossary') 'どこから来た訳文か分かる'
+Chk ([string]$labelSeg[0].Origin -eq 'glossary') '用語集の固定訳から来たと分かる'
 # 文中の語は置き換えない。活用と一致が壊れるため（実機検証結果 §3-2）。
 $proseSeg = @($segs | Where-Object { [bool]$_.Joined })
 Chk ([string]::IsNullOrWhiteSpace([string]$proseSeg[0].Translation)) '完全一致しない文章は空のまま'
@@ -407,23 +414,38 @@ Chk ($jsSrcX -match 'outputGuidance' -and $jsSrcX -match 'eligibility_reasons') 
 
 Write-Host '候補ペイン'
 $cp = New-YakuCatTextProject -Root $root -Text '上期営利' -Settings $settings -Direction 'to_en'
+$cpSeg = @($cp.Segments)[0]
+$null = Add-YakuTerminologyEntry -Scope project -ProjectId ([string]$cp.Id) -Kind occurrence -Enforcement required `
+    -JapanesePreferred '上期営利' -EnglishPreferred '1H OP' -Origin 'cat-project-test' `
+    -OriginProjectId ([string]$cp.Id) -OriginFileName ([string]$cp.FileName) -OriginSegmentId ([string]$cpSeg.SegmentId) `
+    -OriginLocation ([string]$cpSeg.Location) -OriginRevision ([int]$cp.Revision)
 $cands = @(Get-YakuCatSegmentCandidates -Root $root -Project $cp -Index 0)
 Chk ($cands.Count -gt 0) ('候補が出る: ' + $cands.Count)
-Chk ([bool]$cands[0].Exact) '完全一致が先頭に来る'
+Chk ([string]$cands[0].Kind -eq 'term') '利用者が登録した用語として出る'
 Chk ([string]$cands[0].Target -eq '1H OP') ('上期営利 -> 1H OP: ' + [string]$cands[0].Target)
 Remove-YakuCatProject -Id ([string]$cp.Id)
 
 # 文中の一致も出す。表のラベルは完全一致で機械置換できるが、文中の語は
 # 置換しない（活用と一致が壊れるため）。置換しないからこそ目に入れる。
 $cp2 = New-YakuCatTextProject -Root $root -Text '固定費を圧縮した一方、為替の影響を受けました。' -Settings $settings -Direction 'to_en'
+$cp2Seg = @($cp2.Segments)[0]
+$null = Add-YakuTerminologyEntry -Scope project -ProjectId ([string]$cp2.Id) -Kind occurrence -Enforcement required `
+    -JapanesePreferred '固定費' -EnglishPreferred 'fixed costs' -Origin 'cat-project-test' `
+    -OriginProjectId ([string]$cp2.Id) -OriginFileName ([string]$cp2.FileName) -OriginSegmentId ([string]$cp2Seg.SegmentId) `
+    -OriginLocation ([string]$cp2Seg.Location) -OriginRevision ([int]$cp2.Revision)
 $c2 = @(Get-YakuCatSegmentCandidates -Root $root -Project $cp2 -Index 0)
 Chk (@($c2 | Where-Object { [string]$_.Source -eq '固定費' }).Count -eq 1) '文中の語を拾う'
-Chk (@($c2 | Where-Object { [bool]$_.Exact }).Count -eq 0) '文には完全一致が無い'
+Chk (@($c2 | Where-Object { [string]$_.Kind -ne 'term' }).Count -eq 0) '未登録の翻訳例を混ぜない'
 Remove-YakuCatProject -Id ([string]$cp2.Id)
 
 # 短い漢字語が前の漢字と続いて別の語になっている場合は拾わない。
 # 「四半期」の中の「半期」が Half-year として出ると、かえって誤らせる。
 $cp3 = New-YakuCatTextProject -Root $root -Text '当第1四半期の実績です。' -Settings $settings -Direction 'to_en'
+$cp3Seg = @($cp3.Segments)[0]
+$null = Add-YakuTerminologyEntry -Scope project -ProjectId ([string]$cp3.Id) -Kind occurrence -Enforcement required `
+    -JapanesePreferred '半期' -EnglishPreferred 'half-year' -Origin 'cat-project-test' `
+    -OriginProjectId ([string]$cp3.Id) -OriginFileName ([string]$cp3.FileName) -OriginSegmentId ([string]$cp3Seg.SegmentId) `
+    -OriginLocation ([string]$cp3Seg.Location) -OriginRevision ([int]$cp3.Revision)
 $c3 = @(Get-YakuCatSegmentCandidates -Root $root -Project $cp3 -Index 0)
 Chk (@($c3 | Where-Object { [string]$_.Source -eq '半期' }).Count -eq 0) '四半期 の中の 半期 を拾わない'
 Remove-YakuCatProject -Id ([string]$cp3.Id)
@@ -437,6 +459,7 @@ Remove-YakuCatProject -Id ([string]$project.Id)
 Chk ((Get-YakuCatProject -Id ([string]$project.Id)) -eq $null) '終わったプロジェクトは捨てられる'
 
 try { Remove-Item -LiteralPath $tmp -Recurse -Force } catch {}
+if ([string]::IsNullOrWhiteSpace($previousDataDir)) { Remove-Item Env:\YAKULINGO_DATA_DIR -ErrorAction SilentlyContinue } else { $env:YAKULINGO_DATA_DIR = $previousDataDir }
 
 if ($script:fail -gt 0) {
     Write-Host "V91.61 CAT project regression failed. failures=$script:fail" -ForegroundColor Red

@@ -13,12 +13,13 @@ if ($failures.Count -eq 0) {
     $processorText = Get-Content -LiteralPath $fileProcessors -Raw -Encoding UTF8
     $translationText = Get-Content -LiteralPath $fileTranslation -Raw -Encoding UTF8
     if ($processorText.Contains('return $false }`n        $end')) { $failures.Add('literal backtick-n remains in Add-YakuAddressRangeToSet') | Out-Null }
-    # 文中の用語監査（conflict-review / 用語遵守の突き合わせ）は廃止した
-    # （利用者の判断 2026-08-06）。用語集はレイアウトの保証だけに使う。
-    # 戻っていないことと、保証側が残っていることを見る。
+    # 同梱CSVは廃止した。文中の用語監査を旧方式へ戻さず、セル完全一致は
+    # 利用者が登録した管理対象用語だけを使う。
     if ($translationText -match 'glossary-conflict-review') { $failures.Add('in-sentence glossary conflict review must stay removed') | Out-Null }
     if ($translationText -match 'function Get-YakuFileGlossaryOccurrenceAudit') { $failures.Add('in-sentence glossary audit must stay removed') | Out-Null }
     if ($translationText -notmatch 'function Resolve-YakuFileExactGlossaryTranslations') { $failures.Add('cell-exact replacement (the layout guarantee) is missing') | Out-Null }
+    if ($translationText -notmatch 'Find-YakuCellExactTerminologyMatch') { $failures.Add('cell-exact replacement must use governed user terminology') | Out-Null }
+    if ($translationText -match 'Get-YakuGlossaryEntries') { $failures.Add('bundled glossary reader must not be reachable from CAT translation') | Out-Null }
 }
 if (-not [string]::IsNullOrWhiteSpace($JobLogPath)) {
     if (-not (Test-Path -LiteralPath $JobLogPath)) {

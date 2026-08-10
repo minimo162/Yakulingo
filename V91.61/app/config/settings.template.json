@@ -11,7 +11,6 @@
   "extract_timeout_seconds": 300,
   "worker_heartbeat_timeout_seconds": 180,
   "max_retries": 3,
-  "use_bundled_glossary": true,
   "glossary_prompt_limit": 48,
   "browser_display_mode": "foreground",
   "edge_window_size": "1280,900",

@@ -96,7 +96,6 @@ function Get-YakuSettingsSchema {
         extract_timeout_seconds           = @{ Type='int';  Default=300; Min=60; Max=3600 }
         worker_heartbeat_timeout_seconds  = @{ Type='int';  Default=180; Min=30; Max=3600 }
         max_retries                       = @{ Type='int';  Default=3; Min=0; Max=10 }
-        use_bundled_glossary              = @{ Type='bool'; Default=$true }
         # 金額の書き方。訳の種類ではなく書き方なので、毎回選ばせず設定で持つ。
         # 外部公表は billion、社内資料の一部が oku（利用者 2026-08-08）。
         #

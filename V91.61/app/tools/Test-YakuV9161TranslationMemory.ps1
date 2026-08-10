@@ -173,7 +173,7 @@ try {
     Chk ($cat -match "Kind\s*=\s*'memory'") '翻訳メモリの候補に印を付ける'
     # 自分が確定した訳を先頭に置く。公表訳より自分の文体に合うため。
     Chk ($cat -match 'Weight   = 30000') '自分の訳を先に出す'
-    Chk ($cat -match 'Weight   = 20000') '公表訳をその次に出す'
+    Chk ($cat -notmatch 'Find-YakuCorpusPairsForSegment' -and $cat -notmatch "Kind\s*=\s*'corpus'") '同梱コーパスを候補へ混ぜない'
     # 文例を作るのは開発者。突き合わせた資料からだけ保存できる。
     Chk ($cat -match "Project\.Source -ne 'align'") '文例は突き合わせからだけ保存できる'
 

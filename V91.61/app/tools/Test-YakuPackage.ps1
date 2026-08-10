@@ -10,6 +10,13 @@ try {
     if ($escaped.Count -gt 0) { throw "PACKAGE_ESCAPED_NAME: $($escaped -join ', ')" }
     $leaked = @($names | Where-Object { $_ -match '/user_settings[^/]*$' -or $_ -match '\.(bak|tmp)$' })
     if ($leaked.Count -gt 0) { throw "PACKAGE_FORBIDDEN_FILE: $($leaked -join ', ')" }
+    $seedAssets = @($names | Where-Object {
+        $_ -match '(?i)(^|/)(glossary|propernouns)\.csv$' -or
+        $_ -match '(?i)(^|/)corpus(/|$)' -or
+        $_ -match '(?i)(^|/)_docs(/|$)' -or
+        $_ -match '(^|/)管理者用_コーパス作成\.cmd$'
+    })
+    if ($seedAssets.Count -gt 0) { throw "PACKAGE_BUNDLED_LANGUAGE_ASSET: $($seedAssets -join ', ')" }
     $buildEntry = $zip.Entries | Where-Object { $_.FullName -match '/app/config/build\.txt$' } | Select-Object -First 1
     if (-not $buildEntry) { throw 'PACKAGE_BUILD_MISSING: config/build.txt がありません。' }
     $reader = New-Object IO.StreamReader($buildEntry.Open(), [Text.Encoding]::UTF8, $true)

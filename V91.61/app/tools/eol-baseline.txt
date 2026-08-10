@@ -1,6 +1,5 @@
 ﻿config/settings.template.json	lf
 desktop/Build-DesktopShell.ps1	lf
-glossary.csv	crlf
 prompts/cat_translate_to_en.txt	lf
 prompts/cat_translate_to_jp.txt	lf
 prompts/corpus_query_to_en.txt	lf
@@ -63,6 +62,8 @@ tools/Test-Copilot.ps1	crlf
 tools/Test-CopilotAutomation.ps1	crlf
 tools/Test-YakuBootstrap.ps1	crlf
 tools/Test-YakuPackage.ps1	crlf
+tools/Test-YakuPackageLanguageBoundary.ps1	lf
+tools/Test-YakuUploadFolderBoundary.ps1	lf
 tools/Test-YakuV9110BulkFormulaGuard.ps1	lf
 tools/Test-YakuV9117BandedFormulaFree.ps1	lf
 tools/Test-YakuV9159SettingsPath.ps1	crlf

@@ -406,6 +406,57 @@ function Find-YakuTerminologyMatches {
     return @($out.ToArray())
 }
 
+function Find-YakuCellExactTerminologyMatch {
+    <#
+      Resolve a whole-cell fixed translation from the terminology store.
+
+      These records are deliberately separate from occurrence terms: an
+      occurrence term constrains wording inside a sentence, while cell_exact
+      is allowed to fill the complete target cell.  Project entries override
+      personal entries.  Competing entries at the same scope fail closed
+      rather than depending on append order.
+    #>
+    param(
+        [AllowNull()][string]$Text,
+        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
+        [AllowNull()][object[]]$Entries,
+        [AllowNull()][string]$ProjectId
+    )
+    $normalize = {
+        param([AllowNull()][string]$Value)
+        $valueText = ([string]$Value).Normalize([Text.NormalizationForm]::FormKC).Trim()
+        return (($valueText -replace '\s+', ' ').ToLowerInvariant())
+    }
+    $needle = & $normalize $Text
+    if ([string]::IsNullOrWhiteSpace($needle)) { return $null }
+
+    $matches = New-Object Collections.Generic.List[object]
+    foreach ($entry in @($Entries)) {
+        if (-not (Test-YakuTerminologyProvenance -Entry $entry) -or -not [bool]$entry.active -or [string]$entry.kind -ne 'cell_exact') { continue }
+        if ([string]$entry.scope -eq 'project' -and
+            -not [string]::Equals([string]$entry.project_id, $ProjectId, [StringComparison]::OrdinalIgnoreCase)) { continue }
+        $sourceLanguage = if ($Direction -eq 'to_en') { $entry.ja } else { $entry.en }
+        $targetLanguage = if ($Direction -eq 'to_en') { $entry.en } else { $entry.ja }
+        $aliases = @([string]$sourceLanguage.preferred) + @($sourceLanguage.allowed)
+        $matchedSource = ''
+        foreach ($alias in @(ConvertTo-YakuTerminologyTextList -Values $aliases)) {
+            if ((& $normalize $alias) -eq $needle) { $matchedSource = [string]$alias; break }
+        }
+        if ([string]::IsNullOrWhiteSpace($matchedSource) -or [string]::IsNullOrWhiteSpace([string]$targetLanguage.preferred)) { continue }
+        $matches.Add([pscustomobject]@{
+            Entry=$entry; Source=$matchedSource; Target=[string]$targetLanguage.preferred
+            Scope=[string]$entry.scope; ScopeWeight=$(if ([string]$entry.scope -eq 'project') { 2 } else { 1 })
+            ReferenceId=[string]$entry.reference_id; TermId=[string]$entry.term_id; Version=[int]$entry.version
+        }) | Out-Null
+    }
+    if ($matches.Count -eq 0) { return $null }
+    $topWeight = @($matches.ToArray() | Measure-Object -Property ScopeWeight -Maximum)[0].Maximum
+    $top = @($matches.ToArray() | Where-Object { [int]$_.ScopeWeight -eq [int]$topWeight })
+    $targets = @($top | ForEach-Object { & $normalize ([string]$_.Target) } | Sort-Object -Unique)
+    if ($targets.Count -gt 1) { throw 'TERMINOLOGY_CELL_EXACT_CONFLICT' }
+    return $top[0]
+}
+
 function Get-YakuTerminologySnapshotHash {
     param([AllowNull()][object[]]$Entries)
     $rows = @($Entries | Where-Object { Test-YakuTerminologyProvenance -Entry $_ } |

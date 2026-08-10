@@ -487,7 +487,6 @@ function New-YakuWarmTranslationRunspace {
             $null = Assert-YakuBuildIdentity -Root $Root -ExpectedBuildId $ExpectedBuildId
             $preloadSw = [System.Diagnostics.Stopwatch]::StartNew()
             $settings = Read-YakuSettings -Root $Root
-            $null = @(Get-YakuGlossaryEntries -Root $Root)
             $null = Get-YakuPromptTemplate -Root $Root -Name 'text_translate_full_to_en.txt'
             $null = New-YakuTextPrompt -Root $Root -InputText 'ウォームアップ' -Settings $settings -DirectionOverride 'to_en' -RequestId 'warmup00000000000000000000000000' -Mode 'full'
             $preloadSw.Stop()
@@ -608,7 +607,6 @@ function Start-YakuWarmTranslationRunspaceBuild {
                     $null = Assert-YakuBuildIdentity -Root $Root -ExpectedBuildId $ExpectedBuildId
                     $preloadSw = [System.Diagnostics.Stopwatch]::StartNew()
                     $settings = Read-YakuSettings -Root $Root
-                    $null = @(Get-YakuGlossaryEntries -Root $Root)
                     $null = Get-YakuPromptTemplate -Root $Root -Name 'text_translate_full_to_en.txt'
                     $null = New-YakuTextPrompt -Root $Root -InputText 'ウォームアップ' -Settings $settings -DirectionOverride 'to_en' -RequestId 'warmup00000000000000000000000000' -Mode 'full'
                     $preloadSw.Stop()
@@ -2620,12 +2618,11 @@ function Invoke-YakuRoute {
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 }
                 'candidates' {
-                    # 現在行の候補。用語集と過去の対訳を手元のファイルから引く。
-                    # どちらも Copilot への往復が要らないので、行を移るたびに出せる。
+                    # 現在行の候補。利用者が登録した用語、確認済みTM、当該
+                    # projectへ明示的に取り込んだ前回版だけを手元から引く。
                     $index = -1
                     try { $index = [int]$payload['index'] } catch { $index = -1 }
-                    $pairsDir = ''; try { $pairsDir = Get-YakuCorpusSearchDir } catch { $pairsDir = '' }
-                    $items = @(Get-YakuCatSegmentCandidates -Root $script:YakuRoot -Project $project -Index $index -PairsDir $pairsDir)
+                    $items = @(Get-YakuCatSegmentCandidates -Root $script:YakuRoot -Project $project -Index $index)
                     $rows = @($items | ForEach-Object { [ordered]@{
                         kind = [string]$_.Kind
                         reference_id = [string]$_.ReferenceId
@@ -2655,24 +2652,41 @@ function Invoke-YakuRoute {
                         origin_segment_id = [string]$_.OriginSegmentId
                         review_revision = $(try { [int]$_.ReviewRevision } catch { 0 })
                     } })
-                    $termRows = @($rows | Where-Object { [string]$_.kind -in @('term','glossary') })
-                    $segmentRows = @($rows | Where-Object { [string]$_.kind -notin @('term','glossary') })
+                    $termRows = @($rows | Where-Object { [string]$_.kind -eq 'term' })
+                    $segmentRows = @($rows | Where-Object { [string]$_.kind -ne 'term' })
                     Send-YakuTextResponse -Context $Context -Text (([ordered]@{
                         index = $index; terms = @($termRows); segment_matches = @($segmentRows)
                         candidates = @($rows) # 旧UI/テストの読取互換
                     } | ConvertTo-Json -Depth 7 -Compress)) -ContentType 'application/json; charset=utf-8'
                 }
                 'glossary-add' {
-                    # 行から個人用の用語集へ足す。これが無いと「用語集を直す」という
-                    # 方針が回らない。これまでは CSV を手で開くしかなかった。
+                    # 行全体の固定訳を、利用者所有の出典付きterminologyへ足す。
+                    # 旧CSVやアプリ同梱glossaryへは書かない。
                     $index = -1
                     try { $index = [int]$payload['index'] } catch { $index = -1 }
                     $segs2 = @($project.Segments)
                     if ($index -lt 0 -or $index -ge $segs2.Count) { throw '行が見つかりません。' }
-                    $added = Add-YakuPersonalGlossaryEntry -Source ([string]$segs2[$index].Text) -Target ([string]$segs2[$index].Translation)
-                    if (-not [bool]$added.Added -and [string]$added.Reason -eq 'empty') { throw '訳文を入れてから追加してください。' }
-                    if (-not [bool]$added.Added -and [string]$added.Reason -eq 'too-long') { throw '用語集は表の項目のための一覧です。文章は追加できません。' }
-                    $msg = if ([bool]$added.Added) { '用語集に追加しました。次から自動で入ります。' } else { 'すでに同じ内容が用語集にあります。' }
+                    $segment = $segs2[$index]
+                    $sourceText = ([string]$segment.Text).Trim()
+                    $targetText = ([string]$segment.Translation).Trim()
+                    if ([string]::IsNullOrWhiteSpace($sourceText) -or [string]::IsNullOrWhiteSpace($targetText)) { throw '訳文を入れてから追加してください。' }
+                    if ($sourceText.Length -gt 80 -or $targetText.Length -gt 80 -or $sourceText -match "[`r`n]" -or $targetText -match "[`r`n]") { throw '固定訳は改行を含まない80文字以内で登録してください。' }
+                    $originFile = ([string]$project.FileName).Trim()
+                    if ([string]::IsNullOrWhiteSpace($originFile)) { $originFile = '貼り付け資料' }
+                    $originLocation = ([string]$segment.Location).Trim()
+                    if ([string]::IsNullOrWhiteSpace($originLocation)) { $originLocation = '行 ' + [string]($index + 1) }
+                    $termParams = @{
+                        Scope='personal'; Kind='cell_exact'; Enforcement='advisory'; Origin='cat-cell-exact-editor'
+                        OriginProjectId=[string]$project.Id; OriginFileName=$originFile; OriginSegmentId=[string]$segment.SegmentId
+                        OriginLocation=$originLocation; OriginRevision=[int]$project.Revision
+                    }
+                    if ([string]$project.Direction -eq 'to_en') {
+                        $termParams.JapanesePreferred=$sourceText; $termParams.EnglishPreferred=$targetText
+                    } else {
+                        $termParams.EnglishPreferred=$sourceText; $termParams.JapanesePreferred=$targetText
+                    }
+                    $added = Add-YakuTerminologyEntry @termParams
+                    $msg = if ([bool]$added.Added) { '登録した固定訳に追加しました。次から同じセルへ自動で入ります。' } else { 'すでに同じ固定訳が登録されています。' }
                     Send-YakuTextResponse -Context $Context -Text (([ordered]@{ ok = [bool]$added.Added; message = $msg } | ConvertTo-Json -Compress)) -ContentType 'application/json; charset=utf-8'
                 }
                 'term-add' {
@@ -2801,8 +2815,7 @@ function Invoke-YakuRoute {
                 'term-insert' {
                     $index = -1; try { $index = [int]$payload['index'] } catch {}
                     $text = [string]$payload['text']; $referenceId = [string]$payload['reference_id']
-                    $pairsDir = ''; try { $pairsDir = Get-YakuCorpusSearchDir } catch {}
-                    $matches = @(Get-YakuCatSegmentCandidates -Root $script:YakuRoot -Project $project -Index $index -PairsDir $pairsDir | Where-Object { [string]$_.ReferenceId -eq $referenceId -and [string]$_.Kind -in @('term','glossary') })
+                    $matches = @(Get-YakuCatSegmentCandidates -Root $script:YakuRoot -Project $project -Index $index | Where-Object { [string]$_.ReferenceId -eq $referenceId -and [string]$_.Kind -eq 'term' })
                     if ($matches.Count -ne 1) { throw 'CAT_TERM_REFERENCE_NOT_AVAILABLE' }
                     $mutation = {
                         param($candidate,$innerIndex,$innerText,$innerCandidate)
@@ -2828,8 +2841,7 @@ function Invoke-YakuRoute {
                     $referenceId = [string]$payload['reference_id']
                     if ($referenceId -notmatch '^[a-f0-9]{64}$') { throw 'TRANSLATION_MEMORY_REFERENCE_INVALID' }
                     $index=-1; try{$index=[int]$payload['index']}catch{}
-                    $pairsDir=''; try{$pairsDir=Get-YakuCorpusSearchDir}catch{}
-                    $matches=@(Get-YakuCatSegmentCandidates -Root $script:YakuRoot -Project $project -Index $index -PairsDir $pairsDir | Where-Object { [string]$_.Kind -eq 'memory' -and [string]$_.ReferenceId -eq $referenceId })
+                    $matches=@(Get-YakuCatSegmentCandidates -Root $script:YakuRoot -Project $project -Index $index | Where-Object { [string]$_.Kind -eq 'memory' -and [string]$_.ReferenceId -eq $referenceId })
                     if($matches.Count -ne 1){throw 'TRANSLATION_MEMORY_REFERENCE_NOT_AVAILABLE'}
                     $deleted = Add-YakuTranslationMemoryTombstone -Direction ([string]$project.Direction) `
                         -OriginProjectId ([string]$matches[0].OriginProjectId) -OriginSegmentId ([string]$matches[0].OriginSegmentId) `
@@ -2886,18 +2898,17 @@ function Invoke-YakuRoute {
                     $referenceId = ''
                     try { $referenceId = [string]$payload['reference_id'] } catch {}
                     $mutation = {
-                        param($candidate,$innerIndex,$innerText,$innerReferenceId,$root,$innerSettings,$pairsDir)
+                        param($candidate,$innerIndex,$innerText,$innerReferenceId,$root,$innerSettings)
                         $null = Set-YakuCatSegmentTranslation -Project $candidate -Index $innerIndex -Text $innerText
                         if (-not [string]::IsNullOrWhiteSpace($innerReferenceId)) {
-                            $matches = @(Get-YakuCatSegmentCandidates -Root $root -Project $candidate -Index $innerIndex -PairsDir $pairsDir | Where-Object { [string]$_.ReferenceId -eq $innerReferenceId })
+                            $matches = @(Get-YakuCatSegmentCandidates -Root $root -Project $candidate -Index $innerIndex | Where-Object { [string]$_.ReferenceId -eq $innerReferenceId })
                             if ($matches.Count -ne 1) { throw 'CAT_REFERENCE_NOT_AVAILABLE' }
-                            if ([string]$matches[0].Kind -in @('term','glossary')) { throw 'CAT_TERM_CANNOT_REPLACE_SEGMENT' }
+                            if ([string]$matches[0].Kind -eq 'term') { throw 'CAT_TERM_CANNOT_REPLACE_SEGMENT' }
                             $null = Set-YakuCatSegmentReferenceUsage -Project $candidate -Index $innerIndex -Candidate $matches[0]
                         }
                         try { $candidate | Add-Member -NotePropertyName 'GlossaryCandidates' -NotePropertyValue (Measure-YakuCatGlossaryCandidates -Root $root -Project $candidate -Settings $innerSettings) -Force } catch {}
                     }
-                    $pairsDir = ''; try { $pairsDir = Get-YakuCorpusSearchDir } catch { $pairsDir = '' }
-                    $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($index,$text,$referenceId,$script:YakuRoot,$settings,$pairsDir)
+                    $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($index,$text,$referenceId,$script:YakuRoot,$settings)
                     $project = $commit.Project
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 }
