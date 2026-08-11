@@ -27,6 +27,13 @@ if ($forbidden.Count -gt 0) {
     throw "PACKAGE_FORBIDDEN_FILE: 配布物に含められないファイルがあります: $names"
 }
 
+# desktop\YakuLingo.exe はビルド成果物で git では追跡しない。ビルドを忘れたまま
+# 配布物を作ると、起動できないパッケージが黙って出来上がる。ここで止める。
+$desktopExe = Join-Path $source 'app\desktop\YakuLingo.exe'
+if (-not (Test-Path -LiteralPath $desktopExe -PathType Leaf)) {
+    throw "PACKAGE_DESKTOP_SHELL_MISSING: $desktopExe がありません。app\desktop\Build-DesktopShell.ps1 を実行してから配布物を作ってください。"
+}
+
 # A release starts with an empty termbase and translation memory.  Historical
 # company vocabulary, proper names, and disclosure corpora are user data, not
 # application defaults.  Reject them by path instead of relying on a maintainer
