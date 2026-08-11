@@ -432,7 +432,10 @@ function Get-YakuNumericContextDescriptor {
     $scaleMatch=$null
     # 「k yen」「k units」も日本語の文中へ差し込まれる（「18万6千台」→「186 k units」）。
     # ここの \b も日本語との間に境界を作らないので、英数字が続かないことで判定する。
-    if($after -match ('(?i)^\s*\)?'+$join+'(?<scale>trillion|billion|million|thousand|oku|k(?=\s*(?:yen|units?)(?![A-Za-z0-9])))\b')){$scaleMatch=$Matches['scale']}
+    # billion も oku と同じく日本語の文へ差し込まれる（「1兆3,150億円」→「1,315 billion yen」）。
+    # \b は英字と日本語の間に境界を作らない（かなも \w）。「billionと」で外れて
+    # 桁が 1 のままになるため、ここも「後ろが英数字でない」で判定する。
+    if($after -match ('(?i)^\s*\)?'+$join+'(?<scale>trillion|billion|million|thousand|oku|k(?=\s*(?:yen|units?)(?![A-Za-z0-9])))(?![A-Za-z0-9])')){$scaleMatch=$Matches['scale']}
     # 単位変換は日本語の文の中へ oku を差し込む（「1兆3,150億円」→「13,150 oku」）。
     # \b は「oku」と日本語の間に境界を作らないので 433行では拾えない。
     # 以前はここで「です・でした・句読点」を列挙していたが、「となりました」
@@ -454,10 +457,13 @@ function Get-YakuNumericContextDescriptor {
     }
     $currency=''
     $scalePart='(?:(?:trillion|billion|million|thousand|oku|k|兆|億|百万|万|千|百)'+$join+')?'
-    if($after -match ('(?i)^\s*\)?'+$join+$scalePart+'yen\b') -or $after -match ('^\s*\)?'+$join+$scalePart+'円')){$currency='yen'}
-    elseif($after -match ('(?i)^\s*\)?'+$join+$scalePart+'dollars?\b') -or $after -match ('^\s*\)?'+$join+$scalePart+'ドル')){$currency='dollar'}
-    elseif($after -match ('(?i)^\s*\)?'+$join+$scalePart+'euros?\b') -or $after -match ('^\s*\)?'+$join+$scalePart+'ユーロ')){$currency='euro'}
-    elseif($after -match ('(?i)^\s*\)?'+$join+$scalePart+'pounds?\b') -or $after -match ('^\s*\)?'+$join+$scalePart+'ポンド')){$currency='pound'}
+    # 通貨語のあとにも日本語が続く（「1,315 billion yenとなりました」）。
+    # 桁の判定と同じ理由で \b は使えない。
+    $endOfWord='(?![A-Za-z0-9])'
+    if($after -match ('(?i)^\s*\)?'+$join+$scalePart+'yen'+$endOfWord) -or $after -match ('^\s*\)?'+$join+$scalePart+'円')){$currency='yen'}
+    elseif($after -match ('(?i)^\s*\)?'+$join+$scalePart+'dollars?'+$endOfWord) -or $after -match ('^\s*\)?'+$join+$scalePart+'ドル')){$currency='dollar'}
+    elseif($after -match ('(?i)^\s*\)?'+$join+$scalePart+'euros?'+$endOfWord) -or $after -match ('^\s*\)?'+$join+$scalePart+'ユーロ')){$currency='euro'}
+    elseif($after -match ('(?i)^\s*\)?'+$join+$scalePart+'pounds?'+$endOfWord) -or $after -match ('^\s*\)?'+$join+$scalePart+'ポンド')){$currency='pound'}
     elseif($before -match '(?i)(?:\bJPY|¥)\s*$'){$currency='yen'}
     elseif($before -match '(?i)(?:\bUSD|\$)\s*$'){$currency='dollar'}
     elseif($before -match '(?i)(?:\bEUR|€)\s*$'){$currency='euro'}
@@ -565,10 +571,39 @@ function ConvertTo-YakuNaturalEnglishNotation {
 }
 
 function Convert-YakuNumericUnits {
-    param([AllowNull()][string]$Text, [string]$Location='unknown')
+    <#
+      日本語の単位を、送る前に英字の単位へ直す。桁の換算はここで済ませ、
+      Copilot には計算させない（数値は伏せて送るので、そもそもできない）。
+
+      金額の書き方は2つ。どちらも同じ計算から作るので、ずれようがない。
+        oku      1兆3,150億円 -> 13,150 oku      （億をそのまま）
+        billion  1兆3,150億円 -> 1,315 billion   （億 ÷ 10）
+
+      billion を長く塞いでいたのは、単位名だけ差し替えると 122億円 が
+      ¥122 billion になる（10倍の誤り、2026-08-08 に確認）ためである。
+      割り算はここに置く。decimal なので 10 で割っても丸めは起きない。
+
+      千円・千台（k yen / k units）は billion でも変えない。0.0000122 billion の
+      ような書き方は読めないし、英文開示でも小さい額は千単位で書く。
+    #>
+    param(
+        [AllowNull()][string]$Text,
+        [string]$Location='unknown',
+        [ValidateSet('oku','billion')][string]$Notation='oku'
+    )
     $result = [string]$Text
     $tokens = New-Object System.Collections.Generic.List[string]
     $warnings = New-Object System.Collections.Generic.List[string]
+    # 億を単位とした値を受け取り、設定どおりの書き方の字面にする。
+    $amount = { param($okuValue)
+        $v = [decimal]$okuValue
+        # billion は単位名だけでは通貨が決まらない。oku は「1億円」を表す語なので
+        # それ自体が円を含むが、billion は含まない。yen を付けずに送ると、
+        # 点検が原文側を number、訳文側（¥1,315 billion）を currency:yen と数え、
+        # 同じ値なのに numeric-value-mismatch で落ちる（2026-08-12 に実測）。
+        if ($Notation -eq 'billion') { return ((ConvertTo-YakuInvariantNumberText -Value ($v / 10) -UseGrouping) + ' billion yen') }
+        return ((ConvertTo-YakuInvariantNumberText -Value $v -UseGrouping) + ' oku')
+    }
     $num = '(?:[\d０-９][\d０-９,，\.．]*|[xXｘＸ]{2,})'
     $normalizeNumber = { param($v)
         $text = [string]$v
@@ -582,18 +617,23 @@ function Convert-YakuNumericUnits {
     $parse = { param($v) $normalized = & $normalizeNumber $v; $d=[decimal]0; $ok=[decimal]::TryParse($normalized.Replace(',',''), [Globalization.NumberStyles]::Number, [Globalization.CultureInfo]::InvariantCulture, [ref]$d); return @($ok,$d) }
 
     # Ranges share the unit: 10〜20億円 -> 10 oku〜20 oku.
-    $result = [regex]::Replace($result, "(?<a>$num)\s*(?<sep>[〜~～])\s*(?<b>$num)\s*億円", { param($m) & $addToken ((& $normalizeNumber $m.Groups['a'].Value) + ' oku') | Out-Null; & $addToken ((& $normalizeNumber $m.Groups['b'].Value) + ' oku') | Out-Null; return ((& $normalizeNumber $m.Groups['a'].Value) + ' oku' + [string]$m.Groups['sep'].Value + (& $normalizeNumber $m.Groups['b'].Value) + ' oku') })
+    $result = [regex]::Replace($result, "(?<a>$num)\s*(?<sep>[〜~～])\s*(?<b>$num)\s*億円", { param($m)
+        $a=&$parse $m.Groups['a'].Value; $b=&$parse $m.Groups['b'].Value
+        if (-not $a[0] -or -not $b[0]) { return $m.Value }
+        $left = & $amount ([decimal]$a[1]); $right = & $amount ([decimal]$b[1])
+        & $addToken $left | Out-Null; & $addToken $right | Out-Null
+        return ($left + [string]$m.Groups['sep'].Value + $right) })
     # Compound trillion + oku.
     $result = [regex]::Replace($result, "(?<t>$num)\s*兆\s*(?<o>$num)\s*億円", { param($m)
         if ((& $normalizeNumber $m.Groups['t'].Value) -match '^[xX]') { & $warn "masked compound trillion amount left unchanged: $($m.Value)"; return $m.Value }
         $a=&$parse $m.Groups['t'].Value; $b=&$parse $m.Groups['o'].Value
         if (-not $a[0] -or -not $b[0]) { return $m.Value }
-        $token=(ConvertTo-YakuInvariantNumberText -Value (([decimal]$a[1]*10000)+[decimal]$b[1]) -UseGrouping)+' oku'; return (&$addToken $token)
+        $token=& $amount ((([decimal]$a[1]*10000)+[decimal]$b[1])); return (&$addToken $token)
     })
     $result = [regex]::Replace($result, "(?<n>$num)\s*兆円", { param($m)
         if ((& $normalizeNumber $m.Groups['n'].Value) -match '^[xX]') { & $warn "masked trillion amount left unchanged: $($m.Value)"; return $m.Value }
         $a=&$parse $m.Groups['n'].Value; if (-not $a[0]) { return $m.Value }
-        $token=(ConvertTo-YakuInvariantNumberText -Value ([decimal]$a[1]*10000) -UseGrouping)+' oku'; return (&$addToken $token)
+        $token=& $amount ([decimal]$a[1]*10000); return (&$addToken $token)
     })
     # 億 + 万 の複合。兆+億 と同じ理由で、単独の規則より先に畳む必要がある。
     # 畳まないと 億 が日本語のまま英文へ残り、モデルが "1 oku 20,000 k yen" のように訳す。
@@ -601,15 +641,25 @@ function Convert-YakuNumericUnits {
         if ((& $normalizeNumber $m.Groups['o'].Value) -match '^[xX]' -or (& $normalizeNumber $m.Groups['m'].Value) -match '^[xX]') { & $warn "masked compound oku amount left unchanged: $($m.Value)"; return $m.Value }
         $a=&$parse $m.Groups['o'].Value; $b=&$parse $m.Groups['m'].Value
         if (-not $a[0] -or -not $b[0]) { return $m.Value }
-        $token=(ConvertTo-YakuInvariantNumberText -Value ([decimal]$a[1]+([decimal]$b[1]*1000/10000)) -UseGrouping)+' oku'; return (&$addToken $token)
+        $token=& $amount ([decimal]$a[1]+([decimal]$b[1]*1000/10000)); return (&$addToken $token)
     })
     $result = [regex]::Replace($result, "(?<o>$num)\s*億\s*(?<m>$num)\s*万円", { param($m)
         if ((& $normalizeNumber $m.Groups['o'].Value) -match '^[xX]' -or (& $normalizeNumber $m.Groups['m'].Value) -match '^[xX]') { & $warn "masked compound oku amount left unchanged: $($m.Value)"; return $m.Value }
         $a=&$parse $m.Groups['o'].Value; $b=&$parse $m.Groups['m'].Value
         if (-not $a[0] -or -not $b[0]) { return $m.Value }
-        $token=(ConvertTo-YakuInvariantNumberText -Value ([decimal]$a[1]+([decimal]$b[1]/10000)) -UseGrouping)+' oku'; return (&$addToken $token)
+        $token=& $amount ([decimal]$a[1]+([decimal]$b[1]/10000)); return (&$addToken $token)
     })
-    $result = [regex]::Replace($result, "(?<n>$num)\s*億円", { param($m) $token=(& $normalizeNumber $m.Groups['n'].Value)+' oku'; return (&$addToken $token) })
+    $result = [regex]::Replace($result, "(?<n>$num)\s*億円", { param($m)
+        # 伏せ字（xx億円）は計算できない。oku は億をそのまま置くだけなので
+        # 単位名を替えられるが、billion は 10 で割らねばならず、割れない。
+        # 「xx billion」と書けば 10倍の誤りになるので、billion のときは
+        # 兆の伏せ字と同じく手を触れず、警告だけ残す。
+        if ((& $normalizeNumber $m.Groups['n'].Value) -match '^[xX]') {
+            if ($Notation -eq 'billion') { & $warn "masked oku amount left unchanged (billion needs division): $($m.Value)"; return $m.Value }
+            $token=(& $normalizeNumber $m.Groups['n'].Value)+' oku'; return (&$addToken $token)
+        }
+        $a=&$parse $m.Groups['n'].Value; if (-not $a[0]) { return $m.Value }
+        $token=& $amount ([decimal]$a[1]); return (&$addToken $token) })
     # 万 + 千 の複合。18万6千台 が「18万6 k units」になり、残った 万 を
     # モデルが ten thousand と訳していた（2026-08-05 実機）。
     # 千を伴う形を先に、素の端数を後に当てる。順番を逆にすると端数側が先に食う。

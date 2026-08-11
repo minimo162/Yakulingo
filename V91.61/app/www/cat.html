@@ -6,6 +6,7 @@
   <meta name="yaku-session" content="__YAKU_SESSION_TOKEN__">
   <meta name="yaku-file-max-bytes" content="__YAKU_MAX_UPLOAD_BYTES__">
   <meta name="yaku-max-batch-chars" content="__YAKU_MAX_BATCH_CHARS__">
+  <meta name="yaku-amount-notation" content="__YAKU_AMOUNT_NOTATION__">
   <title>翻訳 - YakuLingo</title>
   <link rel="stylesheet" href="/assets/styles.css">
   <link rel="stylesheet" href="/assets/cat-workspace.css">
@@ -57,7 +58,17 @@
       <section id="cat-instant" class="cat-instant" aria-labelledby="cat-start-title">
         <form id="quick-form" class="quick-inline">
           <p class="muted">訳したい文章を貼り付けてください。Word・Excel は下から取り込めます。ここで訳しただけでは保存しません（登録した訳語も使いません）。</p>
-          <p class="quick-notation-note">英訳の金額は <strong>oku 表記</strong>で書きます（1兆3,150億円 → <code>13,150 oku</code>、▲152億円 → <code>(152) oku</code>）。</p>
+          <!-- 金額の書き方はここで選ぶ。設定ファイルを開かせないための唯一の入口。
+               既に始めた作業は、その作業を始めたときの書き方のまま進む（原文の換算と
+               数値の点検が同じ書き方でそろっている必要があるため）。 -->
+          <p class="quick-notation-note">
+            <label for="amount-notation">英訳の金額の書き方</label>
+            <select id="amount-notation">
+              <option value="oku">oku（1兆3,150億円 → 13,150 oku）</option>
+              <option value="billion">billion（1兆3,150億円 → ¥1,315 billion）</option>
+            </select>
+            <span id="amount-notation-status" role="status" aria-live="polite"></span>
+          </p>
           <p id="quick-selection-note" class="quick-selection-note" role="status" aria-live="polite" hidden></p>
           <!-- 選んだ範囲だけでは、Word・Excelの体裁を保った社内確認用ファイルは
                作れない。元のファイルを丸ごと取り込む道をここに置く。書き込むのは
@@ -96,7 +107,7 @@
         <section id="quick-result" class="quick-result" aria-labelledby="quick-result-title" hidden>
           <div class="result-card">
             <div class="result-card-header"><div><span class="eyebrow">訳案</span><h3 id="quick-result-title"></h3></div></div>
-            <pre id="quick-result-text" class="translation"></pre><p id="quick-notation-hint" class="quick-notation-note" hidden>金額は <code>oku</code> 表記で書いています。</p>
+            <pre id="quick-result-text" class="translation"></pre><p id="quick-notation-hint" class="quick-notation-note" hidden></p>
             <div class="result-actions">
               <button id="quick-copy" type="button">コピー</button>
               <button id="quick-revise-open" type="button" class="secondary-button" aria-expanded="false" aria-controls="quick-revise-form">この訳案を直す</button>

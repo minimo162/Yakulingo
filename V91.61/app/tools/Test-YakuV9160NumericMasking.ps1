@@ -28,7 +28,7 @@ function Assert-YakuMask {
     else { Write-Host ('  FAIL ' + $Message) -ForegroundColor Red; $script:Failures++ }
 }
 
-foreach ($name in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1','BriefStyle.ps1','CatProject.ps1')) {
+foreach ($name in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1','BriefStyle.ps1','CellSegments.ps1','CellAlign.ps1','CatProject.ps1')) {
     . (Join-Path (Join-Path $root 'src') $name)
 }
 
@@ -804,25 +804,68 @@ $limitAt = $catchWindow.IndexOf('Test-YakuCopilotLimitError')
 $silentAt = $catchWindow.IndexOf('COPILOT_SILENT_START_TIMEOUT')
 Assert-YakuMask ($limitAt -ge 0 -and $silentAt -ge 0 -and $limitAt -lt $silentAt) '打ち切りの判定は他の再試行より先に見る'
 
+Write-Host 'CASE 23: 金額の書き方を画面で選べ、いまの書き方が画面に出る' -ForegroundColor Cyan
+# oku も billion も一般語ではない。どちらで書いたかを言わないと、受け取った側は
+# 13,150 oku を見て桁を疑う。2026-08-12 に billion を開けたので、画面は
+# 「今どちらか」だけでなく「切り替える場所」も持つ。
+$quickPageSrc = [IO.File]::ReadAllText((Join-Path $root 'www/cat.html'))
+$quickJsSrc = [IO.File]::ReadAllText((Join-Path $root 'www/assets/quick.js'))
+$settingsSrc = [IO.File]::ReadAllText((Join-Path $root 'src/Settings.ps1'))
+$serverSrc = [IO.File]::ReadAllText((Join-Path $root 'src/Server.ps1'))
+Assert-YakuMask ($quickPageSrc -match 'amount-notation' -and $quickPageSrc -match 'oku' -and $quickPageSrc -match 'billion') '画面で金額の書き方を選べる'
+Assert-YakuMask ($quickJsSrc -match 'quick-notation-hint') '訳文の隣にも書き方を出す'
+Assert-YakuMask ($quickJsSrc -match 'yaku-amount-notation') '画面側で既定を決めず、設定の値を読む'
+Assert-YakuMask ($settingsSrc -match "amount_notation.*Values=@\('oku','billion'\)") '設定は oku と billion の2つ'
+Assert-YakuMask ($serverSrc -match '/api/settings/amount-notation') '書き方を保存する入口がある'
+
+Write-Host 'CASE 24: billion は 億 を 10 で割る（単位名だけ替えない）' -ForegroundColor Cyan
+# 2026-08-08 に billion を塞いだ理由が「122億円 -> ¥122 billion（10倍の誤り）」だった。
+# 割り算はアプリ側にあり、Copilot へは伏せた数値しか渡さない（計算させない）。
+foreach ($case in @(
+    @{ Source='1兆3,150億円'; Oku='13,150 oku'; Billion='1,315 billion yen' }
+    @{ Source='122億円';       Oku='122 oku';    Billion='12.2 billion yen' }
+    @{ Source='115.77億円';    Oku='115.77 oku'; Billion='11.577 billion yen' }
+    @{ Source='1億2,340万円';  Oku='1.234 oku';  Billion='0.1234 billion yen' }
+    @{ Source='5兆円';         Oku='50,000 oku'; Billion='5,000 billion yen' }
+    # 千円・千台は billion でも畳まない。0.0000012 billion は読めない。
+    @{ Source='1,234千円';     Oku='1,234 k yen'; Billion='1,234 k yen' }
+)) {
+    $okuText = [string](Convert-YakuNumericUnits -Text ([string]$case.Source) -Location 'test' -Notation 'oku').Text
+    $billionText = [string](Convert-YakuNumericUnits -Text ([string]$case.Source) -Location 'test' -Notation 'billion').Text
+    Assert-YakuMask ($okuText -eq [string]$case.Oku) ("oku: {0} -> {1}（実際 {2}）" -f $case.Source, $case.Oku, $okuText)
+    Assert-YakuMask ($billionText -eq [string]$case.Billion) ("billion: {0} -> {1}（実際 {2}）" -f $case.Source, $case.Billion, $billionText)
+}
+# 伏せ字（xx億円）は 10 で割れない。oku は単位名だけ替えられるが、billion は
+# 触らずに残す。「xx billion」と書けば必ず 10 倍の誤りになる。
+$maskedOku = [string](Convert-YakuNumericUnits -Text 'xx億円' -Location 'test' -Notation 'oku').Text
+$maskedBillion = [string](Convert-YakuNumericUnits -Text 'xx億円' -Location 'test' -Notation 'billion').Text
+Assert-YakuMask ($maskedOku -eq 'xx oku') ('伏せ字は oku なら単位名だけ替える（実際 ' + $maskedOku + '）')
+Assert-YakuMask ($maskedBillion -eq 'xx億円') ('伏せ字は billion では換算できないので触らない（実際 ' + $maskedBillion + '）')
+
+Write-Host 'CASE 25: billion 表記でも、規約どおりの訳文が数値の点検を通る' -ForegroundColor Cyan
+# 換算後の原文と訳文を突き合わせる仕組みなので、書き方を替えると点検も一緒に
+# 動かないと、アプリ自身が作った正しい訳を自分で拒否する（2026-08-11 に oku で発生）。
+$yen = [string][char]0xA5
+$notationProject = New-YakuCatTextProject -Root $root -Text '当第1四半期の売上高は1兆3,150億円となりました。' -Settings ([pscustomobject]@{ amount_notation='billion' }) -Direction 'to_en'
+try {
+    Assert-YakuMask ((Get-YakuCatProjectAmountNotation -Project $notationProject) -eq 'billion') '作業ごとに書き方を固定する'
+    foreach ($case in @(
+        @{ Text=($yen + '1,315 billion'); Pass=$true;  Why='規約どおり（¥1,315 billion）は通る' }
+        @{ Text='1,315 billion yen';      Pass=$true;  Why='yen を後ろに書いた形も通る' }
+        @{ Text=($yen + '13,150 billion'); Pass=$false; Why='10 倍の誤りは止まる' }
+    )) {
+        $null = Set-YakuCatSegmentTranslation -Project $notationProject -Index 0 -Text ('Net sales for Q1 were ' + [string]$case.Text + '.')
+        $verdict = Invoke-YakuCatSegmentValidation -Project $notationProject -Segment @($notationProject.Segments)[0]
+        Assert-YakuMask ([bool]$verdict.Passed -eq [bool]$case.Pass) ([string]$case.Why + '（' + (@($verdict.Findings | ForEach-Object { [string]$_.Code }) -join ',') + '）')
+    }
+} finally { Remove-YakuCatProject -Id ([string]$notationProject.Id) }
+
 if ([string]::IsNullOrWhiteSpace($oldDataDir)) { Remove-Item Env:\YAKULINGO_DATA_DIR -ErrorAction SilentlyContinue } else { $env:YAKULINGO_DATA_DIR = $oldDataDir }
 Remove-Item -LiteralPath $script:YakuNumericTestData -Recurse -Force -ErrorAction SilentlyContinue
 
 if ($script:Failures -gt 0) {
     Write-Host "V91.60 numeric masking test failed. failures=$script:Failures" -ForegroundColor Red
     exit 1
-}
-Write-Host 'CASE 23: oku 表記への換算を画面に明示する' -ForegroundColor Cyan
-# oku は社内規約であって一般的な英語ではない。「メール・Webを訳す」という看板から
-# billion を期待した人が、黙って 13,150 oku を受け取ると混乱する。
-# billion は Settings.ps1 で意図的に選べない（換算コードが無く 10 倍の誤りになる）。
-# 選べない以上、いま何をしているかは画面に書くほかない。
-$quickPageSrc = [IO.File]::ReadAllText((Join-Path $root 'www/cat.html'))
-$quickJsSrc = [IO.File]::ReadAllText((Join-Path $root 'www/assets/quick.js'))
-$catPageSrc = [IO.File]::ReadAllText((Join-Path $root 'www/cat.html'))
-$settingsSrc = [IO.File]::ReadAllText((Join-Path $root 'src/Settings.ps1'))
-Assert-YakuMask ($quickPageSrc -match 'oku' -and $quickPageSrc -match 'billion') 'ちょっと翻訳が金額の書き方を明示する'
-Assert-YakuMask ($quickJsSrc -match 'quick-notation-hint') '訳文の隣にも書き方を出す'
-Assert-YakuMask ($catPageSrc -match 'oku' -and $catPageSrc -match 'billion') '資料翻訳も金額の書き方を明示する'
-Assert-YakuMask ($settingsSrc -match "amount_notation.*Values=@\('oku'\)") '換算コードが入るまで billion を選べるようにしない'
+}
 
 Write-Host 'V91.60 numeric masking regression passed.' -ForegroundColor Green

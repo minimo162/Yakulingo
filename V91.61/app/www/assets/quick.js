@@ -27,6 +27,38 @@
     return value > 0 ? value : 3000;
   }
 
+  /* 金額の書き方（oku / billion）。設定そのものを読み、画面側で既定を決めない。
+     選び直すと設定を保存する。既に始めた作業には及ばない（作業ごとに固定）。 */
+  function notation() {
+    var node = document.querySelector('meta[name="yaku-amount-notation"]');
+    var value = node ? String(node.getAttribute('content') || '') : '';
+    return value === 'billion' ? 'billion' : 'oku';
+  }
+  function notationExample(value) {
+    return value === 'billion' ? '金額は ¥1,315 billion のように書いています。' : '金額は 13,150 oku のように書いています。';
+  }
+  function startNotationControl() {
+    var select = el('amount-notation');
+    if (!select) return;
+    var status = el('amount-notation-status');
+    select.value = notation();
+    select.addEventListener('change', function () {
+      var value = select.value;
+      select.disabled = true;
+      if (status) status.textContent = '保存しています…';
+      YakuCommon.post('/api/settings/amount-notation', { amount_notation: value }).then(function (data) {
+        var applied = data && data.amount_notation === 'billion' ? 'billion' : 'oku';
+        select.value = applied;
+        var node = document.querySelector('meta[name="yaku-amount-notation"]');
+        if (node) node.setAttribute('content', applied);
+        if (status) status.textContent = 'これから訳す分に使います（開いている作業はそのまま）。';
+      }).catch(function (error) {
+        select.value = notation();
+        if (status) status.textContent = error.message || '保存できませんでした。';
+      }).then(function () { select.disabled = false; });
+    });
+  }
+
   function el(id) { return document.getElementById(id); }
   function update() {
     var text = el('quick-input').value;
@@ -117,10 +149,10 @@
     el('quick-result-title').textContent = toEnglish ? '英語の訳案（未確認）' : '日本語の訳案（内容確認用）';
     el('quick-result-text').textContent = artifact.translation;
     el('quick-result-note').textContent = toEnglish ? '外部へ配布する資料に使う場合は、1文ずつ確認して保存してからお使いください。' : '内容確認用の訳案です。';
-    /* 金額を oku 表記へ換算しているのに、画面がそれを言っていなかった。
-       「メール、Web、数文を訳す」という看板から billion を期待した人が混乱する。
-       和訳では換算が起きないので出さない。 */
+    /* どちらの書き方で換算したかを訳案のそばで言う。設定を変えられるように
+       なったので、文言も設定から作る。和訳では換算が起きないので出さない。 */
     el('quick-notation-hint').hidden = !toEnglish;
+    el('quick-notation-hint').textContent = toEnglish ? notationExample(notation()) : '';
     /* 件数だけでは「自分のあの数字が伏せられたか」が確かめられない。
        伏せた値そのものを並べる。値はこのパソコンの中で作り直したもので、
        Copilotへは記号として送っている。 */
@@ -416,6 +448,7 @@
       if (busy) return;
       window.dispatchEvent(new CustomEvent('yaku-instant-handoff', { detail: { text: el('quick-input').value } }));
     });
+    startNotationControl();
     update();
   }
   window.YakuInstant = { show: show, hide: hide, isBusy: isBusy };

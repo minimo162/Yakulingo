@@ -288,7 +288,7 @@ function New-YakuCatWordProject {
     $warnings=@($inventory.UnsupportedReasons | ForEach-Object { 'WordのDRAFT出力対象外: ' + $_ })
     $project=[pscustomobject]@{
         Id=[guid]::NewGuid().ToString('N'); Path=$Path; FileName=[IO.Path]::GetFileName($Path)
-        Direction=$Direction; Blocks=@($inventory.Blocks); Segments=@($segments.ToArray())
+        Direction=$Direction; AmountNotation=(Get-YakuAmountNotation -Settings $Settings); Blocks=@($inventory.Blocks); Segments=@($segments.ToArray())
         Warnings=$warnings; Source='file'; DocumentFormat='docx'; WordInventory=$inventory
         CreatedAt=(Get-Date).ToString('s')
     }

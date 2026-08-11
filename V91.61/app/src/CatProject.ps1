@@ -442,7 +442,7 @@ function Invoke-YakuCatSegmentValidation {
 
     if (-not [string]::IsNullOrWhiteSpace($target) -and -not $isVerbatimRegisteredTerm) {
         try {
-            $normalizedSource = if ([string]$Project.Direction -eq 'to_en') { [string](Convert-YakuNumericUnits -Text $source -Location ('cat-review-' + [string]$Segment.SegmentId)).Text } else { $source }
+            $normalizedSource = if ([string]$Project.Direction -eq 'to_en') { [string](Convert-YakuNumericUnits -Text $source -Notation (Get-YakuCatProjectAmountNotation -Project $Project) -Location ('cat-review-' + [string]$Segment.SegmentId)).Text } else { $source }
             $audit = Test-YakuNumericIntegrity -SourceText $normalizedSource -TranslatedText $target -Location ('cat-review-' + [string]$Segment.SegmentId)
             if (-not [bool]$audit.Ok) { $findings.Add([pscustomobject]@{ Code='numeric-integrity'; Severity='error'; Detail=[string]$audit.Detail }) | Out-Null }
             # 突き合わせにも単位変換後の原文を使う。443行の $audit だけが変換を通っていて、
@@ -543,7 +543,11 @@ function Invoke-YakuCatSegmentValidation {
     # `oku` は本アプリの英訳で 1億円を表す単位であり、数値fact抽出でも
     # yen として扱う。ここだけ単純な文字列検査で落とすと、正しい
     # `1,234 oku` を確認済みにできない。
-    if (-not $isVerbatimRegisteredTerm -and $source -match '(?i)(?:円|\byen\b|\boku\b)' -and $target -notmatch '(?i)(?:円|\byen\b|\boku\b)') { $findings.Add([pscustomobject]@{ Code='currency-mismatch'; Severity='error'; Detail='yen' }) | Out-Null }
+    # billion 表記では、このアプリ自身が Copilot へ「¥1,315 billion と書け」と
+    # 指示している（PromptBuilder.ps1 の amount 規約）。¥ を通貨として数えないと、
+    # 規約どおりの訳文を自分の点検が currency-mismatch で拒否する。
+    $yenMark = '(?i)(?:円|\byen\b|\boku\b|¥|\bJPY\b)'
+    if (-not $isVerbatimRegisteredTerm -and $source -match $yenMark -and $target -notmatch $yenMark) { $findings.Add([pscustomobject]@{ Code='currency-mismatch'; Severity='error'; Detail='yen' }) | Out-Null }
     if (-not $isVerbatimRegisteredTerm -and $source -match '(?i)(?:ドル|\bdollars?\b|\$)' -and $target -notmatch '(?i)(?:ドル|\bdollars?\b|\$)') { $findings.Add([pscustomobject]@{ Code='currency-mismatch'; Severity='error'; Detail='dollar' }) | Out-Null }
     try {
         $structure = Test-YakuTextStructureIntegrity -SourceText $source -FullText $target -BriefText $target
@@ -573,6 +577,18 @@ function Invoke-YakuCatSegmentValidation {
     $Segment | Add-Member -NotePropertyName QcTerminologyHash -NotePropertyValue $terminologyHash -Force
     $Segment.QcFindings = @($findings.ToArray())
     return [pscustomobject]@{ Passed=($status -eq 'passed'); Status=$status; Findings=@($findings.ToArray()) }
+}
+
+function Get-YakuCatProjectAmountNotation {
+    <# その作業を作ったときの金額表記。あとから設定を変えても、この作業の送信と
+       点検は同じ表記のままにする。表記が食い違うと、アプリ自身が換算した数値を
+       アプリ自身が numeric-value-mismatch として弾く（点検は換算後の原文と
+       突き合わせるため）。古い作業には項目が無いので oku とみなす。 #>
+    param([AllowNull()]$Project)
+    $v = ''
+    try { $v = [string]$Project.AmountNotation } catch { $v = '' }
+    if ($v -eq 'billion') { return 'billion' }
+    return 'oku'
 }
 
 function Get-YakuCatOutputEligibility {
@@ -808,6 +824,8 @@ function New-YakuCatProject {
         Path      = [string]$Path
         FileName  = [System.IO.Path]::GetFileName($Path)
         Direction = [string]$Direction
+        # 金額の書き方を作業へ焼き付ける。あとで設定を変えても、この作業の送信と点検は同じ表記で行う。
+        AmountNotation = (Get-YakuAmountNotation -Settings $Settings)
         Blocks    = $blocks
         Segments  = $segments
         Warnings  = @($extract.Warnings)
@@ -869,6 +887,8 @@ function New-YakuCatTextProject {
         Path      = ''
         FileName  = '貼り付けたテキスト'
         Direction = [string]$Direction
+        # 金額の書き方を作業へ焼き付ける。あとで設定を変えても、この作業の送信と点検は同じ表記で行う。
+        AmountNotation = (Get-YakuAmountNotation -Settings $Settings)
         Blocks    = @()
         Segments  = @($segments.ToArray())
         Warnings  = @()
@@ -1009,6 +1029,8 @@ function New-YakuCatProjectFromPairs {
         Path      = ''
         FileName  = [string]$FileName
         Direction = [string]$Direction
+        # 金額の書き方を作業へ焼き付ける。あとで設定を変えても、この作業の送信と点検は同じ表記で行う。
+        AmountNotation = (Get-YakuAmountNotation -Settings $Settings)
         Blocks    = @()
         Segments  = @($segments.ToArray())
         Warnings  = @($warn.ToArray())
@@ -1377,6 +1399,7 @@ function Save-YakuCatProject {
             path = [string]$Project.Path
             file_name = [string]$Project.FileName
             direction = [string]$Project.Direction
+            amount_notation = (Get-YakuCatProjectAmountNotation -Project $Project)
             direction_basis = [string]$Project.DirectionBasis
             direction_confidence = [string]$Project.DirectionConfidence
             direction_source_fingerprint = [string]$Project.DirectionSourceFingerprint
@@ -1637,6 +1660,7 @@ function Restore-YakuCatProject {
         Path      = $savedSourcePath
         FileName  = [string]$o.file_name
         Direction = [string]$o.direction
+        AmountNotation = $(if ([string]$o.amount_notation -eq 'billion') { 'billion' } else { 'oku' })
         DirectionBasis = $(if (-not [string]::IsNullOrWhiteSpace([string]$o.direction_basis)) { [string]$o.direction_basis } else { 'fixed' })
         DirectionConfidence = $(if (-not [string]::IsNullOrWhiteSpace([string]$o.direction_confidence)) { [string]$o.direction_confidence } else { 'not_applicable' })
         DirectionSourceFingerprint = [string]$o.direction_source_fingerprint
@@ -2016,7 +2040,7 @@ function Get-YakuCatCopilotUsage {
         $item = [pscustomobject]@{ Index=($items.Count + 1); Text=$text; BlockIds=(New-Object System.Collections.Generic.List[string]) }
         $byText[$text] = $item; $items.Add($item) | Out-Null
     }
-    $null = Protect-YakuCatItems -Items @($items.ToArray()) -Root $Root -Direction ([string]$Project.Direction)
+    $null = Protect-YakuCatItems -Items @($items.ToArray()) -Root $Root -Direction ([string]$Project.Direction) -Notation (Get-YakuCatProjectAmountNotation -Project $Project)
     $pending = New-Object System.Collections.Generic.List[object]
     foreach ($item in @($items.ToArray())) {
         $pending.Add($item) | Out-Null
@@ -2054,7 +2078,10 @@ function Protect-YakuCatItems {
     param(
         [Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Items,
         [Parameter(Mandatory=$true)][string]$Root,
-        [Parameter(Mandatory=$true)][string]$Direction
+        [Parameter(Mandatory=$true)][string]$Direction,
+        # 金額の書き方は作業ごとに固定する。点検も同じ表記で突き合わせるため、
+        # ここと点検側がずれると、正しい訳をアプリ自身が弾く。
+        [ValidateSet('oku','billion')][string]$Notation='oku'
     )
     $maskedItems = 0
     foreach ($item in @($Items)) {
@@ -2064,7 +2091,7 @@ function Protect-YakuCatItems {
         # CAT translation uses the dedicated canonical contract and protects every unit here.
         # 呼ぶため、ここで単位変換を済ませる。先に数値を伏せると
         # 18万6千台 が [[N1]]万[[N2]]千台 に割れ、1つの数量へ戻せない。
-        $numericPre = Convert-YakuNumericUnits -Text $text -Location ("cat-ID-" + [string]$item.Index)
+        $numericPre = Convert-YakuNumericUnits -Text $text -Notation $Notation -Location ("cat-ID-" + [string]$item.Index)
         $text = [string]$numericPre.Text
         $maskResult = New-YakuNumericMaskMap -Text $text -Root $Root -Direction $Direction -Location ("cat-ID-" + [string]$item.Index)
         $item | Add-Member -NotePropertyName NumericMaskMap -NotePropertyValue $maskResult.Map -Force

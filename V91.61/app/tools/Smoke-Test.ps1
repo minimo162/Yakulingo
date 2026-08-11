@@ -321,7 +321,14 @@ Assert-Yaku -Condition ($catClient.Contains('event.isComposing') -and $catClient
 Assert-Yaku -Condition ($catIndex.Contains('id="cat-complete-state"') -and $catClient.Contains("currentFilter = 'all'")) -Message 'completed CAT work must show its reviewed rows instead of an empty actionable grid'
 Assert-Yaku -Condition ($catIndex.Contains('id="cat-export-dialog"') -and $catClient.Contains("post('preflight', {}, true, requestScope)") -and $catClient.Contains("String(data.project_id || '') !== requestScope.id") -and $catClient.Contains('Number(data.revision) !== requestScope.revision')) -Message 'CAT output dialog must consume server preflight for the exact project revision'
 Assert-Yaku -Condition ($catClient.Contains("el('cat-export-dialog').addEventListener('close'") -and $catClient.Contains('if (!scopeIsCurrent(scope, true))') -and $catClient.Contains('exportProject();')) -Message 'CAT export must recheck the preflight scope before producing a DRAFT or copied text'
-Assert-Yaku -Condition (-not ($indexSource -match 'amount-notation|122 oku|設定とデータ管理|直近の翻訳|用語集（読取専用）')) -Message 'technical amount and unused utility controls must be absent from the main screen'
+Assert-Yaku -Condition (-not ($indexSource -match '122 oku|設定とデータ管理|直近の翻訳|用語集（読取専用）')) -Message 'unused utility controls must be absent from the main screen'
+# 2026-08-12: 金額の書き方の選択だけ戻した。billion を開けたが、設定を変える画面が
+# 他に無く、選べない対応は対応にならない。最初の画面には置かない（訳す前に迷わせない）。
+# 置くのは訳す画面の1か所だけ。値は設定から読み、画面側で既定を決めない。
+Assert-Yaku -Condition (-not ($homeIndex -match 'amount-notation') -and
+    ([regex]::Matches($catIndex, 'id="amount-notation"').Count -eq 1) -and
+    $quickClient.Contains('meta[name="yaku-amount-notation"]') -and
+    $server.Contains('__YAKU_AMOUNT_NOTATION__')) -Message 'the amount notation choice must live once on the translation screen and read its value from settings'
 Assert-Yaku -Condition ($server -match 'INVALID_SESSION_TOKEN' -and $server -match 'UNSUPPORTED_CONTENT_TYPE' -and $server -match 'Local\\YakuLingo') -Message 'server boundary and single-instance controls must be present'
 Assert-Yaku -Condition ($server -notmatch 'ProcessStopper\.ps1|Type\s*=\s*''Process''') -Message 'legacy process-backed file jobs must be absent'
 Assert-Yaku -Condition ($server -notmatch 'Save-YakuIncomingFileFromForm|Parse-YakuUrlEncodedForm') -Message 'legacy Base64/form upload path must be removed'
