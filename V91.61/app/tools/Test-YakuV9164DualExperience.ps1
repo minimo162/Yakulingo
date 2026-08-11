@@ -175,6 +175,23 @@ Check-YakuDual ($catWorkspaceStyle -match '(?s)\.cat-editor-toolbar\s*\{[^}]*pos
 Check-YakuDual ($catWorkspaceStyle -match '(?s)\.cat-toolbar-progress\s*\{[^}]*min-width:\s*max-content') 'toolbar progress must not be squeezed below its own text'
 Check-YakuDual ($catWorkspaceStyle -notmatch '(?s)\.cat-toolbar-document,\s*\r?\n?\.cat-toolbar-progress\s*\{[^}]*min-width:\s*0') 'the shrink rule must not be shared with the progress cell'
 Check-YakuDual ($catWorkspaceStyle -match '(?s)\.cat-copilot-usage\s*\{[^}]*grid-column:\s*1 / -1' -and $catPage -match '(?s)</div>\s*(<!--[\s\S]*?-->\s*)?<span id="cat-copilot-usage"[\s\S]*?</header>') 'the usage note must sit on its own toolbar row instead of competing for column width'
+# 画面に出す情報を減らす（2026-08-12、利用者の指摘「不要な情報が多すぎて必要な情報が
+# 紛れてしまっている」）。数えたら、4セルの資料で「要対応4 / 未翻訳4 / 未確認4」と
+# 同じ数字が3つ並んでいた（actionable = 未確認 or 点検の指摘、未翻訳 ⊂ 未確認）。
+Check-YakuDual (@([regex]::Matches($catPage, 'data-cat-filter="')).Count -le 4) 'the row filter must not offer more entries than it has meanings'
+Check-YakuDual ($catPage -notmatch 'data-cat-filter="untranslated"' -and $catPage -notmatch 'data-cat-filter="unconfirmed"') 'filters that always duplicate each other are gone'
+Check-YakuDual ($catPage -match 'data-cat-filter="qc"[^>]*hidden' -and $catClient -match 'qcFilter\.hidden = counts\.qc < 1') 'the exception filter stays hidden while there is nothing to see'
+Check-YakuDual (@([regex]::Matches($catWorkspaceStyle, 'cat-state-filters button\[data-cat-filter=')).Count -le 3) 'the filter colour bands must stay within three meanings'
+# 場所は「選べる」ときだけ出す。1種類しかなければ、すべての場所と同じものを指す。
+Check-YakuDual ($catClient -match 'locationNames\.length < 2') 'the location list hides itself when it offers no choice'
+# セルはシートでまとめる。番地まで見ると1セル1グループになり、500セルで500個並ぶ。
+Check-YakuDual ($catClient -match "location\.match\(/\^\(\.\*\?\)\\s\*\[!,\]") 'cells group by sheet, accepting both separators'
+# 言い切って終わる。同じ注意を重ねない。
+Check-YakuDual ($catPage -match '<strong>すべての行を確認し終えました</strong></div>') 'the completion line does not carry a second caveat'
+# 出す文言の検査なので、注釈は外してから見る。消した文言を注釈で説明していると、
+# 自分の説明に引っかかって落ちる（2026-08-12 に実際に落ちた）。
+$catClientCode = [regex]::Replace($catClient, '(?s)/\*.*?\*/', '')
+Check-YakuDual ($catClientCode -notmatch '原文が似ているというだけです' -and $catClientCode -notmatch 'ページ情報なし' -and $catClientCode -notmatch '文書内の場所情報なし') 'reference cards drop the restated caveat and the empty-field placeholders'
 Check-YakuDual ($catClient -match "activeSegmentId\s*=\s*''" -and $catClient -match 'data-cat-segment-id' -and $catClient -match 'String\(segment\.segment_id') 'active row survives redraws by stable segment_id'
 Check-YakuDual ($catClient -match "esc\(segment\.location \|\| '本文'\)" -and $catClient -match 'function locationGroup\(segment\)') 'rows display the actual source location and navigation groups it locally'
 Check-YakuDual ($catClient -match 'cat-candidate-number' -and $catClient -match 'itemIndex \+ 1' -and $catClient -match 'data-cat-reference-id') 'numbered candidate controls preserve explicit reference insertion'

@@ -242,19 +242,15 @@
 /* 左の絞り込みと、一覧の行の左端に、同じ色の帯を置く。これまでは左で「未確認」を
    押しても、一覧の行に「未確認」という色が無く、対応を推測させていた。
    border-left-color だけを触るので、選択中（aria-pressed）の面と文字は踏まない。
-   選択中は上の規則が border-color を accent にするので、帯も accent になる。
-   これは意図どおり（accent は「いま選んでいるもの」の色）。 */
+
+   色は3つまで。6つあった絞り込みを3つ（＋例外の「点検の指摘」）に減らしたので、
+   帯も「残り＝これから触る」「点検の指摘＝例外」「確認済み＝終わった」の
+   3色で足りる（2026-08-12、利用者の指摘「色分けが多すぎて意味不明」）。
+   「すべて」は状態ではないので帯を持たない。 */
 .app-cat .cat-nav-pane .cat-state-filters button { border-left-width: 4px; }
-.app-cat .cat-nav-pane .cat-state-filters button[data-cat-filter="untranslated"] { border-left-color: var(--faint); }
-.app-cat .cat-nav-pane .cat-state-filters button[data-cat-filter="unconfirmed"] { border-left-color: var(--warning); }
+.app-cat .cat-nav-pane .cat-state-filters button[data-cat-filter="actionable"] { border-left-color: var(--warning); }
 .app-cat .cat-nav-pane .cat-state-filters button[data-cat-filter="qc"] { border-left-color: var(--error); }
 .app-cat .cat-nav-pane .cat-state-filters button[data-cat-filter="reviewed"] { border-left-color: var(--success); }
-/* 「要対応」は3つの合成。合成であることを、そのまま帯で見せる。 */
-.app-cat .cat-nav-pane .cat-state-filters button[data-cat-filter="actionable"] {
-  background-image: linear-gradient(var(--faint) 0 33.3%, var(--warning) 33.3% 66.6%, var(--error) 66.6% 100%);
-  background-size: 4px 100%;
-  background-repeat: no-repeat;
-}
 
 .cat-state-filters button span,
 .cat-location-list button span {
