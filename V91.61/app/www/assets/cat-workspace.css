@@ -229,6 +229,23 @@
   font-weight: 700;
 }
 
+/* 左の絞り込みと、一覧の行の左端に、同じ色の帯を置く。これまでは左で「未確認」を
+   押しても、一覧の行に「未確認」という色が無く、対応を推測させていた。
+   border-left-color だけを触るので、選択中（aria-pressed）の面と文字は踏まない。
+   選択中は上の規則が border-color を accent にするので、帯も accent になる。
+   これは意図どおり（accent は「いま選んでいるもの」の色）。 */
+.app-cat .cat-nav-pane .cat-state-filters button { border-left-width: 4px; }
+.app-cat .cat-nav-pane .cat-state-filters button[data-cat-filter="untranslated"] { border-left-color: var(--faint); }
+.app-cat .cat-nav-pane .cat-state-filters button[data-cat-filter="unconfirmed"] { border-left-color: var(--warning); }
+.app-cat .cat-nav-pane .cat-state-filters button[data-cat-filter="qc"] { border-left-color: var(--error); }
+.app-cat .cat-nav-pane .cat-state-filters button[data-cat-filter="reviewed"] { border-left-color: var(--success); }
+/* 「要対応」は3つの合成。合成であることを、そのまま帯で見せる。 */
+.app-cat .cat-nav-pane .cat-state-filters button[data-cat-filter="actionable"] {
+  background-image: linear-gradient(var(--faint) 0 33.3%, var(--warning) 33.3% 66.6%, var(--error) 66.6% 100%);
+  background-size: 4px 100%;
+  background-repeat: no-repeat;
+}
+
 .cat-state-filters button span,
 .cat-location-list button span {
   color: inherit;
@@ -298,7 +315,9 @@
 .cat-grid tbody tr.is-active {
   outline: 3px solid var(--accent);
   outline-offset: -3px;
-  box-shadow: inset 6px 0 0 0 var(--accent);
+  /* 左端4pxは状態の帯が使う。ここに inset 6px を敷くと、いま作業している行だけ
+     状態が読めなくなっていた。「いまここ」の印は反対側へ回す。 */
+  box-shadow: inset -6px 0 0 0 var(--accent);
 }
 
 /* 主役の行だけ息をさせる。脇役は詰めて、一覧としての一望性を保つ。 */
@@ -509,6 +528,13 @@
 .cat-qc-card.is-error {
   border-left: 4px solid var(--error);
   background: #fff0ee;
+}
+
+/* 「用語集を読み込めませんでした」は、訳の欠陥ではなくアプリ側の不調。
+   赤で出すと、直しようのないものを直そうとして時間を失う。 */
+.cat-qc-card.is-tool {
+  border-left: 4px solid var(--warning);
+  background: #f6efe6;
 }
 
 .cat-context-label {

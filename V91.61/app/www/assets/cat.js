@@ -64,7 +64,6 @@
   function isAlwaysEnabled(button) {
     if (button.closest('dialog')) return true;
     if (button.classList.contains('job-cancel')) return true;
-    if (button.id === 'text-size-toggle') return true;
     if (button.hasAttribute('data-cat-filter') || button.hasAttribute('data-cat-location') ||
         button.hasAttribute('data-cat-change') || button.hasAttribute('data-cat-inspector')) return true;
     return false;
@@ -143,9 +142,26 @@
     };
     return (segment.qc_findings || []).map(function (finding) { var code = String(finding.code || finding.Code || '').toLowerCase().replace(/_/g, '-'); return labels[code] || '自動点検で気になる点が見つかりました。左の原文と見比べてください。'; });
   }
+  /* 点検の指摘は「何が起きたか」で分かれる。14種を全部おなじ赤で出すと、
+     数字の食い違い（出力を止める欠陥）と、用語集を読めなかった道具の不調とが
+     同じ重さに見える。後者は利用者の訳の欠陥ではなく、直しようがない。
+     赤は1種類のままにする。--error を複数作ると、どれが出力を止めるのか
+     分からなくなる。 */
+  function qcGroup(code) {
+    if (code === 'terminology-check-unavailable') return 'tool';
+    return 'error';
+  }
   /* 一覧の印は短く。長い名前は狭い列から溢れて隣の列に重なる。
    意味は title と、左の絞り込み（要対応・未翻訳・未確認…）が持つ。 */
-  function stateLabel(state) { return state === 'reviewed' ? '確認済' : state === 'human_edited' ? '手直し' : state === 'machine_draft' ? '未確認' : state === 'stale' ? '要再確認' : '未翻訳'; }
+  function stateLabel(state) { return state === 'reviewed' ? '確認済' : state === 'human_edited' ? '手直し' : state === 'machine_draft' ? '未確認' : state === 'stale' ? '再確認' : '未翻訳'; }
+  /* 記号は札を置き換えるものではなく、札の読み方を教える相棒として隣に並べる。
+     単独で意味が通じる記号は市販CATでも ✓（確定）だけで、「機械の訳案」や
+     「要再確認」に共通の図形は無い。記号だけにすると title に頼ることになり、
+     ホバーできない環境では今より情報が減る。札はその場の凡例として残す。 */
+  function icon(id) { return '<svg class="yaku-icon" aria-hidden="true" focusable="false"><use href="#' + id + '"></use></svg>'; }
+  function stateIcon(state) {
+    return icon(state === 'reviewed' ? 'i-reviewed' : state === 'human_edited' ? 'i-edited' : state === 'machine_draft' ? 'i-draft' : state === 'stale' ? 'i-stale' : 'i-untranslated');
+  }
   function stateTitle(state) { return state === 'reviewed' ? '確認済み' : state === 'human_edited' ? '手直し済み・未確認' : state === 'machine_draft' ? 'Copilotの訳案・未確認' : state === 'stale' ? '原文が変わったので再確認が必要' : 'まだ訳がありません'; }
   function originLabel(origin) {
     if (origin === 'glossary') return '用語集';
@@ -245,7 +261,7 @@
     el('cat-qc-list').innerHTML = findings.length ? findings.map(function (message, findingIndex) {
       var finding = rawFindings[findingIndex] || {}, code = String(finding.code || finding.Code || '').toLowerCase().replace(/_/g, '-');
       var termAction = (code === 'terminology-missing' || code === 'terminology-forbidden') ? '<button type="button" class="secondary-button" data-cat-term-exception="' + Number(segment.index) + '" data-cat-term-id="' + esc(finding.termId || finding.TermId || '') + '" data-cat-term-version="' + Number(finding.termVersion || finding.TermVersion || 0) + '" data-cat-term-source="' + esc(finding.sourceTerm || finding.SourceTerm || '') + '">この行では別の表現を使う</button>' : '';
-      return '<div class="cat-qc-card is-error"><p>' + esc(message) + '</p>' + termAction + '</div>';
+      return '<div class="cat-qc-card is-' + qcGroup(code) + '"><p>' + esc(message) + '</p>' + termAction + '</div>';
     }).join('') : '<div class="cat-qc-card">数字と単位の自動点検では、気になる点は見つかりませんでした。言い回しが適切かどうかは、ご自身でお確かめください。</div>';
     el('cat-next-qc').disabled = !all.some(segmentHasQc);
     var index = Number(segment.index), previous = all.find(function (item) { return Number(item.index) === index - 1; }), next = all.find(function (item) { return Number(item.index) === index + 1; });
@@ -292,8 +308,8 @@
       var nextSegment = all.find(function (candidate) { return Number(candidate.index) === index + 1; });
       var mergeLosesTranslation = !!(String(segment.translation || '').trim() || (nextSegment && String(nextSegment.translation || '').trim()));
       var splitLosesTranslation = !!String(segment.translation || '').trim();
-      if (segment.can_merge) ops += '<button type="button" class="cat-op secondary-button" data-cat-merge="' + index + '" data-cat-loss="' + (mergeLosesTranslation ? '1' : '0') + '">次の行とつなげて1文にする</button>';
-      if (segment.can_split) ops += '<button type="button" class="cat-op secondary-button" data-cat-split="' + index + '" data-cat-loss="' + (splitLosesTranslation ? '1' : '0') + '">つなげた行を元に戻す</button>';
+      if (segment.can_merge) ops += '<button type="button" class="cat-op secondary-button" data-cat-merge="' + index + '" data-cat-loss="' + (mergeLosesTranslation ? '1' : '0') + '">' + icon('i-merge') + '次の行とつなげて1文にする</button>';
+      if (segment.can_split) ops += '<button type="button" class="cat-op secondary-button" data-cat-split="' + index + '" data-cat-loss="' + (splitLosesTranslation ? '1' : '0') + '">' + icon('i-split') + 'つなげた行を元に戻す</button>';
       var prior = (segment.prior_translation || segment.prior_source) ? '<details><summary>前回版を見る</summary>' + (segment.prior_source ? '<div><strong>前回の原文</strong><br>' + esc(segment.prior_source) + '</div>' : '') + (segment.prior_translation ? '<div><strong>前回の訳文</strong><br>' + esc(segment.prior_translation) + '</div>' : '') + '</details>' : '';
       var qc = findings.length ? '<div id="' + findingId + '" class="cat-qc-findings" role="alert">' + findings.map(function (m) { return '<div>' + esc(m) + '</div>'; }).join('') + '</div>' : '';
       var usage = segment.reference_usage || null;
@@ -302,10 +318,10 @@
       var generatedTerms = (segment.terminology_generation || []).filter(Boolean).length ? '<details class="cat-term-trace"><summary>訳案作成時に指定した用語 ' + segment.terminology_generation.filter(Boolean).length + '件</summary>' + segment.terminology_generation.filter(Boolean).map(function (term) { return '<div><strong>' + esc(term.source || '') + '</strong> → ' + esc(term.preferred || '') + '</div>'; }).join('') + '</details>' : '';
       var compare = revisionComparison && revisionComparison.projectId === String(project.id || '') && Number(revisionComparison.index) === index ? '<section class="cat-revision-compare" aria-labelledby="cat-revision-title-' + index + '"><h4 id="cat-revision-title-' + index + '">修正結果を確認</h4><div class="cat-revision-pair"><div><strong>変更前</strong><p>' + esc(revisionComparison.before) + '</p></div><div><strong>変更後</strong><p>' + esc(segment.translation || '') + '</p></div></div><p class="muted">数字と単位は自動で点検しました。言い回しが適切かどうかは、ご自身でお確かめください。</p><div class="cat-revision-actions"><button type="button" data-cat-accept-revision="' + index + '">この案を使う</button><button type="button" class="secondary-button" data-cat-revert-revision="' + index + '">元に戻す</button></div></section>' : '';
       var kind = segment.kind === 'cell' ? 'セル' : /^word_/.test(segment.kind || '') ? 'Word' : '文';
-      var target = isActive ? '<textarea rows="3" data-cat-input="' + index + '" data-cat-project-id="' + esc(project.id) + '" data-original="' + esc(segment.translation || '') + '" aria-label="' + row + '行目の訳文" aria-invalid="' + (findings.length ? 'true' : 'false') + '"' + (findings.length ? ' aria-describedby="' + findingId + '"' : '') + '>' + esc(segment.translation || '') + '</textarea>' + prior + referenceTrace + generatedTerms + '<div class="cat-ops">' + ops + '</div><div class="cat-row-actions">' + (segment.confirmed ? '<button type="button" class="cat-op secondary-button" data-cat-unconfirm="' + index + '">確認を取り消す</button>' : '<button type="button" class="cat-op cat-op-ok" data-cat-confirm="' + index + '">確認済みにする</button>') + '<button type="button" class="cat-op secondary-button" data-cat-revert="' + index + '" hidden>編集を取り消す</button>' + (segment.translation ? '<button type="button" class="cat-op secondary-button" data-cat-term-open="' + index + '">用語を登録</button>' : '') + ((segment.kind === 'cell' && segment.translation && String(segment.source).length <= 40) ? '<button type="button" class="cat-op secondary-button" data-cat-glossary="' + index + '">このセルの訳を今後も自動で使う</button>' : '') + '</div>' + qc + compare + (segment.can_revise ? '<form class="revise-form" data-cat-revise="' + index + '"><button class="secondary-button" type="button" data-cat-shorten="' + index + '">短くする</button><label class="revise-label">または、どこをどう直すか入力</label><div class="revise-row"><input class="revise-input" type="text" placeholder="例：「increase」を「rise」に変える"><button class="secondary-button" type="submit">この指示で直す</button></div></form>' : '') : '<button type="button" class="cat-row-activate" data-cat-activate="' + index + '"><span class="cat-target-preview">' + esc(segment.translation || '') + '</span></button>';
+      var target = isActive ? '<textarea rows="3" data-cat-input="' + index + '" data-cat-project-id="' + esc(project.id) + '" data-original="' + esc(segment.translation || '') + '" aria-label="' + row + '行目の訳文" aria-invalid="' + (findings.length ? 'true' : 'false') + '"' + (findings.length ? ' aria-describedby="' + findingId + '"' : '') + '>' + esc(segment.translation || '') + '</textarea>' + prior + referenceTrace + generatedTerms + '<div class="cat-ops">' + ops + '</div><div class="cat-row-actions">' + (segment.confirmed ? '<button type="button" class="cat-op secondary-button" data-cat-unconfirm="' + index + '">' + icon('i-undo') + '確認を取り消す</button>' : '<button type="button" class="cat-op cat-op-ok" data-cat-confirm="' + index + '">' + icon('i-reviewed') + '確認済みにする</button>') + '<button type="button" class="cat-op secondary-button" data-cat-revert="' + index + '" hidden>編集を取り消す</button>' + (segment.translation ? '<button type="button" class="cat-op secondary-button" data-cat-term-open="' + index + '">用語を登録</button>' : '') + ((segment.kind === 'cell' && segment.translation && String(segment.source).length <= 40) ? '<button type="button" class="cat-op secondary-button" data-cat-glossary="' + index + '">このセルの訳を今後も自動で使う</button>' : '') + '</div>' + qc + compare + (segment.can_revise ? '<form class="revise-form" data-cat-revise="' + index + '"><button class="secondary-button" type="button" data-cat-shorten="' + index + '">短くする</button><label class="revise-label">または、どこをどう直すか入力</label><div class="revise-row"><input class="revise-input" type="text" placeholder="例：「increase」を「rise」に変える"><button class="secondary-button" type="submit">この指示で直す</button></div></form>' : '') : '<button type="button" class="cat-row-activate" data-cat-activate="' + index + '"><span class="cat-target-preview">' + esc(segment.translation || '') + '</span></button>';
       var change = changeLabel(segment);
       return '<tr class="' + (isActive ? 'is-active' : '') + '" data-cat-row="' + index + '" data-cat-segment-id="' + esc(segment.segment_id || '') + '" data-cat-confirmed="' + (segment.confirmed ? '1' : '0') + '" data-yaku-cat-state="' + esc(state) + '">' +
-        '<td class="cat-col-no"><span class="cat-card-label">行番号・状態</span>' + row + '<span class="cat-state cat-state-' + esc(state) + '" title="' + esc(stateTitle(state)) + '">' + esc(stateLabel(state)) + '</span>' + ((change && isActive) ? '<span class="cat-change-badge cat-change-' + esc(changeGroup(segment)) + '" title="' + esc(changeTitle(segment)) + '">' + esc(change) + '</span>' : '') + '</td>' +
+        '<td class="cat-col-no"><span class="cat-card-label">行番号・状態</span>' + row + '<span class="cat-state cat-state-' + esc(state) + '" title="' + esc(stateTitle(state)) + '">' + stateIcon(state) + '<span>' + esc(stateLabel(state)) + '</span></span>' + ((change && isActive) ? '<span class="cat-change-badge cat-change-' + esc(changeGroup(segment)) + '" title="' + esc(changeTitle(segment)) + '">' + esc(change) + '</span>' : '') + '</td>' +
         '<td class="cat-col-loc"><span class="cat-card-label">場所</span><span class="cat-location-main">' + esc(segment.location || '本文') + '</span><span class="cat-location-kind">' + esc(kind) + '</span>' + (origin ? '<span class="cat-origin">' + esc(origin) + '</span>' : '') + '</td>' +
         /* 開いている行は、原文を上・訳文を下に積んで表の全幅を使う。左右2列は視線が
            横へ飛ぶうえ、「文字を大きく」だと1列が日本語11文字まで痩せる。上下配置の
