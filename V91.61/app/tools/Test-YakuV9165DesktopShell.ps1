@@ -12,6 +12,14 @@ function Assert-YakuDesktopShell {
     $script:passed++
 }
 
+# YakuLingo.exe はビルド成果物で、git では追跡しない（csc が毎回異なる build stamp を
+# 埋めるため、ビルドのたびに差分が出て pull や切り替えを止めていた）。クローン直後や
+# 掃除のあとでもこの検査が通るよう、無ければここで作る。
+if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+    Write-Host 'desktop\YakuLingo.exe が無いのでビルドします。' -ForegroundColor Yellow
+    & (Join-Path $desktop 'Build-DesktopShell.ps1')
+}
+
 foreach ($name in @('YakuLingo.exe','Microsoft.Web.WebView2.Core.dll','Microsoft.Web.WebView2.WinForms.dll','WebView2Loader.dll','WebView2.LICENSE.txt','WebView2.NOTICE.txt')) {
     Assert-YakuDesktopShell (Test-Path -LiteralPath (Join-Path $desktop $name) -PathType Leaf) ("missing dependency: $name")
 }
