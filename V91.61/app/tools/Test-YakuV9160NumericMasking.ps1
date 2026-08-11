@@ -810,5 +810,19 @@ Remove-Item -LiteralPath $script:YakuNumericTestData -Recurse -Force -ErrorActio
 if ($script:Failures -gt 0) {
     Write-Host "V91.60 numeric masking test failed. failures=$script:Failures" -ForegroundColor Red
     exit 1
-}
+}
+Write-Host 'CASE 23: 社内表記への換算を画面に明示する' -ForegroundColor Cyan
+# oku は社内規約であって一般的な英語ではない。「メール・Webを訳す」という看板から
+# billion を期待した人が、黙って 13,150 oku を受け取ると混乱する。
+# billion は Settings.ps1 で意図的に選べない（換算コードが無く 10 倍の誤りになる）。
+# 選べない以上、いま何をしているかは画面に書くほかない。
+$quickPageSrc = [IO.File]::ReadAllText((Join-Path $root 'www/quick.html'))
+$quickJsSrc = [IO.File]::ReadAllText((Join-Path $root 'www/assets/quick.js'))
+$catPageSrc = [IO.File]::ReadAllText((Join-Path $root 'www/cat.html'))
+$settingsSrc = [IO.File]::ReadAllText((Join-Path $root 'src/Settings.ps1'))
+Assert-YakuMask ($quickPageSrc -match 'oku' -and $quickPageSrc -match 'billion') 'ちょっと翻訳が金額の書き方を明示する'
+Assert-YakuMask ($quickJsSrc -match 'quick-notation-hint') '訳文の隣にも書き方を出す'
+Assert-YakuMask ($catPageSrc -match 'oku' -and $catPageSrc -match 'billion') '資料翻訳も金額の書き方を明示する'
+Assert-YakuMask ($settingsSrc -match "amount_notation.*Values=@\('oku'\)") '換算コードが入るまで billion を選べるようにしない'
+
 Write-Host 'V91.60 numeric masking regression passed.' -ForegroundColor Green

@@ -22,7 +22,7 @@
       <form id="quick-form" class="translate-form">
         <div class="section-title-row"><div>
           <h1 id="quick-title">ちょっと翻訳</h1>
-          <p class="muted">メール、Web、数文を貼り付けて訳します。この画面の文章と訳文は保存されません。登録した訳語もここでは使いません。用語をそろえたいときは、資料翻訳をお使いください。</p>
+          <p class="muted">メール、Web、数文を貼り付けて訳します。この画面の文章と訳文は保存されません。登録した訳語もここでは使いません。用語をそろえたいときは、資料翻訳をお使いください。</p><p class="quick-notation-note">英訳の金額は<strong>社内表記</strong>で書きます。例: 1兆3,150億円 → <code>13,150 oku</code>、▲152億円 → <code>(152) oku</code>。<code>billion</code> での表記には、いまは対応していません。</p>
         </div></div>
         <label for="quick-input" class="sr-only">訳したい文章</label>
         <textarea id="quick-input" rows="10" placeholder="訳したい文章を入力" autocomplete="off"></textarea>
@@ -48,7 +48,7 @@
       <section id="quick-result" class="quick-result" aria-labelledby="quick-result-title" hidden>
         <div class="result-card">
           <div class="result-card-header"><div><span class="eyebrow">訳案</span><h2 id="quick-result-title"></h2></div></div>
-          <pre id="quick-result-text" class="translation"></pre>
+          <pre id="quick-result-text" class="translation"></pre><p id="quick-notation-hint" class="quick-notation-note" hidden>金額は社内表記（<code>oku</code>）で書いています。社外へそのまま出す場合は、書き方をご確認ください。</p>
           <div class="result-actions">
             <button id="quick-copy" type="button">コピー</button>
             <button id="quick-revise-open" type="button" class="secondary-button" aria-expanded="false" aria-controls="quick-revise-form">この訳案を直す</button>

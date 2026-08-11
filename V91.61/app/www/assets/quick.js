@@ -96,6 +96,10 @@
     el('quick-result-title').textContent = toEnglish ? '英語の訳案（未確認）' : '日本語の訳案（内容確認用）';
     el('quick-result-text').textContent = artifact.translation;
     el('quick-result-note').textContent = toEnglish ? '外部へ配布する資料に使う場合は、資料翻訳で1文ずつ確認してください。' : '内容確認用の訳案です。';
+    /* 金額を社内表記（oku）へ換算しているのに、画面がそれを言っていなかった。
+       「メール、Web、数文を訳す」という看板から billion を期待した人が混乱する。
+       和訳では換算が起きないので出さない。 */
+    el('quick-notation-hint').hidden = !toEnglish;
     /* 件数だけでは「自分のあの数字が伏せられたか」が確かめられない。
        伏せた値そのものを並べる。値はこのパソコンの中で作り直したもので、
        Copilotへは記号として送っている。 */
