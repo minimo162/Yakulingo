@@ -168,6 +168,13 @@ Check-YakuDual ($catClient -match 'function redrawAfterFlush\(\)[\s\S]*?return f
 Write-Host 'CAT H1 focused workspace contract' -ForegroundColor Cyan
 Check-YakuDual ($catPage -match 'cat-workspace\.css' -and $catPage -match 'id="cat-editor-toolbar"' -and $catPage -match 'id="cat-nav-pane"' -and $catPage -match 'id="cat-editor-pane"' -and $catPage -match 'id="cat-inspector-pane"') 'CAT uses one WebView workspace with sticky toolbar and three named regions'
 Check-YakuDual ($catWorkspaceStyle -match '(?s)\.cat-editor-toolbar\s*\{[^}]*position:\s*sticky' -and $catWorkspaceStyle -match 'grid-template-columns:\s*var\(--pane-nav\)\s+minmax\(0,\s*1fr\)\s+var\(--pane-inspector\)' -and $catWorkspaceStyle -match '--pane-nav:\s*clamp\(' -and $catWorkspaceStyle -match '--pane-inspector:\s*clamp\(') 'desktop CAT workspace has the approved sticky three-region layout'
+# ツールバーは行数が3桁（200行など）になっても壊れてはいけない。実測（窓1380px）で
+# 2つの壊れ方を踏んだ。1つは進捗が min-width: 0 で枠より小さくなり検索欄の上へ
+# 重なる。もう1つは使う量の1文がボタンと同じ列で幅を奪い、列の合計が 1,460px と
+# なって「そのほか」が画面外へ出る。どちらも「省略する当てが無いものを潰した」形。
+Check-YakuDual ($catWorkspaceStyle -match '(?s)\.cat-toolbar-progress\s*\{[^}]*min-width:\s*max-content') 'toolbar progress must not be squeezed below its own text'
+Check-YakuDual ($catWorkspaceStyle -notmatch '(?s)\.cat-toolbar-document,\s*\r?\n?\.cat-toolbar-progress\s*\{[^}]*min-width:\s*0') 'the shrink rule must not be shared with the progress cell'
+Check-YakuDual ($catWorkspaceStyle -match '(?s)\.cat-copilot-usage\s*\{[^}]*grid-column:\s*1 / -1' -and $catPage -match '(?s)</div>\s*(<!--[\s\S]*?-->\s*)?<span id="cat-copilot-usage"[\s\S]*?</header>') 'the usage note must sit on its own toolbar row instead of competing for column width'
 Check-YakuDual ($catClient -match "activeSegmentId\s*=\s*''" -and $catClient -match 'data-cat-segment-id' -and $catClient -match 'String\(segment\.segment_id') 'active row survives redraws by stable segment_id'
 Check-YakuDual ($catClient -match "esc\(segment\.location \|\| '本文'\)" -and $catClient -match 'function locationGroup\(segment\)') 'rows display the actual source location and navigation groups it locally'
 Check-YakuDual ($catClient -match 'cat-candidate-number' -and $catClient -match 'itemIndex \+ 1' -and $catClient -match 'data-cat-reference-id') 'numbered candidate controls preserve explicit reference insertion'

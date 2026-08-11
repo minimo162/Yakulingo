@@ -532,6 +532,9 @@ html.yaku-compact .cat-instant { max-width: none; }
    画面全体の見出しを重ねると、Ctrl+Alt+J で出る小さな窓では、読み込んだ文章が
    見出し2つと戻るボタンに押し下げられて見えなくなる（実機で確認）。 */
 body[data-cat-view="instant"] .workspace-heading { display: none; }
+/* 1回で送れる量を超えたときだけ出る案内。押せる出口を同じ枠の中に置く。 */
+.quick-long-notice { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); justify-content: space-between; margin: var(--space-2) 0 0; padding: 12px 14px; border-left: 4px solid var(--warning); border-radius: var(--radius-control); background: var(--surface-subtle); }
+.quick-long-notice p { margin: 0; font-size: var(--font-meta); }
 html.yaku-compact .hero { padding: 10px 0; }
 html.yaku-compact .tab-panel { margin-top: 12px; }
 html.yaku-compact .translate-form { padding: 16px; }

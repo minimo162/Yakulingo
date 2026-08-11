@@ -1846,6 +1846,10 @@ function Serve-YakuAppPage {
     $maxBytes = Get-YakuFileUploadBodyLimitBytes -Settings $settings
     $html = $html.Replace('__YAKU_SESSION_TOKEN__', (ConvertTo-YakuHtml $script:YakuSessionToken))
     $html = $html.Replace('__YAKU_MAX_UPLOAD_BYTES__', [string]$maxBytes)
+    # 1回の依頼に入る文字数。これを超える文章は、確認作業なら分けて送れるが、
+    # その場で訳す状態には分ける仕組みが無い（上限超過での再依頼もしない）。
+    # 画面が「1文ずつ確認して始める」を勧める境目に使う。勝手な数字は置かない。
+    $html = $html.Replace('__YAKU_MAX_BATCH_CHARS__', [string](Get-YakuMaxCharsPerFileBatch -Settings $settings))
     Send-YakuTextResponse -Context $Context -Text $html -ContentType 'text/html; charset=utf-8'
 }
 

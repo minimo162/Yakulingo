@@ -34,17 +34,20 @@
     <div class="home-choice-grid">
       <!-- 行き先は同じ一つの画面。ここで選ぶのは「どう始めるか」であって、
            別のアプリではない（2026-08-11、画面を一つにする判断）。 -->
+      <!-- 「保存する／しない」で選ばせない。初見の人は、訳案を見る前に1文ずつ
+           直したいかを決められない。ここで聞くのは、手元にあるのが文章かファイルか
+           だけにする。1文ずつ確認へ移るかは、訳案を見たあとで選べる。 -->
       <a class="home-choice-card" href="/quick" id="open-quick">
         <span class="home-choice-kicker">メール・Web・数文</span>
-        <strong>その場で訳す</strong>
-        <span>文章を貼り付けて、英語または日本語の訳案を作ります。内容は保存しません。</span>
-        <span class="home-choice-action">文章を貼り付ける</span>
+        <strong>文章を貼り付ける</strong>
+        <span>貼り付けた文章の訳案をすぐ作ります。そのあと、1文ずつ確認して仕上げることもできます。</span>
+        <span class="home-choice-action">貼り付けて訳す</span>
       </a>
       <a class="home-choice-card" href="/cat" id="open-cat">
-        <span class="home-choice-kicker">Word・Excel・長い文章</span>
-        <strong>1文ずつ確認して仕上げる</strong>
+        <span class="home-choice-kicker">Word・Excel・保存した作業</span>
+        <strong>資料を取り込む</strong>
         <span>訳案を1文ずつ確認し、途中まででも作業を保存します。Word・Excelは、社内確認用のファイルを作れます。</span>
-        <span class="home-choice-action">資料を取り込む・続きを開く</span>
+        <span class="home-choice-action">取り込む・続きを開く</span>
       </a>
     </div>
 

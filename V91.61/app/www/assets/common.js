@@ -173,7 +173,7 @@
   }
 
   function notifyDesktopShell(type) {
-    if (type !== 'desktop-preferences-changed' && type !== 'desktop-preferences-error' && type !== 'translation-finished' && type !== 'copilot-ready') return;
+    if (type !== 'desktop-preferences-changed' && type !== 'desktop-preferences-error' && type !== 'translation-finished' && type !== 'copilot-ready' && type !== 'cat-workspace-opened') return;
     try {
       if (window.chrome && window.chrome.webview && typeof window.chrome.webview.postMessage === 'function') {
         window.chrome.webview.postMessage({ type: type });

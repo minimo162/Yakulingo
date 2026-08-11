@@ -292,7 +292,10 @@ $appJsText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'a
 $quickJsText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'assets\quick.js'))
 Chk ($quickJsText.Contains('/api/cat/promote') -and $quickJsText.Contains('artifact_id')) 'ちょっと翻訳から資料翻訳へserver artifactで昇格できる'
 $indexText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'cat.html'))
-Chk ($indexText.Contains('data-cat-source-show="file"') -and $indexText.Contains('data-cat-source-show="text"')) '取り込み元を切り替えられる'
+# 貼り付けの入口は1つで、まずその場で訳す状態へ入る（2026-08-11）。長すぎて1回で
+# 送れないときだけ、貼り付けた本文をそのまま確認作業へ渡す。
+Chk ($indexText.Contains('data-cat-source-show="file"') -and $indexText.Contains('id="cat-open-instant"')) 'ファイルと貼り付けの入口がある'
+Chk ($quickJsText.Contains('yaku-instant-handoff') -and $appJsText.Contains('yaku-instant-handoff') -and $appJsText -match "showPicker\(\);\s*\r?\n\s*el\('cat-text'\)\.value = text;") '長すぎる文章は確認作業へ渡せる'
 Chk ($indexText -match 'id="cat-text"') 'CAT に貼り付け欄がある'
 
 # ---------------------------------------------------------------- 一覧の作法

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="yaku-session" content="__YAKU_SESSION_TOKEN__">
   <meta name="yaku-file-max-bytes" content="__YAKU_MAX_UPLOAD_BYTES__">
+  <meta name="yaku-max-batch-chars" content="__YAKU_MAX_BATCH_CHARS__">
   <title>翻訳 - YakuLingo</title>
   <link rel="stylesheet" href="/assets/styles.css">
   <link rel="stylesheet" href="/assets/cat-workspace.css">
@@ -43,11 +44,13 @@
 
       <section id="cat-picker" class="translate-form cat-picker" aria-labelledby="cat-start-title">
         <h2 id="cat-start-title">何を訳しますか</h2>
-        <p class="muted">Word・Excelや長い文章は、取り込んだあと1文ずつ確認しながら進めます。メールやWebの数文をその場で訳したいだけなら、保存しない「その場で訳す」をお使いください。</p>
+        <!-- 「保存する／しない」で入口を分けない。初見の人は、訳案を見る前に
+             1文ずつ直したいかを決められない。まず訳し、訳案の下の
+             「1文ずつ確認して保存する」で移れるようにする（2026-08-11）。 -->
+        <p class="muted">訳したいものを選んでください。貼り付けた文章はまず訳案を作り、必要なら1文ずつ確認しながら仕上げられます。</p>
         <div class="entry-actions cat-entry-actions">
           <button type="button" data-cat-source-show="file">Word・Excelを取り込む</button>
-          <button type="button" class="secondary-button" data-cat-source-show="text">長い文章を貼り付ける</button>
-          <button type="button" class="secondary-button" id="cat-open-instant">その場で訳す（保存しません）</button>
+          <button type="button" class="secondary-button" id="cat-open-instant">文章を貼り付ける</button>
         </div>
         <div id="cat-resume" class="cat-resume" hidden><h3>保存した作業</h3><div id="cat-resume-list"></div></div>
         <details class="entry-more"><summary>そのほかの始め方</summary><div class="entry-more-actions">
@@ -97,6 +100,12 @@
           <label for="quick-input" class="sr-only">訳したい文章</label>
           <textarea id="quick-input" rows="10" placeholder="訳したい文章を入力" autocomplete="off"></textarea>
           <div class="input-meta"><span id="quick-count">0字</span></div>
+          <!-- 1回の依頼に入る量を超えたときだけ出す。ここから先は、その場で訳す
+               状態には分けて送る仕組みが無い。 -->
+          <div id="quick-long-notice" class="quick-long-notice" role="status" hidden>
+            <p id="quick-long-text"></p>
+            <button type="button" id="quick-long-handoff">1文ずつ確認しながら進める</button>
+          </div>
           <div class="privacy-note">金額などの数値は、Copilotへ送る前に自動で伏せます。社名・人名・文章はそのまま送信されます。</div>
 
           <div id="quick-direction-summary" class="direction-summary" hidden>
@@ -165,7 +174,7 @@
             <span id="cat-save-status" class="cat-save-status" role="status" aria-live="polite">保存済み</span>
           </div>
           <label class="cat-toolbar-search" for="cat-search"><span>検索</span><input id="cat-search" type="search" placeholder="原文・訳文を検索"></label>
-          <div id="cat-actions" class="cat-actions"><span id="cat-copilot-usage" class="cat-copilot-usage" role="status" aria-live="polite" hidden></span><button id="cat-translate" type="button">残りの訳案を作る</button><button id="cat-export" type="button" class="secondary-button">訳文を取り出す（確認画面が出ます）</button><details class="cat-more-actions"><summary>そのほか</summary><div class="cat-more-actions-list"><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みの行だけコピー</button><button id="cat-switch-project" type="button" class="secondary-button">ほかの資料に切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>右の候補を上から順に訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や右側から訳文欄へ戻る</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
+          <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">残りの訳案を作る</button><button id="cat-export" type="button" class="secondary-button">訳文を取り出す（確認画面が出ます）</button><details class="cat-more-actions"><summary>そのほか</summary><div class="cat-more-actions-list"><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みの行だけコピー</button><button id="cat-switch-project" type="button" class="secondary-button">ほかの資料に切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>右の候補を上から順に訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や右側から訳文欄へ戻る</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
           <section aria-labelledby="cat-personal-glossary-title">
             <h3 id="cat-personal-glossary-title">今後の資料でも使うと登録した訳</h3>
             <p class="muted">ここにあるものは、これからのすべての資料で自動的に使われます。間違えて登録したものは取り消せます。取り消しても、すでに訳した文章はそのまま残ります。</p>
@@ -177,6 +186,10 @@
             <button id="cat-delete" type="button" class="danger-button">この作業を削除</button>
           </section>
         </details></div></details></div>
+          <!-- 使う量の1文は、ボタンと同じ列に入れると列幅を奪い、行数が3桁の
+               作業（例: 200行）でツールバーが横にあふれて「そのほか」が画面外へ
+               出た。ツールバーの2段目に全幅で置き、列幅を一切奪わせない。 -->
+          <span id="cat-copilot-usage" class="cat-copilot-usage" role="status" aria-live="polite" hidden></span>
         </header>
 
         <div id="cat-status" class="cat-status muted" role="status" aria-live="polite" tabindex="-1"></div>

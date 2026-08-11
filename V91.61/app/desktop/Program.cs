@@ -615,6 +615,18 @@ namespace YakuLingo.Desktop
                 {
                     tray.ShowBalloonTip(7000, "YakuLingo", "自動起動の設定を変更できませんでした。最初の画面で「使い方を見る」を開き、起動の設定をやり直してください。", ToolTipIcon.Warning);
                 }
+                else if (type == "cat-workspace-opened")
+                {
+                    // 確認作業は3列で、狭いとツールバーが折り返す。画面を一つに
+                    // したので、その場で訳す状態から画面遷移なしで確認作業へ入る
+                    // 道ができた。NavigationCompleted の広げ直しはその道を通らない。
+                    if (WindowState == FormWindowState.Normal && Width < catWindowSize.Width && !catWindowResizedByUser)
+                    {
+                        MinimumSize = new Size(900, 620);
+                        Size = catWindowSize;
+                        catWindowResizedByUser = true;
+                    }
+                }
                 else if (type == "copilot-ready")
                 {
                     // 起動直後、Copilot を開くために Edge が前へ出てこの窓を覆う。

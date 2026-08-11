@@ -15,10 +15,29 @@
      同じボタンが2つの操作に見える。 */
   var PROMOTE_LABEL = '1文ずつ確認して保存する（あとから開けます）';
 
+  /* 1回の依頼に入る文字数。サーバの設定（max_chars_per_batch_file）そのもので、
+     確認作業が分割の境目に使っているのと同じ値。ここを超える文章は、その場で
+     訳す状態では分けて送れない（上限超過での再依頼もしない）ので、1文ずつ
+     確認する側を勧める。画面側で別の数字を決めない。 */
+  function maxBatchChars() {
+    var node = document.querySelector('meta[name="yaku-max-batch-chars"]');
+    var value = node ? Number(node.getAttribute('content')) : 0;
+    return value > 0 ? value : 3000;
+  }
+
   function el(id) { return document.getElementById(id); }
   function update() {
     var text = el('quick-input').value;
-    el('quick-count').textContent = Array.from(text).length.toLocaleString('ja-JP') + '字';
+    var length = Array.from(text).length;
+    el('quick-count').textContent = length.toLocaleString('ja-JP') + '字';
+    var notice = el('quick-long-notice');
+    if (notice) {
+      var limit = maxBatchChars();
+      notice.hidden = length <= limit;
+      if (length > limit) {
+        el('quick-long-text').textContent = '1回で送れるのは ' + limit.toLocaleString('ja-JP') + '字 までです。この文章は ' + length.toLocaleString('ja-JP') + '字 あるので、分けて送りながら1文ずつ確認するほうが確実です。';
+      }
+    }
     el('quick-direction-summary').hidden = !text.trim() || !explicitDirection;
     el('quick-direction-choice').hidden = true;
     if (explicitDirection) el('quick-direction-label').textContent = explicitDirection === 'to_en' ? '英語に訳します' : '日本語に訳します';
@@ -352,6 +371,10 @@
       if (!form) return;
       event.preventDefault();
       form.requestSubmit();
+    });
+    el('quick-long-handoff').addEventListener('click', function () {
+      if (busy) return;
+      window.dispatchEvent(new CustomEvent('yaku-instant-handoff', { detail: { text: el('quick-input').value } }));
     });
     el('quick-back').addEventListener('click', function () {
       if (busy) { showError('翻訳しているあいだは移動できません。「翻訳をやめる」を押すか、終わるまでお待ちください。'); return; }

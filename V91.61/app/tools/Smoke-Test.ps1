@@ -258,7 +258,7 @@ Assert-Yaku -Condition (-not ($appJs -match "localStorage\.setItem\([^\r\n]*(job
 Assert-Yaku -Condition ($appJs -notmatch 'readAsDataURL|file_b64|application/x-www-form-urlencoded') -Message 'browser client must not Base64/urlencode file uploads'
 # 画面を一つにしたので、開始画面が選ばせるのはアプリではなく「どう始めるか」。
 # 行き先は同じ画面で、/quick はその場で訳す状態として残っている。
-Assert-Yaku -Condition ($homeIndex.Contains('<h1 id="home-title">何を訳しますか</h1>') -and $homeIndex.Contains('その場で訳す') -and $homeIndex.Contains('1文ずつ確認して仕上げる') -and $homeIndex.Contains('href="/quick"') -and $homeIndex.Contains('href="/cat"')) -Message 'the single launcher must open a large, explained landing screen offering both ways to start'
+Assert-Yaku -Condition ($homeIndex.Contains('<h1 id="home-title">何を訳しますか</h1>') -and $homeIndex.Contains('文章を貼り付ける') -and $homeIndex.Contains('資料を取り込む') -and $homeIndex.Contains('href="/quick"') -and $homeIndex.Contains('href="/cat"')) -Message 'the single launcher must open a large, explained landing screen offering both ways to start'
 Assert-Yaku -Condition (-not ($homeIndex -match '<textarea|type="file"|data-cat-|quick-form')) -Message 'the landing screen must ask only for the work experience, not contain a hidden translator'
 # 画面は一つになったので「ファイルの機能がページに無いこと」では測れない。
 # その場で訳す状態の中に、保存しないことと登録した訳語を使わないことが書いてあり、
@@ -267,7 +267,12 @@ $instantBlock = ''
 if ($quickIndex -match '(?s)<section id="cat-instant".*?</section>\s*<section id="cat-workspace"') { $instantBlock = $Matches[0] }
 Assert-Yaku -Condition ($instantBlock.Contains('この状態の文章と訳文は保存しません') -and $instantBlock.Contains('登録した訳語もここでは使いません') -and $instantBlock.Contains('id="quick-form"')) -Message 'the instant state must state that it does not save and does not use registered terms'
 Assert-Yaku -Condition ($quickIndex -match 'id="cat-instant"[^>]*\shidden') -Message 'the instant state must not be the default view of the single page'
-Assert-Yaku -Condition ($catIndex.Contains('Word・Excelを取り込む') -and $catIndex.Contains('長い文章を貼り付ける') -and $catIndex.Contains('保存した作業')) -Message 'document translation must keep file, long-text, and resume entries together'
+# 貼り付け先は1つ。「保存する／しない」で入口を分けない（2026-08-11）。初見の人は
+# 訳案を見る前に1文ずつ直したいかを決められないので、選択は訳案のあとへ置く。
+Assert-Yaku -Condition ($catIndex.Contains('Word・Excelを取り込む') -and $catIndex.Contains('文章を貼り付ける') -and $catIndex.Contains('保存した作業')) -Message 'the single screen must keep file, paste, and resume entries together'
+Assert-Yaku -Condition ((([regex]::Matches($catIndex, 'class="entry-actions cat-entry-actions">(?s).*?</div>')) | ForEach-Object { ([regex]::Matches($_.Value, '<button')).Count }) -eq 2) -Message 'the front door must not offer two different ways to paste text'
+# 長さの境目は画面が決めない。確認作業が分割に使っている設定値をそのまま使う。
+Assert-Yaku -Condition ($catIndex.Contains('__YAKU_MAX_BATCH_CHARS__') -and $quickClient.Contains('yaku-max-batch-chars') -and $quickClient -notmatch 'length > 3000|length > 2000') -Message 'the long-text threshold must come from the server batch budget, not a number chosen in the page'
 Assert-Yaku -Condition ($catIndex.Contains('前回の日本語と英語を、参考として読み込む') -and $catIndex.Contains('そのほかの始め方')) -Message 'project-bound prior bilingual import must remain available without appearing as a primary mode choice'
 Assert-Yaku -Condition ($quickIndex.Contains('<span class="eyebrow">訳案</span>') -and -not $indexSource.Contains('すぐ訳した完成訳')) -Message 'unreviewed Quick output must consistently be called a draft translation'
 Assert-Yaku -Condition ($catIndex.Contains('前回の英語は「前回版」と出所を明示して表示し、自動では反映しません') -and -not $catIndex.Contains('cat-prior-evidence') -and -not $catClient.Contains('prior_evidence:')) -Message 'prior English must stay reference-only without a self-attested approval selector or evidence payload'

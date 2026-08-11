@@ -365,6 +365,10 @@
     if (previousProjectId && previousProjectId !== String(project.id || '')) { activeSegmentId = ''; activeIndex = -1; revisionComparison = null; currentFilter = 'actionable'; currentLocation = 'all'; currentChange = 'all'; }
     if (outputScope && (outputScope.id !== String(project.id || '') || outputScope.revision !== revision())) clearOutputDisplay();
     dirty.clear(); candidateSeq++;
+    /* 画面遷移なしで確認作業へ入る道（その場で訳す → 長すぎるので渡す）ができた。
+       外枠の広げ直しは読み込み完了に紐づいているので、その道では効かない。
+       状態が変わったことを外枠へ知らせる。 */
+    if (el('cat-workspace').hidden) YakuCommon.notifyDesktopShell('cat-workspace-opened');
     hideInstant(); setView('workspace');
     el('cat-picker').hidden = true; el('cat-workspace').hidden = false; el('cat-current-summary').hidden = true;
     el('cat-current-title').textContent = project.file_name || '貼り付けた文章';
@@ -1140,6 +1144,19 @@
       closeStartPanels();
     });
     window.addEventListener('yaku-instant-close', function () { showPicker(); });
+    /* 1回の依頼に入りきらない長さの文章は、その場で訳す状態では分けて送れない。
+       貼り付けた本文をそのまま確認作業へ渡し、1文ずつ確認しながら進めてもらう。
+       （本文をブラウザーから送るのは、もともと「長い文章を貼り付ける」が通って
+       いた経路。訳文を送り返す promote とは別で、そちらは artifact ID だけ） */
+    window.addEventListener('yaku-instant-handoff', function (event) {
+      var text = String(event && event.detail && event.detail.text || '');
+      if (!text.trim()) return;
+      /* 先に選ぶ画面へ戻してから始める。訳す向きを聞き返されたときの二択は
+         選ぶ画面の中に居るので、隠したままだと行き止まりになる。 */
+      showPicker();
+      el('cat-text').value = text;
+      openSource('text', 'auto');
+    });
   }
   function start() {
     YakuCommon.start(); YakuCommon.onReady(function (value) { ready = value; setBusy(busy); }); bind(); bindInstant(); loadRecent();
