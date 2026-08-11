@@ -904,12 +904,11 @@
     apply();
     if (window.ResizeObserver) { try { new ResizeObserver(apply).observe(toolbar); } catch (_) {} }
     window.addEventListener('resize', apply);
-    document.addEventListener('yaku-text-size-changed', apply);
-    /* 文字を大きくすると訳文の行数が増える。伸ばし直さないと下が切れる
-       （実測 249px の欄に 376px の中身が入っていた）。 */
+    /* 窓幅や拡大率が変わると訳文の行数が変わる。伸ばし直さないと下が切れる
+       （実測 249px の欄に 376px の中身が入っていた）。Ctrl+スクロールでの
+       拡大も resize として届く。 */
     function regrow() { document.querySelectorAll('textarea[data-cat-input]').forEach(autoGrow); }
     window.addEventListener('resize', regrow);
-    document.addEventListener('yaku-text-size-changed', regrow);
   }
 
   function bind() {

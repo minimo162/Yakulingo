@@ -177,9 +177,9 @@
 @media (min-width: 1320px) {
   .cat-editor-layout { align-items: stretch; min-height: 0; }
   .cat-inspector-pane { min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
-  /* 左ナビは中の節を伸縮させない。「文字を大きく」にすると絞り込みだけで枠を超え、
-     hidden に切られて押せなくなる（実測で確認）。ペインごと動かして、切れることを
-     原理的に無くす。動くのは枠の中だけで、ページも見出しも動かない。 */
+  /* 左ナビは中の節を伸縮させない。拡大すると絞り込みだけで枠を超え、hidden に
+     切られて押せなくなる（実測で確認）。ペインごと動かして、切れることを原理的に
+     無くす。動くのは枠の中だけで、ページも見出しも動かない。 */
   .cat-nav-pane { min-height: 0; overflow: auto; }
   /* 状態行の上下 17px は、器が固定の画面では一覧2行ぶんに相当する。 */
   .app-cat #cat-status { margin: var(--space-1) 0; }
@@ -615,12 +615,6 @@
      与えておらず、末尾が切れていた。ここは削らない。 */
   .cat-editor-toolbar { grid-template-columns: minmax(240px, 1fr) auto minmax(140px, 200px) auto; }
   .cat-editor-toolbar .cat-actions { flex-wrap: nowrap; }
-
-  /* 「文字を大きく」でも1段に保つ。3段225pxになると一覧が 5.5→2.8行 まで落ちる。
-     検索の見出しは入力欄の placeholder が同じことを言っている。進捗は数字が残る。 */
-  :root[data-yaku-text-size="large"] .cat-toolbar-search > span { display: none; }
-  :root[data-yaku-text-size="large"] .cat-editor-toolbar .cat-progress { display: none; }
-  :root[data-yaku-text-size="large"] .cat-copilot-usage { display: none; }
 }
 
 /* 窓が低いと、固定したままでは中身が入りきらない。切れて触れないより、

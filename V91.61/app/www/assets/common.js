@@ -135,25 +135,12 @@
     listener(ready, {});
   }
 
-  function applyTextSize(large) {
-    document.documentElement.setAttribute('data-yaku-text-size', large ? 'large' : 'normal');
-    var button = document.getElementById('text-size-toggle');
-    if (button) {
-      button.setAttribute('aria-pressed', large ? 'true' : 'false');
-      button.textContent = large ? '文字を標準に戻す' : '文字を大きく';
-    }
-    try { localStorage.setItem('yaku-text-size', large ? 'large' : 'normal'); } catch (_) {}
-    /* 文字を大きくすると、固定ヘッダの高さも変わる。追随したい側へ知らせる。 */
-    try { document.dispatchEvent(new Event('yaku-text-size-changed')); } catch (_) {}
-  }
-
-  function bindTextSize() {
-    var large = false;
-    try { large = localStorage.getItem('yaku-text-size') === 'large'; } catch (_) {}
-    applyTextSize(large);
-    var button = document.getElementById('text-size-toggle');
-    if (button) button.addEventListener('click', function () { applyTextSize(button.getAttribute('aria-pressed') !== 'true'); });
-  }
+  /* 独自の「文字を大きく」は廃止した（2026-08-11）。本文は既に 17px、原文と訳文は
+     19.04px で、市販CATの編集画面（MateCat 18px）より大きい。拡大したいときは
+     WebView2 の Ctrl+スクロールが使える（desktop/Program.cs の
+     IsZoomControlEnabled = true）。独自に持つと、器の高さが変わるたびに
+     ツールバーが3段になる・絞り込みが枠に切られる、といった破綻を各画面で
+     個別に面倒みることになり、実際に何度も壊した。 */
 
   function copyText(text, target, status) {
     function fallback() {
@@ -218,7 +205,6 @@
   }
 
   function start() {
-    bindTextSize();
     pollReady();
   }
 

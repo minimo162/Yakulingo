@@ -32,14 +32,14 @@
   --motion: 140ms;
   --ease: cubic-bezier(.25,.46,.45,.94);
   --shadow-card: 0 1px 2px rgba(16,24,40,.04);
-  /* 文字の大きさは rem で組む。「文字を大きく」は html の font-size を動かすので、
+  /* 文字の大きさは rem で組む。基準を1か所（html の font-size）に集めておくと、
      px で書いた場所だけが取り残される事故が起きない。既定 17px、拡大時 21px。 */
   --font-ui: 1rem;
   --font-input: 1.06rem;
   --font-meta: .88rem;
   --font-body: 1rem;
   /* 資料翻訳の主役。原文と訳文だけ、本文より一段大きい。
-     比率で持つので「文字を大きく」しても主役と脇役の差が保たれる。 */
+     比率で持つので、拡大しても主役と脇役の差が保たれる。 */
   --font-segment: 1.12rem;
 
   /* 余白も比率で持つ。px 固定だと文字だけ大きくなって、拡大したときのほうが
@@ -48,7 +48,6 @@
 }
 
 html { font-size: 17px; }
-:root[data-yaku-text-size="large"] { font-size: 21px; }
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -257,7 +256,7 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .cat-grid { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: var(--font-segment); }
 .cat-grid thead th { position: sticky; top: 0; z-index: 1; background: var(--surface); border-bottom: 1px solid var(--line-strong); padding: 8px 10px; text-align: left; }
 .cat-grid td { border-bottom: 1px solid var(--line); padding: .35em .6em; vertical-align: top; }
-/* 番号・場所は脇役。ここを rem にすると「文字を大きく」で脇役の列だけが太り、
+/* 番号・場所は脇役。ここを rem にすると拡大時に脇役の列だけが太り、
    原文・訳文が痩せる（実測 番号109+場所189 に対し本文は各222px しかなかった）。
    増えた幅は主役へ回す。中の文字は --font-meta のまま拡大する。 */
 .cat-col-no { width: 78px; color: var(--muted); font-variant-numeric: tabular-nums; }
