@@ -83,9 +83,14 @@ Check-YakuDual (-not (Test-Path -LiteralPath (Join-Path $wwwRoot 'quick.html')))
 Check-YakuDual (Test-Path -LiteralPath $catPagePath -PathType Leaf) 'the single translation page exists'
 Check-YakuDual ($catPage -match '<body[^>]+class\s*=\s*[\x22\x27][^\x22\x27]*app-cat') 'the single page keeps one body class'
 Check-YakuDual ($catPage -match 'id\s*=\s*[\x22\x27]cat-picker[\x22\x27]' -and $catPage -match 'id\s*=\s*[\x22\x27]cat-instant[\x22\x27]' -and $catPage -match 'id\s*=\s*[\x22\x27]cat-workspace[\x22\x27]') 'the single page holds all three states'
-Check-YakuDual ($catPage -match 'id="cat-instant"[^>]*\shidden') 'the instant state starts hidden'
-Check-YakuDual ($catClient -match 'yaku-instant-open' -and $catClient -match "el\('cat-picker'\)\.hidden = true; el\('cat-workspace'\)\.hidden = true") 'opening the instant state hides the other two'
-Check-YakuDual ($catClient -match "hideInstant\(\); setView\('workspace'\)" -and $catClient -match "hideInstant\(\); setView\('picker'\)") 'the other two states hide the instant state'
+# 2026-08-12: 状態を3つ→2つにした。貼り付け欄は「別の状態」ではなく、始める画面の
+# 中身になった。以前は押すと画面ごと入れ替わり、画面を一つにしたと言いながら
+# 実際は入れ替えていただけだった（利用者の指摘）。
+Check-YakuDual ($catPage -notmatch 'id="cat-instant"[^>]*\shidden') 'the paste box is part of the start view, not a separate state'
+Check-YakuDual ($catPage -match '(?s)<section id="cat-picker".*?id="quick-input".*?id="cat-resume".*?</section>') 'the paste box, the file entry and the saved works live in one view'
+Check-YakuDual ($catPage -match 'id="cat-workspace"[^>]*\shidden') 'the review workspace stays hidden until a document is open'
+Check-YakuDual ($catClient -notmatch 'hideInstant' -and $catClient -notmatch 'yaku-instant-close') 'the swap between the paste box and the picker is gone'
+Check-YakuDual ($catClient -match "setView\('start'\)" -and $catClient -match "setView\('workspace'\)") 'the screen names only the two states it still has'
 Check-YakuDual ($quickClient -notmatch '/api/cat/(?!promote)' -and $catClient -notmatch '/api/quick/') 'active clients cannot call the other experience API'
 
 Write-Host 'Load production helpers for dynamic contracts' -ForegroundColor Cyan

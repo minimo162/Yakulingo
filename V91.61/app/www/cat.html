@@ -51,58 +51,13 @@
 
       <section id="cat-picker" class="translate-form cat-picker" aria-labelledby="cat-start-title">
         <h2 id="cat-start-title">何を訳しますか</h2>
-        <!-- 「保存する／しない」で入口を分けない。初見の人は、訳案を見る前に
-             1文ずつ直したいかを決められない。まず訳し、訳案の下の
-             「1文ずつ確認して保存する」で移れるようにする（2026-08-11）。 -->
-        <p class="muted">訳したいものを選んでください。貼り付けた文章はまず訳案を作り、必要なら1文ずつ確認しながら仕上げられます。</p>
-        <div class="entry-actions cat-entry-actions">
-          <button type="button" data-cat-source-show="file">Word・Excelを取り込む</button>
-          <button type="button" class="secondary-button" id="cat-open-instant">文章を貼り付ける</button>
-        </div>
-        <div id="cat-resume" class="cat-resume" hidden><h3>保存した作業</h3><div id="cat-resume-list"></div></div>
-        <details class="entry-more"><summary>そのほかの始め方</summary><div class="entry-more-actions">
-          <button type="button" class="secondary-button" data-cat-source-show="prior">前回の資料をもとに、今回の分だけ訳す</button>
-          <button type="button" class="secondary-button" data-cat-source-show="align">前回の日本語と英語を、参考として読み込む</button>
-        </div></details>
-
-        <div id="cat-source-file" class="cat-start-panel" hidden>
-          <h3>Word・Excelを選ぶ</h3>
-          <label class="file-drop" for="cat-file-input" id="cat-drop" role="button" tabindex="0"><input id="cat-file-input" type="file" accept=".docx,.xlsx,.xlsm" hidden><span>ここにファイルをドロップ、またはクリックして選択</span><span id="cat-file-name" class="muted">.docx / .xlsx / .xlsm</span></label>
-          <details><summary>ファイルを選べない場合</summary><label class="field-label" for="cat-path">ファイルの保存場所<input id="cat-path" type="text" placeholder="例: C:\Documents\資料.docx"></label></details>
-          <button type="button" data-cat-open="file">取り込んで確認を始める</button>
-        </div>
-        <div id="cat-source-text" class="cat-start-panel" hidden>
-          <h3>長い文章を貼り付ける</h3><label for="cat-text" class="sr-only">翻訳したい文章</label><textarea id="cat-text" rows="9" placeholder="翻訳したい文章を貼り付け"></textarea><button type="button" data-cat-open="text">確認を始める</button>
-        </div>
-        <div id="cat-source-prior" class="cat-start-panel" hidden>
-          <p class="muted">前回の英語は「前回版」と出所を明示して表示し、自動では反映しません。ここでは3つの文章を貼り付け、出力は確認済み訳文のコピーです。3つのWordを体裁付きで更新する機能ではありません。</p>
-          <label class="field-label" for="cat-prior-ja">前回の日本語<textarea id="cat-prior-ja" rows="4"></textarea></label>
-          <label class="field-label" for="cat-prior-en">前回の英語<textarea id="cat-prior-en" rows="4"></textarea></label>
-          <label class="field-label" for="cat-current-ja">今回の日本語<textarea id="cat-current-ja" rows="4"></textarea></label>
-          <label class="field-label" for="cat-prior-name">資料名<input id="cat-prior-name" type="text"></label>
-          <button type="button" id="cat-prior-open">貼り付けた文章で始める</button>
-        </div>
-        <div id="cat-source-align" class="cat-start-panel" hidden>
-          <p class="muted">左に前回の日本語、右に対応する前回の英語を貼り付けます。取り込んだ訳は「前回版」として、この作業だけで参照できます。</p>
-          <label class="field-label" for="cat-align-source">日本語版<textarea id="cat-align-source" rows="5"></textarea></label>
-          <label class="field-label" for="cat-align-target">英語版<textarea id="cat-align-target" rows="5"></textarea></label>
-          <label class="field-label" for="cat-align-name">資料名<input id="cat-align-name" type="text"></label>
-          <button type="button" id="cat-align-open">前回版として取り込む</button>
-        </div>
-        <fieldset id="cat-direction-choice" class="direction-choice" hidden><legend>どちらに訳しますか？</legend><p class="muted">入力内容だけでは自動で決められません。</p><div class="direction-choice-grid"><button type="button" class="secondary-button" data-cat-direction="to_en">英語に訳す</button><button type="button" class="secondary-button" data-cat-direction="to_jp">日本語に訳す</button></div></fieldset>
-        <p class="privacy-note">金額などの数値は、Copilotへ送る前に自動で伏せます。社名・人名・文章はそのまま送信されます。英訳の金額は社内表記で書きます（1兆3,150億円 → <code>13,150 oku</code>）。<code>billion</code> での表記には、いまは対応していません。</p>
-      </section>
-
       <!-- その場で訳す。保存しない状態。ここで作った文章と訳文はディスクへ書かず、
            登録した訳語・過去訳・コーパスも使わない（決定_ちょっと翻訳と資料翻訳の分離 §3.2）。
            保存したくなったら「1文ずつ確認して保存する」で、同じ画面の確認作業へ移る。 -->
-      <section id="cat-instant" class="cat-instant" hidden aria-labelledby="quick-title">
-        <form id="quick-form" class="translate-form">
-          <div class="section-title-row"><div>
-            <h2 id="quick-title">その場で訳す</h2>
-            <p class="muted">メール、Web、数文をすぐ訳します。この状態の文章と訳文は保存しません。登録した訳語もここでは使いません。用語をそろえたいときは、資料として取り込んでください。</p>
-            <p class="quick-notation-note">英訳の金額は<strong>社内表記</strong>で書きます。例: 1兆3,150億円 → <code>13,150 oku</code>、▲152億円 → <code>(152) oku</code>。<code>billion</code> での表記には、いまは対応していません。</p>
-          </div></div>
+      <section id="cat-instant" class="cat-instant" aria-labelledby="cat-start-title">
+        <form id="quick-form" class="quick-inline">
+          <p class="muted">文章を貼り付けると、その場で訳します。この状態の文章と訳文は保存しません。登録した訳語もここでは使いません。保存すると1文ずつ直せて、用語もそろいます。</p>
+          <p class="quick-notation-note">英訳の金額は<strong>社内表記</strong>で書きます（1兆3,150億円 → <code>13,150 oku</code>、▲152億円 → <code>(152) oku</code>）。<code>billion</code> での表記には、いまは対応していません。</p>
           <p id="quick-selection-note" class="quick-selection-note" role="status" aria-live="polite" hidden></p>
           <!-- 選んだ範囲だけでは、Word・Excelの体裁を保った社内確認用ファイルは
                作れない。元のファイルを丸ごと取り込む道をここに置く。書き込むのは
@@ -112,7 +67,7 @@
             <button type="button" id="quick-source-file-open"></button>
           </div>
           <label for="quick-input" class="sr-only">訳したい文章</label>
-          <textarea id="quick-input" rows="10" placeholder="訳したい文章を入力" autocomplete="off"></textarea>
+          <textarea id="quick-input" rows="5" placeholder="訳したい文章を入力" autocomplete="off"></textarea>
           <div class="input-meta"><span id="quick-count">0字</span></div>
           <!-- 1回の依頼に入る量を超えたときだけ出す。ここから先は、その場で訳す
                状態には分けて送る仕組みが無い。 -->
@@ -173,7 +128,51 @@
             <textarea id="quick-copy-fallback" class="quick-copy-fallback" readonly hidden aria-label="コピー用の訳文"></textarea>
           </div>
         </section>
-        <p><button type="button" id="quick-back" class="button secondary-button">ほかの訳し方を選ぶ</button></p>
+      </section>
+
+        <!-- 「保存する／しない」で入口を分けない。初見の人は、訳案を見る前に
+             1文ずつ直したいかを決められない。まず訳し、訳案の下の
+             「1文ずつ確認して保存する」で移れるようにする（2026-08-11）。
+
+             2026-08-12: 貼り付け欄をここへ出した。以前は「文章を貼り付ける」を
+             押すと別の見た目の画面へ入れ替わり、状態が3つあった。画面を一つに
+             したと言いながら、実際は入れ替えていただけだったため（利用者の指摘）。
+             いまは、この画面で貼って訳し、結果も下に出る。 -->
+        <div class="entry-actions cat-entry-actions">
+          <button type="button" data-cat-source-show="file">Word・Excelを取り込む</button>
+        </div>
+        <div id="cat-resume" class="cat-resume" hidden><h3>保存した作業</h3><div id="cat-resume-list"></div></div>
+        <details class="entry-more"><summary>そのほかの始め方</summary><div class="entry-more-actions">
+          <button type="button" class="secondary-button" data-cat-source-show="prior">前回の資料をもとに、今回の分だけ訳す</button>
+          <button type="button" class="secondary-button" data-cat-source-show="align">前回の日本語と英語を、参考として読み込む</button>
+        </div></details>
+
+        <div id="cat-source-file" class="cat-start-panel" hidden>
+          <h3>Word・Excelを選ぶ</h3>
+          <label class="file-drop" for="cat-file-input" id="cat-drop" role="button" tabindex="0"><input id="cat-file-input" type="file" accept=".docx,.xlsx,.xlsm" hidden><span>ここにファイルをドロップ、またはクリックして選択</span><span id="cat-file-name" class="muted">.docx / .xlsx / .xlsm</span></label>
+          <details><summary>ファイルを選べない場合</summary><label class="field-label" for="cat-path">ファイルの保存場所<input id="cat-path" type="text" placeholder="例: C:\Documents\資料.docx"></label></details>
+          <button type="button" data-cat-open="file">取り込んで確認を始める</button>
+        </div>
+        <div id="cat-source-text" class="cat-start-panel" hidden>
+          <h3>長い文章を貼り付ける</h3><label for="cat-text" class="sr-only">翻訳したい文章</label><textarea id="cat-text" rows="9" placeholder="翻訳したい文章を貼り付け"></textarea><button type="button" data-cat-open="text">確認を始める</button>
+        </div>
+        <div id="cat-source-prior" class="cat-start-panel" hidden>
+          <p class="muted">前回の英語は「前回版」と出所を明示して表示し、自動では反映しません。ここでは3つの文章を貼り付け、出力は確認済み訳文のコピーです。3つのWordを体裁付きで更新する機能ではありません。</p>
+          <label class="field-label" for="cat-prior-ja">前回の日本語<textarea id="cat-prior-ja" rows="4"></textarea></label>
+          <label class="field-label" for="cat-prior-en">前回の英語<textarea id="cat-prior-en" rows="4"></textarea></label>
+          <label class="field-label" for="cat-current-ja">今回の日本語<textarea id="cat-current-ja" rows="4"></textarea></label>
+          <label class="field-label" for="cat-prior-name">資料名<input id="cat-prior-name" type="text"></label>
+          <button type="button" id="cat-prior-open">貼り付けた文章で始める</button>
+        </div>
+        <div id="cat-source-align" class="cat-start-panel" hidden>
+          <p class="muted">左に前回の日本語、右に対応する前回の英語を貼り付けます。取り込んだ訳は「前回版」として、この作業だけで参照できます。</p>
+          <label class="field-label" for="cat-align-source">日本語版<textarea id="cat-align-source" rows="5"></textarea></label>
+          <label class="field-label" for="cat-align-target">英語版<textarea id="cat-align-target" rows="5"></textarea></label>
+          <label class="field-label" for="cat-align-name">資料名<input id="cat-align-name" type="text"></label>
+          <button type="button" id="cat-align-open">前回版として取り込む</button>
+        </div>
+        <fieldset id="cat-direction-choice" class="direction-choice" hidden><legend>どちらに訳しますか？</legend><p class="muted">入力内容だけでは自動で決められません。</p><div class="direction-choice-grid"><button type="button" class="secondary-button" data-cat-direction="to_en">英語に訳す</button><button type="button" class="secondary-button" data-cat-direction="to_jp">日本語に訳す</button></div></fieldset>
+        <p class="privacy-note">金額などの数値は、Copilotへ送る前に自動で伏せます。社名・人名・文章はそのまま送信されます。英訳の金額は社内表記で書きます（1兆3,150億円 → <code>13,150 oku</code>）。<code>billion</code> での表記には、いまは対応していません。</p>
       </section>
 
       <section id="cat-workspace" class="cat-workspace" hidden>

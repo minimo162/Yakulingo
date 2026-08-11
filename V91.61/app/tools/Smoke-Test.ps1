@@ -266,11 +266,11 @@ Assert-Yaku -Condition (-not ($homeIndex -match '<textarea|type="file"|data-cat-
 $instantBlock = ''
 if ($quickIndex -match '(?s)<section id="cat-instant".*?</section>\s*<section id="cat-workspace"') { $instantBlock = $Matches[0] }
 Assert-Yaku -Condition ($instantBlock.Contains('この状態の文章と訳文は保存しません') -and $instantBlock.Contains('登録した訳語もここでは使いません') -and $instantBlock.Contains('id="quick-form"')) -Message 'the instant state must state that it does not save and does not use registered terms'
-Assert-Yaku -Condition ($quickIndex -match 'id="cat-instant"[^>]*\shidden') -Message 'the instant state must not be the default view of the single page'
+Assert-Yaku -Condition ($quickIndex -notmatch 'id="cat-instant"[^>]*\shidden' -and $quickIndex -match 'id="cat-workspace"[^>]*\shidden') -Message 'the paste box is available on the start view while the review workspace waits for a document'
 # 貼り付け先は1つ。「保存する／しない」で入口を分けない（2026-08-11）。初見の人は
 # 訳案を見る前に1文ずつ直したいかを決められないので、選択は訳案のあとへ置く。
-Assert-Yaku -Condition ($catIndex.Contains('Word・Excelを取り込む') -and $catIndex.Contains('文章を貼り付ける') -and $catIndex.Contains('保存した作業')) -Message 'the single screen must keep file, paste, and resume entries together'
-Assert-Yaku -Condition ((([regex]::Matches($catIndex, 'class="entry-actions cat-entry-actions">(?s).*?</div>')) | ForEach-Object { ([regex]::Matches($_.Value, '<button')).Count }) -eq 2) -Message 'the front door must not offer two different ways to paste text'
+Assert-Yaku -Condition ($catIndex.Contains('Word・Excelを取り込む') -and $catIndex.Contains('文章を貼り付けると、その場で訳します') -and $catIndex.Contains('保存した作業')) -Message 'the single screen must keep file, paste, and resume entries together'
+Assert-Yaku -Condition ((([regex]::Matches($catIndex, 'class="entry-actions cat-entry-actions">(?s).*?</div>')) | ForEach-Object { ([regex]::Matches($_.Value, '<button')).Count }) -eq 1 -and (([regex]::Matches($catIndex, 'id="quick-input"')).Count -eq 1)) -Message 'the front door must not offer two different ways to paste text'
 # 長さの境目は画面が決めない。確認作業が分割に使っている設定値をそのまま使う。
 Assert-Yaku -Condition ($catIndex.Contains('__YAKU_MAX_BATCH_CHARS__') -and $quickClient.Contains('yaku-max-batch-chars') -and $quickClient -notmatch 'length > 3000|length > 2000') -Message 'the long-text threshold must come from the server batch budget, not a number chosen in the page'
 Assert-Yaku -Condition ($catIndex.Contains('前回の日本語と英語を、参考として読み込む') -and $catIndex.Contains('そのほかの始め方')) -Message 'project-bound prior bilingual import must remain available without appearing as a primary mode choice'

@@ -305,27 +305,20 @@
     host.hidden = false;
   }
 
-  /* 画面は一つで、状態が三つある（選ぶ／その場で訳す／1文ずつ確認）。
-     状態の出し入れは cat.js が持ち、ここは自分の状態の中身だけを持つ。
-     器の高さ固定（cat-workspace.css）は確認作業のときだけ効かせたいので、
-     いま何の状態かを body に書く。 */
+  /* 状態は二つになった（選んで訳す／1文ずつ確認する）。貼り付け欄は最初の画面に
+     常にあるので、show() は「その画面へ戻して入力欄へ焦点を置く」だけでよい。
+     以前は貼り付け欄が別の状態で、押すと画面ごと入れ替わっていた。画面を一つに
+     したと言いながら入れ替えていただけだった（2026-08-12、利用者の指摘）。 */
   function show() {
-    var host = el('cat-instant');
-    if (!host || !host.hidden) { if (host) YakuCommon.focus(el('quick-input')); return; }
+    if (!el('quick-input')) return;
     window.dispatchEvent(new CustomEvent('yaku-instant-open'));
-    host.hidden = false;
-    document.body.setAttribute('data-cat-view', 'instant');
-    update();
     /* scrollIntoView は使わない。入力欄を画面の中央へ寄せるため、上の見出しと
        状態表示が窓の外へ出てしまう（実機で確認）。ここは最初から見えている。 */
     el('quick-input').focus();
     window.scrollTo(0, 0);
   }
 
-  function hide() {
-    var host = el('cat-instant');
-    if (host) host.hidden = true;
-  }
+  function hide() { }
 
   function isBusy() { return busy; }
 
@@ -422,10 +415,6 @@
     el('quick-long-handoff').addEventListener('click', function () {
       if (busy) return;
       window.dispatchEvent(new CustomEvent('yaku-instant-handoff', { detail: { text: el('quick-input').value } }));
-    });
-    el('quick-back').addEventListener('click', function () {
-      if (busy) { showError('翻訳しているあいだは移動できません。「翻訳をやめる」を押すか、終わるまでお待ちください。'); return; }
-      window.dispatchEvent(new CustomEvent('yaku-instant-close'));
     });
     update();
   }

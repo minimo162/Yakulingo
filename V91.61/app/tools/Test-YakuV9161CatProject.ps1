@@ -294,7 +294,10 @@ Chk ($quickJsText.Contains('/api/cat/promote') -and $quickJsText.Contains('artif
 $indexText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'cat.html'))
 # 貼り付けの入口は1つで、まずその場で訳す状態へ入る（2026-08-11）。長すぎて1回で
 # 送れないときだけ、貼り付けた本文をそのまま確認作業へ渡す。
-Chk ($indexText.Contains('data-cat-source-show="file"') -and $indexText.Contains('id="cat-open-instant"')) 'ファイルと貼り付けの入口がある'
+# 貼り付けは「入口」ではなく、始める画面にそのまま置いてある（2026-08-12）。
+# 押して別の画面へ入れ替わる作りをやめたので、開く導線ではなく同居を見る。
+Chk ($indexText.Contains('data-cat-source-show="file"') -and $indexText -notmatch 'id="cat-open-instant"') 'ファイルの入口はあり、貼り付けを開く導線は要らなくなった'
+Chk ($indexText -match '(?s)<section id="cat-picker".*?id="quick-input".*?</section>') '貼り付け欄は始める画面の中にある'
 Chk ($quickJsText.Contains('yaku-instant-handoff') -and $appJsText.Contains('yaku-instant-handoff') -and $appJsText -match "showPicker\(\);\s*\r?\n\s*el\('cat-text'\)\.value = text;") '長すぎる文章は確認作業へ渡せる'
 Chk ($indexText -match 'id="cat-text"') 'CAT に貼り付け欄がある'
 
