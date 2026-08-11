@@ -32,14 +32,14 @@
   --motion: 140ms;
   --ease: cubic-bezier(.25,.46,.45,.94);
   --shadow-card: 0 1px 2px rgba(16,24,40,.04);
-  /* 文字の大きさは rem で組む。「文字を大きく」は html の font-size を動かすので、
+  /* 文字の大きさは rem で組む。基準を1か所（html の font-size）に集めておくと、
      px で書いた場所だけが取り残される事故が起きない。既定 17px、拡大時 21px。 */
   --font-ui: 1rem;
   --font-input: 1.06rem;
   --font-meta: .88rem;
   --font-body: 1rem;
   /* 資料翻訳の主役。原文と訳文だけ、本文より一段大きい。
-     比率で持つので「文字を大きく」しても主役と脇役の差が保たれる。 */
+     比率で持つので、拡大しても主役と脇役の差が保たれる。 */
   --font-segment: 1.12rem;
 
   /* 余白も比率で持つ。px 固定だと文字だけ大きくなって、拡大したときのほうが
@@ -48,7 +48,6 @@
 }
 
 html { font-size: 17px; }
-:root[data-yaku-text-size="large"] { font-size: 21px; }
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -257,10 +256,10 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .cat-grid { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: var(--font-segment); }
 .cat-grid thead th { position: sticky; top: 0; z-index: 1; background: var(--surface); border-bottom: 1px solid var(--line-strong); padding: 8px 10px; text-align: left; }
 .cat-grid td { border-bottom: 1px solid var(--line); padding: .35em .6em; vertical-align: top; }
-/* 番号・場所は脇役。ここを rem にすると「文字を大きく」で脇役の列だけが太り、
+/* 番号・場所は脇役。ここを rem にすると拡大時に脇役の列だけが太り、
    原文・訳文が痩せる（実測 番号109+場所189 に対し本文は各222px しかなかった）。
    増えた幅は主役へ回す。中の文字は --font-meta のまま拡大する。 */
-.cat-col-no { width: 78px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.cat-col-no { width: 92px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .cat-col-loc { width: 112px; }
 .cat-source { width: 42%; white-space: pre-wrap; }
 .cat-target { width: 42%; }
@@ -272,12 +271,20 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .cat-loc { display: block; color: var(--muted); }
 /* 確認済みの印。番号の隣に小さく出す。一覧を眺めたときに、どこまで見たかが分かる。 */
 /* 行の印。狭い列から溢れて隣に重ならないよう、番号の下に1行で置く。 */
-.cat-state { display: inline-block; width: fit-content; max-width: 100%; margin-top: var(--space-0); padding: 1px 8px; border-radius: 999px; font-size: var(--font-meta); font-weight: 700; white-space: nowrap; }
-.cat-state-untranslated { background: color-mix(in srgb, var(--bg) 70%, #d33 30%); }
-.cat-state-machine_draft { background: color-mix(in srgb, var(--bg) 70%, #e8a 30%); }
-.cat-state-human_edited { background: color-mix(in srgb, var(--bg) 70%, #d9a441 30%); }
-.cat-state-reviewed { background: color-mix(in srgb, var(--bg) 70%, var(--accent) 30%); }
-.cat-state-stale { background: color-mix(in srgb, var(--bg) 65%, #d33 35%); }
+.cat-state { display: inline-flex; align-items: center; gap: 4px; width: fit-content; max-width: 100%; margin-top: var(--space-0); font-size: var(--font-meta); font-weight: 700; white-space: nowrap; }
+.cat-state > span { color: var(--text); }
+/* 記号は色を持ち、文字は --text のまま。--warning は活性行で 4.34:1 と
+   文字の 4.5:1 を割るが、図形の 3:1 には十分に届く。 */
+.yaku-icon { width: 1.15em; height: 1.15em; flex: 0 0 auto; }
+/* 旧の地色は白地に対して 1.30〜1.76:1 しかなく、離れて見れば5つとも「薄い何か」
+   だった。読めていたのは上に載った黒文字だけで、色は装飾になっていた。
+   面を捨て、左端の帯と同じ3色を文字側へ渡す。文字自体は --text のまま
+   （--warning は活性行で 4.34:1 と 4.5:1 を割るため、色は記号と帯だけが持つ）。 */
+.cat-state-untranslated { color: var(--faint); }
+.cat-state-machine_draft,
+.cat-state-human_edited,
+.cat-state-stale { color: var(--warning); }
+.cat-state-reviewed { color: var(--success); }
 .cat-row-actions { display: flex; gap: var(--space-0); margin-top: var(--space-1); flex-wrap: wrap; }
 .cat-op-ok { font-weight: 700; }
 .cat-confirmed { margin-left: 4px; color: var(--accent); font-weight: 700; }
@@ -303,13 +310,19 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .cat-origin { display: block; width: fit-content; max-width: 100%; margin-top: var(--space-0); border-radius: 999px; padding: 3px 8px; font-size: var(--font-meta); background: var(--soft); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cat-origin-manual { background: var(--accent-soft); border: 1px solid var(--accent); color: var(--accent-text); }
 
-/* 行の状態を左端の色で示す。一覧を眺めて「どこが手つかずか」が分かるように。 */
-.cat-grid tbody tr { border-left: 3px solid transparent; }
-.cat-grid tbody tr[data-yaku-cat-state="untranslated"] { border-left-color: var(--line-strong); }
-.cat-grid tbody tr[data-yaku-cat-state="machine_draft"] { border-left-color: #6b4fa8; }
-.cat-grid tbody tr[data-yaku-cat-state="human_edited"] { border-left-color: #8a6d1f; }
-.cat-grid tbody tr[data-yaku-cat-state="reviewed"] { border-left-color: var(--accent); }
-.cat-grid tbody tr[data-yaku-cat-state="stale"] { border-left-color: #d33; }
+/* 行の状態を左端の色で示す。色は「状態の名前」ではなく「あなたが次に何をするか」
+   に割り当てる。左ナビの絞り込みは5状態を3つに束ねている（未確認＝Copilot訳・
+   手直し・要再確認）ので、状態ごとに5色あると左と一覧の対応を推測させることになる。
+
+   旧の色は untranslated が白地 1.40:1 で、取り込み直後は全行がこれだった。
+   「どこが手つかずか分かるように」がいちばん要る場面で成立していなかった。
+   新しい色は 4.51〜6.57:1（活性行の上でも）。トークンは既存のものだけを使う。 */
+.cat-grid tbody tr { border-left: 4px solid transparent; }
+.cat-grid tbody tr[data-yaku-cat-state="untranslated"] { border-left-color: var(--faint); }
+.cat-grid tbody tr[data-yaku-cat-state="machine_draft"] { border-left-color: var(--warning); }
+.cat-grid tbody tr[data-yaku-cat-state="human_edited"] { border-left-color: var(--warning); }
+.cat-grid tbody tr[data-yaku-cat-state="stale"] { border-left-color: var(--warning); }
+.cat-grid tbody tr[data-yaku-cat-state="reviewed"] { border-left-color: var(--success); }
 /* いま見ている行。長い一覧で自分の位置を見失わないようにする。 */
 /* いま見ている行。未確認の行に敷いていた薄い accent は外した。ほぼ全行が未確認なので、
    表全体が色の面になって「いま見ている行」が埋もれていた。未確認かどうかは左端3pxの線と
@@ -324,7 +337,9 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
    隣の列に重なる（文字を大きくすると実測 50-87px はみ出していた）。 */
 .cat-ops { display: flex; gap: var(--space-1); margin: 0 0 var(--space-1); flex-wrap: wrap; }
 .cat-ops > .cat-op, .cat-row-actions > .cat-op, .cat-ops > *, .cat-row-actions > * { max-width: 100%; white-space: normal; text-align: center; }
-.cat-op { min-height: 36px; padding: 7px 12px; font-size: var(--font-meta); background: transparent; border: 1px solid var(--line-strong); color: var(--text); white-space: nowrap; }
+.cat-op { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 7px 12px; font-size: var(--font-meta); background: transparent; border: 1px solid var(--line-strong); color: var(--text); white-space: nowrap; }
+/* 押した記号と、押した結果その行に付く記号を同じ形にする。 */
+.cat-op-ok .yaku-icon { color: var(--success); }
 .cat-op-ok { min-height: 48px; font-size: var(--font-ui); background: var(--accent); border-color: var(--accent); color: #fff; }
 .cat-op:hover { background: var(--soft); }
 

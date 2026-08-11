@@ -113,13 +113,6 @@
     startupInput = document.getElementById('startup-enabled');
     desktopInput = document.getElementById('desktop-shortcut');
 
-    document.getElementById('text-size-toggle').addEventListener('click', function () {
-      var button = this;
-      var large = button.getAttribute('aria-pressed') !== 'true';
-      document.documentElement.setAttribute('data-yaku-text-size', large ? 'large' : 'normal');
-      button.setAttribute('aria-pressed', large ? 'true' : 'false');
-      button.textContent = large ? '文字を標準に戻す' : '文字を大きく';
-    });
     backButton.addEventListener('click', function () { showStep(currentStep - 1, true); });
     nextButton.addEventListener('click', function () { showStep(currentStep + 1, true); });
     skipButton.addEventListener('click', function () { showStep(lastStep, true); });

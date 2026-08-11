@@ -177,9 +177,9 @@
 @media (min-width: 1320px) {
   .cat-editor-layout { align-items: stretch; min-height: 0; }
   .cat-inspector-pane { min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
-  /* 左ナビは中の節を伸縮させない。「文字を大きく」にすると絞り込みだけで枠を超え、
-     hidden に切られて押せなくなる（実測で確認）。ペインごと動かして、切れることを
-     原理的に無くす。動くのは枠の中だけで、ページも見出しも動かない。 */
+  /* 左ナビは中の節を伸縮させない。拡大すると絞り込みだけで枠を超え、hidden に
+     切られて押せなくなる（実測で確認）。ペインごと動かして、切れることを原理的に
+     無くす。動くのは枠の中だけで、ページも見出しも動かない。 */
   .cat-nav-pane { min-height: 0; overflow: auto; }
   /* 状態行の上下 17px は、器が固定の画面では一覧2行ぶんに相当する。 */
   .app-cat #cat-status { margin: var(--space-1) 0; }
@@ -227,6 +227,23 @@
   background: var(--accent-soft);
   color: var(--accent-text);
   font-weight: 700;
+}
+
+/* 左の絞り込みと、一覧の行の左端に、同じ色の帯を置く。これまでは左で「未確認」を
+   押しても、一覧の行に「未確認」という色が無く、対応を推測させていた。
+   border-left-color だけを触るので、選択中（aria-pressed）の面と文字は踏まない。
+   選択中は上の規則が border-color を accent にするので、帯も accent になる。
+   これは意図どおり（accent は「いま選んでいるもの」の色）。 */
+.app-cat .cat-nav-pane .cat-state-filters button { border-left-width: 4px; }
+.app-cat .cat-nav-pane .cat-state-filters button[data-cat-filter="untranslated"] { border-left-color: var(--faint); }
+.app-cat .cat-nav-pane .cat-state-filters button[data-cat-filter="unconfirmed"] { border-left-color: var(--warning); }
+.app-cat .cat-nav-pane .cat-state-filters button[data-cat-filter="qc"] { border-left-color: var(--error); }
+.app-cat .cat-nav-pane .cat-state-filters button[data-cat-filter="reviewed"] { border-left-color: var(--success); }
+/* 「要対応」は3つの合成。合成であることを、そのまま帯で見せる。 */
+.app-cat .cat-nav-pane .cat-state-filters button[data-cat-filter="actionable"] {
+  background-image: linear-gradient(var(--faint) 0 33.3%, var(--warning) 33.3% 66.6%, var(--error) 66.6% 100%);
+  background-size: 4px 100%;
+  background-repeat: no-repeat;
 }
 
 .cat-state-filters button span,
@@ -298,7 +315,9 @@
 .cat-grid tbody tr.is-active {
   outline: 3px solid var(--accent);
   outline-offset: -3px;
-  box-shadow: inset 6px 0 0 0 var(--accent);
+  /* 左端4pxは状態の帯が使う。ここに inset 6px を敷くと、いま作業している行だけ
+     状態が読めなくなっていた。「いまここ」の印は反対側へ回す。 */
+  box-shadow: inset -6px 0 0 0 var(--accent);
 }
 
 /* 主役の行だけ息をさせる。脇役は詰めて、一覧としての一望性を保つ。 */
@@ -511,6 +530,13 @@
   background: #fff0ee;
 }
 
+/* 「用語集を読み込めませんでした」は、訳の欠陥ではなくアプリ側の不調。
+   赤で出すと、直しようのないものを直そうとして時間を失う。 */
+.cat-qc-card.is-tool {
+  border-left: 4px solid var(--warning);
+  background: #f6efe6;
+}
+
 .cat-context-label {
   color: var(--muted);
   font-size: var(--font-meta);
@@ -615,12 +641,6 @@
      与えておらず、末尾が切れていた。ここは削らない。 */
   .cat-editor-toolbar { grid-template-columns: minmax(240px, 1fr) auto minmax(140px, 200px) auto; }
   .cat-editor-toolbar .cat-actions { flex-wrap: nowrap; }
-
-  /* 「文字を大きく」でも1段に保つ。3段225pxになると一覧が 5.5→2.8行 まで落ちる。
-     検索の見出しは入力欄の placeholder が同じことを言っている。進捗は数字が残る。 */
-  :root[data-yaku-text-size="large"] .cat-toolbar-search > span { display: none; }
-  :root[data-yaku-text-size="large"] .cat-editor-toolbar .cat-progress { display: none; }
-  :root[data-yaku-text-size="large"] .cat-copilot-usage { display: none; }
 }
 
 /* 窓が低いと、固定したままでは中身が入りきらない。切れて触れないより、
