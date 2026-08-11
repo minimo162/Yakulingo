@@ -816,3 +816,28 @@
   color: var(--muted);
   font-size: var(--font-meta);
 }
+
+/* 行に割り当てできなかった訳案。既定は畳む。開くと全文が読める。
+   挿入ボタンは置かない（明示的に写す操作だけを残す）。 */
+.cat-promotion-reference {
+  margin-bottom: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+}
+
+.cat-promotion-reference > summary {
+  min-height: 2.5rem;
+  display: flex;
+  align-items: center;
+  font-size: var(--font-meta);
+  font-weight: 700;
+}
+
+.cat-promotion-reference-text {
+  margin-top: var(--space-1);
+  white-space: pre-wrap;
+  font-size: var(--font-segment);
+  line-height: 1.8;
+}

@@ -138,7 +138,7 @@
 
           <section id="cat-editor-pane" class="cat-editor-pane" aria-label="原文と訳文の確認">
             <div id="cat-complete-state" class="cat-complete-state" hidden><strong>すべての行を確認し終えました</strong><span>自動で点検しているのは、数字と単位の写しちがいだけです。言い回しが適切かどうかは、ファイルを作る前にご自身でお確かめください。</span></div>
-            <div id="cat-empty-state" class="cat-empty-state" hidden>この絞り込みに当てはまる行はありません。左の「すべて」を押すと、全部の行が表示されます。</div>
+            <details id="cat-promotion-reference" class="cat-promotion-reference" hidden><summary>ちょっと翻訳から移した訳案（行に割り当てできませんでした）</summary><p class="muted">原文の文の数と、訳案の文の数が合わなかったため、行ごとには入れていません。ここから必要な部分を選んで、各行の訳文へ手で写してください。</p><p id="cat-promotion-reference-text" class="cat-promotion-reference-text"></p></details><div id="cat-empty-state" class="cat-empty-state" hidden>この絞り込みに当てはまる行はありません。左の「すべて」を押すと、全部の行が表示されます。</div>
             <div id="cat-grid-wrap" class="cat-grid-wrap"><table class="cat-grid"><caption class="sr-only">原文と訳案を1行ずつ確認する一覧</caption><thead><tr><th class="cat-col-no">#</th><th class="cat-col-loc">場所</th><th>原文</th><th>訳文</th></tr></thead><tbody id="cat-grid-body"></tbody></table></div>
           </section>
 

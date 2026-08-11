@@ -11,6 +11,10 @@
   var jobStartedAt = 0;
   var activeJobId = '';
 
+  /* 昇格ボタンの文言は1つだけ。失敗して戻したときに別の名前へ化けると、
+     同じボタンが2つの操作に見える。 */
+  var PROMOTE_LABEL = 'この訳を資料翻訳へ移す（ここから先は保存され、あとから開けます）';
+
   function el(id) { return document.getElementById(id); }
   function update() {
     var text = el('quick-input').value;
@@ -120,7 +124,7 @@
       /* 少なければ開いたまま見せ、多いときは畳んで画面を埋めない。 */
       maskDetail.open = maskValues.length > 0 && maskValues.length <= 6;
     }
-    el('quick-promote').hidden = !toEnglish;
+    el('quick-promote').hidden = false;
     el('quick-result').hidden = false;
     if (wasRevision) {
       if (artifact.revision_error) {
@@ -254,7 +258,7 @@
       YakuCommon.post('/api/cat/promote', { artifact_id: artifact.artifact_id }).then(function (data) {
         if (!data.project_id) throw new Error('資料翻訳へ移せませんでした。');
         window.location.assign('/cat?project=' + encodeURIComponent(data.project_id));
-      }).catch(function (error) { button.disabled = false; button.textContent = '資料翻訳で1文ずつ確認する'; showError(error.message); });
+      }).catch(function (error) { button.disabled = false; button.textContent = PROMOTE_LABEL; showError(error.message); });
     });
     /* 「翻訳をやめる」は、進捗表示のたびに作り直されるので document で受ける。 */
     document.addEventListener('click', function (event) {

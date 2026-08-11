@@ -301,6 +301,13 @@
     bulkButton.setAttribute('data-cat-bulk-indexes', bulkTargets.map(function (segment) { return Number(segment.index); }).join(','));
     el('cat-complete-state').hidden = !(all.length && !all.some(segmentActionable));
     el('cat-empty-state').hidden = shown.length > 0;
+    /* ちょっと翻訳から移したとき、原文と訳案の文の数が合わないと、行には割り当てず
+       サーバが全文を保持する（CatProject.ps1 の PromotionReferenceTranslation）。
+       画面がそれを読んでいなかったので、利用者からは「移したら訳が消えた」に
+       見えていた。挿入ボタンは置かない。手で写す。 */
+    var carried = String(project.promotion_reference_translation || '');
+    el('cat-promotion-reference').hidden = !carried;
+    if (carried) el('cat-promotion-reference-text').textContent = carried;
     el('cat-grid-wrap').hidden = shown.length === 0;
     body.innerHTML = shown.map(function (segment) {
       var index = Number(segment.index), row = index + 1, state = segmentState(segment), isActive = current && Number(current.index) === index;
