@@ -854,7 +854,24 @@ function Test-YakuProtectedFileText {
     if ([string]::IsNullOrWhiteSpace($s)) { return $false }
     if ($s.StartsWith('=')) { return $true }
     if ($s -match '^(?i:https?://|mailto:|www\.)\S+$' -or $s -match '^[^\s@]+@[^\s@]+\.[^\s@]+$') { return $true }
+    # ここへ来る文は、外部送信前のマスク済みである。数値は [[N1]] の形に置き換わって
+    # いるので、数字として数えないと「数値だけの行」を見分けられない。
+    # 形を見る検査の前に、記号を数字1つとして戻す（値は戻さない）。
+    $s = $s -replace '\[\[[NP]\d+\]\]', '0'
     if ($s -match '^[\d\s.,%+\-()△▲▼＋−]+$') { return $true }
+    # 数値だけのセルは「原文と同じ」でも正しい訳として通していたが、金額だけの
+    # セルは通らなかった。単位換算がこのアプリ自身の表記へ直すため（1兆3,150億円
+    # → 13,150 oku）、Copilot へ渡る原文は既に 13,150 oku で、正しい訳もまったく
+    # 同じ文字列になる。それを same-as-source として捨てていた。
+    #
+    # 実機（2026-08-11）: Excelの「1兆3,150億円」のセルだけ訳案が付かず、
+    # ログに reason=same-as-source sourceLength=10 が出ていた（13,150 oku は10文字）。
+    # 全行確認しないと出力できないので、金額だけのセルが1つあるだけで
+    # 社内確認用ファイルが永久に作れなくなる。
+    #
+    # 通すのは、このアプリ自身が作る英字の単位（oku / yen / k units）が付いた形だけ。
+    # 「1兆3,150億円」がそのまま返ってきた場合は、いままでどおり捨てる。
+    if ($s -match '(?i)^(?<body>[\d\s.,%+\-()△▲▼＋−]+)\s*(?:oku|yen|k\s*units?)$' -and $Matches['body'] -match '\d') { return $true }
     if ($s -match '^[A-Z0-9][A-Z0-9._+%/&()\-]{0,40}$') { return $true }
     return $false
 }
