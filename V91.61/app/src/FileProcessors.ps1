@@ -4355,6 +4355,30 @@ function Get-YakuFileInfo {
         [Parameter(Mandatory=$true)][string]$Path,
         [AllowNull()]$Settings
     )
+    # Word はここを通れなかった。取り込みの入口（/api/cat/open と /api/file-info）は
+    # 必ずこの関数で訳す向きを見るのに、この関数が Excel と CSV しか知らず
+    # 「対応しているファイル形式は .xlsx / .xlsm / .csv です」で止めていた。
+    # 画面は .docx を選ばせ、CatProject には Word の分岐（New-YakuCatWordProject）が
+    # あるのに、そこへ届いていなかった（2026-08-11、実機で Word を取り込んで発覚）。
+    # 本文の取り出しは OpenXML だけで済むので、ここで COM は使わない。
+    if (([System.IO.Path]::GetExtension($Path)).ToLowerInvariant() -eq '.docx') {
+        $wordName = [System.IO.Path]::GetFileName($Path)
+        $inventory = Get-YakuWordDocumentInventory -Path $Path
+        $wordSample = New-Object System.Text.StringBuilder
+        foreach ($block in @($inventory.Blocks)) {
+            if ($wordSample.Length -ge 8000) { break }
+            $blockText = [string]$block.Text
+            if (-not [string]::IsNullOrWhiteSpace($blockText)) { [void]$wordSample.AppendLine($blockText) }
+        }
+        $wordAnalysis = if (Get-Command Get-YakuDirectionAnalysis -ErrorAction SilentlyContinue) { Get-YakuDirectionAnalysis -Text ([string]$wordSample.ToString()) } else { [pscustomobject]@{ Direction='to_en'; Confidence='low'; Reason='detector-unavailable' } }
+        $wordDirection = [string]$wordAnalysis.Direction
+        return [pscustomobject]@{
+            Kind='word'; Name=$wordName; FileName=$wordName; Extension='.docx'; ExcelAvailable=(Test-YakuExcelAvailable)
+            Direction=$wordDirection; DetectedDirection=$wordDirection
+            DirectionConfidence=[string]$wordAnalysis.Confidence; DirectionReason=[string]$wordAnalysis.Reason
+            Sheets=@(); Rows=@($inventory.Blocks).Count; Columns=1
+        }
+    }
     $kind = Get-YakuSupportedFileKind -Path $Path
     Add-YakuInputReadOnlyNotice -Path $Path -Warnings $null
     $name = [System.IO.Path]::GetFileName($Path)

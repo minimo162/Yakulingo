@@ -39,6 +39,15 @@ try {
     Check-YakuWord ($inventory.SupportedBlockCount -eq 2 -and $inventory.DraftStructureEligible) 'simple heading and table paragraph are inventoried'
     Check-YakuWord ([string]$inventory.Blocks[0].Location -like '見出し*' -and [string]$inventory.Blocks[1].Meta.Kind -eq 'word_table') 'heading and table locations stay distinct'
 
+    # 取り込みの入口（/api/cat/open と /api/file-info）は、プロジェクトを作る前に
+    # 必ず Get-YakuFileInfo で訳す向きを見る。ここが Excel と CSV しか知らず、
+    # Word は「対応しているファイル形式は .xlsx / .xlsm / .csv です」で止まっていた。
+    # この試験は New-YakuCatProject を直接叩いていたので、下の層だけ緑で、
+    # 実際の経路は通らないままだった（2026-08-11、実機の Word 取り込みで発覚）。
+    $wordInfo = Get-YakuFileInfo -Path $source -Settings $settings
+    Check-YakuWord ([string]$wordInfo.Kind -eq 'word' -and [string]$wordInfo.FileName -eq 'quarter.docx') 'the import gate accepts DOCX instead of rejecting it as an unsupported type'
+    Check-YakuWord (@('to_en','to_jp') -contains [string]$wordInfo.DetectedDirection -and -not [string]::IsNullOrWhiteSpace([string]$wordInfo.DirectionConfidence)) 'the import gate decides a direction for DOCX like it does for Excel'
+
     $project=New-YakuCatProject -Root $root -Path $source -Settings $settings -Direction to_en
     Check-YakuWord ([string]$project.DocumentFormat -eq 'docx' -and @($project.Segments).Count -eq 2) 'generic CAT open dispatches DOCX to Word adapter'
     Check-YakuWord (Save-YakuCatProject -Project $project) 'Word project and owned source persist'
