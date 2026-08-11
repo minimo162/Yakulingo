@@ -2251,7 +2251,7 @@ function Invoke-YakuRoute {
         try { $windowClass = [string]$payload['window_class'] } catch { $windowClass = '' }
         $hwnd = 0
         try { $hwnd = [int]$payload['foreground_hwnd'] } catch { $hwnd = 0 }
-        if ($windowClass -notin @('OpusApp','XLMAIN')) {
+        if ($windowClass -notin @('OpusApp','XLMAIN','PPTFrameClass')) {
             Send-YakuTextResponse -Context $Context -Text (([ordered]@{ kind='none'; reason='not_office' } | ConvertTo-Json -Compress)) -ContentType 'application/json; charset=utf-8'
             return
         }
@@ -2265,6 +2265,14 @@ function Invoke-YakuRoute {
             # 保存済みかどうかも一緒に返す。
             $body['source_path'] = $(try { [string]$result.DocumentPath } catch { '' })
             $body['saved'] = $(try { [bool]$result.Saved } catch { $false })
+        } elseif ([string]$result.Kind -eq 'powerpoint_text') {
+            # スライドは丸ごと取り込めない（資料翻訳が .pptx を扱わない）ので
+            # source_path は返さない。読んだ本文だけを渡す。
+            $body['text'] = [string]$result.Text
+            $body['presentation_name'] = [string]$result.PresentationName
+            $body['slide_index'] = [int]$result.SlideIndex
+            $body['shape_count'] = [int]$result.ShapeCount
+            $body['char_count'] = [int]$result.CharCount
         } elseif ([string]$result.Kind -eq 'excel_cells') {
             # 読んだブック・シート・番地を必ず返す。画面へ出さないと、別のブックを
             # 読んでいても利用者が気づけない。

@@ -241,7 +241,7 @@
     var note = el('quick-selection-note');
     YakuCommon.post('/api/quick/selection', { window_class: windowClass, foreground_hwnd: hwnd }).then(function (data) {
       var kind = String(data && data.kind || 'none');
-      if (kind === 'word_text' || kind === 'excel_cells') {
+      if (kind === 'word_text' || kind === 'excel_cells' || kind === 'powerpoint_text') {
         var input = el('quick-input');
         input.value = String(data.text || '');
         input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -249,6 +249,9 @@
           note.textContent = kind === 'excel_cells'
             ? ('Excel「' + (data.workbook_name || '') + '」の ' + (data.sheet_name || '') + ' シート ' + (data.address || '') + '（' + (data.cell_count || 0) + 'セル）を読み込みました。'
                + ((data.formula_skipped || 0) > 0 ? ' 数式のセル ' + data.formula_skipped + ' 件は訳しません。' : ''))
+            : kind === 'powerpoint_text'
+            ? ('PowerPoint「' + (data.presentation_name || '') + '」の ' + (data.slide_index || 0) + ' 枚目'
+               + ((data.shape_count || 0) > 0 ? '（' + data.shape_count + ' 個の枠）' : '') + 'から ' + (data.char_count || 0) + ' 文字を読み込みました。')
             : ('Word「' + (data.document_name || '') + '」で選んでいた ' + (data.char_count || 0) + ' 文字を読み込みました。');
           note.hidden = false;
         }
