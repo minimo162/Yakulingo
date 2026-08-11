@@ -174,6 +174,45 @@ namespace YakuLingo.Desktop
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
+        // Ctrl+Alt+J は「押すだけで、いま選んでいる文章を訳す」ためのもの。
+        // 選択の取り方は相手のアプリで違う（2026-08-11 実測）。
+        //   Word(OpusApp) / Excel(XLMAIN) : Office COM。バックエンドが読む。ここでは
+        //                                   窓のクラスとハンドルを覚えるだけ
+        //   それ以外                      : COM が無いので Ctrl+C を送ってから
+        //                                   クリップボードを読む
+        // 疑似 Ctrl+C は Office には使わない。COM で確実に取れるのに、利用者の
+        // クリップボードを壊す理由がない。
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+        [DllImport("user32.dll")]
+        private static extern uint GetClipboardSequenceNumber();
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int vKey);
+
+        private const int InputKeyboard = 1;
+        private const uint KeyEventKeyUp = 0x0002;
+        private const ushort VkControl = 0x11;
+        private const ushort VkC = 0x43;
+        private const ushort VkAlt = 0x12;
+        private const ushort VkShift = 0x10;
+        private const ushort VkLWin = 0x5B;
+        private const ushort VkRWin = 0x5C;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct KEYBDINPUT
+        {
+            public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo;
+        }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct INPUT
+        {
+            public int type; public KEYBDINPUT ki; public int padding1; public int padding2;
+        }
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
         // 通知領域のバルーンは、アイコンが隠れた領域にあると Windows が出さない。
         // 既定ではそこへ入るので、バルーンだけに頼ると完了に気づけない。
         // タスクバーの点滅は、アイコンの可視状態にも応答不可設定にも左右されない。
@@ -224,6 +263,15 @@ namespace YakuLingo.Desktop
         private bool catWindowResizedByUser;
         private string pendingQuickText = "";
         private bool pendingQuickSubmit;
+        // Office のときは本文をここで読まない。窓のクラスとハンドルだけ覚え、
+        // バックエンドに COM で読ませる。
+        private string pendingOfficeClass = "";
+        private long pendingOfficeHwnd;
+        // いま実際に読み込みが終わっている画面。webView.Source は Navigate を
+        // 始めた瞬間に新しい URL へ変わるので、「もう /quick が居るか」の判定には
+        // 使えない（2026-08-11、ホーム画面から Ctrl+Alt+J を押すと選択が
+        // 消える不具合の原因。まだ居ないホーム画面へ通知を投げていた）。
+        private string loadedPath = "";
         private Size quickWindowSize = new Size(650, 640);
         private Size catWindowSize = new Size(1400, 900);
         private Size homeWindowSize = new Size(1240, 840);
@@ -329,8 +377,125 @@ namespace YakuLingo.Desktop
 
         protected override void WndProc(ref Message m)
         {
-            if (m.Msg == WmHotkey && m.WParam.ToInt32() == HotkeyId) OpenQuick();
+            if (m.Msg == WmHotkey && m.WParam.ToInt32() == HotkeyId)
+            {
+                CaptureForegroundSelection();
+                OpenQuick();
+                FlushPendingOfficeSelection();
+            }
             base.WndProc(ref m);
+        }
+
+        // Office のときは本文をここで持たない。窓のクラスとハンドルだけ渡し、
+        // ページからバックエンドへ読ませる。C# は COM を1行も書かない。
+        //
+        // 既に /quick を開いている窓では再ナビゲートが起きず NavigationCompleted が
+        // 発火しないので、ホットキー処理からも直接呼ぶ。別の画面から来たときは
+        // loadedPath がまだ /quick ではないのでここでは何もせず、読み込みが
+        // 終わってから NavigationCompleted 側で送る。控えは送った時だけ消す。
+        private void FlushPendingOfficeSelection()
+        {
+            if (!webReady) return;
+            if (!loadedPath.Equals("/quick", StringComparison.OrdinalIgnoreCase)) return;
+            if (String.IsNullOrEmpty(pendingOfficeClass)) return;
+            string cls = pendingOfficeClass;
+            long hwnd = pendingOfficeHwnd;
+            pendingOfficeClass = "";
+            pendingOfficeHwnd = 0;
+            try
+            {
+                webView.CoreWebView2.PostWebMessageAsJson(
+                    "{\"type\":\"yaku-office-selection\",\"window_class\":" + json.Serialize(cls) + ",\"foreground_hwnd\":" + hwnd + "}");
+            }
+            catch { }
+        }
+
+        // 押した瞬間の前面の窓を見て、選択を取る。窓を出すより先に取ること。
+        // 先に出すと前面が自分になり、自分の入力欄を読んでしまう。
+        private void CaptureForegroundSelection()
+        {
+            pendingOfficeClass = "";
+            pendingOfficeHwnd = 0;
+            try
+            {
+                IntPtr fg = GetForegroundWindow();
+                if (fg == IntPtr.Zero) return;
+                StringBuilder cls = new StringBuilder(256);
+                GetClassName(fg, cls, cls.Capacity);
+                string name = cls.ToString();
+                if (name == "OpusApp" || name == "XLMAIN")
+                {
+                    // Office はバックエンドが COM で読む。クリップボードには触れない。
+                    pendingOfficeClass = name;
+                    pendingOfficeHwnd = fg.ToInt64();
+                    return;
+                }
+                string copied = CopySelectionFromForeground();
+                if (!String.IsNullOrWhiteSpace(copied))
+                {
+                    pendingQuickText = copied;
+                    pendingQuickSubmit = false;
+                }
+            }
+            catch { }
+        }
+
+        // Office 以外には COM が無いので Ctrl+C を送る。クリップボードは置き換わる
+        // （利用者判断で受け入れ、復元は試みない。Excel 由来の遅延描画形式は原理的に
+        // 復元できず、「復元したつもりで壊れている」ほうが悪い）。
+        //
+        // 選択が無いときに前の中身を送らないことが要点。連番が変わらなければ、
+        // 新しく置かれていないので読まない。
+        private string CopySelectionFromForeground()
+        {
+            uint before = GetClipboardSequenceNumber();
+            SendCtrlC();
+            for (int i = 0; i < 12; i++)
+            {
+                System.Threading.Thread.Sleep(40);
+                if (GetClipboardSequenceNumber() == before) continue;
+                try
+                {
+                    if (Clipboard.ContainsText()) return Clipboard.GetText();
+                }
+                catch { }
+                return "";
+            }
+            return "";
+        }
+
+        // WM_HOTKEY は「押した瞬間」に来るので、この時点で Ctrl と Alt はまだ
+        // 押されたままである。そのまま Ctrl+C を送ると Ctrl+Alt+C になり、コピーに
+        // ならない（2026-08-11、メモ帳で1文字もコピーされず実機で判明）。
+        // 少し待って離してもらい、それでも残っていれば離した扱いの入力を送る。
+        private void ReleaseHotkeyModifiers()
+        {
+            for (int i = 0; i < 20; i++)
+            {
+                bool held = (GetAsyncKeyState(VkAlt) & 0x8000) != 0 || (GetAsyncKeyState(VkControl) & 0x8000) != 0;
+                if (!held) return;
+                System.Threading.Thread.Sleep(15);
+            }
+            ushort[] stuck = new ushort[] { VkAlt, VkShift, VkLWin, VkRWin, VkControl };
+            INPUT[] seq = new INPUT[stuck.Length];
+            for (int i = 0; i < stuck.Length; i++)
+            {
+                seq[i].type = InputKeyboard;
+                seq[i].ki.wVk = stuck[i];
+                seq[i].ki.dwFlags = KeyEventKeyUp;
+            }
+            SendInput((uint)seq.Length, seq, Marshal.SizeOf(typeof(INPUT)));
+        }
+
+        private void SendCtrlC()
+        {
+            ReleaseHotkeyModifiers();
+            INPUT[] seq = new INPUT[4];
+            seq[0].type = InputKeyboard; seq[0].ki.wVk = VkControl;
+            seq[1].type = InputKeyboard; seq[1].ki.wVk = VkC;
+            seq[2].type = InputKeyboard; seq[2].ki.wVk = VkC; seq[2].ki.dwFlags = KeyEventKeyUp;
+            seq[3].type = InputKeyboard; seq[3].ki.wVk = VkControl; seq[3].ki.dwFlags = KeyEventKeyUp;
+            SendInput((uint)seq.Length, seq, Marshal.SizeOf(typeof(INPUT)));
         }
 
         private void StartCleanupWatcher()
@@ -373,6 +538,9 @@ namespace YakuLingo.Desktop
         private void OnNavigationStarting(object sender, CoreWebView2NavigationStartingEventArgs e)
         {
             Uri uri;
+            // 読み込みが始まった時点で「いま居る画面」は無効になる。読み終えるまで
+            // 画面あての通知を投げない。
+            loadedPath = "";
             if (String.Equals(e.Uri, "about:blank", StringComparison.OrdinalIgnoreCase)) return;
             if (!Uri.TryCreate(e.Uri, UriKind.Absolute, out uri) || !IsTrustedOrigin(uri))
             {
@@ -383,6 +551,7 @@ namespace YakuLingo.Desktop
         private async void OnNavigationCompleted(object sender, CoreWebView2NavigationCompletedEventArgs e)
         {
             if (!e.IsSuccess || webView.Source == null || !IsTrustedOrigin(webView.Source)) return;
+            loadedPath = webView.Source.AbsolutePath;
             InjectHotkeyStatus();
             // 画面の中のカードから資料翻訳へ入ると OpenCat() を通らないので、
             // ホームの窓（1240x840）のまま3列の作業画面が開き、原文と訳文の列が潰れていた。
@@ -398,6 +567,7 @@ namespace YakuLingo.Desktop
                     catWindowResizedByUser = true;
                 }
             }
+            FlushPendingOfficeSelection();
             if (webView.Source.AbsolutePath.Equals("/quick", StringComparison.OrdinalIgnoreCase) && !String.IsNullOrEmpty(pendingQuickText))
             {
                 string source = json.Serialize(pendingQuickText);

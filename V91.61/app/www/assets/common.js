@@ -198,12 +198,23 @@
     });
   }
 
+  var officeSelectionListeners = [];
+  function onOfficeSelection(listener) { officeSelectionListeners.push(listener); }
+
   function bindDesktopShellMessages() {
     if (!(window.chrome && window.chrome.webview && typeof window.chrome.webview.addEventListener === 'function')) return;
     window.chrome.webview.addEventListener('message', function (event) {
       var data = event && event.data;
       if (!data || typeof data !== 'object' || Array.isArray(data)) return;
       var keys = Object.keys(data).sort().join(',');
+      /* Ctrl+Alt+J で前面にあったのが Office のとき、外枠が窓のクラスとハンドルを
+         寄こす。本文は寄こさない（読むのはバックエンドの COM）。 */
+      if (keys === 'foreground_hwnd,type,window_class' && data.type === 'yaku-office-selection') {
+        officeSelectionListeners.forEach(function (listener) {
+          try { listener(String(data.window_class || ''), Number(data.foreground_hwnd) || 0); } catch (_) {}
+        });
+        return;
+      }
       if (keys !== 'enabled,type' || data.type !== 'set-startup-enabled' || typeof data.enabled !== 'boolean') return;
       var enabled = data.enabled;
       desktopPreferenceMessageQueue = desktopPreferenceMessageQueue.then(function () {
@@ -225,7 +236,7 @@
     escape: escapeHtml, plainError: plainError, focus: focusAndReveal,
     reducedMotion: reducedMotion, onReady: onReady, isReady: function () { return ready; },
     copyText: copyText, decodeBase64: decodeBase64, start: start,
-    notifyDesktopShell: notifyDesktopShell,
+    notifyDesktopShell: notifyDesktopShell, onOfficeSelection: onOfficeSelection,
     maxUploadBytes: Number(meta('yaku-file-max-bytes')) || 50 * 1024 * 1024
   };
 })();

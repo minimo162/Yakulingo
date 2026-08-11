@@ -208,8 +208,46 @@
     el('quick-form').requestSubmit();
   }
 
+  /* Ctrl+Alt+J で前面にあったのが Word / Excel のとき、外枠が窓のクラスとハンドルを
+     寄こす。本文はバックエンドが COM で読む。ブラウザーから本文を送る経路は作らない。
+     読んだブック・シート・番地は必ず画面に出す。出さないと、別のブックを読んで
+     いても利用者が気づけない。 */
+  function applyOfficeSelection(windowClass, hwnd) {
+    if (!windowClass) return;
+    var note = el('quick-selection-note');
+    YakuCommon.post('/api/quick/selection', { window_class: windowClass, foreground_hwnd: hwnd }).then(function (data) {
+      var kind = String(data && data.kind || 'none');
+      if (kind === 'word_text' || kind === 'excel_cells') {
+        var input = el('quick-input');
+        input.value = String(data.text || '');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        if (note) {
+          note.textContent = kind === 'excel_cells'
+            ? ('Excel「' + (data.workbook_name || '') + '」の ' + (data.sheet_name || '') + ' シート ' + (data.address || '') + '（' + (data.cell_count || 0) + 'セル）を読み込みました。'
+               + ((data.formula_skipped || 0) > 0 ? ' 数式のセル ' + data.formula_skipped + ' 件は訳しません。' : ''))
+            : ('Word「' + (data.document_name || '') + '」で選んでいた ' + (data.char_count || 0) + ' 文字を読み込みました。');
+          note.hidden = false;
+        }
+        /* 送信はしない。Enter を1回押して送る。押す前に何を送るかが見えている。 */
+        YakuCommon.focus(el('quick-submit'));
+        return;
+      }
+      if (!note) return;
+      var reason = String(data && data.reason || '');
+      note.textContent = reason === 'instance_mismatch' ? '前面のOfficeを読めませんでした。ファイルを取り込んでお使いください。'
+        : reason === 'too_large' ? '選んだ範囲が大きすぎます。資料翻訳でファイルを取り込んでください。'
+        : reason === 'multi_area' ? '複数の範囲が選ばれています。1つの範囲を選んでください。'
+        : reason === 'no_text' ? '選んだ範囲に文字がありませんでした。'
+        : '選んでいた文章を読み取れませんでした。貼り付けてください。';
+      note.hidden = false;
+    }).catch(function () {
+      if (note) { note.textContent = '選んでいた文章を読み取れませんでした。貼り付けてください。'; note.hidden = false; }
+    });
+  }
+
   function start() {
     YakuCommon.start();
+    if (YakuCommon.onOfficeSelection) YakuCommon.onOfficeSelection(applyOfficeSelection);
     YakuCommon.onReady(function (value) { ready = value; update(); submitPendingWhenReady(); });
     window.addEventListener('yaku-pending-quick-submit', submitPendingWhenReady);
     el('quick-input').addEventListener('input', function () { explicitDirection = ''; artifact = null; el('quick-result').hidden = true; update(); });
