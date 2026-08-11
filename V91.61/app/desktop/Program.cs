@@ -435,6 +435,16 @@ namespace YakuLingo.Desktop
                 {
                     tray.ShowBalloonTip(7000, "YakuLingo", "自動起動の設定を変更できませんでした。最初の画面で「使い方を見る」を開き、起動の設定をやり直してください。", ToolTipIcon.Warning);
                 }
+                else if (type == "copilot-ready")
+                {
+                    // 起動直後、Copilot を開くために Edge が前へ出てこの窓を覆う。
+                    // 準備が終わった時点で1回だけ戻す。利用者が自分で最小化して
+                    // いるなら、それは意図した操作なので触らない。
+                    if (Visible && WindowState != FormWindowState.Minimized && !ContainsFocus)
+                    {
+                        ShowAndActivate();
+                    }
+                }
                 else if (type == "translation-finished")
                 {
                     // 数十分かかる翻訳のあいだ、利用者はExcelやOutlookで別の仕事をしている。
