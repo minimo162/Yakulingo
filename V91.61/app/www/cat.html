@@ -212,10 +212,13 @@
           <nav id="cat-nav-pane" class="cat-nav-pane" aria-label="資料内の移動">
             <section aria-labelledby="cat-state-filter-title"><h2 id="cat-state-filter-title">表示する行</h2>
               <div id="cat-state-filters" class="cat-state-filters">
-                <button type="button" data-cat-filter="actionable" aria-pressed="true">要対応 <span data-cat-count="actionable">0</span></button>
-                <button type="button" data-cat-filter="untranslated" aria-pressed="false">未翻訳 <span data-cat-count="untranslated">0</span></button>
-                <button type="button" data-cat-filter="unconfirmed" aria-pressed="false">未確認 <span data-cat-count="unconfirmed">0</span></button>
-                <button type="button" data-cat-filter="qc" aria-pressed="false" title="数字の自動点検で気になる点が見つかった行だけを表示します">点検の指摘 <span data-cat-count="qc">0</span></button>
+                <!-- 6つあったものを3つにした（2026-08-12）。要対応・未翻訳・未確認は
+                     ほとんどの資料で同じ数を指しており、実際に4セルの資料では
+                     「要対応4 / 未翻訳4 / 未確認4」と同じ数字が3つ並んでいた。
+                     未翻訳か未確認かは行の記号で分かる。ここは「残り」で足りる。
+                     点検の指摘は例外なので、指摘が1件も無いときは出さない。 -->
+                <button type="button" data-cat-filter="actionable" aria-pressed="true">残り <span data-cat-count="actionable">0</span></button>
+                <button type="button" data-cat-filter="qc" aria-pressed="false" title="数字の自動点検で気になる点が見つかった行だけを表示します" hidden>点検の指摘 <span data-cat-count="qc">0</span></button>
                 <button type="button" data-cat-filter="reviewed" aria-pressed="false">確認済み <span data-cat-count="reviewed">0</span></button>
                 <button type="button" data-cat-filter="all" aria-pressed="false">すべて <span data-cat-count="all">0</span></button>
               </div>
@@ -234,8 +237,8 @@
           </nav>
 
           <section id="cat-editor-pane" class="cat-editor-pane" aria-label="原文と訳文の確認">
-            <div id="cat-complete-state" class="cat-complete-state" hidden><strong>すべての行を確認し終えました</strong><span>自動で点検しているのは、数字と単位の写しちがいだけです。言い回しが適切かどうかは、ファイルを作る前にご自身でお確かめください。</span></div>
-            <details id="cat-promotion-reference" class="cat-promotion-reference" hidden><summary>ちょっと翻訳から移した訳案（行に割り当てできませんでした）</summary><p class="muted">原文の文の数と、訳案の文の数が合わなかったため、行ごとには入れていません。ここから必要な部分を選んで、各行の訳文へ手で写してください。</p><p id="cat-promotion-reference-text" class="cat-promotion-reference-text"></p></details><div id="cat-empty-state" class="cat-empty-state" hidden>この絞り込みに当てはまる行はありません。左の「すべて」を押すと、全部の行が表示されます。</div>
+            <div id="cat-complete-state" class="cat-complete-state" hidden><strong>すべての行を確認し終えました</strong></div>
+            <details id="cat-promotion-reference" class="cat-promotion-reference" hidden><summary>行に割り当てできなかった訳案</summary><p class="muted">原文の文の数と、訳案の文の数が合わなかったため、行ごとには入れていません。ここから必要な部分を選んで、各行の訳文へ手で写してください。</p><p id="cat-promotion-reference-text" class="cat-promotion-reference-text"></p></details><div id="cat-empty-state" class="cat-empty-state" hidden>この絞り込みに当てはまる行はありません。左の「すべて」を押すと、全部の行が表示されます。</div>
             <div id="cat-grid-wrap" class="cat-grid-wrap"><table class="cat-grid"><caption class="sr-only">原文と訳案を1行ずつ確認する一覧</caption><thead><tr><th class="cat-col-no">#</th><th class="cat-col-loc">場所</th><th>原文</th><th>訳文</th></tr></thead><tbody id="cat-grid-body"></tbody></table></div>
           </section>
 

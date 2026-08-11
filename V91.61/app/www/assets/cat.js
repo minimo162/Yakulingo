@@ -197,7 +197,14 @@
   }
   function locationGroup(segment) {
     var location = String(segment.location || '').trim();
-    if (segment.kind === 'cell') { var bang = location.lastIndexOf('!'); return bang > 0 ? location.slice(0, bang) : (location || 'Excel'); }
+    /* セルはシートでまとめる。番地（A1）まで見ると1セルが1グループになり、
+       500セルの資料で500個の「場所」が並ぶ。区切りが Sheet1!A1 から
+       「Sheet1, A1」へ変わったあとも ! だけを見ていたため、実際にそうなっていた
+       （2026-08-12、利用者の指摘で気づいた）。 */
+    if (segment.kind === 'cell') {
+      var sheet = location.match(/^(.*?)\s*[!,]\s*\$?[A-Z]{1,3}\$?\d+$/i);
+      return sheet ? sheet[1] : (location || 'Excel');
+    }
     if (/^見出し/.test(location)) return '見出し';
     if (/^本文/.test(location)) return '本文';
     if (/^表/.test(location)) return '表';
@@ -242,6 +249,13 @@
       if (segment.confirmed) counts.reviewed++;
     });
     Object.keys(counts).forEach(function (name) { var target = document.querySelector('[data-cat-count="' + name + '"]'); if (target) target.textContent = counts[name]; });
+    /* 点検の指摘は例外の入口。1件も無いときに 0 と並べても、選べる場所が
+       増えるだけで何も伝えない（2026-08-12）。 */
+    var qcFilter = document.querySelector('[data-cat-filter="qc"]');
+    if (qcFilter) {
+      qcFilter.hidden = counts.qc < 1;
+      if (qcFilter.hidden && currentFilter === 'qc') currentFilter = 'actionable';
+    }
     document.querySelectorAll('[data-cat-filter]').forEach(function (button) { button.setAttribute('aria-pressed', String(button.getAttribute('data-cat-filter') === currentFilter)); });
     var changeCounts = { unchanged: 0, changed: 0, new: 0 }, hasChanges = false;
     all.forEach(function (segment) { var group = changeGroup(segment); if (group) { changeCounts[group]++; hasChanges = true; } });
@@ -250,7 +264,13 @@
     document.querySelectorAll('[data-cat-change]').forEach(function (button) { button.setAttribute('aria-pressed', String(button.getAttribute('data-cat-change') === currentChange)); });
     var groups = {};
     all.forEach(function (segment) { var name = locationGroup(segment); groups[name] = (groups[name] || 0) + 1; });
-    el('cat-location-list').innerHTML = '<button type="button" data-cat-location="all" aria-pressed="' + String(currentLocation === 'all') + '">すべての場所 <span>' + all.length + '</span></button>' + Object.keys(groups).map(function (name) {
+    /* 場所が1種類しかない資料（貼り付けた文章や、本文だけの Word）では、
+       「すべての場所」と「本文」が同じものを指す。選べない選択肢は出さない
+       （2026-08-12、利用者の指摘）。 */
+    var locationNames = Object.keys(groups);
+    var locationSection = el('cat-location-list').closest('section');
+    if (locationSection) locationSection.hidden = locationNames.length < 2;
+    el('cat-location-list').innerHTML = '<button type="button" data-cat-location="all" aria-pressed="' + String(currentLocation === 'all') + '">すべての場所 <span>' + all.length + '</span></button>' + locationNames.map(function (name) {
       return '<button type="button" data-cat-location="' + esc(name) + '" aria-pressed="' + String(currentLocation === name) + '">' + esc(name) + ' <span>' + groups[name] + '</span></button>';
     }).join('');
   }
@@ -669,17 +689,24 @@
       el('cat-candidates-list').innerHTML = items.length ? items.map(function (item, itemIndex) {
         var label = item.kind === 'memory' ? '過去に確認した訳' : '前回の資料の訳';
         var material = item.source_name || item.database || '資料名なし';
-        var place = Number(item.page) > 0 ? ('ページ ' + Number(item.page)) : 'ページ情報なし';
-        var location = item.location ? String(item.location) : '文書内の場所情報なし';
+        /* 無いものを「情報なし」と書かない。埋まっている行と見分けがつかず、
+           カードの行数だけが増えていた（2026-08-12）。 */
+        var place = Number(item.page) > 0 ? ('ページ ' + Number(item.page)) : '';
+        var location = item.location ? String(item.location) : '';
         var ratio = Number(item.score != null ? item.score : (item.source_match_ratio != null ? item.source_match_ratio : item.ratio)) || 0;
-        var match = item.kind === 'prior' ? (item.exact ? '前回と原文が同じ' : '前回から原文に変更あり') : (ratio >= .999 || item.exact ? '前とまったく同じ原文です' : ('原文が ' + Math.round(ratio * 100) + '% 同じです'));
+        var match = item.kind === 'prior' ? (item.exact ? '前回と原文が同じ' : '前回から原文に変更あり') : (ratio >= .999 || item.exact ? '原文が同じ' : ('原文が ' + Math.round(ratio * 100) + '% 同じ'));
         var translation = item.translation != null ? item.translation : item.target;
         var number = terms.length + itemIndex + 1;
-        var saved = item.saved ? ('・確認日: ' + String(item.saved)) : '';
+        /* 日時は「いつ確認した訳か」だけ分かればよい。秒まで出すと、
+           見比べたい原文・訳文より目立つ（2026-08-12）。 */
+        var saved = item.saved ? ('・' + String(item.saved).slice(0, 10) + ' 確認') : '';
         var deleteButton = item.kind === 'memory' ? '<button type="button" class="secondary-button" data-cat-tm-delete="' + esc(item.reference_id || '') + '" data-cat-index="' + index + '">この候補を今後は出さない</button>' : '';
         return '<article class="cat-candidate-card"><span class="cat-candidate-number">' + number + '</span>' + (number <= 9 ? '<span class="cat-candidate-shortcut"><kbd>Ctrl</kbd>+<kbd>' + number + '</kbd></span>' : '') + '<div class="cat-candidate-meta"><span class="cat-cand-tag">' + esc(label) + '</span><span>' + esc(material) + '</span>' + (location ? '<span>' + esc(location) + '</span>' : '') + (place ? '<span>' + esc(place) + '</span>' : '') + '</div>' +
           '<div><strong>原文</strong><p class="cat-cand-src">' + esc(item.source) + '</p></div><div><strong>訳文</strong><p class="cat-cand-tgt">' + esc(translation) + '</p></div>' +
-          '<p class="muted">' + esc(match + saved) + '。原文が似ているというだけです。訳文が正しいかは、ご自身でお確かめください。</p>' +
+          /* 「原文が似ているというだけです。訳文が正しいかは…」は消した。
+             見出しが「似ている過去の訳」で、入れるかどうかは押して決める。
+             読む人はそれを分かっている（2026-08-12、利用者の指摘）。 */
+          '<p class="muted">' + esc(match + saved) + '</p>' +
           '<div class="cat-row-actions"><button type="button" class="secondary-button" data-cat-insert="' + esc(translation) + '" data-cat-reference-id="' + esc(item.reference_id || '') + '" data-cat-project-id="' + esc(requestScope.id) + '" data-cat-index="' + index + '">' + number + ' この訳を挿入</button>' + deleteButton + '</div></article>';
       }).join('') : '<p class="muted">この行に似た訳は、まだ見つかりません。訳文を「確認済みにする」と、このパソコンに記録され、次の資料から自動で候補に出ます。</p>';
     }).catch(function () { if (seq === candidateSeq) { el('cat-candidate-count').textContent = '0'; el('cat-terms-list').innerHTML = '<p class="muted">用語を読み込めませんでした。行を選び直すと、もう一度探します。</p>'; el('cat-candidates-list').innerHTML = '<p class="muted">似た訳を読み込めませんでした。行を選び直すと、もう一度探します。</p>'; } });
