@@ -838,7 +838,7 @@ function New-YakuCatProjectFromQuickArtifact {
 
     $project = New-YakuCatTextProject -Root $Root -Text ([string]$Artifact.SourceText) -Settings $Settings `
         -Direction ([string]$Artifact.Direction) -Translation ([string]$Artifact.Translation) -Register $false
-    $project.FileName = 'ちょっと翻訳から引き継ぎ'
+    $project.FileName = 'その場で訳した文章'
     $project | Add-Member -NotePropertyName QuickArtifactId -NotePropertyValue ([string]$Artifact.Id) -Force
     $project | Add-Member -NotePropertyName DirectionBasis -NotePropertyValue 'inherited' -Force
     $project | Add-Member -NotePropertyName DirectionConfidence -NotePropertyValue ([string]$Artifact.DirectionConfidence) -Force

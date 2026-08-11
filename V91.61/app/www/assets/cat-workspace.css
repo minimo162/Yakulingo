@@ -42,7 +42,10 @@
    はみ出した下端を取り戻す手段が無くなる。 */
 @media (min-width: 1320px) {
   html, body.app-cat { height: 100%; }
-  body.app-cat { height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
+  /* 高さを窓に固定するのは、一覧が主役の確認作業のときだけ。画面を一つにして
+     「選ぶ」と「その場で訳す」が同じ body に同居したため、状態を見ずに固定すると
+     訳案や伏せた数値の一覧が窓の下で切れて、触る手段が無くなる。 */
+  body.app-cat[data-cat-view="workspace"] { height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
   .app-cat .shell { flex: 1; min-height: 0; display: flex; flex-direction: column; padding-bottom: 0; }
   .app-cat .hero { flex: 0 0 auto; }
   /* 51px の余白が、そのまま一覧の半行ぶんだった。 */
@@ -80,9 +83,17 @@
   background: var(--surface);
 }
 
-.cat-toolbar-document,
-.cat-toolbar-progress {
+/* 資料名は縮んでよい。末尾を … で省く作りにしてある（下の overflow 指定）。 */
+.cat-toolbar-document {
   min-width: 0;
+}
+
+/* 進捗は縮ませない。中身は折り返さない指定なのに min-width: 0 で枠より
+   小さくなれてしまい、行数が3桁（例: 0 / 200行を確認済み）になると隣の
+   検索欄の上へはみ出して重なった（実機、200行の作業で確認）。
+   省略する当てが無いものに min-width: 0 を付けない。 */
+.cat-toolbar-progress {
+  min-width: max-content;
 }
 
 /* 資料名と訳す向きは1行に並べる。別々の行にすると、器であるツールバーが
@@ -646,7 +657,7 @@
    従来どおりページが動くほうがよい。 */
 @media (min-width: 1320px) and (max-height: 620px) {
   html, body.app-cat { height: auto; }
-  body.app-cat { overflow: visible; display: block; }
+  body.app-cat[data-cat-view="workspace"] { overflow: visible; display: block; }
   .app-cat .shell,
   .app-cat .tab-panel,
   .app-cat #cat-workspace { display: block; }
@@ -766,11 +777,19 @@
 
 /* 押す前に見える位置に置く。警告ではないので色は付けない。ボタンの隣で、
    ボタンより弱く。 */
+/* ボタンと同じ列に置くと、この1文の幅がそのまま列幅の取り合いになる。実測
+   （窓 1380px、200行の作業）では列の合計が 1,460px となり、器の 1,348px を
+   112px 超えて「そのほか」が画面外へ出た。逆に潰させると幅 55px で5行に割れ、
+   ツールバーが3段になって一覧が 2.4 行消える。
+   2段目へ全幅で出せば、列幅を奪わずに1行で読める。固定の最小幅の合計は
+   1,248px に収まり、100px の余裕ができる（同条件の実測）。丈は 72→101px。 */
 .cat-copilot-usage {
+  grid-column: 1 / -1;
   align-self: center;
   color: var(--muted);
   font-size: var(--font-meta);
   text-align: right;
+  white-space: nowrap;
 }
 
 /* 「そのほか」に、めったに使わないものを寄せた（キーボード操作・登録した訳と

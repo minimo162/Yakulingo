@@ -5,10 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="yaku-session" content="__YAKU_SESSION_TOKEN__">
   <meta name="yaku-file-max-bytes" content="__YAKU_MAX_UPLOAD_BYTES__">
-  <title>資料翻訳 - YakuLingo</title>
+  <meta name="yaku-max-batch-chars" content="__YAKU_MAX_BATCH_CHARS__">
+  <title>翻訳 - YakuLingo</title>
   <link rel="stylesheet" href="/assets/styles.css">
   <link rel="stylesheet" href="/assets/cat-workspace.css">
   <script src="/assets/common.js" defer></script>
+  <script src="/assets/quick.js" defer></script>
   <script src="/assets/cat.js" defer></script>
 </head>
 <body class="app-cat">
@@ -27,25 +29,28 @@
     </svg>
   <main class="shell">
     <header class="hero">
-      <div class="brand-block"><a class="brand home-link" href="/">YakuLingo</a><span class="version-label">資料翻訳</span></div>
+      <div class="brand-block"><a class="brand home-link" href="/">YakuLingo</a><span class="version-label">翻訳</span></div>
       <div class="header-actions">
                 <div class="status-block"><div id="copilot-status" class="status" aria-live="polite"><span class="status-dot warn"></span><span>準備しています</span></div><p id="copilot-status-detail" class="status-detail" role="status" aria-live="polite" hidden></p></div>
       </div>
     </header>
 
     <section class="tab-panel" aria-labelledby="cat-page-title">
-      <div class="workspace-heading"><div><h1 id="cat-page-title">資料翻訳</h1><p class="muted">Word・Excelや長い文章を、途中保存しながら1文ずつ確認します。</p></div><a class="button secondary-button compact" href="/">最初の画面へ戻る</a></div>
+      <div class="workspace-heading"><div><h1 id="cat-page-title">翻訳</h1><p class="muted">その場で訳すか、Word・Excelや長い文章を1文ずつ確認します。</p></div><a class="button secondary-button compact" href="/">最初の画面へ戻る</a></div>
 
       <section id="cat-current-summary" class="sr-only" hidden aria-live="polite">
         <h2 id="cat-current-title"></h2><p id="cat-current-progress"></p><span id="cat-current-save">保存済み</span>
       </section>
 
       <section id="cat-picker" class="translate-form cat-picker" aria-labelledby="cat-start-title">
-        <h2 id="cat-start-title">新しい資料を始める</h2>
-        <p class="muted">まず、訳したいWordかExcelを取り込んでください。取り込んだあと、1文ずつ確認しながら進めます。</p>
+        <h2 id="cat-start-title">何を訳しますか</h2>
+        <!-- 「保存する／しない」で入口を分けない。初見の人は、訳案を見る前に
+             1文ずつ直したいかを決められない。まず訳し、訳案の下の
+             「1文ずつ確認して保存する」で移れるようにする（2026-08-11）。 -->
+        <p class="muted">訳したいものを選んでください。貼り付けた文章はまず訳案を作り、必要なら1文ずつ確認しながら仕上げられます。</p>
         <div class="entry-actions cat-entry-actions">
           <button type="button" data-cat-source-show="file">Word・Excelを取り込む</button>
-          <button type="button" class="secondary-button" data-cat-source-show="text">長い文章を貼り付ける</button>
+          <button type="button" class="secondary-button" id="cat-open-instant">文章を貼り付ける</button>
         </div>
         <div id="cat-resume" class="cat-resume" hidden><h3>保存した作業</h3><div id="cat-resume-list"></div></div>
         <details class="entry-more"><summary>そのほかの始め方</summary><div class="entry-more-actions">
@@ -81,6 +86,82 @@
         <p class="privacy-note">金額などの数値は、Copilotへ送る前に自動で伏せます。社名・人名・文章はそのまま送信されます。英訳の金額は社内表記で書きます（1兆3,150億円 → <code>13,150 oku</code>）。<code>billion</code> での表記には、いまは対応していません。</p>
       </section>
 
+      <!-- その場で訳す。保存しない状態。ここで作った文章と訳文はディスクへ書かず、
+           登録した訳語・過去訳・コーパスも使わない（決定_ちょっと翻訳と資料翻訳の分離 §3.2）。
+           保存したくなったら「1文ずつ確認して保存する」で、同じ画面の確認作業へ移る。 -->
+      <section id="cat-instant" class="cat-instant" hidden aria-labelledby="quick-title">
+        <form id="quick-form" class="translate-form">
+          <div class="section-title-row"><div>
+            <h2 id="quick-title">その場で訳す</h2>
+            <p class="muted">メール、Web、数文をすぐ訳します。この状態の文章と訳文は保存しません。登録した訳語もここでは使いません。用語をそろえたいときは、資料として取り込んでください。</p>
+            <p class="quick-notation-note">英訳の金額は<strong>社内表記</strong>で書きます。例: 1兆3,150億円 → <code>13,150 oku</code>、▲152億円 → <code>(152) oku</code>。<code>billion</code> での表記には、いまは対応していません。</p>
+          </div></div>
+          <p id="quick-selection-note" class="quick-selection-note" role="status" aria-live="polite" hidden></p>
+          <label for="quick-input" class="sr-only">訳したい文章</label>
+          <textarea id="quick-input" rows="10" placeholder="訳したい文章を入力" autocomplete="off"></textarea>
+          <div class="input-meta"><span id="quick-count">0字</span></div>
+          <!-- 1回の依頼に入る量を超えたときだけ出す。ここから先は、その場で訳す
+               状態には分けて送る仕組みが無い。 -->
+          <div id="quick-long-notice" class="quick-long-notice" role="status" hidden>
+            <p id="quick-long-text"></p>
+            <button type="button" id="quick-long-handoff">1文ずつ確認しながら進める</button>
+          </div>
+          <div class="privacy-note">金額などの数値は、Copilotへ送る前に自動で伏せます。社名・人名・文章はそのまま送信されます。</div>
+
+          <div id="quick-direction-summary" class="direction-summary" hidden>
+            <strong id="quick-direction-label"></strong>
+            <button id="quick-direction-change" type="button" class="secondary-button compact">訳す言語を変える</button>
+          </div>
+          <fieldset id="quick-direction-choice" class="direction-choice" hidden>
+            <legend>どちらに訳しますか？</legend>
+            <p id="quick-direction-help" class="muted">日本語と外国語が混ざっているため、自動で決められません。</p>
+            <div class="direction-choice-grid">
+              <button type="button" class="secondary-button direction-choice-button" data-quick-direction="to_en"><strong>英語に訳す</strong><span>日本語の文章を外国人向けにします</span></button>
+              <button type="button" class="secondary-button direction-choice-button" data-quick-direction="to_jp"><strong>日本語に訳す</strong><span>外国語の内容を日本語で確認します</span></button>
+            </div>
+          </fieldset>
+          <div class="command-bar"><button id="quick-submit" type="submit" disabled>文章を入力してください</button></div>
+        </form>
+
+        <section id="quick-job" class="result-target" aria-live="polite"></section>
+        <section id="quick-result" class="quick-result" aria-labelledby="quick-result-title" hidden>
+          <div class="result-card">
+            <div class="result-card-header"><div><span class="eyebrow">訳案</span><h3 id="quick-result-title"></h3></div></div>
+            <pre id="quick-result-text" class="translation"></pre><p id="quick-notation-hint" class="quick-notation-note" hidden>金額は社内表記（<code>oku</code>）で書いています。社外へそのまま出す場合は、書き方をご確認ください。</p>
+            <div class="result-actions">
+              <button id="quick-copy" type="button">コピー</button>
+              <button id="quick-revise-open" type="button" class="secondary-button" aria-expanded="false" aria-controls="quick-revise-form">この訳案を直す</button>
+              <button id="quick-promote" type="button" class="secondary-button">1文ずつ確認して保存する（あとから開けます）</button>
+            </div>
+            <form id="quick-revise-form" class="quick-revise-panel" hidden>
+              <div>
+                <h4>訳案の表現を直す</h4>
+                <p class="muted">直したい表現をCopilotに伝えます。原文の内容や数値を変えないよう依頼し、数値はアプリでも確認します。結果はご自身で確認してください。</p>
+              </div>
+              <label for="quick-revise-instruction">どこを、どう変えますか？</label>
+              <textarea id="quick-revise-instruction" rows="3" maxlength="300" placeholder="例：「Thank you for contacting me.」を「Thank you for your email.」に変える"></textarea>
+              <div class="result-actions">
+                <button id="quick-revise-submit" type="submit">この指示で訳案を直す</button>
+                <button id="quick-revise-cancel" type="button" class="secondary-button">やめる</button>
+              </div>
+            </form>
+            <p id="quick-revise-status" class="muted" role="status" aria-live="polite"></p>
+            <p id="quick-result-note" class="muted"></p>
+            <div id="quick-mask-summary" class="privacy-note mask-summary" hidden>
+              <p class="mask-summary-line"><strong id="quick-mask-count"></strong>を伏せてCopilotへ送り、訳案では元の数値に戻しました。</p>
+              <details id="quick-mask-detail" class="mask-detail" hidden>
+                <summary>伏せた数値を確かめる</summary>
+                <ul id="quick-mask-list" class="mask-list"></ul>
+                <p class="mask-detail-note">この一覧はこのパソコンの中だけで作っています。Copilotへは記号で送りました。</p>
+              </details>
+            </div>
+            <p id="quick-copy-status" class="muted" role="status" aria-live="polite"></p>
+            <textarea id="quick-copy-fallback" class="quick-copy-fallback" readonly hidden aria-label="コピー用の訳文"></textarea>
+          </div>
+        </section>
+        <p><button type="button" id="quick-back" class="button secondary-button">ほかの訳し方を選ぶ</button></p>
+      </section>
+
       <section id="cat-workspace" class="cat-workspace" hidden>
         <header id="cat-editor-toolbar" class="cat-editor-toolbar">
           <div class="cat-toolbar-document">
@@ -93,7 +174,7 @@
             <span id="cat-save-status" class="cat-save-status" role="status" aria-live="polite">保存済み</span>
           </div>
           <label class="cat-toolbar-search" for="cat-search"><span>検索</span><input id="cat-search" type="search" placeholder="原文・訳文を検索"></label>
-          <div id="cat-actions" class="cat-actions"><span id="cat-copilot-usage" class="cat-copilot-usage" role="status" aria-live="polite" hidden></span><button id="cat-translate" type="button">残りの訳案を作る</button><button id="cat-export" type="button" class="secondary-button">訳文を取り出す（確認画面が出ます）</button><details class="cat-more-actions"><summary>そのほか</summary><div class="cat-more-actions-list"><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みの行だけコピー</button><button id="cat-switch-project" type="button" class="secondary-button">ほかの資料に切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>右の候補を上から順に訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や右側から訳文欄へ戻る</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
+          <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">残りの訳案を作る</button><button id="cat-export" type="button" class="secondary-button">訳文を取り出す（確認画面が出ます）</button><details class="cat-more-actions"><summary>そのほか</summary><div class="cat-more-actions-list"><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みの行だけコピー</button><button id="cat-switch-project" type="button" class="secondary-button">ほかの資料に切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>右の候補を上から順に訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や右側から訳文欄へ戻る</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
           <section aria-labelledby="cat-personal-glossary-title">
             <h3 id="cat-personal-glossary-title">今後の資料でも使うと登録した訳</h3>
             <p class="muted">ここにあるものは、これからのすべての資料で自動的に使われます。間違えて登録したものは取り消せます。取り消しても、すでに訳した文章はそのまま残ります。</p>
@@ -105,6 +186,10 @@
             <button id="cat-delete" type="button" class="danger-button">この作業を削除</button>
           </section>
         </details></div></details></div>
+          <!-- 使う量の1文は、ボタンと同じ列に入れると列幅を奪い、行数が3桁の
+               作業（例: 200行）でツールバーが横にあふれて「そのほか」が画面外へ
+               出た。ツールバーの2段目に全幅で置き、列幅を一切奪わせない。 -->
+          <span id="cat-copilot-usage" class="cat-copilot-usage" role="status" aria-live="polite" hidden></span>
         </header>
 
         <div id="cat-status" class="cat-status muted" role="status" aria-live="polite" tabindex="-1"></div>

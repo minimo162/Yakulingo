@@ -35,9 +35,12 @@ Assert-YakuDesktopShell ((([regex]::Matches($text, 'Clipboard\.GetText')).Count 
 Assert-YakuDesktopShell ($text -notmatch 'Clipboard\.SetText|Clipboard\.SetDataObject') 'shell must not write the clipboard (no restore attempt)'
 Assert-YakuDesktopShell ($text -match 'name == "OpusApp" \|\| name == "XLMAIN"[\s\S]{0,400}?return;[\s\S]{0,200}?CopySelectionFromForeground\(\)') 'Office must be read by COM without a synthetic copy'
 Assert-YakuDesktopShell ($text -match 'private void SendCtrlC\(\)\s*\{\s*ReleaseHotkeyModifiers\(\);') 'held Ctrl+Alt must be released before the synthetic copy'
-# webView.Source は Navigate を始めた瞬間に新しい URL になる。まだ読み込みが
-# 終わっていない画面あてに選択を投げると、選択が消える。
-Assert-YakuDesktopShell ($text -match 'loadedPath\.Equals\("/quick"' -and $text -match 'loadedPath = webView\.Source\.AbsolutePath') 'office selection must be delivered to the loaded document, not the pending URL'
+# webView.Source は行き先の判定に使えない。Navigate を始めた瞬間に新しい URL へ
+# 変わるうえ、画面自身が history.replaceState で書き換える（cat.js は /quick で
+# 開いてもアドレスを /cat へ直す）。どちらも実機で選択が黙って消える形で出た。
+Assert-YakuDesktopShell ($text -match 'loadedPath\.Equals\("/quick"' -and $text -match 'loadedPath = String\.IsNullOrEmpty\(navigatingPath\)') 'the delivery target must come from the navigation we asked for, not the page URL'
+Assert-YakuDesktopShell ($text -match 'navigatingPath = uri\.AbsolutePath' -and $text -match 'Uri\.Equals\(webView\.Source, target\)\) loadedPath = ""') 'requesting a navigation must immediately invalidate the current screen'
+Assert-YakuDesktopShell ($text -notmatch 'webView\.Source\.AbsolutePath\.Equals\("/quick"') 'the outgoing page URL must not gate delivery'
 Assert-YakuDesktopShell ($text -match 'IsTrustedOrigin' -and $text -match 'e\.Cancel = true') 'non-loopback navigation must be blocked'
 Assert-YakuDesktopShell ($text -match 'AreDevToolsEnabled = false' -and $text -match 'AreDefaultContextMenusEnabled = false') 'WebView2 developer surfaces must be disabled'
 Assert-YakuDesktopShell ($text -match 'desktop-preferences-changed' -and $text -match 'message\.Count != 1') 'WebMessage input must use an exact metadata-only shape'

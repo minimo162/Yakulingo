@@ -816,7 +816,7 @@ Write-Host 'CASE 23: 社内表記への換算を画面に明示する' -Foregrou
 # billion を期待した人が、黙って 13,150 oku を受け取ると混乱する。
 # billion は Settings.ps1 で意図的に選べない（換算コードが無く 10 倍の誤りになる）。
 # 選べない以上、いま何をしているかは画面に書くほかない。
-$quickPageSrc = [IO.File]::ReadAllText((Join-Path $root 'www/quick.html'))
+$quickPageSrc = [IO.File]::ReadAllText((Join-Path $root 'www/cat.html'))
 $quickJsSrc = [IO.File]::ReadAllText((Join-Path $root 'www/assets/quick.js'))
 $catPageSrc = [IO.File]::ReadAllText((Join-Path $root 'www/cat.html'))
 $settingsSrc = [IO.File]::ReadAllText((Join-Path $root 'src/Settings.ps1'))

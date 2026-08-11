@@ -13,12 +13,31 @@
 
   /* 昇格ボタンの文言は1つだけ。失敗して戻したときに別の名前へ化けると、
      同じボタンが2つの操作に見える。 */
-  var PROMOTE_LABEL = 'この訳を資料翻訳へ移す（ここから先は保存され、あとから開けます）';
+  var PROMOTE_LABEL = '1文ずつ確認して保存する（あとから開けます）';
+
+  /* 1回の依頼に入る文字数。サーバの設定（max_chars_per_batch_file）そのもので、
+     確認作業が分割の境目に使っているのと同じ値。ここを超える文章は、その場で
+     訳す状態では分けて送れない（上限超過での再依頼もしない）ので、1文ずつ
+     確認する側を勧める。画面側で別の数字を決めない。 */
+  function maxBatchChars() {
+    var node = document.querySelector('meta[name="yaku-max-batch-chars"]');
+    var value = node ? Number(node.getAttribute('content')) : 0;
+    return value > 0 ? value : 3000;
+  }
 
   function el(id) { return document.getElementById(id); }
   function update() {
     var text = el('quick-input').value;
-    el('quick-count').textContent = Array.from(text).length.toLocaleString('ja-JP') + '字';
+    var length = Array.from(text).length;
+    el('quick-count').textContent = length.toLocaleString('ja-JP') + '字';
+    var notice = el('quick-long-notice');
+    if (notice) {
+      var limit = maxBatchChars();
+      notice.hidden = length <= limit;
+      if (length > limit) {
+        el('quick-long-text').textContent = '1回で送れるのは ' + limit.toLocaleString('ja-JP') + '字 までです。この文章は ' + length.toLocaleString('ja-JP') + '字 あるので、分けて送りながら1文ずつ確認するほうが確実です。';
+      }
+    }
     el('quick-direction-summary').hidden = !text.trim() || !explicitDirection;
     el('quick-direction-choice').hidden = true;
     if (explicitDirection) el('quick-direction-label').textContent = explicitDirection === 'to_en' ? '英語に訳します' : '日本語に訳します';
@@ -70,7 +89,7 @@
       (elapsed ? '<br><span class="job-elapsed">' + esc(elapsed) + '</span>' : '') + '</div>' +
       (jobId ? '<button type="button" class="secondary-button job-cancel" data-yaku-cancel-job="' + esc(jobId) + '">翻訳をやめる</button>' : '') +
       '</div></div></div>';
-    document.title = percent > 0 ? percent + '% 翻訳中 - ちょっと翻訳 - YakuLingo' : 'ちょっと翻訳 - YakuLingo';
+    document.title = percent > 0 ? percent + '% 翻訳中 - 翻訳 - YakuLingo' : '翻訳 - YakuLingo';
   }
 
   function finish(data) {
@@ -81,8 +100,8 @@
     busy = false;
     activeJobId = '';
     el('quick-job').innerHTML = '';
-    document.title = '✔ 訳案ができました - ちょっと翻訳 - YakuLingo';
-    window.setTimeout(function () { document.title = 'ちょっと翻訳 - YakuLingo'; }, 8000);
+    document.title = '✔ 訳案ができました - 翻訳 - YakuLingo';
+    window.setTimeout(function () { document.title = '翻訳 - YakuLingo'; }, 8000);
     if (!sourceStillMatches) {
       artifact = null;
       el('quick-result').hidden = true;
@@ -95,7 +114,7 @@
     var toEnglish = artifact.direction === 'to_en';
     el('quick-result-title').textContent = toEnglish ? '英語の訳案（未確認）' : '日本語の訳案（内容確認用）';
     el('quick-result-text').textContent = artifact.translation;
-    el('quick-result-note').textContent = toEnglish ? '外部へ配布する資料に使う場合は、資料翻訳で1文ずつ確認してください。' : '内容確認用の訳案です。';
+    el('quick-result-note').textContent = toEnglish ? '外部へ配布する資料に使う場合は、1文ずつ確認して保存してからお使いください。' : '内容確認用の訳案です。';
     /* 金額を社内表記（oku）へ換算しているのに、画面がそれを言っていなかった。
        「メール、Web、数文を訳す」という看板から billion を期待した人が混乱する。
        和訳では換算が起きないので出さない。 */
@@ -154,7 +173,7 @@
       if (data.mode === 'cancelled') {
         revisionInFlight = false; activeSourceSnapshot = ''; busy = false; activeJobId = ''; update();
         el('quick-job').innerHTML = '';
-        document.title = 'ちょっと翻訳 - YakuLingo';
+        document.title = '翻訳 - YakuLingo';
         el('quick-revise-status').textContent = '';
         el('quick-copy-status').textContent = '翻訳をやめました。もう一度「訳案を作る」を押せば、やり直せます。';
         return;
@@ -214,6 +233,9 @@
      いても利用者が気づけない。 */
   function applyOfficeSelection(windowClass, hwnd) {
     if (!windowClass) return;
+    /* Ctrl+Alt+J は「その場で訳す」へ着地させる。取り込んで1文ずつ確認したく
+       なったら、訳したあとに移れる。 */
+    show();
     var note = el('quick-selection-note');
     YakuCommon.post('/api/quick/selection', { window_class: windowClass, foreground_hwnd: hwnd }).then(function (data) {
       var kind = String(data && data.kind || 'none');
@@ -228,8 +250,11 @@
             : ('Word「' + (data.document_name || '') + '」で選んでいた ' + (data.char_count || 0) + ' 文字を読み込みました。');
           note.hidden = false;
         }
-        /* 送信はしない。Enter を1回押して送る。押す前に何を送るかが見えている。 */
-        YakuCommon.focus(el('quick-submit'));
+        /* 送信はしない。押す前に何を送るかが見えている必要がある。ボタンへ
+           scrollIntoView すると、小さい窓では「どこから読んだか」の1行と本文が
+           上へ流れて見えなくなった（実機で確認）。焦点だけ移し、画面は先頭に置く。 */
+        el('quick-submit').focus({ preventScroll: true });
+        window.scrollTo(0, 0);
         return;
       }
       if (!note) return;
@@ -245,7 +270,32 @@
     });
   }
 
+  /* 画面は一つで、状態が三つある（選ぶ／その場で訳す／1文ずつ確認）。
+     状態の出し入れは cat.js が持ち、ここは自分の状態の中身だけを持つ。
+     器の高さ固定（cat-workspace.css）は確認作業のときだけ効かせたいので、
+     いま何の状態かを body に書く。 */
+  function show() {
+    var host = el('cat-instant');
+    if (!host || !host.hidden) { if (host) YakuCommon.focus(el('quick-input')); return; }
+    window.dispatchEvent(new CustomEvent('yaku-instant-open'));
+    host.hidden = false;
+    document.body.setAttribute('data-cat-view', 'instant');
+    update();
+    /* scrollIntoView は使わない。入力欄を画面の中央へ寄せるため、上の見出しと
+       状態表示が窓の外へ出てしまう（実機で確認）。ここは最初から見えている。 */
+    el('quick-input').focus();
+    window.scrollTo(0, 0);
+  }
+
+  function hide() {
+    var host = el('cat-instant');
+    if (host) host.hidden = true;
+  }
+
+  function isBusy() { return busy; }
+
   function start() {
+    if (!el('quick-form')) return;
     YakuCommon.start();
     if (YakuCommon.onOfficeSelection) YakuCommon.onOfficeSelection(applyOfficeSelection);
     YakuCommon.onReady(function (value) { ready = value; update(); submitPendingWhenReady(); });
@@ -322,7 +372,16 @@
       event.preventDefault();
       form.requestSubmit();
     });
-    update(); el('quick-input').focus();
+    el('quick-long-handoff').addEventListener('click', function () {
+      if (busy) return;
+      window.dispatchEvent(new CustomEvent('yaku-instant-handoff', { detail: { text: el('quick-input').value } }));
+    });
+    el('quick-back').addEventListener('click', function () {
+      if (busy) { showError('翻訳しているあいだは移動できません。「翻訳をやめる」を押すか、終わるまでお待ちください。'); return; }
+      window.dispatchEvent(new CustomEvent('yaku-instant-close'));
+    });
+    update();
   }
+  window.YakuInstant = { show: show, hide: hide, isBusy: isBusy };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();

@@ -114,5 +114,4 @@ www/assets/tutorial.css	lf
 www/assets/tutorial.js	lf
 www/cat.html	lf
 www/index.html	crlf
-www/quick.html	lf
 www/tutorial.html	lf

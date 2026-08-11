@@ -46,7 +46,7 @@ $catProjectPath = Join-Path $srcRoot 'CatProject.ps1'
 $translationMemoryPath = Join-Path $srcRoot 'TranslationMemory.ps1'
 $htmlPath = Join-Path $srcRoot 'Html.ps1'
 $landingPath = Join-Path $wwwRoot 'index.html'
-$quickPagePath = Join-Path $wwwRoot 'quick.html'
+$quickPagePath = Join-Path $wwwRoot 'cat.html'
 $catPagePath = Join-Path $wwwRoot 'cat.html'
 $assetsRoot = Join-Path $wwwRoot 'assets'
 $homeClientPath = Join-Path $assetsRoot 'home.js'
@@ -75,12 +75,17 @@ Check-YakuDual (($server -split '\[System\.Net\.HttpListener\]::new\(\)').Count 
 Check-YakuDual ($server -match '(?i)[\x22\x27]?/quick[\x22\x27]?' -and $server -match '(?i)[\x22\x27]?/cat[\x22\x27]?') 'server exposes /quick and /cat from the same launch'
 Check-YakuDual ($landing -match '(?i)href\s*=\s*[\x22\x27][^\x22\x27]*/quick[\x22\x27]' -and $landing -match '(?i)href\s*=\s*[\x22\x27][^\x22\x27]*/cat[\x22\x27]') 'large landing links to /quick and /cat'
 Check-YakuDual ($landing -notmatch 'id\s*=\s*[\x22\x27](?:text-form|cat-open-button)[\x22\x27]') 'landing contains no translator DOM'
-Check-YakuDual (Test-Path -LiteralPath $quickPagePath -PathType Leaf) 'dedicated Quick page exists'
-Check-YakuDual (Test-Path -LiteralPath $catPagePath -PathType Leaf) 'dedicated CAT page exists'
-Check-YakuDual ($quickPage -match '<body[^>]+class\s*=\s*[\x22\x27][^\x22\x27]*app-quick' -and $quickPage -match 'id\s*=\s*[\x22\x27]quick-form[\x22\x27]') 'Quick page declares only the Quick experience'
-Check-YakuDual ($quickPage -notmatch 'id\s*=\s*[\x22\x27](?:panel-cat|cat-open-button|cat-grid)[\x22\x27]') 'Quick DOM has no CAT controls'
-Check-YakuDual ($catPage -match '<body[^>]+class\s*=\s*[\x22\x27][^\x22\x27]*app-cat' -and $catPage -match 'id\s*=\s*[\x22\x27]cat-picker[\x22\x27]') 'CAT page declares only the CAT experience'
-Check-YakuDual ($catPage -notmatch 'id\s*=\s*[\x22\x27](?:panel-text|text-form|input-text)[\x22\x27]') 'CAT DOM has no Quick controls'
+# 2026-08-11 に利用者判断で画面を一つにした（「画面を一つにするのでokです」）。
+# 分かれているのは DOM ではなく状態になったので、検査もそちらへ移す。守るべき
+# ものは変わらない: その場で訳す状態は保存しない、確認作業と同時には出ない、
+# /quick から来ても同じ画面が出る。
+Check-YakuDual (-not (Test-Path -LiteralPath (Join-Path $wwwRoot 'quick.html'))) 'the separate Quick page is gone'
+Check-YakuDual (Test-Path -LiteralPath $catPagePath -PathType Leaf) 'the single translation page exists'
+Check-YakuDual ($catPage -match '<body[^>]+class\s*=\s*[\x22\x27][^\x22\x27]*app-cat') 'the single page keeps one body class'
+Check-YakuDual ($catPage -match 'id\s*=\s*[\x22\x27]cat-picker[\x22\x27]' -and $catPage -match 'id\s*=\s*[\x22\x27]cat-instant[\x22\x27]' -and $catPage -match 'id\s*=\s*[\x22\x27]cat-workspace[\x22\x27]') 'the single page holds all three states'
+Check-YakuDual ($catPage -match 'id="cat-instant"[^>]*\shidden') 'the instant state starts hidden'
+Check-YakuDual ($catClient -match 'yaku-instant-open' -and $catClient -match "el\('cat-picker'\)\.hidden = true; el\('cat-workspace'\)\.hidden = true") 'opening the instant state hides the other two'
+Check-YakuDual ($catClient -match "hideInstant\(\); setView\('workspace'\)" -and $catClient -match "hideInstant\(\); setView\('picker'\)") 'the other two states hide the instant state'
 Check-YakuDual ($quickClient -notmatch '/api/cat/(?!promote)' -and $catClient -notmatch '/api/quick/') 'active clients cannot call the other experience API'
 
 Write-Host 'Load production helpers for dynamic contracts' -ForegroundColor Cyan
@@ -163,6 +168,13 @@ Check-YakuDual ($catClient -match 'function redrawAfterFlush\(\)[\s\S]*?return f
 Write-Host 'CAT H1 focused workspace contract' -ForegroundColor Cyan
 Check-YakuDual ($catPage -match 'cat-workspace\.css' -and $catPage -match 'id="cat-editor-toolbar"' -and $catPage -match 'id="cat-nav-pane"' -and $catPage -match 'id="cat-editor-pane"' -and $catPage -match 'id="cat-inspector-pane"') 'CAT uses one WebView workspace with sticky toolbar and three named regions'
 Check-YakuDual ($catWorkspaceStyle -match '(?s)\.cat-editor-toolbar\s*\{[^}]*position:\s*sticky' -and $catWorkspaceStyle -match 'grid-template-columns:\s*var\(--pane-nav\)\s+minmax\(0,\s*1fr\)\s+var\(--pane-inspector\)' -and $catWorkspaceStyle -match '--pane-nav:\s*clamp\(' -and $catWorkspaceStyle -match '--pane-inspector:\s*clamp\(') 'desktop CAT workspace has the approved sticky three-region layout'
+# ツールバーは行数が3桁（200行など）になっても壊れてはいけない。実測（窓1380px）で
+# 2つの壊れ方を踏んだ。1つは進捗が min-width: 0 で枠より小さくなり検索欄の上へ
+# 重なる。もう1つは使う量の1文がボタンと同じ列で幅を奪い、列の合計が 1,460px と
+# なって「そのほか」が画面外へ出る。どちらも「省略する当てが無いものを潰した」形。
+Check-YakuDual ($catWorkspaceStyle -match '(?s)\.cat-toolbar-progress\s*\{[^}]*min-width:\s*max-content') 'toolbar progress must not be squeezed below its own text'
+Check-YakuDual ($catWorkspaceStyle -notmatch '(?s)\.cat-toolbar-document,\s*\r?\n?\.cat-toolbar-progress\s*\{[^}]*min-width:\s*0') 'the shrink rule must not be shared with the progress cell'
+Check-YakuDual ($catWorkspaceStyle -match '(?s)\.cat-copilot-usage\s*\{[^}]*grid-column:\s*1 / -1' -and $catPage -match '(?s)</div>\s*(<!--[\s\S]*?-->\s*)?<span id="cat-copilot-usage"[\s\S]*?</header>') 'the usage note must sit on its own toolbar row instead of competing for column width'
 Check-YakuDual ($catClient -match "activeSegmentId\s*=\s*''" -and $catClient -match 'data-cat-segment-id' -and $catClient -match 'String\(segment\.segment_id') 'active row survives redraws by stable segment_id'
 Check-YakuDual ($catClient -match "esc\(segment\.location \|\| '本文'\)" -and $catClient -match 'function locationGroup\(segment\)') 'rows display the actual source location and navigation groups it locally'
 Check-YakuDual ($catClient -match 'cat-candidate-number' -and $catClient -match 'itemIndex \+ 1' -and $catClient -match 'data-cat-reference-id') 'numbered candidate controls preserve explicit reference insertion'

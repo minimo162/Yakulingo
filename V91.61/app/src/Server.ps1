@@ -274,7 +274,7 @@ function Get-YakuTranslateReadinessState {
             # 実行中はボタンを押せない。ここで Copilot のバッジ（準備完了なら「使えます」）を
             # そのまま返していたので、画面には緑の「使えます」が出たまま操作だけが死んでいた。
             # 押せない理由そのものをバッジに出す。
-            $busyLabel = if ($kind -eq 'quick') { 'ちょっと翻訳を実行中' } elseif ($kind -eq 'cat' -or $kind -eq 'file') { '資料翻訳を実行中' } else { 'ほかの翻訳を実行中' }
+            $busyLabel = if ($kind -eq 'quick') { 'その場の翻訳を実行中' } elseif ($kind -eq 'cat' -or $kind -eq 'file') { '資料の翻訳を実行中' } else { 'ほかの翻訳を実行中' }
             return [pscustomobject]@{ ready=$ready; canTranslate=$false; mode='working'; label=$busyLabel; class='warn'; detail=$detail; updated_at=(Get-Date).ToString('s'); jobId=$jobId; progress=$progress; kind=$kind; phase=$phase; jobLabel=[string]$job['label'] }
         }
         if ($jobMode -eq 'done' -or $jobMode -eq 'completed_with_warnings') {
@@ -1834,7 +1834,7 @@ function Serve-YakuStaticFile {
 function Serve-YakuAppPage {
     param(
         [Parameter(Mandatory=$true)]$Context,
-        [Parameter(Mandatory=$true)][ValidateSet('index.html','quick.html','cat.html','tutorial.html')][string]$PageName
+        [Parameter(Mandatory=$true)][ValidateSet('index.html','cat.html','tutorial.html')][string]$PageName
     )
     $path = Join-Path (Join-Path $script:YakuRoot 'www') $PageName
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -1846,6 +1846,10 @@ function Serve-YakuAppPage {
     $maxBytes = Get-YakuFileUploadBodyLimitBytes -Settings $settings
     $html = $html.Replace('__YAKU_SESSION_TOKEN__', (ConvertTo-YakuHtml $script:YakuSessionToken))
     $html = $html.Replace('__YAKU_MAX_UPLOAD_BYTES__', [string]$maxBytes)
+    # 1回の依頼に入る文字数。これを超える文章は、確認作業なら分けて送れるが、
+    # その場で訳す状態には分ける仕組みが無い（上限超過での再依頼もしない）。
+    # 画面が「1文ずつ確認して始める」を勧める境目に使う。勝手な数字は置かない。
+    $html = $html.Replace('__YAKU_MAX_BATCH_CHARS__', [string](Get-YakuMaxCharsPerFileBatch -Settings $settings))
     Send-YakuTextResponse -Context $Context -Text $html -ContentType 'text/html; charset=utf-8'
 }
 
@@ -1905,11 +1909,10 @@ function Invoke-YakuRoute {
         }
         return
     }
-    if ($method -eq 'GET' -and $path -eq '/quick') {
-        Serve-YakuAppPage -Context $Context -PageName 'quick.html'
-        return
-    }
-    if ($method -eq 'GET' -and $path -eq '/cat') {
+    # 画面は一つ（2026-08-11 の利用者判断「画面を一つにするのでok」）。/quick は
+    # 同じ画面の「その場で訳す」状態として残す。Ctrl+Alt+J、外枠、開始画面、
+    # チュートリアルがこの経路を持っているため、消さずに同じページを返す。
+    if ($method -eq 'GET' -and ($path -eq '/quick' -or $path -eq '/cat')) {
         Serve-YakuAppPage -Context $Context -PageName 'cat.html'
         return
     }
