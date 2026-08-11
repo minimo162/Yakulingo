@@ -112,8 +112,18 @@
     return detail;
   }
 
+  /* 起動直後は Copilot を開くために Edge が前へ出て、アプリを覆う。準備が
+     終わった時点で1回だけ、こちらへ戻すよう外枠へ知らせる。以後の再確認では
+     知らせない（作業中に窓を奪い返されるほうが迷惑になる）。 */
+  var readyAnnounced = false;
+  var startedAt = Date.now();
+
   function announceReady(data) {
     ready = !!(data && data.canTranslate);
+    if (ready && !readyAnnounced) {
+      readyAnnounced = true;
+      if (Date.now() - startedAt < 180000) notifyDesktopShell('copilot-ready');
+    }
     setStatus(data && data.label ? data.label : (ready ? '使えます' : '準備しています'), data && data.class ? data.class : (ready ? 'ok' : 'warn'), readableDetail(data));
     readyListeners.forEach(function (listener) { try { listener(ready, data || {}); } catch (_) {} });
   }
@@ -163,7 +173,7 @@
   }
 
   function notifyDesktopShell(type) {
-    if (type !== 'desktop-preferences-changed' && type !== 'desktop-preferences-error' && type !== 'translation-finished') return;
+    if (type !== 'desktop-preferences-changed' && type !== 'desktop-preferences-error' && type !== 'translation-finished' && type !== 'copilot-ready') return;
     try {
       if (window.chrome && window.chrome.webview && typeof window.chrome.webview.postMessage === 'function') {
         window.chrome.webview.postMessage({ type: type });

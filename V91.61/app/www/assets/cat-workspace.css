@@ -315,9 +315,8 @@
 .cat-grid tbody tr.is-active {
   outline: 3px solid var(--accent);
   outline-offset: -3px;
-  /* 左端4pxは状態の帯が使う。ここに inset 6px を敷くと、いま作業している行だけ
-     状態が読めなくなっていた。「いまここ」の印は反対側へ回す。 */
-  box-shadow: inset -6px 0 0 0 var(--accent);
+  /* 印は outline と面の2つで足りる。3つ目を足しても強調は増えず、
+     左端の状態の帯と紛らわしくなるだけだった。 */
 }
 
 /* 主役の行だけ息をさせる。脇役は詰めて、一覧としての一望性を保つ。 */
@@ -451,7 +450,7 @@
   padding-bottom: 6px;
   border-bottom: 2px solid var(--line);
   font-size: 1rem;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .cat-candidates section:first-child .cat-candidates-title { margin-top: 0; }
@@ -506,7 +505,7 @@
   border-radius: 50%;
   background: var(--accent);
   color: #fff;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .cat-candidate-shortcut {
@@ -755,10 +754,8 @@
   text-underline-offset: 3px;
 }
 
-/* 1行おきに薄く色を変える。覚えることが増えず、横に目が滑るのを防ぐ。 */
-.cat-grid tbody tr:not(.is-active):nth-child(even) > td {
-  background: var(--surface-subtle);
-}
+/* 縞は廃止した。面を持つのは「いま開いている行」だけにする。半分の行が面を
+   持っていると、開いた行の面が「その行だけの印」として読めなくなる。 */
 
 /* 確認済みの行は、もう見なくてよい。番号と場所を一段沈める。
    （旧 [data-yaku-confirmed] は JS が出す属性名と食い違っていて効いていなかった） */
@@ -794,4 +791,28 @@
   width: min(760px, 92vw);
   max-height: 82vh;
   overflow: auto;
+}
+
+/* 開いている行は、上下に空きを置いて一覧から切り離す。差を「足す」のではなく
+   「離す」で付ける。実測で開いた行は一覧領域の64%を占めており、印を重ねるより
+   周囲を空けるほうが、どこを見ればよいかが伝わる。 */
+.cat-grid tbody tr.is-active > td:first-child { border-top-left-radius: var(--radius-control); border-bottom-left-radius: var(--radius-control); }
+.cat-grid tbody tr.is-active > td:last-child { border-top-right-radius: var(--radius-control); border-bottom-right-radius: var(--radius-control); }
+.cat-grid tbody tr.is-active > td { border-top: 8px solid var(--bg); border-bottom: 8px solid var(--bg); }
+
+/* 閉じた行は脇役。太字をやめ、色は状態の記号と左端の帯だけが持つ。
+   --muted は白地 7.0:1 で AA に十分。 */
+.cat-grid tbody tr:not(.is-active) .cat-state > span,
+.cat-grid tbody tr:not(.is-active) .cat-location-main { font-weight: 600; color: var(--muted); }
+
+/* 開いている行の主役は原文・訳文・確認の3つ。それ以外は畳んで、必要なときだけ開く。 */
+.cat-row-primary { margin-top: var(--space-1); }
+
+.cat-more-row > summary {
+  min-height: 2.5rem;
+  display: flex;
+  align-items: center;
+  margin-top: var(--space-1);
+  color: var(--muted);
+  font-size: var(--font-meta);
 }

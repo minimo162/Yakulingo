@@ -102,8 +102,35 @@ try {
 
     # W2: fire Edge before loading the large Copilot automation module so the
     # browser startup and SMB-backed dot-source happen in parallel.
+    #
+    # この先行起動が使うポートは、あとで Start-YakuCopilotEdge が選ぶポートと
+    # 一致していなければならない。一致しないと、先に出した窓が「古いプロセス」
+    # として消され、別ポートで開き直される。利用者には「Edgeが出て、消えて、
+    # また出る」と見える。
+    #
+    # Start-YakuCopilotEdge は Get-YakuCdpPortCandidates を通し、前回使った
+    # ポート（runtime\cdp-port.json）を最優先する。設定値ではない。一度でも
+    # 別ポートへ切り替わると、キャッシュがそれを保持し続けるため、以後は毎回
+    # 「設定値で起動 → 消す → キャッシュのポートで起動」を繰り返す。
+    # 2026-08-11 に実測（設定 9433、キャッシュ 9434、毎回2回起動していた）。
+    #
+    # CopilotClient はまだ読み込んでいないので、同じ規則をここで最小限なぞる。
     $earlyLaunchSw = [System.Diagnostics.Stopwatch]::StartNew()
-    $earlyLaunch = Start-YakuEdgeLaunch -Port $port -DisplayMode ([string]$settings.browser_display_mode) -Url $copilotUrl -WindowSize ([string]$settings.edge_window_size) -NoWait
+    $earlyPort = $port
+    try {
+        $cachePath = Join-Path (Get-YakuSubDir 'runtime') 'cdp-port.json'
+        if (Test-Path -LiteralPath $cachePath -PathType Leaf) {
+            $cache = Get-Content -LiteralPath $cachePath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $cachedPort = [int]$cache.port
+            $expectedProfile = [System.IO.Path]::GetFullPath((Join-Path (Get-YakuDataDir) 'edge-profile'))
+            if ($cachedPort -ge 1024 -and $cachedPort -le 65535 -and
+                [string]::Equals([string]$cache.userDataDir, $expectedProfile, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $earlyPort = $cachedPort
+            }
+        }
+    } catch { $earlyPort = $port }
+    if ($earlyPort -ne $port) { Write-YakuEdgeLaunchLog "Speculative Edge launch follows the cached port. configured=$port cached=$earlyPort" 'INFO' }
+    $earlyLaunch = Start-YakuEdgeLaunch -Port $earlyPort -DisplayMode ([string]$settings.browser_display_mode) -Url $copilotUrl -WindowSize ([string]$settings.edge_window_size) -NoWait
     $earlyLaunchSw.Stop()
 
     $moduleLoadSw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -111,7 +138,7 @@ try {
     $moduleLoadSw.Stop()
     Write-YakuLog "Copilot warmup startup timings. early-edge-launch elapsedMs=$($earlyLaunchSw.ElapsedMilliseconds) copilot-module-load elapsedMs=$($moduleLoadSw.ElapsedMilliseconds) edgeStarted=$([bool]$earlyLaunch.Started) edgeAlreadyReachable=$([bool]$earlyLaunch.AlreadyReachable)" 'INFO'
 
-    $port = Start-YakuCopilotEdge -Port $port -DisplayMode ([string]$settings.browser_display_mode) -Url $copilotUrl -WindowSize ([string]$settings.edge_window_size)
+    $port = Start-YakuCopilotEdge -Port $earlyPort -DisplayMode ([string]$settings.browser_display_mode) -Url $copilotUrl -WindowSize ([string]$settings.edge_window_size)
     $null = Write-YakuWarmupStatus -Mode 'loading' -Label 'Copilotを準備しています' -Class 'warn' -Detail 'Copilotの入力欄が開くのを待っています。あと1〜2分ほどかかります。' -Ready $false
 
     while ((Get-Date) -lt $deadline) {
