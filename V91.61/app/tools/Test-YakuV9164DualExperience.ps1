@@ -100,7 +100,7 @@ Check-YakuDual ([bool]$decision.RequiresConfirmation -and [string]::IsNullOrWhit
 $simulatedTransportCalls = 0
 if (-not [bool]$decision.RequiresConfirmation) { $simulatedTransportCalls++ }
 Check-YakuDual ($simulatedTransportCalls -eq 0) 'low-confidence decision produces zero transport calls'
-$textRoute = Get-YakuDualSlice -Text $server -Start "if (`$method -eq 'POST' -and `$path -eq '/api/translate-text')" -End "if (`$method -eq 'POST' -and `$path.StartsWith('/api/cat/'))"
+$textRoute = Get-YakuDualSlice -Text $server -Start "if (`$method -eq 'POST' -and `$path -eq '/api/quick/jobs')" -End "if (`$method -eq 'POST' -and `$path -match '^/api/quick/artifacts/(...)/revisions`$')"
 $directionGateAt = $textRoute.IndexOf('RequiresConfirmation', [StringComparison]::Ordinal)
 $jobStartAt = $textRoute.IndexOf('Start-YakuTranslationJob', [StringComparison]::Ordinal)
 Check-YakuDual ($directionGateAt -ge 0 -and $jobStartAt -gt $directionGateAt) 'Quick route gates direction before starting a job'
@@ -114,7 +114,7 @@ $quickArtifactSource = Read-YakuDualText $quickArtifactPath
 Check-YakuDual ($quickArtifactSource -match '\$script:YakuQuickArtifacts|ConcurrentDictionary|Synchronized') 'QuickArtifact uses an in-memory store'
 Check-YakuDual ($quickArtifactSource -match 'ExpiresAt|TtlSeconds|TTL') 'QuickArtifact has an explicit TTL'
 Check-YakuDual ($quickArtifactSource -notmatch '(?i)WriteAllText|WriteAllLines|Set-Content|Add-Content|Out-File|Write-Yaku(?:Json|Text)Atomic|Save-YakuQuickArtifact') 'QuickArtifact has no disk writer'
-Check-YakuDual ($translationSource -match 'DisableCache|CachePolicy' -and $server -match '(?s)/api/translate-text.*?(?:DisableCache|CachePolicy)') 'Quick translation explicitly disables content cache'
+Check-YakuDual ($translationSource -match 'DisableCache|CachePolicy' -and $server -match '(?s)/api/quick/jobs.*?(?:DisableCache|CachePolicy)') 'Quick translation explicitly disables content cache'
 Check-YakuDual ($server -match 'if \(\$Kind -(?:eq ''quick''|in @\(''quick'',''quick_revise''\))\)[\s\S]{0,700}Add-Member -NotePropertyName ''diagnostics_level'' -NotePropertyValue ''standard''[\s\S]{0,300}full_text_diagnostics_enabled'' -NotePropertyValue \$false[\s\S]{0,300}YakuFullTextDiagnosticsEnabled = \$false') 'Quick and Quick revision override the settings object and content diagnostics even when the user setting is full'
 $quickDiagnosticSettings = [pscustomobject]@{ diagnostics_level='full'; full_text_diagnostics_enabled=$true }
 $quickDiagnosticSettings | Add-Member -NotePropertyName 'diagnostics_level' -NotePropertyValue 'standard' -Force
