@@ -12,6 +12,26 @@ $null=New-Item -ItemType Directory -Path $tempRoot -Force
 function Get-YakuCatProjectStoreDir { return (Join-Path $tempRoot 'cat') }
 function Add-YakuTranslationMemoryEntry { return [pscustomobject]@{Added=$true;Reason='test'} }
 
+function New-TestDocxParagraph {
+    # 段落ひとつだけの docx。run の書式だけを変えて試すために使う。
+    param([string]$Path,[string]$RunsXml)
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $stream=[IO.File]::Open($Path,[IO.FileMode]::CreateNew,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+    $zip=New-Object IO.Compression.ZipArchive($stream,[IO.Compression.ZipArchiveMode]::Create,$false)
+    try {
+        $parts=[ordered]@{
+            '[Content_Types].xml'='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'
+            '_rels/.rels'='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>'
+            'word/document.xml'='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p>'+$RunsXml+'</w:p><w:sectPr/></w:body></w:document>'
+        }
+        foreach($name in $parts.Keys){
+            $entry=$zip.CreateEntry($name,[IO.Compression.CompressionLevel]::Optimal)
+            $writer=New-Object IO.StreamWriter($entry.Open(),(New-Object Text.UTF8Encoding($false)))
+            try{$writer.Write([string]$parts[$name])}finally{$writer.Dispose()}
+        }
+    } finally {$zip.Dispose();$stream.Dispose()}
+}
+
 function New-TestDocx {
     param([string]$Path,[switch]$Complex)
     Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -78,6 +98,20 @@ try {
     $restartOutput=Join-Path $tempRoot 'DRAFT_quarter_restart.docx'
     $restartResult=Export-YakuCatProject -Project $restored -OutputPath $restartOutput -Settings $settings
     Check-YakuWord ((Test-Path -LiteralPath $restartOutput) -and $restartResult.Written -eq 2) 'restored Word project can still produce a verified DRAFT'
+
+    # 日本語を打つと Word は自動で w:rFonts の w:hint を付ける。hint は書式ではなく
+    # どのフォント表を当てるかの指定で、太さも大きさも色も変えない。これを別書式と
+    # 数えていたため、Word が作った普通の1段落の文書ですら DRAFT を出せなかった
+    # （2026-08-11、実機で判明）。ほんとうの書式差（太字）は今までどおり止める。
+    $hintDoc=Join-Path $tempRoot 'hint.docx'
+    New-TestDocxParagraph -Path $hintDoc -RunsXml '<w:r><w:rPr><w:rFonts w:hint="eastAsia"/></w:rPr><w:t>当第</w:t></w:r><w:r><w:t>1四半期の売上高です。</w:t></w:r>'
+    $hintInv=Get-YakuWordDocumentInventory -Path $hintDoc
+    Check-YakuWord ([bool]$hintInv.DraftStructureEligible -and $hintInv.SupportedBlockCount -eq 1) 'a font hint alone is not treated as a different character format'
+
+    $boldDoc=Join-Path $tempRoot 'bold.docx'
+    New-TestDocxParagraph -Path $boldDoc -RunsXml '<w:r><w:rPr><w:b/></w:rPr><w:t>当第</w:t></w:r><w:r><w:t>1四半期の売上高です。</w:t></w:r>'
+    $boldInv=Get-YakuWordDocumentInventory -Path $boldDoc
+    Check-YakuWord (-not [bool]$boldInv.DraftStructureEligible -and @($boldInv.UnsupportedReasons).Count -gt 0) 'a real character format difference still fails closed'
 
     $complex=Join-Path $tempRoot 'complex.docx'; New-TestDocx -Path $complex -Complex
     $complexProject=New-YakuCatProject -Root $root -Path $complex -Settings $settings -Direction to_en

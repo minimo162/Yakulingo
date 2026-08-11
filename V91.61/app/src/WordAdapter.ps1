@@ -51,6 +51,33 @@ function Get-YakuWordParagraphText {
     return (@($Paragraph.SelectNodes('.//w:t', $Namespaces) | ForEach-Object { [string]$_.InnerText }) -join '')
 }
 
+function Get-YakuWordRunStyleKey {
+    <#
+      文字書式が同じかどうかを見るための鍵。rPr をそのまま比べると、
+      w:rFonts の w:hint だけが違う run を「別の書式」と数えてしまう。
+
+      hint は書式ではない。どの文字にどのフォント表（ascii / eastAsia）を
+      当てるかの指定で、太さも大きさも色も変えない。日本語を打つと Word が
+      自動で付けるため、日本語の文書ではほぼ必ず現れる。
+
+      実測（2026-08-11、Word が作った1段落の文書）:
+        run1 「当第」 rPr=<w:rFonts w:hint="eastAsia"/>
+        run2 「1四半期の売上高は…」 rPr=なし
+      この2つを別書式と数えたせいで DRAFT 出力が止まっていた。書き戻しは
+      段落の先頭 run へ本文をまとめて入れる作りなので、hint の違いは結果に
+      影響しない。ここだけを無視し、太字などほんとうの書式差は今までどおり止める。
+    #>
+    param([AllowNull()][Xml.XmlNode]$RunProperties)
+    if ($null -eq $RunProperties) { return '' }
+    $clone = $RunProperties.CloneNode($true)
+    foreach ($fonts in @($clone.SelectNodes('.//*[local-name()="rFonts"]'))) {
+        $null = $fonts.RemoveAttribute('hint','http://schemas.openxmlformats.org/wordprocessingml/2006/main')
+        if ($fonts.Attributes.Count -eq 0 -and $fonts.ChildNodes.Count -eq 0) { $null = $fonts.ParentNode.RemoveChild($fonts) }
+    }
+    if ($clone.ChildNodes.Count -eq 0 -and $clone.Attributes.Count -eq 0) { return '' }
+    return [string]$clone.OuterXml
+}
+
 function Get-YakuWordStructureHash {
     param([Parameter(Mandatory=$true)][Xml.XmlDocument]$Document)
     $copy = New-Object Xml.XmlDocument
@@ -108,7 +135,7 @@ function Get-YakuWordDocumentInventory {
             foreach ($textNode in @($p.SelectNodes('.//w:t', $ns))) {
                 $run = $textNode.SelectSingleNode('ancestor::w:r[1]', $ns)
                 $rPr = if ($run) { $run.SelectSingleNode('./w:rPr', $ns) } else { $null }
-                $runStyles.Add($(if ($rPr) { [string]$rPr.OuterXml } else { '' })) | Out-Null
+                $runStyles.Add((Get-YakuWordRunStyleKey -RunProperties $rPr)) | Out-Null
             }
             if (@($runStyles.ToArray() | Select-Object -Unique).Count -gt 1) {
                 $unsupported.Add(('段落内に複数の文字書式（段落 ' + $ordinal + '）')) | Out-Null
