@@ -226,7 +226,9 @@ $homeIndex = Get-Content -LiteralPath (Join-Path $root 'www\index.html') -Raw -E
 $quickIndex = $catIndex
 $quickClient = Get-Content -LiteralPath (Join-Path $root 'www\assets\quick.js') -Raw -Encoding UTF8
 $commonClient = Get-Content -LiteralPath (Join-Path $root 'www\assets\common.js') -Raw -Encoding UTF8
-Assert-Yaku -Condition (($catIndex + $catClient).Contains('確認済み訳文をコピー')) -Message 'CAT output must be presented as a reviewed translation list rather than legacy incomplete-file output'
+# 2026-08-12: 全行確認を条件から外したので、出口を「確認済み訳文」とは呼べない。
+# 呼び名ではなく、出せるものが訳文一覧であることを見る。
+Assert-Yaku -Condition (($catIndex + $catClient).Contains('訳文をコピー') -and -not ($catClient -match "'確認済み訳文をコピー'")) -Message 'CAT output must be offered as the translation list it actually is'
 
 $appJs = @(
     $commonClient

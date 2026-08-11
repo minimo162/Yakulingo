@@ -403,7 +403,7 @@
     var draft = isFile && !sourceMissing && (project.document_format !== 'docx' || wordReady);
     /* 読み上げにも同じ言い方を出す。ここだけ硬い言い方にしない。 */
     el('cat-output-help').textContent = draft ? '原本はそのままで、訳文を入れたコピーを作ります。名前と文書内に DRAFT が付きます。' : '';
-    el('cat-export').textContent = isFile ? (project.document_format === 'docx' && wordReady ? '訳文入りのWordを作る' : project.document_format === 'docx' ? '確認済み訳文をコピー' : '訳文入りのExcelを作る') : '確認済み訳文をコピー';
+    el('cat-export').textContent = isFile ? (project.document_format === 'docx' && wordReady ? '訳文入りのWordを作る' : project.document_format === 'docx' ? '訳文をコピー' : '訳文入りのExcelを作る') : '訳文をコピー';
     /* 出せない理由は、押す前の常時表示ではなく取り出しダイアログの点検で出す。
        常時 35px を占めながら、ほぼ always「あと N 行」としか言っていなかった。 */
     el('cat-export-blocked').textContent = '';
@@ -872,7 +872,7 @@
   function outputModeLabel(mode) {
     if (mode === 'word_draft') return '確認用Word DRAFTを作成します';
     if (mode === 'excel_draft') return '確認用Excel DRAFTを作成します';
-    if (mode === 'copy_text') return '確認済み訳文をコピーします';
+    if (mode === 'copy_text') return '訳文をまとめてコピーします';
     return '現在は出力できません';
   }
   /* 確認済みの行だけを取り出す。全行そろうまで成果ゼロ、という状態をなくすための経路。
@@ -940,7 +940,15 @@
       if (data.eligible && blockers.length) { warnings = warnings.concat(blockers); blockers = []; }
       el('cat-export-mode').textContent = outputModeLabel(mode);
       el('cat-export-name').textContent = data.output_name ? ('出力名: ' + data.output_name) : '';
-      el('cat-export-checks').innerHTML = blockers.map(function (item) { return '<div class="cat-preflight-item is-blocked">' + esc(item.message || item.code || 'いまはファイルを作れません。上に出ている項目をご確認ください。') + '</div>'; }).join('') + warnings.map(function (item) { return '<div class="cat-preflight-item">' + esc(item.message || item.code || item) + '</div>'; }).join('') + (!blockers.length ? '<div class="cat-preflight-item is-ready">確認済みの内容を出力できます。</div>' : '');
+      /* 「確認済みの内容を出力できます」とは言えなくなった。未確認の行を含んだまま
+         出せるので、残っている行数をそのまま出す（2026-08-12）。 */
+      var unconfirmed = Number(data.unconfirmed_count || 0);
+      var readyLine = !blockers.length
+        ? (unconfirmed > 0
+            ? '<div class="cat-preflight-item is-ready">いまの訳文でファイルを作れます。</div>'
+            : '<div class="cat-preflight-item is-ready">すべての行を確認し終えています。</div>')
+        : '';
+      el('cat-export-checks').innerHTML = blockers.map(function (item) { return '<div class="cat-preflight-item is-blocked">' + esc(item.message || item.code || 'いまはファイルを作れません。上に出ている項目をご確認ください。') + '</div>'; }).join('') + warnings.map(function (item) { return '<div class="cat-preflight-item">' + esc(item.message || item.code || item) + '</div>'; }).join('') + readyLine;
       el('cat-export-notice').textContent = data.draft_notice || '原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。';
       el('cat-export-notice').hidden = mode === 'copy_text' || mode === 'blocked';
       el('cat-export-confirm').disabled = !data.eligible || mode === 'blocked';

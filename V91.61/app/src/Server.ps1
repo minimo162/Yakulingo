@@ -3115,6 +3115,7 @@ function Invoke-YakuRoute {
                         eligible = [bool]$preflight.Eligible
                         mode = [string]$preflight.Mode
                         output_name = [string]$preflight.OutputName
+                        unconfirmed_count = [int]$preflight.UnconfirmedCount
                         blockers = @($preflight.Blockers)
                         warnings = @($preflight.Warnings)
                         draft_notice = [string]$preflight.DraftNotice

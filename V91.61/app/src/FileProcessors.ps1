@@ -3831,7 +3831,9 @@ function Write-YakuExcelTranslations {
                 } finally {
                     if ($null -ne $existingDraftName) { Release-YakuComObject $existingDraftName }
                 }
-                $draftName = $workbook.Names.Add('_YakuLingoArtifactStatus', '="DRAFT - reviewed translation work; not release approved"', $false)
+                # 「reviewed」とは書かない。未確認の行を含んだまま出せるように
+                # したので（2026-08-12）、確認し終えた成果物だと読める言い方は使えない。
+                $draftName = $workbook.Names.Add('_YakuLingoArtifactStatus', '="DRAFT - translation work in progress; not release approved"', $false)
                 if ($null -eq $draftName -or [bool]$draftName.Visible) { throw 'Hidden workbook marker was not created.' }
             } catch {
                 throw ('CAT_DRAFT_MARKER_FAILED: Excel内にDRAFT標識を記録できませんでした。' + $_.Exception.Message)
