@@ -1149,7 +1149,18 @@
        （本文をブラウザーから送るのは、もともと「長い文章を貼り付ける」が通って
        いた経路。訳文を送り返す promote とは別で、そちらは artifact ID だけ） */
     window.addEventListener('yaku-instant-handoff', function (event) {
-      var text = String(event && event.detail && event.detail.text || '');
+      var detail = (event && event.detail) || {};
+      /* Ctrl+Alt+J で読んだ選択の出どころ（Word・Excelのファイル）を丸ごと取り込む。
+         取り出しは既存の経路と同じで、原本ではなく DRAFT_ 付きのコピーを作る。 */
+      var filePath = String(detail.filePath || '');
+      if (filePath) {
+        showPicker();
+        el('cat-file-input').value = '';
+        el('cat-path').value = filePath;
+        openSource('file', 'auto');
+        return;
+      }
+      var text = String(detail.text || '');
       if (!text.trim()) return;
       /* 先に選ぶ画面へ戻してから始める。訳す向きを聞き返されたときの二択は
          選ぶ画面の中に居るので、隠したままだと行き止まりになる。 */

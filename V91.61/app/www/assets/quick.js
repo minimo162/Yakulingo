@@ -10,6 +10,8 @@
   var activeSourceSnapshot = '';
   var jobStartedAt = 0;
   var activeJobId = '';
+  /* Ctrl+Alt+J で読んだ選択の出どころ（保存済みのファイルのときだけ入る）。 */
+  var sourceFilePath = '';
 
   /* 昇格ボタンの文言は1つだけ。失敗して戻したときに別の名前へ化けると、
      同じボタンが2つの操作に見える。 */
@@ -250,6 +252,7 @@
             : ('Word「' + (data.document_name || '') + '」で選んでいた ' + (data.char_count || 0) + ' 文字を読み込みました。');
           note.hidden = false;
         }
+        showSourceFileOffer(kind, data);
         /* 送信はしない。押す前に何を送るかが見えている必要がある。ボタンへ
            scrollIntoView すると、小さい窓では「どこから読んだか」の1行と本文が
            上へ流れて見えなくなった（実機で確認）。焦点だけ移し、画面は先頭に置く。 */
@@ -268,6 +271,35 @@
     }).catch(function () {
       if (note) { note.textContent = '選んでいた文章を読み取れませんでした。貼り付けてください。'; note.hidden = false; }
     });
+  }
+
+  /* 選んだ範囲だけを訳しても、Word・Excelの体裁を保った社内確認用ファイルには
+     ならない。元のファイルが分かっているので、丸ごと取り込む道を出す。
+
+     未保存のときは出さない。取り込むのはディスクにある版なので、画面で編集中の
+     内容とは違うものから DRAFT を作ってしまう。黙って古い内容を訳すより、
+     保存してくださいと言うほうがよい。 */
+  function showSourceFileOffer(kind, data) {
+    var host = el('quick-source-file');
+    if (!host) return;
+    var path = String(data && data.source_path || '');
+    var name = String((kind === 'excel_cells' ? data.workbook_name : data.document_name) || '');
+    var label = kind === 'excel_cells' ? 'このブック' : 'この文書';
+    sourceFilePath = '';
+    if (!path || !name) { host.hidden = true; return; }
+    if (data.saved === false) {
+      el('quick-source-file-text').textContent = name + ' は編集中で、まだ保存されていません。' + label + '全体を取り込むときは、先に保存してください。';
+      el('quick-source-file-open').hidden = true;
+      host.hidden = false;
+      return;
+    }
+    sourceFilePath = path;
+    el('quick-source-file-text').textContent = name + ' 全体を取り込むと、1文ずつ確認して社内確認用のファイル（DRAFT_ 付きのコピー）を作れます。原本には書き込みません。';
+    var button = el('quick-source-file-open');
+    button.textContent = label + '全体を取り込む';
+    button.title = path;
+    button.hidden = false;
+    host.hidden = false;
   }
 
   /* 画面は一つで、状態が三つある（選ぶ／その場で訳す／1文ずつ確認）。
@@ -300,7 +332,15 @@
     if (YakuCommon.onOfficeSelection) YakuCommon.onOfficeSelection(applyOfficeSelection);
     YakuCommon.onReady(function (value) { ready = value; update(); submitPendingWhenReady(); });
     window.addEventListener('yaku-pending-quick-submit', submitPendingWhenReady);
-    el('quick-input').addEventListener('input', function () { explicitDirection = ''; artifact = null; el('quick-result').hidden = true; update(); });
+    /* 文章を書き換えたら、読み込んだ出どころの案内は外す。手で直した文と
+       「このブック全体」は、もう同じものを指していない。 */
+    el('quick-input').addEventListener('input', function () {
+      explicitDirection = ''; artifact = null; el('quick-result').hidden = true;
+      sourceFilePath = '';
+      var host = el('quick-source-file'); if (host) host.hidden = true;
+      var note = el('quick-selection-note'); if (note) note.hidden = true;
+      update();
+    });
     el('quick-form').addEventListener('submit', submit);
     el('quick-direction-change').addEventListener('click', function () { showChoice('翻訳先を変更できます。'); });
     /* 訳す向きを選んだら、そのまま翻訳へ進む。資料翻訳（cat.js）は選んだ時点で
@@ -371,6 +411,10 @@
       if (!form) return;
       event.preventDefault();
       form.requestSubmit();
+    });
+    el('quick-source-file-open').addEventListener('click', function () {
+      if (busy || !sourceFilePath) return;
+      window.dispatchEvent(new CustomEvent('yaku-instant-handoff', { detail: { filePath: sourceFilePath } }));
     });
     el('quick-long-handoff').addEventListener('click', function () {
       if (busy) return;

@@ -1635,7 +1635,28 @@ function Resolve-YakuIncomingFile {
     if (!(Test-Path -LiteralPath $full -PathType Leaf)) { throw 'そのファイルが見つかりません。保存場所と名前をもう一度ご確認ください。' }
     $directExt=[IO.Path]::GetExtension($full).ToLowerInvariant()
     if(@('.docx','.xlsx','.xlsm','.csv') -notcontains $directExt){throw '対応しているファイル形式は .docx / .xlsx / .xlsm / .csv です。'}
-    return [pscustomobject]@{ Handle=''; Path=$full; OriginalName=[System.IO.Path]::GetFileName($full); Size=(Get-Item -LiteralPath $full).Length; ExpiresAt=[datetime]::MaxValue; Uploaded=$false }
+    # 原本をそのまま読まず、いったんこのアプリの中へ写してから読む。理由は2つ。
+    #
+    # 1. Excel や Word で開いたままだと原本は読めない。実測（2026-08-11）では
+    #    ZipFile::OpenRead が共有違反で落ち、写したものは 10 entries を読めた。
+    #    Ctrl+Alt+J から取り込むときは、開いたままであるのが普通の状態である。
+    # 2. 確認作業は数十分続く。そのあいだに原本が編集されると、取り込んだ文と
+    #    書き戻す先が食い違う。写しを持てば、この作業が見ているものは動かない。
+    #
+    # 書き込み先はいつもローカル（uploads）で、原本には触れない。
+    $copyId = [guid]::NewGuid().ToString('N')
+    $copyDir = Join-Path (Get-YakuSubDir 'uploads') $copyId
+    New-Item -ItemType Directory -Path $copyDir -Force | Out-Null
+    $copyPath = Join-Path $copyDir (New-SafeFileName -FileName ([System.IO.Path]::GetFileName($full)))
+    try { Copy-Item -LiteralPath $full -Destination $copyPath -Force -ErrorAction Stop }
+    catch {
+        try { Remove-Item -LiteralPath $copyDir -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+        throw 'そのファイルを読み込めませんでした。ほかのプログラムで編集中でないかご確認のうえ、もう一度お試しください。'
+    }
+    $handle = New-YakuSecureToken -ByteLength 24
+    $item = [pscustomobject]@{ Handle=$handle; Path=$copyPath; OriginalName=[System.IO.Path]::GetFileName($full); Size=(Get-Item -LiteralPath $copyPath).Length; ExpiresAt=(Get-Date).AddHours(1); Uploaded=$true }
+    $script:YakuUploadHandles[$handle] = $item
+    return $item
 }
 
 function Remove-YakuUploadHandle {
@@ -2240,6 +2261,10 @@ function Invoke-YakuRoute {
             $body['text'] = [string]$result.Text
             $body['document_name'] = [string]$result.DocumentName
             $body['char_count'] = [int]$result.CharCount
+            # 「この文書を丸ごと取り込む」用。ディスクにある版を読むので、
+            # 保存済みかどうかも一緒に返す。
+            $body['source_path'] = $(try { [string]$result.DocumentPath } catch { '' })
+            $body['saved'] = $(try { [bool]$result.Saved } catch { $false })
         } elseif ([string]$result.Kind -eq 'excel_cells') {
             # 読んだブック・シート・番地を必ず返す。画面へ出さないと、別のブックを
             # 読んでいても利用者が気づけない。
@@ -2249,6 +2274,7 @@ function Invoke-YakuRoute {
             $body['cell_count'] = [int]$result.CellCount
             $body['formula_skipped'] = [int]$result.FormulaSkipped
             $body['saved'] = [bool]$result.Saved
+            $body['source_path'] = $(try { [string]$result.WorkbookPath } catch { '' })
             $body['text'] = (@($result.Cells | ForEach-Object { [string]$_.Text }) -join "`n")
         }
         Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 4 -Compress) -ContentType 'application/json; charset=utf-8'

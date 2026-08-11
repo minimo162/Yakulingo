@@ -506,7 +506,15 @@ function Invoke-YakuCatSegmentValidation {
             }
         } catch { $findings.Add([pscustomobject]@{ Code='numeric-validation-error'; Severity='error' }) | Out-Null }
     }
-    if (-not $isVerbatimRegisteredTerm -and ($source -match '[△▲]' -or $source -match '\(\s*[-+]?\d[\d,.]*\s*\)') -and $target -notmatch '(?i)(?:^|[\s(])[-−]|loss|decrease|decline|deficit|negative|損失|減少|赤字|マイナス|△|▲') {
+    # 負であることの印は、マイナス記号・損失を表す語のほかに「括弧」がある。
+    # このアプリ自身が Copilot へ「▲やマイナスは数値を括弧でくくれ」と指示しており
+    # （PromptBuilder.ps1 の amount 規約）、画面にも「▲152億円 → (152) oku」と
+    # 書いている。にもかかわらず括弧を印として数えていなかったため、自分で作った
+    # (152) oku を自分の点検が「マイナスが無い」と弾き、確認済みにできなかった
+    # （2026-08-11、実機のExcel取り込みで判明）。負の金額を含む資料は、この規約の
+    # とおりに訳すかぎり必ず出力できなくなる。
+    $targetHasNegativeMark = $target -match '(?i)(?:^|[\s(])[-−]|loss|decrease|decline|deficit|negative|損失|減少|赤字|マイナス|△|▲' -or $target -match '\(\s*\d[\d,.]*\s*\)'
+    if (-not $isVerbatimRegisteredTerm -and ($source -match '[△▲]' -or $source -match '\(\s*[-+]?\d[\d,.]*\s*\)') -and -not $targetHasNegativeMark) {
         $findings.Add([pscustomobject]@{ Code='numeric-sign-missing'; Severity='error' }) | Out-Null
     }
     if (-not $isVerbatimRegisteredTerm -and [string]$Project.Direction -eq 'to_jp') {
@@ -655,7 +663,13 @@ function Get-YakuCatOutputPreflight {
 
     $outputName = ''
     if ($mode -in @('word_draft','excel_draft')) {
-        $sourceName = $(try { [IO.Path]::GetFileNameWithoutExtension([string]$Project.Path) } catch { 'translated' })
+        # project 配下の原本は安全のため original.ext という固定名で置いている。
+        # 押す前に見せる名前をそこから作ると、実際にできるファイル
+        # （Get-YakuCatDraftOutputPath が FileName から作る）と食い違い、
+        # 画面には DRAFT_original_translated.xlsx と出て
+        # DRAFT_yaku-seltest_translated.xlsx ができていた（2026-08-11、実機）。
+        $sourceName = $(try { [IO.Path]::GetFileNameWithoutExtension([string]$Project.FileName) } catch { '' })
+        if ([string]::IsNullOrWhiteSpace($sourceName)) { $sourceName = $(try { [IO.Path]::GetFileNameWithoutExtension([string]$Project.Path) } catch { 'translated' }) }
         if ([string]::IsNullOrWhiteSpace($sourceName)) { $sourceName = 'translated' }
         $safeName = ($sourceName -replace '[\\/:*?"<>|]', '_').Trim()
         if ([string]::IsNullOrWhiteSpace($safeName)) { $safeName = 'translated' }

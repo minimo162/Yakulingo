@@ -83,9 +83,14 @@ function Get-YakuWordSelection {
         if ($text.Length -gt $script:YakuSelectionMaxChars) {
             return [pscustomobject]@{ Kind='too_large'; Reason='too_large'; CharCount=$text.Length; DocumentName=[string]$app.ActiveDocument.Name }
         }
+        # 保存先と保存状態も返す。あとで「この文書を丸ごと取り込む」を出すため。
+        # ディスクの中身を読むので、未保存のまま取り込むと画面の文と違うものから
+        # DRAFT を作ってしまう。黙って古い内容を訳さないよう、状態を持って帰る。
         return [pscustomobject]@{
             Kind='word_text'; Text=$text; CharCount=$text.Length
             DocumentName=$(try { [string]$app.ActiveDocument.Name } catch { '' })
+            DocumentPath=$(try { [string]$app.ActiveDocument.FullName } catch { '' })
+            Saved=$(try { [bool]$app.ActiveDocument.Saved } catch { $false })
         }
     } finally { Release-YakuComObject $app }
 }
