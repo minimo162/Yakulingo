@@ -225,7 +225,12 @@
     });
   }
 
+  /* 画面を一つにしたので、同じページで cat.js と quick.js の両方が start() を
+     呼ぶ。2回呼んで問い合わせを二重に流さない。 */
+  var started = false;
   function start() {
+    if (started) return;
+    started = true;
     pollReady();
   }
 

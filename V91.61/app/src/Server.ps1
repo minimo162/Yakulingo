@@ -274,7 +274,7 @@ function Get-YakuTranslateReadinessState {
             # 実行中はボタンを押せない。ここで Copilot のバッジ（準備完了なら「使えます」）を
             # そのまま返していたので、画面には緑の「使えます」が出たまま操作だけが死んでいた。
             # 押せない理由そのものをバッジに出す。
-            $busyLabel = if ($kind -eq 'quick') { 'ちょっと翻訳を実行中' } elseif ($kind -eq 'cat' -or $kind -eq 'file') { '資料翻訳を実行中' } else { 'ほかの翻訳を実行中' }
+            $busyLabel = if ($kind -eq 'quick') { 'その場の翻訳を実行中' } elseif ($kind -eq 'cat' -or $kind -eq 'file') { '資料の翻訳を実行中' } else { 'ほかの翻訳を実行中' }
             return [pscustomobject]@{ ready=$ready; canTranslate=$false; mode='working'; label=$busyLabel; class='warn'; detail=$detail; updated_at=(Get-Date).ToString('s'); jobId=$jobId; progress=$progress; kind=$kind; phase=$phase; jobLabel=[string]$job['label'] }
         }
         if ($jobMode -eq 'done' -or $jobMode -eq 'completed_with_warnings') {
@@ -1834,7 +1834,7 @@ function Serve-YakuStaticFile {
 function Serve-YakuAppPage {
     param(
         [Parameter(Mandatory=$true)]$Context,
-        [Parameter(Mandatory=$true)][ValidateSet('index.html','quick.html','cat.html','tutorial.html')][string]$PageName
+        [Parameter(Mandatory=$true)][ValidateSet('index.html','cat.html','tutorial.html')][string]$PageName
     )
     $path = Join-Path (Join-Path $script:YakuRoot 'www') $PageName
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -1905,11 +1905,10 @@ function Invoke-YakuRoute {
         }
         return
     }
-    if ($method -eq 'GET' -and $path -eq '/quick') {
-        Serve-YakuAppPage -Context $Context -PageName 'quick.html'
-        return
-    }
-    if ($method -eq 'GET' -and $path -eq '/cat') {
+    # 画面は一つ（2026-08-11 の利用者判断「画面を一つにするのでok」）。/quick は
+    # 同じ画面の「その場で訳す」状態として残す。Ctrl+Alt+J、外枠、開始画面、
+    # チュートリアルがこの経路を持っているため、消さずに同じページを返す。
+    if ($method -eq 'GET' -and ($path -eq '/quick' -or $path -eq '/cat')) {
         Serve-YakuAppPage -Context $Context -PageName 'cat.html'
         return
     }

@@ -523,8 +523,15 @@ summary { cursor: pointer; color: var(--text); font-size: var(--font-meta); min-
 .mask-value { font-weight: 700; }
 .mask-detail-note { margin: 10px 0 0; color: var(--muted); font-size: var(--font-meta); }
 
-.quick-shell { max-width: 820px; }
-html.yaku-compact .quick-shell { width: calc(100% - 24px); max-width: none; padding-bottom: 12px; }
+/* その場で訳す状態は、確認作業と同じ器（幅の広い画面）の中に居る。文章を読む
+   1カラムなので、器の幅をそのまま使うと1行が長くなりすぎる。分かれていた頃の
+   820px をここで保つ。 */
+.cat-instant { max-width: 820px; margin-inline: auto; width: 100%; }
+html.yaku-compact .cat-instant { max-width: none; }
+/* その場で訳す状態は自分で見出しを持ち、戻る導線も自分の下に持っている。
+   画面全体の見出しを重ねると、Ctrl+Alt+J で出る小さな窓では、読み込んだ文章が
+   見出し2つと戻るボタンに押し下げられて見えなくなる（実機で確認）。 */
+body[data-cat-view="instant"] .workspace-heading { display: none; }
 html.yaku-compact .hero { padding: 10px 0; }
 html.yaku-compact .tab-panel { margin-top: 12px; }
 html.yaku-compact .translate-form { padding: 16px; }

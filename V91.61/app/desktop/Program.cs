@@ -240,7 +240,7 @@ namespace YakuLingo.Desktop
         private readonly NotifyIcon tray = new NotifyIcon();
         private readonly ToolStripMenuItem trayStatus = new ToolStripMenuItem("準備しています");
         private readonly ToolStripMenuItem startupItem = new ToolStripMenuItem("次回から、サインイン時に自動で準備する");
-        private readonly ToolStripMenuItem quickItem = new ToolStripMenuItem("ちょっと翻訳を開く    Ctrl+Alt+J");
+        private readonly ToolStripMenuItem quickItem = new ToolStripMenuItem("その場で訳す    Ctrl+Alt+J");
         private readonly ToolStripMenuItem catItem = new ToolStripMenuItem("資料翻訳を開く");
         private readonly System.Windows.Forms.Timer backendTimer = new System.Windows.Forms.Timer();
         private Thread pipeThread;
@@ -267,11 +267,15 @@ namespace YakuLingo.Desktop
         // バックエンドに COM で読ませる。
         private string pendingOfficeClass = "";
         private long pendingOfficeHwnd;
-        // いま実際に読み込みが終わっている画面。webView.Source は Navigate を
-        // 始めた瞬間に新しい URL へ変わるので、「もう /quick が居るか」の判定には
-        // 使えない（2026-08-11、ホーム画面から Ctrl+Alt+J を押すと選択が
-        // 消える不具合の原因。まだ居ないホーム画面へ通知を投げていた）。
+        // いま実際に読み込みが終わっている画面。webView.Source は使えない。
+        // 二重に裏切られた場所なので、両方書いておく。
+        //   1. Navigate を始めた瞬間に新しい URL へ変わる（まだ居ない画面へ通知を投げた）
+        //   2. 画面が history.replaceState で書き換える。cat.js は /quick で開いても
+        //      アドレスを /cat へ直すので、読み込み完了時には /quick が消えている
+        // どちらも実機で選択が黙って消える形で出た（2026-08-11）。判断はこちらが
+        // 指示した行き先（navigatingPath）だけで行う。
         private string loadedPath = "";
+        private string navigatingPath = "";
         private Size quickWindowSize = new Size(650, 640);
         private Size catWindowSize = new Size(1400, 900);
         private Size homeWindowSize = new Size(1240, 840);
@@ -541,22 +545,25 @@ namespace YakuLingo.Desktop
             // 読み込みが始まった時点で「いま居る画面」は無効になる。読み終えるまで
             // 画面あての通知を投げない。
             loadedPath = "";
+            navigatingPath = "";
             if (String.Equals(e.Uri, "about:blank", StringComparison.OrdinalIgnoreCase)) return;
             if (!Uri.TryCreate(e.Uri, UriKind.Absolute, out uri) || !IsTrustedOrigin(uri))
             {
                 e.Cancel = true;
+                return;
             }
+            navigatingPath = uri.AbsolutePath;
         }
 
         private async void OnNavigationCompleted(object sender, CoreWebView2NavigationCompletedEventArgs e)
         {
             if (!e.IsSuccess || webView.Source == null || !IsTrustedOrigin(webView.Source)) return;
-            loadedPath = webView.Source.AbsolutePath;
+            loadedPath = String.IsNullOrEmpty(navigatingPath) ? webView.Source.AbsolutePath : navigatingPath;
             InjectHotkeyStatus();
             // 画面の中のカードから資料翻訳へ入ると OpenCat() を通らないので、
             // ホームの窓（1240x840）のまま3列の作業画面が開き、原文と訳文の列が潰れていた。
             // 資料翻訳に必要な広さへ広げる。利用者が自分で小さくした場合は尊重する。
-            if (webView.Source.AbsolutePath.StartsWith("/cat", StringComparison.OrdinalIgnoreCase))
+            if (loadedPath.StartsWith("/cat", StringComparison.OrdinalIgnoreCase))
             {
                 desiredRoute = "/cat";
                 desiredQuery = webView.Source.Query;
@@ -568,13 +575,16 @@ namespace YakuLingo.Desktop
                 }
             }
             FlushPendingOfficeSelection();
-            if (webView.Source.AbsolutePath.Equals("/quick", StringComparison.OrdinalIgnoreCase) && !String.IsNullOrEmpty(pendingQuickText))
+            if (loadedPath.Equals("/quick", StringComparison.OrdinalIgnoreCase) && !String.IsNullOrEmpty(pendingQuickText))
             {
                 string source = json.Serialize(pendingQuickText);
                 bool submit = pendingQuickSubmit;
                 pendingQuickText = "";
                 pendingQuickSubmit = false;
-                string script = "(function(){var x=document.getElementById('quick-input');if(!x)return;x.value=" + source + ";x.dispatchEvent(new Event('input',{bubbles:true}));x.focus();" +
+                // Office と同じく、どこから来た文章かを画面に出す。出さないと
+                // 「勝手に何か入った」になり、送る前の確認ができない。
+                string script = "(function(){var x=document.getElementById('quick-input');if(!x)return;x.value=" + source + ";x.dispatchEvent(new Event('input',{bubbles:true}));x.focus({preventScroll:true});window.scrollTo(0,0);" +
+                    "var n=document.getElementById('quick-selection-note');if(n){n.textContent='選んでいた文章を読み込みました（' + Array.from(x.value).length + ' 文字）。';n.hidden=false;}" +
                     (submit ? "window.__yakuPendingQuickSubmit=true;window.dispatchEvent(new Event('yaku-pending-quick-submit'));" : "") + "})()";
                 try { await webView.ExecuteScriptAsync(script); } catch { }
             }
@@ -755,7 +765,13 @@ namespace YakuLingo.Desktop
             string route = desiredRoute;
             if (route == "/quick") route = "/quick?compact=1";
             else if (!String.IsNullOrEmpty(desiredQuery)) route = route + desiredQuery;
-            webView.Source = new Uri(new Uri(activeBaseUrl), route.TrimStart('/'));
+            Uri target = new Uri(new Uri(activeBaseUrl), route.TrimStart('/'));
+            // 出て行く画面あてに通知を投げないよう、ここで「いま居る画面」を捨てる。
+            // NavigationStarting は非同期に来るので、それを待つと、ホットキー処理の
+            // 続きが古い画面へ選択を投げて控えを消してしまう（2026-08-11、実機で
+            // Word の選択が黙って消えた）。
+            if (webView.Source == null || !Uri.Equals(webView.Source, target)) loadedPath = "";
+            webView.Source = target;
         }
 
         // スリープ復帰やネットワーク切替のあとで、いま開いていた資料へ戻れるようにする。
@@ -818,7 +834,7 @@ namespace YakuLingo.Desktop
             string body;
             if (quick)
             {
-                body = "<h1>ちょっと翻訳</h1><p>再準備しています。文章はまだ送信されていません。</p><label for='pending-input'>訳したい文章</label><textarea id='pending-input' autofocus></textarea><button id='pending-send' type='button'>準備でき次第、この文章を翻訳</button><button type='button' onclick=\"document.getElementById('pending-input').value='';document.getElementById('pending-input').readOnly=false;window.pendingRequested=false;window.pendingSnapshot='';document.getElementById('wait-status').textContent='取り消しました。';\">取消</button><p id='wait-status' role='status'></p><script>window.pendingRequested=false;window.pendingSnapshot='';document.getElementById('pending-send').onclick=function(){var x=document.getElementById('pending-input');window.pendingSnapshot=x.value;window.pendingRequested=!!window.pendingSnapshot.trim();x.readOnly=window.pendingRequested;document.getElementById('wait-status').textContent=window.pendingRequested?'準備でき次第、押した時点の文章を翻訳します。':'文章を入力してください。';};document.getElementById('pending-input').onkeydown=function(e){if(e.ctrlKey&&e.key==='Enter'){e.preventDefault();document.getElementById('pending-send').click();}};</script>";
+                body = "<h1>その場で訳す</h1><p>再準備しています。文章はまだ送信されていません。</p><label for='pending-input'>訳したい文章</label><textarea id='pending-input' autofocus></textarea><button id='pending-send' type='button'>準備でき次第、この文章を翻訳</button><button type='button' onclick=\"document.getElementById('pending-input').value='';document.getElementById('pending-input').readOnly=false;window.pendingRequested=false;window.pendingSnapshot='';document.getElementById('wait-status').textContent='取り消しました。';\">取消</button><p id='wait-status' role='status'></p><script>window.pendingRequested=false;window.pendingSnapshot='';document.getElementById('pending-send').onclick=function(){var x=document.getElementById('pending-input');window.pendingSnapshot=x.value;window.pendingRequested=!!window.pendingSnapshot.trim();x.readOnly=window.pendingRequested;document.getElementById('wait-status').textContent=window.pendingRequested?'準備でき次第、押した時点の文章を翻訳します。':'文章を入力してください。';};document.getElementById('pending-input').onkeydown=function(e){if(e.ctrlKey&&e.key==='Enter'){e.preventDefault();document.getElementById('pending-send').click();}};</script>";
             }
             else body = "<h1>YakuLingo</h1><p>再準備しています。文章はまだ送信されていません。</p>";
             string html = "<!doctype html><html lang='ja'><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>YakuLingo</title><style>body{font-family:'Segoe UI','Yu Gothic UI',sans-serif;font-size:17px;line-height:1.7;margin:0;padding:28px;color:#202124;background:#fafafa}h1{font-size:25px}label{display:block;font-weight:700;margin-top:18px}textarea{box-sizing:border-box;width:100%;height:280px;padding:14px;font:inherit;border:2px solid #60646c;border-radius:10px}button{min-height:44px;margin:16px 10px 0 0;padding:8px 18px;font:inherit;font-weight:700;border-radius:9px;border:1px solid #3c5bdc;background:#3c5bdc;color:white}button+button{background:white;color:#30333a}</style><body>" + body + "</body></html>";

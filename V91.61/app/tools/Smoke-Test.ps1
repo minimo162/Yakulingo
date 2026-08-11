@@ -222,7 +222,8 @@ try {
 $catIndex = Get-Content -LiteralPath (Join-Path $root 'www\cat.html') -Raw -Encoding UTF8
 $catClient = Get-Content -LiteralPath (Join-Path $root 'www\assets\cat.js') -Raw -Encoding UTF8
 $homeIndex = Get-Content -LiteralPath (Join-Path $root 'www\index.html') -Raw -Encoding UTF8
-$quickIndex = Get-Content -LiteralPath (Join-Path $root 'www\quick.html') -Raw -Encoding UTF8
+# 画面は一つになった。その場で訳す状態も cat.html の中にある。
+$quickIndex = $catIndex
 $quickClient = Get-Content -LiteralPath (Join-Path $root 'www\assets\quick.js') -Raw -Encoding UTF8
 $commonClient = Get-Content -LiteralPath (Join-Path $root 'www\assets\common.js') -Raw -Encoding UTF8
 Assert-Yaku -Condition (($catIndex + $catClient).Contains('確認済み訳文をコピー')) -Message 'CAT output must be presented as a reviewed translation list rather than legacy incomplete-file output'
@@ -255,9 +256,17 @@ $copilotAutomationTest = Get-Content -LiteralPath (Join-Path $root 'tools\Test-C
 Assert-Yaku -Condition ($appJs -match 'X-Yaku-Session' -and $appJs -match 'application/octet-stream' -and $appJs -match '/api/jobs/') -Message 'browser client must use token, binary upload, and per-job polling'
 Assert-Yaku -Condition (-not ($appJs -match "localStorage\.setItem\([^\r\n]*(job|artifact)|sessionStorage\.setItem\([^\r\n]*(job|artifact)")) -Message 'Quick and CAT job or artifact identifiers must not leak into cross-session browser persistence'
 Assert-Yaku -Condition ($appJs -notmatch 'readAsDataURL|file_b64|application/x-www-form-urlencoded') -Message 'browser client must not Base64/urlencode file uploads'
-Assert-Yaku -Condition ($homeIndex.Contains('<h1 id="home-title">何を訳しますか</h1>') -and $homeIndex.Contains('ちょっと翻訳') -and $homeIndex.Contains('資料翻訳') -and $homeIndex.Contains('href="/quick"') -and $homeIndex.Contains('href="/cat"')) -Message 'the single launcher must open a large, explained Quick-or-document landing screen'
+# 画面を一つにしたので、開始画面が選ばせるのはアプリではなく「どう始めるか」。
+# 行き先は同じ画面で、/quick はその場で訳す状態として残っている。
+Assert-Yaku -Condition ($homeIndex.Contains('<h1 id="home-title">何を訳しますか</h1>') -and $homeIndex.Contains('その場で訳す') -and $homeIndex.Contains('1文ずつ確認して仕上げる') -and $homeIndex.Contains('href="/quick"') -and $homeIndex.Contains('href="/cat"')) -Message 'the single launcher must open a large, explained landing screen offering both ways to start'
 Assert-Yaku -Condition (-not ($homeIndex -match '<textarea|type="file"|data-cat-|quick-form')) -Message 'the landing screen must ask only for the work experience, not contain a hidden translator'
-Assert-Yaku -Condition ($quickIndex.Contains('この画面の文章と訳文は保存されません') -and $quickIndex.Contains('id="quick-form"') -and -not ($quickIndex -match 'Word・Excelを選ぶ|保存した作業|過去の翻訳例')) -Message 'Quick must be a dedicated no-save text experience without file or reference features'
+# 画面は一つになったので「ファイルの機能がページに無いこと」では測れない。
+# その場で訳す状態の中に、保存しないことと登録した訳語を使わないことが書いてあり、
+# その状態が既定では出ていないことを見る。
+$instantBlock = ''
+if ($quickIndex -match '(?s)<section id="cat-instant".*?</section>\s*<section id="cat-workspace"') { $instantBlock = $Matches[0] }
+Assert-Yaku -Condition ($instantBlock.Contains('この状態の文章と訳文は保存しません') -and $instantBlock.Contains('登録した訳語もここでは使いません') -and $instantBlock.Contains('id="quick-form"')) -Message 'the instant state must state that it does not save and does not use registered terms'
+Assert-Yaku -Condition ($quickIndex -match 'id="cat-instant"[^>]*\shidden') -Message 'the instant state must not be the default view of the single page'
 Assert-Yaku -Condition ($catIndex.Contains('Word・Excelを取り込む') -and $catIndex.Contains('長い文章を貼り付ける') -and $catIndex.Contains('保存した作業')) -Message 'document translation must keep file, long-text, and resume entries together'
 Assert-Yaku -Condition ($catIndex.Contains('前回の日本語と英語を、参考として読み込む') -and $catIndex.Contains('そのほかの始め方')) -Message 'project-bound prior bilingual import must remain available without appearing as a primary mode choice'
 Assert-Yaku -Condition ($quickIndex.Contains('<span class="eyebrow">訳案</span>') -and -not $indexSource.Contains('すぐ訳した完成訳')) -Message 'unreviewed Quick output must consistently be called a draft translation'
