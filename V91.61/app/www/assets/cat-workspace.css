@@ -855,3 +855,8 @@
   font-size: var(--font-segment);
   line-height: 1.8;
 }
+
+/* 一覧のその場で消せるようにした（2026-08-12）。消す側は目立たせない。 */
+.cat-resume-row { display: flex; align-items: stretch; gap: var(--space-1); }
+.cat-resume-row .cat-resume-card { flex: 1 1 auto; min-width: 0; }
+.cat-resume-row .cat-resume-drop { flex: 0 0 auto; align-self: center; color: var(--muted); }

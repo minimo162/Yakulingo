@@ -811,7 +811,7 @@ if ($script:Failures -gt 0) {
     Write-Host "V91.60 numeric masking test failed. failures=$script:Failures" -ForegroundColor Red
     exit 1
 }
-Write-Host 'CASE 23: 社内表記への換算を画面に明示する' -ForegroundColor Cyan
+Write-Host 'CASE 23: oku 表記への換算を画面に明示する' -ForegroundColor Cyan
 # oku は社内規約であって一般的な英語ではない。「メール・Webを訳す」という看板から
 # billion を期待した人が、黙って 13,150 oku を受け取ると混乱する。
 # billion は Settings.ps1 で意図的に選べない（換算コードが無く 10 倍の誤りになる）。

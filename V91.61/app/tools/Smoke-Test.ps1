@@ -267,11 +267,11 @@ Assert-Yaku -Condition (-not ($homeIndex -match '<textarea|type="file"|data-cat-
 # その状態が既定では出ていないことを見る。
 $instantBlock = ''
 if ($quickIndex -match '(?s)<section id="cat-instant".*?</section>\s*<section id="cat-workspace"') { $instantBlock = $Matches[0] }
-Assert-Yaku -Condition ($instantBlock.Contains('この状態の文章と訳文は保存しません') -and $instantBlock.Contains('登録した訳語もここでは使いません') -and $instantBlock.Contains('id="quick-form"')) -Message 'the instant state must state that it does not save and does not use registered terms'
+Assert-Yaku -Condition ($instantBlock.Contains('ここで訳しただけでは保存しません') -and $instantBlock.Contains('登録した訳語も使いません') -and $instantBlock.Contains('id="quick-form"')) -Message 'the instant state must state that it does not save and does not use registered terms'
 Assert-Yaku -Condition ($quickIndex -notmatch 'id="cat-instant"[^>]*\shidden' -and $quickIndex -match 'id="cat-workspace"[^>]*\shidden') -Message 'the paste box is available on the start view while the review workspace waits for a document'
 # 貼り付け先は1つ。「保存する／しない」で入口を分けない（2026-08-11）。初見の人は
 # 訳案を見る前に1文ずつ直したいかを決められないので、選択は訳案のあとへ置く。
-Assert-Yaku -Condition ($catIndex.Contains('Word・Excelを取り込む') -and $catIndex.Contains('文章を貼り付けると、その場で訳します') -and $catIndex.Contains('保存した作業')) -Message 'the single screen must keep file, paste, and resume entries together'
+Assert-Yaku -Condition ($catIndex.Contains('Word・Excelを取り込む') -and $catIndex.Contains('訳したい文章を貼り付けてください') -and $catIndex.Contains('保存した作業')) -Message 'the single screen must keep file, paste, and resume entries together'
 Assert-Yaku -Condition ((([regex]::Matches($catIndex, 'class="entry-actions cat-entry-actions">(?s).*?</div>')) | ForEach-Object { ([regex]::Matches($_.Value, '<button')).Count }) -eq 1 -and (([regex]::Matches($catIndex, 'id="quick-input"')).Count -eq 1)) -Message 'the front door must not offer two different ways to paste text'
 # 長さの境目は画面が決めない。確認作業が分割に使っている設定値をそのまま使う。
 Assert-Yaku -Condition ($catIndex.Contains('__YAKU_MAX_BATCH_CHARS__') -and $quickClient.Contains('yaku-max-batch-chars') -and $quickClient -notmatch 'length > 3000|length > 2000') -Message 'the long-text threshold must come from the server batch budget, not a number chosen in the page'
@@ -304,7 +304,12 @@ Assert-Yaku -Condition ($indexSource.Contains('id="cat-text-output-value"') -and
 Assert-Yaku -Condition ($catClient.Contains('aria-describedby="' + "' + findingId + '" + '"') -and $catClient.Contains('data.review_blocked') -and $catClient.Contains('function focusAfter(index)')) -Message 'QC findings must be tied to the editor and confirmation focus must advance by segment index'
 Assert-Yaku -Condition ($indexSource.Contains('<caption class="sr-only">') -and $stylesSource.Contains('@media (prefers-reduced-motion: reduce)') -and -not $indexSource.Contains('class="input-meta" aria-live="polite"')) -Message 'CAT semantics and reduced-motion support must remain accessible without noisy character-count announcements'
 Assert-Yaku -Condition ($catClient.Contains("type: 'translate', scope: jobScope") -and $catClient.Contains("post('apply', { job_id: jobId }, true, context.scope)") -and $server.Contains('CAT_JOB_PROJECT_MISMATCH') -and $server.Contains('CAT_JOB_SOURCE_MISMATCH')) -Message 'CAT job results must stay bound to their starting project, revision, and source text'
-Assert-Yaku -Condition ($catClient.Contains('deleteTarget = currentScope()') -and $catClient.Contains('if (!scopeIsCurrent(target, true))') -and $catClient.Contains("post('delete', { id: target.id }, true, target)")) -Message 'delete confirmation must remain bound to the project name and ID shown in the dialog'
+# 2026-08-12: 一覧のその場でも消せるようにした。開いている作業を消すときは
+# これまでどおり「表示中のものと同じか」を確かめる。一覧から消すときは開いて
+# いないので比べる相手が無く、代わりに一覧が持っている revision をそのまま送る。
+# 一覧が古ければ revision が合わず、サーバが断る。
+Assert-Yaku -Condition ($catClient.Contains('deleteTarget = currentScope()') -and $catClient.Contains('if (!target.fromList && !scopeIsCurrent(target, true))') -and $catClient.Contains("post('delete', { id: target.id }, true, target)")) -Message 'delete confirmation must remain bound to the project name and ID shown in the dialog'
+Assert-Yaku -Condition ($catClient.Contains('data-cat-resume-drop') -and $catClient -match "revision: Number\(drop\.getAttribute\('data-cat-resume-revision'\)\)") -Message 'deleting from the saved list must carry that entry own revision so a stale list cannot delete changed work'
 Assert-Yaku -Condition ($catClient.Contains('saveChain = saveChain.catch') -and $catClient -match 'function redrawAfterFlush\(\)[\s\S]*?return flush\(\)\.then' -and $catClient -match "button\.hasAttribute\('data-cat-filter'\)[\s\S]{0,180}redrawAfterFlush\(\)") -Message 'CAT saves and local filter redraws must be serialized behind the project save barrier'
 Assert-Yaku -Condition ($catClient.Contains('data.review_blocked') -and $catClient.Contains('検索条件の外に未確認の行があります')) -Message 'failed review and filtered confirmation must retain a logical keyboard focus target'
 Assert-Yaku -Condition ($catIndex -match 'id="cat-workspace"[^>]*\shidden(?:\s|>)' -and $catClient.Contains("el('cat-workspace').hidden = false") -and $catClient.Contains("el('cat-workspace').hidden = true")) -Message 'opening another project must hide the current workspace instead of mixing two work contexts'

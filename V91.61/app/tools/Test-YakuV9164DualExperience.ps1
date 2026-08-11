@@ -208,7 +208,10 @@ $catProjectSrc = Read-YakuDualText (Join-Path $srcRoot 'CatProject.ps1')
 Check-YakuDual ($catProjectSrc -match "segment-qc-failed") 'a row failing the numeric check still blocks the file'
 Check-YakuDual ($catProjectSrc -match 'Copy-YakuCatProjectSegmentForProbe') 'unconfirmed rows are checked on a copy so the work is not altered'
 $wordSrc = Read-YakuDualText (Join-Path $srcRoot 'WordAdapter.ps1')
-Check-YakuDual ($wordSrc -match '未確認 .*行を含む') 'the produced Word file states how many rows are unconfirmed'
+# 2026-08-12: 進み具合はファイルへ書かない（利用者の指摘「ファイルに出したら
+# 完成品にならないのでは」）。ファイルに残すのは DRAFT の帯だけで、未確認の数は
+# 画面と出力前の確認に出す。
+Check-YakuDual ($wordSrc -notmatch '未確認 .*行を含む' -and $wordSrc -match 'DRAFT — YakuLingo') 'the produced file carries the DRAFT mark but not the working progress'
 Check-YakuDual ($catClient -match "activeSegmentId\s*=\s*''" -and $catClient -match 'data-cat-segment-id' -and $catClient -match 'String\(segment\.segment_id') 'active row survives redraws by stable segment_id'
 Check-YakuDual ($catClient -match "esc\(segment\.location \|\| '本文'\)" -and $catClient -match 'function locationGroup\(segment\)') 'rows display the actual source location and navigation groups it locally'
 Check-YakuDual ($catClient -match 'cat-candidate-number' -and $catClient -match 'itemIndex \+ 1' -and $catClient -match 'data-cat-reference-id') 'numbered candidate controls preserve explicit reference insertion'

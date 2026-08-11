@@ -249,12 +249,11 @@ function Export-YakuWordDraft {
             $body=$doc.SelectSingleNode('/w:document/w:body',$ns)
             $marker=$doc.CreateElement('w','p','http://schemas.openxmlformats.org/wordprocessingml/2006/main')
             $run=$doc.CreateElement('w','r','http://schemas.openxmlformats.org/wordprocessingml/2006/main'); $null=$marker.AppendChild($run)
-            # 未確認のまま出せるようにしたので、何行が未確認かをファイル自身に書く。
-            # 画面で見た人と、ファイルだけを受け取った人が同じことを知れるようにする。
-            $unconfirmed = @($Project.Segments | Where-Object { [string]$_.State -ne 'reviewed' }).Count
-            $markerText = 'DRAFT — YakuLingo（確認用）'
-            if ($unconfirmed -gt 0) { $markerText = $markerText + ' 未確認 ' + $unconfirmed + ' 行を含む' }
-            $textNode=$doc.CreateElement('w','t','http://schemas.openxmlformats.org/wordprocessingml/2006/main'); $textNode.InnerText=$markerText; $null=$run.AppendChild($textNode)
+            # 作業の進み具合はファイルへ書かない（2026-08-12、利用者の指摘
+            # 「ファイルに出したら完成品にならないのでは」）。何行が未確認かは
+            # 作業中に知りたいことで、受け取った人が読むものではない。画面と
+            # 出力前の確認では必ず数を出す。ファイルに残すのは DRAFT の帯だけ。
+            $textNode=$doc.CreateElement('w','t','http://schemas.openxmlformats.org/wordprocessingml/2006/main'); $textNode.InnerText='DRAFT — YakuLingo（確認用）'; $null=$run.AppendChild($textNode)
             $null=$body.InsertBefore($marker,$body.FirstChild)
             $entry=$package.Archive.GetEntry('word/document.xml'); $entry.Delete()
             $newEntry=$package.Archive.CreateEntry('word/document.xml',[IO.Compression.CompressionLevel]::Optimal)

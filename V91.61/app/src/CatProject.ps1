@@ -1474,6 +1474,8 @@ function Get-YakuCatSavedProjects {
                     Id = [string]$o.id
                     FileName = [string]$o.file_name
                     Direction = [string]$o.direction
+                    # 一覧からそのまま消せるようにする。削除は expected_revision が要る。
+                    Revision = $(try { [int]$o.revision } catch { 0 })
                     Total = $segs.Count
                     Confirmed = @($segs | Where-Object { [bool]$_.confirmed }).Count
                     Saved = [string]$o.saved

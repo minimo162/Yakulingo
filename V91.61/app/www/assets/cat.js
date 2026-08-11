@@ -125,9 +125,16 @@
     return post('recent', {}).then(function (data) {
       var items = data.projects || [], box = el('cat-resume'), list = el('cat-resume-list');
       box.hidden = !items.length;
+      /* 消す手段が「開いてから、そのほか → 管理」の奥にしかなく、要らない作業が
+         溜まっていくだけだった（2026-08-12、利用者の指摘）。一覧のその場で消せる
+         ようにする。消すのは途中保存だけで、元のファイルには触らない。 */
       list.innerHTML = items.map(function (item, i) {
         var remaining = Math.max(0, Number(item.total) - Number(item.confirmed));
-        return '<button type="button" class="cat-resume-card secondary-button" data-cat-resume="' + esc(item.id) + '">' + (i === 0 ? '<span class="cat-resume-recent">前回開いた作業</span>' : '') + '<span>' + esc(item.file_name || '名称未設定') + '・' + esc(directionName(item.direction)) + '・' + (remaining ? 'あと' + remaining + '行' : '確認完了') + '</span></button>';
+        var name = esc(item.file_name || '名称未設定');
+        return '<div class="cat-resume-row">' +
+          '<button type="button" class="cat-resume-card secondary-button" data-cat-resume="' + esc(item.id) + '">' + (i === 0 ? '<span class="cat-resume-recent">前回開いた作業</span>' : '') + '<span>' + name + '・' + esc(directionName(item.direction)) + '・' + (remaining ? 'あと' + remaining + '行' : '確認完了') + '</span></button>' +
+          '<button type="button" class="cat-resume-drop secondary-button" data-cat-resume-drop="' + esc(item.id) + '" data-cat-resume-revision="' + (Number(item.revision) || 0) + '" data-cat-resume-name="' + name + '" title="この作業を一覧から消す" aria-label="' + name + ' の作業を消す">消す</button>' +
+          '</div>';
       }).join('');
     }).catch(function (error) { el('cat-resume').hidden = false; el('cat-resume-list').innerHTML = '<div class="alert alert-error">途中まで進めた作業の一覧を読み込めませんでした。画面を読み込み直してください（Ctrl+R）。' + esc(error.message) + '</div>'; });
   }
@@ -861,17 +868,17 @@
     return flush().then(function () { requestScope = currentScope(); if (!requestScope) throw new Error('資料が開かれていません。「ほかの資料に切り替える」から選び直してください。'); setBusy(true); status('出力しています…'); return post('export', {}, true, requestScope); }).then(function (data) {
       if (!project || String(project.id || '') !== requestScope.id) { setBusy(false); return; }
       setBusy(false); outputScope = requestScope;
-      if (data.text) { openTextOutput(); el('cat-text-output').setAttribute('data-cat-output-project', requestScope.id); el('cat-text-output-value').value = data.text; el('cat-text-output-note').textContent = ''; return YakuCommon.copyText(data.text, el('cat-text-output-value'), el('cat-status')); }
+      if (data.text) { status(''); openTextOutput(); el('cat-text-output').setAttribute('data-cat-output-project', requestScope.id); el('cat-text-output-value').value = data.text; el('cat-text-output-note').textContent = ''; return YakuCommon.copyText(data.text, el('cat-text-output-value'), el('cat-status')); }
       /* 出したあとに同じことを2度言わない。行にファイル名が出ており、DRAFT_ の
          決まりは押す前の確認で読んでいる（2026-08-12、利用者の指摘
          「いちいち言われなくても、そのまま社外に送るひとなんていない」）。 */
-      el('cat-output-row').hidden = false; el('cat-output-row').setAttribute('data-cat-output-project', requestScope.id); el('cat-output-name').textContent = data.output_name || data.output_path; YakuCommon.focus(el('cat-output-row'));
+      status(''); el('cat-output-row').hidden = false; el('cat-output-row').setAttribute('data-cat-output-project', requestScope.id); el('cat-output-name').textContent = data.output_name || data.output_path; YakuCommon.focus(el('cat-output-row'));
     }).catch(function (error) { setBusy(false); status(error.message, true); });
   }
 
   function outputModeLabel(mode) {
-    if (mode === 'word_draft') return '確認用Word DRAFTを作成します';
-    if (mode === 'excel_draft') return '確認用Excel DRAFTを作成します';
+    if (mode === 'word_draft') return '訳文入りのWordを作ります';
+    if (mode === 'excel_draft') return '訳文入りのExcelを作ります';
     if (mode === 'copy_text') return '訳文をまとめてコピーします';
     return '現在は出力できません';
   }
@@ -1163,12 +1170,25 @@
     el('cat-delete-dialog').addEventListener('close', function () {
       var target = deleteTarget; deleteTarget = null;
       if (this.returnValue !== 'delete' || !target) return;
-      if (!scopeIsCurrent(target, true)) { status('表示中の作業が変わったため、削除を中止しました。'); return; }
-      setBusy(true); status('作業を削除しています…');
+      /* 一覧から消すときは、その作業を開いていない。開いている作業を消すときだけ
+         「表示中のものと同じか」を確かめる。 */
+      if (!target.fromList && !scopeIsCurrent(target, true)) { status('表示中の作業が変わったため、削除を中止しました。'); return; }
+      setBusy(true); status('作業を消しています…');
       post('delete', { id: target.id }, true, target).then(function () {
-        if (!project || String(project.id || '') !== target.id) { setBusy(false); return; }
-        showPicker(); setBusy(false); status('翻訳作業と途中保存を削除しました。元のファイルは残っています。');
-      }).catch(function (error) { setBusy(false); if (project && String(project.id || '') === target.id) status(error.message, true); });
+        setBusy(false);
+        if (target.fromList) { loadRecent(); status(target.name + ' を一覧から消しました。元のファイルは残っています。'); return; }
+        if (!project || String(project.id || '') !== target.id) return;
+        showPicker(); status('翻訳作業と途中保存を消しました。元のファイルは残っています。');
+      }).catch(function (error) { setBusy(false); if (target.fromList || (project && String(project.id || '') === target.id)) status(error.message, true); });
+    });
+    /* 一覧のその場で消す。押した瞬間に消さず、同じ確認の窓を通す。 */
+    el('cat-resume-list').addEventListener('click', function (event) {
+      var drop = event.target.closest('[data-cat-resume-drop]');
+      if (!drop || busy) return;
+      event.preventDefault(); event.stopPropagation();
+      deleteTarget = { id: drop.getAttribute('data-cat-resume-drop'), revision: Number(drop.getAttribute('data-cat-resume-revision')) || 0, name: drop.getAttribute('data-cat-resume-name') || 'この作業', fromList: true };
+      el('cat-delete-name').textContent = deleteTarget.name;
+      var dialog = el('cat-delete-dialog'); dialog.returnValue = 'cancel'; dialog.showModal();
     });
   }
   /* 貼り付け欄は最初の画面の中にある（cat.html）。中身は quick.js が持つ。

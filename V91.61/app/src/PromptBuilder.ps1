@@ -643,7 +643,7 @@ function Get-YakuNumericRulesSection {
     # 行き先を類推できるようにするため。
     if ($Notation -eq 'billion') {
         # 外部公表の書き方。マツダの英文開示12冊を読んで決めた。
-        # 社内表記（oku・括弧の負数）は持ち込まない。
+        # oku 表記（括弧の負数）は持ち込まない。
         $billionRules = @()
         if ([string]$InputText -match '\[\[N\d+\]\]') {
             $billionRules += '- NUMBER PLACEHOLDERS (highest priority). [[N1]], [[N2]] ... stand for redacted numbers. Copy each token character for character, exactly once, and never invent, merge, drop, or reorder them.'

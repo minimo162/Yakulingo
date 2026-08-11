@@ -176,7 +176,7 @@ Check-YakuQuick ($quickClient -match 'PROMOTE_LABEL' -and ($quickClient -split '
 # 「保存しません」が昇格で反転することを、押す前に書く。
 Check-YakuQuick ($quickPage -match '1文ずつ確認して保存する') '移した先では保存されると押す前に書く'
 # 用語集が Quick に効かないことを、登録した人が読む場所に書く。
-Check-YakuQuick ($quickPage -match '登録した訳語もここでは使いません') '用語集が効かない境界を画面に書く'
+Check-YakuQuick ($quickPage -match '登録した訳語も使いません') '用語集が効かない境界を画面に書く'
 # 文数不一致のとき、サーバは訳案全文を保持する。画面がそれを読まないと「移したら訳が消えた」になる。
 Check-YakuQuick ($catClient2 -match 'promotion_reference_translation' -and $catPage2 -match 'id="cat-promotion-reference"') '行に割り当てできなかった訳案を画面に残す'
 
