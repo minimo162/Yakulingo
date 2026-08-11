@@ -2345,59 +2345,6 @@ function Invoke-YakuRoute {
         return
     }
 
-    if ($method -eq 'POST' -and $path -eq '/api/translate-text') {
-        $payload = Read-YakuRequestJson -Request $req
-        $settings = Read-YakuSettings -Root $script:YakuRoot
-        $inputText = [string]$payload['input_text']
-        $directionIntent = 'auto'
-        try { if (@('auto','to_en','to_jp') -contains [string]$payload['direction_intent']) { $directionIntent = [string]$payload['direction_intent'] } } catch {}
-        # 旧クライアントとの互換。新UIは direction_intent だけを送る。
-        if ($directionIntent -eq 'auto') {
-            try { if (@('to_en','to_jp') -contains [string]$payload['direction']) { $directionIntent = [string]$payload['direction'] } } catch {}
-        }
-        if ([string]::IsNullOrWhiteSpace($inputText)) {
-            Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind warning -Message '訳したい文章を入力してください。')) -StatusCode 400
-            return
-        }
-
-        $directionBasis = $(if ($directionIntent -eq 'auto') { 'detected' } else { 'explicit' })
-        $directionDecision = Resolve-YakuDirectionDecision -Text $inputText -Intent $directionIntent -Basis $directionBasis
-        if ([bool]$directionDecision.RequiresConfirmation) {
-            $response = [ordered]@{
-                code='DIRECTION_CONFIRMATION_REQUIRED'
-                error='翻訳先を選んでください。入力内容だけでは英訳か和訳かを安全に決められません。'
-                suggested_direction=[string]$directionDecision.SuggestedDirection
-                confidence=[string]$directionDecision.Confidence
-                source_fingerprint=[string]$directionDecision.SourceFingerprint
-            }
-            Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Compress) -StatusCode 409 -ContentType 'application/json; charset=utf-8'
-            return
-        }
-        $directionOverride = [string]$directionDecision.Resolved
-
-        $readyState = Get-YakuTranslateReadinessState
-        if (-not [bool]$readyState.canTranslate) {
-            $label = [string]$readyState.label
-            if ([string]::IsNullOrWhiteSpace($label)) { $label = 'Copilotを準備しています' }
-            $klass = [string]$readyState.class
-            if ([string]::IsNullOrWhiteSpace($klass)) { $klass = 'warn' }
-            $message = if ([string]$readyState.mode -eq 'working') { '翻訳ジョブが実行中です。ステータスが完了になるまでお待ちください。' } else { 'Copilotの準備が完了してから翻訳できます。EdgeでCopilotが開いている場合は、ログインと読み込み完了を待ってください。' }
-            Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind warning -Message $message)) -StatusCode 409
-            return
-        }
-
-        try {
-            # 旧Quick APIも同じno-cache/no-reuse workerへ固定する。
-            $state = Start-YakuTranslationJob -InputText $inputText -Settings $settings -TextDirectionOverride $directionOverride `
-                -Kind 'quick' -CachePolicy 'none' -ReferencePolicy 'none'
-            Send-YakuTextResponse -Context $Context -Text (Convert-YakuTranslationJobStartedHtml -State $state)
-        } catch {
-            $safeError = Convert-YakuExceptionToUserMessage $_
-            try { Write-YakuLog "Translate job start exception: $($_.Exception.ToString())" 'ERROR' } catch {}
-            Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind error -Message $safeError)) -StatusCode 400
-        }
-        return
-    }
     # ---------------------------------------------------------------- CAT
     # ファイル翻訳と同じことを、押した分だけ進む形にする。
     # 段階ごとに口を分けているのは、途中を画面へ出すためである。
@@ -2428,9 +2375,11 @@ function Invoke-YakuRoute {
                     }
                     $direction = [string]$directionDecision.Resolved
                     # 簡易翻訳から渡された訳文があれば一緒に取り込む。
-                    $pastedTranslation = ''
-                    try { $pastedTranslation = [string]$payload['translation'] } catch {}
-                    $project = New-YakuCatTextProject -Root $script:YakuRoot -Text $pastedText -Settings $settings -Direction $direction -Translation $pastedTranslation -Register $false
+                    # 訳文をクライアントから受け取る旧 handoff の受け口は閉じた。
+                    # ちょっと翻訳からの引き継ぎは artifact ID だけを渡す経路
+                    # （/api/cat/promote）へ一本化してある。ここで訳文を受けると、
+                    # ブラウザ側で書き換えた訳をそのまま project に載せられてしまう。
+                    $project = New-YakuCatTextProject -Root $script:YakuRoot -Text $pastedText -Settings $settings -Direction $direction -Register $false
                     $project | Add-Member -NotePropertyName DirectionBasis -NotePropertyValue ([string]$directionDecision.Basis) -Force
                     $project | Add-Member -NotePropertyName DirectionConfidence -NotePropertyValue ([string]$directionDecision.Confidence) -Force
                     $project | Add-Member -NotePropertyName DirectionSourceFingerprint -NotePropertyValue ([string]$directionDecision.SourceFingerprint) -Force
@@ -3154,84 +3103,6 @@ function Invoke-YakuRoute {
         } catch {
             $body = [ordered]@{ error = (Convert-YakuExceptionToUserMessage $_) }
             Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
-        }
-        return
-    }
-    if ($method -eq 'POST' -and $path -eq '/api/shorten-text') {
-        # できあがった訳文を短くする。押されたときだけ走る。
-        # 現訳はマスク後のものを受け取る。画面の訳文（実値入り）を送らせると、
-        # 伏せたはずの数値が Copilot へ出る。
-        $payload = Read-YakuRequestJson -Request $req
-        $settings = Read-YakuSettings -Root $script:YakuRoot
-        $srcText = ''
-        $curText = ''
-        try { $srcText = [string]$payload['source_text'] } catch {}
-        try { $curText = [string]$payload['current_text'] } catch {}
-        if ([string]::IsNullOrWhiteSpace($srcText) -or [string]::IsNullOrWhiteSpace($curText)) {
-            Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind warning -Message 'もとになる原文と訳文を取得できませんでした。もう一度翻訳してからお試しください。')) -StatusCode 400
-            return
-        }
-        $readyState = Get-YakuTranslateReadinessState
-        if (-not [bool]$readyState.canTranslate) {
-            $message = if ([string]$readyState.mode -eq 'working') { 'いま別の翻訳を実行中です。そちらが終わってからもう一度お試しください。' } else { 'Copilotの準備が完了してからお試しください。' }
-            Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind warning -Message $message)) -StatusCode 409
-            return
-        }
-        try {
-            $shortenPayload = ([ordered]@{ source_text = $srcText; current_text = $curText } | ConvertTo-Json -Depth 5 -Compress)
-            $state = Start-YakuTranslationJob -InputText $srcText -Settings $settings -Kind 'shorten' -ReviseJson $shortenPayload
-            Send-YakuTextResponse -Context $Context -Text (Convert-YakuTranslationJobStartedHtml -State $state)
-        } catch {
-            $safeError = Convert-YakuExceptionToUserMessage $_
-            try { Write-YakuLog "Shorten job start exception: $($_.Exception.ToString())" 'ERROR' } catch {}
-            Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind error -Message $safeError)) -StatusCode 400
-        }
-        return
-    }
-    if ($method -eq 'POST' -and $path -eq '/api/revise-text') {
-        # V91.61（2026-08-06）: できあがった訳文へ指示を1つ当てて直す。
-        # 現訳はマスク後のものを受け取る。画面の訳文（実値入り）を送らせると、
-        # 伏せたはずの数値が Copilot へ出る。
-        $payload = Read-YakuRequestJson -Request $req
-        $settings = Read-YakuSettings -Root $script:YakuRoot
-        $srcText = ''
-        $curText = ''
-        $instruction = ''
-        $revStyle = 'full'
-        $revDirection = 'to_en'
-        try { $srcText = [string]$payload['source_text'] } catch {}
-        try { $curText = [string]$payload['current_text'] } catch {}
-        try { $instruction = [string]$payload['instruction'] } catch {}
-        try { if (@('full','brief') -contains [string]$payload['style']) { $revStyle = [string]$payload['style'] } } catch {}
-        try { if (@('to_en','to_jp') -contains [string]$payload['direction']) { $revDirection = [string]$payload['direction'] } } catch {}
-        if ([string]::IsNullOrWhiteSpace($instruction)) {
-            Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind warning -Message '修正の指示を入力してください。')) -StatusCode 400
-            return
-        }
-        if ([string]::IsNullOrWhiteSpace($srcText) -or [string]::IsNullOrWhiteSpace($curText)) {
-            Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind warning -Message '修正のもとになる原文と訳文を取得できませんでした。もう一度翻訳してからお試しください。')) -StatusCode 400
-            return
-        }
-        $readyState = Get-YakuTranslateReadinessState
-        if (-not [bool]$readyState.canTranslate) {
-            $message = if ([string]$readyState.mode -eq 'working') { 'いま別の翻訳を実行中です。そちらが終わってからもう一度お試しください。' } else { 'Copilotの準備が完了してから修正を依頼できます。' }
-            Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind warning -Message $message)) -StatusCode 409
-            return
-        }
-        try {
-            $revisePayload = ([ordered]@{
-                source_text  = $srcText
-                current_text = $curText
-                instruction  = $instruction
-                style        = $revStyle
-                direction    = $revDirection
-            } | ConvertTo-Json -Depth 5 -Compress)
-            $state = Start-YakuTranslationJob -InputText $srcText -Settings $settings -Kind 'revise' -ReviseJson $revisePayload
-            Send-YakuTextResponse -Context $Context -Text (Convert-YakuTranslationJobStartedHtml -State $state)
-        } catch {
-            $safeError = Convert-YakuExceptionToUserMessage $_
-            try { Write-YakuLog "Revise job start exception: $($_.Exception.ToString())" 'ERROR' } catch {}
-            Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind error -Message $safeError)) -StatusCode 400
         }
         return
     }

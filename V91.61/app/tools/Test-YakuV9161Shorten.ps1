@@ -93,7 +93,11 @@ Chk ($htmlSrc -notmatch 'data-yaku-shorten') '旧HTML結果にも短縮導線を
 $quickJs = Get-Content -LiteralPath (Join-Path (Join-Path $root 'www\assets') 'quick.js') -Raw -Encoding UTF8
 Chk ($quickJs -notmatch 'shorten|/api/shorten-text') 'ちょっと翻訳は1本の訳案に絞り、短縮操作を出さない'
 $srvSrc = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'Server.ps1') -Raw -Encoding UTF8
-Chk ($srvSrc -match "'/api/shorten-text'") 'サーバ側に入口がある'
+# 誰も呼ばない入口の存在を固定していた（/api/shorten-text は www から参照0件だった）。
+# 守りたいのは入口の有無ではなく「短縮は資料翻訳にだけあり、ちょっと翻訳には無い」。
+$catJs = Get-Content -LiteralPath (Join-Path (Join-Path $root 'www/assets') 'cat.js') -Raw -Encoding UTF8
+Chk ($srvSrc -notmatch "'/api/shorten-text'") '誰も呼ばない旧入口を残さない'
+Chk ($catJs -match 'data-cat-shorten' -and $srvSrc -match "'/api/cat/translate'|mode.*revise|Kind '?revise") '短縮は資料翻訳の経路にある'
 Chk ($srvSrc -match "SHORTEN_REJECTED") '門で弾いた理由を利用者へ伝える'
 
 Write-Host 'プロンプト' -ForegroundColor Cyan
