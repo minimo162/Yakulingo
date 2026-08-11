@@ -559,3 +559,8 @@ html.yaku-compact .quick-result { margin-top: 12px; }
   .direction-summary { align-items: stretch; flex-direction: column; }
   .direction-summary button, .direction-choice-grid button, .cat-entry-actions button, .cat-start-panel > button { width: 100%; }
 }
+
+/* 金額を社内表記へ換算していることの明示。装飾ではなく、期待とのずれを防ぐ注記なので
+   本文と同じ大きさで、目に入る場所に置く。 */
+.quick-notation-note { margin-top: var(--space-1); padding: 8px 12px; border-left: 4px solid var(--warning); background: var(--surface-subtle); color: var(--text); font-size: var(--font-meta); }
+.quick-notation-note code { padding: 1px 5px; border-radius: 4px; background: var(--soft); font-size: 1em; }
