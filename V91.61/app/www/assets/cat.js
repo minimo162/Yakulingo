@@ -401,9 +401,9 @@
     var isFile = project.source === 'file', sourceMissing = (project.eligibility_reasons || []).indexOf('source-file-missing') >= 0;
     var wordReady = project.document_format === 'docx' && project.word_file_output_supported && !sourceMissing;
     var draft = isFile && !sourceMissing && (project.document_format !== 'docx' || wordReady);
-    el('cat-draft-warning').hidden = true;
-    el('cat-output-help').textContent = draft ? '作成するファイルは確認作業用です。完成版・外部公表可能資料ではありません。ファイル名と文書内にDRAFTを表示します。' : '';
-    el('cat-export').textContent = isFile ? (project.document_format === 'docx' && wordReady ? '社内確認用のWordを作る' : project.document_format === 'docx' ? '確認済み訳文をコピー' : '社内確認用のExcelを作る') : '確認済み訳文をコピー';
+    /* 読み上げにも同じ言い方を出す。ここだけ硬い言い方にしない。 */
+    el('cat-output-help').textContent = draft ? '原本はそのままで、訳文を入れたコピーを作ります。名前と文書内に DRAFT が付きます。' : '';
+    el('cat-export').textContent = isFile ? (project.document_format === 'docx' && wordReady ? '訳文入りのWordを作る' : project.document_format === 'docx' ? '確認済み訳文をコピー' : '訳文入りのExcelを作る') : '確認済み訳文をコピー';
     /* 出せない理由は、押す前の常時表示ではなく取り出しダイアログの点検で出す。
        常時 35px を占めながら、ほぼ always「あと N 行」としか言っていなかった。 */
     el('cat-export-blocked').textContent = '';
@@ -862,7 +862,10 @@
       if (!project || String(project.id || '') !== requestScope.id) { setBusy(false); return; }
       setBusy(false); outputScope = requestScope;
       if (data.text) { openTextOutput(); el('cat-text-output').setAttribute('data-cat-output-project', requestScope.id); el('cat-text-output-value').value = data.text; el('cat-text-output-note').textContent = ''; return YakuCommon.copyText(data.text, el('cat-text-output-value'), el('cat-status')); }
-      el('cat-output-row').hidden = false; el('cat-output-row').setAttribute('data-cat-output-project', requestScope.id); el('cat-output-name').textContent = data.output_name || data.output_path; el('cat-draft-warning').hidden = false; el('cat-draft-warning').textContent = '社内確認用のファイルを作りました。ファイル名の先頭に「DRAFT_」が付いています。完成版ではありませんので、社外へはそのままお送りにならないでください。'; YakuCommon.focus(el('cat-draft-warning'));
+      /* 出したあとに同じことを2度言わない。行にファイル名が出ており、DRAFT_ の
+         決まりは押す前の確認で読んでいる（2026-08-12、利用者の指摘
+         「いちいち言われなくても、そのまま社外に送るひとなんていない」）。 */
+      el('cat-output-row').hidden = false; el('cat-output-row').setAttribute('data-cat-output-project', requestScope.id); el('cat-output-name').textContent = data.output_name || data.output_path; YakuCommon.focus(el('cat-output-row'));
     }).catch(function (error) { setBusy(false); status(error.message, true); });
   }
 
@@ -938,7 +941,7 @@
       el('cat-export-mode').textContent = outputModeLabel(mode);
       el('cat-export-name').textContent = data.output_name ? ('出力名: ' + data.output_name) : '';
       el('cat-export-checks').innerHTML = blockers.map(function (item) { return '<div class="cat-preflight-item is-blocked">' + esc(item.message || item.code || 'いまはファイルを作れません。上に出ている項目をご確認ください。') + '</div>'; }).join('') + warnings.map(function (item) { return '<div class="cat-preflight-item">' + esc(item.message || item.code || item) + '</div>'; }).join('') + (!blockers.length ? '<div class="cat-preflight-item is-ready">確認済みの内容を出力できます。</div>' : '');
-      el('cat-export-notice').textContent = data.draft_notice || 'できあがるファイルは、社内で確認するためのものです。ファイル名の先頭に「DRAFT_」が付きます。完成版ではありませんので、お客様や社外へはそのままお送りにならないでください。';
+      el('cat-export-notice').textContent = data.draft_notice || '原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。';
       el('cat-export-notice').hidden = mode === 'copy_text' || mode === 'blocked';
       el('cat-export-confirm').disabled = !data.eligible || mode === 'blocked';
       el('cat-export-confirm').textContent = mode === 'copy_text' ? '訳文をコピー' : 'ファイルを作る';
@@ -1080,7 +1083,6 @@
       note = note && note.querySelector('.cat-example-trace');
       if (note) note.textContent = note.textContent.replace('その後編集なし', 'その後編集あり');
       saveStatus('変更を保存していません', false); el('cat-export').disabled = true; clearOutputDisplay();
-      if (!el('cat-draft-warning').hidden) el('cat-draft-warning').textContent = 'できあがるファイルは、社内で確認するためのものです。ファイル名の先頭に「DRAFT_」が付きます。完成版ではありませんので、お客様や社外へはそのままお送りにならないでください。';
     });
     document.addEventListener('mousedown', function (event) { if (event.target.closest('[data-cat-insert],[data-cat-term-insert]')) event.preventDefault(); });
     document.addEventListener('mouseup', function (event) {

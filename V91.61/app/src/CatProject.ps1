@@ -687,7 +687,7 @@ function Get-YakuCatOutputPreflight {
         OutputName = $outputName
         Blockers = @($blockers)
         Warnings = @($warnings.ToArray())
-        DraftNotice = if ($mode -in @('word_draft','excel_draft')) { 'できあがるファイルは、社内で確認するためのものです。ファイル名の先頭に「DRAFT_」が付きます。完成版ではありませんので、お客様や社外へはそのままお送りにならないでください。' } else { '確認済みの訳文をまとめてコピーします。' }
+        DraftNotice = if ($mode -in @('word_draft','excel_draft')) { '原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。' } else { '確認済みの訳文をまとめてコピーします。' }
     }
 }
 

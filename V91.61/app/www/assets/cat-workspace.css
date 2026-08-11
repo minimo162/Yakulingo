@@ -63,8 +63,7 @@
   .app-cat #cat-job:empty { display: none; min-height: 0; margin: 0; }
   /* 出力後にだけ出る帯。ページが動かないので scrollIntoView では見せられない。
      器の中に居場所を作り、出たときだけ一覧が高さを譲る。 */
-  .app-cat #cat-output-row,
-  .app-cat #cat-draft-warning { flex: 0 0 auto; }
+  .app-cat #cat-output-row { flex: 0 0 auto; }
 
 }
 
