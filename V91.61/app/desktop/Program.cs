@@ -427,7 +427,10 @@ namespace YakuLingo.Desktop
                 StringBuilder cls = new StringBuilder(256);
                 GetClassName(fg, cls, cls.Capacity);
                 string name = cls.ToString();
-                if (name == "OpusApp" || name == "XLMAIN")
+                // PPTFrameClass = PowerPoint。図形を選んだ状態では疑似 Ctrl+C で
+                // 文字が取れないため（2026-08-12 実測）、COM で読む側へ回す。
+                // Outlook はここに入れない。理由は src/Selection.ps1 に書いた。
+                if (name == "OpusApp" || name == "XLMAIN" || name == "PPTFrameClass")
                 {
                     // Office はバックエンドが COM で読む。クリップボードには触れない。
                     pendingOfficeClass = name;
