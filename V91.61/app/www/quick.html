@@ -24,7 +24,7 @@
           <h1 id="quick-title">ちょっと翻訳</h1>
           <p class="muted">メール、Web、数文を貼り付けて訳します。この画面の文章と訳文は保存されません。登録した訳語もここでは使いません。用語をそろえたいときは、資料翻訳をお使いください。</p><p class="quick-notation-note">英訳の金額は<strong>社内表記</strong>で書きます。例: 1兆3,150億円 → <code>13,150 oku</code>、▲152億円 → <code>(152) oku</code>。<code>billion</code> での表記には、いまは対応していません。</p>
         </div></div>
-        <label for="quick-input" class="sr-only">訳したい文章</label>
+        <p id="quick-selection-note" class="quick-selection-note" role="status" aria-live="polite" hidden></p><label for="quick-input" class="sr-only">訳したい文章</label>
         <textarea id="quick-input" rows="10" placeholder="訳したい文章を入力" autocomplete="off"></textarea>
         <div class="input-meta"><span id="quick-count">0字</span></div>
         <div class="privacy-note">金額などの数値は、Copilotへ送る前に自動で伏せます。社名・人名・文章はそのまま送信されます。</div>

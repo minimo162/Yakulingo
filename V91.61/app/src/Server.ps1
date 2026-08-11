@@ -35,6 +35,7 @@ $script:YakuRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyComman
 . (Join-Path $PSScriptRoot 'WordAdapter.ps1')
 . (Join-Path $PSScriptRoot 'CatProject.ps1')
 . (Join-Path $PSScriptRoot 'QuickArtifact.ps1')
+. (Join-Path $PSScriptRoot 'Selection.ps1')
 . (Join-Path $PSScriptRoot 'VersionUpdate.ps1')
 . (Join-Path $PSScriptRoot 'DesktopIntegration.ps1')
 
@@ -2211,6 +2212,43 @@ function Invoke-YakuRoute {
             $response = [ordered]@{ code='QUICK_JOB_START_FAILED'; error=(Convert-YakuExceptionToUserMessage $_) }
             Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Compress) -StatusCode 400 -ContentType 'application/json; charset=utf-8'
         }
+        return
+    }
+    if ($method -eq 'POST' -and $path -eq '/api/quick/selection') {
+        # Ctrl+Alt+J で開いたときに、前面にあった Office の選択範囲を読む。
+        # 受け取るのは窓のクラスとハンドルだけで、本文はブラウザーから来ない。
+        # 本文が来る経路を作らないのは、ブラウザー側で書き換えたものを載せられる
+        # ようにしないため（/api/cat/promote と同じ考え方）。
+        $payload = Read-YakuRequestJson -Request $req
+        foreach ($key in @($payload.Keys)) {
+            if ([string]$key -notin @('window_class','foreground_hwnd')) { throw 'QUICK_SELECTION_PAYLOAD_INVALID' }
+        }
+        $windowClass = ''
+        try { $windowClass = [string]$payload['window_class'] } catch { $windowClass = '' }
+        $hwnd = 0
+        try { $hwnd = [int]$payload['foreground_hwnd'] } catch { $hwnd = 0 }
+        if ($windowClass -notin @('OpusApp','XLMAIN')) {
+            Send-YakuTextResponse -Context $Context -Text (([ordered]@{ kind='none'; reason='not_office' } | ConvertTo-Json -Compress)) -ContentType 'application/json; charset=utf-8'
+            return
+        }
+        $result = Get-YakuForegroundSelection -WindowClass $windowClass -ForegroundHwnd $hwnd
+        $body = [ordered]@{ kind = [string]$result.Kind; reason = $(try { [string]$result.Reason } catch { '' }) }
+        if ([string]$result.Kind -eq 'word_text') {
+            $body['text'] = [string]$result.Text
+            $body['document_name'] = [string]$result.DocumentName
+            $body['char_count'] = [int]$result.CharCount
+        } elseif ([string]$result.Kind -eq 'excel_cells') {
+            # 読んだブック・シート・番地を必ず返す。画面へ出さないと、別のブックを
+            # 読んでいても利用者が気づけない。
+            $body['workbook_name'] = [string]$result.WorkbookName
+            $body['sheet_name'] = [string]$result.SheetName
+            $body['address'] = [string]$result.Address
+            $body['cell_count'] = [int]$result.CellCount
+            $body['formula_skipped'] = [int]$result.FormulaSkipped
+            $body['saved'] = [bool]$result.Saved
+            $body['text'] = (@($result.Cells | ForEach-Object { [string]$_.Text }) -join "`n")
+        }
+        Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 4 -Compress) -ContentType 'application/json; charset=utf-8'
         return
     }
     if ($method -eq 'POST' -and $path -match '^/api/quick/artifacts/([a-f0-9]{32})/revisions$') {

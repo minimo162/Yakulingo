@@ -564,3 +564,7 @@ html.yaku-compact .quick-result { margin-top: 12px; }
    本文と同じ大きさで、目に入る場所に置く。 */
 .quick-notation-note { margin-top: var(--space-1); padding: 8px 12px; border-left: 4px solid var(--warning); background: var(--surface-subtle); color: var(--text); font-size: var(--font-meta); }
 .quick-notation-note code { padding: 1px 5px; border-radius: 4px; background: var(--soft); font-size: 1em; }
+
+/* Ctrl+Alt+J で読み込んだ内容の出どころ。別のブックを読んでいても気づけるよう、
+   ブック名・シート名・番地をここに必ず出す。 */
+.quick-selection-note { margin-bottom: var(--space-1); padding: 8px 12px; border-left: 4px solid var(--accent); background: var(--accent-soft); color: var(--accent-text); font-size: var(--font-meta); }

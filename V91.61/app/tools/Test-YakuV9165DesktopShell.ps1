@@ -26,7 +26,18 @@ foreach ($name in @('YakuLingo.exe','Microsoft.Web.WebView2.Core.dll','Microsoft
 $text = Get-Content -LiteralPath $source -Raw -Encoding UTF8
 $serverText = Get-Content -LiteralPath (Join-Path $appRoot 'src\Server.ps1') -Raw -Encoding UTF8
 Assert-YakuDesktopShell ($text -match 'ModControl \| ModAlt \| ModNoRepeat, VkJ') 'Ctrl+Alt+J must use RegisterHotKey with MOD_NOREPEAT'
-Assert-YakuDesktopShell ($text -notmatch 'SetWindowsHookEx|Clipboard|SendKeys|keybd_event') 'shell must not monitor input or simulate copy'
+# 以前はここで 'Clipboard' という語そのものを禁じていた。2026-08-11 に、利用者の
+# 決定（「利用者は Ctrl+Alt+J を押すだけ。office は COM、それ以外は Ctrl+C」）で
+# Office 以外への疑似 Ctrl+C を入れたため、語ではなく守るべき性質を検査する。
+Assert-YakuDesktopShell ($text -notmatch 'SetWindowsHookEx|RegisterRawInputDevices') 'shell must not monitor input'
+Assert-YakuDesktopShell ($text -match 'GetClipboardSequenceNumber\(\) == before\) continue') 'stale clipboard must never be read as a selection'
+Assert-YakuDesktopShell ((([regex]::Matches($text, 'Clipboard\.GetText')).Count -eq 1) -and $text -match 'private string CopySelectionFromForeground') 'clipboard may be read only in the hotkey copy path'
+Assert-YakuDesktopShell ($text -notmatch 'Clipboard\.SetText|Clipboard\.SetDataObject') 'shell must not write the clipboard (no restore attempt)'
+Assert-YakuDesktopShell ($text -match 'name == "OpusApp" \|\| name == "XLMAIN"[\s\S]{0,400}?return;[\s\S]{0,200}?CopySelectionFromForeground\(\)') 'Office must be read by COM without a synthetic copy'
+Assert-YakuDesktopShell ($text -match 'private void SendCtrlC\(\)\s*\{\s*ReleaseHotkeyModifiers\(\);') 'held Ctrl+Alt must be released before the synthetic copy'
+# webView.Source は Navigate を始めた瞬間に新しい URL になる。まだ読み込みが
+# 終わっていない画面あてに選択を投げると、選択が消える。
+Assert-YakuDesktopShell ($text -match 'loadedPath\.Equals\("/quick"' -and $text -match 'loadedPath = webView\.Source\.AbsolutePath') 'office selection must be delivered to the loaded document, not the pending URL'
 Assert-YakuDesktopShell ($text -match 'IsTrustedOrigin' -and $text -match 'e\.Cancel = true') 'non-loopback navigation must be blocked'
 Assert-YakuDesktopShell ($text -match 'AreDevToolsEnabled = false' -and $text -match 'AreDefaultContextMenusEnabled = false') 'WebView2 developer surfaces must be disabled'
 Assert-YakuDesktopShell ($text -match 'desktop-preferences-changed' -and $text -match 'message\.Count != 1') 'WebMessage input must use an exact metadata-only shape'
