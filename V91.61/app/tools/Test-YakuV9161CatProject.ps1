@@ -465,6 +465,37 @@ Chk ($appJsText.Contains('function candidates(index)')) '行を移るたびに�
 Chk ($appJsText.Contains('data-cat-insert')) '候補を訳文へ差し込める'
 Chk ($indexText -match 'id="cat-candidates"') '候補ペインがある'
 
+# ---------------------------------------------- 負の金額は、括弧も印として数える
+# このアプリは Copilot へ「▲やマイナスは数値を括弧でくくれ」と指示し、画面にも
+# 「▲152億円 → (152) oku」と書いている。その形を点検が弾くと、負の金額を含む
+# 資料は規約どおりに訳すかぎり必ず出力できなくなる（2026-08-11、実機で発生）。
+$signProject = [pscustomobject]@{ Direction='to_en' }
+function Test-YakuSignFinding { param([string]$Source,[string]$Target)
+    $seg = [pscustomobject]@{ Text=$Source; Translation=$Target; Origin='human'; TermIds=@()
+        SourceRevision=1; QcStatus=''; QcSourceRevision=0; QcFindings=@(); TerminologyExceptions=@() }
+    $result = Invoke-YakuCatSegmentValidation -Project $signProject -Segment $seg
+    return @(@($result.Findings) | Where-Object { [string]$_.Code -eq 'numeric-sign-missing' }).Count
+}
+Chk ((Test-YakuSignFinding -Source '▲152億円' -Target '(152) oku') -eq 0) '括弧でくくった負の金額は、この規約どおりとして通る'
+Chk ((Test-YakuSignFinding -Source '▲152億円' -Target '-152 oku') -eq 0) 'マイナス記号でも通る'
+Chk ((Test-YakuSignFinding -Source '▲152億円' -Target '152 oku') -eq 1) '負である印が無ければ、いままでどおり弾く'
+
+# -------------------------------- 金額だけのセルは「原文と同じ」でも正しい訳
+# 単位換算がこのアプリ自身の表記へ直すので（1兆3,150億円 → 13,150 oku）、
+# Copilot へ渡る原文は既に 13,150 oku であり、正しい訳もまったく同じ文字列になる。
+# それを捨てると、金額だけのセルが1つあるだけで全行確認できず、社内確認用の
+# ファイルが永久に作れない（2026-08-11、実機のExcelで発生）。
+# 検査に届くのは外部送信前にマスクした形（[[N1]] oku）である。実機のログに出た
+# sourceLength=10 はこれで、素の 13,150 oku ではない。素のほうだけで試すと
+# 直ったつもりで直っていない（2026-08-11、一度そうなった）。
+Chk ((Get-YakuFileTranslationInvalidReason -Source '[[N1]] oku' -Translation '[[N1]] oku' -Direction 'to_en') -eq '') 'マスク済みの金額セルは、同じ文字列でも訳として通る'
+Chk ((Get-YakuFileTranslationInvalidReason -Source '[[N1]]' -Translation '[[N1]]' -Direction 'to_en') -eq '') 'マスク済みの数値だけのセルも通る'
+Chk ((Get-YakuFileTranslationInvalidReason -Source '13,150 oku' -Translation '13,150 oku' -Direction 'to_en') -eq '') '金額だけのセルは、同じ文字列でも訳として通る'
+Chk ((Get-YakuFileTranslationInvalidReason -Source '(152) oku' -Translation '(152) oku' -Direction 'to_en') -eq '') '括弧付きの負の金額も通る'
+Chk ((Get-YakuFileTranslationInvalidReason -Source '13,150' -Translation '13,150' -Direction 'to_en') -eq '') '数値だけのセルは、いままでどおり通る'
+Chk ((Get-YakuFileTranslationInvalidReason -Source '1兆3,150億円' -Translation '1兆3,150億円' -Direction 'to_en') -eq 'same-as-source') '日本語のまま返ってきたものは、いままでどおり捨てる'
+Chk ((Get-YakuFileTranslationInvalidReason -Source '売上高' -Translation '売上高' -Direction 'to_en') -eq 'same-as-source') '訳されていない語も、いままでどおり捨てる'
+
 # ---------------------------------------------------------------- 片付け
 Remove-YakuCatProject -Id ([string]$project.Id)
 Chk ((Get-YakuCatProject -Id ([string]$project.Id)) -eq $null) '終わったプロジェクトは捨てられる'

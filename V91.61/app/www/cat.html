@@ -42,6 +42,13 @@
         <h2 id="cat-current-title"></h2><p id="cat-current-progress"></p><span id="cat-current-save">保存済み</span>
       </section>
 
+      <!-- 三つの状態のどれでも見える場所に置く。確認作業の中に入れていたため、
+           取り込みに失敗しても文言が隠れた器の中に書かれ、画面上は「押しても
+           何も起きない」ようにしか見えなかった（2026-08-11、開いたままのExcelを
+           取り込もうとして実機で発覚）。 -->
+      <div id="cat-status" class="cat-status muted" role="status" aria-live="polite" tabindex="-1"></div>
+      <div id="cat-job" class="result-target" aria-live="polite"></div>
+
       <section id="cat-picker" class="translate-form cat-picker" aria-labelledby="cat-start-title">
         <h2 id="cat-start-title">何を訳しますか</h2>
         <!-- 「保存する／しない」で入口を分けない。初見の人は、訳案を見る前に
@@ -97,6 +104,13 @@
             <p class="quick-notation-note">英訳の金額は<strong>社内表記</strong>で書きます。例: 1兆3,150億円 → <code>13,150 oku</code>、▲152億円 → <code>(152) oku</code>。<code>billion</code> での表記には、いまは対応していません。</p>
           </div></div>
           <p id="quick-selection-note" class="quick-selection-note" role="status" aria-live="polite" hidden></p>
+          <!-- 選んだ範囲だけでは、Word・Excelの体裁を保った社内確認用ファイルは
+               作れない。元のファイルを丸ごと取り込む道をここに置く。書き込むのは
+               いつも DRAFT_ 付きのコピーで、原本には触れない。 -->
+          <div id="quick-source-file" class="quick-long-notice" role="status" hidden>
+            <p id="quick-source-file-text"></p>
+            <button type="button" id="quick-source-file-open"></button>
+          </div>
           <label for="quick-input" class="sr-only">訳したい文章</label>
           <textarea id="quick-input" rows="10" placeholder="訳したい文章を入力" autocomplete="off"></textarea>
           <div class="input-meta"><span id="quick-count">0字</span></div>
@@ -192,8 +206,6 @@
           <span id="cat-copilot-usage" class="cat-copilot-usage" role="status" aria-live="polite" hidden></span>
         </header>
 
-        <div id="cat-status" class="cat-status muted" role="status" aria-live="polite" tabindex="-1"></div>
-        <div id="cat-job" class="result-target" aria-live="polite"></div>
         <p id="cat-output-help" class="sr-only"></p><p id="cat-export-blocked" class="cat-export-blocked" role="status"></p>
 
         <div id="cat-editor-layout" class="cat-editor-layout">
