@@ -1,6 +1,7 @@
-﻿/* ツールバーの高さを定数にする。sticky の top と各ペインの max-height はここから引く。
-   13インチを125%/150%で使うと .cat-actions が2段目に落ちてツールバーが伸びるので、
-   固定値(旧 84px)ではペインの先頭と表の見出しがツールバーの下に隠れていた。 */
+﻿/* ツールバーの高さを定数にする。1320px 未満（ページが従来どおりスクロールする幅）で、
+   一覧の max-height を引くのに使う。13インチを125%/150%で使うと .cat-actions が
+   2段目に落ちてツールバーが伸びるので、固定値(旧 84px)では表の見出しが隠れていた。
+   1320px 以上では器を窓へ固定するので、この値は使わない。 */
 :root {
   --cat-toolbar-h: 76px;
   /* 主役は中央（原文と訳文）。脇役2つを可変にして、主役に幅を回す。
@@ -28,6 +29,42 @@
   margin-top: 12px;
 }
 
+/* 縦に動く場所を絞る。以前はページ全体・左ナビ・一覧・右ペインの4つが独立に
+   スクロールし、そのうえツールバーが sticky で追いかけてきた。どこにマウスが
+   あるかで動くものが変わり、利用者が現在地を見失っていた。
+
+   ページを窓の高さに固定すれば、ツールバーを sticky にする理由も、その高さを
+   JS で実測する理由も消える。ただし固定するだけでは悪化する。ページスクロールは
+   高さを買っていたので、器（一覧より上の帯）を同時に削らないと見える行が減る。
+
+   100vh ではなく 100dvh を使う。Edge で直接開いたときの vh は「URL欄が隠れた
+   最大の高さ」で実際の可視領域より大きく、ページスクロールを無くした画面では
+   はみ出した下端を取り戻す手段が無くなる。 */
+@media (min-width: 1320px) {
+  html, body.app-cat { height: 100%; }
+  body.app-cat { height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
+  .app-cat .shell { flex: 1; min-height: 0; display: flex; flex-direction: column; padding-bottom: 0; }
+  .app-cat .hero { flex: 0 0 auto; }
+  /* 51px の余白が、そのまま一覧の半行ぶんだった。 */
+  .app-cat .tab-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; margin-top: var(--space-1); }
+  .app-cat #cat-workspace { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  /* 取り出したあとに出る帯が一覧を押し潰さないよう、床を作る（実測で一覧が
+     2px まで潰れた）。それでも入りきらないときだけ、この器がスクロールする。 */
+  .app-cat #cat-workspace { overflow: auto; }
+  .app-cat #cat-editor-layout { flex: 1 1 auto; min-height: 15rem; }
+  /* 資料名も訳す向きもツールバーが持っている。二重に出して1行を使わない。 */
+  .app-cat .workspace-heading { display: none; }
+  /* 空でも高さを持っていた帯。合わせて約97px を一覧へ回す。 */
+  .app-cat #cat-status:empty,
+  .app-cat #cat-export-blocked:empty,
+  .app-cat #cat-job:empty { display: none; min-height: 0; margin: 0; }
+  /* 出力後にだけ出る帯。ページが動かないので scrollIntoView では見せられない。
+     器の中に居場所を作り、出たときだけ一覧が高さを譲る。 */
+  .app-cat #cat-output-row,
+  .app-cat #cat-draft-warning { flex: 0 0 auto; }
+
+}
+
 .cat-editor-toolbar {
   position: sticky;
   top: 0;
@@ -36,13 +73,11 @@
   grid-template-columns: minmax(220px, 1fr) auto minmax(210px, 300px) auto;
   gap: 12px;
   align-items: center;
-  min-height: var(--cat-toolbar-h);
-  padding: 10px 12px;
+  padding: 8px 12px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-control);
-  background: color-mix(in srgb, var(--surface) 94%, transparent);
-  box-shadow: 0 4px 16px rgba(24, 24, 27, .08);
-  backdrop-filter: blur(12px);
+  /* 下に潜る行がもう無いので、透過とぼかしは要らない。 */
+  background: var(--surface);
 }
 
 .cat-toolbar-document,
@@ -125,9 +160,6 @@
 
 .cat-nav-pane,
 .cat-inspector-pane {
-  position: sticky;
-  top: calc(var(--cat-toolbar-h) + 12px);
-  max-height: calc(100vh - var(--cat-toolbar-h) - 28px);
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
@@ -136,6 +168,25 @@
 
 .cat-nav-pane {
   padding: 12px;
+}
+
+/* 器が窓に固定される幅では、ペイン自体は動かさない。左ナビは「資料内の場所」
+   だけ、右ペインは開いているタブの中身だけが、溢れたときにスクロールする。
+   場所の一覧は資料しだいで無制限、候補は最大16枚あるので、この2つは
+   CSS では消せない。消せると言うのは嘘になる。 */
+@media (min-width: 1320px) {
+  .cat-editor-layout { align-items: stretch; min-height: 0; }
+  .cat-inspector-pane { min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+  /* 左ナビは中の節を伸縮させない。「文字を大きく」にすると絞り込みだけで枠を超え、
+     hidden に切られて押せなくなる（実測で確認）。ペインごと動かして、切れることを
+     原理的に無くす。動くのは枠の中だけで、ページも見出しも動かない。 */
+  .cat-nav-pane { min-height: 0; overflow: auto; }
+  /* 状態行の上下 17px は、器が固定の画面では一覧2行ぶんに相当する。 */
+  .app-cat #cat-status { margin: var(--space-1) 0; }
+  .cat-editor-pane { display: flex; flex-direction: column; min-height: 0; }
+  .cat-grid-wrap { flex: 1; min-height: 0; max-height: none; }
+  .cat-inspector-tabs { flex: 0 0 auto; position: static; }
+  .cat-inspector-pane [role="tabpanel"] { flex: 1; min-height: 0; overflow: auto; }
 }
 
 .cat-nav-pane h2 {
@@ -187,7 +238,9 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 印は行の高さを決める側に回らせない。番号・状態と横に並べて1行に収める。 */
+/* 一覧を眺めるときは、1行につき状態の札ひとつだけにする。前回からの変更は
+   開いている行にだけ出す（78pxの列に2つ並べると折り返し、全行が30px高くなる）。
+   閉じた行で変更を探したいときは、左の「前回からの変更」で絞り込む。 */
 .cat-change-badge {
   display: inline-block;
   width: fit-content;
@@ -233,7 +286,7 @@
 }
 
 .cat-grid-wrap {
-  max-height: calc(100vh - var(--cat-toolbar-h) - 73px);
+  max-height: calc(100dvh - var(--cat-toolbar-h) - 73px);
   background: var(--surface);
 }
 
@@ -532,16 +585,56 @@
 }
 
 @media (max-width: 1400px) {
-  /* ボタンを2つ＋畳みにしたので、ここで2段目へ落ちても伸びは小さい。 */
   :root {
     --cat-toolbar-h: 116px;
   }
   .cat-editor-toolbar {
-    grid-template-columns: minmax(210px, 1fr) auto minmax(180px, 260px);
+    grid-template-columns: minmax(180px, 1fr) auto minmax(150px, 220px) auto;
   }
-  .cat-editor-toolbar .cat-actions {
-    grid-column: 1 / -1;
-  }
+}
+
+/* 器を窓へ固定する幅では、ツールバーは1段に収める。2段になると 72→130px となり、
+   一覧が 2.4行ぶん消える（実測）。ページが動かない画面では、その2.4行は
+   取り戻せない。 */
+@media (min-width: 1320px) {
+  .cat-editor-toolbar { align-items: center; }
+  /* 器を薄くする。ここで削った分がそのまま一覧の行数になる。 */
+  .app-cat .hero { padding: 6px 0; }
+  /* 「現在の確認作業」は1行を専有していた。資料名の上に置かなくても、
+     この画面に他の作業は無い。 */
+  .cat-toolbar-document .cat-current-kicker { display: none; }
+  .cat-toolbar-progress { display: flex; align-items: center; gap: var(--space-1); }
+  .cat-editor-toolbar .cat-progress-row,
+  .cat-editor-toolbar .cat-save-status { margin: 0; }
+  .cat-editor-toolbar .cat-progress { flex: 0 0 80px; }
+  /* 「保存済み」が「保存済／み」に割れる。帯の中の短い語は折り返さない。 */
+  .cat-editor-toolbar #cat-progress-text,
+  .cat-editor-toolbar .cat-save-status,
+  .cat-editor-toolbar .cat-toolbar-search > span { white-space: nowrap; }
+  /* 資料名は「いまどのファイルを触っているか」。240px 必要なのに182pxしか
+     与えておらず、末尾が切れていた。ここは削らない。 */
+  .cat-editor-toolbar { grid-template-columns: minmax(240px, 1fr) auto minmax(140px, 200px) auto; }
+  .cat-editor-toolbar .cat-actions { flex-wrap: nowrap; }
+
+  /* 「文字を大きく」でも1段に保つ。3段225pxになると一覧が 5.5→2.8行 まで落ちる。
+     検索の見出しは入力欄の placeholder が同じことを言っている。進捗は数字が残る。 */
+  :root[data-yaku-text-size="large"] .cat-toolbar-search > span { display: none; }
+  :root[data-yaku-text-size="large"] .cat-editor-toolbar .cat-progress { display: none; }
+  :root[data-yaku-text-size="large"] .cat-copilot-usage { display: none; }
+}
+
+/* 窓が低いと、固定したままでは中身が入りきらない。切れて触れないより、
+   従来どおりページが動くほうがよい。 */
+@media (min-width: 1320px) and (max-height: 620px) {
+  html, body.app-cat { height: auto; }
+  body.app-cat { overflow: visible; display: block; }
+  .app-cat .shell,
+  .app-cat .tab-panel,
+  .app-cat #cat-workspace { display: block; }
+  .app-cat .workspace-heading { display: flex; }
+  .app-cat .cat-nav-pane,
+  .app-cat .cat-inspector-pane { overflow: auto; }
+  .app-cat .cat-grid-wrap { max-height: calc(100dvh - var(--cat-toolbar-h) - 73px); }
 }
 
 /* 3列（220 + 560 + 380 + gap 24）に必要なのは 1184px。.shell は画面幅 -32px なので
@@ -661,4 +754,24 @@
   color: var(--muted);
   font-size: var(--font-meta);
   text-align: right;
+}
+
+/* 「そのほか」に、めったに使わないものを寄せた（キーボード操作・登録した訳と
+   この作業の管理）。左の絞り込みと混ぜると、絞り込みが読めなくなる。
+   中身が伸びてもツールバーを押し広げないよう、ここで丈を切る。 */
+.cat-more-actions-list {
+  max-height: min(60vh, 520px);
+  overflow: auto;
+}
+
+.cat-more-actions-list .cat-key-help,
+.cat-more-actions-list .cat-danger-zone {
+  margin-top: var(--space-1);
+}
+
+/* 全文の退避はダイアログ。器の中に置くと、取り出した直後だけ一覧が1.5行まで潰れる。 */
+.cat-text-output[open] {
+  width: min(760px, 92vw);
+  max-height: 82vh;
+  overflow: auto;
 }
