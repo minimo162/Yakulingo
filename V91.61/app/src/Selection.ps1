@@ -3,6 +3,11 @@
 # 2026-08-11 に実測した結果、対象ごとに手段が違う。
 #   Word / Excel : Office COM で取れる（Word は UI Automation では TextPattern を
 #                  1つも公開しない。深さ9まで探索して0個だった）
+#   PowerPoint   : COM で取れる。しかも疑似 Ctrl+C では足りない（2026-08-12 実測）
+#                    図形を選んだとき: クリップボードに文字が入らない（何も読めない）
+#                    文字を選んだとき: 読める
+#                  スライドは枠を1回クリックして選ぶのが普通なので、Ctrl+C だけでは
+#                  よくある選び方でまったく読めなかった
 #   それ以外     : COM が無い。C# 側が疑似 Ctrl+C を送り、クリップボードから読む
 #
 # ここは Office の COM 経路だけを持つ。クリップボードには触れない。
@@ -24,7 +29,7 @@ $script:YakuSelectionMaxCells = 200
 
 function Get-YakuOfficeApplication {
     <# 起動中の Office を掴む。無ければ $null。新しく起動しない。 #>
-    param([Parameter(Mandatory=$true)][ValidateSet('Word.Application','Excel.Application')][string]$ProgId)
+    param([Parameter(Mandatory=$true)][ValidateSet('Word.Application','Excel.Application','PowerPoint.Application')][string]$ProgId)
     try { return [Runtime.InteropServices.Marshal]::GetActiveObject($ProgId) } catch { return $null }
 }
 
