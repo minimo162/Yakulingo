@@ -149,8 +149,8 @@ button, .button { min-height: 44px; display: inline-flex; align-items: center; j
    脇役（絞り込み、点検タブ、閉じている行）まで accent で塗られる。
    :not() は「引数の中でいちばん強いもの1つぶん」しか積まない。リスト形にして
    (0,1,1) に抑える。以後、状態を足すたびに詳細度を継ぎ足す必要がなくなる。 */
-button:not(.secondary-button, .tab-button, .file-clear-button, [disabled]), .button:not([disabled]) { background: var(--accent); border-color: var(--accent); color: #fff; }
-button:not(.secondary-button, .tab-button, .file-clear-button, [disabled]):hover, .button:not([disabled]):hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+button:not(.secondary-button, .tab-button, .file-clear-button, .link-button, .danger-button, [disabled]), .button:not([disabled]) { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:not(.secondary-button, .tab-button, .file-clear-button, .link-button, .danger-button, [disabled]):hover, .button:not([disabled]):hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 button:active:not([disabled]), .button:active:not([disabled]) { transform: translateY(.5px); }
 /* 無効ボタンを opacity で薄くすると、主ボタンの白文字が背景に溶けて 2.1:1 まで落ちる。
    「文章を入力してください」のような操作指示そのものが読めなくなるので、実色で塗る。 */
@@ -165,7 +165,12 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .entry-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: var(--space-2); }
 .entry-more { position: relative; }
 .entry-more > summary, .cat-source-picker > summary { cursor: pointer; color: var(--muted); font-size: var(--font-meta); }
-.entry-more-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+/* 閉じた <details> の中身へ display を書くと、ブラウザの「閉じたら隠す」を
+   打ち消してしまう。「そのほかの始め方」は閉じているのに、中の2つのボタンが
+   ずっと画面に出ていた（2026-08-12、実機 1380px で closed のまま実測 44px）。
+   開いているときだけ flex にする。 */
+.entry-more-actions { display: none; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.entry-more[open] .entry-more-actions { display: flex; }
 .workspace-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-2); }
 .workspace-heading .muted { margin: 6px 0 0; font-size: var(--font-meta); }
 .cat-source-picker { margin: var(--space-2) 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-control); }
@@ -574,10 +579,25 @@ html.yaku-compact .quick-result { margin-top: 12px; }
   .direction-summary button, .direction-choice-grid button, .cat-entry-actions button, .cat-start-panel > button { width: 100%; }
 }
 
-/* 金額を oku 表記へ換算していることの明示。装飾ではなく、期待とのずれを防ぐ注記なので
-   本文と同じ大きさで、目に入る場所に置く。 */
+/* 訳案の隣に出す、どの書き方で換算したかの注記。 */
 .quick-notation-note { margin-top: var(--space-1); padding: 8px 12px; border-left: 4px solid var(--warning); background: var(--surface-subtle); color: var(--text); font-size: var(--font-meta); }
 .quick-notation-note code { padding: 1px 5px; border-radius: 4px; background: var(--soft); font-size: 1em; }
+
+/* 押したあとの結果を説明する注記。読む必要はあるが、入力と実行の間に割り込ませない。
+   枠も塗りも付けず、罫線1本の下に小さく置く。 */
+.command-bar { align-items: center; }
+.command-bar-note { flex: 1 1 240px; order: -1; color: var(--muted); font-size: var(--font-meta); }
+.quick-fineprint { margin-top: var(--space-2); border-top: 1px solid var(--line); padding-top: 10px; display: grid; gap: 6px; }
+.quick-fineprint-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0; max-width: 60em; color: var(--muted); font-size: var(--font-meta); }
+.quick-fineprint-line select { width: auto; min-height: 32px; padding: 2px 8px; font-size: var(--font-meta); }
+#amount-notation-status { color: var(--muted); }
+
+/* ここから下は「ほかの始め方」であることを、見出しと余白で示す。 */
+.entry-secondary { margin-top: var(--space-4); border-top: 1px solid var(--line); padding-top: var(--space-3); }
+.entry-secondary-title { margin: 0 0 10px; color: var(--muted); font-size: var(--font-meta); font-weight: 600; }
+.entry-secondary .cat-resume h3 { margin: 0 0 8px; font-size: var(--font-meta); font-weight: 600; color: var(--muted); }
+.link-button { margin-top: 8px; border: 0; background: none; padding: 0; color: var(--accent-text); font-size: var(--font-meta); text-decoration: underline; cursor: pointer; min-height: 0; }
+.link-button[hidden] { display: none; }
 
 /* Ctrl+Alt+J で読み込んだ内容の出どころ。別のブックを読んでいても気づけるよう、
    ブック名・シート名・番地をここに必ず出す。 */

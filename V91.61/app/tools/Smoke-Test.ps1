@@ -271,7 +271,9 @@ Assert-Yaku -Condition ($instantBlock.Contains('ここで訳しただけでは�
 Assert-Yaku -Condition ($quickIndex -notmatch 'id="cat-instant"[^>]*\shidden' -and $quickIndex -match 'id="cat-workspace"[^>]*\shidden') -Message 'the paste box is available on the start view while the review workspace waits for a document'
 # 貼り付け先は1つ。「保存する／しない」で入口を分けない（2026-08-11）。初見の人は
 # 訳案を見る前に1文ずつ直したいかを決められないので、選択は訳案のあとへ置く。
-Assert-Yaku -Condition ($catIndex.Contains('Word・Excelを取り込む') -and $catIndex.Contains('訳したい文章を貼り付けてください') -and $catIndex.Contains('保存した作業')) -Message 'the single screen must keep file, paste, and resume entries together'
+# 2026-08-12: 「訳したい文章を貼り付けてください」という説明文で貼り付け口を数えていたが、
+# 見出しと同じことを繰り返す一文だったので消した。数えるのは説明文ではなく貼り付け欄そのもの。
+Assert-Yaku -Condition ($catIndex.Contains('Word・Excelを取り込む') -and $catIndex.Contains('id="quick-input"') -and $catIndex.Contains('保存した作業')) -Message 'the single screen must keep file, paste, and resume entries together'
 Assert-Yaku -Condition ((([regex]::Matches($catIndex, 'class="entry-actions cat-entry-actions">(?s).*?</div>')) | ForEach-Object { ([regex]::Matches($_.Value, '<button')).Count }) -eq 1 -and (([regex]::Matches($catIndex, 'id="quick-input"')).Count -eq 1)) -Message 'the front door must not offer two different ways to paste text'
 # 長さの境目は画面が決めない。確認作業が分割に使っている設定値をそのまま使う。
 Assert-Yaku -Condition ($catIndex.Contains('__YAKU_MAX_BATCH_CHARS__') -and $quickClient.Contains('yaku-max-batch-chars') -and $quickClient -notmatch 'length > 3000|length > 2000') -Message 'the long-text threshold must come from the server batch budget, not a number chosen in the page'
@@ -325,6 +327,17 @@ Assert-Yaku -Condition (-not ($indexSource -match '122 oku|設定とデータ管
 # 2026-08-12: 金額の書き方の選択だけ戻した。billion を開けたが、設定を変える画面が
 # 他に無く、選べない対応は対応にならない。最初の画面には置かない（訳す前に迷わせない）。
 # 置くのは訳す画面の1か所だけ。値は設定から読み、画面側で既定を決めない。
+# 2026-08-12: 「どこがメインでどこがサブか分からない」への手当て。実機 1380px で測った事実。
+#  - 塗ったボタンが2つ並んでいた（訳す=押せない灰色、Word・Excel取り込み=accent）。
+#    押せるほうが主役に見えるので、取り込みは輪郭線のボタンにする
+#  - 保存した作業が10件で685px、画面1555pxの44%を占めていた。既定は直近3件
+#  - この作業を削除は .danger-button なのに accent で塗られていた。基本ルールの
+#    :not() リストに入れて、詳細度を上げずに部品側へ勝たせる
+Assert-Yaku -Condition ($catIndex -match 'class="secondary-button" data-cat-source-show="file"') -Message 'the file entry must not compete with the paste action as a second filled button'
+Assert-Yaku -Condition ($catClient.Contains('var RESUME_VISIBLE = 3') -and $catIndex.Contains('id="cat-resume-more"')) -Message 'the saved work list must fold to the most recent few with a count of the rest'
+Assert-Yaku -Condition ($stylesSource -match 'button:not\(\.secondary-button, \.tab-button, \.file-clear-button, \.link-button, \.danger-button, \[disabled\]\)') -Message 'destructive and link buttons must be excluded from the filled base style without raising its specificity'
+Assert-Yaku -Condition ($stylesSource -match '\.entry-more-actions \{ display: none;' -and $stylesSource -match '\.entry-more\[open\] \.entry-more-actions \{ display: flex; \}') -Message 'collapsed alternative entries must actually be hidden instead of being forced visible by their own display rule'
+Assert-Yaku -Condition ($catClient.Contains("exportButton.classList.toggle('secondary-button', drafting)") -and $catClient.Contains("translate.classList.toggle('secondary-button', !drafting)")) -Message 'the toolbar filled button must follow the next step instead of staying on a finished action'
 Assert-Yaku -Condition (-not ($homeIndex -match 'amount-notation') -and
     ([regex]::Matches($catIndex, 'id="amount-notation"').Count -eq 1) -and
     $quickClient.Contains('meta[name="yaku-amount-notation"]') -and

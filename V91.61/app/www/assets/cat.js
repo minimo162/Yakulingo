@@ -83,6 +83,16 @@
         : (project && Number(project.untranslated) <= 0) ? '訳案はすべてできています'
         : '残りの訳案を作る';
     }
+    /* 塗ったボタンは、いつでも「次にやること」1つだけにする。訳案が全部できると
+       「残りの訳案を作る」は灰色の飾りになり、実際の次（取り出す）は輪郭線だけの
+       ボタンとして「ほかの資料に切り替える」と同じ見た目で並んでいた。
+       訳す仕事が残っていないときは、主役を取り出す側へ渡す（2026-08-12）。 */
+    var exportButton = el('cat-export');
+    if (exportButton && translate) {
+      var drafting = !(project && Number(project.untranslated) <= 0);
+      exportButton.classList.toggle('secondary-button', drafting);
+      translate.classList.toggle('secondary-button', !drafting);
+    }
   }
   /* Copilot は3時間の窓で使える回数に上限がある（値は非公開）。押したあとに上限へ
      当たると、そのバッチぶんの往復が無駄になる。サーバは以前から estimate で
@@ -121,21 +131,41 @@
     }
   }
 
+  /* 保存した作業は既定で直近3件だけ出す。実機で10件あり、この一覧だけで
+     画面の44%（685px / 全体1555px）を占めていた（2026-08-12）。
+     多いほうが困る一覧なので、隠すのではなく「あと何件あるか」を出して畳む。 */
+  var RESUME_VISIBLE = 3;
+  var resumeItems = [];
+  var resumeExpanded = false;
+
+  function renderRecent() {
+    var list = el('cat-resume-list');
+    var more = el('cat-resume-more');
+    var shown = resumeExpanded ? resumeItems : resumeItems.slice(0, RESUME_VISIBLE);
+    list.innerHTML = shown.map(function (item, i) {
+      var remaining = Math.max(0, Number(item.total) - Number(item.confirmed));
+      var name = esc(item.file_name || '名称未設定');
+      return '<div class="cat-resume-row">' +
+        '<button type="button" class="cat-resume-card secondary-button" data-cat-resume="' + esc(item.id) + '">' + (i === 0 ? '<span class="cat-resume-recent">前回開いた作業</span>' : '') + '<span>' + name + '・' + esc(directionName(item.direction)) + '・' + (remaining ? 'あと' + remaining + '行' : '確認完了') + '</span></button>' +
+        '<button type="button" class="cat-resume-drop secondary-button" data-cat-resume-drop="' + esc(item.id) + '" data-cat-resume-revision="' + (Number(item.revision) || 0) + '" data-cat-resume-name="' + name + '" title="この作業を一覧から消す" aria-label="' + name + ' の作業を消す">消す</button>' +
+        '</div>';
+    }).join('');
+    var hiddenCount = resumeItems.length - RESUME_VISIBLE;
+    more.hidden = hiddenCount <= 0;
+    more.textContent = resumeExpanded ? '直近3件だけ表示する' : ('保存した作業をすべて表示（あと' + hiddenCount + '件）');
+    more.setAttribute('aria-expanded', resumeExpanded ? 'true' : 'false');
+  }
+
   function loadRecent() {
     return post('recent', {}).then(function (data) {
-      var items = data.projects || [], box = el('cat-resume'), list = el('cat-resume-list');
-      box.hidden = !items.length;
       /* 消す手段が「開いてから、そのほか → 管理」の奥にしかなく、要らない作業が
-         溜まっていくだけだった（2026-08-12、利用者の指摘）。一覧のその場で消せる
-         ようにする。消すのは途中保存だけで、元のファイルには触らない。 */
-      list.innerHTML = items.map(function (item, i) {
-        var remaining = Math.max(0, Number(item.total) - Number(item.confirmed));
-        var name = esc(item.file_name || '名称未設定');
-        return '<div class="cat-resume-row">' +
-          '<button type="button" class="cat-resume-card secondary-button" data-cat-resume="' + esc(item.id) + '">' + (i === 0 ? '<span class="cat-resume-recent">前回開いた作業</span>' : '') + '<span>' + name + '・' + esc(directionName(item.direction)) + '・' + (remaining ? 'あと' + remaining + '行' : '確認完了') + '</span></button>' +
-          '<button type="button" class="cat-resume-drop secondary-button" data-cat-resume-drop="' + esc(item.id) + '" data-cat-resume-revision="' + (Number(item.revision) || 0) + '" data-cat-resume-name="' + name + '" title="この作業を一覧から消す" aria-label="' + name + ' の作業を消す">消す</button>' +
-          '</div>';
-      }).join('');
+         溜まっていくだけだった（2026-08-12、利用者の指摘）。一覧のその場で消せる。
+         消すのは途中保存だけで、元のファイルには触らない。 */
+      var items = data.projects || [];
+      el('cat-resume').hidden = !items.length;
+      resumeItems = items;
+      if (items.length <= RESUME_VISIBLE) resumeExpanded = false;
+      renderRecent();
     }).catch(function (error) { el('cat-resume').hidden = false; el('cat-resume-list').innerHTML = '<div class="alert alert-error">途中まで進めた作業の一覧を読み込めませんでした。画面を読み込み直してください（Ctrl+R）。' + esc(error.message) + '</div>'; });
   }
 
@@ -1180,6 +1210,11 @@
         if (!project || String(project.id || '') !== target.id) return;
         showPicker(); status('翻訳作業と途中保存を消しました。元のファイルは残っています。');
       }).catch(function (error) { setBusy(false); if (target.fromList || (project && String(project.id || '') === target.id)) status(error.message, true); });
+    });
+    el('cat-resume-more').addEventListener('click', function () {
+      resumeExpanded = !resumeExpanded;
+      renderRecent();
+      if (!resumeExpanded) YakuCommon.focus(el('cat-resume-more'));
     });
     /* 一覧のその場で消す。押した瞬間に消さず、同じ確認の窓を通す。 */
     el('cat-resume-list').addEventListener('click', function (event) {
