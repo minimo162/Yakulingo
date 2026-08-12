@@ -41,7 +41,10 @@
     <section class="tab-panel" aria-labelledby="cat-page-title">
       <!-- 見出しの下に説明を足さない。この画面が何かは、貼り付け欄と取り込みボタンを
            見れば分かる。説明文を全部に付けるのをやめる（2026-08-12）。 -->
-      <div class="workspace-heading"><div><h1 id="cat-page-title">翻訳</h1></div><a class="button secondary-button compact" href="/">最初の画面へ戻る</a></div>
+      <!-- 「最初の画面へ戻る」は外した。起動して最初に出るのがこの画面になったので、
+           押すと同じ画面を読み直すだけになる。資料の切り替えは道具の帯の
+           「ほかの資料に切り替える」で行う。 -->
+      <div class="workspace-heading"><div><h1 id="cat-page-title">翻訳</h1></div></div>
 
       <section id="cat-current-summary" class="sr-only" hidden aria-live="polite">
         <h2 id="cat-current-title"></h2><p id="cat-current-progress"></p><span id="cat-current-save">保存済み</span>
@@ -199,6 +202,14 @@
           <button type="button" id="cat-align-open">前回版として取り込む</button>
         </div>
         <fieldset id="cat-direction-choice" class="direction-choice" hidden><legend>どちらに訳しますか？</legend><p class="muted">入力内容だけでは自動で決められません。</p><div class="direction-choice-grid"><button type="button" class="secondary-button" data-cat-direction="to_en">英語に訳す</button><button type="button" class="secondary-button" data-cat-direction="to_jp">日本語に訳す</button></div></fieldset>
+
+        <!-- 起動して最初に出るのはこの画面になった（2026-08-12）。以前あった
+             「何を訳しますか」の選択画面は消し、その出口だけをここへ移した。 -->
+        <nav class="home-help-links" aria-label="使い方と起動設定">
+          <a href="/tutorial#settings">起動とショートカット</a>
+          <a href="/cat?tour=1">使い方を見る</a>
+          <a href="/tutorial">このアプリについて</a>
+        </nav>
       </section>
 
       <section id="cat-workspace" class="cat-workspace" hidden>

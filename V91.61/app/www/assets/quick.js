@@ -373,6 +373,16 @@
   function start() {
     if (!el('quick-form')) return;
     YakuCommon.start();
+    /* 起動して最初に出るのがこの画面になったので、開いた時点で貼り付け欄に
+       入れておく（2026-08-12）。押す場所を探さずに、貼って Ctrl+Enter で訳せる。
+       保存した作業を開いている最中は横取りしない。 */
+    window.setTimeout(function () {
+      var input = el('quick-input');
+      var picker = document.getElementById('cat-picker');
+      if (!input || !picker || picker.hidden) return;
+      if (document.activeElement && document.activeElement !== document.body) return;
+      input.focus();
+    }, 0);
     if (YakuCommon.onOfficeSelection) YakuCommon.onOfficeSelection(applyOfficeSelection);
     YakuCommon.onReady(function (value) { ready = value; update(); submitPendingWhenReady(); });
     window.addEventListener('yaku-pending-quick-submit', submitPendingWhenReady);

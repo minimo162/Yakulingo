@@ -1224,20 +1224,50 @@ function Close-YakuSurplusCopilotTargets {
         Write-YakuLog "Surplus Copilot tab scan failed. reason=$($_.Exception.Message)" 'WARN'
         return
     }
+    $browserWs = ''
+    try { $browserWs = [string](Get-YakuCdpBrowserWebSocketUrl -Port $Port) } catch { $browserWs = '' }
     foreach ($target in $pages) {
-        if (-not $target -or $target.type -ne 'page') { continue }
+        # 空の「新しいタブ」は type=other で返る（実測 2026-08-12）。page だけを見て
+        # いたので、これだけが窓に残り続けていた。Edge を強制終了したあとの復元で
+        # 増えるため、放っておくと再起動のたびに1枚ずつ溜まる。
+        if (-not $target -or ($target.type -ne 'page' -and $target.type -ne 'other')) { continue }
         $targetId = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $target -Name 'id' -Default '')
         $targetUrl = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $target -Name 'url' -Default '')
         if ([string]::IsNullOrWhiteSpace($targetId) -or $targetId -eq $KeepTargetId) { continue }
-        if (-not (Test-YakuCopilotUrl -Url $targetUrl)) { continue }
         $normalized = $targetUrl.TrimEnd('/').ToLowerInvariant()
-        if ($normalized -ne 'https://m365.cloud.microsoft/chat') { continue }
-        try {
-            $encodedId = [System.Uri]::EscapeDataString($targetId)
-            $null = Invoke-RestMethod -UseBasicParsing -Method Get -Uri "http://127.0.0.1:$Port/json/close/$encodedId" -TimeoutSec 5
-            Write-YakuLog "Closed surplus Copilot tab. targetId=$targetId url=$targetUrl" 'INFO'
-        } catch {
-            Write-YakuLog "Failed to close surplus Copilot tab. targetId=$targetId url=$targetUrl reason=$($_.Exception.Message)" 'WARN'
+        # 閉じてよいのは2種類だけ。この窓は当アプリ専用の profile（所有は呼び出し前に
+        # 確認済み）なので、利用者が自分で開いたタブはここには無い。
+        $isSurplusChat = ((Test-YakuCopilotUrl -Url $targetUrl) -and $normalized -eq 'https://m365.cloud.microsoft/chat')
+        $isBlankTab = ($normalized -in @('edge://newtab', 'edge://new-tab-page', 'about:blank', ''))
+        if (-not ($isSurplusChat -or $isBlankTab)) { continue }
+        # /json/close は 200 を返しても type=other（新しいタブ）には効かない。
+        # 実測（2026-08-12）: 同じ id に2回投げても一覧に残り続けた。ブラウザ側の
+        # websocket から Target.closeTarget を呼ぶと、どちらの種類でも閉じる。
+        $closedHere = $false
+        if (-not [string]::IsNullOrWhiteSpace($browserWs)) {
+            try {
+                $null = Invoke-YakuCdpMethod -WebSocketUrl $browserWs -Method 'Target.closeTarget' -Params @{ targetId = $targetId } -TimeoutSeconds 8
+                $closedHere = $true
+            } catch {
+                Write-YakuLog "Surplus tab close over CDP failed; falling back to /json/close. targetId=$targetId reason=$($_.Exception.Message)" 'DEBUG'
+            }
+        }
+        if (-not $closedHere) {
+            try {
+                $encodedId = [System.Uri]::EscapeDataString($targetId)
+                $null = Invoke-RestMethod -UseBasicParsing -Method Get -Uri "http://127.0.0.1:$Port/json/close/$encodedId" -TimeoutSec 5
+                $closedHere = $true
+            } catch {
+                Write-YakuLog "Failed to close surplus tab. targetId=$targetId url=$targetUrl reason=$($_.Exception.Message)" 'WARN'
+            }
+        }
+        # 「閉じた」と書く前に、本当に消えたかを確かめる。眠っているタブ（pid=0）は
+        # どちらの経路も成功を返すのに一覧へ残り続けた（2026-08-12 実測）。
+        if ($closedHere) {
+            $stillThere = $false
+            try { $stillThere = @(Get-YakuCdpPages -Port $Port | Where-Object { $_ -and ([string]$_.id) -eq $targetId }).Count -gt 0 } catch {}
+            if ($stillThere) { Write-YakuLog "Surplus tab did not close. targetId=$targetId url=$targetUrl" 'DEBUG' }
+            else { Write-YakuLog "Closed surplus tab. targetId=$targetId url=$targetUrl" 'INFO' }
         }
     }
 }

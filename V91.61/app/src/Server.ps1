@@ -1768,7 +1768,7 @@ function Serve-YakuStaticFile {
 function Serve-YakuAppPage {
     param(
         [Parameter(Mandatory=$true)]$Context,
-        [Parameter(Mandatory=$true)][ValidateSet('index.html','cat.html','tutorial.html')][string]$PageName,
+        [Parameter(Mandatory=$true)][ValidateSet('cat.html','tutorial.html')][string]$PageName,
         [switch]$StartTour
     )
     $path = Join-Path (Join-Path $script:YakuRoot 'www') $PageName
@@ -1807,11 +1807,6 @@ function Convert-YakuQuickJobResultJson {
     } | ConvertTo-Json -Depth 12 -Compress)
 }
 
-function Serve-YakuIndex {
-    param([Parameter(Mandatory=$true)]$Context)
-    Serve-YakuAppPage -Context $Context -PageName 'index.html'
-}
-
 function Serve-YakuAdminPage {
     # V91.61: 管理画面。/api/ はセッショントークンを要求するため、
     # index.html と同じ差し込みを行う。差し込まないと画面から API を呼べない。
@@ -1838,14 +1833,17 @@ function Invoke-YakuRoute {
     Clear-YakuExpiredQuickArtifacts
 
     if ($method -eq 'GET' -and $path -eq '/') {
-        # 初回は説明の画面へ送らず、本物の翻訳画面へ着地させる（2026-08-12）。
-        # 前置きの説明は読み飛ばされ、作業の成績も上がらないという調査に合わせた。
-        # 案内は画面の上で3か所だけ吹き出しを出し、実際に1回訳してもらう。
+        # 起動したら、選ばせずに貼り付け欄へ着地させる（2026-08-12、利用者の指摘
+        # 「アプリ起動すると選択肢が提示されて選ばなくてはいけないのはストレス」）。
+        # 「文章を貼り付ける」「資料を取り込む」の2枚のカードは、どちらも同じ画面へ
+        # 行き先が同じだった。取り込みは、着地した画面の中に脇役として置いてある。
+        # 初回は同じ画面の上で3か所だけ吹き出しを出す（前置きの説明は読み飛ばされ、
+        # 作業の成績も上がらないという調査に合わせた）。
         $desktopPreferences = Get-YakuDesktopPreferences
         if ([bool]$desktopPreferences.available -and -not [bool]$desktopPreferences.tutorial_completed) {
             Serve-YakuAppPage -Context $Context -PageName 'cat.html' -StartTour
         } else {
-            Serve-YakuIndex -Context $Context
+            Serve-YakuAppPage -Context $Context -PageName 'cat.html'
         }
         return
     }

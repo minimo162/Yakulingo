@@ -28,8 +28,9 @@ function Read-YakuTutorialFile {
 $html = Read-YakuTutorialFile 'www\tutorial.html'
 $js = Read-YakuTutorialFile 'www\assets\tutorial.js'
 $css = Read-YakuTutorialFile 'www\assets\tutorial.css'
-$homeHtml = Read-YakuTutorialFile 'www\index.html'
-$homeJs = Read-YakuTutorialFile 'www\assets\home.js'
+# 2026-08-12: 選ばせる開始画面（index.html と home.js）を削除した。使い方と起動設定
+# への出口は、着地する翻訳画面に移してある。
+$homeHtml = Read-YakuTutorialFile 'www\cat.html'
 $commonJs = Read-YakuTutorialFile 'www\assets\common.js'
 
 # 2026-08-12: 4画面の説明をやめ、本物の画面の上で3か所だけ吹き出しを出す形にした
@@ -102,12 +103,12 @@ Check-YakuTutorial ($css.Contains('font-size: clamp(2rem') -and $css.Contains('f
 
 Check-YakuTutorial ($homeHtml.Contains('起動とショートカット') -and $homeHtml.Contains('使い方を見る') -and $homeHtml.Contains('/tutorial#settings')) 'home exposes help and direct preference routes'
 # 既定オフにしたので、「オフです」と知らせる帯は催促にしかならない。外した。
-Check-YakuTutorial (-not $homeHtml.Contains('id="background-disabled-banner"') -and -not $homeJs.Contains('background-disabled-banner')) 'the startup-off nag banner must stay removed'
+Check-YakuTutorial (-not $homeHtml.Contains('id="background-disabled-banner"')) 'the startup-off nag banner must stay removed'
 # 開始画面は状態を変えない。読み取り専用の一覧取得（/api/cat/recent）だけを許し、
 # それ以外の POST（とくに起動設定の書き換え）は今までどおり禁止する。
-$homePostTargets = @([regex]::Matches($homeJs, "YakuCommon\.post\('([^']+)'") | ForEach-Object { $_.Groups[1].Value })
-# 帯を外したので、開始画面は起動設定を読みもしない。要求するのは「変えないこと」だけ。
-Check-YakuTutorial ((@($homePostTargets | Where-Object { $_ -ne '/api/cat/recent' }).Count -eq 0) -and -not ($homeJs -match 'desktop/preferences')) 'home must not touch the startup preference at all'
+# 開始画面を兼ねる翻訳画面も、起動設定を書き換えない。
+$catJs = Read-YakuTutorialFile 'www\assets\cat.js'
+Check-YakuTutorial (-not ($catJs -match "post\('/api/desktop/preferences'")) 'the landing translation screen must not touch the startup preference at all'
 
 Check-YakuTutorial ($commonJs.Contains("data.type !== 'set-startup-enabled'") -and
     $commonJs.Contains("typeof data.enabled !== 'boolean'") -and $commonJs.Contains("keys !== 'enabled,type'")) 'shell handler accepts only the exact startup-toggle message contract'

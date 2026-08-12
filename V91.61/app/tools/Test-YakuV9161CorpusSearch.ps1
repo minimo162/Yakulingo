@@ -225,7 +225,7 @@ Chk ($serverText -match "Get-YakuQueryValue -Request \`$req -Name 'q'") 'クエ�
 Chk ($serverText -notmatch "QueryString\['q'\]") 'QueryString を使っていない'
 $adminHtml = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'admin.html'))
 Chk ($adminHtml -match 'search-query') '管理画面に検索欄がある'
-$indexHtml = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'index.html'))
+$indexHtml = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'cat.html'))
 Chk ($indexHtml -notmatch 'search-query') '一般利用者の画面には出さない（段階4 まで出さない）'
 # V91.61（2026-08-06）: CAT に「文例を検索」を置いた。参照する側は一般利用者の
 # 画面にも現れる。管理画面だけに置くのは**作る側**（取り込み・索引作り）である。

@@ -45,11 +45,9 @@ $catBatchPath = Join-Path $srcRoot 'CatBatch.ps1'
 $catProjectPath = Join-Path $srcRoot 'CatProject.ps1'
 $translationMemoryPath = Join-Path $srcRoot 'TranslationMemory.ps1'
 $htmlPath = Join-Path $srcRoot 'Html.ps1'
-$landingPath = Join-Path $wwwRoot 'index.html'
 $quickPagePath = Join-Path $wwwRoot 'cat.html'
 $catPagePath = Join-Path $wwwRoot 'cat.html'
 $assetsRoot = Join-Path $wwwRoot 'assets'
-$homeClientPath = Join-Path $assetsRoot 'home.js'
 $quickClientPath = Join-Path $assetsRoot 'quick.js'
 $catClientPath = Join-Path $assetsRoot 'cat.js'
 $catWorkspaceStylePath = Join-Path $assetsRoot 'cat-workspace.css'
@@ -61,20 +59,19 @@ $catBatchSource = Read-YakuDualText $catBatchPath
 $catProjectSource = Read-YakuDualText $catProjectPath
 $translationMemorySource = Read-YakuDualText $translationMemoryPath
 $rendererSource = Read-YakuDualText $htmlPath
-$landing = Read-YakuDualText $landingPath
 $quickPage = Read-YakuDualText $quickPagePath
 $catPage = Read-YakuDualText $catPagePath
-$homeClient = Read-YakuDualText $homeClientPath
 $quickClient = Read-YakuDualText $quickClientPath
 $catClient = Read-YakuDualText $catClientPath
 $catWorkspaceStyle = Read-YakuDualText $catWorkspaceStylePath
-$client = $homeClient + "`n" + $quickClient + "`n" + $catClient
+$client = $quickClient + "`n" + $catClient
 
 Write-Host 'Single launch, landing, and DOM separation' -ForegroundColor Cyan
 Check-YakuDual (($server -split '\[System\.Net\.HttpListener\]::new\(\)').Count -eq 2) 'one listener instance serves both experiences'
 Check-YakuDual ($server -match '(?i)[\x22\x27]?/quick[\x22\x27]?' -and $server -match '(?i)[\x22\x27]?/cat[\x22\x27]?') 'server exposes /quick and /cat from the same launch'
-Check-YakuDual ($landing -match '(?i)href\s*=\s*[\x22\x27][^\x22\x27]*/quick[\x22\x27]' -and $landing -match '(?i)href\s*=\s*[\x22\x27][^\x22\x27]*/cat[\x22\x27]') 'large landing links to /quick and /cat'
-Check-YakuDual ($landing -notmatch 'id\s*=\s*[\x22\x27](?:text-form|cat-open-button)[\x22\x27]') 'landing contains no translator DOM'
+# 2026-08-12: 選ばせる開始画面を削除し、起動直後に翻訳画面へ着地させる。
+Check-YakuDual (-not (Test-Path -LiteralPath (Join-Path $wwwRoot 'index.html'))) 'no separate landing screen stands between launch and translating'
+Check-YakuDual ($catPage.Contains('id="quick-input"')) 'the screen the launcher opens contains the paste box itself'
 # 2026-08-11 に利用者判断で画面を一つにした（「画面を一つにするのでokです」）。
 # 分かれているのは DOM ではなく状態になったので、検査もそちらへ移す。守るべき
 # ものは変わらない: その場で訳す状態は保存しない、確認作業と同時には出ない、
@@ -131,7 +128,7 @@ $quickDiagnosticSettings | Add-Member -NotePropertyName 'diagnostics_level' -Not
 $quickDiagnosticSettings | Add-Member -NotePropertyName 'full_text_diagnostics_enabled' -NotePropertyValue $false -Force
 Check-YakuDual ((Get-YakuDiagnosticsLevel -Settings $quickDiagnosticSettings) -eq 'standard') 'raw transport re-reading Quick settings cannot reactivate full-text diagnostics'
 Check-YakuDual ($server -match 'ConvertTo-YakuQuickResultView|New-YakuQuickArtifact') 'Quick result is reduced before job publication'
-$quickResultBlock = Get-YakuDualSlice -Text $server -Start 'function Convert-YakuQuickJobResultJson' -End 'function Serve-YakuIndex'
+$quickResultBlock = Get-YakuDualSlice -Text $server -Start 'function Convert-YakuQuickJobResultJson' -End 'function Serve-YakuAdminPage'
 Check-YakuDual ($quickResultBlock -notmatch '(?m)^\s*(?:Raw|Prompt|Batches)\s*=') 'published Quick result excludes raw prompt/response/batches'
 Check-YakuDual ($server -match 'Clear-YakuExpiredQuickArtifacts' -and $quickArtifactSource -match 'Clear-YakuExpiredQuickArtifacts') 'Quick artifacts are purged by TTL'
 
@@ -157,7 +154,7 @@ Check-YakuDual ($candidateRoute -notmatch 'Get-YakuCorpusSearchDir|Find-YakuCorp
 Check-YakuDual ($catClient -match '(?i)reference_usage' -and $catClient -match '(?i)reference_id' -and $catClient -match '(?i)data-cat-reference-id') 'candidate insertion sends reference_id and displays reference_usage'
 Check-YakuDual ($catClient -match "function renderRows\(\)[\s\S]*?el\('cat-candidates'\)\.hidden = true") 'candidate panel closes when its row leaves the current grid'
 Check-YakuDual ($candidateRoute -match '(?i)reference_id' -and $server -match '(?i)Set-YakuCatSegmentReferenceUsage' -and $catProjectSource -match '(?i)ReferenceUsage') 'server persists reference_usage through the explicit segment mutation'
-$activeUi = $landing + "`n" + $quickPage + "`n" + $catPage + "`n" + $client
+$activeUi = $quickPage + "`n" + $catPage + "`n" + $client
 Check-YakuDual ($activeUi -notmatch '(?i)(?:quality|translation|\u8a33|\u516c\u8868|\u78ba\u8a8d)[^\r\n]{0,40}100\s*[%\uff05]') 'active UI never presents 100 percent as translation quality'
 
 Write-Host 'CAT client state and keyboard regression' -ForegroundColor Cyan
@@ -296,13 +293,13 @@ try {
 }
 
 Write-Host 'User-facing reuse vocabulary and no classification input' -ForegroundColor Cyan
-$normalUi = $landing + "`n" + $quickPage + "`n" + $catPage + "`n" + $client + "`n" + $rendererSource
+$normalUi = $quickPage + "`n" + $catPage + "`n" + $client + "`n" + $rendererSource
 $selfConfirmedPattern = '\u81ea\u5206\u304c\u78ba\u8a8d\u3057\u305f\u8a33'
 $pastExamplePattern = '\u904e\u53bb\u306e\u7ffb\u8a33\u4f8b'
 Check-YakuDual ($normalUi -match $selfConfirmedPattern) 'normal UI says self-confirmed translation'
 Check-YakuDual ($normalUi -match $pastExamplePattern) 'normal UI says past translation example'
 Check-YakuDual ($normalUi -notmatch '\u81ea\u5206\u306e\u8a33\s*100%|\u516c\u8868\u8a33\s*100%|Verified\s*=\s*\$true') 'normal UI has no 100-percent or Verified quality claim'
-$allHtml = @($landingPath,$quickPagePath,$catPagePath) | ForEach-Object { Read-YakuDualText $_ }
+$allHtml = @($quickPagePath,$catPagePath) | ForEach-Object { Read-YakuDualText $_ }
 $classificationMarkup = ($allHtml -join "`n")
 Check-YakuDual ($classificationMarkup -notmatch '(?i)<(?:input|select|option)[^>]+(?:name|id|value)\s*=\s*[\x22\x27][^\x22\x27]*(?:public|internal|verified_release|verified_internal|prior_evidence|document_type)[^\x22\x27]*[\x22\x27]') 'production UI has no public/internal/document classification input'
 Check-YakuDual ($client -notmatch '(?i)prior_evidence\s*:|verified_(?:release|internal)') 'browser payload cannot self-assert reuse classification'

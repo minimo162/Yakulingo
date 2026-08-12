@@ -221,7 +221,6 @@ try {
 
 $catIndex = Get-Content -LiteralPath (Join-Path $root 'www\cat.html') -Raw -Encoding UTF8
 $catClient = Get-Content -LiteralPath (Join-Path $root 'www\assets\cat.js') -Raw -Encoding UTF8
-$homeIndex = Get-Content -LiteralPath (Join-Path $root 'www\index.html') -Raw -Encoding UTF8
 # 画面は一つになった。その場で訳す状態も cat.html の中にある。
 $quickIndex = $catIndex
 $quickClient = Get-Content -LiteralPath (Join-Path $root 'www\assets\quick.js') -Raw -Encoding UTF8
@@ -236,7 +235,6 @@ $appJs = @(
     $catClient
 ) -join "`n"
 $indexSource = @(
-    $homeIndex
     $quickIndex
     $catIndex
 ) -join "`n"
@@ -260,8 +258,11 @@ Assert-Yaku -Condition (-not ($appJs -match "localStorage\.setItem\([^\r\n]*(job
 Assert-Yaku -Condition ($appJs -notmatch 'readAsDataURL|file_b64|application/x-www-form-urlencoded') -Message 'browser client must not Base64/urlencode file uploads'
 # 画面を一つにしたので、開始画面が選ばせるのはアプリではなく「どう始めるか」。
 # 行き先は同じ画面で、/quick はその場で訳す状態として残っている。
-Assert-Yaku -Condition ($homeIndex.Contains('<h1 id="home-title">何を訳しますか</h1>') -and $homeIndex.Contains('文章を貼り付ける') -and $homeIndex.Contains('資料を取り込む') -and $homeIndex.Contains('href="/quick"') -and $homeIndex.Contains('href="/cat"')) -Message 'the single launcher must open a large, explained landing screen offering both ways to start'
-Assert-Yaku -Condition (-not ($homeIndex -match '<textarea|type="file"|data-cat-|quick-form')) -Message 'the landing screen must ask only for the work experience, not contain a hidden translator'
+# 2026-08-12: 選ばせる開始画面（index.html）を削除した。起動したら直接、貼り付け欄へ着地する（利用者の指摘「選ばなくてはいけないのはストレス」）。
+Assert-Yaku -Condition (-not (Test-Path -LiteralPath (Join-Path $root 'www\index.html'))) -Message 'the launcher must not present a choice screen before the translator'
+Assert-Yaku -Condition ($server -match "path -eq '/'" -and $server -notmatch "PageName 'index.html'" -and
+    ([regex]::Matches($server, [regex]::Escape("Serve-YakuAppPage -Context `$Context -PageName 'cat.html'")).Count -ge 2)) -Message 'the root route must land on the translation screen itself'
+Assert-Yaku -Condition ($catIndex.Contains('href="/tutorial#settings"') -and $catIndex.Contains('href="/cat?tour=1"') -and $catIndex.Contains('href="/tutorial"')) -Message 'the ways out of the deleted landing screen must live on the translation screen'
 # 画面は一つになったので「ファイルの機能がページに無いこと」では測れない。
 # その場で訳す状態の中に、保存しないことと登録した訳語を使わないことが書いてあり、
 # その状態が既定では出ていないことを見る。
@@ -354,8 +355,7 @@ Assert-Yaku -Condition ($stylesSource -match '\.button:not\(\.secondary-button, 
 Assert-Yaku -Condition ($server -match 'mode = \$catMode; amount_notation = \(Get-YakuCatProjectAmountNotation -Project \$project\)') -Message 'the CAT translation job payload must carry the project amount notation into the worker runspace'
 Assert-Yaku -Condition ($stylesSource -match '\.entry-more-actions \{ display: none;' -and $stylesSource -match '\.entry-more\[open\] \.entry-more-actions \{ display: flex; \}') -Message 'collapsed alternative entries must actually be hidden instead of being forced visible by their own display rule'
 Assert-Yaku -Condition ($catClient.Contains("exportButton.classList.toggle('secondary-button', drafting)") -and $catClient.Contains("translate.classList.toggle('secondary-button', !drafting)")) -Message 'the toolbar filled button must follow the next step instead of staying on a finished action'
-Assert-Yaku -Condition (-not ($homeIndex -match 'amount-notation') -and
-    ([regex]::Matches($catIndex, 'id="amount-notation"').Count -eq 1) -and
+Assert-Yaku -Condition (([regex]::Matches($catIndex, 'id="amount-notation"').Count -eq 1) -and
     $quickClient.Contains('meta[name="yaku-amount-notation"]') -and
     $server.Contains('__YAKU_AMOUNT_NOTATION__')) -Message 'the amount notation choice must live once on the translation screen and read its value from settings'
 Assert-Yaku -Condition ($server -match 'INVALID_SESSION_TOKEN' -and $server -match 'UNSUPPORTED_CONTENT_TYPE' -and $server -match 'Local\\YakuLingo') -Message 'server boundary and single-instance controls must be present'

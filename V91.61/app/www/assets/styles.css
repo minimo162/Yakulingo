@@ -500,26 +500,10 @@ summary { cursor: pointer; color: var(--text); font-size: var(--font-meta); min-
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
 
-/* Horizon 2: one launcher, separate short-text and document workspaces. */
+/* 起動して最初に出るのは翻訳画面そのもの。選ばせる画面（index.html）は 2026-08-12 に削除したので、その寄せ集めも残さない。残すのは使い方の出口だけ。 */
 .home-link { display: inline-flex; align-items: center; min-height: 44px; text-decoration: none; }
-.home-intro { margin: var(--space-5) 0 var(--space-3); }
-.home-intro .muted { max-width: 58ch; }
-/* 途中の資料への入口。開始画面に置くことで、中断からの復帰が1回で済む。 */
-.home-resume { margin-bottom: var(--space-3); }
-.home-resume h2 { margin-bottom: 10px; }
-.home-resume-list { display: grid; gap: 10px; }
-.home-resume-card { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; min-height: 60px; border: 2px solid var(--accent); border-radius: var(--radius-card); background: var(--accent-soft); padding: 12px 16px; text-decoration: none; }
-.home-resume-card strong { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
-.home-resume-card > span { color: var(--muted); }
-.home-resume-card > span.home-resume-action { display: inline-flex; min-height: 44px; align-items: center; margin-left: auto; border-radius: var(--radius-control); background: var(--accent); color: #fff; padding: 7px 16px; font-weight: 700; }
-.home-resume-card:hover .home-resume-action { background: var(--accent-hover); }
-.home-resume-more { display: inline-flex; align-items: center; min-height: 44px; color: var(--accent-text); font-size: var(--font-meta); font-weight: 600; }
-.home-choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
-.home-choice-card { display: flex; min-height: 270px; flex-direction: column; align-items: flex-start; gap: 12px; border: 2px solid var(--line-strong); border-radius: var(--radius-card); background: var(--surface); padding: 26px; text-decoration: none; box-shadow: var(--shadow-card); }
-.home-choice-card:hover, .home-choice-card:focus-visible { border-color: var(--accent); background: var(--accent-soft); }
-.home-choice-card strong { font-size: 1.35em; }
-.home-choice-kicker { color: var(--muted); font-size: var(--font-meta); font-weight: 700; }
-.home-choice-action { display: inline-flex; min-height: 44px; align-items: center; margin-top: auto; border-radius: var(--radius-control); background: var(--accent); color: #fff; padding: 7px 16px; font-weight: 700; }
+.home-help-links { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-4); }
+.home-help-links a { color: var(--accent-text); font-size: var(--font-meta); }
 /* 日本語は1行 35〜45字を超えると目が次の行頭を見失う。長い説明文には必ず幅を与える。 */
 .privacy-summary, .privacy-note { max-width: 42em; margin: var(--space-3) 0 0; border-left: 4px solid var(--accent); background: var(--accent-soft); padding: 12px 14px; color: var(--text); }
 .cat-picker p.muted, .cat-start-panel > p.muted, .hint, .batch-note { max-width: 42em; }
