@@ -856,6 +856,20 @@ $maskedBillion = [string](Convert-YakuNumericUnits -Text 'xx億円' -Location 't
 Assert-YakuMask ($maskedOku -eq 'xx oku') ('伏せ字は oku なら単位名だけ替える（実際 ' + $maskedOku + '）')
 Assert-YakuMask ($maskedBillion -eq 'xx億円') ('伏せ字は billion では換算できないので触らない（実際 ' + $maskedBillion + '）')
 
+Write-Host 'CASE 24a: 訳文を直すときも、その作業の書き方の規則を送る' -ForegroundColor Cyan
+# New-YakuRevisePrompt は書き方を受け取っておらず、常に既定（oku）の規則を送っていた。
+# billion で作った訳文に「oku をそのまま保て。billion は使うな」と言う形になる。
+foreach ($case in @(
+    @{ Notation='oku';     Billion=$false }
+    @{ Notation='billion'; Billion=$true }
+)) {
+    $revisePrompt = [string](New-YakuRevisePrompt -Root $root -InputText '売上高は[[N1]] billion yenでした。' `
+        -CurrentText ('Revenue was ' + [string][char]0xA5 + '[[N1]] billion.') -Instruction 'make it shorter' `
+        -Direction 'to_en' -Notation ([string]$case.Notation) -RequestId ([guid]::NewGuid().ToString('N'))).Prompt
+    Assert-YakuMask (($revisePrompt -match 'yen sign, the figure, then billion') -eq [bool]$case.Billion) ([string]$case.Notation + ' の作業を直すときは ' + [string]$case.Notation + ' の規則を送る')
+    Assert-YakuMask (($revisePrompt -match 'Never million, billion, trillion') -eq (-not [bool]$case.Billion)) ([string]$case.Notation + ' の作業に、もう一方の書き方の禁止を混ぜない')
+}
+
 Write-Host 'CASE 24b: 換算を呼ぶところは、どれも設定の書き方に従う' -ForegroundColor Cyan
 # 2026-08-12 の実機検証で見つけた穴。その場で訳す経路だけ -Notation を渡しておらず、
 # 原文は oku、プロンプトは billion という食い違いが起きていた。訳文は復元側の

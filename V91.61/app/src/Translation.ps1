@@ -1883,6 +1883,9 @@ function Invoke-YakuTextRevision {
         [Parameter(Mandatory=$true)]$Settings,
         [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
         [ValidateSet('full','brief')][string]$Style = 'full',
+        # 資料翻訳から呼ぶときは、その作業に固定した書き方が渡ってくる。
+        # 渡らなければ設定から読む（その場で訳す経路はこちら）。
+        [ValidateSet('oku','billion','')][string]$Notation = '',
         [AllowNull()]$ProgressState,
         [AllowNull()]$Warnings
     )
@@ -1903,7 +1906,7 @@ function Invoke-YakuTextRevision {
         [pscustomobject]@{ Name='instruction'; OriginalText=$Instruction; ProtectedText=$maskedInstruction; NumericMaskMaps=@($maskMap) }
     )
     $promptPackage = New-YakuProtectedPromptPackage -Kind revision -Root $Root -Direction $Direction -Fields $protectedFields `
-        -Arguments ([pscustomobject]@{ Style=$Style })
+        -Arguments ([pscustomobject]@{ Style=$Style; Notation=$(if ([string]::IsNullOrWhiteSpace($Notation)) { Get-YakuAmountNotation -Settings $Settings } else { $Notation }) })
     $requestId = [string]$promptPackage.RequestId
     $built = $promptPackage.Built
     $built.Prompt = [string]$promptPackage.Prompt
