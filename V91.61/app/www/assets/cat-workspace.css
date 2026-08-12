@@ -700,6 +700,39 @@
   font-weight: 700;
 }
 
+/* 出せない件数を持つときだけ、点検ボタンが赤い縁になる。数字は文字でも出す
+   （色だけに頼らない）。 */
+.app-cat .cat-actions .cat-qa-has-blockers { border-color: var(--error); color: #7a271a; font-weight: 700; }
+
+/* 点検一覧。行へ飛ぶための一覧なので、1件が1つの押せる行になっている。
+   止まる指摘（訳文が空・数字の点検）を先に、未確認をあとに置く。 */
+.cat-qa-dialog { width: min(46rem, 92vw); }
+.cat-qa-list { max-height: 52vh; overflow: auto; margin: var(--space-1) 0; }
+.cat-qa-group + .cat-qa-group { margin-top: var(--space-2); }
+.cat-qa-group h3 { margin-bottom: var(--space-0); font-size: var(--font-body); }
+.cat-qa-group h3 span { color: var(--muted); font-variant-numeric: tabular-nums; }
+.cat-qa-group.is-blocking h3 { color: var(--error); }
+.app-cat .cat-qa-item {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  gap: 2px var(--space-1);
+  width: 100%;
+  min-height: 2.4rem;
+  padding: 5px 8px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-size: var(--font-meta);
+}
+.app-cat .cat-qa-item:hover { background: var(--accent-soft); }
+.cat-qa-row { color: var(--muted); font-variant-numeric: tabular-nums; }
+.cat-qa-source { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cat-qa-message { grid-column: 2; color: var(--muted); }
+.cat-qa-group.is-blocking .cat-qa-message { color: #7a271a; }
+
 .cat-revision-compare {
   margin-top: 12px;
   border: 2px solid var(--accent);

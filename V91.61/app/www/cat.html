@@ -224,7 +224,7 @@
             <span id="cat-save-status" class="cat-save-status" role="status" aria-live="polite">保存済み</span>
           </div>
           <label class="cat-toolbar-search" for="cat-search"><span>検索</span><input id="cat-search" type="search" placeholder="原文・訳文を検索"></label>
-         <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">残りの訳案を作る</button><button id="cat-export" type="button" class="secondary-button">訳文を取り出す</button><details class="cat-more-actions"><summary>そのほか</summary><div class="cat-more-actions-list"><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みの行だけコピー</button><button id="cat-switch-project" type="button" class="secondary-button">ほかの資料に切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>右の候補を上から順に訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></dt><dd>原文をそのまま訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd></dt><dd>確認を取り消す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>M</kbd> / <kbd>Alt</kbd>+<kbd>K</kbd></dt><dd>次の行とつなげる / つなげた行を戻す</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や右側から訳文欄へ戻る</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
+         <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">残りの訳案を作る</button><button id="cat-export" type="button" class="secondary-button">訳文を取り出す</button><button id="cat-qa-open" type="button" class="secondary-button" title="出す前に、直すところを一覧で見ます（F8）">点検</button><details class="cat-more-actions"><summary>そのほか</summary><div class="cat-more-actions-list"><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みの行だけコピー</button><button id="cat-switch-project" type="button" class="secondary-button">ほかの資料に切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>右の候補を上から順に訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></dt><dd>原文をそのまま訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd></dt><dd>確認を取り消す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>M</kbd> / <kbd>Alt</kbd>+<kbd>K</kbd></dt><dd>次の行とつなげる / つなげた行を戻す</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や右側から訳文欄へ戻る</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
           <section aria-labelledby="cat-personal-glossary-title">
             <h3 id="cat-personal-glossary-title">今後も使う訳</h3>
             <p class="muted">取り消しても、訳した文章は残ります。</p>
@@ -311,7 +311,18 @@
               </section>
     </section>
   </main>
-  <dialog id="cat-export-dialog" class="confirm-dialog cat-export-dialog"><form method="dialog"><h2 id="cat-export-title">取り出す前のご確認</h2><p id="cat-export-mode"></p><p id="cat-export-name" class="muted"></p><div id="cat-export-checks" role="status"></div><p class="cat-human-review-note">自動で点検しているのは、数字と単位の写しちがいだけです。言い回しが適切かどうかは、ご自身でお確かめください。</p><p id="cat-export-notice" class="draft-warning">原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。</p><div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>戻って確認する</button><button id="cat-export-confirm" value="export">これで取り出す</button></div></form></dialog>
+  <dialog id="cat-export-dialog" class="confirm-dialog cat-export-dialog"><form method="dialog"><h2 id="cat-export-title">取り出す前のご確認</h2><p id="cat-export-mode"></p><p id="cat-export-name" class="muted"></p><div id="cat-export-checks" role="status"></div><p class="cat-human-review-note">自動で点検しているのは、数字と単位の写しちがいだけです。言い回しが適切かどうかは、ご自身でお確かめください。</p><p id="cat-export-notice" class="draft-warning">原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。</p><div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>戻って確認する</button><button id="cat-export-qa" type="button" class="secondary-button" hidden>点検一覧を開く</button><button id="cat-export-confirm" value="export">これで取り出す</button></div></form></dialog>
+  <!-- 出す前に、資料ぜんぶの指摘を1枚で見る（市販CATの検証パネルに相当）。
+       memoQ・Trados は書き出し前にこの一覧を見て、行へ飛んで直す作りになっている。
+       当アプリは行ごとの指摘と「点検の指摘」での絞り込みは持っていたが、
+       「あと何件残っているか」を出す前に見る場所が無かった。 -->
+  <dialog id="cat-qa-dialog" class="confirm-dialog cat-qa-dialog"><form method="dialog">
+    <h2>点検一覧</h2>
+    <p id="cat-qa-summary" class="muted" role="status"></p>
+    <div id="cat-qa-list" class="cat-qa-list"></div>
+    <p class="cat-human-review-note">自動で点検しているのは、訳文が空かどうかと、数字・単位の写しちがいだけです。言い回しが適切かどうかは、ご自身でお確かめください。</p>
+    <div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>閉じる</button></div>
+  </form></dialog>
   <dialog id="cat-delete-dialog" class="confirm-dialog"><form method="dialog"><h2>この作業を削除しますか</h2><p><strong id="cat-delete-name">この作業</strong> の途中保存を削除します。この操作は取り消せません。元のファイルは削除しません。</p><div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>削除しない</button><button value="delete" class="danger-button">削除する</button></div></form></dialog>
   <dialog id="cat-term-dialog" class="confirm-dialog cat-term-dialog"><form id="cat-term-form" method="dialog">
     <h2>用語を登録</h2><p class="muted">原文と訳文の中から、登録したい部分をマウスで選んでからこの画面を開くと、自動で入ります。</p>

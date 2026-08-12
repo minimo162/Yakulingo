@@ -72,5 +72,16 @@ $styles = Get-Content -LiteralPath (Join-Path $root 'www\assets\styles.css') -Ra
 Check-YakuGrid ($styles -match '\.cat-diff-ins \{[^}]*font-weight: 700[^}]*text-decoration: underline') '差分の印は色だけに頼らない'
 Check-YakuGrid ($styles -match '\.cat-cand-score\.is-exact') '100%一致は他と見分けが付く'
 
+# 出す前の点検一覧。市販CAT（memoQ・Trados）は書き出し前にこの一覧から行へ飛ぶ。
+Check-YakuGrid ($catHtml -match 'id="cat-qa-dialog"' -and $catHtml -match 'id="cat-qa-list"') '点検一覧の器がある'
+Check-YakuGrid ($catHtml -match 'id="cat-qa-open"[^>]*class="secondary-button"') '点検一覧は畳んだ menu ではなく道具の帯から開ける'
+Check-YakuGrid ($catJs -match 'function qaFindings\(') '指摘を資料ぜんぶから集める'
+Check-YakuGrid ($catJs -match "key: 'empty'" -and $catJs -match "key: 'qc'" -and $catJs -match "key: 'unconfirmed'") '出力を止める2つと、止めない未確認を分けて数える'
+Check-YakuGrid ($catJs -match 'data-cat-qa-jump') '一覧から行へ飛べる'
+Check-YakuGrid ($catJs -match "function jumpFromQa[\s\S]{0,400}currentFilter = 'all'") '飛ぶ前に絞り込みを外す（隠れた行へ飛ばさない）'
+Check-YakuGrid ($catJs -match "event.key === 'F8'") 'F8 で開く（Trados の検証キーに合わせる）'
+Check-YakuGrid ($catJs -match 'function updateQaButton\(') '止まっている件数をボタンに出す'
+Check-YakuGrid ($catJs -match "el\('cat-export'\)\.disabled = !project \|\| !!\(project && project\.export_blocked\)") '点検一覧を足しても、出力を止める条件は緩めない'
+
 if ($script:failed -gt 0) { Write-Host ('CAT grid tests failed: ' + $script:failed) -ForegroundColor Red; exit 1 }
 Write-Host 'CAT grid tests passed.' -ForegroundColor Green

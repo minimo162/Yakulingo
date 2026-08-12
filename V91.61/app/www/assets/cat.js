@@ -155,6 +155,9 @@
       el('cat-translate').disabled = !ready || !project || Number(project && project.untranslated) <= 0;
       updateActionLabels();
       el('cat-export').disabled = !project || !!(project && project.export_blocked) || dirty.size > 0;
+      /* 出せないときは、どこを直すかへ行ける場所を出しておく。件数もボタンに出す
+         （市販CATの検証パネルと同じ役目）。取り出しボタンは方針どおり止めたまま。 */
+      updateQaButton();
       /* 1行でも確認済みなら取り出せる。全行そろうのを待たせない。 */
       el('cat-export-reviewed').disabled = !project || Number(project && project.confirmed) <= 0 || dirty.size > 0;
       document.querySelectorAll('[data-cat-filter],[data-cat-location],[data-cat-change],[data-cat-inspector]').forEach(function (button) { button.disabled = false; });
@@ -1108,10 +1111,73 @@
       el('cat-export-checks').innerHTML = blockers.map(function (item) { return '<div class="cat-preflight-item is-blocked">' + esc(item.message || item.code || 'いまはファイルを作れません。上に出ている項目をご確認ください。') + '</div>'; }).join('') + warnings.map(function (item) { return '<div class="cat-preflight-item">' + esc(item.message || item.code || item) + '</div>'; }).join('') + readyLine;
       el('cat-export-notice').textContent = data.draft_notice || '原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。';
       el('cat-export-notice').hidden = mode === 'copy_text' || mode === 'blocked';
+      /* 止まっているときは、どの行かを見に行けるようにする。「作れません」だけを
+         出して行き先を示さないと、利用者は資料の中を目で探すことになる。 */
+      el('cat-export-qa').hidden = !blockers.length;
       el('cat-export-confirm').disabled = !data.eligible || mode === 'blocked';
       el('cat-export-confirm').textContent = mode === 'copy_text' ? '訳文をコピー' : 'ファイルを作る';
       var dialog = el('cat-export-dialog'); dialog.returnValue = 'cancel'; dialog.showModal();
     }).catch(function (error) { setBusy(false); preflightScope = null; status(error.message, true); });
+  }
+
+  /* 出す前に、資料ぜんぶの指摘を1枚で見る（市販CATの検証パネルに相当）。
+     memoQ も Trados も、書き出し前にこの一覧から行へ飛んで直す。当アプリは
+     行ごとの指摘と絞り込みは持っていたが、「あと何件残っているか」を出す前に
+     見る場所が無かった。数えるのは画面が持っている行そのもので、
+     出力を止める条件（訳文が空・数字の点検）と同じ2つを先に並べる。 */
+  function qaFindings() {
+    var all = (project && project.segments) || [], groups = [
+      { key: 'empty', title: '訳文が空', blocking: true, items: [] },
+      { key: 'qc', title: '数字の点検', blocking: true, items: [] },
+      { key: 'unconfirmed', title: '未確認', blocking: false, items: [] }
+    ];
+    all.forEach(function (segment) {
+      var messages = qcMessages(segment);
+      var empty = !String(segment.translation || '').trim();
+      if (empty) groups[0].items.push({ index: Number(segment.index), source: segment.source, message: '訳文が入っていません。' });
+      messages.filter(function (message) { return !empty || message.indexOf('訳文が空') < 0; }).forEach(function (message) {
+        if (empty && /空/.test(message)) return;
+        groups[1].items.push({ index: Number(segment.index), source: segment.source, message: message });
+      });
+      if (!segment.confirmed && !empty) groups[2].items.push({ index: Number(segment.index), source: segment.source, message: '確認済みにしていません。' });
+    });
+    return groups;
+  }
+  function updateQaButton() {
+    var button = el('cat-qa-open');
+    if (!button) return;
+    button.disabled = !project;
+    if (!project) { button.textContent = '点検'; return; }
+    var groups = qaFindings();
+    var blocking = groups[0].items.length + groups[1].items.length;
+    button.textContent = blocking ? ('点検 ' + blocking) : '点検';
+    button.classList.toggle('cat-qa-has-blockers', blocking > 0);
+  }
+  function openQaList() {
+    if (!project) { status('資料が開かれていません。'); return; }
+    var groups = qaFindings();
+    var blocking = groups.filter(function (group) { return group.blocking; }).reduce(function (sum, group) { return sum + group.items.length; }, 0);
+    var unconfirmed = groups[2].items.length;
+    el('cat-qa-summary').textContent = blocking
+      ? ('ファイルを作れない指摘が ' + blocking + ' 件あります。' + (unconfirmed ? '未確認は ' + unconfirmed + ' 行です。' : ''))
+      : (unconfirmed ? ('止まる指摘はありません。未確認は ' + unconfirmed + ' 行です。') : '指摘はありません。すべての行を確認し終えています。');
+    el('cat-qa-list').innerHTML = groups.filter(function (group) { return group.items.length; }).map(function (group) {
+      return '<section class="cat-qa-group' + (group.blocking ? ' is-blocking' : '') + '"><h3>' + esc(group.title) + ' <span>' + group.items.length + '</span></h3>' +
+        group.items.map(function (item) {
+          return '<button type="button" class="cat-qa-item" data-cat-qa-jump="' + item.index + '">' +
+            '<span class="cat-qa-row">' + (item.index + 1) + '行目</span>' +
+            '<span class="cat-qa-source">' + esc(String(item.source || '').slice(0, 40)) + '</span>' +
+            '<span class="cat-qa-message">' + esc(item.message) + '</span></button>';
+        }).join('') + '</section>';
+    }).join('') || '<p class="muted">直すところは見つかりませんでした。</p>';
+    var dialog = el('cat-qa-dialog'); dialog.returnValue = 'cancel'; dialog.showModal();
+  }
+  function jumpFromQa(index) {
+    var dialog = el('cat-qa-dialog'); if (dialog.open) dialog.close('cancel');
+    var exportDialog = el('cat-export-dialog'); if (exportDialog.open) exportDialog.close('cancel');
+    /* 飛んだ先が絞り込みで隠れていては直せない。表示を「すべて」に戻す。 */
+    currentFilter = 'all'; currentLocation = 'all'; currentChange = 'all';
+    return redrawAfterFlush().then(function () { return activateIndex(Number(index), true); });
   }
 
   function goToNextQc() {
@@ -1174,6 +1240,8 @@
     el('cat-switch-project').addEventListener('click', function () { if (busy) return; flush().then(showPicker).catch(function (error) { status(error.message, true); }); });
     el('cat-translate').addEventListener('click', translate); el('cat-export').addEventListener('click', openExportPreflight);
     el('cat-export-reviewed').addEventListener('click', exportReviewed);
+    el('cat-qa-open').addEventListener('click', openQaList);
+    el('cat-export-qa').addEventListener('click', openQaList);
     el('cat-danger-zone').addEventListener('toggle', function () { if (this.open) loadPersonalGlossary(); });
     /* 右の参考情報は畳める。閉じると、原文と訳文が右端まで使う。次に開いたときも
        同じ状態にする（市販CATでもペインの開閉は覚える）。 */
@@ -1217,6 +1285,7 @@
     document.addEventListener('click', function (event) {
       var button = event.target.closest('button'); if (!button) return;
       if (busy && (button.id === 'cat-confirm-bulk' || button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-shorten') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
+      if (button.hasAttribute('data-cat-qa-jump')) return jumpFromQa(button.getAttribute('data-cat-qa-jump'));
       if (button.hasAttribute('data-cat-filter')) { currentFilter = button.getAttribute('data-cat-filter') || 'actionable'; return redrawAfterFlush(); }
       if (button.hasAttribute('data-cat-location')) {
         currentLocation = button.getAttribute('data-cat-location') || 'all';
@@ -1323,6 +1392,8 @@
       if (event.isComposing) return;
       var input = event.target.closest && event.target.closest('[data-cat-input]');
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') { event.preventDefault(); YakuCommon.focus(el('cat-search')); el('cat-search').select(); return; }
+      /* 点検一覧。Trados の検証（F8）に合わせる。 */
+      if (event.key === 'F8' && !el('cat-workspace').hidden) { event.preventDefault(); openQaList(); return; }
       /* 過去訳を言葉で探す。memoQ / Trados もコンコーダンスに専用キーを割いている。 */
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
