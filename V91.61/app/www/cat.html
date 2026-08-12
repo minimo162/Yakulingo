@@ -7,12 +7,14 @@
   <meta name="yaku-file-max-bytes" content="__YAKU_MAX_UPLOAD_BYTES__">
   <meta name="yaku-max-batch-chars" content="__YAKU_MAX_BATCH_CHARS__">
   <meta name="yaku-amount-notation" content="__YAKU_AMOUNT_NOTATION__">
+  <meta name="yaku-tour" content="__YAKU_TOUR__">
   <title>翻訳 - YakuLingo</title>
   <link rel="stylesheet" href="/assets/styles.css">
   <link rel="stylesheet" href="/assets/cat-workspace.css">
   <script src="/assets/common.js" defer></script>
   <script src="/assets/quick.js" defer></script>
   <script src="/assets/cat.js" defer></script>
+  <script src="/assets/tour.js" defer></script>
 </head>
 <body class="app-cat">
     <!-- 行の状態を示す記号。輪郭が5つとも違うので、白黒でも色覚特性でも区別できる。
@@ -223,10 +225,6 @@
             <button id="cat-delete" type="button" class="danger-button">この作業を削除</button>
           </section>
         </details></div></details></div>
-          <!-- 使う量の1文は、ボタンと同じ列に入れると列幅を奪い、行数が3桁の
-               作業（例: 200行）でツールバーが横にあふれて「そのほか」が画面外へ
-               出た。ツールバーの2段目に全幅で置き、列幅を一切奪わせない。 -->
-          <span id="cat-copilot-usage" class="cat-copilot-usage" role="status" aria-live="polite" hidden></span>
         </header>
 
         <p id="cat-output-help" class="sr-only"></p><p id="cat-export-blocked" class="cat-export-blocked" role="status"></p>

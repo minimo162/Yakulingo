@@ -27,7 +27,9 @@
     node.classList.toggle('alert-inline', !!error);
     if (error && text) YakuCommon.focus(node);
   }
-  function saveStatus(text, error) { el('cat-save-status').textContent = text || ''; el('cat-current-save').textContent = text || '保存済み'; el('cat-save-status').classList.toggle('is-error', !!error); el('cat-current-save').classList.toggle('is-error', !!error); }
+  /* 保存できているのは既定の状態なので、毎回言わない。言うのは、まだ保存できて
+     いないときだけにする（2026-08-12）。読み上げ用の要約には従来どおり入れる。 */
+  function saveStatus(text, error) { el('cat-save-status').textContent = (text === '保存済み' ? '' : (text || '')); el('cat-current-save').textContent = text || '保存済み'; el('cat-save-status').classList.toggle('is-error', !!error); el('cat-current-save').classList.toggle('is-error', !!error); }
   function revision() { return project ? Number(project.revision) || 0 : -1; }
   function currentScope() { return project ? { id: String(project.id || ''), revision: revision() } : null; }
   function scopeIsCurrent(scope, checkRevision) {
@@ -56,6 +58,8 @@
     return YakuCommon.post('/api/cat/' + action, body);
   }
   function directionName(value) { return value === 'to_jp' ? '日本語に訳す作業' : '英語に訳す作業'; }
+  /* ツールバーは横に長い。向きは記号で足りる（2026-08-12、利用者の指摘）。 */
+  function directionMark(value) { return value === 'to_jp' ? '英→日' : '日→英'; }
   /* 画面は一つで、状態は二つ（始める／1文ずつ確認する）。どれが出ているかは
      body の data-cat-view に書く。
      器の高さを窓に固定する規則（cat-workspace.css）は、一覧が主役の確認作業に
@@ -94,26 +98,9 @@
       translate.classList.toggle('secondary-button', !drafting);
     }
   }
-  /* Copilot は3時間の窓で使える回数に上限がある（値は非公開）。押したあとに上限へ
-     当たると、そのバッチぶんの往復が無駄になる。サーバは以前から estimate で
-     「この操作で何回使うか」「直近3時間で何回使ったか」を返していたが、画面が
-     一度も呼んでいなかった。押す前に出す。 */
-  var usageSeq = 0;
-  function refreshCopilotUsage() {
-    var host = el('cat-copilot-usage');
-    if (!host) return;
-    var scope = currentScope();
-    if (!scope || !project || Number(project.untranslated) <= 0) { host.hidden = true; return; }
-    var seq = ++usageSeq;
-    return YakuCommon.post('/api/cat/estimate', { id: scope.id }).then(function (data) {
-      if (seq !== usageSeq || !scopeIsCurrent(scope, true)) return;
-      var calls = Number(data && data.estimated_calls) || 0;
-      var recent = Number(data && data.calls_last_3h) || 0;
-      if (calls <= 0) { host.hidden = true; return; }
-      host.textContent = 'この操作でCopilotを約' + calls + '回使います（直近3時間で' + recent + '回）';
-      host.hidden = false;
-    }).catch(function () { if (seq === usageSeq) host.hidden = true; });
-  }
+  /* 「この操作でCopilotを約N回使います（直近3時間でM回）」は外した（2026-08-12）。
+     押す前に読んでも判断が変わらない数字で、ツールバーの2段目を1行ぶん占めていた。
+     上限に当たったときは、そのときに出る文言で足りる。 */
 
   function setBusy(value) {
     busy = value;
@@ -401,7 +388,7 @@
       var generatedTerms = (segment.terminology_generation || []).filter(Boolean).length ? '<details class="cat-term-trace"><summary>訳案作成時に指定した用語 ' + segment.terminology_generation.filter(Boolean).length + '件</summary>' + segment.terminology_generation.filter(Boolean).map(function (term) { return '<div><strong>' + esc(term.source || '') + '</strong> → ' + esc(term.preferred || '') + '</div>'; }).join('') + '</details>' : '';
       var compare = revisionComparison && revisionComparison.projectId === String(project.id || '') && Number(revisionComparison.index) === index ? '<section class="cat-revision-compare" aria-labelledby="cat-revision-title-' + index + '"><h4 id="cat-revision-title-' + index + '">修正結果を確認</h4><div class="cat-revision-pair"><div><strong>変更前</strong><p>' + esc(revisionComparison.before) + '</p></div><div><strong>変更後</strong><p>' + esc(segment.translation || '') + '</p></div></div><p class="muted">数字と単位は自動で点検しました。言い回しが適切かどうかは、ご自身でお確かめください。</p><div class="cat-revision-actions"><button type="button" data-cat-accept-revision="' + index + '">この案を使う</button><button type="button" class="secondary-button" data-cat-revert-revision="' + index + '">元に戻す</button></div></section>' : '';
       var kind = segment.kind === 'cell' ? 'セル' : /^word_/.test(segment.kind || '') ? 'Word' : '文';
-      var target = isActive ? '<textarea rows="3" data-cat-input="' + index + '" data-cat-project-id="' + esc(project.id) + '" data-original="' + esc(segment.translation || '') + '" aria-label="' + row + '行目の訳文" aria-invalid="' + (findings.length ? 'true' : 'false') + '"' + (findings.length ? ' aria-describedby="' + findingId + '"' : '') + '>' + esc(segment.translation || '') + '</textarea>' + prior + referenceTrace + generatedTerms + '<div class="cat-row-primary">' + (segment.confirmed ? '<button type="button" class="cat-op secondary-button" data-cat-unconfirm="' + index + '">' + icon('i-undo') + '確認を取り消す</button>' : '<button type="button" class="cat-op cat-op-ok" data-cat-confirm="' + index + '">' + icon('i-reviewed') + '確認済みにする</button>') + '</div><details class="cat-more-row"><summary>この行のそのほかの操作</summary><div class="cat-ops">' + ops + '</div>' + '<button type="button" class="cat-op secondary-button" data-cat-revert="' + index + '" hidden>編集を取り消す</button>' + (segment.translation ? '<button type="button" class="cat-op secondary-button" data-cat-term-open="' + index + '">用語を登録</button>' : '') + ((segment.kind === 'cell' && segment.translation && String(segment.source).length <= 40) ? '<button type="button" class="cat-op secondary-button" data-cat-glossary="' + index + '">このセルの訳を今後も自動で使う</button>' : '') + '</details>' + qc + compare + (segment.can_revise ? '<details class="cat-more-row"><summary>Copilotに直してもらう</summary><form class="revise-form" data-cat-revise="' + index + '"><button class="secondary-button" type="button" data-cat-shorten="' + index + '">短くする</button><label class="revise-label">または、どこをどう直すか入力</label><div class="revise-row"><input class="revise-input" type="text" placeholder="例：「increase」を「rise」に変える"><button class="secondary-button" type="submit">この指示で直す</button></div></form></details>' : '') : '<button type="button" class="cat-row-activate" data-cat-activate="' + index + '"><span class="cat-target-preview">' + esc(segment.translation || '') + '</span></button>';
+      var target = isActive ? '<textarea rows="2" data-cat-input="' + index + '" data-cat-project-id="' + esc(project.id) + '" data-original="' + esc(segment.translation || '') + '" aria-label="' + row + '行目の訳文" aria-invalid="' + (findings.length ? 'true' : 'false') + '"' + (findings.length ? ' aria-describedby="' + findingId + '"' : '') + '>' + esc(segment.translation || '') + '</textarea>' + prior + referenceTrace + generatedTerms + '<div class="cat-row-primary">' + (segment.confirmed ? '<button type="button" class="cat-op secondary-button" data-cat-unconfirm="' + index + '">' + icon('i-undo') + '確認を取り消す</button>' : '<button type="button" class="cat-op cat-op-ok" data-cat-confirm="' + index + '">' + icon('i-reviewed') + '確認済みにする</button>') + '</div><details class="cat-more-row"><summary>そのほかの操作</summary><div class="cat-ops">' + ops + '</div>' + '<button type="button" class="cat-op secondary-button" data-cat-revert="' + index + '" hidden>編集を取り消す</button>' + (segment.translation ? '<button type="button" class="cat-op secondary-button" data-cat-term-open="' + index + '">用語を登録</button>' : '') + ((segment.kind === 'cell' && segment.translation && String(segment.source).length <= 40) ? '<button type="button" class="cat-op secondary-button" data-cat-glossary="' + index + '">このセルの訳を今後も自動で使う</button>' : '') + '</details>' + qc + compare + (segment.can_revise ? '<details class="cat-more-row"><summary>Copilotに直してもらう</summary><form class="revise-form" data-cat-revise="' + index + '"><button class="secondary-button" type="button" data-cat-shorten="' + index + '">短くする</button><label class="revise-label">または、どこをどう直すか入力</label><div class="revise-row"><input class="revise-input" type="text" placeholder="例：「increase」を「rise」に変える"><button class="secondary-button" type="submit">この指示で直す</button></div></form></details>' : '') : '<button type="button" class="cat-row-activate" data-cat-activate="' + index + '"><span class="cat-target-preview">' + esc(segment.translation || '') + '</span></button>';
       var change = changeLabel(segment);
       return '<tr class="' + (isActive ? 'is-active' : '') + '" data-cat-row="' + index + '" data-cat-segment-id="' + esc(segment.segment_id || '') + '" data-cat-confirmed="' + (segment.confirmed ? '1' : '0') + '" data-yaku-cat-state="' + esc(state) + '">' +
         '<td class="cat-col-no"><span class="cat-card-label">行番号・状態</span>' + row + '<span class="cat-state cat-state-' + esc(state) + '" title="' + esc(stateTitle(state)) + '">' + stateIcon(state) + '<span>' + esc(stateLabel(state)) + '</span></span>' + ((change && isActive) ? '<span class="cat-change-badge cat-change-' + esc(changeGroup(segment)) + '" title="' + esc(changeTitle(segment)) + '">' + esc(change) + '</span>' : '') + '</td>' +
@@ -445,9 +432,9 @@
     el('cat-current-title').textContent = project.file_name || '貼り付けた文章';
     el('cat-current-progress').textContent = directionName(project.direction) + '・全' + project.total + '行のうち' + project.confirmed + '行を確認済み・残り' + Math.max(0, project.total - project.confirmed) + '行';
     el('cat-toolbar-title').textContent = project.file_name || '貼り付けた文章';
-    el('cat-toolbar-direction').textContent = directionName(project.direction);
+    el('cat-toolbar-direction').textContent = directionMark(project.direction);
     var pct = project.total ? Math.round(100 * Number(project.confirmed) / Number(project.total)) : 0;
-    el('cat-progress-bar').style.width = pct + '%'; el('cat-progress-row').querySelector('[role="progressbar"]').setAttribute('aria-valuenow', String(pct)); el('cat-progress-text').textContent = project.confirmed + ' / ' + project.total + '行を確認済み' + (Number(project.remaining_chars || 0) > 0 ? '（残り約' + Number(project.remaining_chars).toLocaleString('ja-JP') + '字）' : '');
+    el('cat-progress-bar').style.width = pct + '%'; el('cat-progress-row').querySelector('[role="progressbar"]').setAttribute('aria-valuenow', String(pct)); el('cat-progress-text').textContent = project.confirmed + '/' + project.total + '行';
     renderRows();
     var isFile = project.source === 'file', sourceMissing = (project.eligibility_reasons || []).indexOf('source-file-missing') >= 0;
     var wordReady = project.document_format === 'docx' && project.word_file_output_supported && !sourceMissing;
@@ -461,7 +448,7 @@
     /* 帯は畳んだが、理由は失わない。押せない理由はボタン自身が持つ（title）。
        押したあとの詳細は取り出しダイアログの点検一覧が出す。 */
     el('cat-export').title = outputGuidance() || '';
-    saveStatus('保存済み', false); setBusy(false); refreshCopilotUsage();
+    saveStatus('保存済み', false); setBusy(false);
     /* 資料名も残り行数も、ツールバーと左ナビが持っている。同じ数字を4か所へ書いて
        いた。この帯は「異常を知らせる」ときだけ使う。読み上げは sr-only の
        #cat-current-summary が担う。 */

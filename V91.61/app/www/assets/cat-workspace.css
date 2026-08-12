@@ -359,11 +359,18 @@
 
 /* 主役の行だけ息をさせる。脇役は詰めて、一覧としての一望性を保つ。 */
 .cat-grid tbody tr.is-active > td {
-  padding-block: .6em;
+  padding-block: .45em;
 }
 
 .cat-grid tbody tr:not(.is-active) td {
-  padding-block: .5em;
+  padding-block: .25em;
+}
+
+/* 閉じている行の原文・訳文は1行だけ出す。2行にすると行の高さが倍になり、
+   一覧としての一望性が落ちる。全文は開いた行で読む。 */
+.cat-grid tbody tr:not(.is-active) .cat-source-text,
+.cat-grid tbody tr:not(.is-active) .cat-target-preview {
+  -webkit-line-clamp: 1;
 }
 
 .cat-grid tbody tr:not(.is-active) .cat-source-text,
@@ -377,11 +384,15 @@
 /* 一覧の各行を開くための主要なクリック先。min-height:0 だと実効26px しかなく、
    狙って当てないと外れる。行を開くのはこの画面で最も回数の多い操作なので、
    ポインタでもタッチでも外さない大きさを確保する。 */
+/* 押せる高さは 44px から 32px へ下げた（2026-08-12）。44px は WCAG 2.5.5（AAA）の
+   値で、AA として要求されるのは 2.5.8 の 24x24 である。行そのものが押せる帯なので
+   幅は列いっぱいあり、24 は十分に超える。市販のCATは1画面に15〜25行を出すのに対し、
+   ここは 8 行しか出ていなかった。原文と訳文が見えないほうが、この道具では致命的。 */
 .app-cat .cat-editor-pane button.cat-row-activate {
   display: block;
   width: 100%;
-  min-height: 44px;
-  padding: 6px 0;
+  min-height: 32px;
+  padding: 2px 0;
   border: 0;
   background: transparent;
   color: inherit;
@@ -746,6 +757,7 @@
 }
 
 @media (max-width: 900px) {
+  .cat-work-label { display: block; }
   :root {
     --cat-toolbar-h: 0px;
   }
@@ -798,14 +810,26 @@
 }
 
 .cat-work-source {
-  padding-bottom: var(--space-2);
+  padding-bottom: var(--space-1);
   border-bottom: 1px solid var(--line);
   white-space: pre-wrap;
 }
 
 .cat-work-target {
-  padding-top: var(--space-2);
+  padding-top: var(--space-1);
 }
+
+/* 開いている行が 392px を占め、1画面に4行しか出ていなかった（2026-08-12 実測）。
+   市販のCATは、開いている行も閉じている行と同じ格子の中で編集する。ここも
+   同じ考えで詰める。列見出し（#・場所・原文・訳文）が名前を持っているので、
+   行の中の「原文」「訳文」の札は要らない。狭い画面では札が唯一の手がかりに
+   なるので、そのときだけ出す。 */
+.cat-work-label { display: none; }
+.cat-work-target textarea { min-height: 4.4em; }
+/* 「確認済みにする」と「そのほかの操作」は同じ行に置く。縦に積むと 94px 使う。 */
+.cat-work-target .cat-row-primary { display: inline-flex; vertical-align: top; }
+.cat-work-target .cat-more-row { display: inline-block; margin-left: var(--space-2); }
+.cat-work-target .cat-more-row > summary { margin-top: 0; min-height: 2.2rem; }
 
 .cat-work-label {
   display: block;
@@ -838,20 +862,6 @@
 
 /* 押す前に見える位置に置く。警告ではないので色は付けない。ボタンの隣で、
    ボタンより弱く。 */
-/* ボタンと同じ列に置くと、この1文の幅がそのまま列幅の取り合いになる。実測
-   （窓 1380px、200行の作業）では列の合計が 1,460px となり、器の 1,348px を
-   112px 超えて「そのほか」が画面外へ出た。逆に潰させると幅 55px で5行に割れ、
-   ツールバーが3段になって一覧が 2.4 行消える。
-   2段目へ全幅で出せば、列幅を奪わずに1行で読める。固定の最小幅の合計は
-   1,248px に収まり、100px の余裕ができる（同条件の実測）。丈は 72→101px。 */
-.cat-copilot-usage {
-  grid-column: 1 / -1;
-  align-self: center;
-  color: var(--muted);
-  font-size: var(--font-meta);
-  text-align: right;
-  white-space: nowrap;
-}
 
 /* 「そのほか」に、めったに使わないものを寄せた（キーボード操作・登録した訳と
    この作業の管理）。左の絞り込みと混ぜると、絞り込みが読めなくなる。
@@ -926,3 +936,36 @@
 .cat-resume-row { display: flex; align-items: stretch; gap: var(--space-1); }
 .cat-resume-row .cat-resume-card { flex: 1 1 auto; min-width: 0; }
 .cat-resume-row .cat-resume-drop { flex: 0 0 auto; align-self: center; color: var(--muted); }
+
+/* 初回の案内（コーチマーク）。対象の周りだけ明るく残し、外を落とす。
+   吹き出しは1つだけ出す。「次へ」は置かない（実際の操作で進む）。 */
+.yaku-tour-spotlight {
+  position: fixed;
+  z-index: 60;
+  border-radius: 8px;
+  box-shadow: 0 0 0 9999px rgba(15, 23, 38, .45);
+  pointer-events: none;
+  transition: top var(--motion) var(--ease), left var(--motion) var(--ease), width var(--motion) var(--ease), height var(--motion) var(--ease);
+}
+.yaku-tour-callout {
+  position: fixed;
+  z-index: 61;
+  max-width: 22rem;
+  padding: 14px 16px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgba(15, 23, 38, .18);
+}
+.yaku-tour-title { margin: 0; font-weight: 700; }
+.yaku-tour-body { margin: 6px 0 0; color: var(--muted); font-size: var(--font-meta); line-height: 1.6; }
+.yaku-tour-skip {
+  margin-top: 10px;
+  min-height: 32px;
+  padding: 2px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: var(--font-meta);
+}

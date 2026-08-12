@@ -136,3 +136,13 @@
   .tutorial-navigation button,
   .tutorial-navigation .button { flex: 1; }
 }
+
+/* 「このアプリについて」の事実の一覧。見出しと本文を1行ずつ、罫線で区切る。 */
+.tutorial-facts { margin: 0 0 var(--space-4); }
+.tutorial-facts > div { display: grid; grid-template-columns: 12rem 1fr; gap: 16px; padding: 14px 0; border-top: 1px solid var(--tutorial-line); }
+.tutorial-facts > div:last-child { border-bottom: 1px solid var(--tutorial-line); }
+.tutorial-facts dt { font-weight: 700; }
+.tutorial-facts dd { margin: 0; line-height: 1.75; }
+@media (max-width: 640px) {
+  .tutorial-facts > div { grid-template-columns: 1fr; gap: 4px; }
+}

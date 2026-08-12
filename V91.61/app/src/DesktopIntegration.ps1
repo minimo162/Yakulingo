@@ -113,6 +113,29 @@ function Set-YakuDesktopShortcutFile {
     }
 }
 
+function Set-YakuTutorialCompleted {
+    <#
+      「はじめの案内は済んだ」だけを記録する。ショートカットには触らない。
+
+      2026-08-12 に案内の作りを変えた。文章を読ませる4画面をやめ、本物の画面の上で
+      3か所だけ吹き出しを出す形にしたため、案内の終わりと起動設定の保存が別の
+      出来事になった。Set-YakuDesktopPreferences は両方を一度に書くので使えない。
+      （前置きの説明は読み飛ばされ、成績も上がらないという調査結果に合わせた変更。
+        Nielsen Norman Group「Onboarding Tutorials vs. Contextual Help」）
+    #>
+    $path = Get-YakuDesktopPreferencesPath
+    $current = $null
+    try { $current = Read-YakuJsonFile -Path $path } catch {}
+    $state = [ordered]@{
+        tutorial_completed = $true
+        startup_enabled = $(try { [bool]$current.startup_enabled } catch { $false })
+        desktop_shortcut = $(try { [bool]$current.desktop_shortcut } catch { $false })
+        updated_at = (Get-Date).ToString('o')
+    }
+    Write-YakuTextAtomic -Path $path -Text ($state | ConvertTo-Json -Compress)
+    return (Get-YakuDesktopPreferences)
+}
+
 function Get-YakuDesktopPreferences {
     $shellPath = Get-YakuDesktopShellPath
     $locations = Get-YakuDesktopShortcutLocations

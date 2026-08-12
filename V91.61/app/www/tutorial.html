@@ -4,84 +4,68 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="yaku-session" content="__YAKU_SESSION_TOKEN__">
-  <title>はじめに - YakuLingo</title>
+  <title>このアプリについて - YakuLingo</title>
   <link rel="stylesheet" href="/assets/styles.css">
   <link rel="stylesheet" href="/assets/tutorial.css">
   <script src="/assets/common.js" defer></script>
   <script src="/assets/tutorial.js" defer></script>
 </head>
 <body class="app-tutorial">
+  <!-- 2026-08-12: 4画面の説明をやめた。初回は本物の翻訳画面へ着地し、そこで
+       3か所だけ吹き出しを出す（www/assets/tour.js）。ここは、あとから確かめたい
+       ことだけを置く1枚にする。長い説明を並べず、事実を短く書く。 -->
   <main class="tutorial-shell" aria-labelledby="tutorial-title">
     <header class="tutorial-header">
       <a class="brand tutorial-brand" href="/">YakuLingo</a>
       <div class="tutorial-header-actions">
-                <button id="tutorial-skip" type="button" class="tutorial-skip">設定画面へ進む</button>
+        <a class="button secondary-button" href="/cat?tour=1">使い方をもう一度見る</a>
       </div>
     </header>
 
-    <div class="tutorial-progress" aria-label="全4画面">
-      <p id="tutorial-progress-text" aria-live="polite">1 / 4</p>
-      <div class="tutorial-progress-track" aria-hidden="true"><span id="tutorial-progress-bar"></span></div>
-    </div>
-
-    <section class="tutorial-step" data-step="0" aria-labelledby="tutorial-title">
-      <p class="tutorial-kicker">このアプリについて</p>
-      <h1 id="tutorial-title" tabindex="-1">日本語と英語を訳すアプリです</h1>
-      <p class="tutorial-lead">Microsoft 365 Copilotへ文章を送り、訳案（下書きの訳）を受け取ります。そのまま使える訳ではありませんので、内容はご自身で確かめてください。</p>
-      <div class="tutorial-example-grid" aria-label="訳しかたの2とおり">
-        <div class="tutorial-example"><strong>貼り付けて訳す</strong><span>メール・Web・数文。保存しません</span></div>
-        <div class="tutorial-example"><strong>1文ずつ確認する</strong><span>Word・Excel・長い文章。途中で保存されます</span></div>
-      </div>
-      <p class="tutorial-note">どちらも同じ画面です。貼り付けて訳したあとで「1文ずつ確認して保存する」へ移れます。</p>
+    <section aria-labelledby="tutorial-title">
+      <h1 id="tutorial-title" tabindex="-1">このアプリについて</h1>
+      <dl class="tutorial-facts">
+        <div>
+          <dt>訳すしくみ</dt>
+          <dd>Microsoft 365 Copilot が訳します。出てくるのは下書きです。</dd>
+        </div>
+        <div>
+          <dt>送るもの</dt>
+          <dd>入力欄に入れて「訳案を作る」を押した文章だけ。数値は伏せて送り、社名・人名・文章はそのまま送ります。</dd>
+        </div>
+        <div>
+          <dt><kbd>Ctrl</kbd>＋<kbd>Alt</kbd>＋<kbd>J</kbd></dt>
+          <dd>選んだ文章を入力欄へ読み込みます。読み込むのは押した時だけです。Word・Excel・PowerPoint は選択範囲をそのまま読みます。ほかのアプリではコピー（<kbd>Ctrl</kbd>＋<kbd>C</kbd>）を代わりに押すので、クリップボードが置き換わります。</dd>
+        </div>
+        <div>
+          <dt>元のファイル</dt>
+          <dd>書き込みません。訳文を入れたファイルは、名前の先頭に <code>DRAFT_</code> が付いた別のコピーです。</dd>
+        </div>
+      </dl>
     </section>
 
-    <section class="tutorial-step" data-step="1" aria-labelledby="tutorial-hotkey-title" hidden>
-      <p class="tutorial-kicker">すぐ開く</p>
-      <h1 id="tutorial-hotkey-title" tabindex="-1">選んだ文章をすぐ訳す</h1>
-      <p class="tutorial-lead"><kbd>Ctrl</kbd>＋<kbd>Alt</kbd>＋<kbd>J</kbd>で、どの画面からでも入力欄を開けます。Word・Excel・PowerPoint が前面にあるときは、そのとき選んでいた範囲の文字を入力欄へ読み込みます。</p>
-      <p class="tutorial-note">読み込むのは、このキーを押した時だけです。ふだん画面を見張ることはありません。読み込んだあとも、「訳案を作る」を押すまでCopilotへは送りません。<br>
-        Word・Excel・PowerPoint は、選んでいる範囲を直接読みます（クリップボードは変わりません）。<strong>それ以外のアプリ（Outlook・ブラウザなど）では、このキーがコピー（<kbd>Ctrl</kbd>＋<kbd>C</kbd>）を代わりに押します</strong>。そのため、クリップボードの中身が選んでいた文章に置き換わります。何も選んでいなければ、前の中身は読みません。</p>
-    </section>
-
-    <section class="tutorial-step" data-step="2" aria-labelledby="tutorial-safety-title" hidden>
-      <p class="tutorial-kicker">送信前の確認</p>
-      <h1 id="tutorial-safety-title" tabindex="-1">送信される内容</h1>
-      <p class="tutorial-lead">金額などの数値は、Copilotへ送る前に自動で伏せます。社名・人名・文章はそのまま送信されます。伏せた数値は、訳文へ戻すときにこのパソコンの中で書き戻します。</p>
-      <div class="tutorial-safety-box"><strong>自動では送信しません</strong><span>入力欄に入れて「訳案を作る」を押した文章だけを送信します。</span></div>
-      <p class="tutorial-note">英訳の金額の書き方（<code>13,150 oku</code> か <code>¥1,315 billion</code>）は、訳す画面で選べます。桁の計算はこのパソコンの中で済ませます。</p>
-    </section>
-
-    <section class="tutorial-step" data-step="3" aria-labelledby="tutorial-settings-title" hidden>
-      <p class="tutorial-kicker">起動の設定</p>
-      <h1 id="tutorial-settings-title" tabindex="-1">次回からすぐ使う</h1>
-      <p class="tutorial-lead">内容を確認してから「この設定で始める」を押してください。それまではパソコンの設定を変更しません。</p>
+    <section id="settings" aria-labelledby="tutorial-settings-title">
+      <h2 id="tutorial-settings-title">起動とショートカット</h2>
+      <p class="tutorial-lead">押すまで、パソコンの設定は変わりません。</p>
 
       <form id="tutorial-preferences" class="tutorial-preferences">
         <label class="tutorial-check-row" for="startup-enabled">
-          <!-- 既定はオフ。2026-08-12 に実測して決めた。これが節約するのは
-               Copilot の準備 4.3〜15秒で、代わりに常駐して 850ms ごとの死活確認を
-               回し続ける。同じ形の道具でも QTranslate は「Windowsと同時に起動」を
-               利用者が入れるチェックにしている。要る人だけが入れる形にする。 -->
+          <!-- 既定はオフ。実測で、これが節約するのは Copilot の準備 4.3〜15秒。
+               代わりに常駐して 850ms ごとの死活確認を回し続ける。 -->
           <input id="startup-enabled" name="startup_enabled" type="checkbox">
-          <span><strong>WindowsにサインインしたらYakuLingoを準備する</strong><small><kbd>Ctrl</kbd>＋<kbd>Alt</kbd>＋<kbd>J</kbd> をいつでも使えるようにするための設定です（DeepLなど、同じ形の翻訳アプリと同じ考え方）。オフでも、アプリを開いてから使えば同じことができます。準備にかかるのは数秒〜十数秒です。文章を読み込むのは <kbd>Ctrl</kbd>＋<kbd>Alt</kbd>＋<kbd>J</kbd> を押したときだけ、送るのは「訳案を作る」を押したときだけです。</small></span>
+          <span><strong>Windowsのサインイン時に準備する</strong><small><kbd>Ctrl</kbd>＋<kbd>Alt</kbd>＋<kbd>J</kbd> をすぐ使えます。オフでも、アプリを開けば同じことができます。</small></span>
         </label>
         <label class="tutorial-check-row" for="desktop-shortcut">
           <input id="desktop-shortcut" name="desktop_shortcut" type="checkbox" checked>
-          <span><strong>デスクトップにYakuLingoのショートカットを作る</strong><small>スタートメニューからは、いつでも「YakuLingo」で検索できます。</small></span>
+          <span><strong>デスクトップにショートカットを作る</strong></span>
         </label>
-        <!-- 押す直前に迷う人がいる。迷いの中身は「何が起きるか」「取り消せるか」
-             「チェックを外しても押していいのか」の3つなので、その3つをここに書く。
-             スタートメニューはチェックに関係なく必ず作る（実装がそうなっている。
-             DesktopIntegration.ps1 の start_menu = $true）。書かないと、外したのに
-             作られたと見えてしまう。 -->
         <details class="tutorial-detail">
           <summary>押すと何が起きますか</summary>
           <ul>
-            <li>ショートカット（.lnk）を作ります。置き場所はどれもご自身のユーザーフォルダの中です。</li>
-            <li><strong>スタートメニュー</strong>には、チェックに関係なく必ず作ります。次にアプリを開くときの入口だからです。</li>
-            <li>ほかにパソコンの設定は変えません。レジストリへの書き込みも、管理者権限も使いません（置き場所を調べるために読むだけです）。</li>
-            <li>あとから変えられます。開始画面の「起動とショートカット」から、この画面をもう一度開けます。</li>
-            <li>「設定はあとで」を選んだ場合は、次にアプリを開いたときにこの画面がまた出ます。</li>
+            <li>ショートカット（.lnk）を、ご自身のユーザーフォルダの中に作ります。</li>
+            <li><strong>スタートメニュー</strong>には、チェックに関係なく必ず作ります。</li>
+            <li>ほかの設定は変えません。レジストリへの書き込みも、管理者権限も使いません。</li>
+            <li>あとから開始画面の「起動とショートカット」で変えられます。</li>
           </ul>
         </details>
         <p class="tutorial-preferences-hint">両方のチェックを外したまま押しても<strong>かまいません</strong>。</p>
@@ -90,11 +74,8 @@
       </form>
     </section>
 
-    <nav class="tutorial-navigation" aria-label="使い方の画面移動">
-      <button id="tutorial-back" type="button" class="secondary-button" hidden>戻る</button>
-      <button id="tutorial-next" type="button">次へ</button>
-      <a id="tutorial-home" class="button" href="/" hidden>開始画面へ</a>
-      <a class="button secondary-button tutorial-escape" href="/cat">設定はあとで。まず翻訳を使う</a>
+    <nav class="tutorial-navigation" aria-label="移動">
+      <a id="tutorial-home" class="button secondary-button" href="/">開始画面へ</a>
     </nav>
   </main>
 </body>

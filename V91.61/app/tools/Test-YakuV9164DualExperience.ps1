@@ -179,7 +179,7 @@ Check-YakuDual ($catWorkspaceStyle -match '(?s)\.cat-editor-toolbar\s*\{[^}]*pos
 # なって「そのほか」が画面外へ出る。どちらも「省略する当てが無いものを潰した」形。
 Check-YakuDual ($catWorkspaceStyle -match '(?s)\.cat-toolbar-progress\s*\{[^}]*min-width:\s*max-content') 'toolbar progress must not be squeezed below its own text'
 Check-YakuDual ($catWorkspaceStyle -notmatch '(?s)\.cat-toolbar-document,\s*\r?\n?\.cat-toolbar-progress\s*\{[^}]*min-width:\s*0') 'the shrink rule must not be shared with the progress cell'
-Check-YakuDual ($catWorkspaceStyle -match '(?s)\.cat-copilot-usage\s*\{[^}]*grid-column:\s*1 / -1' -and $catPage -match '(?s)</div>\s*(<!--[\s\S]*?-->\s*)?<span id="cat-copilot-usage"[\s\S]*?</header>') 'the usage note must sit on its own toolbar row instead of competing for column width'
+# 2026-08-12: 使う量の1文は画面から外した（押す前に読んでも判断が変わらない）。
 # 画面に出す情報を減らす（2026-08-12、利用者の指摘「不要な情報が多すぎて必要な情報が
 # 紛れてしまっている」）。数えたら、4セルの資料で「要対応4 / 未翻訳4 / 未確認4」と
 # 同じ数字が3つ並んでいた（actionable = 未確認 or 点検の指摘、未翻訳 ⊂ 未確認）。
