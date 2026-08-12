@@ -58,7 +58,11 @@
 
       <form id="tutorial-preferences" class="tutorial-preferences">
         <label class="tutorial-check-row" for="startup-enabled">
-          <input id="startup-enabled" name="startup_enabled" type="checkbox" checked>
+          <!-- 既定はオフ。2026-08-12 に実測して決めた。これが節約するのは
+               Copilot の準備 4.3〜15秒で、代わりに常駐して 850ms ごとの死活確認を
+               回し続ける。同じ形の道具でも QTranslate は「Windowsと同時に起動」を
+               利用者が入れるチェックにしている。要る人だけが入れる形にする。 -->
+          <input id="startup-enabled" name="startup_enabled" type="checkbox">
           <span><strong>WindowsにサインインしたらYakuLingoを準備する</strong><small><kbd>Ctrl</kbd>＋<kbd>Alt</kbd>＋<kbd>J</kbd> をいつでも使えるようにするための設定です（DeepLなど、同じ形の翻訳アプリと同じ考え方）。オフでも、アプリを開いてから使えば同じことができます。準備にかかるのは数秒〜十数秒です。文章を読み込むのは <kbd>Ctrl</kbd>＋<kbd>Alt</kbd>＋<kbd>J</kbd> を押したときだけ、送るのは「訳案を作る」を押したときだけです。</small></span>
         </label>
         <label class="tutorial-check-row" for="desktop-shortcut">

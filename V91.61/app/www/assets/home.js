@@ -4,12 +4,9 @@
     YakuCommon.start();
     var preferred = document.getElementById('open-quick');
     if (preferred) preferred.focus();
-    var banner = document.getElementById('background-disabled-banner');
-    YakuCommon.json('/api/desktop/preferences').then(function (data) {
-      if (banner && data && data.available !== false && data.tutorial_completed === true && data.startup_enabled === false) banner.hidden = false;
-    }).catch(function () {
-      // 起動設定を取得できなくても、翻訳の開始画面はそのまま利用できる。
-    });
+    /* 「次回からすぐ使う設定がオフです」の帯は外した（2026-08-12）。
+       自動起動を既定オフにしたので、オフは想定どおりの状態であって、
+       毎回知らせる不具合ではない。入れたい人は「起動とショートカット」から入れる。 */
     loadResume();
   }
 
