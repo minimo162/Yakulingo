@@ -859,7 +859,7 @@
         /* 「太字が違うところ」は、最初に印が付いたカードで一度だけ言う。
            全部のカードに書くと、読むのは印そのものではなく説明文になる。 */
         var diffHint = '';
-        if (!exact && !diffHintShown) { diffHint = '太字がいまの原文と違うところ'; diffHintShown = true; }
+        if (!exact && !diffHintShown) { diffHint = '太字が原文との違い'; diffHintShown = true; }
         var deleteButton = item.kind === 'memory' ? '<button type="button" class="secondary-button" data-cat-tm-delete="' + esc(item.reference_id || '') + '" data-cat-index="' + index + '">この候補を今後は出さない</button>' : '';
         return '<article class="cat-candidate-card"><span class="cat-candidate-number">' + number + '</span>' + (number <= 9 ? '<span class="cat-candidate-shortcut"><kbd>Ctrl</kbd>+<kbd>' + number + '</kbd></span>' : '') + '<div class="cat-candidate-meta">' + scoreBadge + '<span class="cat-cand-tag">' + esc(label) + '</span><span>' + esc(material) + '</span>' + (location ? '<span>' + esc(location) + '</span>' : '') + (place ? '<span>' + esc(place) + '</span>' : '') + '</div>' +
           '<div><strong>原文</strong><p class="cat-cand-src">' + diffMarkup(item.source, activeSource) + '</p></div><div><strong>訳文</strong><p class="cat-cand-tgt">' + esc(translation) + '</p></div>' +
@@ -1134,12 +1134,12 @@
     all.forEach(function (segment) {
       var messages = qcMessages(segment);
       var empty = !String(segment.translation || '').trim();
-      if (empty) groups[0].items.push({ index: Number(segment.index), source: segment.source, message: '訳文が入っていません。' });
+      if (empty) groups[0].items.push({ index: Number(segment.index), source: segment.source, message: '' });
       messages.filter(function (message) { return !empty || message.indexOf('訳文が空') < 0; }).forEach(function (message) {
         if (empty && /空/.test(message)) return;
         groups[1].items.push({ index: Number(segment.index), source: segment.source, message: message });
       });
-      if (!segment.confirmed && !empty) groups[2].items.push({ index: Number(segment.index), source: segment.source, message: '確認済みにしていません。' });
+      if (!segment.confirmed && !empty) groups[2].items.push({ index: Number(segment.index), source: segment.source, message: '' });
     });
     return groups;
   }
@@ -1220,9 +1220,8 @@
     });
     var all = (project && project.segments) || [];
     var missing = all.filter(function (segment) { return !String(segment.translation || '').trim(); }).length;
-    el('cat-preview-note').textContent = previewSide === 'target'
-      ? (missing ? ('訳文がまだ無い ' + missing + ' か所は、原文を薄く出しています。押すとその行へ移ります。') : '押すと、その行へ移ります。')
-      : '原文を、資料の並びで出しています。押すと、その行へ移ります。';
+    /* 仕組みの説明は書かない。薄い字が何かだけ、見て分からないので書く。 */
+    el('cat-preview-note').textContent = (previewSide === 'target' && missing) ? '薄い字は、訳文がまだ無いところです。' : '';
     el('cat-preview-body').innerHTML = buildPreview();
     var active = el('cat-preview-body').querySelector('.is-active');
     if (active && active.scrollIntoView) active.scrollIntoView({ block: 'center' });
@@ -1257,7 +1256,7 @@
           return '<button type="button" class="cat-qa-item" data-cat-qa-jump="' + item.index + '">' +
             '<span class="cat-qa-row">' + (item.index + 1) + '行目</span>' +
             '<span class="cat-qa-source">' + esc(String(item.source || '').slice(0, 40)) + '</span>' +
-            '<span class="cat-qa-message">' + esc(item.message) + '</span></button>';
+            (item.message ? '<span class="cat-qa-message">' + esc(item.message) + '</span>' : '') + '</button>';
         }).join('') + '</section>';
     }).join('') || '<p class="muted">直すところは見つかりませんでした。</p>';
     var dialog = el('cat-qa-dialog'); dialog.returnValue = 'cancel'; dialog.showModal();
