@@ -48,6 +48,18 @@ Check-YakuTutorial ($quickClientForTutorial.Contains("'訳案を作る'") -and $
 Check-YakuTutorial ($html -match 'id="startup-enabled"[^>]*type="checkbox"[^>]*checked') 'startup is visibly ON by default'
 Check-YakuTutorial ($html -match 'id="desktop-shortcut"[^>]*type="checkbox"[^>]*checked') 'desktop shortcut is visibly ON by default'
 Check-YakuTutorial ($html.Contains('それまではパソコンの設定を変更しません') -and $html.Contains('この設定で始める')) 'final confirmation explains the side-effect boundary'
+# 2026-08-12: 押してよいか迷う人がいる、という指摘。迷いの中身は「何が起きるか」
+# 「取り消せるか」「チェックを外しても押していいのか」の3つ。押す直前に3つとも書く。
+# とくにスタートメニューは、チェックに関係なく必ず作る（DesktopIntegration.ps1 の
+# start_menu = $true）。書かないと「外したのに作られた」と見える。
+Check-YakuTutorial ($html.Contains('チェックに関係なく必ず作ります') -and $html.Contains('ユーザーフォルダの中')) 'final step states exactly what the button creates, including the always-created start menu entry'
+Check-YakuTutorial ($html.Contains('レジストリへの書き込みも、管理者権限も使いません') -and $html.Contains('あとから変えられます')) 'final step states the limits of the change and that it is reversible'
+Check-YakuTutorial ($html.Contains('両方のチェックを外したまま押しても')) 'final step says both boxes may be cleared before pressing'
+$desktopSrc = Read-YakuTutorialFile 'src\DesktopIntegration.ps1'
+# レジストリは「置き場所を読む」だけで、書き込みはしない。書き込む道が入ったら、
+# チュートリアルの説明が嘘になるのでここで止める。
+Check-YakuTutorial ($desktopSrc -match 'start_menu\s*=\s*\$true') 'the tutorial claim matches the implementation: the start menu shortcut is always created'
+Check-YakuTutorial (-not ($desktopSrc -match '(Set|New|Remove)-ItemProperty|reg\.exe|RegistryKey.*SetValue')) 'the tutorial claim matches the implementation: nothing is written to the registry'
 Check-YakuTutorial ($html.Contains('tabindex="-1"') -and $html.Contains('aria-live="polite"') -and $html.Contains('aria-label="使い方の画面移動"')) 'focus and live-region semantics are present'
 
 Check-YakuTutorial ([regex]::Matches($js, [regex]::Escape("YakuCommon.post('/api/desktop/preferences'")).Count -eq 1) 'desktop preferences have one POST call site'

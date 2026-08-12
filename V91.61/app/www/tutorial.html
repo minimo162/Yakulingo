@@ -64,6 +64,22 @@
           <input id="desktop-shortcut" name="desktop_shortcut" type="checkbox" checked>
           <span><strong>デスクトップにYakuLingoのショートカットを作る</strong><small>スタートメニューからは、いつでも「YakuLingo」で検索できます。</small></span>
         </label>
+        <!-- 押す直前に迷う人がいる。迷いの中身は「何が起きるか」「取り消せるか」
+             「チェックを外しても押していいのか」の3つなので、その3つをここに書く。
+             スタートメニューはチェックに関係なく必ず作る（実装がそうなっている。
+             DesktopIntegration.ps1 の start_menu = $true）。書かないと、外したのに
+             作られたと見えてしまう。 -->
+        <details class="tutorial-detail">
+          <summary>押すと何が起きますか</summary>
+          <ul>
+            <li>ショートカット（.lnk）を作ります。置き場所はどれもご自身のユーザーフォルダの中です。</li>
+            <li><strong>スタートメニュー</strong>には、チェックに関係なく必ず作ります。次にアプリを開くときの入口だからです。</li>
+            <li>ほかにパソコンの設定は変えません。レジストリへの書き込みも、管理者権限も使いません（置き場所を調べるために読むだけです）。</li>
+            <li>あとから変えられます。開始画面の「起動とショートカット」から、この画面をもう一度開けます。</li>
+            <li>「設定はあとで」を選んだ場合は、次にアプリを開いたときにこの画面がまた出ます。</li>
+          </ul>
+        </details>
+        <p class="tutorial-preferences-hint">両方のチェックを外したまま押しても<strong>かまいません</strong>。</p>
         <div id="tutorial-setting-response" class="tutorial-response" role="status" aria-live="polite" tabindex="-1" hidden></div>
         <button id="tutorial-confirm" type="submit" class="tutorial-confirm">この設定で始める</button>
       </form>
