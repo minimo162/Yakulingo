@@ -787,7 +787,7 @@
           '<div class="cat-row-actions"><button type="button" class="secondary-button" data-cat-term-insert="' + esc(item.translation || item.target) + '" data-cat-reference-id="' + esc(item.reference_id || '') + '" data-cat-project-id="' + esc(requestScope.id) + '" data-cat-index="' + index + '">この訳語を入力位置に入れる</button>' +
           '<button type="button" class="secondary-button" data-cat-term-edit data-cat-index="' + index + '" data-cat-term-id="' + esc(item.term_id || '') + '" data-cat-term-version="' + Number(item.term_version || 0) + '" data-cat-term-source="' + esc(item.source || '') + '" data-cat-term-target="' + esc(item.translation || item.target || '') + '" data-cat-term-allowed="' + esc(allowed.join('|')) + '" data-cat-term-forbidden="' + esc(forbidden.join('|')) + '" data-cat-term-scope="' + esc(item.scope || 'project') + '">用語を修正</button><button type="button" class="secondary-button" data-cat-term-deactivate="' + esc(item.term_id || '') + '" data-cat-index="' + index + '">この用語の登録を取りやめる</button></div></article>';
       }).join('') : '<p class="muted">この行で使う用語の登録はありません。</p>'
-      + '<details class="pane-note"><summary>用語を登録するには</summary><p class="muted">原文と訳文から必要な語をマウスで選び、「用語を登録」を押します。この資料だけ、または今後の資料でも使えます。</p></details>';
+      + '<details class="pane-note"><summary>用語を登録するには</summary><p class="muted">原文と訳文から語をマウスで選び、「用語を登録」を押します。</p></details>';
       markTermsInSource(terms);
       el('cat-candidates-list').innerHTML = items.length ? items.map(function (item, itemIndex) {
         var label = item.kind === 'memory' ? '過去に確認した訳' : '前回の資料の訳';
@@ -811,7 +811,7 @@
              読む人はそれを分かっている（2026-08-12、利用者の指摘）。 */
           '<p class="muted">' + esc(match + saved) + '</p>' +
           '<div class="cat-row-actions"><button type="button" class="secondary-button" data-cat-insert="' + esc(translation) + '" data-cat-reference-id="' + esc(item.reference_id || '') + '" data-cat-project-id="' + esc(requestScope.id) + '" data-cat-index="' + index + '">' + number + ' この訳を挿入</button>' + deleteButton + '</div></article>';
-      }).join('') : '<p class="muted">この行に似た訳は、まだ見つかりません。訳文を「確認済みにする」と、このパソコンに記録され、次の資料から自動で候補に出ます。</p>';
+      }).join('') : '<p class="muted">似た訳はまだありません。確認済みにした訳が、次の資料から候補に出ます。</p>';
     }).catch(function () { if (seq === candidateSeq) { el('cat-candidate-count').textContent = '0'; el('cat-terms-list').innerHTML = '<p class="muted">用語を読み込めませんでした。行を選び直すと、もう一度探します。</p>'; el('cat-candidates-list').innerHTML = '<p class="muted">似た訳を読み込めませんでした。行を選び直すと、もう一度探します。</p>'; } });
   }
 

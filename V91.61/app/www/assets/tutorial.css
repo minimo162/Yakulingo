@@ -3,7 +3,7 @@
   --tutorial-muted: #536176;
   --tutorial-line: #d8deea;
   --tutorial-soft: #f4f6fb;
-  --tutorial-accent: #4857d6;
+  --tutorial-accent: #1F3A5F;
   --tutorial-error: #9d2525;
 }
 
@@ -34,16 +34,16 @@
 .tutorial-header { justify-content: space-between; }
 .tutorial-brand { text-decoration: none; }
 .tutorial-header-actions { flex-wrap: wrap; justify-content: flex-end; }
-.tutorial-skip { padding: 10px 4px; border: 0; color: #3342b8; background: transparent; text-decoration: underline; }
+.tutorial-skip { padding: 10px 4px; border: 0; color: #1B3455; background: transparent; text-decoration: underline; }
 
 .tutorial-progress { margin: 32px 0 42px; }
 .tutorial-progress p { margin: 0 0 10px; color: var(--tutorial-muted); font-size: 1rem; font-weight: 700; }
-.tutorial-progress-track { overflow: hidden; height: 8px; border-radius: 999px; background: #e6e9f2; }
+.tutorial-progress-track { overflow: hidden; height: 8px; border-radius: 999px; background: #e3e8ee; }
 .tutorial-progress-track span { display: block; width: 25%; height: 100%; background: var(--tutorial-accent); transition: width .15s ease; }
 
 .tutorial-step { min-height: 340px; }
 .tutorial-step[hidden] { display: none !important; }
-.tutorial-kicker { margin: 0 0 8px; color: #4451bd; font-weight: 700; }
+.tutorial-kicker { margin: 0 0 8px; color: #1B3455; font-weight: 700; }
 .tutorial-step h1 { margin: 0 0 24px; font-size: clamp(2rem, 5vw, 3rem); line-height: 1.2; }
 .tutorial-step h1:focus { outline: none; }
 .tutorial-lead { max-width: 34em; margin: 0 0 28px; font-size: 1.25rem; line-height: 1.8; }
@@ -75,7 +75,7 @@
 
 .tutorial-preferences { display: grid; gap: 12px; }
 .tutorial-check-row { display: grid; grid-template-columns: 32px 1fr; gap: 14px; padding: 18px; border: 2px solid var(--tutorial-line); border-radius: 14px; cursor: pointer; }
-.tutorial-check-row:focus-within { outline: 3px solid #8390ee; outline-offset: 3px; }
+.tutorial-check-row:focus-within { outline: 3px solid #5A7CA6; outline-offset: 3px; }
 .tutorial-check-row input { width: 26px; height: 26px; margin: 2px 0 0; accent-color: var(--tutorial-accent); }
 .tutorial-check-row span { display: flex; flex-direction: column; gap: 8px; }
 .tutorial-check-row strong { font-size: 1.08rem; line-height: 1.5; }

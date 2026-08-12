@@ -8,14 +8,20 @@
   --faint: #686a73;
   --line: #e8e8ec;
   --line-strong: #d9d9e0;
-  /* 文字色に使う accent は、白地でも accent-soft の上でも WCAG AA(4.5:1) を満たす
-     必要がある。旧 #5E6AD2 は白地 4.70:1、accent-soft 上 4.25:1 で後者が落ちていた。
-     面（塗り）用と文字用を分ける。 */
-  --accent: #4550B8;
-  --accent-hover: #38429c;
-  --accent-text: #343DA0;
-  --accent-soft: rgba(69,80,184,.08);
-  --focus: #4550B8;
+  /* 主色は紺。2026-08-12 に インディゴ（#4550B8）から替えた。
+     替えた理由は好みではない。生成された画面に共通する指紋として最も多く挙げられる
+     のが「インディゴ〜紫」で、出どころは Tailwind の既定色が学習データを占めたこと
+     だと各所が説明している。#4550B8 はその族の色だった。
+     紺にすると、決算・開示の資料という中身とも釣り合い、コントラストも上がる。
+       白地   6.79 -> 11.48
+       淡い面 6.18 -> 10.45
+     文字色に使う accent は、白地でも accent-soft の上でも AA(4.5:1) が要る。
+     面（塗り）用と文字用は、濃さを変えて別に持つ。 */
+  --accent: #1F3A5F;
+  --accent-hover: #162C48;
+  --accent-text: #1B3455;
+  --accent-soft: rgba(31,58,95,.07);
+  --focus: #1F3A5F;
   --surface-subtle: #f4f4f6;
   --danger: #b42318;
   --success: #0f7b55;
@@ -130,10 +136,10 @@ textarea:focus, input:focus, select:focus { background: var(--surface); box-shad
 .direction-row input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; z-index: 2; }
 .file-direction-row { margin-top: 0; }
 .direction-warning { margin-left: 8px; color: var(--warning); font-size: var(--font-body); }
-.direction-summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 12px; padding: 12px 14px; border: 1px solid #c8d6f0; border-radius: var(--radius-control); background: #f5f8ff; }
+.direction-summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 12px; padding: 12px 14px; border: 1px solid #c3d2e0; border-radius: var(--radius-control); background: #f2f6fa; }
 .direction-summary > div { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
-.direction-summary strong { color: #17366f; font-size: var(--font-body); }
-.direction-choice { margin-top: 12px; padding: 16px; border: 2px solid var(--accent); border-radius: var(--radius-card); background: #f8faff; }
+.direction-summary strong { color: #1B3455; font-size: var(--font-body); }
+.direction-choice { margin-top: 12px; padding: 16px; border: 2px solid var(--accent); border-radius: var(--radius-card); background: #f2f6fa; }
 .direction-choice h2 { margin: 0 0 6px; font-size: calc(var(--font-ui) + 2px); }
 .direction-choice p { margin: 0 0 12px; color: var(--muted); }
 .direction-choice-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
@@ -149,8 +155,8 @@ button, .button { min-height: 44px; display: inline-flex; align-items: center; j
    脇役（絞り込み、点検タブ、閉じている行）まで accent で塗られる。
    :not() は「引数の中でいちばん強いもの1つぶん」しか積まない。リスト形にして
    (0,1,1) に抑える。以後、状態を足すたびに詳細度を継ぎ足す必要がなくなる。 */
-button:not(.secondary-button, .tab-button, .file-clear-button, .link-button, .danger-button, [disabled]), .button:not([disabled]) { background: var(--accent); border-color: var(--accent); color: #fff; }
-button:not(.secondary-button, .tab-button, .file-clear-button, .link-button, .danger-button, [disabled]):hover, .button:not([disabled]):hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+button:not(.secondary-button, .tab-button, .file-clear-button, .link-button, .danger-button, .tutorial-skip, [disabled]), .button:not(.secondary-button, .danger-button, [disabled]) { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:not(.secondary-button, .tab-button, .file-clear-button, .link-button, .danger-button, .tutorial-skip, [disabled]):hover, .button:not(.secondary-button, .danger-button, [disabled]):hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 button:active:not([disabled]), .button:active:not([disabled]) { transform: translateY(.5px); }
 /* 無効ボタンを opacity で薄くすると、主ボタンの白文字が背景に溶けて 2.1:1 まで落ちる。
    「文章を入力してください」のような操作指示そのものが読めなくなるので、実色で塗る。 */

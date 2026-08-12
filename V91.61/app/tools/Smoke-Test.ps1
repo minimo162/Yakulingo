@@ -335,7 +335,18 @@ Assert-Yaku -Condition (-not ($indexSource -match '122 oku|設定とデータ管
 #    :not() リストに入れて、詳細度を上げずに部品側へ勝たせる
 Assert-Yaku -Condition ($catIndex -match 'class="secondary-button" data-cat-source-show="file"') -Message 'the file entry must not compete with the paste action as a second filled button'
 Assert-Yaku -Condition ($catClient.Contains('var RESUME_VISIBLE = 3') -and $catIndex.Contains('id="cat-resume-more"')) -Message 'the saved work list must fold to the most recent few with a count of the rest'
-Assert-Yaku -Condition ($stylesSource -match 'button:not\(\.secondary-button, \.tab-button, \.file-clear-button, \.link-button, \.danger-button, \[disabled\]\)') -Message 'destructive and link buttons must be excluded from the filled base style without raising its specificity'
+# 2026-08-12（同日追記）: 除外する名前を字面で丸ごと固定していたため、名前を1つ
+# 足すたびに落ちていた。見たいのは2つ。除外が入っていること、そして詳細度を
+# 上げていないこと（:not() を連ねると1つにつき class 1個ぶん積む）。
+$filledBaseRule = ''
+if ($stylesSource -match '(?m)^(button:not\([^
+]*?\{)') { $filledBaseRule = $Matches[1] }
+$requiredExclusions = @('.secondary-button','.tab-button','.file-clear-button','.link-button','.danger-button','.tutorial-skip','[disabled]')
+Assert-Yaku -Condition ($filledBaseRule -ne '' -and (@($requiredExclusions | Where-Object { -not $filledBaseRule.Contains($_) }).Count -eq 0)) -Message 'the filled base style must exclude secondary, tab, file-clear, link, danger and skip buttons'
+# 連ねた :not() が1つでもあれば詳細度が上がっている。
+Assert-Yaku -Condition ($stylesSource -notmatch '\):not\(') -Message 'exclusions must stay in one :not() list so the base specificity does not creep'
+# a.button（リンクのボタン）も同じ除外を持つ。持たないと secondary-button が塗られる。
+Assert-Yaku -Condition ($stylesSource -match '\.button:not\(\.secondary-button, \.danger-button, \[disabled\]\)') -Message 'link-shaped buttons must honour the secondary and danger variants'
 # 2026-08-12: 実機のCAT往復で、billion を選んだ作業が oku で訳された。
 # 翻訳ジョブは別のランスペースで走るため、この JSON に載せたものしか届かない。
 # 受け側（Protect-YakuCatItems / Invoke-YakuCatTranslationItems）は

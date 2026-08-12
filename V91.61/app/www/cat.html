@@ -37,7 +37,9 @@
     </header>
 
     <section class="tab-panel" aria-labelledby="cat-page-title">
-      <div class="workspace-heading"><div><h1 id="cat-page-title">翻訳</h1><p class="muted">その場で訳すか、Word・Excelや長い文章を1文ずつ確認します。</p></div><a class="button secondary-button compact" href="/">最初の画面へ戻る</a></div>
+      <!-- 見出しの下に説明を足さない。この画面が何かは、貼り付け欄と取り込みボタンを
+           見れば分かる。説明文を全部に付けるのをやめる（2026-08-12）。 -->
+      <div class="workspace-heading"><div><h1 id="cat-page-title">翻訳</h1></div><a class="button secondary-button compact" href="/">最初の画面へ戻る</a></div>
 
       <section id="cat-current-summary" class="sr-only" hidden aria-live="polite">
         <h2 id="cat-current-title"></h2><p id="cat-current-progress"></p><span id="cat-current-save">保存済み</span>
@@ -213,7 +215,7 @@
           <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">残りの訳案を作る</button><button id="cat-export" type="button" class="secondary-button">訳文を取り出す（確認画面が出ます）</button><details class="cat-more-actions"><summary>そのほか</summary><div class="cat-more-actions-list"><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みの行だけコピー</button><button id="cat-switch-project" type="button" class="secondary-button">ほかの資料に切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>右の候補を上から順に訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></dt><dd>原文をそのまま訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd></dt><dd>確認を取り消す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>M</kbd> / <kbd>Alt</kbd>+<kbd>K</kbd></dt><dd>次の行とつなげる / つなげた行を戻す</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や右側から訳文欄へ戻る</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
           <section aria-labelledby="cat-personal-glossary-title">
             <h3 id="cat-personal-glossary-title">今後の資料でも使うと登録した訳</h3>
-            <p class="muted">ここにあるものは、これからのすべての資料で自動的に使われます。間違えて登録したものは取り消せます。取り消しても、すでに訳した文章はそのまま残ります。</p>
+            <p class="muted">これからのすべての資料で自動的に使われます。取り消しても、訳した文章は残ります。</p>
             <div id="cat-personal-glossary-list" class="cat-personal-glossary-list"><p class="muted">読み込んでいます…</p></div>
           </section>
           <section aria-labelledby="cat-delete-title">
