@@ -1173,15 +1173,18 @@
     sheets.forEach(function (sheet) { if (String(sheet.name) === String(sheetName)) found = sheet; });
     if (!found) return null;
     if (found.__prepared) return found.__prepared;
-    var widths = {}, wrap = {}, align = {}, spans = {}, covered = {};
+    var widths = {}, heights = {}, wrap = {}, align = {}, bold = {}, spans = {}, covered = {};
     (found.columns || []).forEach(function (col) {
       for (var c = Number(col.min); c <= Number(col.max); c++) widths[c] = col.hidden ? 0 : Number(col.width);
     });
+    /* 行の高さは、既定と違う行だけ来る。来ない行は既定で埋める。 */
+    (found.rows || []).forEach(function (row) { heights[Number(row.row)] = Number(row.height); });
     (found.cells || []).forEach(function (cell) {
       var ref = previewCellRef('x, ' + cell.address);
       if (!ref) return;
       if (cell.wrap) wrap[ref.row + ':' + ref.column] = true;
       if (cell.align) align[ref.row + ':' + ref.column] = String(cell.align);
+      if (cell.bold) bold[ref.row + ':' + ref.column] = true;
     });
     /* 結合は「左上のセルが何列ぶん占めるか」と「隠れるセル」に分けて持つ。 */
     (found.merges || []).forEach(function (range) {
@@ -1199,7 +1202,8 @@
     });
     found.__prepared = {
       defaultWidth: Number(found.default_width) || 8.43,
-      widths: widths, wrap: wrap, align: align, spans: spans, covered: covered
+      defaultHeight: Number(found.default_height) || 18.75,
+      widths: widths, heights: heights, wrap: wrap, align: align, bold: bold, spans: spans, covered: covered
     };
     return found.__prepared;
   }
@@ -1215,6 +1219,15 @@
     }
     return Math.max(24, Math.round(total));
   }
+  /* 行の高さは「ポイント」。96dpi の px に直す（1pt = 4/3 px）。
+     tr の height は最低の高さとして効くので、折り返して伸びた行は伸びたまま出る。
+     縦に切ると、隠れた文字に気づく手がかりが画面に残らないため、そちらは採らない。 */
+  function previewRowPx(layout, row) {
+    if (!layout) return 0;
+    var points = layout.heights[row];
+    if (points === undefined) points = layout.defaultHeight;
+    return Math.max(1, Math.round(Number(points) * 4 / 3));
+  }
   function previewCellHtml(segment, layout, row, column, span) {
     var value = previewText(segment);
     var key = row + ':' + column;
@@ -1226,9 +1239,62 @@
         (align === 'center' ? ';text-align:center' : align === 'right' ? ';text-align:right' : '') + '"';
     }
     return '<button type="button" class="cat-preview-cell' + (value.missing ? ' is-missing' : '') +
-      (wrap ? ' is-wrap' : '') + (Number(segment.index) === Number(activeIndex) ? ' is-active' : '') +
+      (wrap ? ' is-wrap' : '') + (layout && layout.bold[key] ? ' is-bold' : '') +
+      (Number(segment.index) === Number(activeIndex) ? ' is-active' : '') +
       '"' + style + ' data-cat-qa-jump="' + Number(segment.index) + '">' +
       esc(value.text) + '</button>';
+  }
+  /* Word の並び。見出しは段の深さで、表は格子で出す。Excel と同じ考えで、
+     原本を見た人が「どこの話か」を形で分かるようにするためのもの。
+     見出しの段も表の位置も無い資料（古い作業を含む）は、今までどおり平らに出す。 */
+  function previewParagraphHtml(segment, extraClass) {
+    var value = previewText(segment);
+    return '<button type="button" class="cat-preview-paragraph' + (extraClass || '') +
+      (value.missing ? ' is-missing' : '') +
+      (Number(segment.index) === Number(activeIndex) ? ' is-active' : '') +
+      '" data-cat-qa-jump="' + Number(segment.index) + '">' + esc(value.text) + '</button>';
+  }
+  function buildFlow(flow) {
+    var html = '', index = 0;
+    while (index < flow.length) {
+      var segment = flow[index];
+      var table = Number(segment.table_index);
+      if (!isFinite(table) || table < 0) {
+        var level = Number(segment.heading_level) || 0;
+        html += previewParagraphHtml(segment, level > 0 ? (' is-heading is-heading-' + Math.min(level, 4)) : '');
+        index++;
+        continue;
+      }
+      /* 同じ表のぶんをまとめて取り、行と列へ戻す。同じセルに段落が複数あることがある
+         （Word ではふつう）ので、セルの中は積み重ねる。 */
+      var cells = {}, maxRow = 0, maxColumn = 0;
+      while (index < flow.length && Number(flow[index].table_index) === table) {
+        var item = flow[index];
+        var row = Number(item.table_row), column = Number(item.table_column);
+        if (!isFinite(row) || row < 0) { row = 0; }
+        if (!isFinite(column) || column < 0) { column = 0; }
+        var key = row + ':' + column;
+        if (!cells[key]) { cells[key] = { span: Math.max(1, Number(item.table_span) || 1), parts: [] }; }
+        cells[key].parts.push(item);
+        maxRow = Math.max(maxRow, row);
+        maxColumn = Math.max(maxColumn, column + (Math.max(1, Number(item.table_span) || 1) - 1));
+        index++;
+      }
+      var body = '';
+      for (var r = 0; r <= maxRow; r++) {
+        var tds = '', c = 0;
+        while (c <= maxColumn) {
+          var cell = cells[r + ':' + c];
+          if (!cell) { tds += '<td></td>'; c++; continue; }
+          tds += '<td' + (cell.span > 1 ? ' colspan="' + cell.span + '"' : '') + '>' +
+            cell.parts.map(function (part) { return previewParagraphHtml(part, ' is-in-table'); }).join('') + '</td>';
+          c += cell.span;
+        }
+        body += '<tr>' + tds + '</tr>';
+      }
+      html += '<table class="cat-preview-doctable"><tbody>' + body + '</tbody></table>';
+    }
+    return html;
   }
   function buildPreview() {
     var all = (project && project.segments) || [];
@@ -1258,7 +1324,7 @@
           var attrs = span ? (' colspan="' + span.columns + '" rowspan="' + span.rows + '"') : '';
           cells += '<td' + attrs + '>' + (segment ? previewCellHtml(segment, layout, row, column, span) : '') + '</td>';
         }
-        rows += '<tr>' + cells + '</tr>';
+        rows += '<tr' + (layout ? ' style="height:' + previewRowPx(layout, row) + 'px"' : '') + '>' + cells + '</tr>';
       }
       /* 幅を効かせるには table-layout: fixed と colgroup が要る。auto のままだと
          中身の長さが勝ち、Excel なら切れるはずの文字で列が広がる。 */
@@ -1270,15 +1336,13 @@
         while (n > 0) { var mod = (n - 1) % 26; letters = String.fromCharCode(65 + mod) + letters; n = Math.floor((n - mod) / 26); }
         head += '<th scope="col">' + letters + '</th>';
       }
-      return '<section class="cat-preview-sheet"><h3>' + esc(sheet.name) + '</h3><table class="cat-preview-grid"><colgroup>' + group + '</colgroup><thead><tr>' + head + '</tr></thead><tbody>' + rows + '</tbody></table></section>';
+      /* 原本の高さが分かっているときだけ、押しやすさのための下限（1.9rem）を外す。
+         外さないと、10pt の行も 30px になり、縦の詰まり具合が原本と変わってしまう。 */
+      return '<section class="cat-preview-sheet"><h3>' + esc(sheet.name) + '</h3><table class="cat-preview-grid' +
+        (layout ? ' is-measured' : '') + '"><colgroup>' + group + '</colgroup><thead><tr>' + head + '</tr></thead><tbody>' + rows + '</tbody></table></section>';
     }).join('');
     if (flow.length) {
-      html += '<section class="cat-preview-flow">' + flow.map(function (segment) {
-        var value = previewText(segment);
-        return '<button type="button" class="cat-preview-paragraph' + (value.missing ? ' is-missing' : '') +
-          (Number(segment.index) === Number(activeIndex) ? ' is-active' : '') + '" data-cat-qa-jump="' + Number(segment.index) + '">' +
-          esc(value.text) + '</button>';
-      }).join('') + '</section>';
+      html += '<section class="cat-preview-flow">' + buildFlow(flow) + '</section>';
     }
     return html || '<p class="muted">まだ行がありません。</p>';
   }

@@ -30,11 +30,24 @@
             try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
         }
 
-        # スタイル番号 -> 折り返し・寄せ。cellXfs の並び順がそのまま番号になる。
+        # スタイル番号 -> 折り返し・寄せ・太字。cellXfs の並び順がそのまま番号になる。
         $wrapByStyle = @{}
         $alignByStyle = @{}
+        $boldByStyle = @{}
         $stylesXml = Read-YakuZipText -Archive $zip -Name 'xl/styles.xml'
         if ($stylesXml) {
+            # 太字は xf が直接持たず、fontId で fonts の並びを指す。先に font 側を作る。
+            # <b/> は太字、<b val="0"/> は太字ではない（既定の font が太字のときに出る）。
+            $boldByFont = @{}
+            $fonts = [regex]::Match($stylesXml, '(?s)<fonts[^>]*>(.*?)</fonts>')
+            if ($fonts.Success) {
+                $fontIndex = 0
+                foreach ($font in [regex]::Matches($fonts.Groups[1].Value, '(?s)<font\b.*?(?:/>|</font>)')) {
+                    $bold = [regex]::Match($font.Value, '<b\s*(?:/>|val="(?<v>[^"]*)")')
+                    $boldByFont[$fontIndex] = ($bold.Success -and @('0','false') -notcontains $bold.Groups['v'].Value)
+                    $fontIndex++
+                }
+            }
             $cellXfs = [regex]::Match($stylesXml, '(?s)<cellXfs[^>]*>(.*?)</cellXfs>')
             if ($cellXfs.Success) {
                 $index = 0
@@ -42,6 +55,8 @@
                     $wrapByStyle[$index] = ($xf.Value -match 'wrapText="1"')
                     $horizontal = [regex]::Match($xf.Value, 'horizontal="([a-z]+)"')
                     $alignByStyle[$index] = if ($horizontal.Success) { $horizontal.Groups[1].Value } else { '' }
+                    $fontId = [regex]::Match($xf.Value, 'fontId="(\d+)"')
+                    $boldByStyle[$index] = ($fontId.Success -and [bool]$boldByFont[[int]$fontId.Groups[1].Value])
                     $index++
                 }
             }
@@ -58,11 +73,15 @@
             $sheetXml = Read-YakuZipText -Archive $zip -Name ('xl/worksheets/sheet' + $ordinal + '.xml')
             if (-not $sheetXml) { continue }
 
+            # 既定の列幅は「文字数」、既定の行の高さは「ポイント」。単位が違うので混ぜない。
             $defaultWidth = 8.43
+            $defaultHeight = 18.75
             $format = [regex]::Match($sheetXml, '<sheetFormatPr\b[^>]*>')
             if ($format.Success) {
                 $value = [regex]::Match($format.Value, 'defaultColWidth="([0-9.]+)"')
                 if ($value.Success) { $defaultWidth = [double]$value.Groups[1].Value }
+                $heightValue = [regex]::Match($format.Value, 'defaultRowHeight="([0-9.]+)"')
+                if ($heightValue.Success) { $defaultHeight = [double]$heightValue.Groups[1].Value }
             }
 
             $columns = New-Object System.Collections.Generic.List[object]
@@ -96,20 +115,26 @@
                 $style = [int]$cell.Groups[2].Value
                 $wrap = [bool]$wrapByStyle[$style]
                 $align = [string]$alignByStyle[$style]
-                if (-not $wrap -and [string]::IsNullOrEmpty($align)) { continue }
-                [void]$cells.Add([ordered]@{ address = [string]$cell.Groups[1].Value; wrap = $wrap; align = $align })
+                $bold = [bool]$boldByStyle[$style]
+                if (-not $wrap -and -not $bold -and [string]::IsNullOrEmpty($align)) { continue }
+                [void]$cells.Add([ordered]@{ address = [string]$cell.Groups[1].Value; wrap = $wrap; align = $align; bold = $bold })
             }
 
+            # ここは @($columns) と書いてはいけない。PowerShell 5.1 の
+            # 配列部分式は List[object] に限って ArgumentException（Argument types
+            # do not match）を投げる。List[string] も ArrayList も投げない。
+            # 実測は 5.1.26100.9168。ToArray() なら通る。
             [void]$sheets.Add([ordered]@{
                 name = [string]$name
                 default_width = [double]$defaultWidth
-                columns = @($columns)
-                merges = @($merges)
-                rows = @($rows)
-                cells = @($cells)
+                default_height = [double]$defaultHeight
+                columns = $columns.ToArray()
+                merges = $merges.ToArray()
+                rows = $rows.ToArray()
+                cells = $cells.ToArray()
             })
         }
-        return @($sheets)
+        return $sheets.ToArray()
     } catch {
         # 体裁は「足し」であって前提ではない。読めなければプレビューは今までどおり出す。
         try { Write-YakuLog ('Sheet layout read failed; preview falls back to plain cells. reason=' + $_.Exception.Message) 'DEBUG' } catch {}

@@ -138,6 +138,12 @@ CAT 側の部品の上書き（いずれも (0,3,1)）を**全部踏み潰した
 - `@($null)` は要素1の配列
 - `@(Get-Content x | ConvertFrom-Json)` は配列全体が要素1になる。
   一度変数へ受けてから `@($var)`
+- **`@($list)` は `List[object]` に限って落ちる。** `ArgumentException:
+  Argument types do not match`。`List[string]` も `List[int]` も `List[psobject]` も
+  `ArrayList` も落ちない。`foreach` も `[object[]]` も `.ToArray()` も落ちない。
+  `@()` だけが落ちる（実測 5.1.26100.9168）。**`.ToArray()` で書く。**
+  2026-08-13 に `src/SheetLayout.ps1` がこれで1枚も返しておらず、
+  しかも `catch { return @() }` の内側だったので無音だった
 - 関数が `return ,$array` で返したものを `@()` で包むと入れ子になる
 - `-not (X) -match Y` は `(-not X) -match Y`。括弧を明示する
 - `[IO.File]` は `Set-Location` を見ない。絶対パスを渡す

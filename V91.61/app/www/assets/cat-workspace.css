@@ -734,6 +734,11 @@
    （はみ出しに気づけるのは、切れて見えるからである）。ON のセルは折り返す。 */
 .app-cat .cat-preview-cell { overflow: hidden; text-overflow: clip; white-space: nowrap; }
 .app-cat .cat-preview-cell.is-wrap { white-space: pre-wrap; }
+/* 見出しかどうかは、原本では太字で分かる。体裁で見るのだから、そこも写す。 */
+.app-cat .cat-preview-cell.is-bold { font-weight: 700; }
+/* 原本の行の高さが分かっているときは、押しやすさのための下限を外す。行の高さは
+   tr 側が持つ。詳細度は (0,3,0) で、上の (0,2,0) にだけ勝つ。基本ルールは上げない。 */
+.cat-preview-grid.is-measured .cat-preview-cell { min-height: 0; }
 .cat-preview-grid thead th { min-width: 0; }
 
 .app-cat .cat-preview-cell:hover,
@@ -744,6 +749,18 @@
 .app-cat .cat-preview-cell.is-missing,
 .app-cat .cat-preview-paragraph.is-missing { color: var(--faint); font-style: italic; }
 .cat-preview-flow { max-width: 42em; }
+/* Word の見出し。段の深さが見て分かればよいので、字の大きさと太さだけで出す。
+   段は4段までに丸める（それより深い見出しは、字の大きさでは区別がつかない）。 */
+.app-cat .cat-preview-paragraph.is-heading { font-weight: 700; margin-top: var(--space-3); }
+.app-cat .cat-preview-paragraph.is-heading-1 { font-size: 1.5em; }
+.app-cat .cat-preview-paragraph.is-heading-2 { font-size: 1.25em; }
+.app-cat .cat-preview-paragraph.is-heading-3 { font-size: 1.1em; }
+.app-cat .cat-preview-paragraph.is-heading-4 { font-size: 1em; }
+/* Word の表。原本と同じく格子で出す。列幅は Word 側の指定を読んでいないので
+   中身なりに配る（幅を偽って出すより、格子であることを示すほうが確か）。 */
+.cat-preview-doctable { border-collapse: collapse; width: 100%; margin: var(--space-2) 0; }
+.cat-preview-doctable td { border: 1px solid var(--line-strong); padding: 0; vertical-align: top; }
+.app-cat .cat-preview-paragraph.is-in-table { margin-bottom: 0; }
 .app-cat .cat-preview-paragraph { margin-bottom: var(--space-1); line-height: 1.9; }
 
 /* 点検一覧。行へ飛ぶための一覧なので、1件が1つの押せる行になっている。

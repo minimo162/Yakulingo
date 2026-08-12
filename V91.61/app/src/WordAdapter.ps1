@@ -116,6 +116,9 @@ function Get-YakuWordDocumentInventory {
         $blocks = New-Object Collections.Generic.List[object]
         $forbiddenXPath = './/w:txbxContent|.//w:ins|.//w:del|.//w:moveFrom|.//w:moveTo|.//w:fldSimple|.//w:fldChar|.//w:instrText|.//w:hyperlink|.//w:drawing|.//w:pict|.//w:object|.//w:altChunk|.//w:sdt|.//w:tab|.//w:br|.//w:cr|.//w:sym|.//m:oMath|.//m:oMathPara'
         $paragraphs = @($doc.SelectNodes('/w:document/w:body//w:p', $ns))
+        # 表の位置は、体裁で見るときに格子へ戻すために要る。Location は画面の「場所」列と
+        # 保存済みの作業が見ているので触らない。位置は Meta へ足すだけにする。
+        $tables = @($doc.SelectNodes('/w:document/w:body//w:tbl', $ns))
         $ordinal = 0; $bodyNo = 0; $tableNo = 0; $writeSupportedCount=0
         foreach ($p in $paragraphs) {
             $ordinal++
@@ -142,17 +145,54 @@ function Get-YakuWordDocumentInventory {
                 $writeSupported=$false
             }
             $inTable = $null -ne $p.SelectSingleNode('ancestor::w:tc', $ns)
-            if ($inTable) { $tableNo++; $kind='word_table'; $location='表内 ' + $tableNo }
+            $headingLevel = 0
+            $tableIndex = -1; $rowIndex = -1; $columnIndex = -1; $columnSpan = 1
+            if ($inTable) {
+                $tableNo++; $kind='word_table'; $location='表内 ' + $tableNo
+                # いちばん内側のセルから、行・表へさかのぼる（入れ子の表があるため）。
+                $tc = $p.SelectSingleNode('ancestor::w:tc[1]', $ns)
+                $tr = if ($tc) { $tc.ParentNode } else { $null }
+                $tbl = if ($tr) { $tr.ParentNode } else { $null }
+                if ($null -ne $tbl) { $tableIndex = [Array]::IndexOf($tables, $tbl) }
+                if ($null -ne $tr -and $null -ne $tbl) {
+                    $rowIndex = 0
+                    foreach ($sibling in @($tbl.SelectNodes('./w:tr', $ns))) {
+                        if ($sibling -eq $tr) { break }
+                        $rowIndex++
+                    }
+                }
+                if ($null -ne $tc -and $null -ne $tr) {
+                    # 横に結合したセルがあると、並び順と格子の列番号がずれる。
+                    # gridSpan を足しながら数えて、格子のほうの列番号を出す。
+                    $columnIndex = 0
+                    foreach ($sibling in @($tr.SelectNodes('./w:tc', $ns))) {
+                        if ($sibling -eq $tc) { break }
+                        $siblingSpan = $sibling.SelectSingleNode('./w:tcPr/w:gridSpan', $ns)
+                        $columnIndex += if ($siblingSpan) { [int]$siblingSpan.GetAttribute('val','http://schemas.openxmlformats.org/wordprocessingml/2006/main') } else { 1 }
+                    }
+                    $span = $tc.SelectSingleNode('./w:tcPr/w:gridSpan', $ns)
+                    if ($span) { $columnSpan = [int]$span.GetAttribute('val','http://schemas.openxmlformats.org/wordprocessingml/2006/main') }
+                }
+            }
             else {
                 $bodyNo++; $kind='word_paragraph'
                 $styleNode = $p.SelectSingleNode('./w:pPr/w:pStyle', $ns)
                 $style = if ($styleNode) { [string]$styleNode.GetAttribute('val','http://schemas.openxmlformats.org/wordprocessingml/2006/main') } else { '' }
                 $location = if ($style -match '^(?i:Heading|見出し)') { '見出し ' + $bodyNo } else { '本文 ' + $bodyNo }
+                # 見出しは「何番目の見出しか」ではなく「どの深さか」で見せたい。
+                # Heading2 / 見出し 2 のどちらの書き方でも段を取る。取れなければ 1 段目とする。
+                if ($style -match '^(?i:Heading|見出し)') {
+                    $level = [regex]::Match($style, '(\d+)')
+                    $headingLevel = if ($level.Success) { [int]$level.Groups[1].Value } else { 1 }
+                    if ($headingLevel -lt 1) { $headingLevel = 1 }
+                    if ($headingLevel -gt 9) { $headingLevel = 9 }
+                }
             }
             $id = 'word:document.xml:p:' + $ordinal
             $blocks.Add([pscustomobject]@{
                 Id=$id; Text=$text; Location=$location
-                Meta=[pscustomobject]@{ Kind=$kind; Part='word/document.xml'; ParagraphOrdinal=$ordinal; WriteSupported=$writeSupported }
+                Meta=[pscustomobject]@{ Kind=$kind; Part='word/document.xml'; ParagraphOrdinal=$ordinal; WriteSupported=$writeSupported
+                    HeadingLevel=$headingLevel; TableIndex=$tableIndex; RowIndex=$rowIndex; ColumnIndex=$columnIndex; ColumnSpan=$columnSpan }
             }) | Out-Null
             if($writeSupported){$writeSupportedCount++}
         }
