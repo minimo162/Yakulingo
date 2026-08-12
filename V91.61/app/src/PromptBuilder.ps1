@@ -850,6 +850,11 @@ function New-YakuRevisePrompt {
         [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
         # 現訳がどちらの成果物か。求めるラベルと文体の注記が決まる。
         [ValidateSet('full','brief')][string]$Style = 'full',
+        # 金額の書き方。直す相手はその作業の書き方で作られた訳文なので、
+        # 規則もそれに合わせる。渡さないと既定の oku 用の規則を送ることになり、
+        # billion で作った訳文に「oku をそのまま保て。billion は使うな」と
+        # 言う形になっていた（2026-08-12）。
+        [ValidateSet('oku','billion')][string]$Notation = 'oku',
         [AllowNull()][string]$RequestId
     )
     if ([string]::IsNullOrWhiteSpace($RequestId)) { $RequestId = [guid]::NewGuid().ToString('N') }
@@ -864,7 +869,7 @@ function New-YakuRevisePrompt {
         else { 'CURRENT is a complete English translation. Keep it complete: no compression and no abbreviations that SOURCE does not itself use.' }
     # 伏せた数値の規則だけは残す。トークンが原文と現訳の両方に居るため、
     # 扱いを示さないと書き換えられて実値へ戻せなくなる。
-    $numeric = Get-YakuNumericRulesSection -InputText ([string]$InputText + "`n" + [string]$CurrentText) -Direction $Direction
+    $numeric = Get-YakuNumericRulesSection -InputText ([string]$InputText + "`n" + [string]$CurrentText) -Direction $Direction -Notation $Notation
     $template = Get-YakuPromptTemplate -Root $Root -Name 'text_revise.txt'
     $vars = @{
         request_id       = $RequestId

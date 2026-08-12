@@ -5418,8 +5418,11 @@ function Initialize-YakuProtectedPromptBoundary {
                 if (-not [string]::IsNullOrWhiteSpace($additional)) { $prompt += "`n`n$additional" }
             }
             'revision' {
+                # 直す相手はその作業の書き方で作られた訳文。規則もそれに合わせる。
+                $reviseNotation = 'oku'
+                try { if ([string]$Arguments.Notation -eq 'billion') { $reviseNotation = 'billion' } } catch { $reviseNotation = 'oku' }
                 $built = New-YakuRevisePrompt -Root $trustedRoot -InputText (& $getField 'source') -CurrentText (& $getField 'current') `
-                    -Instruction (& $getField 'instruction') -Direction $Direction -Style ([string]$Arguments.Style) -RequestId $requestIdArgument
+                    -Instruction (& $getField 'instruction') -Direction $Direction -Style ([string]$Arguments.Style) -Notation $reviseNotation -RequestId $requestIdArgument
                 $prompt = [string]$built.Prompt
             }
             'shorten' {

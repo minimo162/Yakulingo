@@ -1059,6 +1059,7 @@ function Start-YakuTranslationJob {
                         $rev1 = Invoke-YakuTextRevision -Root $Root -InputText ([string]$revItem.text) `
                             -CurrentText ([string]$revItem.current_text) -Instruction ([string]$revItem.instruction) `
                             -Settings $settings -Direction ([string]$cat.direction) -Style 'full' `
+                            -Notation $(if ([string]$cat.amount_notation -eq 'billion') { 'billion' } else { 'oku' }) `
                             -ProgressState $JobState -Warnings $catWarnings
                         $revOption = @($rev1.Options)[0]
                         $result = [pscustomobject]@{
