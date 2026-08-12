@@ -83,5 +83,14 @@ Check-YakuGrid ($catJs -match "event.key === 'F8'") 'F8 で開く（Trados の�
 Check-YakuGrid ($catJs -match 'function updateQaButton\(') '止まっている件数をボタンに出す'
 Check-YakuGrid ($catJs -match "el\('cat-export'\)\.disabled = !project \|\| !!\(project && project\.export_blocked\)") '点検一覧を足しても、出力を止める条件は緩めない'
 
+# 体裁で見る（Trados のプレビュー、memoQ の Preview に当たる）。
+Check-YakuGrid ($catHtml -match 'id="cat-preview-dialog"' -and $catHtml -match 'id="cat-preview-open"') '体裁で見る画面がある'
+Check-YakuGrid ($catJs -match 'function previewCellRef\(') 'Excel はセルの位置を場所から読む'
+Check-YakuGrid ($catJs -match 'cat-preview-grid' -and $catJs -match 'cat-preview-flow') 'セルの格子と、段落の並びの両方を組む'
+Check-YakuGrid ($catJs -match 'data-cat-preview-side') '訳文と原文を切り替えられる'
+Check-YakuGrid ($catJs -match 'is-missing') '訳文が無いところは原文を薄く出す（空白にしない）'
+Check-YakuGrid ($catJs -match 'function openPreview[\s\S]{0,200}showModal') '開くときに組み直す'
+Check-YakuGrid ($catJs -notmatch 'preview[\s\S]{0,40}fetch\(' ) 'プレビューのためにファイルを作らない・開かない'
+
 if ($script:failed -gt 0) { Write-Host ('CAT grid tests failed: ' + $script:failed) -ForegroundColor Red; exit 1 }
 Write-Host 'CAT grid tests passed.' -ForegroundColor Green

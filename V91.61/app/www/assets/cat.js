@@ -1143,6 +1143,96 @@
     });
     return groups;
   }
+  /* 体裁で見る。市販CAT（Trados のプレビュー、memoQ の Preview）に当たる。
+     元のファイルは開かないし、作らない。画面が既に持っている行だけで組む。
+
+     Excel は「Sheet1, A2」から行と列を読み、同じ位置にセルを置く。位置が
+     ずれていないか、セルからはみ出していないかは、これで見て分かる。
+     Word と貼り付けた文章は段落の並び順（画面の行の順）がそのまま本文になる。
+     体裁そのものの再現ではない。書体や罫線までは持っていないので、
+     見出しの大小や色は再現しない。 */
+  var previewSide = 'target';
+  function previewCellRef(location) {
+    var text = String(location || '');
+    var match = text.match(/^(.*?),\s*([A-Z]+)(\d+)$/);
+    if (!match) return null;
+    var letters = match[2], column = 0;
+    for (var i = 0; i < letters.length; i++) column = column * 26 + (letters.charCodeAt(i) - 64);
+    return { sheet: match[1] || 'Sheet', column: column, row: Number(match[3]), address: letters + match[3] };
+  }
+  function previewText(segment) {
+    var target = String(segment.translation || '');
+    if (previewSide === 'source') return { text: String(segment.source || ''), missing: false };
+    if (target.trim()) return { text: target, missing: false };
+    return { text: String(segment.source || ''), missing: true };
+  }
+  function previewCellHtml(segment) {
+    var value = previewText(segment);
+    return '<button type="button" class="cat-preview-cell' + (value.missing ? ' is-missing' : '') +
+      (Number(segment.index) === Number(activeIndex) ? ' is-active' : '') + '" data-cat-qa-jump="' + Number(segment.index) + '">' +
+      esc(value.text) + '</button>';
+  }
+  function buildPreview() {
+    var all = (project && project.segments) || [];
+    var sheets = [], sheetIndex = {}, flow = [];
+    all.forEach(function (segment) {
+      var ref = segment.kind === 'cell' ? previewCellRef(segment.location) : null;
+      if (!ref) { flow.push(segment); return; }
+      if (!sheetIndex[ref.sheet]) { sheetIndex[ref.sheet] = { name: ref.sheet, cells: [], maxRow: 0, maxColumn: 0 }; sheets.push(sheetIndex[ref.sheet]); }
+      var sheet = sheetIndex[ref.sheet];
+      sheet.cells.push({ ref: ref, segment: segment });
+      sheet.maxRow = Math.max(sheet.maxRow, ref.row);
+      sheet.maxColumn = Math.max(sheet.maxColumn, ref.column);
+    });
+    var html = sheets.map(function (sheet) {
+      var grid = {};
+      sheet.cells.forEach(function (item) { grid[item.ref.row + ':' + item.ref.column] = item.segment; });
+      var rows = '';
+      for (var row = 1; row <= sheet.maxRow; row++) {
+        var cells = '<th scope="row">' + row + '</th>';
+        for (var column = 1; column <= sheet.maxColumn; column++) {
+          var segment = grid[row + ':' + column];
+          cells += '<td>' + (segment ? previewCellHtml(segment) : '') + '</td>';
+        }
+        rows += '<tr>' + cells + '</tr>';
+      }
+      var head = '<th scope="col"><span class="sr-only">行番号</span></th>';
+      for (var c = 1; c <= sheet.maxColumn; c++) {
+        var letters = '', n = c;
+        while (n > 0) { var mod = (n - 1) % 26; letters = String.fromCharCode(65 + mod) + letters; n = Math.floor((n - mod) / 26); }
+        head += '<th scope="col">' + letters + '</th>';
+      }
+      return '<section class="cat-preview-sheet"><h3>' + esc(sheet.name) + '</h3><table class="cat-preview-grid"><thead><tr>' + head + '</tr></thead><tbody>' + rows + '</tbody></table></section>';
+    }).join('');
+    if (flow.length) {
+      html += '<section class="cat-preview-flow">' + flow.map(function (segment) {
+        var value = previewText(segment);
+        return '<button type="button" class="cat-preview-paragraph' + (value.missing ? ' is-missing' : '') +
+          (Number(segment.index) === Number(activeIndex) ? ' is-active' : '') + '" data-cat-qa-jump="' + Number(segment.index) + '">' +
+          esc(value.text) + '</button>';
+      }).join('') + '</section>';
+    }
+    return html || '<p class="muted">まだ行がありません。</p>';
+  }
+  function renderPreview() {
+    document.querySelectorAll('[data-cat-preview-side]').forEach(function (button) {
+      button.setAttribute('aria-pressed', String(button.getAttribute('data-cat-preview-side') === previewSide));
+    });
+    var all = (project && project.segments) || [];
+    var missing = all.filter(function (segment) { return !String(segment.translation || '').trim(); }).length;
+    el('cat-preview-note').textContent = previewSide === 'target'
+      ? (missing ? ('訳文がまだ無い ' + missing + ' か所は、原文を薄く出しています。押すとその行へ移ります。') : '押すと、その行へ移ります。')
+      : '原文を、資料の並びで出しています。押すと、その行へ移ります。';
+    el('cat-preview-body').innerHTML = buildPreview();
+    var active = el('cat-preview-body').querySelector('.is-active');
+    if (active && active.scrollIntoView) active.scrollIntoView({ block: 'center' });
+  }
+  function openPreview() {
+    if (!project) { status('資料が開かれていません。'); return; }
+    renderPreview();
+    var dialog = el('cat-preview-dialog'); dialog.returnValue = 'cancel'; dialog.showModal();
+  }
+
   function updateQaButton() {
     var button = el('cat-qa-open');
     if (!button) return;
@@ -1175,6 +1265,7 @@
   function jumpFromQa(index) {
     var dialog = el('cat-qa-dialog'); if (dialog.open) dialog.close('cancel');
     var exportDialog = el('cat-export-dialog'); if (exportDialog.open) exportDialog.close('cancel');
+    var previewDialog = el('cat-preview-dialog'); if (previewDialog.open) previewDialog.close('cancel');
     /* 飛んだ先が絞り込みで隠れていては直せない。表示を「すべて」に戻す。 */
     currentFilter = 'all'; currentLocation = 'all'; currentChange = 'all';
     return redrawAfterFlush().then(function () { return activateIndex(Number(index), true); });
@@ -1241,6 +1332,7 @@
     el('cat-translate').addEventListener('click', translate); el('cat-export').addEventListener('click', openExportPreflight);
     el('cat-export-reviewed').addEventListener('click', exportReviewed);
     el('cat-qa-open').addEventListener('click', openQaList);
+    el('cat-preview-open').addEventListener('click', openPreview);
     el('cat-export-qa').addEventListener('click', openQaList);
     el('cat-danger-zone').addEventListener('toggle', function () { if (this.open) loadPersonalGlossary(); });
     /* 右の参考情報は畳める。閉じると、原文と訳文が右端まで使う。次に開いたときも
@@ -1285,6 +1377,7 @@
     document.addEventListener('click', function (event) {
       var button = event.target.closest('button'); if (!button) return;
       if (busy && (button.id === 'cat-confirm-bulk' || button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-shorten') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
+      if (button.hasAttribute('data-cat-preview-side')) { previewSide = button.getAttribute('data-cat-preview-side') || 'target'; renderPreview(); return; }
       if (button.hasAttribute('data-cat-qa-jump')) return jumpFromQa(button.getAttribute('data-cat-qa-jump'));
       if (button.hasAttribute('data-cat-filter')) { currentFilter = button.getAttribute('data-cat-filter') || 'actionable'; return redrawAfterFlush(); }
       if (button.hasAttribute('data-cat-location')) {
