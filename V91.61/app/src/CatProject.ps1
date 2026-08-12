@@ -1825,11 +1825,38 @@ function ConvertTo-YakuCatProjectJson {
         if (-not $repetitionCounts.ContainsKey($repetitionKey)) { $repetitionCounts[$repetitionKey] = 0; $repetitionFirst[$repetitionKey] = $i }
         $repetitionCounts[$repetitionKey] = [int]$repetitionCounts[$repetitionKey] + 1
     }
+    # Word の見出しの段と表の位置は、原本のブロックが持っている。行から引けるよう
+    # ブロック番号で引ける形にしておく（行ごとに探すと資料の大きさの2乗になる）。
+    # 古い作業には無い項目なので、無ければ「見出しでない・表でない」に落とす。
+    $blockStructure = @{}
+    foreach ($block in @($Project.Blocks)) {
+        $blockId = [string]$block.Id
+        if ([string]::IsNullOrWhiteSpace($blockId)) { continue }
+        $meta = $block.Meta
+        if ($null -eq $meta) { continue }
+        $blockStructure[$blockId] = [ordered]@{
+            heading_level = [int]$(try { if ($null -ne $meta.HeadingLevel) { $meta.HeadingLevel } else { 0 } } catch { 0 })
+            table_index   = [int]$(try { if ($null -ne $meta.TableIndex) { $meta.TableIndex } else { -1 } } catch { -1 })
+            table_row     = [int]$(try { if ($null -ne $meta.RowIndex) { $meta.RowIndex } else { -1 } } catch { -1 })
+            table_column  = [int]$(try { if ($null -ne $meta.ColumnIndex) { $meta.ColumnIndex } else { -1 } } catch { -1 })
+            table_span    = [int]$(try { if ($null -ne $meta.ColumnSpan) { $meta.ColumnSpan } else { 1 } } catch { 1 })
+        }
+    }
     for ($i = 0; $i -lt $segs.Count; $i++) {
+        # 繋げた行は先頭のブロックの位置で出す。繋げた時点で見出しと本文は混ざらない。
+        $structure = $null
+        foreach ($blockId in @($segs[$i].BlockIds)) {
+            if ($blockStructure.ContainsKey([string]$blockId)) { $structure = $blockStructure[[string]$blockId]; break }
+        }
         [void]$rows.Add([ordered]@{
             index       = $i
             segment_id  = [string]$segs[$i].SegmentId
             source      = [string]$segs[$i].Text
+            heading_level = [int]$(if ($structure) { $structure.heading_level } else { 0 })
+            table_index   = [int]$(if ($structure) { $structure.table_index } else { -1 })
+            table_row     = [int]$(if ($structure) { $structure.table_row } else { -1 })
+            table_column  = [int]$(if ($structure) { $structure.table_column } else { -1 })
+            table_span    = [int]$(if ($structure) { $structure.table_span } else { 1 })
             translation = [string]$segs[$i].Translation
             origin      = [string]$segs[$i].Origin
             joined      = [bool]$segs[$i].Joined
@@ -1884,10 +1911,25 @@ function ConvertTo-YakuCatProjectJson {
         if (-not [string]::IsNullOrWhiteSpace($page)) { $where = ($where + ' p.' + $page).Trim() }
         [void]$corpusRows.Add([ordered]@{ text = $text; where = $where })
     }
+    # 体裁（列幅・折り返し・結合）。原本の写しから Office 抜きで読む。
+    # 同じ資料で何度も読まないよう、作業ごとに1回だけ覚える。読めなくても翻訳は続く。
+    $sheetLayout = @()
+    try {
+        $layoutPath = [string]$Project.Path
+        if ((-not [string]::IsNullOrWhiteSpace($layoutPath)) -and ($layoutPath.ToLowerInvariant().EndsWith('.xlsx') -or $layoutPath.ToLowerInvariant().EndsWith('.xlsm'))) {
+            if ($null -eq $script:YakuSheetLayoutCache) { $script:YakuSheetLayoutCache = @{} }
+            $layoutKey = [string]$Project.Id + '|' + [string]$Project.Revision
+            if (-not $script:YakuSheetLayoutCache.ContainsKey($layoutKey)) {
+                $script:YakuSheetLayoutCache[$layoutKey] = @(Get-YakuSheetLayoutFromXlsx -Path $layoutPath)
+            }
+            $sheetLayout = @($script:YakuSheetLayoutCache[$layoutKey])
+        }
+    } catch { $sheetLayout = @() }
     return ([ordered]@{
         id         = [string]$Project.Id
         revision   = [int]$Project.Revision
         source     = $(try { [string]$Project.Source } catch { 'file' })
+        sheet_layout = @($sheetLayout)
         # 出力できない状態かどうか。押す前に画面へ出す。
         export_blocked = [bool]$exportBlocked
         translation_list_eligibility = [bool]$eligibility.TranslationListEligible

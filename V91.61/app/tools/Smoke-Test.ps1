@@ -221,7 +221,6 @@ try {
 
 $catIndex = Get-Content -LiteralPath (Join-Path $root 'www\cat.html') -Raw -Encoding UTF8
 $catClient = Get-Content -LiteralPath (Join-Path $root 'www\assets\cat.js') -Raw -Encoding UTF8
-$homeIndex = Get-Content -LiteralPath (Join-Path $root 'www\index.html') -Raw -Encoding UTF8
 # 画面は一つになった。その場で訳す状態も cat.html の中にある。
 $quickIndex = $catIndex
 $quickClient = Get-Content -LiteralPath (Join-Path $root 'www\assets\quick.js') -Raw -Encoding UTF8
@@ -236,7 +235,6 @@ $appJs = @(
     $catClient
 ) -join "`n"
 $indexSource = @(
-    $homeIndex
     $quickIndex
     $catIndex
 ) -join "`n"
@@ -260,8 +258,11 @@ Assert-Yaku -Condition (-not ($appJs -match "localStorage\.setItem\([^\r\n]*(job
 Assert-Yaku -Condition ($appJs -notmatch 'readAsDataURL|file_b64|application/x-www-form-urlencoded') -Message 'browser client must not Base64/urlencode file uploads'
 # 画面を一つにしたので、開始画面が選ばせるのはアプリではなく「どう始めるか」。
 # 行き先は同じ画面で、/quick はその場で訳す状態として残っている。
-Assert-Yaku -Condition ($homeIndex.Contains('<h1 id="home-title">何を訳しますか</h1>') -and $homeIndex.Contains('文章を貼り付ける') -and $homeIndex.Contains('資料を取り込む') -and $homeIndex.Contains('href="/quick"') -and $homeIndex.Contains('href="/cat"')) -Message 'the single launcher must open a large, explained landing screen offering both ways to start'
-Assert-Yaku -Condition (-not ($homeIndex -match '<textarea|type="file"|data-cat-|quick-form')) -Message 'the landing screen must ask only for the work experience, not contain a hidden translator'
+# 2026-08-12: 選ばせる開始画面（index.html）を削除した。起動したら直接、貼り付け欄へ着地する（利用者の指摘「選ばなくてはいけないのはストレス」）。
+Assert-Yaku -Condition (-not (Test-Path -LiteralPath (Join-Path $root 'www\index.html'))) -Message 'the launcher must not present a choice screen before the translator'
+Assert-Yaku -Condition ($server -match "path -eq '/'" -and $server -notmatch "PageName 'index.html'" -and
+    ([regex]::Matches($server, [regex]::Escape("Serve-YakuAppPage -Context `$Context -PageName 'cat.html'")).Count -ge 2)) -Message 'the root route must land on the translation screen itself'
+Assert-Yaku -Condition ($catIndex.Contains('href="/tutorial#settings"') -and $catIndex.Contains('href="/cat?tour=1"') -and $catIndex.Contains('href="/tutorial"')) -Message 'the ways out of the deleted landing screen must live on the translation screen'
 # 画面は一つになったので「ファイルの機能がページに無いこと」では測れない。
 # その場で訳す状態の中に、保存しないことと登録した訳語を使わないことが書いてあり、
 # その状態が既定では出ていないことを見る。
@@ -316,7 +317,8 @@ Assert-Yaku -Condition ($catClient.Contains('saveChain = saveChain.catch') -and 
 Assert-Yaku -Condition ($catClient.Contains('data.review_blocked') -and $catClient.Contains('検索条件の外に未確認の行があります')) -Message 'failed review and filtered confirmation must retain a logical keyboard focus target'
 Assert-Yaku -Condition ($catIndex -match 'id="cat-workspace"[^>]*\shidden(?:\s|>)' -and $catClient.Contains("el('cat-workspace').hidden = false") -and $catClient.Contains("el('cat-workspace').hidden = true")) -Message 'opening another project must hide the current workspace instead of mixing two work contexts'
 Assert-Yaku -Condition ($catClient.Contains("document.querySelectorAll('textarea[data-cat-input], input.revise-input')") -and $catClient.Contains('処理中は参考訳を挿入できません') -and $catClient.Contains('scopeIsCurrent(context.scope, true)')) -Message 'CAT job lock must survive redraws, shortcuts, candidate insertion, and defensive apply checks'
-Assert-Yaku -Condition ($catIndex.Contains('id="cat-editor-toolbar"') -and $catIndex.Contains('id="cat-nav-pane"') -and $catIndex.Contains('id="cat-editor-pane"') -and $catIndex.Contains('id="cat-inspector-pane"') -and $stylesSource -match '(?s)\.cat-editor-toolbar\s*\{[^}]*position:\s*sticky') -Message 'CAT review must use the sticky three-region focused workspace'
+# 2026-08-12: 左の絞り込み列を廃止し、帯を表の上へ移した（市販CATと同じ）。
+Assert-Yaku -Condition ($catIndex.Contains('id="cat-editor-toolbar"') -and $catIndex.Contains('id="cat-editor-pane"') -and $catIndex.Contains('id="cat-inspector-pane"') -and (-not $catIndex.Contains('id="cat-nav-pane"')) -and $catIndex.Contains('class="cat-toolbar-filters"') -and $stylesSource -match '(?s)\.cat-editor-toolbar\s*\{[^}]*position:\s*sticky') -Message 'CAT review must filter from a bar above the grid, not a permanent side column'
 Assert-Yaku -Condition ($catClient.Contains('activeSegmentId') -and $catClient.Contains('data-cat-segment-id') -and $catClient.Contains("esc(segment.location || '本文')") -and $catClient.Contains('function locationGroup(segment)')) -Message 'CAT active row and actual document location must survive redraw and drive navigation'
 Assert-Yaku -Condition ($catClient.Contains('cat-candidate-number') -and $catClient.Contains('itemIndex + 1') -and $catClient.Contains('data-cat-reference-id')) -Message 'CAT candidates must be visibly numbered without weakening explicit reference insertion'
 Assert-Yaku -Condition ($catClient.Contains('event.isComposing') -and $catClient.Contains("event.key === 'ArrowUp'") -and $catClient.Contains("event.key.toLowerCase() === 'f'")) -Message 'CAT keyboard workflow must be IME-safe and include row movement and local search'
@@ -335,7 +337,18 @@ Assert-Yaku -Condition (-not ($indexSource -match '122 oku|設定とデータ管
 #    :not() リストに入れて、詳細度を上げずに部品側へ勝たせる
 Assert-Yaku -Condition ($catIndex -match 'class="secondary-button" data-cat-source-show="file"') -Message 'the file entry must not compete with the paste action as a second filled button'
 Assert-Yaku -Condition ($catClient.Contains('var RESUME_VISIBLE = 3') -and $catIndex.Contains('id="cat-resume-more"')) -Message 'the saved work list must fold to the most recent few with a count of the rest'
-Assert-Yaku -Condition ($stylesSource -match 'button:not\(\.secondary-button, \.tab-button, \.file-clear-button, \.link-button, \.danger-button, \[disabled\]\)') -Message 'destructive and link buttons must be excluded from the filled base style without raising its specificity'
+# 2026-08-12（同日追記）: 除外する名前を字面で丸ごと固定していたため、名前を1つ
+# 足すたびに落ちていた。見たいのは2つ。除外が入っていること、そして詳細度を
+# 上げていないこと（:not() を連ねると1つにつき class 1個ぶん積む）。
+$filledBaseRule = ''
+if ($stylesSource -match '(?m)^(button:not\([^
+]*?\{)') { $filledBaseRule = $Matches[1] }
+$requiredExclusions = @('.secondary-button','.tab-button','.file-clear-button','.link-button','.danger-button','.tutorial-skip','[disabled]')
+Assert-Yaku -Condition ($filledBaseRule -ne '' -and (@($requiredExclusions | Where-Object { -not $filledBaseRule.Contains($_) }).Count -eq 0)) -Message 'the filled base style must exclude secondary, tab, file-clear, link, danger and skip buttons'
+# 連ねた :not() が1つでもあれば詳細度が上がっている。
+Assert-Yaku -Condition ($stylesSource -notmatch '\):not\(') -Message 'exclusions must stay in one :not() list so the base specificity does not creep'
+# a.button（リンクのボタン）も同じ除外を持つ。持たないと secondary-button が塗られる。
+Assert-Yaku -Condition ($stylesSource -match '\.button:not\(\.secondary-button, \.danger-button, \[disabled\]\)') -Message 'link-shaped buttons must honour the secondary and danger variants'
 # 2026-08-12: 実機のCAT往復で、billion を選んだ作業が oku で訳された。
 # 翻訳ジョブは別のランスペースで走るため、この JSON に載せたものしか届かない。
 # 受け側（Protect-YakuCatItems / Invoke-YakuCatTranslationItems）は
@@ -343,8 +356,7 @@ Assert-Yaku -Condition ($stylesSource -match 'button:not\(\.secondary-button, \.
 Assert-Yaku -Condition ($server -match 'mode = \$catMode; amount_notation = \(Get-YakuCatProjectAmountNotation -Project \$project\)') -Message 'the CAT translation job payload must carry the project amount notation into the worker runspace'
 Assert-Yaku -Condition ($stylesSource -match '\.entry-more-actions \{ display: none;' -and $stylesSource -match '\.entry-more\[open\] \.entry-more-actions \{ display: flex; \}') -Message 'collapsed alternative entries must actually be hidden instead of being forced visible by their own display rule'
 Assert-Yaku -Condition ($catClient.Contains("exportButton.classList.toggle('secondary-button', drafting)") -and $catClient.Contains("translate.classList.toggle('secondary-button', !drafting)")) -Message 'the toolbar filled button must follow the next step instead of staying on a finished action'
-Assert-Yaku -Condition (-not ($homeIndex -match 'amount-notation') -and
-    ([regex]::Matches($catIndex, 'id="amount-notation"').Count -eq 1) -and
+Assert-Yaku -Condition (([regex]::Matches($catIndex, 'id="amount-notation"').Count -eq 1) -and
     $quickClient.Contains('meta[name="yaku-amount-notation"]') -and
     $server.Contains('__YAKU_AMOUNT_NOTATION__')) -Message 'the amount notation choice must live once on the translation screen and read its value from settings'
 Assert-Yaku -Condition ($server -match 'INVALID_SESSION_TOKEN' -and $server -match 'UNSUPPORTED_CONTENT_TYPE' -and $server -match 'Local\\YakuLingo') -Message 'server boundary and single-instance controls must be present'

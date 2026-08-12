@@ -3,15 +3,14 @@
    2段目に落ちてツールバーが伸びるので、固定値(旧 84px)では表の見出しが隠れていた。
    1320px 以上では器を窓へ固定するので、この値は使わない。 */
 :root {
-  --cat-toolbar-h: 76px;
+  --cat-toolbar-h: 118px;
   /* 主役は中央（原文と訳文）。脇役2つを可変にして、主役に幅を回す。
      固定220+380では、1240のウィンドウで主役が半分を切っていた。 */
   /* 脇役の2ペインで窓の39%を使い、原文と訳文が39%しか残っていなかった。
      MateCat は原文・訳文に45%ずつ割いている。器を詰めて主役へ回す。 */
-  /* 左ナビの幅は、いちばん長い絞り込みラベルが1行に収まるかで決まる。
-     「点検で気になる点」は実測119pxで、詰めた幅には収まらず3行に折り返していた。
-     ラベルを「点検の指摘」（実測74px）に縮めて、幅は主役へ回す。全文は title に置く。 */
-  --pane-nav: clamp(11rem, 13vw, 13rem);
+  /* 左ナビは 2026-08-12 に廃止。絞り込みは表の上の帯へ移した
+     （memoQ・Trados・Phrase も同じ）。実測 1380px で、原文と訳文は
+     1列 321px から広がる。 */
   /* 右の参考ペイン。19vw では実機（1380px）で262px＝日本語20字/行しかなく、
      過去訳の原文と訳文が細切れになって読めない。21vw まで広げて 23字/行にする。
      これ以上広げると主役（原文・訳文）が痩せるので、上限は 22rem で止める。 */
@@ -23,10 +22,32 @@
   max-width: 1600px;
 }
 
+/* 最初の画面は、白いカードで全体を囲まない（2026-08-12）。生成された画面の指紋の
+   ひとつが「角丸カードの入れ子」で、ここは中身を1つも区切っていない只の器だった。
+   枠と影を外し、地の紙に直接置く。区切りが要るところは罫線（.quick-fineprint /
+   .entry-secondary の border-top）が既に持っている。 */
 .cat-picker {
   max-width: 920px;
   margin-inline: auto;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  padding-inline: 0;
 }
+
+/* 保存した作業は「押せる行の一覧」。1件ずつ角丸の箱に入れると、数が増えるほど
+   箱が並ぶ。罫線で区切った行にして、触れたときだけ面を出す。 */
+.cat-resume-row { border-bottom: 1px solid var(--line); }
+.cat-resume-row:last-child { border-bottom: 0; }
+.cat-resume-row .cat-resume-card {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.cat-resume-row .cat-resume-card:hover,
+.cat-resume-row .cat-resume-card:focus-visible { background: var(--accent-soft); }
+.cat-resume-row .cat-resume-drop { border: 0; }
 
 .cat-workspace {
   margin-top: 12px;
@@ -165,22 +186,20 @@
 
 .cat-editor-layout {
   display: grid;
-  grid-template-columns: var(--pane-nav) minmax(0, 1fr) var(--pane-inspector);
+  grid-template-columns: minmax(0, 1fr) var(--pane-inspector);
   gap: 12px;
   align-items: start;
   min-height: 62vh;
 }
 
-.cat-nav-pane,
+/* 右の脇ペインは、白い面と余白で十分に分かれている。角丸の枠で囲むと、箱が
+   並んだ見た目になる。枠を外し、主役（左の一覧）との境目だけ罫線1本で示す。 */
 .cat-inspector-pane {
   overflow: auto;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
+  border: 0;
+  border-radius: 0;
+  border-left: 1px solid var(--line);
   background: var(--surface);
-}
-
-.cat-nav-pane {
-  padding: 12px;
 }
 
 /* 器が窓に固定される幅では、ペイン自体は動かさない。左ナビは「資料内の場所」
@@ -190,10 +209,6 @@
 @media (min-width: 1320px) {
   .cat-editor-layout { align-items: stretch; min-height: 0; }
   .cat-inspector-pane { min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
-  /* 左ナビは中の節を伸縮させない。拡大すると絞り込みだけで枠を超え、hidden に
-     切られて押せなくなる（実測で確認）。ペインごと動かして、切れることを原理的に
-     無くす。動くのは枠の中だけで、ページも見出しも動かない。 */
-  .cat-nav-pane { min-height: 0; overflow: auto; }
   /* 状態行の上下 17px は、器が固定の画面では一覧2行ぶんに相当する。 */
   .app-cat #cat-status { margin: var(--space-1) 0; }
   .cat-editor-pane { display: flex; flex-direction: column; min-height: 0; }
@@ -202,58 +217,80 @@
   .cat-inspector-pane [role="tabpanel"] { flex: 1; min-height: 0; overflow: auto; }
 }
 
-.cat-nav-pane h2 {
-  margin-bottom: var(--space-1);
-  color: var(--faint);
-  font-size: var(--font-meta);
-  letter-spacing: .06em;
-}
-
-.cat-nav-pane section + section {
-  margin-top: 18px;
-  padding-top: 14px;
+/* 絞り込みの帯（表の上）。市販CATと同じく、行を絞る道具は表の直前に置く。 */
+.cat-toolbar-filters {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-0) 6px;
+  padding-top: 6px;
   border-top: 1px solid var(--line);
 }
 
-.cat-state-filters,
-.cat-location-list {
-  display: grid;
-  gap: 5px;
-}
+.cat-state-filters { display: flex; flex-wrap: wrap; gap: 5px; }
+.cat-location-list { display: grid; gap: 5px; }
 
-.app-cat .cat-nav-pane .cat-state-filters button,
-.app-cat .cat-nav-pane .cat-location-list button {
-  justify-content: space-between;
-  width: 100%;
-  min-height: 44px;
-  padding: 7px 10px;
+.app-cat .cat-toolbar-filters .cat-state-filters button,
+.app-cat .cat-location-list button {
+  min-height: 1.9rem;
+  padding: 2px 10px;
   border-color: transparent;
   background: transparent;
   color: var(--text);
-  text-align: left;
   font-size: var(--font-meta);
 }
 
-.app-cat .cat-nav-pane .cat-state-filters button[aria-pressed="true"],
-.app-cat .cat-nav-pane .cat-location-list button[aria-pressed="true"] {
+.app-cat .cat-toolbar-filters .cat-state-filters button[aria-pressed="true"],
+.app-cat .cat-location-list button[aria-pressed="true"] {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent-text);
   font-weight: 700;
 }
 
-/* 左の絞り込みと、一覧の行の左端に、同じ色の帯を置く。これまでは左で「未確認」を
+/* 絞り込みと、一覧の行の左端に、同じ色の帯を置く。これまでは「未確認」を
    押しても、一覧の行に「未確認」という色が無く、対応を推測させていた。
-   border-left-color だけを触るので、選択中（aria-pressed）の面と文字は踏まない。
+   色は3つまで。「残り＝これから触る」「点検の指摘＝例外」「確認済み＝終わった」
+   （2026-08-12、利用者の指摘「色分けが多すぎて意味不明」）。 */
+.app-cat .cat-toolbar-filters .cat-state-filters button { border-left-width: 4px; }
+.app-cat .cat-toolbar-filters .cat-state-filters button[data-cat-filter="actionable"] { border-left-color: var(--warning); }
+.app-cat .cat-toolbar-filters .cat-state-filters button[data-cat-filter="qc"] { border-left-color: var(--error); }
+.app-cat .cat-toolbar-filters .cat-state-filters button[data-cat-filter="reviewed"] { border-left-color: var(--success); }
 
-   色は3つまで。6つあった絞り込みを3つ（＋例外の「点検の指摘」）に減らしたので、
-   帯も「残り＝これから触る」「点検の指摘＝例外」「確認済み＝終わった」の
-   3色で足りる（2026-08-12、利用者の指摘「色分けが多すぎて意味不明」）。
-   「すべて」は状態ではないので帯を持たない。 */
-.app-cat .cat-nav-pane .cat-state-filters button { border-left-width: 4px; }
-.app-cat .cat-nav-pane .cat-state-filters button[data-cat-filter="actionable"] { border-left-color: var(--warning); }
-.app-cat .cat-nav-pane .cat-state-filters button[data-cat-filter="qc"] { border-left-color: var(--error); }
-.app-cat .cat-nav-pane .cat-state-filters button[data-cat-filter="reviewed"] { border-left-color: var(--success); }
+/* 「資料内の場所」「前回からの変更」は、押したときだけ開く。常時見えていると
+   場所の一覧は資料しだいで無制限に伸び、帯が表を押し下げる。 */
+.cat-toolbar-menu { position: relative; }
+.cat-toolbar-menu > summary {
+  min-height: 1.9rem;
+  padding: 2px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  color: var(--text);
+  font-size: var(--font-meta);
+  white-space: nowrap;
+}
+.cat-toolbar-menu[open] > summary { border-color: var(--accent); }
+.cat-toolbar-menu > div {
+  position: absolute;
+  left: 0;
+  z-index: 30;
+  min-width: 15rem;
+  max-height: 60vh;
+  overflow: auto;
+  margin-top: var(--space-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: 0 10px 30px rgba(24,24,27,.16);
+  padding: var(--space-1);
+}
+.cat-location-list button { justify-content: space-between; width: 100%; text-align: left; }
+
+/* 参考情報を畳む。閉じている間は主役（原文・訳文）が右端まで使う。 */
+.cat-inspector-toggle { margin-left: auto; font-size: var(--font-meta); }
+.cat-editor-layout.is-inspector-hidden { grid-template-columns: minmax(0, 1fr); }
+.cat-editor-layout.is-inspector-hidden .cat-inspector-pane { display: none; }
 
 .cat-state-filters button span,
 .cat-location-list button span {
@@ -314,6 +351,8 @@
 .cat-grid-wrap {
   max-height: calc(100dvh - var(--cat-toolbar-h) - 73px);
   background: var(--surface);
+  border: 0;
+  border-radius: 0;
 }
 
 .cat-grid tbody tr {
@@ -330,39 +369,53 @@
 
 /* 主役の行だけ息をさせる。脇役は詰めて、一覧としての一望性を保つ。 */
 .cat-grid tbody tr.is-active > td {
-  padding-block: .6em;
+  padding-block: .45em;
 }
 
 .cat-grid tbody tr:not(.is-active) td {
-  padding-block: .5em;
+  padding-block: .25em;
 }
 
-.cat-grid tbody tr:not(.is-active) .cat-source-text,
-.cat-grid tbody tr:not(.is-active) .cat-target-preview {
+/* 閉じている行の原文は1行だけ出す。2行にすると行の高さが倍になり、一覧としての
+   一望性が落ちる。全文は、その行に入ると欄が伸びて読める。 */
+.cat-grid tbody tr:not(.is-active) .cat-source-text {
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
 }
 
-/* 一覧の各行を開くための主要なクリック先。min-height:0 だと実効26px しかなく、
-   狙って当てないと外れる。行を開くのはこの画面で最も回数の多い操作なので、
-   ポインタでもタッチでも外さない大きさを確保する。 */
-.app-cat .cat-editor-pane button.cat-row-activate {
-  display: block;
+.cat-source-text { cursor: text; }
+
+/* 訳文欄は全行にある。閉じている行では2行ぶんで頭打ちにして、一覧の高さを保つ。
+   枠線は入っている行だけに出す。全行に枠を引くと、表が升目だらけになる。 */
+.cat-grid tbody textarea[data-cat-input] {
   width: 100%;
-  min-height: 44px;
-  padding: 6px 0;
-  border: 0;
+  min-height: 32px;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
   background: transparent;
   color: inherit;
-  text-align: left;
   font: inherit;
+  resize: vertical;
 }
 
-/* 閉じている行は脇役。触れたことは背景の淡い変化だけで示す。 */
-.app-cat .cat-editor-pane button.cat-row-activate:hover {
-  background: var(--soft);
+.cat-grid tbody tr:not(.is-active) textarea[data-cat-input] {
+  max-height: 3.4em;
+  /* 送り出しの帯（スクロールバー）は出さない。全行に出ると表が升目だらけに見え、
+     しかも閉じている行では使わない。続きはその行に入れば読める。 */
+  overflow-y: hidden;
+  resize: none;
+}
+
+.cat-grid tbody tr:not(.is-active) textarea[data-cat-input]:hover {
+  border-color: var(--line);
+}
+
+.cat-grid tbody tr.is-active textarea[data-cat-input] {
+  border-color: var(--line);
+  background: var(--surface);
 }
 
 .cat-location-main {
@@ -407,8 +460,25 @@
   display: inline;
   margin-top: 0;
 }
-.cat-grid tbody tr:not(.is-active) .cat-location-kind,
 .cat-grid tbody tr:not(.is-active) .cat-repetition { margin-left: 6px; }
+/* 閉じている行の高さを決めていたのは訳文欄ではなく、この列だった（実測 1380x900 で
+   行 78px のうち 60px）。「本文 / 文 / 同じ原文×3」が 112px の中で2行に折れていた。
+   1行に収め、溢れたら畳む。種類（文・セル・Word）は場所を見れば分かるので、
+   閉じている行では出さない。 */
+.cat-grid tbody tr:not(.is-active) .cat-col-loc {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cat-grid tbody tr:not(.is-active) .cat-location-kind { display: none; }
+/* 同じ理由で、行番号と状態も1行に収める。92px の列で「1」と「✓確認済」が折れて
+   いた。閉じている行では文字を小さくして横に並べる（開いた行は元の大きさのまま）。 */
+.cat-grid tbody tr:not(.is-active) .cat-col-no {
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--font-meta);
+}
+.cat-grid tbody tr:not(.is-active) .cat-state { font-size: var(--font-meta); }
 /* 「同じ原文 3 行」は途中で折らない。折れると印だけで3行ぶんの高さを取り、
    詰めたぶんが帳消しになる（実測 47px）。 */
 .cat-repetition { white-space: nowrap; }
@@ -419,10 +489,7 @@
 .cat-concordance-source { margin: 0 0 4px; }
 .cat-concordance-target { margin: 0; color: var(--accent-text); }
 
-.cat-target-preview:empty::before {
-  content: "未翻訳";
-  color: var(--muted);
-}
+/* 訳が空の行は、欄が空であることで分かる。「未翻訳」の札は左端の状態と重なる。 */
 
 .cat-complete-state,
 .cat-empty-state {
@@ -633,6 +700,98 @@
   font-weight: 700;
 }
 
+/* 出せない件数を持つときだけ、点検ボタンが赤い縁になる。数字は文字でも出す
+   （色だけに頼らない）。 */
+.app-cat .cat-actions .cat-qa-has-blockers { border-color: var(--error); color: #7a271a; font-weight: 700; }
+
+/* 体裁で見る。Excel はセルの位置、Word と貼り付けた文章は段落の並びで出す。
+   書体や罫線は持っていないので再現しない。位置と流れだけを見るための画面。 */
+.cat-preview-dialog { width: min(72rem, 94vw); }
+.cat-preview-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); margin-bottom: var(--space-1); }
+.cat-preview-body { max-height: 62vh; overflow: auto; border: 1px solid var(--line); background: var(--surface); padding: var(--space-1); }
+.cat-preview-sheet + .cat-preview-sheet, .cat-preview-flow { margin-top: var(--space-3); }
+.cat-preview-sheet h3 { margin-bottom: var(--space-0); font-size: var(--font-meta); color: var(--muted); }
+.cat-preview-grid { border-collapse: collapse; table-layout: fixed; }
+.cat-preview-grid th { border: 1px solid var(--line-strong); background: var(--soft); color: var(--muted); font-size: var(--font-meta); font-weight: 600; padding: 2px 6px; }
+.cat-preview-grid thead th { min-width: 8rem; }
+.cat-preview-grid tbody th { min-width: 2.4rem; text-align: right; }
+.cat-preview-grid td { border: 1px solid var(--line-strong); padding: 0; vertical-align: top; }
+.app-cat .cat-preview-cell,
+.app-cat .cat-preview-paragraph {
+  display: block;
+  width: 100%;
+  min-height: 1.9rem;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  white-space: pre-wrap;
+}
+/* Excel と同じ見え方にする。折り返し OFF のセルは、幅を超えたら切って見せる
+   （はみ出しに気づけるのは、切れて見えるからである）。ON のセルは折り返す。 */
+.app-cat .cat-preview-cell { overflow: hidden; text-overflow: clip; white-space: nowrap; }
+.app-cat .cat-preview-cell.is-wrap { white-space: pre-wrap; }
+/* 見出しかどうかは、原本では太字で分かる。体裁で見るのだから、そこも写す。 */
+.app-cat .cat-preview-cell.is-bold { font-weight: 700; }
+/* 原本の行の高さが分かっているときは、押しやすさのための下限を外す。行の高さは
+   tr 側が持つ。詳細度は (0,3,0) で、上の (0,2,0) にだけ勝つ。基本ルールは上げない。 */
+.cat-preview-grid.is-measured .cat-preview-cell { min-height: 0; }
+.cat-preview-grid thead th { min-width: 0; }
+
+.app-cat .cat-preview-cell:hover,
+.app-cat .cat-preview-paragraph:hover { background: var(--accent-soft); }
+.app-cat .cat-preview-cell.is-active,
+.app-cat .cat-preview-paragraph.is-active { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* 訳文がまだ無いところは原文を薄く出す。空白にすると、体裁の確認にならない。 */
+.app-cat .cat-preview-cell.is-missing,
+.app-cat .cat-preview-paragraph.is-missing { color: var(--faint); font-style: italic; }
+.cat-preview-flow { max-width: 42em; }
+/* Word の見出し。段の深さが見て分かればよいので、字の大きさと太さだけで出す。
+   段は4段までに丸める（それより深い見出しは、字の大きさでは区別がつかない）。 */
+.app-cat .cat-preview-paragraph.is-heading { font-weight: 700; margin-top: var(--space-3); }
+.app-cat .cat-preview-paragraph.is-heading-1 { font-size: 1.5em; }
+.app-cat .cat-preview-paragraph.is-heading-2 { font-size: 1.25em; }
+.app-cat .cat-preview-paragraph.is-heading-3 { font-size: 1.1em; }
+.app-cat .cat-preview-paragraph.is-heading-4 { font-size: 1em; }
+/* Word の表。原本と同じく格子で出す。列幅は Word 側の指定を読んでいないので
+   中身なりに配る（幅を偽って出すより、格子であることを示すほうが確か）。 */
+.cat-preview-doctable { border-collapse: collapse; width: 100%; margin: var(--space-2) 0; }
+.cat-preview-doctable td { border: 1px solid var(--line-strong); padding: 0; vertical-align: top; }
+.app-cat .cat-preview-paragraph.is-in-table { margin-bottom: 0; }
+.app-cat .cat-preview-paragraph { margin-bottom: var(--space-1); line-height: 1.9; }
+
+/* 点検一覧。行へ飛ぶための一覧なので、1件が1つの押せる行になっている。
+   止まる指摘（訳文が空・数字の点検）を先に、未確認をあとに置く。 */
+.cat-qa-dialog { width: min(46rem, 92vw); }
+.cat-qa-list { max-height: 52vh; overflow: auto; margin: var(--space-1) 0; }
+.cat-qa-group + .cat-qa-group { margin-top: var(--space-2); }
+.cat-qa-group h3 { margin-bottom: var(--space-0); font-size: var(--font-body); }
+.cat-qa-group h3 span { color: var(--muted); font-variant-numeric: tabular-nums; }
+.cat-qa-group.is-blocking h3 { color: var(--error); }
+.app-cat .cat-qa-item {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  gap: 2px var(--space-1);
+  width: 100%;
+  min-height: 2.4rem;
+  padding: 5px 8px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-size: var(--font-meta);
+}
+.app-cat .cat-qa-item:hover { background: var(--accent-soft); }
+.cat-qa-row { color: var(--muted); font-variant-numeric: tabular-nums; }
+.cat-qa-source { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cat-qa-message { grid-column: 2; color: var(--muted); }
+.cat-qa-group.is-blocking .cat-qa-message { color: #7a271a; }
+
 .cat-revision-compare {
   margin-top: 12px;
   border: 2px solid var(--accent);
@@ -694,16 +853,15 @@
   .app-cat .tab-panel,
   .app-cat #cat-workspace { display: block; }
   .app-cat .workspace-heading { display: flex; }
-  .app-cat .cat-nav-pane,
   .app-cat .cat-inspector-pane { overflow: auto; }
   .app-cat .cat-grid-wrap { max-height: calc(100dvh - var(--cat-toolbar-h) - 73px); }
 }
 
-/* 3列（220 + 560 + 380 + gap 24）に必要なのは 1184px。.shell は画面幅 -32px なので
-   ビューポート 1216px を下回ると横スクロールが出ていた。2列化をそこまで引き上げる。 */
+/* 狭い窓では、参考情報を横ではなく下に置く。左の絞り込み列は廃止したので、
+   ここで確保するのは一覧の幅だけでよい（2026-08-12）。 */
 @media (max-width: 1319px) {
   .cat-editor-layout {
-    grid-template-columns: 190px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
   .cat-inspector-pane {
     position: static;
@@ -738,7 +896,6 @@
   .cat-toolbar-search {
     grid-template-columns: 1fr;
   }
-  .cat-nav-pane,
   .cat-inspector-pane {
     position: static;
     max-height: none;
@@ -760,31 +917,11 @@
   }
 }
 
-/* 開いている行だけ、原文と訳文を上下に積んで表の全幅を使う。左右2列は「文字を
-   大きく」で1列が日本語11文字まで痩せ、視線も横へ飛ぶ。上下配置のほうが速いこと
-   は Läubli et al.(arXiv:2011.05978) の統制実験で示されている。閉じている行は
-   一望性が要るので左右のまま残す。 */
-.cat-work {
-  padding-block: .6em;
-}
-
-.cat-work-source {
-  padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--line);
-  white-space: pre-wrap;
-}
-
-.cat-work-target {
-  padding-top: var(--space-2);
-}
-
-.cat-work-label {
-  display: block;
-  margin-bottom: var(--space-0);
-  color: var(--muted);
-  font-size: var(--font-meta);
-  font-weight: 700;
-}
+/* 開いている行に付く操作は、訳文欄の下へ横1列で置く。縦に積むと 94px 使う。
+   閉じている行と同じ格子の中に収めるため、余白も最小にする。 */
+.cat-grid tbody tr.is-active .cat-row-primary { display: inline-flex; vertical-align: top; }
+.cat-grid tbody tr.is-active .cat-more-row { display: inline-block; margin-left: var(--space-2); }
+.cat-grid tbody tr.is-active .cat-more-row > summary { margin-top: 0; min-height: 2.2rem; }
 
 /* 登録済みの用語がどこにあるかを原文の上で示す。塗りではなく下線にする。
    訳文の面と競合させないため。 */
@@ -809,20 +946,6 @@
 
 /* 押す前に見える位置に置く。警告ではないので色は付けない。ボタンの隣で、
    ボタンより弱く。 */
-/* ボタンと同じ列に置くと、この1文の幅がそのまま列幅の取り合いになる。実測
-   （窓 1380px、200行の作業）では列の合計が 1,460px となり、器の 1,348px を
-   112px 超えて「そのほか」が画面外へ出た。逆に潰させると幅 55px で5行に割れ、
-   ツールバーが3段になって一覧が 2.4 行消える。
-   2段目へ全幅で出せば、列幅を奪わずに1行で読める。固定の最小幅の合計は
-   1,248px に収まり、100px の余裕ができる（同条件の実測）。丈は 72→101px。 */
-.cat-copilot-usage {
-  grid-column: 1 / -1;
-  align-self: center;
-  color: var(--muted);
-  font-size: var(--font-meta);
-  text-align: right;
-  white-space: nowrap;
-}
 
 /* 「そのほか」に、めったに使わないものを寄せた（キーボード操作・登録した訳と
    この作業の管理）。左の絞り込みと混ぜると、絞り込みが読めなくなる。
@@ -897,3 +1020,36 @@
 .cat-resume-row { display: flex; align-items: stretch; gap: var(--space-1); }
 .cat-resume-row .cat-resume-card { flex: 1 1 auto; min-width: 0; }
 .cat-resume-row .cat-resume-drop { flex: 0 0 auto; align-self: center; color: var(--muted); }
+
+/* 初回の案内（コーチマーク）。対象の周りだけ明るく残し、外を落とす。
+   吹き出しは1つだけ出す。「次へ」は置かない（実際の操作で進む）。 */
+.yaku-tour-spotlight {
+  position: fixed;
+  z-index: 60;
+  border-radius: 8px;
+  box-shadow: 0 0 0 9999px rgba(15, 23, 38, .45);
+  pointer-events: none;
+  transition: top var(--motion) var(--ease), left var(--motion) var(--ease), width var(--motion) var(--ease), height var(--motion) var(--ease);
+}
+.yaku-tour-callout {
+  position: fixed;
+  z-index: 61;
+  max-width: 22rem;
+  padding: 14px 16px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgba(15, 23, 38, .18);
+}
+.yaku-tour-title { margin: 0; font-weight: 700; }
+.yaku-tour-body { margin: 6px 0 0; color: var(--muted); font-size: var(--font-meta); line-height: 1.6; }
+.yaku-tour-skip {
+  margin-top: 10px;
+  min-height: 32px;
+  padding: 2px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: var(--font-meta);
+}

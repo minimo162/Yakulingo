@@ -8,14 +8,20 @@
   --faint: #686a73;
   --line: #e8e8ec;
   --line-strong: #d9d9e0;
-  /* 文字色に使う accent は、白地でも accent-soft の上でも WCAG AA(4.5:1) を満たす
-     必要がある。旧 #5E6AD2 は白地 4.70:1、accent-soft 上 4.25:1 で後者が落ちていた。
-     面（塗り）用と文字用を分ける。 */
-  --accent: #4550B8;
-  --accent-hover: #38429c;
-  --accent-text: #343DA0;
-  --accent-soft: rgba(69,80,184,.08);
-  --focus: #4550B8;
+  /* 主色は紺。2026-08-12 に インディゴ（#4550B8）から替えた。
+     替えた理由は好みではない。生成された画面に共通する指紋として最も多く挙げられる
+     のが「インディゴ〜紫」で、出どころは Tailwind の既定色が学習データを占めたこと
+     だと各所が説明している。#4550B8 はその族の色だった。
+     紺にすると、決算・開示の資料という中身とも釣り合い、コントラストも上がる。
+       白地   6.79 -> 11.48
+       淡い面 6.18 -> 10.45
+     文字色に使う accent は、白地でも accent-soft の上でも AA(4.5:1) が要る。
+     面（塗り）用と文字用は、濃さを変えて別に持つ。 */
+  --accent: #1F3A5F;
+  --accent-hover: #162C48;
+  --accent-text: #1B3455;
+  --accent-soft: rgba(31,58,95,.07);
+  --focus: #1F3A5F;
   --surface-subtle: #f4f4f6;
   --danger: #b42318;
   --success: #0f7b55;
@@ -130,10 +136,10 @@ textarea:focus, input:focus, select:focus { background: var(--surface); box-shad
 .direction-row input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; z-index: 2; }
 .file-direction-row { margin-top: 0; }
 .direction-warning { margin-left: 8px; color: var(--warning); font-size: var(--font-body); }
-.direction-summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 12px; padding: 12px 14px; border: 1px solid #c8d6f0; border-radius: var(--radius-control); background: #f5f8ff; }
+.direction-summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 12px; padding: 12px 14px; border: 1px solid #c3d2e0; border-radius: var(--radius-control); background: #f2f6fa; }
 .direction-summary > div { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
-.direction-summary strong { color: #17366f; font-size: var(--font-body); }
-.direction-choice { margin-top: 12px; padding: 16px; border: 2px solid var(--accent); border-radius: var(--radius-card); background: #f8faff; }
+.direction-summary strong { color: #1B3455; font-size: var(--font-body); }
+.direction-choice { margin-top: 12px; padding: 16px; border: 2px solid var(--accent); border-radius: var(--radius-card); background: #f2f6fa; }
 .direction-choice h2 { margin: 0 0 6px; font-size: calc(var(--font-ui) + 2px); }
 .direction-choice p { margin: 0 0 12px; color: var(--muted); }
 .direction-choice-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
@@ -149,8 +155,8 @@ button, .button { min-height: 44px; display: inline-flex; align-items: center; j
    脇役（絞り込み、点検タブ、閉じている行）まで accent で塗られる。
    :not() は「引数の中でいちばん強いもの1つぶん」しか積まない。リスト形にして
    (0,1,1) に抑える。以後、状態を足すたびに詳細度を継ぎ足す必要がなくなる。 */
-button:not(.secondary-button, .tab-button, .file-clear-button, .link-button, .danger-button, [disabled]), .button:not([disabled]) { background: var(--accent); border-color: var(--accent); color: #fff; }
-button:not(.secondary-button, .tab-button, .file-clear-button, .link-button, .danger-button, [disabled]):hover, .button:not([disabled]):hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+button:not(.secondary-button, .tab-button, .file-clear-button, .link-button, .danger-button, .tutorial-skip, [disabled]), .button:not(.secondary-button, .danger-button, [disabled]) { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:not(.secondary-button, .tab-button, .file-clear-button, .link-button, .danger-button, .tutorial-skip, [disabled]):hover, .button:not(.secondary-button, .danger-button, [disabled]):hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 button:active:not([disabled]), .button:active:not([disabled]) { transform: translateY(.5px); }
 /* 無効ボタンを opacity で薄くすると、主ボタンの白文字が背景に溶けて 2.1:1 まで落ちる。
    「文章を入力してください」のような操作指示そのものが読めなくなるので、実色で塗る。 */
@@ -272,7 +278,7 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
    原文が4行とも見えているのに訳文だけ切れていた。em 基準にして「文字を大きく」でも
    3行ぶんを保つ。実際の行数に合わせた高さは cat.js の自動伸長が上書きする。
    開いている行は原文の下に積むので、下限を厚くすると行が画面に収まらなくなる。 */
-.cat-target textarea, .cat-work-target textarea { width: 100%; min-height: calc(1.8em * 3 + 1.2em); padding: .7em .9em; resize: vertical; overflow-y: hidden; font-size: var(--font-segment); line-height: 1.8; }
+.cat-target textarea { width: 100%; min-height: calc(1.8em * 3 + 1.2em); padding: .7em .9em; resize: vertical; overflow-y: hidden; font-size: var(--font-segment); line-height: 1.8; }
 .cat-loc { display: block; color: var(--muted); }
 /* 確認済みの印。番号の隣に小さく出す。一覧を眺めたときに、どこまで見たかが分かる。 */
 /* 行の印。狭い列から溢れて隣に重ならないよう、番号の下に1行で置く。 */
@@ -361,6 +367,14 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .cat-cand-tag { border-radius: 999px; padding: 2px 9px; background: var(--soft); color: var(--text); font-size: var(--font-meta); font-weight: 700; text-align: center; }
 .cat-cand-tag.is-exact { background: #6b5416; color: #fff; }
 .cat-cand-src { color: var(--muted); overflow-wrap: anywhere; }
+/* 一致率と差分。市販CAT（memoQ・Trados・Phrase）はどれも率だけでなく、
+   過去訳の原文がいまの原文とどこで違うかを示す。率だけだと「93%」がどこの
+   93% か分からず、結局2文を目で読み比べることになる。
+   色だけに頼らない: 100% は塗り、それ以外は枠。違う箇所は太字＋下線。 */
+.cat-cand-score { border-radius: 999px; padding: 2px 9px; border: 1px solid var(--line-strong); color: var(--text); font-size: var(--font-meta); font-weight: 700; font-variant-numeric: tabular-nums; }
+.cat-cand-score.is-exact { border-color: var(--success); background: var(--success); color: #fff; }
+.cat-cand-score.is-high { border-color: var(--accent); color: var(--accent-text); }
+.cat-diff-ins { font-weight: 700; color: var(--text); text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 2px; }
 .cat-cand-tgt { overflow-wrap: anywhere; }
 
 .cat-progress-row { display: flex; gap: 12px; align-items: center; margin-bottom: var(--space-2); font-size: var(--font-meta); }
@@ -444,7 +458,7 @@ summary { cursor: pointer; color: var(--text); font-size: var(--font-meta); min-
 .cat-text-output textarea { margin-top: 10px; min-height: 180px; }
 .cat-text-output-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
 .cat-qc-findings { font-size: var(--font-meta); }
-.cat-target textarea[aria-invalid="true"], .cat-work-target textarea[aria-invalid="true"] { box-shadow: 0 0 0 3px var(--error); background: #fff7f5; }
+.cat-target textarea[aria-invalid="true"] { box-shadow: 0 0 0 3px var(--error); background: #fff7f5; }
 .cat-card-label { display: none; }
 
 @media (max-width: 900px) {
@@ -458,7 +472,7 @@ summary { cursor: pointer; color: var(--text); font-size: var(--font-meta); min-
   .cat-card-label { display: block; margin-bottom: 6px; color: var(--muted); font-size: var(--font-meta); font-weight: 700; }
   .cat-col-no, .cat-col-loc, .cat-source, .cat-target { width: 100%; }
   .cat-source { font-size: var(--font-body); line-height: 1.75; }
-  .cat-target textarea, .cat-work-target textarea { min-height: calc(1.8em * 5 + 1.2em); }
+  .cat-target textarea { min-height: calc(1.8em * 5 + 1.2em); }
   .cat-row-actions { gap: 10px; flex-wrap: wrap; margin-top: 12px; }
   .cat-cand { grid-template-columns: 32px 1fr; }
   .cat-cand-src, .cat-cand-tgt { grid-column: 1 / -1; }
@@ -494,26 +508,10 @@ summary { cursor: pointer; color: var(--text); font-size: var(--font-meta); min-
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
 
-/* Horizon 2: one launcher, separate short-text and document workspaces. */
+/* 起動して最初に出るのは翻訳画面そのもの。選ばせる画面（index.html）は 2026-08-12 に削除したので、その寄せ集めも残さない。残すのは使い方の出口だけ。 */
 .home-link { display: inline-flex; align-items: center; min-height: 44px; text-decoration: none; }
-.home-intro { margin: var(--space-5) 0 var(--space-3); }
-.home-intro .muted { max-width: 58ch; }
-/* 途中の資料への入口。開始画面に置くことで、中断からの復帰が1回で済む。 */
-.home-resume { margin-bottom: var(--space-3); }
-.home-resume h2 { margin-bottom: 10px; }
-.home-resume-list { display: grid; gap: 10px; }
-.home-resume-card { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; min-height: 60px; border: 2px solid var(--accent); border-radius: var(--radius-card); background: var(--accent-soft); padding: 12px 16px; text-decoration: none; }
-.home-resume-card strong { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
-.home-resume-card > span { color: var(--muted); }
-.home-resume-card > span.home-resume-action { display: inline-flex; min-height: 44px; align-items: center; margin-left: auto; border-radius: var(--radius-control); background: var(--accent); color: #fff; padding: 7px 16px; font-weight: 700; }
-.home-resume-card:hover .home-resume-action { background: var(--accent-hover); }
-.home-resume-more { display: inline-flex; align-items: center; min-height: 44px; color: var(--accent-text); font-size: var(--font-meta); font-weight: 600; }
-.home-choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
-.home-choice-card { display: flex; min-height: 270px; flex-direction: column; align-items: flex-start; gap: 12px; border: 2px solid var(--line-strong); border-radius: var(--radius-card); background: var(--surface); padding: 26px; text-decoration: none; box-shadow: var(--shadow-card); }
-.home-choice-card:hover, .home-choice-card:focus-visible { border-color: var(--accent); background: var(--accent-soft); }
-.home-choice-card strong { font-size: 1.35em; }
-.home-choice-kicker { color: var(--muted); font-size: var(--font-meta); font-weight: 700; }
-.home-choice-action { display: inline-flex; min-height: 44px; align-items: center; margin-top: auto; border-radius: var(--radius-control); background: var(--accent); color: #fff; padding: 7px 16px; font-weight: 700; }
+.home-help-links { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-4); }
+.home-help-links a { color: var(--accent-text); font-size: var(--font-meta); }
 /* 日本語は1行 35〜45字を超えると目が次の行頭を見失う。長い説明文には必ず幅を与える。 */
 .privacy-summary, .privacy-note { max-width: 42em; margin: var(--space-3) 0 0; border-left: 4px solid var(--accent); background: var(--accent-soft); padding: 12px 14px; color: var(--text); }
 .cat-picker p.muted, .cat-start-panel > p.muted, .hint, .batch-note { max-width: 42em; }

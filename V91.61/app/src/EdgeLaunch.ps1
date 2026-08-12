@@ -150,6 +150,37 @@ function Stop-YakuCopilotEdgeProfile {
     return [int]$stopped
 }
 
+function Set-YakuEdgeProfileCleanExit {
+    <#
+      当アプリ専用の Edge profile に「前回はきちんと終わった」と書いておく。
+
+      2026-08-12 実測。Edge を落として開き直すたびに窓のタブが1枚ずつ増えていた
+      （Copilotの会話が2枚、それに「新しいタブ」）。原因は復元だった。
+      profile\Default\Preferences の exit_type が Crashed になっており、Edge は
+      前回のタブを復元する。復元されたタブは眠った状態（CDP では pid=0）で戻り、
+      Target.closeTarget も /json/close も効かない。閉じるより、作らせない。
+
+      触るのは当アプリの profile だけで、利用者ふだんの Edge には関係しない。
+      文字列の置き換えにとどめる（読み直して書き戻すと、Edge が使う細かい型を
+      PowerShell の JSON 変換が壊す）。
+    #>
+    param([Parameter(Mandatory=$true)][string]$UserDataDir)
+    try {
+        $path = Join-Path (Join-Path $UserDataDir 'Default') 'Preferences'
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
+        $text = [IO.File]::ReadAllText($path)
+        if ($text -notmatch '"exit_type"\s*:\s*"(?!Normal")') { return $false }
+        $updated = [regex]::Replace($text, '"exit_type"\s*:\s*"[^"]*"', '"exit_type":"Normal"')
+        if ($updated -eq $text) { return $false }
+        [IO.File]::WriteAllText($path, $updated)
+        Write-YakuEdgeLaunchLog 'Edge profile marked as cleanly exited so the previous tabs are not restored.' 'INFO'
+        return $true
+    } catch {
+        Write-YakuEdgeLaunchLog ('Edge profile clean-exit mark failed; continuing. reason=' + $_.Exception.Message) 'DEBUG'
+        return $false
+    }
+}
+
 function Start-YakuEdgeLaunch {
     param(
         [Parameter(Mandatory=$true)][int]$Port,
@@ -181,6 +212,7 @@ function Start-YakuEdgeLaunch {
     if ($hasAnyEdge) { $stopped = Stop-YakuCopilotEdgeProfile -UserDataDir $spec.UserDataDir }
     if ($stopped -gt 0) { Start-Sleep -Milliseconds 700 }
 
+    $null = Set-YakuEdgeProfileCleanExit -UserDataDir $spec.UserDataDir
     Write-YakuEdgeLaunchLog "Starting Edge. port=$Port display=$DisplayMode" 'INFO'
     $process = Start-Process -FilePath $spec.EdgePath -ArgumentList $spec.Arguments -PassThru
     $script:YakuEdgeLaunchInProgress = [pscustomobject]@{ Port=$Port; UserDataDir=$spec.UserDataDir; ProcessId=[int]$process.Id; StartedAt=(Get-Date) }
@@ -195,6 +227,7 @@ function Start-YakuEdgeLaunch {
     Write-YakuEdgeLaunchLog 'Edge DevTools did not become reachable. Retrying after closing dedicated profile processes.' 'WARN'
     $null = Stop-YakuCopilotEdgeProfile -UserDataDir $spec.UserDataDir
     Start-Sleep -Seconds 2
+    $null = Set-YakuEdgeProfileCleanExit -UserDataDir $spec.UserDataDir
     $retry = Start-Process -FilePath $spec.EdgePath -ArgumentList $spec.Arguments -PassThru
     $script:YakuEdgeLaunchInProgress = [pscustomobject]@{ Port=$Port; UserDataDir=$spec.UserDataDir; ProcessId=[int]$retry.Id; StartedAt=(Get-Date) }
     if ($spec.WindowSize.Enabled) { $script:YakuEdgeNeedsWindowNormalization = [pscustomobject]@{ Port=$Port; WindowSize=$spec.WindowSize; ProcessId=[int]$retry.Id } }

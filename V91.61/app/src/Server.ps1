@@ -1768,7 +1768,8 @@ function Serve-YakuStaticFile {
 function Serve-YakuAppPage {
     param(
         [Parameter(Mandatory=$true)]$Context,
-        [Parameter(Mandatory=$true)][ValidateSet('index.html','cat.html','tutorial.html')][string]$PageName
+        [Parameter(Mandatory=$true)][ValidateSet('cat.html','tutorial.html')][string]$PageName,
+        [switch]$StartTour
     )
     $path = Join-Path (Join-Path $script:YakuRoot 'www') $PageName
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -1785,6 +1786,7 @@ function Serve-YakuAppPage {
     # 画面が「1文ずつ確認して始める」を勧める境目に使う。勝手な数字は置かない。
     $html = $html.Replace('__YAKU_MAX_BATCH_CHARS__', [string](Get-YakuMaxCharsPerFileBatch -Settings $settings))
     $html = $html.Replace('__YAKU_AMOUNT_NOTATION__', (ConvertTo-YakuHtml (Get-YakuAmountNotation -Settings $settings)))
+    $html = $html.Replace('__YAKU_TOUR__', $(if ($StartTour) { '1' } else { '' }))
     Send-YakuTextResponse -Context $Context -Text $html -ContentType 'text/html; charset=utf-8'
 }
 
@@ -1803,11 +1805,6 @@ function Convert-YakuQuickJobResultJson {
         error_code = [string]$State['error_code']
         artifact = ConvertTo-YakuQuickArtifactView -Artifact $artifact -IncludeContent -Root $script:YakuRoot
     } | ConvertTo-Json -Depth 12 -Compress)
-}
-
-function Serve-YakuIndex {
-    param([Parameter(Mandatory=$true)]$Context)
-    Serve-YakuAppPage -Context $Context -PageName 'index.html'
 }
 
 function Serve-YakuAdminPage {
@@ -1836,11 +1833,17 @@ function Invoke-YakuRoute {
     Clear-YakuExpiredQuickArtifacts
 
     if ($method -eq 'GET' -and $path -eq '/') {
+        # 起動したら、選ばせずに貼り付け欄へ着地させる（2026-08-12、利用者の指摘
+        # 「アプリ起動すると選択肢が提示されて選ばなくてはいけないのはストレス」）。
+        # 「文章を貼り付ける」「資料を取り込む」の2枚のカードは、どちらも同じ画面へ
+        # 行き先が同じだった。取り込みは、着地した画面の中に脇役として置いてある。
+        # 初回は同じ画面の上で3か所だけ吹き出しを出す（前置きの説明は読み飛ばされ、
+        # 作業の成績も上がらないという調査に合わせた）。
         $desktopPreferences = Get-YakuDesktopPreferences
         if ([bool]$desktopPreferences.available -and -not [bool]$desktopPreferences.tutorial_completed) {
-            Serve-YakuAppPage -Context $Context -PageName 'tutorial.html'
+            Serve-YakuAppPage -Context $Context -PageName 'cat.html' -StartTour
         } else {
-            Serve-YakuIndex -Context $Context
+            Serve-YakuAppPage -Context $Context -PageName 'cat.html'
         }
         return
     }
@@ -1874,6 +1877,16 @@ function Invoke-YakuRoute {
     if ($method -eq 'GET' -and $path -eq '/api/desktop/preferences') {
         $preferences = Get-YakuDesktopPreferences
         Send-YakuTextResponse -Context $Context -Text ($preferences | ConvertTo-Json -Depth 6 -Compress) -ContentType 'application/json; charset=utf-8'
+        return
+    }
+    if ($method -eq 'POST' -and $path -eq '/api/desktop/tour-complete') {
+        # 案内を終えた（または飛ばした）ことだけを記録する。ショートカットは作らない。
+        try {
+            $preferences = Set-YakuTutorialCompleted
+            Send-YakuTextResponse -Context $Context -Text ($preferences | ConvertTo-Json -Depth 6 -Compress) -ContentType 'application/json; charset=utf-8'
+        } catch {
+            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ message=(Convert-YakuExceptionToUserMessage $_) } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
+        }
         return
     }
     if ($method -eq 'POST' -and $path -eq '/api/desktop/preferences') {

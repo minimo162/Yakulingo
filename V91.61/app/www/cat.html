@@ -7,12 +7,14 @@
   <meta name="yaku-file-max-bytes" content="__YAKU_MAX_UPLOAD_BYTES__">
   <meta name="yaku-max-batch-chars" content="__YAKU_MAX_BATCH_CHARS__">
   <meta name="yaku-amount-notation" content="__YAKU_AMOUNT_NOTATION__">
+  <meta name="yaku-tour" content="__YAKU_TOUR__">
   <title>翻訳 - YakuLingo</title>
   <link rel="stylesheet" href="/assets/styles.css">
   <link rel="stylesheet" href="/assets/cat-workspace.css">
   <script src="/assets/common.js" defer></script>
   <script src="/assets/quick.js" defer></script>
   <script src="/assets/cat.js" defer></script>
+  <script src="/assets/tour.js" defer></script>
 </head>
 <body class="app-cat">
     <!-- 行の状態を示す記号。輪郭が5つとも違うので、白黒でも色覚特性でも区別できる。
@@ -37,7 +39,12 @@
     </header>
 
     <section class="tab-panel" aria-labelledby="cat-page-title">
-      <div class="workspace-heading"><div><h1 id="cat-page-title">翻訳</h1><p class="muted">その場で訳すか、Word・Excelや長い文章を1文ずつ確認します。</p></div><a class="button secondary-button compact" href="/">最初の画面へ戻る</a></div>
+      <!-- 見出しの下に説明を足さない。この画面が何かは、貼り付け欄と取り込みボタンを
+           見れば分かる。説明文を全部に付けるのをやめる（2026-08-12）。 -->
+      <!-- 「最初の画面へ戻る」は外した。起動して最初に出るのがこの画面になったので、
+           押すと同じ画面を読み直すだけになる。資料の切り替えは道具の帯の
+           「ほかの資料に切り替える」で行う。 -->
+      <div class="workspace-heading"><div><h1 id="cat-page-title">翻訳</h1></div></div>
 
       <section id="cat-current-summary" class="sr-only" hidden aria-live="polite">
         <h2 id="cat-current-title"></h2><p id="cat-current-progress"></p><span id="cat-current-save">保存済み</span>
@@ -154,7 +161,6 @@
              「訳す」は文章を入れるまで押せない灰色だったので、押せるほうの
              取り込みが主役に見えていた（2026-08-12、実機 1380px で確認）。 -->
         <div class="entry-secondary">
-          <h3 class="entry-secondary-title">ファイルや、途中の作業から始める</h3>
           <div class="entry-actions cat-entry-actions">
             <button type="button" class="secondary-button" data-cat-source-show="file">Word・Excelを取り込む</button>
           </div>
@@ -196,6 +202,14 @@
           <button type="button" id="cat-align-open">前回版として取り込む</button>
         </div>
         <fieldset id="cat-direction-choice" class="direction-choice" hidden><legend>どちらに訳しますか？</legend><p class="muted">入力内容だけでは自動で決められません。</p><div class="direction-choice-grid"><button type="button" class="secondary-button" data-cat-direction="to_en">英語に訳す</button><button type="button" class="secondary-button" data-cat-direction="to_jp">日本語に訳す</button></div></fieldset>
+
+        <!-- 起動して最初に出るのはこの画面になった（2026-08-12）。以前あった
+             「何を訳しますか」の選択画面は消し、その出口だけをここへ移した。 -->
+        <nav class="home-help-links" aria-label="使い方と起動設定">
+          <a href="/tutorial#settings">起動とショートカット</a>
+          <a href="/cat?tour=1">使い方を見る</a>
+          <a href="/tutorial">このアプリについて</a>
+        </nav>
       </section>
 
       <section id="cat-workspace" class="cat-workspace" hidden>
@@ -210,55 +224,54 @@
             <span id="cat-save-status" class="cat-save-status" role="status" aria-live="polite">保存済み</span>
           </div>
           <label class="cat-toolbar-search" for="cat-search"><span>検索</span><input id="cat-search" type="search" placeholder="原文・訳文を検索"></label>
-          <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">残りの訳案を作る</button><button id="cat-export" type="button" class="secondary-button">訳文を取り出す（確認画面が出ます）</button><details class="cat-more-actions"><summary>そのほか</summary><div class="cat-more-actions-list"><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みの行だけコピー</button><button id="cat-switch-project" type="button" class="secondary-button">ほかの資料に切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>右の候補を上から順に訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></dt><dd>原文をそのまま訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd></dt><dd>確認を取り消す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>M</kbd> / <kbd>Alt</kbd>+<kbd>K</kbd></dt><dd>次の行とつなげる / つなげた行を戻す</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や右側から訳文欄へ戻る</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
+         <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">残りの訳案を作る</button><button id="cat-export" type="button" class="secondary-button">訳文を取り出す</button><button id="cat-qa-open" type="button" class="secondary-button" title="出す前に、直すところを一覧で見ます（F8）">点検</button><details class="cat-more-actions"><summary>そのほか</summary><div class="cat-more-actions-list"><button id="cat-preview-open" type="button" class="secondary-button">体裁で見る</button><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みの行だけコピー</button><button id="cat-switch-project" type="button" class="secondary-button">ほかの資料に切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>右の候補を上から順に訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></dt><dd>原文をそのまま訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd></dt><dd>確認を取り消す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>M</kbd> / <kbd>Alt</kbd>+<kbd>K</kbd></dt><dd>次の行とつなげる / つなげた行を戻す</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や右側から訳文欄へ戻る</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
           <section aria-labelledby="cat-personal-glossary-title">
-            <h3 id="cat-personal-glossary-title">今後の資料でも使うと登録した訳</h3>
-            <p class="muted">ここにあるものは、これからのすべての資料で自動的に使われます。間違えて登録したものは取り消せます。取り消しても、すでに訳した文章はそのまま残ります。</p>
+            <h3 id="cat-personal-glossary-title">今後も使う訳</h3>
+            <p class="muted">取り消しても、訳した文章は残ります。</p>
             <div id="cat-personal-glossary-list" class="cat-personal-glossary-list"><p class="muted">読み込んでいます…</p></div>
           </section>
           <section aria-labelledby="cat-delete-title">
             <h3 id="cat-delete-title">この作業を削除する</h3>
-            <p class="muted">不要になった作業だけを削除できます。元のファイルは削除しません。</p>
+            <p class="muted">元のファイルは削除しません。</p>
             <button id="cat-delete" type="button" class="danger-button">この作業を削除</button>
           </section>
         </details></div></details></div>
-          <!-- 使う量の1文は、ボタンと同じ列に入れると列幅を奪い、行数が3桁の
-               作業（例: 200行）でツールバーが横にあふれて「そのほか」が画面外へ
-               出た。ツールバーの2段目に全幅で置き、列幅を一切奪わせない。 -->
-          <span id="cat-copilot-usage" class="cat-copilot-usage" role="status" aria-live="polite" hidden></span>
-        </header>
-
-        <p id="cat-output-help" class="sr-only"></p><p id="cat-export-blocked" class="cat-export-blocked" role="status"></p>
-
-        <div id="cat-editor-layout" class="cat-editor-layout">
-          <nav id="cat-nav-pane" class="cat-nav-pane" aria-label="資料内の移動">
-            <section aria-labelledby="cat-state-filter-title"><h2 id="cat-state-filter-title">表示する行</h2>
-              <div id="cat-state-filters" class="cat-state-filters">
-                <!-- 6つあったものを3つにした（2026-08-12）。要対応・未翻訳・未確認は
-                     ほとんどの資料で同じ数を指しており、実際に4セルの資料では
-                     「要対応4 / 未翻訳4 / 未確認4」と同じ数字が3つ並んでいた。
-                     未翻訳か未確認かは行の記号で分かる。ここは「残り」で足りる。
-                     点検の指摘は例外なので、指摘が1件も無いときは出さない。 -->
-                <button type="button" data-cat-filter="actionable" aria-pressed="true">残り <span data-cat-count="actionable">0</span></button>
-                <button type="button" data-cat-filter="qc" aria-pressed="false" title="数字の自動点検で気になる点が見つかった行だけを表示します" hidden>点検の指摘 <span data-cat-count="qc">0</span></button>
-                <!-- 同じ原文の行だけを見る。まとめて片づけると、確定1回で残りへ配れる。 -->
-                <button type="button" data-cat-filter="repetition" aria-pressed="false" title="資料の中で同じ原文が2行以上ある行だけを表示します" hidden>同じ原文 <span data-cat-count="repetition">0</span></button>
-                <button type="button" data-cat-filter="reviewed" aria-pressed="false">確認済み <span data-cat-count="reviewed">0</span></button>
-                <button type="button" data-cat-filter="all" aria-pressed="false">すべて <span data-cat-count="all">0</span></button>
-              </div>
-              <span id="cat-filter-count" class="muted"></span>
-              <button id="cat-confirm-bulk" type="button" class="secondary-button compact" hidden></button>
-            </section>
-            <section id="cat-change-filter" aria-labelledby="cat-change-filter-title" hidden><h2 id="cat-change-filter-title">前回からの変更</h2>
+          <!-- 絞り込みは表の上（2026-08-12）。以前は左に列を1本立てていたが、
+               memoQ・Trados・Phrase はどれも表の上の帯で絞り込む。左の列に
+               187px を常時渡すと、原文と訳文が1列 321px しか取れなかった。 -->
+          <div class="cat-toolbar-filters">
+            <div id="cat-state-filters" class="cat-state-filters" role="group" aria-label="表示する行">
+              <!-- 6つあったものを3つにした（2026-08-12）。要対応・未翻訳・未確認は
+                   ほとんどの資料で同じ数を指しており、実際に4セルの資料では
+                   「要対応4 / 未翻訳4 / 未確認4」と同じ数字が3つ並んでいた。
+                   未翻訳か未確認かは行の記号で分かる。ここは「残り」で足りる。
+                   点検の指摘は例外なので、指摘が1件も無いときは出さない。 -->
+              <button type="button" data-cat-filter="actionable" aria-pressed="true">残り <span data-cat-count="actionable">0</span></button>
+              <button type="button" data-cat-filter="qc" aria-pressed="false" title="数字の自動点検で気になる点が見つかった行だけを表示します" hidden>点検の指摘 <span data-cat-count="qc">0</span></button>
+              <!-- 同じ原文の行だけを見る。まとめて片づけると、確定1回で残りへ配れる。 -->
+              <button type="button" data-cat-filter="repetition" aria-pressed="false" title="資料の中で同じ原文が2行以上ある行だけを表示します" hidden>同じ原文 <span data-cat-count="repetition">0</span></button>
+              <button type="button" data-cat-filter="reviewed" aria-pressed="false">確認済み <span data-cat-count="reviewed">0</span></button>
+              <button type="button" data-cat-filter="all" aria-pressed="false">すべて <span data-cat-count="all">0</span></button>
+            </div>
+            <details id="cat-location-menu" class="cat-toolbar-menu"><summary id="cat-location-summary">資料内の場所</summary><div id="cat-location-list" class="cat-location-list"></div></details>
+            <details id="cat-change-filter" class="cat-toolbar-menu" hidden><summary>前回からの変更</summary>
               <div class="cat-state-filters">
                 <button type="button" data-cat-change="all" aria-pressed="true">すべて</button>
                 <button type="button" data-cat-change="unchanged" aria-pressed="false">前回と同じ <span data-cat-change-count="unchanged">0</span></button>
                 <button type="button" data-cat-change="changed" aria-pressed="false">変更あり <span data-cat-change-count="changed">0</span></button>
                 <button type="button" data-cat-change="new" aria-pressed="false">今回追加 <span data-cat-change-count="new">0</span></button>
               </div>
-            </section>
-            <section aria-labelledby="cat-location-title"><h2 id="cat-location-title">資料内の場所</h2><div id="cat-location-list" class="cat-location-list"></div></section>
-          </nav>
+            </details>
+            <span id="cat-filter-count" class="muted"></span>
+            <button id="cat-confirm-bulk" type="button" class="secondary-button compact" hidden></button>
+            <!-- 右の参考情報は畳める。市販CATでも横のペインは閉じられる。 -->
+            <button id="cat-inspector-toggle" type="button" class="link-button cat-inspector-toggle" aria-expanded="true" aria-controls="cat-inspector-pane">参考情報を隠す</button>
+          </div>
+         </header>
+
+        <p id="cat-output-help" class="sr-only"></p><p id="cat-export-blocked" class="cat-export-blocked" role="status"></p>
+
+        <div id="cat-editor-layout" class="cat-editor-layout">
 
           <section id="cat-editor-pane" class="cat-editor-pane" aria-label="原文と訳文の確認">
             <div id="cat-complete-state" class="cat-complete-state" hidden><strong>すべての行を確認し終えました</strong></div>
@@ -298,7 +311,33 @@
               </section>
     </section>
   </main>
-  <dialog id="cat-export-dialog" class="confirm-dialog cat-export-dialog"><form method="dialog"><h2 id="cat-export-title">取り出す前のご確認</h2><p id="cat-export-mode"></p><p id="cat-export-name" class="muted"></p><div id="cat-export-checks" role="status"></div><p class="cat-human-review-note">自動で点検しているのは、数字と単位の写しちがいだけです。言い回しが適切かどうかは、ご自身でお確かめください。</p><p id="cat-export-notice" class="draft-warning">原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。</p><div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>戻って確認する</button><button id="cat-export-confirm" value="export">これで取り出す</button></div></form></dialog>
+  <dialog id="cat-export-dialog" class="confirm-dialog cat-export-dialog"><form method="dialog"><h2 id="cat-export-title">取り出す前のご確認</h2><p id="cat-export-mode"></p><p id="cat-export-name" class="muted"></p><div id="cat-export-checks" role="status"></div><p class="cat-human-review-note">自動で点検しているのは、数字と単位の写しちがいだけです。言い回しが適切かどうかは、ご自身でお確かめください。</p><p id="cat-export-notice" class="draft-warning">原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。</p><div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>戻って確認する</button><button id="cat-export-qa" type="button" class="secondary-button" hidden>点検一覧を開く</button><button id="cat-export-confirm" value="export">これで取り出す</button></div></form></dialog>
+  <!-- 出す前に、資料ぜんぶの指摘を1枚で見る（市販CATの検証パネルに相当）。
+       memoQ・Trados は書き出し前にこの一覧を見て、行へ飛んで直す作りになっている。
+       当アプリは行ごとの指摘と「点検の指摘」での絞り込みは持っていたが、
+       「あと何件残っているか」を出す前に見る場所が無かった。 -->
+  <!-- 体裁で見る。市販CAT（Tradosのプレビュー、memoQ の Preview）に当たる。
+       Excel はセルの位置、Word・貼り付けた文章は段落の順で並べる。
+       元のファイルは開かないし、作らない。画面が既に持っている行だけで組む。 -->
+  <dialog id="cat-preview-dialog" class="confirm-dialog cat-preview-dialog"><form method="dialog">
+    <h2>体裁で見る</h2>
+    <div class="cat-preview-controls">
+      <div class="cat-state-filters" role="group" aria-label="見るもの">
+        <button type="button" data-cat-preview-side="target" aria-pressed="true">訳文</button>
+        <button type="button" data-cat-preview-side="source" aria-pressed="false">原文</button>
+      </div>
+      <span id="cat-preview-note" class="muted"></span>
+    </div>
+    <div id="cat-preview-body" class="cat-preview-body"></div>
+    <div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>閉じる</button></div>
+  </form></dialog>
+  <dialog id="cat-qa-dialog" class="confirm-dialog cat-qa-dialog"><form method="dialog">
+    <h2>点検一覧</h2>
+    <p id="cat-qa-summary" class="muted" role="status"></p>
+    <div id="cat-qa-list" class="cat-qa-list"></div>
+    <p class="cat-human-review-note">自動で見ているのは、空欄と数字だけです。</p>
+    <div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>閉じる</button></div>
+  </form></dialog>
   <dialog id="cat-delete-dialog" class="confirm-dialog"><form method="dialog"><h2>この作業を削除しますか</h2><p><strong id="cat-delete-name">この作業</strong> の途中保存を削除します。この操作は取り消せません。元のファイルは削除しません。</p><div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>削除しない</button><button value="delete" class="danger-button">削除する</button></div></form></dialog>
   <dialog id="cat-term-dialog" class="confirm-dialog cat-term-dialog"><form id="cat-term-form" method="dialog">
     <h2>用語を登録</h2><p class="muted">原文と訳文の中から、登録したい部分をマウスで選んでからこの画面を開くと、自動で入ります。</p>

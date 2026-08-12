@@ -39,6 +39,7 @@ $script:YakuSrcModuleFiles = @(
     'BriefStyle.ps1',
     'CellSegments.ps1',
     'GlossaryVariants.ps1',
+    'SheetLayout.ps1',
     'CellAlign.ps1',
     'AlignMask.ps1',
     'Alignment.ps1',

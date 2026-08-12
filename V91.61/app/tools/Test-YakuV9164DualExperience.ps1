@@ -45,11 +45,9 @@ $catBatchPath = Join-Path $srcRoot 'CatBatch.ps1'
 $catProjectPath = Join-Path $srcRoot 'CatProject.ps1'
 $translationMemoryPath = Join-Path $srcRoot 'TranslationMemory.ps1'
 $htmlPath = Join-Path $srcRoot 'Html.ps1'
-$landingPath = Join-Path $wwwRoot 'index.html'
 $quickPagePath = Join-Path $wwwRoot 'cat.html'
 $catPagePath = Join-Path $wwwRoot 'cat.html'
 $assetsRoot = Join-Path $wwwRoot 'assets'
-$homeClientPath = Join-Path $assetsRoot 'home.js'
 $quickClientPath = Join-Path $assetsRoot 'quick.js'
 $catClientPath = Join-Path $assetsRoot 'cat.js'
 $catWorkspaceStylePath = Join-Path $assetsRoot 'cat-workspace.css'
@@ -61,20 +59,19 @@ $catBatchSource = Read-YakuDualText $catBatchPath
 $catProjectSource = Read-YakuDualText $catProjectPath
 $translationMemorySource = Read-YakuDualText $translationMemoryPath
 $rendererSource = Read-YakuDualText $htmlPath
-$landing = Read-YakuDualText $landingPath
 $quickPage = Read-YakuDualText $quickPagePath
 $catPage = Read-YakuDualText $catPagePath
-$homeClient = Read-YakuDualText $homeClientPath
 $quickClient = Read-YakuDualText $quickClientPath
 $catClient = Read-YakuDualText $catClientPath
 $catWorkspaceStyle = Read-YakuDualText $catWorkspaceStylePath
-$client = $homeClient + "`n" + $quickClient + "`n" + $catClient
+$client = $quickClient + "`n" + $catClient
 
 Write-Host 'Single launch, landing, and DOM separation' -ForegroundColor Cyan
 Check-YakuDual (($server -split '\[System\.Net\.HttpListener\]::new\(\)').Count -eq 2) 'one listener instance serves both experiences'
 Check-YakuDual ($server -match '(?i)[\x22\x27]?/quick[\x22\x27]?' -and $server -match '(?i)[\x22\x27]?/cat[\x22\x27]?') 'server exposes /quick and /cat from the same launch'
-Check-YakuDual ($landing -match '(?i)href\s*=\s*[\x22\x27][^\x22\x27]*/quick[\x22\x27]' -and $landing -match '(?i)href\s*=\s*[\x22\x27][^\x22\x27]*/cat[\x22\x27]') 'large landing links to /quick and /cat'
-Check-YakuDual ($landing -notmatch 'id\s*=\s*[\x22\x27](?:text-form|cat-open-button)[\x22\x27]') 'landing contains no translator DOM'
+# 2026-08-12: 選ばせる開始画面を削除し、起動直後に翻訳画面へ着地させる。
+Check-YakuDual (-not (Test-Path -LiteralPath (Join-Path $wwwRoot 'index.html'))) 'no separate landing screen stands between launch and translating'
+Check-YakuDual ($catPage.Contains('id="quick-input"')) 'the screen the launcher opens contains the paste box itself'
 # 2026-08-11 に利用者判断で画面を一つにした（「画面を一つにするのでokです」）。
 # 分かれているのは DOM ではなく状態になったので、検査もそちらへ移す。守るべき
 # ものは変わらない: その場で訳す状態は保存しない、確認作業と同時には出ない、
@@ -131,7 +128,7 @@ $quickDiagnosticSettings | Add-Member -NotePropertyName 'diagnostics_level' -Not
 $quickDiagnosticSettings | Add-Member -NotePropertyName 'full_text_diagnostics_enabled' -NotePropertyValue $false -Force
 Check-YakuDual ((Get-YakuDiagnosticsLevel -Settings $quickDiagnosticSettings) -eq 'standard') 'raw transport re-reading Quick settings cannot reactivate full-text diagnostics'
 Check-YakuDual ($server -match 'ConvertTo-YakuQuickResultView|New-YakuQuickArtifact') 'Quick result is reduced before job publication'
-$quickResultBlock = Get-YakuDualSlice -Text $server -Start 'function Convert-YakuQuickJobResultJson' -End 'function Serve-YakuIndex'
+$quickResultBlock = Get-YakuDualSlice -Text $server -Start 'function Convert-YakuQuickJobResultJson' -End 'function Serve-YakuAdminPage'
 Check-YakuDual ($quickResultBlock -notmatch '(?m)^\s*(?:Raw|Prompt|Batches)\s*=') 'published Quick result excludes raw prompt/response/batches'
 Check-YakuDual ($server -match 'Clear-YakuExpiredQuickArtifacts' -and $quickArtifactSource -match 'Clear-YakuExpiredQuickArtifacts') 'Quick artifacts are purged by TTL'
 
@@ -157,7 +154,7 @@ Check-YakuDual ($candidateRoute -notmatch 'Get-YakuCorpusSearchDir|Find-YakuCorp
 Check-YakuDual ($catClient -match '(?i)reference_usage' -and $catClient -match '(?i)reference_id' -and $catClient -match '(?i)data-cat-reference-id') 'candidate insertion sends reference_id and displays reference_usage'
 Check-YakuDual ($catClient -match "function renderRows\(\)[\s\S]*?el\('cat-candidates'\)\.hidden = true") 'candidate panel closes when its row leaves the current grid'
 Check-YakuDual ($candidateRoute -match '(?i)reference_id' -and $server -match '(?i)Set-YakuCatSegmentReferenceUsage' -and $catProjectSource -match '(?i)ReferenceUsage') 'server persists reference_usage through the explicit segment mutation'
-$activeUi = $landing + "`n" + $quickPage + "`n" + $catPage + "`n" + $client
+$activeUi = $quickPage + "`n" + $catPage + "`n" + $client
 Check-YakuDual ($activeUi -notmatch '(?i)(?:quality|translation|\u8a33|\u516c\u8868|\u78ba\u8a8d)[^\r\n]{0,40}100\s*[%\uff05]') 'active UI never presents 100 percent as translation quality'
 
 Write-Host 'CAT client state and keyboard regression' -ForegroundColor Cyan
@@ -171,15 +168,16 @@ Check-YakuDual ($catClient -match 'data\.review_blocked' -and $catClient -match 
 Check-YakuDual ($catClient -match 'function redrawAfterFlush\(\)[\s\S]*?return flush\(\)\.then' -and $catClient -match "button\.hasAttribute\('data-cat-filter'\)[\s\S]{0,180}redrawAfterFlush\(\)") 'filter redraw waits for the shared save barrier'
 
 Write-Host 'CAT H1 focused workspace contract' -ForegroundColor Cyan
-Check-YakuDual ($catPage -match 'cat-workspace\.css' -and $catPage -match 'id="cat-editor-toolbar"' -and $catPage -match 'id="cat-nav-pane"' -and $catPage -match 'id="cat-editor-pane"' -and $catPage -match 'id="cat-inspector-pane"') 'CAT uses one WebView workspace with sticky toolbar and three named regions'
-Check-YakuDual ($catWorkspaceStyle -match '(?s)\.cat-editor-toolbar\s*\{[^}]*position:\s*sticky' -and $catWorkspaceStyle -match 'grid-template-columns:\s*var\(--pane-nav\)\s+minmax\(0,\s*1fr\)\s+var\(--pane-inspector\)' -and $catWorkspaceStyle -match '--pane-nav:\s*clamp\(' -and $catWorkspaceStyle -match '--pane-inspector:\s*clamp\(') 'desktop CAT workspace has the approved sticky three-region layout'
+Check-YakuDual ($catPage -match 'cat-workspace\.css' -and $catPage -match 'id="cat-editor-toolbar"' -and $catPage -match 'id="cat-editor-pane"' -and $catPage -match 'id="cat-inspector-pane"') 'CAT uses one WebView workspace with a sticky toolbar and named regions'
+# 2026-08-12: 左の絞り込み列を廃止し、帯を表の上へ移した。右の参考情報は畳める。
+Check-YakuDual ($catWorkspaceStyle -match '(?s)\.cat-editor-toolbar\s*\{[^}]*position:\s*sticky' -and $catWorkspaceStyle -match 'grid-template-columns:\s*minmax\(0,\s*1fr\)\s+var\(--pane-inspector\)' -and $catWorkspaceStyle -match '--pane-inspector:\s*clamp\(' -and $catWorkspaceStyle -match '\.cat-editor-layout\.is-inspector-hidden' -and $catWorkspaceStyle -notmatch '--pane-nav') 'desktop CAT workspace filters above the grid and can fold the reference pane'
 # ツールバーは行数が3桁（200行など）になっても壊れてはいけない。実測（窓1380px）で
 # 2つの壊れ方を踏んだ。1つは進捗が min-width: 0 で枠より小さくなり検索欄の上へ
 # 重なる。もう1つは使う量の1文がボタンと同じ列で幅を奪い、列の合計が 1,460px と
 # なって「そのほか」が画面外へ出る。どちらも「省略する当てが無いものを潰した」形。
 Check-YakuDual ($catWorkspaceStyle -match '(?s)\.cat-toolbar-progress\s*\{[^}]*min-width:\s*max-content') 'toolbar progress must not be squeezed below its own text'
 Check-YakuDual ($catWorkspaceStyle -notmatch '(?s)\.cat-toolbar-document,\s*\r?\n?\.cat-toolbar-progress\s*\{[^}]*min-width:\s*0') 'the shrink rule must not be shared with the progress cell'
-Check-YakuDual ($catWorkspaceStyle -match '(?s)\.cat-copilot-usage\s*\{[^}]*grid-column:\s*1 / -1' -and $catPage -match '(?s)</div>\s*(<!--[\s\S]*?-->\s*)?<span id="cat-copilot-usage"[\s\S]*?</header>') 'the usage note must sit on its own toolbar row instead of competing for column width'
+# 2026-08-12: 使う量の1文は画面から外した（押す前に読んでも判断が変わらない）。
 # 画面に出す情報を減らす（2026-08-12、利用者の指摘「不要な情報が多すぎて必要な情報が
 # 紛れてしまっている」）。数えたら、4セルの資料で「要対応4 / 未翻訳4 / 未確認4」と
 # 同じ数字が3つ並んでいた（actionable = 未確認 or 点検の指摘、未翻訳 ⊂ 未確認）。
@@ -296,13 +294,13 @@ try {
 }
 
 Write-Host 'User-facing reuse vocabulary and no classification input' -ForegroundColor Cyan
-$normalUi = $landing + "`n" + $quickPage + "`n" + $catPage + "`n" + $client + "`n" + $rendererSource
+$normalUi = $quickPage + "`n" + $catPage + "`n" + $client + "`n" + $rendererSource
 $selfConfirmedPattern = '\u81ea\u5206\u304c\u78ba\u8a8d\u3057\u305f\u8a33'
 $pastExamplePattern = '\u904e\u53bb\u306e\u7ffb\u8a33\u4f8b'
 Check-YakuDual ($normalUi -match $selfConfirmedPattern) 'normal UI says self-confirmed translation'
 Check-YakuDual ($normalUi -match $pastExamplePattern) 'normal UI says past translation example'
 Check-YakuDual ($normalUi -notmatch '\u81ea\u5206\u306e\u8a33\s*100%|\u516c\u8868\u8a33\s*100%|Verified\s*=\s*\$true') 'normal UI has no 100-percent or Verified quality claim'
-$allHtml = @($landingPath,$quickPagePath,$catPagePath) | ForEach-Object { Read-YakuDualText $_ }
+$allHtml = @($quickPagePath,$catPagePath) | ForEach-Object { Read-YakuDualText $_ }
 $classificationMarkup = ($allHtml -join "`n")
 Check-YakuDual ($classificationMarkup -notmatch '(?i)<(?:input|select|option)[^>]+(?:name|id|value)\s*=\s*[\x22\x27][^\x22\x27]*(?:public|internal|verified_release|verified_internal|prior_evidence|document_type)[^\x22\x27]*[\x22\x27]') 'production UI has no public/internal/document classification input'
 Check-YakuDual ($client -notmatch '(?i)prior_evidence\s*:|verified_(?:release|internal)') 'browser payload cannot self-assert reuse classification'

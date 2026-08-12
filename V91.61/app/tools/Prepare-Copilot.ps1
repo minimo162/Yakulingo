@@ -97,6 +97,23 @@ try {
     $freshPrepared = $false
     $lastLog = [datetime]'2000-01-01'
 
+    # 準備ができたと出したあとに、もう一度だけ余ったタブを閉じる。
+    #
+    # 2026-08-12 実測: 起動のたびに窓のタブが1枚ずつ増えていた（Copilotの会話 ×2 と
+    # 「新しいタブ」）。片付けは入力欄が出た時点で1回だけ走るが、Edge を落として
+    # 開き直したときの「前回のタブの復元」はそれより遅れて現れる。片付けの時点では
+    # まだ無いので、取り逃がしていた（ログの CDP targets found: 1 がその瞬間）。
+    # 表示はもう「使えます」なので、ここで数秒待っても待たされる人はいない。
+    $tidyLate = {
+        param([int]$Port, [string]$KeepTargetId)
+        if ([string]::IsNullOrWhiteSpace($KeepTargetId)) { return }
+        Start-Sleep -Seconds 3
+        try { Close-YakuSurplusCopilotTargets -Port $Port -KeepTargetId $KeepTargetId } catch {
+            Write-YakuLog "Late surplus tab cleanup failed; continuing. error=$($_.Exception.Message)" 'WARN'
+        }
+    }
+    $keepTargetId = ''
+
     $null = Write-YakuWarmupStatus -Mode 'starting' -Label 'Copilotを準備しています' -Class 'warn' -Detail 'Edgeを起動して、Microsoft 365 Copilotを開いています。' -Ready $false
     Write-YakuEdgeLaunchLog "Copilot warmup started. port=$port timeout=$timeout" 'INFO'
 
@@ -152,6 +169,7 @@ try {
                 if (-not $freshPrepared) {
                     $freshPrepared = $true
                     $selectedTargetId = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $page -Name 'id' -Default '')
+                    $keepTargetId = $selectedTargetId
                     if (-not [string]::IsNullOrWhiteSpace($selectedTargetId)) {
                         try { Close-YakuSurplusCopilotTargets -Port $port -KeepTargetId $selectedTargetId } catch {
                             Write-YakuLog "Surplus Copilot tab cleanup failed; continuing. error=$($_.Exception.Message)" 'WARN'
@@ -175,6 +193,7 @@ try {
                         $freshAfterTitle = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $freshAfter -Name 'title' -Default '')
                         if (Write-YakuWarmupStatus -Mode 'ready' -Label '使えます' -Class 'ok' -Detail $freshAfterUrl -Ready $true) {
                             Write-YakuLog "Copilot warmup ready from fresh-chat after state. url=$freshAfterUrl title=$freshAfterTitle" 'INFO'
+                            & $tidyLate $port $keepTargetId
                             exit 0
                         }
                         Write-YakuLog 'Ready status write failed; staying in polling loop to retry.' 'WARN'
@@ -188,6 +207,10 @@ try {
 
                 if (Write-YakuWarmupStatus -Mode 'ready' -Label '使えます' -Class 'ok' -Detail $url -Ready $true) {
                     Write-YakuLog "Copilot warmup ready. url=$url title=$title" 'INFO'
+                    if ([string]::IsNullOrWhiteSpace($keepTargetId)) {
+                        $keepTargetId = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $page -Name 'id' -Default '')
+                    }
+                    & $tidyLate $port $keepTargetId
                     exit 0
                 }
                 Write-YakuLog 'Ready status write failed; staying in polling loop to retry.' 'WARN'
