@@ -59,5 +59,20 @@ Chk ($pptBranch -ne '' -and $pptBranch -notmatch "\`$body\['source_path'\]") 'Po
 Chk ($sel -notmatch 'Outlook\.Application' -and $shell -notmatch 'rctrl_renwnd32') 'Outlook へ COM で触りに行かない'
 Chk ($sel -match 'Outlook') 'Outlook を COM で扱わない理由が書かれている'
 
+# 2026-08-12: 実機で Word・Excel・PowerPoint の状態を作って総当たりした結果、
+# 「取れない」より「取り違える／理由が嘘」のほうが問題だと分かった。3件直した。
+#   Word  何も選んでいないのに、カーソル位置の1文字が入力欄へ入っていた
+#   Excel 数式のセルだけを選ぶと「文字がありませんでした」（文字は見えている）
+#   Excel 図形を選ぶと「複数の範囲が選ばれています」（範囲は選んでいない）
+# 図形のときに multi_area へ化けたのは、PowerShell の COM が Areas を $null で返し、
+# [int]$null = 0 が「1でない＝複数」に落ちていたため。0 は範囲ではない。
+Chk ($sel -match 'Selection\.Start' -and $sel -match "Reason='no_selection'") 'Wordは選択の長さで判定する（中身では判定しない）'
+Chk ($sel -match "\`$areas -lt 1.*\r?\n?.*Reason='not_a_range'|(?s)\`$areas -lt 1[^\r\n]*Reason='not_a_range'") 'Excelで範囲でないもの（図形・グラフ）は not_a_range にする'
+Chk ($sel -match "Reason='formula_only'") 'Excelで数式だけのときは、数式だと言う'
+$quickClientForReasons = [IO.File]::ReadAllText((Join-Path $root 'www/assets/quick.js'))
+foreach ($reason in @('no_selection','not_a_range','formula_only')) {
+    Chk ($quickClientForReasons -match ("reason === '" + $reason + "'")) ('画面に ' + $reason + ' の説明がある')
+}
+
 if ($script:failed -gt 0) { Write-Host ("Selection regression failed. failures=" + $script:failed) -ForegroundColor Red; exit 1 }
 Write-Host 'Selection regression passed.' -ForegroundColor Green
