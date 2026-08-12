@@ -35,10 +35,31 @@ $commonJs = Read-YakuTutorialFile 'www\assets\common.js'
 Check-YakuTutorial ([regex]::Matches($html, 'class="tutorial-step"').Count -eq 4) 'tutorial has exactly four stages'
 Check-YakuTutorial ($html.Contains('1 / 4') -and $js.Contains("String(currentStep + 1) + ' / 4'")) 'tutorial exposes progress in text'
 Check-YakuTutorial ($html.Contains('設定画面へ進む') -and -not $html.Contains('>スキップ<')) 'skip action leads explicitly to settings'
-Check-YakuTutorial ($html.Contains('文章は自動では読み取りません') -and $html.Contains('貼り付けて「翻訳」を押すまで')) 'tutorial states the no-monitoring and explicit-send boundary'
+# 2026-08-12: Ctrl+Alt+J が Word・Excel・PowerPoint の選択範囲を読み込むようになったので、
+# 「文章は自動では読み取りません」は事実と違う。境界は2つに分かれた。
+#   読み込む境界: このキーを押したときだけ。見張らない
+#   送る境界:     「訳案を作る」を押すまで送らない
+# 送信ボタンの名前も「翻訳」から変わっている。実物の名前で書く。
+Check-YakuTutorial ($html.Contains('このキーを押した時だけ') -and $html.Contains('ふだん画面を見張ることはありません')) 'tutorial states when text is read from the foreground app'
+Check-YakuTutorial ($html.Contains('「訳案を作る」を押すまでCopilotへは送りません') -and $html.Contains('「訳案を作る」を押した文章だけを送信します')) 'tutorial states the explicit-send boundary with the real button name'
+Check-YakuTutorial (-not ($html -match '文章は自動では読み取りません|貼り付けて「翻訳」を押す')) 'the retired no-reading claim must not come back'
+$quickClientForTutorial = Read-YakuTutorialFile 'www\assets\quick.js'
+Check-YakuTutorial ($quickClientForTutorial.Contains("'訳案を作る'") -and $quickClientForTutorial.Contains('/api/quick/selection')) 'the tutorial button name and the reading path still exist in the app'
 Check-YakuTutorial ($html -match 'id="startup-enabled"[^>]*type="checkbox"[^>]*checked') 'startup is visibly ON by default'
 Check-YakuTutorial ($html -match 'id="desktop-shortcut"[^>]*type="checkbox"[^>]*checked') 'desktop shortcut is visibly ON by default'
 Check-YakuTutorial ($html.Contains('それまではパソコンの設定を変更しません') -and $html.Contains('この設定で始める')) 'final confirmation explains the side-effect boundary'
+# 2026-08-12: 押してよいか迷う人がいる、という指摘。迷いの中身は「何が起きるか」
+# 「取り消せるか」「チェックを外しても押していいのか」の3つ。押す直前に3つとも書く。
+# とくにスタートメニューは、チェックに関係なく必ず作る（DesktopIntegration.ps1 の
+# start_menu = $true）。書かないと「外したのに作られた」と見える。
+Check-YakuTutorial ($html.Contains('チェックに関係なく必ず作ります') -and $html.Contains('ユーザーフォルダの中')) 'final step states exactly what the button creates, including the always-created start menu entry'
+Check-YakuTutorial ($html.Contains('レジストリへの書き込みも、管理者権限も使いません') -and $html.Contains('あとから変えられます')) 'final step states the limits of the change and that it is reversible'
+Check-YakuTutorial ($html.Contains('両方のチェックを外したまま押しても')) 'final step says both boxes may be cleared before pressing'
+$desktopSrc = Read-YakuTutorialFile 'src\DesktopIntegration.ps1'
+# レジストリは「置き場所を読む」だけで、書き込みはしない。書き込む道が入ったら、
+# チュートリアルの説明が嘘になるのでここで止める。
+Check-YakuTutorial ($desktopSrc -match 'start_menu\s*=\s*\$true') 'the tutorial claim matches the implementation: the start menu shortcut is always created'
+Check-YakuTutorial (-not ($desktopSrc -match '(Set|New|Remove)-ItemProperty|reg\.exe|RegistryKey.*SetValue')) 'the tutorial claim matches the implementation: nothing is written to the registry'
 Check-YakuTutorial ($html.Contains('tabindex="-1"') -and $html.Contains('aria-live="polite"') -and $html.Contains('aria-label="使い方の画面移動"')) 'focus and live-region semantics are present'
 
 Check-YakuTutorial ([regex]::Matches($js, [regex]::Escape("YakuCommon.post('/api/desktop/preferences'")).Count -eq 1) 'desktop preferences have one POST call site'
