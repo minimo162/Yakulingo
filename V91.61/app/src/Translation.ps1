@@ -1893,7 +1893,17 @@ function Invoke-YakuTextRevision {
     # 原文から同じ手順でマスク表を作り直す。割り当ては原文だけで決まるので、
     # 翻訳したときと同じトークンになり、現訳の[[N1]]とかみ合う。
     #
-    $maskResult = New-YakuNumericMaskMap -Text $InputText -Root $Root -Direction $Direction -Location 'text-revise'
+    # 「同じ手順」には単位の換算も入る。ここだけ換算を飛ばしていたため、
+    # 訳したときと番号も単位も違うマスク表ができていた（2026-08-12 実測）。
+    #   訳す: 売上高は[[N2]] billion yen      [[N2]]=1,315
+    #   直す: 売上高は[[N2]]兆[[N3]]億円      [[N2]]=1, [[N3]]=3,150
+    # 現訳は前者の番号で書かれているので、モデルが原文側のトークンを写すと
+    # 「¥1 trillion 3,150 billion」のような訳文ができる。実機で発生し、
+    # 数値の点検が止めた（確認済みにできない＝直すたびに詰まる）。
+    $reviseNotation = $Notation
+    if ([string]::IsNullOrWhiteSpace($reviseNotation)) { $reviseNotation = Get-YakuAmountNotation -Settings $Settings }
+    $reviseInput = [string](Convert-YakuNumericUnits -Text $InputText -Location 'text-revise' -Notation $reviseNotation).Text
+    $maskResult = New-YakuNumericMaskMap -Text $reviseInput -Root $Root -Direction $Direction -Location 'text-revise'
     $sourceText = [string]$maskResult.Text
     $maskMap = $maskResult.Map
 
@@ -1901,12 +1911,12 @@ function Invoke-YakuTextRevision {
     $protectedCurrentText = Protect-YakuPromptField -Text $CurrentText -Root $Root -Direction $Direction -NumericMap $maskMap -Location 'text-revise-current' -AllowExistingTokens
     $maskedInstruction = Protect-YakuPromptField -Text $Instruction -Root $Root -Direction $Direction -NumericMap $maskMap -Location 'text-revise-instruction'
     $protectedFields = @(
-        [pscustomobject]@{ Name='source'; OriginalText=$InputText; ProtectedText=$sourceText; NumericMaskMaps=@($maskMap) },
+        [pscustomobject]@{ Name='source'; OriginalText=$reviseInput; ProtectedText=$sourceText; NumericMaskMaps=@($maskMap) },
         [pscustomobject]@{ Name='current'; OriginalText=$CurrentText; ProtectedText=$protectedCurrentText; NumericMaskMaps=@($maskMap) },
         [pscustomobject]@{ Name='instruction'; OriginalText=$Instruction; ProtectedText=$maskedInstruction; NumericMaskMaps=@($maskMap) }
     )
     $promptPackage = New-YakuProtectedPromptPackage -Kind revision -Root $Root -Direction $Direction -Fields $protectedFields `
-        -Arguments ([pscustomobject]@{ Style=$Style; Notation=$(if ([string]::IsNullOrWhiteSpace($Notation)) { Get-YakuAmountNotation -Settings $Settings } else { $Notation }) })
+        -Arguments ([pscustomobject]@{ Style=$Style; Notation=$reviseNotation })
     $requestId = [string]$promptPackage.RequestId
     $built = $promptPackage.Built
     $built.Prompt = [string]$promptPackage.Prompt
