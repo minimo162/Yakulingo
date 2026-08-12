@@ -842,6 +842,34 @@ $maskedBillion = [string](Convert-YakuNumericUnits -Text 'xx億円' -Location 't
 Assert-YakuMask ($maskedOku -eq 'xx oku') ('伏せ字は oku なら単位名だけ替える（実際 ' + $maskedOku + '）')
 Assert-YakuMask ($maskedBillion -eq 'xx億円') ('伏せ字は billion では換算できないので触らない（実際 ' + $maskedBillion + '）')
 
+Write-Host 'CASE 24b: 換算を呼ぶところは、どれも設定の書き方に従う' -ForegroundColor Cyan
+# 2026-08-12 の実機検証で見つけた穴。その場で訳す経路だけ -Notation を渡しておらず、
+# 原文は oku、プロンプトは billion という食い違いが起きていた。訳文は復元側の
+# 桁合わせで正しく出るが、数値監査が毎回「原文の数値トークンが訳文に無い」と警告する
+# （実測 checked=4 matched=2）。呼び出し側が設定を渡しているかを字面で押さえる。
+$translationSrcNotation = [IO.File]::ReadAllText((Join-Path $root 'src/Translation.ps1'))
+foreach ($line in @($translationSrcNotation -split "`r?`n")) {
+    if ($line -notmatch 'Convert-YakuNumericUnits\s+-Text') { continue }
+    if ($line -match '^\s*#') { continue }
+    Assert-YakuMask ($line -match '-Notation') ('換算の呼び出しに書き方を渡す: ' + $line.Trim().Substring(0, [Math]::Min(90, $line.Trim().Length)))
+}
+
+Write-Host 'CASE 24c: billion 表記の金額も数値監査に載る' -ForegroundColor Cyan
+# 単位を oku / k yen / k units の3つしか知らなかったため、billion 表記では金額が
+# 1件も監査されていなかった（2026-08-12 の実機で checked=2、千円と千台だけ）。
+# 原文は「[[N2]] billion yen」、規約どおりの訳文は「¥[[N2]] billion」なので、
+# 期待する字面は yen を含めない。
+$auditSource = '当第[[N1]]四半期の売上高は[[N2]] billion yenとなり、営業利益は[[N3]] billion yenでした。研究開発費は[[N4]] k yen、販売台数は[[N5]] k unitsです。'
+$auditYen = [string][char]0xA5
+foreach ($case in @(
+    @{ Why='規約どおりの訳文は通る'; Ok=$true;  Text=('Sales were ' + $auditYen + '[[N2]] billion, and operating profit was ' + $auditYen + '[[N3]] billion. R&D was [[N4]] k yen, and volume was [[N5]] k units.') }
+    @{ Why='金額が1つ落ちたら止まる'; Ok=$false; Text=('Sales were ' + $auditYen + '[[N2]] billion. R&D was [[N4]] k yen, and volume was [[N5]] k units.') }
+    @{ Why='単位を million に間違えたら止まる'; Ok=$false; Text=('Sales were ' + $auditYen + '[[N2]] million, and operating profit was ' + $auditYen + '[[N3]] billion. R&D was [[N4]] k yen, and volume was [[N5]] k units.') }
+)) {
+    $auditResult = Test-YakuNumericIntegrity -SourceText $auditSource -TranslatedText ([string]$case.Text) -Location 'test-billion-audit'
+    Assert-YakuMask ([bool]$auditResult.Ok -eq [bool]$case.Ok -and [int]$auditResult.Checked -eq 4) ([string]$case.Why + ('（checked={0} matched={1}）' -f $auditResult.Checked, $auditResult.Matched))
+}
+
 Write-Host 'CASE 25: billion 表記でも、規約どおりの訳文が数値の点検を通る' -ForegroundColor Cyan
 # 換算後の原文と訳文を突き合わせる仕組みなので、書き方を替えると点検も一緒に
 # 動かないと、アプリ自身が作った正しい訳を自分で拒否する（2026-08-11 に oku で発生）。

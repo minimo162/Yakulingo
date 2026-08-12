@@ -1123,7 +1123,12 @@ function Get-YakuNumericAuditExpectations {
     $items = New-Object System.Collections.Generic.List[object]
     # V91.60: マスク後は数値が[[N1]]に置き換わるため、監査対象へ加える。
     # これにより既存の数値整合監査・補正・再試行の仕組みがそのまま使える。
-    $pattern = '(?<![0-9])(?<num>\[\[N\d+\]\]|[0-9][0-9,]*(?:\.[0-9]+)?|[xX]{2,})\s+(?<unit>oku|k units|k yen)'
+    # billion は 2026-08-12 に単位として加えた。それまで単位は oku / k yen / k units の
+    # 3つしか知らず、billion 表記の資料では金額が1件も監査に載っていなかった
+    # （実測 checked=2、千円と千台だけ）。数値が落ちたり増えたりしても気づけない。
+    # 原文側は「[[N2]] billion yen」だが、規約どおりの訳文は「¥[[N2]] billion」なので、
+    # 期待する字面は yen を含めない billion までにする。
+    $pattern = '(?<![0-9])(?<num>\[\[N\d+\]\]|[0-9][0-9,]*(?:\.[0-9]+)?|[xX]{2,})\s+(?<unit>oku|k units|k yen|billion)'
     foreach ($m in [regex]::Matches([string]$SourceText, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
         $token = (([string]$m.Groups['num'].Value) + ' ' + ([string]$m.Groups['unit'].Value).ToLowerInvariant())
         $plain = ([string]$m.Groups['num'].Value).Replace(',','')
@@ -2192,7 +2197,12 @@ function Invoke-YakuTextTranslation {
     # V91.60 段階4: 方向によらず単位を正規化トークン(oku / k yen / k units)へ揃える。
     # 日英混在の資料では to_jp の入力にも日本語単位が現れるため、
     # プレースホルダーと単位の並びが方向によらず一定になる。
-    $numericPre = Convert-YakuNumericUnits -Text $processingInput -Location ('text-' + $direction); $processingInput = [string]$numericPre.Text
+    # 金額の書き方は、この経路でも設定に従う。2026-08-12 の実機検証で、ここだけ
+    # 既定の oku で換算していたことが分かった。プロンプトは設定どおり billion を
+    # 指示するので、原文「[[N2]] oku」に対して訳文「¥[[N2]] billion」が返り、
+    # 数値監査が「原文の数値トークンが訳文に無い」と警告していた
+    # （checked=4 matched=2、訳文自体は復元側の桁合わせで正しく出ていた）。
+    $numericPre = Convert-YakuNumericUnits -Text $processingInput -Location ('text-' + $direction) -Notation (Get-YakuAmountNotation -Settings $Settings); $processingInput = [string]$numericPre.Text
     $maxChars = Get-YakuMaxCharsPerBatch -Settings $Settings
     $sectionSw.Stop(); $directionSettingsMs = $sectionSw.ElapsedMilliseconds
     $sectionSw.Restart()
