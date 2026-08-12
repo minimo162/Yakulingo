@@ -81,6 +81,16 @@ function Get-YakuWordSelection {
         if (-not (Test-YakuOfficeInstanceMatchesWindow -Application $app -ForegroundHwnd $ForegroundHwnd)) {
             return [pscustomobject]@{ Kind='none'; Reason='instance_mismatch' }
         }
+        # 何も選んでいないとき、Word はキャレット位置の1文字を返す。空白なら下の
+        # IsNullOrWhiteSpace で落ちるが、文字の上にカーソルがあると落ちない。
+        # 実測（2026-08-12、文頭にカーソルを置いて押した）で「当」の1文字だけが
+        # 入力欄へ入った。選んでいないものが入るほうが事故なので、中身ではなく
+        # 選択の長さ（開始と終了が同じか）で判定する。
+        try {
+            $selectionStart = [int]$app.Selection.Start
+            $selectionEnd = [int]$app.Selection.End
+            if ($selectionStart -eq $selectionEnd) { return [pscustomobject]@{ Kind='none'; Reason='no_selection' } }
+        } catch { }
         $text = ''
         try { $text = [string]$app.Selection.Text } catch { return [pscustomobject]@{ Kind='none'; Reason='not_a_selection' } }
         # Word は選択が無くてもキャレット位置の1文字（改行など）を返すことがある。
@@ -113,6 +123,11 @@ function Get-YakuExcelSelection {
         try { $sel = $app.Selection } catch { return [pscustomobject]@{ Kind='none'; Reason='not_a_range' } }
         $areas = 0
         try { $areas = [int]$sel.Areas.Count } catch { return [pscustomobject]@{ Kind='none'; Reason='not_a_range' } }
+        # 図形やグラフを選んでいると、PowerShell の COM は Areas を「無い」ではなく
+        # $null で返す。例外にならないので catch は効かず、[int]$null = 0 が
+        # 「複数の範囲」に化けていた。実測（2026-08-12、図形を選択）で
+        # 「複数の範囲が選ばれています」と出ていたのはこれ。0 は範囲ではない。
+        if ($areas -lt 1) { return [pscustomobject]@{ Kind='none'; Reason='not_a_range' } }
         if ($areas -ne 1) { return [pscustomobject]@{ Kind='none'; Reason='multi_area' } }
         $count = 0
         try { $count = [int]$sel.Count } catch { return [pscustomobject]@{ Kind='none'; Reason='not_a_range' } }
@@ -136,6 +151,12 @@ function Get-YakuExcelSelection {
             if ([string]::IsNullOrWhiteSpace($t)) { continue }
             $chars += $t.Length
             $null = $cells.Add([pscustomobject]@{ Address=$addr; Text=$t })
+        }
+        # 数式だけを選んで押したときに「文字がありませんでした」と出していた。
+        # 文字はある（画面には計算結果が見えている）。訳さないのはこちらの決めごと
+        # なので、そのとおりに言う（2026-08-12、=B1+B2 のセルで実測）。
+        if ($cells.Count -eq 0 -and $formulaSkipped -gt 0) {
+            return [pscustomobject]@{ Kind='none'; Reason='formula_only'; FormulaSkipped=$formulaSkipped }
         }
         if ($cells.Count -eq 0) { return [pscustomobject]@{ Kind='none'; Reason='no_text'; FormulaSkipped=$formulaSkipped } }
         if ($chars -gt $script:YakuSelectionMaxChars) {
