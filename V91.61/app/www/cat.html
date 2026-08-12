@@ -210,7 +210,7 @@
             <span id="cat-save-status" class="cat-save-status" role="status" aria-live="polite">保存済み</span>
           </div>
           <label class="cat-toolbar-search" for="cat-search"><span>検索</span><input id="cat-search" type="search" placeholder="原文・訳文を検索"></label>
-          <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">残りの訳案を作る</button><button id="cat-export" type="button" class="secondary-button">訳文を取り出す（確認画面が出ます）</button><details class="cat-more-actions"><summary>そのほか</summary><div class="cat-more-actions-list"><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みの行だけコピー</button><button id="cat-switch-project" type="button" class="secondary-button">ほかの資料に切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>右の候補を上から順に訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や右側から訳文欄へ戻る</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
+          <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">残りの訳案を作る</button><button id="cat-export" type="button" class="secondary-button">訳文を取り出す（確認画面が出ます）</button><details class="cat-more-actions"><summary>そのほか</summary><div class="cat-more-actions-list"><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みの行だけコピー</button><button id="cat-switch-project" type="button" class="secondary-button">ほかの資料に切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>右の候補を上から順に訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></dt><dd>原文をそのまま訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd></dt><dd>確認を取り消す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>M</kbd> / <kbd>Alt</kbd>+<kbd>K</kbd></dt><dd>次の行とつなげる / つなげた行を戻す</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や右側から訳文欄へ戻る</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
           <section aria-labelledby="cat-personal-glossary-title">
             <h3 id="cat-personal-glossary-title">今後の資料でも使うと登録した訳</h3>
             <p class="muted">ここにあるものは、これからのすべての資料で自動的に使われます。間違えて登録したものは取り消せます。取り消しても、すでに訳した文章はそのまま残ります。</p>
@@ -241,6 +241,8 @@
                      点検の指摘は例外なので、指摘が1件も無いときは出さない。 -->
                 <button type="button" data-cat-filter="actionable" aria-pressed="true">残り <span data-cat-count="actionable">0</span></button>
                 <button type="button" data-cat-filter="qc" aria-pressed="false" title="数字の自動点検で気になる点が見つかった行だけを表示します" hidden>点検の指摘 <span data-cat-count="qc">0</span></button>
+                <!-- 同じ原文の行だけを見る。まとめて片づけると、確定1回で残りへ配れる。 -->
+                <button type="button" data-cat-filter="repetition" aria-pressed="false" title="資料の中で同じ原文が2行以上ある行だけを表示します" hidden>同じ原文 <span data-cat-count="repetition">0</span></button>
                 <button type="button" data-cat-filter="reviewed" aria-pressed="false">確認済み <span data-cat-count="reviewed">0</span></button>
                 <button type="button" data-cat-filter="all" aria-pressed="false">すべて <span data-cat-count="all">0</span></button>
               </div>
@@ -272,6 +274,18 @@
             </div>
             <section id="cat-panel-candidates" role="tabpanel" aria-labelledby="cat-tab-candidates"><div id="cat-candidates" class="cat-candidates">
               <section aria-labelledby="cat-terms-title"><div class="cat-candidates-title" id="cat-terms-title">この行で使う用語</div><div id="cat-terms-list"><p class="muted">行を選ぶと用語を探します。</p></div></section>
+              <!-- 過去訳を言葉で探す（市販CATのコンコーダンス）。いまの行に対して
+                   自動で出る「似ている過去の訳」とは別の道具で、「あの言い回しは
+                   前にどう訳したか」を引くためにある。 -->
+              <section aria-labelledby="cat-concordance-title">
+                <div class="cat-candidates-title" id="cat-concordance-title">過去の訳を言葉で探す</div>
+                <form id="cat-concordance-form" class="cat-concordance-form">
+                  <label class="sr-only" for="cat-concordance-input">探す言葉</label>
+                  <input id="cat-concordance-input" type="search" placeholder="例：固定費" autocomplete="off">
+                  <button type="submit" class="secondary-button compact">探す</button>
+                </form>
+                <div id="cat-concordance-list"></div>
+              </section>
               <section aria-labelledby="cat-segment-matches-title"><div class="cat-candidates-title" id="cat-segment-matches-title">似ている過去の訳</div><div id="cat-candidates-list"><p class="muted">行を選ぶと、似た訳を探します。</p><details class="pane-note"><summary>どこから探しますか</summary><p class="muted">これまでに確認した訳と、この作業へ読み込んだ前回の資料の訳から探します。</p></details></div></section>
             </div></section>
             <section id="cat-panel-qc" role="tabpanel" aria-labelledby="cat-tab-qc" hidden><div id="cat-qc-list"></div><button id="cat-next-qc" type="button" class="secondary-button">点検の必要な次の行へ移る</button></section>

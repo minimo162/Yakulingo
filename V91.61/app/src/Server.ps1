@@ -2920,6 +2920,27 @@ function Invoke-YakuRoute {
                     $project = $commit.Project
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 }
+                'concordance' {
+                    # 過去に確認した訳を言葉で探す（市販CATのコンコーダンス）。
+                    # 状態は変えないので revision は要求しない。
+                    $query = ''
+                    try { $query = [string]$payload['query'] } catch { $query = '' }
+                    $hits = @()
+                    try { $hits = @(Search-YakuTranslationMemoryConcordance -Query $query -Direction ([string]$project.Direction) -Limit 20) } catch { $hits = @() }
+                    $rows = New-Object System.Collections.Generic.List[object]
+                    foreach ($hit in $hits) {
+                        [void]$rows.Add([ordered]@{
+                            source = [string]$hit.Source
+                            target = [string]$hit.Target
+                            matched_in = [string]$hit.MatchedIn
+                            saved = [string]$hit.Saved
+                            file_name = [string]$hit.SourceName
+                            location = [string]$hit.Location
+                        })
+                    }
+                    $body = [ordered]@{ query = [string]$query; hits = @($rows.ToArray()) }
+                    Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 6 -Compress) -ContentType 'application/json; charset=utf-8'
+                }
                 'estimate' {
                     $usage = Get-YakuCatCopilotUsage -Root $script:YakuRoot -Project $project -Settings $settings
                     $body = [ordered]@{

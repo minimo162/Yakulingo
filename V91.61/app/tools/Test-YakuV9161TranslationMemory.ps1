@@ -246,6 +246,21 @@ try {
 
     Chk ($null -eq (Restore-YakuCatProject -Id 'no-such-project')) '無いものを戻そうとしても落ちない'
     try { Remove-Item -LiteralPath $file -Force } catch {}
+
+    Write-Host '言葉で探す（コンコーダンス）' -ForegroundColor Cyan
+    # 市販のCATツールでいうコンコーダンス。いまの行に対して自動で出る候補
+    # （Find-YakuTranslationMemory）とは別で、利用者が言葉を入れて過去訳を引く。
+    $null = Add-TestTranslationMemoryEntry -Source '固定費を圧縮しました。' -Target 'We reduced fixed costs.' -Path $tm
+    $concordance = @(Search-YakuTranslationMemoryConcordance -Query '固定費' -Direction 'to_en' -Path $tm)
+    Chk ($concordance.Count -ge 1) '原文に含む言葉で引ける'
+    Chk ([string]$concordance[0].Target -eq 'We reduced fixed costs.') '訳文が一緒に返る'
+    Chk ([string]$concordance[0].MatchedIn -eq 'source') 'どちら側に当たったかが分かる'
+    $byTarget = @(Search-YakuTranslationMemoryConcordance -Query 'fixed costs' -Direction 'to_en' -Path $tm)
+    Chk ($byTarget.Count -ge 1 -and [string]$byTarget[0].MatchedIn -eq 'target') '訳文に含む言葉でも引ける'
+    $byCase = @(Search-YakuTranslationMemoryConcordance -Query 'FIXED COSTS' -Direction 'to_en' -Path $tm)
+    Chk ($byCase.Count -ge 1) '英語は大文字小文字を畳む'
+    Chk (@(Search-YakuTranslationMemoryConcordance -Query '固' -Direction 'to_en' -Path $tm).Count -eq 0) '1文字では引かない（何にでも当たる）'
+    Chk (@(Search-YakuTranslationMemoryConcordance -Query '存在しない言葉' -Direction 'to_en' -Path $tm).Count -eq 0) '無いものは無いと返す'
 }
 finally {
     $env:YAKULINGO_DATA_DIR = $oldDataDir

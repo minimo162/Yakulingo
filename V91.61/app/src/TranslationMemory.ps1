@@ -408,6 +408,49 @@ function Get-YakuTranslationMemorySimilarity {
     return [double](2.0 * $intersection / ($gramsA.Count + $gramsB.Count))
 }
 
+function Search-YakuTranslationMemoryConcordance {
+    <#
+      過去に確認した訳を、言葉で探す。市販のCATツールでいうコンコーダンス。
+      「あの言い回し、前はどう訳したか」を引くための道で、いまの行に対して
+      自動で出る候補（Find-YakuTranslationMemory）とは別物である。
+
+      原文・訳文のどちらに含まれていても拾う。日本語には語の区切りが無いので
+      部分一致で探す。大文字小文字は畳む（英語側を探すときに必要）。
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Query,
+        [ValidateSet('to_en', 'to_jp')][string]$Direction = 'to_en',
+        [int]$Limit = 20,
+        [AllowNull()][string]$Path
+    )
+    $needle = ([string]$Query).Trim()
+    if ($needle.Length -lt 2) { return @() }
+    $lowered = $needle.ToLowerInvariant()
+    $entries = Read-YakuTranslationMemory -Direction $Direction -Path $Path
+    if ($entries.Count -eq 0) { return @() }
+    $hits = New-Object System.Collections.Generic.List[object]
+    foreach ($unitId in $entries.Keys) {
+        $e = $entries[$unitId]
+        if (-not (Test-YakuTranslationMemoryProvenance -Entry $e)) { continue }
+        if ([string]$e.direction -ne $Direction) { continue }
+        $source = [string]$e.source
+        $target = [string]$e.target
+        $inSource = $source.ToLowerInvariant().Contains($lowered)
+        $inTarget = $target.ToLowerInvariant().Contains($lowered)
+        if (-not $inSource -and -not $inTarget) { continue }
+        [void]$hits.Add([pscustomobject]@{
+                Source = $source
+                Target = $target
+                MatchedIn = $(if ($inSource -and $inTarget) { 'both' } elseif ($inSource) { 'source' } else { 'target' })
+                Saved = [string]$e.saved
+                SourceName = [string]$e.origin_file_name
+                Location = [string]$e.origin_location
+            })
+    }
+    # 新しく確認したものから見せる。古い言い回しを先に出しても役に立たない。
+    return @(@($hits.ToArray()) | Sort-Object -Property @{ Expression = { [string]$_.Saved }; Descending = $true } | Select-Object -First $Limit)
+}
+
 function Find-YakuTranslationMemory {
     <# 完全一致と70%以上のfuzzyを、複数unitのまま出典付きで返す。 #>
     param(

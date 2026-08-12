@@ -257,6 +257,7 @@
     else if (currentFilter === 'untranslated') keep = state === 'untranslated';
     else if (currentFilter === 'unconfirmed') keep = !segment.confirmed;
     else if (currentFilter === 'qc') keep = segmentHasQc(segment);
+    else if (currentFilter === 'repetition') keep = Number(segment.repetition_count || 1) > 1;
     else if (currentFilter === 'reviewed') keep = !!segment.confirmed;
     if (!keep || (currentLocation !== 'all' && locationGroup(segment) !== currentLocation) || (currentChange !== 'all' && changeGroup(segment) !== currentChange)) return false;
     var needle = el('cat-search').value.trim().toLowerCase();
@@ -280,12 +281,13 @@
     return next;
   }
   function renderNavigation() {
-    var all = project.segments || [], counts = { actionable: 0, untranslated: 0, unconfirmed: 0, qc: 0, reviewed: 0, all: all.length };
+    var all = project.segments || [], counts = { actionable: 0, untranslated: 0, unconfirmed: 0, qc: 0, repetition: 0, reviewed: 0, all: all.length };
     all.forEach(function (segment) {
       if (segmentActionable(segment)) counts.actionable++;
       if (segmentState(segment) === 'untranslated') counts.untranslated++;
       if (!segment.confirmed) counts.unconfirmed++;
       if (segmentHasQc(segment)) counts.qc++;
+      if (Number(segment.repetition_count || 1) > 1) counts.repetition++;
       if (segment.confirmed) counts.reviewed++;
     });
     Object.keys(counts).forEach(function (name) { var target = document.querySelector('[data-cat-count="' + name + '"]'); if (target) target.textContent = counts[name]; });
@@ -295,6 +297,12 @@
     if (qcFilter) {
       qcFilter.hidden = counts.qc < 1;
       if (qcFilter.hidden && currentFilter === 'qc') currentFilter = 'actionable';
+    }
+    /* 同じ原文の行も、無い資料では出さない（点検の指摘と同じ理由）。 */
+    var repetitionFilter = document.querySelector('[data-cat-filter="repetition"]');
+    if (repetitionFilter) {
+      repetitionFilter.hidden = counts.repetition < 1;
+      if (repetitionFilter.hidden && currentFilter === 'repetition') currentFilter = 'actionable';
     }
     document.querySelectorAll('[data-cat-filter]').forEach(function (button) { button.setAttribute('aria-pressed', String(button.getAttribute('data-cat-filter') === currentFilter)); });
     var changeCounts = { unchanged: 0, changed: 0, new: 0 }, hasChanges = false;
@@ -382,6 +390,9 @@
       var splitLosesTranslation = !!String(segment.translation || '').trim();
       if (segment.can_merge) ops += '<button type="button" class="cat-op secondary-button" data-cat-merge="' + index + '" data-cat-loss="' + (mergeLosesTranslation ? '1' : '0') + '">' + icon('i-merge') + '次の行とつなげて1文にする</button>';
       if (segment.can_split) ops += '<button type="button" class="cat-op secondary-button" data-cat-split="' + index + '" data-cat-loss="' + (splitLosesTranslation ? '1' : '0') + '">' + icon('i-split') + 'つなげた行を元に戻す</button>';
+      /* 原文をそのまま訳文へ。市販CATの定番（memoQ Ctrl+Shift+S / Trados Ctrl+Ins）。
+         数字だけ・製品コードだけのセルは訳す必要が無く、打ち直す手間だけが残る。 */
+      ops += '<button type="button" class="cat-op secondary-button" data-cat-copy-source="' + index + '">原文をそのまま訳文へ入れる</button>';
       var prior = (segment.prior_translation || segment.prior_source) ? '<details><summary>前回版を見る</summary>' + (segment.prior_source ? '<div><strong>前回の原文</strong><br>' + esc(segment.prior_source) + '</div>' : '') + (segment.prior_translation ? '<div><strong>前回の訳文</strong><br>' + esc(segment.prior_translation) + '</div>' : '') + '</details>' : '';
       var qc = findings.length ? '<div id="' + findingId + '" class="cat-qc-findings" role="alert">' + findings.map(function (m) { return '<div>' + esc(m) + '</div>'; }).join('') + '</div>' : '';
       var usage = segment.reference_usage || null;
@@ -436,7 +447,7 @@
     el('cat-toolbar-title').textContent = project.file_name || '貼り付けた文章';
     el('cat-toolbar-direction').textContent = directionName(project.direction);
     var pct = project.total ? Math.round(100 * Number(project.confirmed) / Number(project.total)) : 0;
-    el('cat-progress-bar').style.width = pct + '%'; el('cat-progress-row').querySelector('[role="progressbar"]').setAttribute('aria-valuenow', String(pct)); el('cat-progress-text').textContent = project.confirmed + ' / ' + project.total + '行を確認済み';
+    el('cat-progress-bar').style.width = pct + '%'; el('cat-progress-row').querySelector('[role="progressbar"]').setAttribute('aria-valuenow', String(pct)); el('cat-progress-text').textContent = project.confirmed + ' / ' + project.total + '行を確認済み' + (Number(project.remaining_chars || 0) > 0 ? '（残り約' + Number(project.remaining_chars).toLocaleString('ja-JP') + '字）' : '');
     renderRows();
     var isFile = project.source === 'file', sourceMissing = (project.eligibility_reasons || []).indexOf('source-file-missing') >= 0;
     var wordReady = project.document_format === 'docx' && project.word_file_output_supported && !sourceMissing;
@@ -646,6 +657,51 @@
     if (!el('cat-export').disabled) { YakuCommon.focus(el('cat-export')); return; }
     status('検索条件の外に未確認の行があります。絞り込みを変更してください。'); YakuCommon.focus(el('cat-search'));
   }
+  /* 過去に確認した訳を言葉で探す（市販CATのコンコーダンス）。いまの行に対して
+     自動で出る候補とは別で、こちらは利用者が言葉を入れて引く。状態は変えない。 */
+  function runConcordance() {
+    var input = el('cat-concordance-input');
+    var list = el('cat-concordance-list');
+    if (!input || !list) return;
+    var query = String(input.value || '').trim();
+    if (query.length < 2) { list.innerHTML = '<p class="muted">2文字以上で探せます。</p>'; return; }
+    if (!project) return;
+    list.innerHTML = '<p class="muted">探しています…</p>';
+    var scope = currentScope();
+    post('concordance', { query: query }, false, scope).then(function (data) {
+      if (!scopeIsCurrent(scope, true)) return;
+      var hits = (data && data.hits) || [];
+      if (!hits.length) { list.innerHTML = '<p class="muted">' + esc(query) + ' を含む過去の訳は見つかりませんでした。確認済みにした訳から探しています。</p>'; return; }
+      list.innerHTML = hits.map(function (hit) {
+        var where = hit.file_name ? esc(hit.file_name) + (hit.location ? '・' + esc(hit.location) : '') : '';
+        return '<div class="cat-candidate-card">' +
+          '<p class="cat-concordance-source">' + esc(hit.source) + '</p>' +
+          '<p class="cat-concordance-target">' + esc(hit.target) + '</p>' +
+          (where ? '<p class="cat-candidate-meta">' + where + '</p>' : '') +
+          '</div>';
+      }).join('');
+    }).catch(function (error) {
+      list.innerHTML = '<p class="muted">' + esc(error.message || '探せませんでした。') + '</p>';
+    });
+  }
+
+  /* 原文をそのまま訳文へ入れる。既に訳文があるときは黙って消さない。
+     memoQ は確認せず上書きするが、ここでは人が書いた訳を消す危険を採らない。 */
+  function copySourceToTarget(index) {
+    if (busy) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
+    var segment = (project ? (project.segments || []) : []).find(function (item) { return Number(item.index) === Number(index); });
+    if (!segment) return;
+    var input = document.querySelector('[data-cat-input="' + index + '"]');
+    if (!input) { activateIndex(index, true); window.setTimeout(function () { copySourceToTarget(index); }, 0); return; }
+    if (String(input.value || '').trim() && String(input.value) !== String(segment.source)) {
+      if (!window.confirm('この行の訳文を、原文と同じ内容で置き換えます。いまの訳文は失われます。置き換えますか？')) return;
+    }
+    input.value = String(segment.source || '');
+    input.focus();
+    commit(input);
+    status('原文をそのまま訳文へ入れました。数字だけの行など、訳す必要がない行に使えます。');
+  }
+
   function confirmRow(index) {
     return mutate('confirm', { index: index, confirmed: true }, '確認内容を保存しています…').then(function (data) {
       if (!data) return null;
@@ -1101,6 +1157,7 @@
         YakuCommon.focus(revertInput);
         return commit(revertInput).then(function () { status('この行を開いたときの訳文に戻しました。'); });
       }
+      if (button.hasAttribute('data-cat-copy-source')) { return copySourceToTarget(Number(button.getAttribute('data-cat-copy-source'))); }
       if (button.hasAttribute('data-cat-merge')) { if (button.getAttribute('data-cat-loss') === '1' && !window.confirm('この行と次の行をつなげて1文にします。\n\n両方の行に入っている訳文は消えます。消えた訳文は元に戻せません。\n\nつなげますか？')) return; return mutate('merge', { index: Number(button.getAttribute('data-cat-merge')) }, '行をつなげています…'); }
       if (button.hasAttribute('data-cat-split')) { if (button.getAttribute('data-cat-loss') === '1' && !window.confirm('つなげた行を元の2行に戻します。\n\nこの行に入っている訳文は消えます。消えた訳文は元に戻せません。\n\n戻しますか？')) return; return mutate('split', { index: Number(button.getAttribute('data-cat-split')) }, 'つなげた行を元に戻しています…'); }
       if (button.hasAttribute('data-cat-glossary')) {
@@ -1161,6 +1218,7 @@
     document.addEventListener('focusout', function (event) { if (event.target.hasAttribute('data-cat-input')) commit(event.target).catch(function () {}); });
     document.addEventListener('focusin', function (event) { var input = event.target.closest('[data-cat-input]'); if (input) { activeIndex = Number(input.getAttribute('data-cat-input')); var row = input.closest('[data-cat-row]'); activeSegmentId = row ? String(row.getAttribute('data-cat-segment-id') || '') : activeSegmentId; renderInspector(); } });
     document.addEventListener('submit', function (event) {
+      if (event.target.id === 'cat-concordance-form') { event.preventDefault(); runConcordance(); return; }
       if (event.target.id === 'cat-term-form') { event.preventDefault(); if (!busy) saveTerm(); return; }
       if (event.target.id === 'cat-term-exception-form') { event.preventDefault(); if (!busy) saveTermException(); return; }
       var form = event.target.closest('[data-cat-revise]'); if (form) { event.preventDefault(); if (busy) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; } revise(form); }
@@ -1169,8 +1227,41 @@
       if (event.isComposing) return;
       var input = event.target.closest && event.target.closest('[data-cat-input]');
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') { event.preventDefault(); YakuCommon.focus(el('cat-search')); el('cat-search').select(); return; }
+      /* 過去訳を言葉で探す。memoQ / Trados もコンコーダンスに専用キーを割いている。 */
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        var concordanceInput = el('cat-concordance-input');
+        if (concordanceInput) {
+          var selected = String(window.getSelection ? window.getSelection().toString() : '').trim();
+          if (selected) concordanceInput.value = selected;
+          YakuCommon.focus(concordanceInput); concordanceInput.select();
+          if (selected) runConcordance();
+        }
+        return;
+      }
       if (event.altKey && !event.ctrlKey && !event.metaKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) { event.preventDefault(); if (!busy) moveActive(event.key === 'ArrowUp' ? -1 : 1); return; }
       if (event.key === 'Escape' && (el('cat-search') === document.activeElement || event.target.closest('#cat-inspector-pane'))) { event.preventDefault(); focusActive(); return; }
+      /* 行の操作をキーボードから触れるようにする。市販CATは確定以外にも
+         原文コピー・結合・分割が割り当てられている（memoQ の Copy source to target は
+         Ctrl+Shift+S）。ブラウザが握る組み合わせ（Ctrl+T / Ctrl+N / Ctrl+W）は避ける。 */
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 's') {
+        event.preventDefault();
+        if (activeIndex >= 0) copySourceToTarget(activeIndex);
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'u') {
+        event.preventDefault();
+        var undoButton = document.querySelector('[data-cat-unconfirm="' + activeIndex + '"]');
+        if (undoButton) { undoButton.click(); } else { status('この行はまだ確認済みではありません。'); }
+        return;
+      }
+      if (event.altKey && !event.ctrlKey && !event.metaKey && (event.key.toLowerCase() === 'm' || event.key.toLowerCase() === 'k')) {
+        event.preventDefault();
+        var joinButton = document.querySelector('[data-cat-' + (event.key.toLowerCase() === 'm' ? 'merge' : 'split') + '="' + activeIndex + '"]');
+        if (joinButton) { joinButton.click(); }
+        else { status(event.key.toLowerCase() === 'm' ? 'この行は次の行とつなげられません。' : 'この行は分けられません。'); }
+        return;
+      }
       if (!(event.ctrlKey || event.metaKey)) return;
       if (input && event.key === 'Enter') {
         event.preventDefault();

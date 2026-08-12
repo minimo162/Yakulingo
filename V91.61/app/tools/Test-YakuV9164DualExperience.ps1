@@ -183,7 +183,16 @@ Check-YakuDual ($catWorkspaceStyle -match '(?s)\.cat-copilot-usage\s*\{[^}]*grid
 # 画面に出す情報を減らす（2026-08-12、利用者の指摘「不要な情報が多すぎて必要な情報が
 # 紛れてしまっている」）。数えたら、4セルの資料で「要対応4 / 未翻訳4 / 未確認4」と
 # 同じ数字が3つ並んでいた（actionable = 未確認 or 点検の指摘、未翻訳 ⊂ 未確認）。
-Check-YakuDual (@([regex]::Matches($catPage, 'data-cat-filter="')).Count -le 4) 'the row filter must not offer more entries than it has meanings'
+# 2026-08-12（同日追記）: 数を4つに縛っていたが、縛るべきは数ではなく意味だった。
+# 「同じ原文」は状態ではなく資料の性質で、ほかのどれとも重ならない。点検の指摘と
+# 同じく、当てはまる行が無い資料では出さない。数えるのは「意味の重なり」のほう。
+$catFilterNames = @([regex]::Matches($catPage, 'data-cat-filter="([a-z]+)"') | ForEach-Object { $_.Groups[1].Value })
+$allowedFilters = @('actionable','qc','repetition','reviewed','all')
+Check-YakuDual (@($catFilterNames | Where-Object { $allowedFilters -notcontains $_ }).Count -eq 0) 'the row filter must only offer the agreed entries'
+# 未翻訳 ⊂ 未確認 ⊂ 要対応。同じ数字が並ぶので、この3つは並べない。
+Check-YakuDual (@($catFilterNames | Where-Object { @('untranslated','unconfirmed') -contains $_ }).Count -eq 0) 'overlapping state filters must stay removed'
+# 例外の入口は、当てはまる行が無いときに出さない（既定で hidden）。
+Check-YakuDual ($catPage -match 'data-cat-filter="qc"[^>]*hidden' -and $catPage -match 'data-cat-filter="repetition"[^>]*hidden') 'exception filters must be hidden until they have rows'
 Check-YakuDual ($catPage -notmatch 'data-cat-filter="untranslated"' -and $catPage -notmatch 'data-cat-filter="unconfirmed"') 'filters that always duplicate each other are gone'
 Check-YakuDual ($catPage -match 'data-cat-filter="qc"[^>]*hidden' -and $catClient -match 'qcFilter\.hidden = counts\.qc < 1') 'the exception filter stays hidden while there is nothing to see'
 Check-YakuDual (@([regex]::Matches($catWorkspaceStyle, 'cat-state-filters button\[data-cat-filter=')).Count -le 3) 'the filter colour bands must stay within three meanings'
