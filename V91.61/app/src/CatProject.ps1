@@ -1733,6 +1733,61 @@ function Get-YakuCatProjectSummary {
     }
 }
 
+function Get-YakuCatRepetitionKey {
+    <#
+      同じ原文かどうかの鍵。前後の空白と、途中の空白の数だけを揃える。
+      大文字小文字は畳まない。市販のCATツール（memoQ / Phrase）も反復は
+      「同一の原文」で数えており、揺らぎを吸収するのは別の機能（あいまい一致）
+      の役目だからである。ここを緩めると、違う訳が要る行へ勝手に配ってしまう。
+    #>
+    param([AllowNull()][string]$Text)
+    $value = [string]$Text
+    if ([string]::IsNullOrWhiteSpace($value)) { return '' }
+    return ([regex]::Replace($value.Trim(), '\s+', ' '))
+}
+
+function Copy-YakuCatTranslationToRepetitions {
+    <#
+      同じ原文の行へ訳文を配る。市販のCATツールでは標準の機能で、
+      memoQ は auto-propagation、Phrase は repetitions と呼ぶ。確定のときに
+      配るのも各ツールと同じ。
+
+      ただし配り方はこのアプリの決まりに合わせて狭くする。
+        - 訳文が空の行にだけ入れる。既にある訳は上書きしない
+          （memoQ は既定で上書きするが、人が直した訳を消す危険は採らない）
+        - 確認済みにはしない。数字の点検は確定のときにしか走らないので、
+          点検を通っていない行を確認済みにはできない
+        - 出どころは propagated。人がその行に書いた訳ではない
+      返すのは、実際に入れた行数。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [Parameter(Mandatory=$true)][int]$Index
+    )
+    $segs = @($Project.Segments)
+    if ($Index -lt 0 -or $Index -ge $segs.Count) { return 0 }
+    $translation = [string]$segs[$Index].Translation
+    if ([string]::IsNullOrWhiteSpace($translation)) { return 0 }
+    $key = Get-YakuCatRepetitionKey -Text ([string]$segs[$Index].Text)
+    if ([string]::IsNullOrWhiteSpace($key)) { return 0 }
+    $filled = 0
+    for ($i = 0; $i -lt $segs.Count; $i++) {
+        if ($i -eq $Index) { continue }
+        if ((Get-YakuCatRepetitionKey -Text ([string]$segs[$i].Text)) -ne $key) { continue }
+        if (-not [string]::IsNullOrWhiteSpace([string]$segs[$i].Translation)) { continue }
+        $segs[$i].Translation = $translation
+        $null = Update-YakuCatSegmentReferenceEditState -Segment $segs[$i] -Text $translation
+        # マスク後の訳文は元の行のもの。引き継ぐと、この行の原文と対応しない
+        # マスクのまま「直す」を実行してしまう。
+        $segs[$i] | Add-Member -NotePropertyName 'MaskedTranslation' -NotePropertyValue '' -Force
+        $segs[$i].Origin = 'propagated'
+        $segs[$i] | Add-Member -NotePropertyName State -NotePropertyValue 'machine_draft' -Force
+        Reset-YakuCatSegmentQc -Segment $segs[$i] -KeepState
+        $filled++
+    }
+    return $filled
+}
+
 function ConvertTo-YakuCatProjectJson {
     <#
       画面へ渡す形。原文・訳文・出どころ・場所だけを出す。
@@ -1746,6 +1801,17 @@ function ConvertTo-YakuCatProjectJson {
     $documentFormat = $(try { [string]$Project.DocumentFormat } catch { '' })
     $exportBlocked = if ([string]$Project.Source -ne 'file') { -not [bool]$eligibility.TranslationListEligible } elseif ($documentFormat -eq 'docx') { -not [bool]$eligibility.TranslationListEligible } else { -not [bool]$eligibility.ExcelDraftEligible }
     $rows = New-Object System.Collections.Generic.List[object]
+    # 反復（同じ原文の行）を先に数える。行ごとに数え直すと O(n^2) になる。
+    $repetitionKeys = @{}
+    $repetitionCounts = @{}
+    $repetitionFirst = @{}
+    for ($i = 0; $i -lt $segs.Count; $i++) {
+        $repetitionKey = Get-YakuCatRepetitionKey -Text ([string]$segs[$i].Text)
+        $repetitionKeys[$i] = $repetitionKey
+        if ([string]::IsNullOrWhiteSpace($repetitionKey)) { continue }
+        if (-not $repetitionCounts.ContainsKey($repetitionKey)) { $repetitionCounts[$repetitionKey] = 0; $repetitionFirst[$repetitionKey] = $i }
+        $repetitionCounts[$repetitionKey] = [int]$repetitionCounts[$repetitionKey] + 1
+    }
     for ($i = 0; $i -lt $segs.Count; $i++) {
         [void]$rows.Add([ordered]@{
             index       = $i
@@ -1779,6 +1845,9 @@ function ConvertTo-YakuCatProjectJson {
                            ([string]$segs[$i].Kind -eq 'cell' -and [string]$segs[$i].Sheet -eq [string]$segs[$i + 1].Sheet))
             can_split   = (([string]$segs[$i].Kind -eq 'cell' -and @($segs[$i].Cells).Count -gt 1) -or
                            ([string]$segs[$i].Kind -eq 'text' -and @(Get-YakuCatTextPieces -Segment $segs[$i]).Count -gt 1))
+            # 同じ原文が何行あるか。1 なら反復ではない。
+            repetition_count = [int]$(if ($repetitionCounts.ContainsKey([string]$repetitionKeys[$i])) { $repetitionCounts[[string]$repetitionKeys[$i]] } else { 1 })
+            repetition_first = [bool]($repetitionFirst.ContainsKey([string]$repetitionKeys[$i]) -and [int]$repetitionFirst[[string]$repetitionKeys[$i]] -eq $i)
         })
     }
     $summary = Get-YakuCatProjectSummary -Project $Project
