@@ -99,14 +99,14 @@ function Get-YakuSettingsSchema {
         # 金額の書き方。訳の種類ではなく書き方なので、毎回選ばせず設定で持つ。
         # 外部公表は billion、社内資料の一部が oku（利用者 2026-08-08）。
         #
-        # **billion は今は選べない。** プロンプトは「桁の換算は呼び出し側でやる」と
-        # 書いているが、その換算コードが存在しない。122億円 が ¥122 billion になる。
-        # 正しくは ¥12.2 billion で、10倍の誤りである（2026-08-08 に実行して確認）。
-        # 開示資料に10倍の数字が出るのは、訳の善し悪しの話ではない。
+        # billion は 2026-08-08 から 2026-08-12 まで塞いでいた。単位名だけ替えると
+        # 122億円 が ¥122 billion になり、10倍の誤りになるためである（実行して確認）。
+        # 2026-08-12 に Convert-YakuNumericUnits へ 億÷10 の割り算を入れて開けた。
+        # 換算はこのパソコンの中で済ませ、Copilot には伏せた数値しか渡さない。
         #
-        # 換算は次の段階（復元のときに表記ごとに書き分ける）で入れる。
-        # 入るまでは選択肢から外す。壊れた選択肢を残すほうが害が大きい。
-        amount_notation                   = @{ Type='enum'; Default='oku'; Values=@('oku') }
+        # 書き方は作業ごとに固定する（CatProject の amount_notation）。数値の点検は
+        # 換算後の原文と訳文を突き合わせるので、途中で替えると既存の行が落ちる。
+        amount_notation                   = @{ Type='enum'; Default='oku'; Values=@('oku','billion') }
         glossary_prompt_limit             = @{ Type='int';  Default=48; Min=1; Max=200 }
         browser_display_mode              = @{ Type='enum'; Default='foreground'; Values=@('foreground') }
         edge_window_size                  = @{ Type='string'; Default='1280,900'; MaxLength=24 }

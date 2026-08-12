@@ -70,11 +70,13 @@ function Assert-YakuCatProtectedItemsMatchOriginal {
     param(
         [Parameter(Mandatory=$true)][object[]]$Items,
         [Parameter(Mandatory=$true)][string]$Root,
-        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction
+        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
+        # 検算なので、保護したときと同じ金額表記で作り直さないと必ず食い違う。
+        [ValidateSet('oku','billion')][string]$Notation='oku'
     )
     foreach ($item in @($Items)) {
         $expected = [pscustomobject]@{ Index=$item.Index; Text=[string]$item.OriginalText }
-        $null = Protect-YakuCatItems -Items @($expected) -Root $Root -Direction $Direction
+        $null = Protect-YakuCatItems -Items @($expected) -Root $Root -Direction $Direction -Notation $Notation
         if (-not [string]::Equals([string]$item.MaskedText, [string]$expected.MaskedText, [StringComparison]::Ordinal) -or
             -not (Test-YakuCatProtectionMapEqual -Actual $item.NumericMaskMap -Expected $expected.NumericMaskMap)) {
             throw 'CAT_PROTECTED_PAYLOAD_NONCANONICAL'
@@ -145,10 +147,11 @@ function Invoke-YakuCatTranslationItems {
         [AllowNull()]$ProgressState,
         [Parameter(Mandatory=$true)][hashtable]$Context,
         [int]$Depth = 0,
-        [string]$Reason = 'normal'
+        [string]$Reason = 'normal',
+        [ValidateSet('oku','billion')][string]$Notation='oku'
     )
     Assert-YakuCatProtectedItems -Items $Items
-    Assert-YakuCatProtectedItemsMatchOriginal -Items $Items -Root $Root -Direction $Direction
+    Assert-YakuCatProtectedItemsMatchOriginal -Items $Items -Root $Root -Direction $Direction -Notation $Notation
     $Context['Workflow'] = 'cat'
     $Context['PromptContractVersion'] = Get-YakuCatPromptContractVersion
     return Invoke-YakuTranslationBatchItems -Root $Root -Items $Items -Settings $Settings -Direction $Direction -MaxChars $MaxChars -Warnings $Warnings -ProgressState $ProgressState -Context $Context -Depth $Depth -Reason $Reason

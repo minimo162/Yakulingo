@@ -596,14 +596,12 @@ function Get-YakuAmountNotation {
     param([AllowNull()]$Settings)
     $v = ''
     try { $v = [string]$Settings.amount_notation } catch { $v = '' }
-    # billion は今は返さない。桁の換算コードが無く、122億円 が ¥122 billion に
-    # なる（10倍の誤り、2026-08-08 に確認）。今日のうちに billion を保存した
-    # 設定ファイルが残っている可能性があるので、入口で落とす。
-    #
-    # 第2段階（復元のときに表記ごとに書き分ける）で換算が入ったら、
-    # ここを `if ($v -eq 'billion') { return 'billion' }` へ戻す。
-    # billion 用の規則そのものは Get-YakuNumericRulesSection に残してある。
-    if ($v -eq 'billion') { return 'oku' }
+    # 2026-08-12: 桁の換算を Convert-YakuNumericUnits へ入れたので billion を開けた。
+    # 換算はアプリ側で済ませ、Copilot には伏せた数値しか渡さない（計算させない）。
+    #   1兆3,150億円 -> 1,315 billion（億 ÷ 10）
+    # 塞いでいた理由（単位名だけ替えると 122億円 が ¥122 billion になる 10倍の誤り）は、
+    # 割り算が入ったことで消えた。実測は tools/Test-YakuV9160NumericMasking.ps1 にある。
+    if ($v -eq 'billion') { return 'billion' }
     return 'oku'
 }
 
@@ -649,7 +647,11 @@ function Get-YakuNumericRulesSection {
             $billionRules += '- NUMBER PLACEHOLDERS (highest priority). [[N1]], [[N2]] ... stand for redacted numbers. Copy each token character for character, exactly once, and never invent, merge, drop, or reorder them.'
         }
         return (@($billionRules + @(
-            '- Amount units: write yen amounts as published disclosure does: a yen sign, the figure, then billion or million. Example: [[N1]] oku -> ¥[[N1]] billion. Never write oku, k yen, or k units.'
+            # k yen / k units は billion へ畳まない。数値の点検が単位の字面ごと
+            # 突き合わせるため、「¥1,234 thousand」と書き替えると原文の
+            # 「1,234 k yen」と一致せず numeric-integrity で落ちる（2026-08-12 実測）。
+            # 元々 Convert-YakuNumericUnits も千単位は換算していない。
+            '- Amount units: write yen amounts as published disclosure does: a yen sign, the figure, then billion. SOURCE already carries the rescaled unit. Decision table: [[N1]] billion yen -> ¥[[N1]] billion / [[N1]] k yen -> [[N1]] k yen / [[N1]] k units -> [[N1]] k units. Never write oku.'
             '- The caller rescales the figure itself; you only choose the unit word and the yen sign. Keep the placeholder unchanged.'
             '- Negative amounts: do NOT use parentheses in running text, and never keep the source marks (▲, △). Express the direction in words: "a decrease of ¥[[N1]] billion", "down ¥[[N1]] billion". Parentheses around figures belong to tables, not sentences.'
             '- Percentages keep %. A negative percentage is written in words too: "a decrease of [[N1]]%".'

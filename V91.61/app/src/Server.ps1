@@ -1117,7 +1117,7 @@ function Start-YakuTranslationJob {
                     # 実数値と人名を素のまま Copilot へ送っていた（2026-08-08 に判明）。
                     #
                     # ジョブ内で作ったitemsを共通の保護関数へ渡し、送信直前に伏せる。
-                    $null = Protect-YakuCatItems -Items @($items.ToArray()) -Root $Root -Direction ([string]$cat.direction)
+                    $null = Protect-YakuCatItems -Items @($items.ToArray()) -Root $Root -Direction ([string]$cat.direction) -Notation $(if ([string]$cat.amount_notation -eq 'billion') { 'billion' } else { 'oku' })
                     # machine draft は別projectへ再利用しない。同一project/revisionの
                     # 中断再開はOnBatchCompletedのcheckpointだけを正本にする。
                     $map = @{}
@@ -1128,7 +1128,7 @@ function Start-YakuTranslationJob {
                     $catContext['TotalBatches'] = @(Split-YakuFileTranslationItems -Items @($copilotItems.ToArray()) -MaxChars $maxChars).Count
                     if ($copilotItems.Count -gt 0) {
                         $translatedMap = Invoke-YakuCatTranslationItems -Root $Root -Items @($copilotItems.ToArray()) -Settings $settings `
-                            -Direction ([string]$cat.direction) -MaxChars $maxChars -Warnings $catWarnings `
+                            -Direction ([string]$cat.direction) -MaxChars $maxChars -Warnings $catWarnings -Notation $(if ([string]$cat.amount_notation -eq 'billion') { 'billion' } else { 'oku' }) `
                             -ProgressState $JobState -Context $catContext
                         foreach ($key in $translatedMap.Keys) { $map[[int]$key] = [string]$translatedMap[$key] }
                     }
@@ -1871,6 +1871,7 @@ function Serve-YakuAppPage {
     # その場で訳す状態には分ける仕組みが無い（上限超過での再依頼もしない）。
     # 画面が「1文ずつ確認して始める」を勧める境目に使う。勝手な数字は置かない。
     $html = $html.Replace('__YAKU_MAX_BATCH_CHARS__', [string](Get-YakuMaxCharsPerFileBatch -Settings $settings))
+    $html = $html.Replace('__YAKU_AMOUNT_NOTATION__', (ConvertTo-YakuHtml (Get-YakuAmountNotation -Settings $settings)))
     Send-YakuTextResponse -Context $Context -Text $html -ContentType 'text/html; charset=utf-8'
 }
 
@@ -1974,6 +1975,23 @@ function Invoke-YakuRoute {
         } catch {
             $body = [ordered]@{ available=$false; startup_enabled=$false; desktop_shortcut=$false; message=(Convert-YakuExceptionToUserMessage $_); warnings=@() }
             Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 5 -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
+        }
+        return
+    }
+    # 金額の書き方（oku / billion）。設定ファイルを直接開かせないための、
+    # 1項目だけの入口。既に始めた作業の書き方は変えない（作業ごとに固定して
+    # あり、原文の換算と点検が同じ書き方でそろっている必要があるため）。
+    if ($method -eq 'POST' -and $path -eq '/api/settings/amount-notation') {
+        try {
+            $payload = Read-YakuRequestJson -Request $req -MaxBytes 2048
+            $value = [string]$payload['amount_notation']
+            if ($value -ne 'oku' -and $value -ne 'billion') { throw 'AMOUNT_NOTATION_INVALID: 金額の書き方は oku か billion のどちらかです。' }
+            $saved = @(Save-YakuUserSettings -Root $script:YakuRoot -Form @{ amount_notation = $value })
+            $applied = Get-YakuAmountNotation -Settings $saved[0]
+            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ amount_notation=$applied } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+        } catch {
+            $safe = Convert-YakuExceptionToUserMessage $_
+            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ message=$safe } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
         }
         return
     }

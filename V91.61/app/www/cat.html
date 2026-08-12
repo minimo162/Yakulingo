@@ -6,6 +6,7 @@
   <meta name="yaku-session" content="__YAKU_SESSION_TOKEN__">
   <meta name="yaku-file-max-bytes" content="__YAKU_MAX_UPLOAD_BYTES__">
   <meta name="yaku-max-batch-chars" content="__YAKU_MAX_BATCH_CHARS__">
+  <meta name="yaku-amount-notation" content="__YAKU_AMOUNT_NOTATION__">
   <title>翻訳 - YakuLingo</title>
   <link rel="stylesheet" href="/assets/styles.css">
   <link rel="stylesheet" href="/assets/cat-workspace.css">
@@ -50,14 +51,12 @@
       <div id="cat-job" class="result-target" aria-live="polite"></div>
 
       <section id="cat-picker" class="translate-form cat-picker" aria-labelledby="cat-start-title">
-        <h2 id="cat-start-title">何を訳しますか</h2>
+        <h2 id="cat-start-title">訳したい文章を貼り付ける</h2>
       <!-- その場で訳す。保存しない状態。ここで作った文章と訳文はディスクへ書かず、
            登録した訳語・過去訳・コーパスも使わない（決定_ちょっと翻訳と資料翻訳の分離 §3.2）。
            保存したくなったら「1文ずつ確認して保存する」で、同じ画面の確認作業へ移る。 -->
       <section id="cat-instant" class="cat-instant" aria-labelledby="cat-start-title">
         <form id="quick-form" class="quick-inline">
-          <p class="muted">訳したい文章を貼り付けてください。Word・Excel は下から取り込めます。ここで訳しただけでは保存しません（登録した訳語も使いません）。</p>
-          <p class="quick-notation-note">英訳の金額は <strong>oku 表記</strong>で書きます（1兆3,150億円 → <code>13,150 oku</code>、▲152億円 → <code>(152) oku</code>）。</p>
           <p id="quick-selection-note" class="quick-selection-note" role="status" aria-live="polite" hidden></p>
           <!-- 選んだ範囲だけでは、Word・Excelの体裁を保った社内確認用ファイルは
                作れない。元のファイルを丸ごと取り込む道をここに置く。書き込むのは
@@ -75,8 +74,6 @@
             <p id="quick-long-text"></p>
             <button type="button" id="quick-long-handoff">1文ずつ確認しながら進める</button>
           </div>
-          <div class="privacy-note">金額などの数値は、Copilotへ送る前に自動で伏せます。社名・人名・文章はそのまま送信されます。</div>
-
           <div id="quick-direction-summary" class="direction-summary" hidden>
             <strong id="quick-direction-label"></strong>
             <button id="quick-direction-change" type="button" class="secondary-button compact">訳す言語を変える</button>
@@ -89,14 +86,28 @@
               <button type="button" class="secondary-button direction-choice-button" data-quick-direction="to_jp"><strong>日本語に訳す</strong><span>外国語の内容を日本語で確認します</span></button>
             </div>
           </fieldset>
-          <div class="command-bar"><button id="quick-submit" type="submit" disabled>文章を入力してください</button></div>
+          <div class="command-bar"><button id="quick-submit" type="submit" disabled>文章を入力してください</button><span class="command-bar-note">ここで訳しただけでは保存しません。登録した訳語も使いません。</span></div>
+          <!-- 送る前の約束と、金額の書き方。押す前に読む必要はないが、押したあとの
+               結果を説明するものなので、ボタンの下に小さく置く。以前は入力欄と
+               ボタンの間に太い枠で挟まっていて、入力とその実行を分断していた。 -->
+          <div class="quick-fineprint">
+            <p class="quick-fineprint-line">金額などの数値は、Copilotへ送る前に自動で伏せます。社名・人名・文章はそのまま送信されます。</p>
+            <p class="quick-fineprint-line">
+              <label for="amount-notation">英訳の金額</label>
+              <select id="amount-notation">
+                <option value="oku">oku（1兆3,150億円 → 13,150 oku）</option>
+                <option value="billion">billion（1兆3,150億円 → ¥1,315 billion）</option>
+              </select>
+              <span id="amount-notation-status" role="status" aria-live="polite"></span>
+            </p>
+          </div>
         </form>
 
         <section id="quick-job" class="result-target" aria-live="polite"></section>
         <section id="quick-result" class="quick-result" aria-labelledby="quick-result-title" hidden>
           <div class="result-card">
             <div class="result-card-header"><div><span class="eyebrow">訳案</span><h3 id="quick-result-title"></h3></div></div>
-            <pre id="quick-result-text" class="translation"></pre><p id="quick-notation-hint" class="quick-notation-note" hidden>金額は <code>oku</code> 表記で書いています。</p>
+            <pre id="quick-result-text" class="translation"></pre><p id="quick-notation-hint" class="quick-notation-note" hidden></p>
             <div class="result-actions">
               <button id="quick-copy" type="button">コピー</button>
               <button id="quick-revise-open" type="button" class="secondary-button" aria-expanded="false" aria-controls="quick-revise-form">この訳案を直す</button>
@@ -138,14 +149,27 @@
              押すと別の見た目の画面へ入れ替わり、状態が3つあった。画面を一つに
              したと言いながら、実際は入れ替えていただけだったため（利用者の指摘）。
              いまは、この画面で貼って訳し、結果も下に出る。 -->
-        <div class="entry-actions cat-entry-actions">
-          <button type="button" data-cat-source-show="file">Word・Excelを取り込む</button>
+        <!-- ここから下は「ほかの始め方」。塗ったボタンは画面に1つだけにする。
+             以前は「訳す」と「Word・Excelを取り込む」が同じ色で並び、しかも
+             「訳す」は文章を入れるまで押せない灰色だったので、押せるほうの
+             取り込みが主役に見えていた（2026-08-12、実機 1380px で確認）。 -->
+        <div class="entry-secondary">
+          <h3 class="entry-secondary-title">ファイルや、途中の作業から始める</h3>
+          <div class="entry-actions cat-entry-actions">
+            <button type="button" class="secondary-button" data-cat-source-show="file">Word・Excelを取り込む</button>
+          </div>
+          <details class="entry-more"><summary>そのほかの始め方</summary><div class="entry-more-actions">
+            <button type="button" class="secondary-button" data-cat-source-show="prior">前回の資料をもとに、今回の分だけ訳す</button>
+            <button type="button" class="secondary-button" data-cat-source-show="align">前回の日本語と英語を、参考として読み込む</button>
+          </div></details>
+          <!-- 保存した作業は溜まる。実機で10件あり、この一覧だけで画面の44%
+               （685px / 全体1555px）を占めていた。既定は直近3件だけ出す。 -->
+          <div id="cat-resume" class="cat-resume" hidden>
+            <h3>保存した作業</h3>
+            <div id="cat-resume-list"></div>
+            <button type="button" id="cat-resume-more" class="link-button" hidden aria-expanded="false"></button>
+          </div>
         </div>
-        <div id="cat-resume" class="cat-resume" hidden><h3>保存した作業</h3><div id="cat-resume-list"></div></div>
-        <details class="entry-more"><summary>そのほかの始め方</summary><div class="entry-more-actions">
-          <button type="button" class="secondary-button" data-cat-source-show="prior">前回の資料をもとに、今回の分だけ訳す</button>
-          <button type="button" class="secondary-button" data-cat-source-show="align">前回の日本語と英語を、参考として読み込む</button>
-        </div></details>
 
         <div id="cat-source-file" class="cat-start-panel" hidden>
           <h3>Word・Excelを選ぶ</h3>
