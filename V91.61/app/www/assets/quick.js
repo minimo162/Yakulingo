@@ -37,6 +37,16 @@
   function notationExample(value) {
     return value === 'billion' ? '金額は ¥1,315 billion のように書いています。' : '金額は 13,150 oku のように書いています。';
   }
+  /* Office 以外は外枠が疑似 Ctrl+C で読むため、サーバを通らない。読み込んだ事実
+     （文字数だけ、本文は送らない）を報告して記録に残す。Office 側はサーバが自分で
+     記録するので、ここでは扱わない。 */
+  function reportClipboardCapture(chars) {
+    if (!(chars > 0)) return;
+    YakuCommon.post('/api/quick/selection-capture', { chars: chars }).catch(function () {
+      /* 記録できなくても翻訳は続けられる。ここで止める理由が無い。 */
+    });
+  }
+
   function startNotationControl() {
     var select = el('amount-notation');
     if (!select) return;
@@ -447,6 +457,11 @@
     el('quick-long-handoff').addEventListener('click', function () {
       if (busy) return;
       window.dispatchEvent(new CustomEvent('yaku-instant-handoff', { detail: { text: el('quick-input').value } }));
+    });
+    /* 外枠が流し込んだときだけ拾う。人が手で打った文字では鳴らない。 */
+    window.addEventListener('yaku-clipboard-selection', function (event) {
+      var chars = Number((event.detail && event.detail.chars) || 0);
+      reportClipboardCapture(chars);
     });
     startNotationControl();
     update();

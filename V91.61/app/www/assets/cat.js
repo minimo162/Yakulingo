@@ -79,7 +79,7 @@
     var translate = el('cat-translate');
     if (translate) {
       translate.textContent = busy ? '翻訳しています…'
-        : !ready ? 'Copilotを準備しています（あと1〜2分）'
+        : !ready ? 'Copilotを準備しています（数秒〜十数秒）'
         : (project && Number(project.untranslated) <= 0) ? '訳案はすべてできています'
         : '残りの訳案を作る';
     }

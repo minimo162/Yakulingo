@@ -588,6 +588,9 @@ namespace YakuLingo.Desktop
                 // 「勝手に何か入った」になり、送る前の確認ができない。
                 string script = "(function(){var x=document.getElementById('quick-input');if(!x)return;x.value=" + source + ";x.dispatchEvent(new Event('input',{bubbles:true}));x.focus({preventScroll:true});window.scrollTo(0,0);" +
                     "var n=document.getElementById('quick-selection-note');if(n){n.textContent='選んでいた文章を読み込みました（' + Array.from(x.value).length + ' 文字）。';n.hidden=false;}" +
+                    // 取り込んだ事実を記録へ回す。本文は渡さない（文字数だけ）。
+                    // Office 側はサーバが自分で記録するので、こちらの経路だけ知らせる。
+                    "window.dispatchEvent(new CustomEvent('yaku-clipboard-selection',{detail:{chars:Array.from(x.value).length}}));" +
                     (submit ? "window.__yakuPendingQuickSubmit=true;window.dispatchEvent(new Event('yaku-pending-quick-submit'));" : "") + "})()";
                 try { await webView.ExecuteScriptAsync(script); } catch { }
             }

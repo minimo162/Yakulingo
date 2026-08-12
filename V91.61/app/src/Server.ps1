@@ -2169,6 +2169,20 @@ function Invoke-YakuRoute {
         }
         return
     }
+    if ($method -eq 'POST' -and $path -eq '/api/quick/selection-capture') {
+        # Office 以外は、外枠が疑似 Ctrl+C を送ってクリップボードから読む。その経路は
+        # サーバを通らないので、読み込んだことだけを画面から報告してもらって記録する。
+        # 本文は受け取らない（受け取る経路を作らないのが /api/quick/selection と同じ方針）。
+        $payload = Read-YakuRequestJson -Request $req -MaxBytes 2048
+        foreach ($key in @($payload.Keys)) {
+            if ([string]$key -notin @('chars')) { throw 'QUICK_SELECTION_CAPTURE_PAYLOAD_INVALID' }
+        }
+        $capturedChars = 0
+        try { $capturedChars = [int]$payload['chars'] } catch { $capturedChars = 0 }
+        try { Write-YakuLog ("Selection capture. trigger=hotkey app=other via=clipboard chars=" + $capturedChars) 'INFO' } catch {}
+        Send-YakuTextResponse -Context $Context -Text '{"recorded":true}' -ContentType 'application/json; charset=utf-8'
+        return
+    }
     if ($method -eq 'POST' -and $path -eq '/api/quick/selection') {
         # Ctrl+Alt+J で開いたときに、前面にあった Office の選択範囲を読む。
         # 受け取るのは窓のクラスとハンドルだけで、本文はブラウザーから来ない。
@@ -2187,6 +2201,15 @@ function Invoke-YakuRoute {
             return
         }
         $result = Get-YakuForegroundSelection -WindowClass $windowClass -ForegroundHwnd $hwnd
+        # 取り込みは必ず記録に残す。本文は書かない（時刻・相手アプリ・文字数だけ）。
+        # 「押したときだけ読む」を、コードを読まずに確かめられるようにするため。
+        # セキュリティの確認では、RegisterHotKey はキーロガーと同じ入口に見える。
+        # 説明を「信じてください」から「ログを見てください」へ変える。
+        try {
+            $capturedChars = 0
+            try { $capturedChars = [int]$result.CharCount } catch { $capturedChars = 0 }
+            Write-YakuLog ("Selection capture. trigger=hotkey app=" + $windowClass + " via=office kind=" + [string]$result.Kind + " chars=" + $capturedChars) 'INFO'
+        } catch {}
         $body = [ordered]@{ kind = [string]$result.Kind; reason = $(try { [string]$result.Reason } catch { '' }) }
         if ([string]$result.Kind -eq 'word_text') {
             $body['text'] = [string]$result.Text

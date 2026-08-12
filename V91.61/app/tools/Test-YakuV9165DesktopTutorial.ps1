@@ -43,9 +43,22 @@ Check-YakuTutorial ($html.Contains('設定画面へ進む') -and -not $html.Cont
 Check-YakuTutorial ($html.Contains('このキーを押した時だけ') -and $html.Contains('ふだん画面を見張ることはありません')) 'tutorial states when text is read from the foreground app'
 Check-YakuTutorial ($html.Contains('「訳案を作る」を押すまでCopilotへは送りません') -and $html.Contains('「訳案を作る」を押した文章だけを送信します')) 'tutorial states the explicit-send boundary with the real button name'
 Check-YakuTutorial (-not ($html -match '文章は自動では読み取りません|貼り付けて「翻訳」を押す')) 'the retired no-reading claim must not come back'
+# 2026-08-12（同日追記）: 「Outlook などからは読み込めない」と書いたが、実装は
+# Office 以外でも疑似 Ctrl+C を送ってクリップボードから読む（Program.cs の
+# CopySelectionFromForeground）。読めないのではなく、読み方が違ってクリップボードが
+# 変わる。市販側でいちばん良い説明（PowerToys は「選んだ範囲の画素だけを見る」と
+# 具体的に書く）に倣い、2通りの読み方をそのまま書く。
+Check-YakuTutorial (-not ($html -match 'ほかのアプリ（Outlookなど）からは読み込めない')) 'the false claim that other apps cannot be read must not come back'
+Check-YakuTutorial ($html.Contains('クリップボードは変わりません') -and $html.Contains('コピー（<kbd>Ctrl</kbd>＋<kbd>C</kbd>）を代わりに押します')) 'tutorial states both reading paths and the clipboard side effect'
+$shellSourceForTutorial = Read-YakuTutorialFile 'desktop\Program.cs'
+Check-YakuTutorial ($shellSourceForTutorial.Contains('CopySelectionFromForeground') -and $shellSourceForTutorial.Contains('GetClipboardSequenceNumber')) 'the described clipboard path still exists in the shell'
 $quickClientForTutorial = Read-YakuTutorialFile 'www\assets\quick.js'
 Check-YakuTutorial ($quickClientForTutorial.Contains("'訳案を作る'") -and $quickClientForTutorial.Contains('/api/quick/selection')) 'the tutorial button name and the reading path still exist in the app'
-Check-YakuTutorial ($html -match 'id="startup-enabled"[^>]*type="checkbox"[^>]*checked') 'startup is visibly ON by default'
+# 2026-08-12: 自動起動を既定オフ（オプトイン）にした。実測で、これが節約するのは
+# Copilot の準備 4.3〜15秒。代わりに常駐して 850ms ごとの死活確認を回し続ける
+# （Program.cs の backendTimer）。同じ形の道具でも QTranslate は利用者が入れる
+# チェックにしている。デスクトップのショートカットは常駐しないので既定オンのまま。
+Check-YakuTutorial ($html -match 'id="startup-enabled"[^>]*type="checkbox"(?![^>]*checked)') 'startup must be opt-in (unchecked by default)'
 Check-YakuTutorial ($html -match 'id="desktop-shortcut"[^>]*type="checkbox"[^>]*checked') 'desktop shortcut is visibly ON by default'
 Check-YakuTutorial ($html.Contains('それまではパソコンの設定を変更しません') -and $html.Contains('この設定で始める')) 'final confirmation explains the side-effect boundary'
 # 2026-08-12: 押してよいか迷う人がいる、という指摘。迷いの中身は「何が起きるか」
@@ -77,11 +90,13 @@ Check-YakuTutorial ($css.Contains('@media (max-width: 640px)') -and $css.Contain
 Check-YakuTutorial ($css.Contains('font-size: clamp(2rem') -and $css.Contains('font-size: 1.25rem')) 'headings and instructional text remain readable at high zoom'
 
 Check-YakuTutorial ($homeHtml.Contains('起動とショートカット') -and $homeHtml.Contains('使い方を見る') -and $homeHtml.Contains('/tutorial#settings')) 'home exposes help and direct preference routes'
-Check-YakuTutorial ($homeHtml.Contains('id="background-disabled-banner"') -and $homeJs.Contains("data.tutorial_completed === true") -and $homeJs.Contains("data.startup_enabled === false")) 'home explains disabled startup only after first-run confirmation'
+# 既定オフにしたので、「オフです」と知らせる帯は催促にしかならない。外した。
+Check-YakuTutorial (-not $homeHtml.Contains('id="background-disabled-banner"') -and -not $homeJs.Contains('background-disabled-banner')) 'the startup-off nag banner must stay removed'
 # 開始画面は状態を変えない。読み取り専用の一覧取得（/api/cat/recent）だけを許し、
 # それ以外の POST（とくに起動設定の書き換え）は今までどおり禁止する。
 $homePostTargets = @([regex]::Matches($homeJs, "YakuCommon\.post\('([^']+)'") | ForEach-Object { $_.Groups[1].Value })
-Check-YakuTutorial ($homeJs.Contains("YakuCommon.json('/api/desktop/preferences')") -and (@($homePostTargets | Where-Object { $_ -ne '/api/cat/recent' }).Count -eq 0)) 'home checks preferences without changing them'
+# 帯を外したので、開始画面は起動設定を読みもしない。要求するのは「変えないこと」だけ。
+Check-YakuTutorial ((@($homePostTargets | Where-Object { $_ -ne '/api/cat/recent' }).Count -eq 0) -and -not ($homeJs -match 'desktop/preferences')) 'home must not touch the startup preference at all'
 
 Check-YakuTutorial ($commonJs.Contains("data.type !== 'set-startup-enabled'") -and
     $commonJs.Contains("typeof data.enabled !== 'boolean'") -and $commonJs.Contains("keys !== 'enabled,type'")) 'shell handler accepts only the exact startup-toggle message contract'
@@ -93,6 +108,17 @@ Check-YakuTutorial ($commonJs.Contains("notifyDesktopShell('desktop-preferences-
 Check-YakuTutorial ($commonJs.Contains("type !== 'desktop-preferences-changed' && type !== 'desktop-preferences-error'") -and
     $commonJs.Contains('postMessage({ type: type })')) 'outbound WebMessage is restricted to an allowlisted type with no settings or token'
 Check-YakuTutorial ($commonJs.Contains('desktopPreferenceMessageQueue.then')) 'rapid tray changes are serialized in arrival order'
+
+# 取り込みは必ず記録に残す（本文は書かない）。RegisterHotKey はセキュリティの確認で
+# キーロガーと同じ入口に見えるため、「押したときだけ読む」をログで示せるようにする。
+$serverSourceForCapture = Read-YakuTutorialFile 'src\Server.ps1'
+$quickClientForCapture = Read-YakuTutorialFile 'www\assets\quick.js'
+$shellForCapture = Read-YakuTutorialFile 'desktop\Program.cs'
+Check-YakuTutorial ($serverSourceForCapture.Contains('Selection capture. trigger=hotkey') -and $serverSourceForCapture.Contains('via=office')) 'office captures are logged'
+Check-YakuTutorial ($serverSourceForCapture.Contains('/api/quick/selection-capture') -and $serverSourceForCapture.Contains('via=clipboard')) 'clipboard captures are logged too'
+Check-YakuTutorial ($quickClientForCapture.Contains('reportClipboardCapture') -and $shellForCapture.Contains('yaku-clipboard-selection')) 'the clipboard path reports its capture'
+# 本文はログにも、報告の経路にも載せない。
+Check-YakuTutorial ($serverSourceForCapture -match "notin @\('chars'\)") 'the capture report accepts a character count only'
 
 $node = Get-Command node -ErrorAction SilentlyContinue
 if ($node) {
