@@ -856,6 +856,25 @@ $maskedBillion = [string](Convert-YakuNumericUnits -Text 'xx億円' -Location 't
 Assert-YakuMask ($maskedOku -eq 'xx oku') ('伏せ字は oku なら単位名だけ替える（実際 ' + $maskedOku + '）')
 Assert-YakuMask ($maskedBillion -eq 'xx億円') ('伏せ字は billion では換算できないので触らない（実際 ' + $maskedBillion + '）')
 
+Write-Host 'CASE 24-0: 直すときのマスク表は、訳したときと一致する' -ForegroundColor Cyan
+# 修正経路だけ単位換算を飛ばして生の原文をマスクしていた（2026-08-12 実測）。
+#   訳す: 売上高は[[N2]] billion yen   [[N2]]=1,315
+#   直す: 売上高は[[N2]]兆[[N3]]億円   [[N2]]=1, [[N3]]=3,150
+# 現訳は前者の番号で書かれているので、モデルが原文側のトークンを写すと
+# 「¥1 trillion 3,150 billion」ができる。実機で発生し、点検が止めた。
+$reviseSource = '当第1四半期の売上高は1兆3,150億円となりました。'
+foreach ($notation in @('oku','billion')) {
+    $translateMask = New-YakuNumericMaskMap -Text ([string](Convert-YakuNumericUnits -Text $reviseSource -Location 'test' -Notation $notation).Text) -Root $root -Direction 'to_en' -Location 'test-translate'
+    $reviseMask = New-YakuNumericMaskMap -Text ([string](Convert-YakuNumericUnits -Text $reviseSource -Location 'text-revise' -Notation $notation).Text) -Root $root -Direction 'to_en' -Location 'test-revise'
+    $sameText = ([string]$translateMask.Text -eq [string]$reviseMask.Text)
+    $sameMap = $true
+    foreach ($key in $translateMask.Map.Keys) { if ([string]$translateMask.Map[$key] -ne [string]$reviseMask.Map[$key]) { $sameMap = $false } }
+    Assert-YakuMask ($sameText -and $sameMap) ($notation + ': 訳すときと直すときで、同じ番号・同じ単位のマスクになる')
+}
+# 呼び出し側も換算を通しているか（この1行が抜けていた）
+$reviseSrcCode = [IO.File]::ReadAllText((Join-Path $root 'src/Translation.ps1'))
+Assert-YakuMask ($reviseSrcCode -match "Convert-YakuNumericUnits -Text \`$InputText -Location 'text-revise' -Notation \`$reviseNotation") '修正経路も換算してからマスクする'
+
 Write-Host 'CASE 24a: 訳文を直すときも、その作業の書き方の規則を送る' -ForegroundColor Cyan
 # New-YakuRevisePrompt は書き方を受け取っておらず、常に既定（oku）の規則を送っていた。
 # billion で作った訳文に「oku をそのまま保て。billion は使うな」と言う形になる。
