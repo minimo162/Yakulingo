@@ -43,6 +43,15 @@ Check-YakuTutorial ($html.Contains('設定画面へ進む') -and -not $html.Cont
 Check-YakuTutorial ($html.Contains('このキーを押した時だけ') -and $html.Contains('ふだん画面を見張ることはありません')) 'tutorial states when text is read from the foreground app'
 Check-YakuTutorial ($html.Contains('「訳案を作る」を押すまでCopilotへは送りません') -and $html.Contains('「訳案を作る」を押した文章だけを送信します')) 'tutorial states the explicit-send boundary with the real button name'
 Check-YakuTutorial (-not ($html -match '文章は自動では読み取りません|貼り付けて「翻訳」を押す')) 'the retired no-reading claim must not come back'
+# 2026-08-12（同日追記）: 「Outlook などからは読み込めない」と書いたが、実装は
+# Office 以外でも疑似 Ctrl+C を送ってクリップボードから読む（Program.cs の
+# CopySelectionFromForeground）。読めないのではなく、読み方が違ってクリップボードが
+# 変わる。市販側でいちばん良い説明（PowerToys は「選んだ範囲の画素だけを見る」と
+# 具体的に書く）に倣い、2通りの読み方をそのまま書く。
+Check-YakuTutorial (-not ($html -match 'ほかのアプリ（Outlookなど）からは読み込めない')) 'the false claim that other apps cannot be read must not come back'
+Check-YakuTutorial ($html.Contains('クリップボードは変わりません') -and $html.Contains('コピー（<kbd>Ctrl</kbd>＋<kbd>C</kbd>）を代わりに押します')) 'tutorial states both reading paths and the clipboard side effect'
+$shellSourceForTutorial = Read-YakuTutorialFile 'desktop\Program.cs'
+Check-YakuTutorial ($shellSourceForTutorial.Contains('CopySelectionFromForeground') -and $shellSourceForTutorial.Contains('GetClipboardSequenceNumber')) 'the described clipboard path still exists in the shell'
 $quickClientForTutorial = Read-YakuTutorialFile 'www\assets\quick.js'
 Check-YakuTutorial ($quickClientForTutorial.Contains("'訳案を作る'") -and $quickClientForTutorial.Contains('/api/quick/selection')) 'the tutorial button name and the reading path still exist in the app'
 Check-YakuTutorial ($html -match 'id="startup-enabled"[^>]*type="checkbox"[^>]*checked') 'startup is visibly ON by default'
