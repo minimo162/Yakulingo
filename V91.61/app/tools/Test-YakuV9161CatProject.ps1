@@ -499,6 +499,40 @@ Chk ((Get-YakuFileTranslationInvalidReason -Source '13,150' -Translation '13,150
 Chk ((Get-YakuFileTranslationInvalidReason -Source '1兆3,150億円' -Translation '1兆3,150億円' -Direction 'to_en') -eq 'same-as-source') '日本語のまま返ってきたものは、いままでどおり捨てる'
 Chk ((Get-YakuFileTranslationInvalidReason -Source '売上高' -Translation '売上高' -Direction 'to_en') -eq 'same-as-source') '訳されていない語も、いままでどおり捨てる'
 
+Write-Host 'CASE: 同じ原文の行へ配る（反復）' -ForegroundColor Cyan
+# 市販のCATツールでは標準の機能（memoQ の auto-propagation、Phrase の repetitions）。
+# 確定のときに配るのも各ツールと同じ。ただし配り方は狭くする。
+#   空の行にだけ入れる／確認済みにはしない／出どころを propagated にする
+$repText = @(
+    '売上高',
+    '当第1四半期の売上高は122億円でした。',
+    '売上高',
+    '営業利益',
+    '売上高'
+) -join "`n"
+$rp = New-YakuCatTextProject -Root $root -Text $repText -Settings $settings -Direction 'to_en'
+$repSegs = @($rp.Segments)
+Chk ($repSegs.Count -eq 5) '5行に分かれる'
+$repJson = ConvertTo-YakuCatProjectJson -Project $rp | ConvertFrom-Json
+$repRows = @($repJson.segments)
+Chk ([int]$repRows[0].repetition_count -eq 3 -and [bool]$repRows[0].repetition_first) '同じ原文の行数を数え、最初の行が分かる'
+Chk ([int]$repRows[2].repetition_count -eq 3 -and -not [bool]$repRows[2].repetition_first) '2つ目以降は最初ではない'
+Chk ([int]$repRows[1].repetition_count -eq 1) '1行しか無い原文は反復ではない'
+
+# 3行目に先に別の訳を入れておく。上書きしないことを見る。
+$null = Set-YakuCatSegmentTranslation -Project $rp -Index 4 -Text 'Revenue (kept)'
+$null = Set-YakuCatSegmentTranslation -Project $rp -Index 0 -Text 'Net sales'
+$filled = Copy-YakuCatTranslationToRepetitions -Project $rp -Index 0
+$after = @($rp.Segments)
+Chk ($filled -eq 1) ('空いている同じ原文の行にだけ入れる（実際 ' + $filled + ' 行）')
+Chk ([string]$after[2].Translation -eq 'Net sales') '空だった行には入る'
+Chk ([string]$after[4].Translation -eq 'Revenue (kept)') '既にある訳は上書きしない'
+Chk ([string]$after[3].Translation -eq '') '原文が違う行には入らない'
+Chk ([string]$after[2].Origin -eq 'propagated') '出どころが分かる'
+Chk (-not [bool]$after[2].Confirmed) '配った行は確認済みにしない'
+Chk ([string]$after[2].MaskedTranslation -eq '') 'マスク後の訳文は引き継がない'
+Remove-YakuCatProject -Id ([string]$rp.Id)
+
 # ---------------------------------------------------------------- 片付け
 Remove-YakuCatProject -Id ([string]$project.Id)
 Chk ((Get-YakuCatProject -Id ([string]$project.Id)) -eq $null) '終わったプロジェクトは捨てられる'

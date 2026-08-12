@@ -2827,12 +2827,15 @@ function Invoke-YakuRoute {
                             if ([string]$_.Exception.Message -like 'CAT_REVIEW_QC_FAILED:*') { $blocked = $true }
                             else { throw }
                         }
+                        $propagated = 0
                         if ($innerFlag -and -not $blocked) {
                             $reviewed = @($candidate.Segments)[$innerIndex]
                             $null = Add-YakuCatTranslationMemoryOutboxEvent -Project $candidate -Segment $reviewed
+                            # 同じ原文の行へ配る。空の行にだけ入れ、確認済みにはしない。
+                            $propagated = [int](Copy-YakuCatTranslationToRepetitions -Project $candidate -Index $innerIndex)
                         }
                         try { $candidate | Add-Member -NotePropertyName 'GlossaryCandidates' -NotePropertyValue (Measure-YakuCatGlossaryCandidates -Root $root -Project $candidate -Settings $innerSettings) -Force } catch {}
-                        return [pscustomobject]@{ ReviewBlocked=$blocked }
+                        return [pscustomobject]@{ ReviewBlocked=$blocked; Propagated=$propagated }
                     }
                     $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($index,$flag,$script:YakuRoot,$settings)
                     $project = $commit.Project
@@ -2843,9 +2846,12 @@ function Invoke-YakuRoute {
                         $null = Sync-YakuCatTranslationMemoryOutbox -Project $project
                     }
                     $json = ConvertTo-YakuCatProjectJson -Project $project
-                    if ($reviewBlocked) {
+                    $propagatedRows = [int]$(try { $commit.Result.Propagated } catch { 0 })
+                    if ($reviewBlocked -or $propagatedRows -gt 0) {
                         $body = $json | ConvertFrom-Json
-                        $body | Add-Member -NotePropertyName review_blocked -NotePropertyValue $true -Force
+                        if ($reviewBlocked) { $body | Add-Member -NotePropertyName review_blocked -NotePropertyValue $true -Force }
+                        # 何行に配ったかを画面へ返す。黙って他の行が変わるのがいちばん困る。
+                        if ($propagatedRows -gt 0) { $body | Add-Member -NotePropertyName propagated -NotePropertyValue $propagatedRows -Force }
                         $json = $body | ConvertTo-Json -Depth 8 -Compress
                     }
                     Send-YakuTextResponse -Context $Context -Text $json -ContentType 'application/json; charset=utf-8'

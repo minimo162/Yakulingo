@@ -210,6 +210,9 @@
     if (origin === 'copilot') return 'Copilot訳';
     if (origin === 'manual') return '手直し';
     if (origin === 'carried_forward' || origin === 'numeric_update') return '自分が確認した訳';
+    /* 同じ原文の行へ配った訳。出どころが分からないと、直したはずの訳が
+       別の行に残っていると誤解される。 */
+    if (origin === 'propagated') return '同じ原文から';
     return '';
   }
   function segmentState(segment) { return segment.status || segment.state || (segment.translation ? 'machine_draft' : 'untranslated'); }
@@ -391,7 +394,7 @@
       var change = changeLabel(segment);
       return '<tr class="' + (isActive ? 'is-active' : '') + '" data-cat-row="' + index + '" data-cat-segment-id="' + esc(segment.segment_id || '') + '" data-cat-confirmed="' + (segment.confirmed ? '1' : '0') + '" data-yaku-cat-state="' + esc(state) + '">' +
         '<td class="cat-col-no"><span class="cat-card-label">行番号・状態</span>' + row + '<span class="cat-state cat-state-' + esc(state) + '" title="' + esc(stateTitle(state)) + '">' + stateIcon(state) + '<span>' + esc(stateLabel(state)) + '</span></span>' + ((change && isActive) ? '<span class="cat-change-badge cat-change-' + esc(changeGroup(segment)) + '" title="' + esc(changeTitle(segment)) + '">' + esc(change) + '</span>' : '') + '</td>' +
-        '<td class="cat-col-loc"><span class="cat-card-label">場所</span><span class="cat-location-main">' + esc(segment.location || '本文') + '</span><span class="cat-location-kind">' + esc(kind) + '</span>' + (origin ? '<span class="cat-origin">' + esc(origin) + '</span>' : '') + '</td>' +
+        '<td class="cat-col-loc"><span class="cat-card-label">場所</span><span class="cat-location-main">' + esc(segment.location || '本文') + '</span><span class="cat-location-kind">' + esc(kind) + '</span>' + (Number(segment.repetition_count || 1) > 1 ? '<span class="cat-repetition" title="この原文は資料の中に ' + segment.repetition_count + ' 行あります。確認済みにすると、まだ訳が入っていない同じ原文の行へ同じ訳を入れます。">同じ原文 ' + segment.repetition_count + ' 行</span>' : '') + (origin ? '<span class="cat-origin">' + esc(origin) + '</span>' : '') + '</td>' +
         /* 開いている行は、原文を上・訳文を下に積んで表の全幅を使う。左右2列は視線が
            横へ飛ぶうえ、「文字を大きく」だと1列が日本語11文字まで痩せる。上下配置の
            ほうが速いことは Läubli et al.(arXiv:2011.05978) の統制実験で示されている。
@@ -652,6 +655,13 @@
         inspectorTab = 'qc'; renderInspector();
         window.setTimeout(function () { var same = document.querySelector('[data-cat-input="' + index + '"]'); YakuCommon.focus(same); }, 0);
         return data;
+      }
+      /* 同じ原文の行へ配ったときは、必ず言う。黙って他の行が変わるのがいちばん困る。
+         配るのは訳文が空の行だけで、確認済みにはしない（数字の点検は確定のときに
+         しか走らないため）。市販のCATツールと同じ仕組みだが、上書きはしない。 */
+      var propagated = Number(data.propagated || 0);
+      if (propagated > 0) {
+        status('同じ原文の ' + propagated + ' 行にも同じ訳を入れました。まだ確認済みではないので、目を通してから確定してください。');
       }
       window.setTimeout(function () { focusAfter(index); }, 0);
       return data;

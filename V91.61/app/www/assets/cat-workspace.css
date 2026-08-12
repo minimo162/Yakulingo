@@ -379,6 +379,18 @@
   font-size: var(--font-meta);
 }
 
+/* 同じ原文が資料の中に何行あるか。閉じている行でも出す。確定すると他の行にも
+   訳が入るので、押す前に見えている必要がある（市販CATの反復表示に相当）。 */
+.cat-repetition {
+  display: inline-block;
+  margin-top: 3px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--soft);
+  color: var(--muted);
+  font-size: var(--font-meta);
+}
+
 /* 開いていない行は従属。付随する印まで出すと一覧で目が滑る。 */
 .cat-grid tbody tr:not(.is-active) .cat-origin { display: none; }
 
