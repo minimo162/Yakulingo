@@ -1712,6 +1712,16 @@ function Get-YakuCatProjectSummary {
     # 押した瞬間に 100% になり、以後どれだけ確認しても動かない。
     # 数百行を何時間もかけて見る作業では、それは進捗表示として役に立たない。
     $confirmed = @($segs | Where-Object { [string]$_.State -eq 'reviewed' }).Count
+    # 残りの量は行数だけでは分からない。1行が3文字の見出しと、200文字の注記が
+    # 同じ1行として数えられるため。市販のCATが語数で見積もるのと同じ理由で、
+    # 原文の文字数も出す（日本語に語の区切りが無いので、語数ではなく文字数）。
+    $sourceChars = 0
+    $confirmedChars = 0
+    foreach ($seg in $segs) {
+        $length = ([string]$seg.Text).Length
+        $sourceChars += $length
+        if ([string]$seg.State -eq 'reviewed') { $confirmedChars += $length }
+    }
     $eligibility = Get-YakuCatOutputEligibility -Project $Project
     return [pscustomobject]@{
         Id        = [string]$Project.Id
@@ -1725,6 +1735,9 @@ function Get-YakuCatProjectSummary {
         Joined    = @($segs | Where-Object { [bool]$_.Joined }).Count
         Confirmed = $confirmed
         Unconfirmed = ($segs.Count - $confirmed)
+        SourceChars = [int]$sourceChars
+        ConfirmedChars = [int]$confirmedChars
+        RemainingChars = [int]($sourceChars - $confirmedChars)
         Revision = [int]$Project.Revision
         TranslationListEligible = [bool]$eligibility.TranslationListEligible
         ExcelDraftEligible = [bool]$eligibility.ExcelDraftEligible
@@ -1905,6 +1918,8 @@ function ConvertTo-YakuCatProjectJson {
         joined     = [int]$summary.Joined
         confirmed   = [int]$summary.Confirmed
         unconfirmed = [int]$summary.Unconfirmed
+        source_chars = [int]$summary.SourceChars
+        remaining_chars = [int]$summary.RemainingChars
         untranslated = @($segs | Where-Object { (Get-YakuCatSegmentStatus -Segment $_) -eq 'untranslated' }).Count
         glossary_candidates = $(try { [int]$Project.GlossaryCandidates } catch { 0 })
         draft        = @($segs | Where-Object { @('machine_draft','human_edited') -contains (Get-YakuCatSegmentStatus -Segment $_) }).Count

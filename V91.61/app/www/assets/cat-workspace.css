@@ -12,7 +12,10 @@
      「点検で気になる点」は実測119pxで、詰めた幅には収まらず3行に折り返していた。
      ラベルを「点検の指摘」（実測74px）に縮めて、幅は主役へ回す。全文は title に置く。 */
   --pane-nav: clamp(11rem, 13vw, 13rem);
-  --pane-inspector: clamp(15rem, 19vw, 20rem);
+  /* 右の参考ペイン。19vw では実機（1380px）で262px＝日本語20字/行しかなく、
+     過去訳の原文と訳文が細切れになって読めない。21vw まで広げて 23字/行にする。
+     これ以上広げると主役（原文・訳文）が痩せるので、上限は 22rem で止める。 */
+  --pane-inspector: clamp(16rem, 21vw, 22rem);
 }
 
 .app-cat .shell {
@@ -393,6 +396,28 @@
 
 /* 開いていない行は従属。付随する印まで出すと一覧で目が滑る。 */
 .cat-grid tbody tr:not(.is-active) .cat-origin { display: none; }
+
+/* 一覧の一望性。実測（1380x900）で閉じた行は87px、1画面に8行しか入らなかった。
+   市販のCATは1画面に15〜25行を並べる。高さの内訳を測ると、場所（Sheet1, A2）と
+   種類（セル）が縦に積まれて54pxを使っていた。閉じている行では横に並べる。
+   開いている行はこれまでどおり縦積みのまま（主役なので情報量を優先）。 */
+.cat-grid tbody tr:not(.is-active) .cat-location-main,
+.cat-grid tbody tr:not(.is-active) .cat-location-kind,
+.cat-grid tbody tr:not(.is-active) .cat-repetition {
+  display: inline;
+  margin-top: 0;
+}
+.cat-grid tbody tr:not(.is-active) .cat-location-kind,
+.cat-grid tbody tr:not(.is-active) .cat-repetition { margin-left: 6px; }
+/* 「同じ原文 3 行」は途中で折らない。折れると印だけで3行ぶんの高さを取り、
+   詰めたぶんが帳消しになる（実測 47px）。 */
+.cat-repetition { white-space: nowrap; }
+
+/* 過去訳を言葉で探す欄。原文と訳文を上下に置く（左右だと1列が短すぎる）。 */
+.cat-concordance-form { display: flex; gap: 6px; margin-bottom: 8px; }
+.cat-concordance-form input { flex: 1 1 auto; min-width: 0; }
+.cat-concordance-source { margin: 0 0 4px; }
+.cat-concordance-target { margin: 0; color: var(--accent-text); }
 
 .cat-target-preview:empty::before {
   content: "未翻訳";
