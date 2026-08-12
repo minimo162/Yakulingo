@@ -101,6 +101,7 @@ tools/Test-YakuV9166CatResources.ps1	lf
 tools/Test-YakuV9166Terminology.ps1	lf
 tools/Test-YakuV9167Selection.ps1	lf
 tools/Test-YakuV9168CatGrid.ps1	lf
+tools/Test-YakuV9168CopilotModelFallback.ps1	lf
 tools/Test-YakuV9168SheetLayout.ps1	lf
 tools/Test-YakuV9168WordStructure.ps1	lf
 tools/Test-YakuV917RuntimeWarnings.ps1	crlf
