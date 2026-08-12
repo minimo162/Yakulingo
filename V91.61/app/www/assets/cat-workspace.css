@@ -366,43 +366,46 @@
   padding-block: .25em;
 }
 
-/* 閉じている行の原文・訳文は1行だけ出す。2行にすると行の高さが倍になり、
-   一覧としての一望性が落ちる。全文は開いた行で読む。 */
-.cat-grid tbody tr:not(.is-active) .cat-source-text,
-.cat-grid tbody tr:not(.is-active) .cat-target-preview {
-  -webkit-line-clamp: 1;
-}
-
-.cat-grid tbody tr:not(.is-active) .cat-source-text,
-.cat-grid tbody tr:not(.is-active) .cat-target-preview {
+/* 閉じている行の原文は1行だけ出す。2行にすると行の高さが倍になり、一覧としての
+   一望性が落ちる。全文は、その行に入ると欄が伸びて読める。 */
+.cat-grid tbody tr:not(.is-active) .cat-source-text {
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
 }
 
-/* 一覧の各行を開くための主要なクリック先。min-height:0 だと実効26px しかなく、
-   狙って当てないと外れる。行を開くのはこの画面で最も回数の多い操作なので、
-   ポインタでもタッチでも外さない大きさを確保する。 */
-/* 押せる高さは 44px から 32px へ下げた（2026-08-12）。44px は WCAG 2.5.5（AAA）の
-   値で、AA として要求されるのは 2.5.8 の 24x24 である。行そのものが押せる帯なので
-   幅は列いっぱいあり、24 は十分に超える。市販のCATは1画面に15〜25行を出すのに対し、
-   ここは 8 行しか出ていなかった。原文と訳文が見えないほうが、この道具では致命的。 */
-.app-cat .cat-editor-pane button.cat-row-activate {
-  display: block;
+.cat-source-text { cursor: text; }
+
+/* 訳文欄は全行にある。閉じている行では2行ぶんで頭打ちにして、一覧の高さを保つ。
+   枠線は入っている行だけに出す。全行に枠を引くと、表が升目だらけになる。 */
+.cat-grid tbody textarea[data-cat-input] {
   width: 100%;
   min-height: 32px;
-  padding: 2px 0;
-  border: 0;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
   background: transparent;
   color: inherit;
-  text-align: left;
   font: inherit;
+  resize: vertical;
 }
 
-/* 閉じている行は脇役。触れたことは背景の淡い変化だけで示す。 */
-.app-cat .cat-editor-pane button.cat-row-activate:hover {
-  background: var(--soft);
+.cat-grid tbody tr:not(.is-active) textarea[data-cat-input] {
+  max-height: 3.4em;
+  /* 送り出しの帯（スクロールバー）は出さない。全行に出ると表が升目だらけに見え、
+     しかも閉じている行では使わない。続きはその行に入れば読める。 */
+  overflow-y: hidden;
+  resize: none;
+}
+
+.cat-grid tbody tr:not(.is-active) textarea[data-cat-input]:hover {
+  border-color: var(--line);
+}
+
+.cat-grid tbody tr.is-active textarea[data-cat-input] {
+  border-color: var(--line);
+  background: var(--surface);
 }
 
 .cat-location-main {
@@ -447,8 +450,25 @@
   display: inline;
   margin-top: 0;
 }
-.cat-grid tbody tr:not(.is-active) .cat-location-kind,
 .cat-grid tbody tr:not(.is-active) .cat-repetition { margin-left: 6px; }
+/* 閉じている行の高さを決めていたのは訳文欄ではなく、この列だった（実測 1380x900 で
+   行 78px のうち 60px）。「本文 / 文 / 同じ原文×3」が 112px の中で2行に折れていた。
+   1行に収め、溢れたら畳む。種類（文・セル・Word）は場所を見れば分かるので、
+   閉じている行では出さない。 */
+.cat-grid tbody tr:not(.is-active) .cat-col-loc {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cat-grid tbody tr:not(.is-active) .cat-location-kind { display: none; }
+/* 同じ理由で、行番号と状態も1行に収める。92px の列で「1」と「✓確認済」が折れて
+   いた。閉じている行では文字を小さくして横に並べる（開いた行は元の大きさのまま）。 */
+.cat-grid tbody tr:not(.is-active) .cat-col-no {
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--font-meta);
+}
+.cat-grid tbody tr:not(.is-active) .cat-state { font-size: var(--font-meta); }
 /* 「同じ原文 3 行」は途中で折らない。折れると印だけで3行ぶんの高さを取り、
    詰めたぶんが帳消しになる（実測 47px）。 */
 .cat-repetition { white-space: nowrap; }
@@ -459,10 +479,7 @@
 .cat-concordance-source { margin: 0 0 4px; }
 .cat-concordance-target { margin: 0; color: var(--accent-text); }
 
-.cat-target-preview:empty::before {
-  content: "未翻訳";
-  color: var(--muted);
-}
+/* 訳が空の行は、欄が空であることで分かる。「未翻訳」の札は左端の状態と重なる。 */
 
 .cat-complete-state,
 .cat-empty-state {
@@ -757,7 +774,6 @@
 }
 
 @media (max-width: 900px) {
-  .cat-work-label { display: block; }
   :root {
     --cat-toolbar-h: 0px;
   }
@@ -801,43 +817,11 @@
   }
 }
 
-/* 開いている行だけ、原文と訳文を上下に積んで表の全幅を使う。左右2列は「文字を
-   大きく」で1列が日本語11文字まで痩せ、視線も横へ飛ぶ。上下配置のほうが速いこと
-   は Läubli et al.(arXiv:2011.05978) の統制実験で示されている。閉じている行は
-   一望性が要るので左右のまま残す。 */
-.cat-work {
-  padding-block: .6em;
-}
-
-.cat-work-source {
-  padding-bottom: var(--space-1);
-  border-bottom: 1px solid var(--line);
-  white-space: pre-wrap;
-}
-
-.cat-work-target {
-  padding-top: var(--space-1);
-}
-
-/* 開いている行が 392px を占め、1画面に4行しか出ていなかった（2026-08-12 実測）。
-   市販のCATは、開いている行も閉じている行と同じ格子の中で編集する。ここも
-   同じ考えで詰める。列見出し（#・場所・原文・訳文）が名前を持っているので、
-   行の中の「原文」「訳文」の札は要らない。狭い画面では札が唯一の手がかりに
-   なるので、そのときだけ出す。 */
-.cat-work-label { display: none; }
-.cat-work-target textarea { min-height: 4.4em; }
-/* 「確認済みにする」と「そのほかの操作」は同じ行に置く。縦に積むと 94px 使う。 */
-.cat-work-target .cat-row-primary { display: inline-flex; vertical-align: top; }
-.cat-work-target .cat-more-row { display: inline-block; margin-left: var(--space-2); }
-.cat-work-target .cat-more-row > summary { margin-top: 0; min-height: 2.2rem; }
-
-.cat-work-label {
-  display: block;
-  margin-bottom: var(--space-0);
-  color: var(--muted);
-  font-size: var(--font-meta);
-  font-weight: 700;
-}
+/* 開いている行に付く操作は、訳文欄の下へ横1列で置く。縦に積むと 94px 使う。
+   閉じている行と同じ格子の中に収めるため、余白も最小にする。 */
+.cat-grid tbody tr.is-active .cat-row-primary { display: inline-flex; vertical-align: top; }
+.cat-grid tbody tr.is-active .cat-more-row { display: inline-block; margin-left: var(--space-2); }
+.cat-grid tbody tr.is-active .cat-more-row > summary { margin-top: 0; min-height: 2.2rem; }
 
 /* 登録済みの用語がどこにあるかを原文の上で示す。塗りではなく下線にする。
    訳文の面と競合させないため。 */

@@ -278,7 +278,7 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
    原文が4行とも見えているのに訳文だけ切れていた。em 基準にして「文字を大きく」でも
    3行ぶんを保つ。実際の行数に合わせた高さは cat.js の自動伸長が上書きする。
    開いている行は原文の下に積むので、下限を厚くすると行が画面に収まらなくなる。 */
-.cat-target textarea, .cat-work-target textarea { width: 100%; min-height: calc(1.8em * 3 + 1.2em); padding: .7em .9em; resize: vertical; overflow-y: hidden; font-size: var(--font-segment); line-height: 1.8; }
+.cat-target textarea { width: 100%; min-height: calc(1.8em * 3 + 1.2em); padding: .7em .9em; resize: vertical; overflow-y: hidden; font-size: var(--font-segment); line-height: 1.8; }
 .cat-loc { display: block; color: var(--muted); }
 /* 確認済みの印。番号の隣に小さく出す。一覧を眺めたときに、どこまで見たかが分かる。 */
 /* 行の印。狭い列から溢れて隣に重ならないよう、番号の下に1行で置く。 */
@@ -450,7 +450,7 @@ summary { cursor: pointer; color: var(--text); font-size: var(--font-meta); min-
 .cat-text-output textarea { margin-top: 10px; min-height: 180px; }
 .cat-text-output-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
 .cat-qc-findings { font-size: var(--font-meta); }
-.cat-target textarea[aria-invalid="true"], .cat-work-target textarea[aria-invalid="true"] { box-shadow: 0 0 0 3px var(--error); background: #fff7f5; }
+.cat-target textarea[aria-invalid="true"] { box-shadow: 0 0 0 3px var(--error); background: #fff7f5; }
 .cat-card-label { display: none; }
 
 @media (max-width: 900px) {
@@ -464,7 +464,7 @@ summary { cursor: pointer; color: var(--text); font-size: var(--font-meta); min-
   .cat-card-label { display: block; margin-bottom: 6px; color: var(--muted); font-size: var(--font-meta); font-weight: 700; }
   .cat-col-no, .cat-col-loc, .cat-source, .cat-target { width: 100%; }
   .cat-source { font-size: var(--font-body); line-height: 1.75; }
-  .cat-target textarea, .cat-work-target textarea { min-height: calc(1.8em * 5 + 1.2em); }
+  .cat-target textarea { min-height: calc(1.8em * 5 + 1.2em); }
   .cat-row-actions { gap: 10px; flex-wrap: wrap; margin-top: 12px; }
   .cat-cand { grid-template-columns: 32px 1fr; }
   .cat-cand-src, .cat-cand-tgt { grid-column: 1 / -1; }
