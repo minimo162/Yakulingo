@@ -241,23 +241,33 @@ try {
     Check-YakuH1 ([string]$segment.State -eq 'machine_draft' -and -not [bool]$segment.Confirmed) 'imported draft is not reviewed'
     $null = Set-YakuCatSegmentTranslation -Project $project -Index 0 -Text 'Revenue was 100 million yen.'
     Check-YakuH1 ([string]$segment.State -eq 'human_edited' -and -not [bool]$segment.Confirmed) 'manual editing does not imply review'
+    # 2026-08-12: 全行確認をファイル作成の条件から外した（市販ツールはどれも
+    # 「書き出す」と「完了にする」を分けている）。未確認でも出せるが、何行が
+    # 未確認かを必ず数えて返す。数字の点検に落ちる行は、これまでどおり出せない。
     $before = Get-YakuCatOutputEligibility -Project $project
-    Check-YakuH1 (-not [bool]$before.TranslationListEligible) 'unreviewed translation cannot be exported'
+    Check-YakuH1 ([bool]$before.TranslationListEligible) 'unreviewed but sound translation can still be exported'
+    Check-YakuH1 ([int]$before.UnconfirmedCount -eq 1) 'the unconfirmed rows are counted, not hidden'
     $null = Set-YakuCatSegmentConfirmed -Project $project -Index 0
     Check-YakuH1 ([string]$segment.State -eq 'reviewed' -and [string]$segment.QcStatus -eq 'passed') 'review runs current QC and records reviewed state'
     $after = Get-YakuCatOutputEligibility -Project $project
-    Check-YakuH1 ([bool]$after.TranslationListEligible) 'fully reviewed text project can produce a translation list'
+    Check-YakuH1 ([bool]$after.TranslationListEligible -and [int]$after.UnconfirmedCount -eq 0) 'a fully reviewed project reports nothing left unconfirmed'
 
     # 承認は「その時点の原文と訳文」にだけ有効でなければならない。メモリ上の
     # オブジェクトが別経路で書き換わっても、古いQCを使って出力してはいけない。
+    # 訳文を裏から書き換えたら、確認済みの扱いは外れる。数値が原文と合わなくなる
+    # ため、点検にも落ちて出せない（未確認そのものではなく、欠陥だから止まる）。
     $segment.Translation = 'Revenue was 999 million yen.'
     $afterMutation = Get-YakuCatOutputEligibility -Project $project
-    Check-YakuH1 (-not [bool]$afterMutation.TranslationListEligible -and [string]$segment.State -ne 'reviewed') 'target mutation invalidates review and output eligibility'
+    Check-YakuH1 (-not [bool]$afterMutation.TranslationListEligible -and [string]$segment.State -ne 'reviewed') 'target mutation invalidates review and blocks output through QC'
+    Check-YakuH1 (@($afterMutation.Reasons) -contains 'segment-qc-failed') 'the block is reported as a numeric check failure'
     $null = Set-YakuCatSegmentTranslation -Project $project -Index 0 -Text 'Revenue was 100 million yen.'
     $null = Set-YakuCatSegmentConfirmed -Project $project -Index 0
+    # 古い契約版の点検結果は、確認済みの根拠にならない。実測すると、その行は
+    # reviewed から外れて未確認に戻り、出力の可否は現行契約で取り直した点検で
+    # 決まる。「古い点検が出力を許す」ことが起きないという性質は保たれている。
     $segment.QcContractVersion = 'cat-qc-v1'
     $afterOldContract = Get-YakuCatOutputEligibility -Project $project
-    Check-YakuH1 (-not [bool]$afterOldContract.TranslationListEligible) 'old QC contract cannot authorize current output'
+    Check-YakuH1 ([string]$segment.State -ne 'reviewed' -and [int]$afterOldContract.UnconfirmedCount -eq 1) 'an old QC contract stops counting as confirmed'
     $null = Set-YakuCatSegmentConfirmed -Project $project -Index 0
 
     $bad = New-YakuCatTextProject -Root $root -Text '売上高は200百万円でした。' -Settings $null -Direction 'to_en' -Translation 'Revenue increased.'

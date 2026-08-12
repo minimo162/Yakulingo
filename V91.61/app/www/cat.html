@@ -56,8 +56,8 @@
            保存したくなったら「1文ずつ確認して保存する」で、同じ画面の確認作業へ移る。 -->
       <section id="cat-instant" class="cat-instant" aria-labelledby="cat-start-title">
         <form id="quick-form" class="quick-inline">
-          <p class="muted">文章を貼り付けると、その場で訳します。この状態の文章と訳文は保存しません。登録した訳語もここでは使いません。保存すると1文ずつ直せて、用語もそろいます。</p>
-          <p class="quick-notation-note">英訳の金額は<strong>社内表記</strong>で書きます（1兆3,150億円 → <code>13,150 oku</code>、▲152億円 → <code>(152) oku</code>）。<code>billion</code> での表記には、いまは対応していません。</p>
+          <p class="muted">訳したい文章を貼り付けてください。Word・Excel は下から取り込めます。ここで訳しただけでは保存しません（登録した訳語も使いません）。</p>
+          <p class="quick-notation-note">英訳の金額は <strong>oku 表記</strong>で書きます（1兆3,150億円 → <code>13,150 oku</code>、▲152億円 → <code>(152) oku</code>）。</p>
           <p id="quick-selection-note" class="quick-selection-note" role="status" aria-live="polite" hidden></p>
           <!-- 選んだ範囲だけでは、Word・Excelの体裁を保った社内確認用ファイルは
                作れない。元のファイルを丸ごと取り込む道をここに置く。書き込むのは
@@ -96,7 +96,7 @@
         <section id="quick-result" class="quick-result" aria-labelledby="quick-result-title" hidden>
           <div class="result-card">
             <div class="result-card-header"><div><span class="eyebrow">訳案</span><h3 id="quick-result-title"></h3></div></div>
-            <pre id="quick-result-text" class="translation"></pre><p id="quick-notation-hint" class="quick-notation-note" hidden>金額は社内表記（<code>oku</code>）で書いています。社外へそのまま出す場合は、書き方をご確認ください。</p>
+            <pre id="quick-result-text" class="translation"></pre><p id="quick-notation-hint" class="quick-notation-note" hidden>金額は <code>oku</code> 表記で書いています。</p>
             <div class="result-actions">
               <button id="quick-copy" type="button">コピー</button>
               <button id="quick-revise-open" type="button" class="secondary-button" aria-expanded="false" aria-controls="quick-revise-form">この訳案を直す</button>
@@ -172,7 +172,6 @@
           <button type="button" id="cat-align-open">前回版として取り込む</button>
         </div>
         <fieldset id="cat-direction-choice" class="direction-choice" hidden><legend>どちらに訳しますか？</legend><p class="muted">入力内容だけでは自動で決められません。</p><div class="direction-choice-grid"><button type="button" class="secondary-button" data-cat-direction="to_en">英語に訳す</button><button type="button" class="secondary-button" data-cat-direction="to_jp">日本語に訳す</button></div></fieldset>
-        <p class="privacy-note">金額などの数値は、Copilotへ送る前に自動で伏せます。社名・人名・文章はそのまま送信されます。英訳の金額は社内表記で書きます（1兆3,150億円 → <code>13,150 oku</code>）。<code>billion</code> での表記には、いまは対応していません。</p>
       </section>
 
       <section id="cat-workspace" class="cat-workspace" hidden>
@@ -257,7 +256,7 @@
         </div>
 
         <div id="cat-output-row" class="cat-output-row" hidden><span>訳文を入れたコピーを作りました：<strong id="cat-output-name"></strong></span><button id="cat-open-folder" type="button">フォルダを開く</button></div>
-        <dialog id="cat-text-output" class="cat-text-output"><h2>確認済み訳文</h2><p id="cat-text-output-note" class="cat-text-output-note" role="status" aria-live="polite"></p><p class="muted">コピーできない場合も全文はここに残ります。</p><textarea id="cat-text-output-value" readonly></textarea><div class="cat-text-output-actions"><button id="cat-copy-again" type="button">もう一度コピー</button><button id="cat-select-all" type="button" class="secondary-button">全文を選ぶ（このあとCtrl+Cでコピー）</button><button id="cat-text-output-close" type="button" class="secondary-button">閉じる</button></div></dialog>
+        <dialog id="cat-text-output" class="cat-text-output"><h2>訳文</h2><p id="cat-text-output-note" class="cat-text-output-note" role="status" aria-live="polite"></p><p class="muted">コピーできない場合も全文はここに残ります。</p><textarea id="cat-text-output-value" readonly></textarea><div class="cat-text-output-actions"><button id="cat-copy-again" type="button">もう一度コピー</button><button id="cat-select-all" type="button" class="secondary-button">全文を選ぶ（このあとCtrl+Cでコピー）</button><button id="cat-text-output-close" type="button" class="secondary-button">閉じる</button></div></dialog>
               </section>
     </section>
   </main>

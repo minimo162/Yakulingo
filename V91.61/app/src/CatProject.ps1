@@ -580,10 +580,35 @@ function Get-YakuCatOutputEligibility {
     $null = Initialize-YakuCatProjectState -Project $Project
     $reasons = New-Object System.Collections.Generic.List[string]
     if (@($Project.Segments).Count -eq 0) { $reasons.Add('project-empty') | Out-Null }
+
+    # 2026-08-12: 全行を確認済みにしないとファイルを作れない決まりをやめた。
+    # 市販ツールを調べたところ、どれも「書き出す」と「完了にする」を分けている。
+    #   memoQ  : 未確認・未訳があっても書き出せる（警告を出す）。納品は全行確認が必要
+    #   Phrase : ターゲットは随時ダウンロードできる。Complete は全確認が必要
+    #   Trados : Draft のままでも目的ファイルを生成できる。Finalize は別のバッチ
+    # このアプリは書き出しに全行確認を要求しており、3つのどれよりも厳しかった。
+    #
+    # 残す歯止めは2つだけにする。どちらも「直さないと欠陥になる」ものである。
+    #   1. 訳文が空の行がある     → 出せない
+    #   2. 数字の点検に落ちる行がある → 出せない（数値が抜けた訳は警告ではなく欠陥）
+    # 未確認は止めない。代わりに何行あるかを数え、押す前の画面と文書内の帯に出す。
+    #
+    # 点検は「確定したとき」にしか走らないので、未確認の行はここで写しに対して
+    # 走らせて調べる。写しに対して行うので、作業の状態は変えない。
+    $unconfirmed = 0
     foreach ($segment in @($Project.Segments)) {
-        if ([string]$segment.State -ne 'reviewed') { $reasons.Add('segment-not-reviewed') | Out-Null; break }
-        if (-not (Test-YakuCatSegmentQcCurrent -Segment $segment -TerminologySnapshotHash ([string]$Project.TerminologySnapshotHash))) { $reasons.Add('segment-qc-not-current') | Out-Null; break }
-        if ([string]::IsNullOrWhiteSpace([string]$segment.Translation)) { $reasons.Add('segment-untranslated') | Out-Null; break }
+        if ([string]::IsNullOrWhiteSpace([string]$segment.Translation)) { $reasons.Add('segment-untranslated') | Out-Null; continue }
+        if ([string]$segment.State -eq 'reviewed') {
+            if (-not (Test-YakuCatSegmentQcCurrent -Segment $segment -TerminologySnapshotHash ([string]$Project.TerminologySnapshotHash))) {
+                $reasons.Add('segment-qc-not-current') | Out-Null
+            }
+            continue
+        }
+        $unconfirmed++
+        $probe = Copy-YakuCatProjectSegmentForProbe -Segment $segment
+        $verdict = $null
+        try { $verdict = Invoke-YakuCatSegmentValidation -Project $Project -Segment $probe } catch { $verdict = $null }
+        if ($null -eq $verdict -or -not [bool]$verdict.Passed) { $reasons.Add('segment-qc-failed') | Out-Null }
     }
     $translationList = ($reasons.Count -eq 0)
     $sourceReady = [string]$Project.Source -eq 'file' -and (Test-Path -LiteralPath ([string]$Project.Path) -PathType Leaf)
@@ -601,8 +626,19 @@ function Get-YakuCatOutputEligibility {
         TranslationListEligible = $translationList
         ExcelDraftEligible = $excelDraft
         WordDraftEligible = $wordDraft
+        UnconfirmedCount = $unconfirmed
         Reasons = @($reasons.ToArray() | Select-Object -Unique)
     }
+}
+
+function Copy-YakuCatProjectSegmentForProbe {
+    <# 点検を試すためだけの写し。作業中の行には触れない（点検は状態を書き換える）。 #>
+    param([Parameter(Mandatory=$true)]$Segment)
+    $copy = [pscustomobject]@{}
+    foreach ($property in @($Segment.PSObject.Properties)) {
+        $copy | Add-Member -NotePropertyName $property.Name -NotePropertyValue $property.Value -Force
+    }
+    return $copy
 }
 
 function Get-YakuCatOutputPreflight {
@@ -642,7 +678,8 @@ function Get-YakuCatOutputPreflight {
 
     $reasonText = [ordered]@{
         'project-empty' = '翻訳する行がありません。'
-        'segment-not-reviewed' = 'まだ確認していない行があります。左の「要対応」を押すと、その行だけ表示できます。'
+        'segment-not-reviewed' = 'まだ確認していない行があります。左の「残り」を押すと、その行だけ表示できます。'
+        'segment-qc-failed' = '数字の点検に通らない行があります。左の「点検の指摘」を押すと、その行だけ表示できます。'
         'segment-qc-not-current' = '訳文を直したあと、まだ自動点検をしていない行があります。その行を「確認済みにする」と点検します。'
         'segment-untranslated' = '訳文が空の行があります。'
         'source-file-missing' = '元のファイルが見つかりません。'
@@ -676,7 +713,14 @@ function Get-YakuCatOutputPreflight {
         $extension = if ([string]::IsNullOrWhiteSpace($format)) { '' } else { '.' + $format }
         $outputName = 'DRAFT_' + $safeName + '_translated' + $extension
     } elseif ($mode -eq 'copy_text') {
-        $outputName = '確認済み訳文'
+        $outputName = '訳文'
+    }
+
+    # 未確認のまま出せるようにした以上、何行が未確認かは押す前に必ず言う。
+    # 数を言わずに出すと、確認し終えたものと見分けがつかなくなる。
+    $unconfirmedCount = [int]$eligibility.UnconfirmedCount
+    if ($mode -ne 'blocked' -and $unconfirmedCount -gt 0) {
+        $warnings.Add(('まだ確認していない行が ' + $unconfirmedCount + ' 行あります。そのままファイルに入れます。')) | Out-Null
     }
 
     return [pscustomobject]@{
@@ -685,6 +729,7 @@ function Get-YakuCatOutputPreflight {
         Eligible = ($mode -ne 'blocked')
         Mode = $mode
         OutputName = $outputName
+        UnconfirmedCount = $unconfirmedCount
         Blockers = @($blockers)
         Warnings = @($warnings.ToArray())
         DraftNotice = if ($mode -in @('word_draft','excel_draft')) { '原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。' } else { '確認済みの訳文をまとめてコピーします。' }
@@ -1429,6 +1474,8 @@ function Get-YakuCatSavedProjects {
                     Id = [string]$o.id
                     FileName = [string]$o.file_name
                     Direction = [string]$o.direction
+                    # 一覧からそのまま消せるようにする。削除は expected_revision が要る。
+                    Revision = $(try { [int]$o.revision } catch { 0 })
                     Total = $segs.Count
                     Confirmed = @($segs | Where-Object { [bool]$_.confirmed }).Count
                     Saved = [string]$o.saved

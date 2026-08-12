@@ -2510,6 +2510,7 @@ function Invoke-YakuRoute {
                 # 前回までの作業一覧。取り込む前に「続きから」を選べるようにする。
                 $rows = @(Get-YakuCatSavedProjects -Limit 10 | ForEach-Object {
                         [ordered]@{ id = [string]$_.Id; file_name = [string]$_.FileName; direction = [string]$_.Direction
+                            revision = [int]$_.Revision
                             total = [int]$_.Total; confirmed = [int]$_.Confirmed; saved = [string]$_.Saved
                             export_blocked = [bool]$_.ExportBlocked }
                     })
@@ -3115,6 +3116,7 @@ function Invoke-YakuRoute {
                         eligible = [bool]$preflight.Eligible
                         mode = [string]$preflight.Mode
                         output_name = [string]$preflight.OutputName
+                        unconfirmed_count = [int]$preflight.UnconfirmedCount
                         blockers = @($preflight.Blockers)
                         warnings = @($preflight.Warnings)
                         draft_notice = [string]$preflight.DraftNotice

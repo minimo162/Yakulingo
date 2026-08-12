@@ -197,6 +197,21 @@ Check-YakuDual ($catPage -match '<strong>すべての行を確認し終えまし
 # 自分の説明に引っかかって落ちる（2026-08-12 に実際に落ちた）。
 $catClientCode = [regex]::Replace($catClient, '(?s)/\*.*?\*/', '')
 Check-YakuDual ($catClientCode -notmatch '原文が似ているというだけです' -and $catClientCode -notmatch 'ページ情報なし' -and $catClientCode -notmatch '文書内の場所情報なし') 'reference cards drop the restated caveat and the empty-field placeholders'
+# 2026-08-12: 全行確認をファイル作成の条件から外した（memoQ・Phrase・Trados は
+# どれも「書き出す」と「完了にする」を分けている）。緩めた以上、未確認が何行
+# あるかは押す前の画面とファイルの中の両方に必ず出す。
+Check-YakuDual ($server -match 'unconfirmed_count = \[int\]\$preflight\.UnconfirmedCount') 'the preflight reports how many rows are still unconfirmed'
+Check-YakuDual ($catClient -match 'data\.unconfirmed_count') 'the confirm dialog reads that count instead of assuming everything is confirmed'
+# 出す文言の検査なので注釈は外してから見る（消した文言を注釈で説明しているため）。
+Check-YakuDual (([regex]::Replace($catClient, '(?s)/\*.*?\*/', '')) -notmatch '確認済みの内容を出力できます') 'the dialog no longer claims the output is fully reviewed'
+$catProjectSrc = Read-YakuDualText (Join-Path $srcRoot 'CatProject.ps1')
+Check-YakuDual ($catProjectSrc -match "segment-qc-failed") 'a row failing the numeric check still blocks the file'
+Check-YakuDual ($catProjectSrc -match 'Copy-YakuCatProjectSegmentForProbe') 'unconfirmed rows are checked on a copy so the work is not altered'
+$wordSrc = Read-YakuDualText (Join-Path $srcRoot 'WordAdapter.ps1')
+# 2026-08-12: 進み具合はファイルへ書かない（利用者の指摘「ファイルに出したら
+# 完成品にならないのでは」）。ファイルに残すのは DRAFT の帯だけで、未確認の数は
+# 画面と出力前の確認に出す。
+Check-YakuDual ($wordSrc -notmatch '未確認 .*行を含む' -and $wordSrc -match 'DRAFT — YakuLingo') 'the produced file carries the DRAFT mark but not the working progress'
 Check-YakuDual ($catClient -match "activeSegmentId\s*=\s*''" -and $catClient -match 'data-cat-segment-id' -and $catClient -match 'String\(segment\.segment_id') 'active row survives redraws by stable segment_id'
 Check-YakuDual ($catClient -match "esc\(segment\.location \|\| '本文'\)" -and $catClient -match 'function locationGroup\(segment\)') 'rows display the actual source location and navigation groups it locally'
 Check-YakuDual ($catClient -match 'cat-candidate-number' -and $catClient -match 'itemIndex \+ 1' -and $catClient -match 'data-cat-reference-id') 'numbered candidate controls preserve explicit reference insertion'
