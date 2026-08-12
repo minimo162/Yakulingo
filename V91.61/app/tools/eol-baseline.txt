@@ -37,6 +37,7 @@ src/Runtime.ps1	crlf
 src/Selection.ps1	lf
 src/Server.ps1	crlf
 src/Settings.ps1	lf
+src/SrcModules.ps1	crlf
 src/Terminology.ps1	lf
 src/Translation.ps1	crlf
 src/TranslationMemory.ps1	crlf
@@ -85,6 +86,7 @@ tools/Test-YakuV9161GlossaryVariants.ps1	crlf
 tools/Test-YakuV9161Revise.ps1	crlf
 tools/Test-YakuV9161Shorten.ps1	crlf
 tools/Test-YakuV9161SplitRequests.ps1	crlf
+tools/Test-YakuV9161SrcModuleLoad.ps1	crlf
 tools/Test-YakuV9161TranslationMemory.ps1	crlf
 tools/Test-YakuV9162Horizon1.ps1	lf
 tools/Test-YakuV9163VersionUpdate.ps1	crlf
