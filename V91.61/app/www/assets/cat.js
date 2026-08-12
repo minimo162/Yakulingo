@@ -8,6 +8,49 @@
   var termSelection = { index: -1, source: '', target: '' };
   function el(id) { return document.getElementById(id); }
   function esc(value) { return YakuCommon.escape(value); }
+
+  /* 過去訳の原文が、いまの原文とどこが違うかを示す。市販CAT（memoQ・Trados・
+     Phrase）はどれも一致率だけでなく差分を出す。率だけでは「93%」がどこの93%か
+     分からず、結局は目で2文を読み比べることになる。
+
+     日本語は語の区切りが無いので1文字ずつ、英数字は語単位で比べる。長い文は
+     比較そのものが重くなるので、上限を超えたら差分をあきらめて原文を出す
+     （出さないより、印の無い原文を出すほうがまし）。 */
+  function diffTokens(text) {
+    var tokens = [], run = '';
+    String(text || '').split('').forEach(function (ch) {
+      if (/[A-Za-z0-9'’\-]/.test(ch)) { run += ch; return; }
+      if (run) { tokens.push(run); run = ''; }
+      tokens.push(ch);
+    });
+    if (run) tokens.push(run);
+    return tokens;
+  }
+  function diffMarkup(candidateSource, currentSource) {
+    var a = diffTokens(currentSource), b = diffTokens(candidateSource);
+    if (!a.length || !b.length || a.length * b.length > 160000) return esc(candidateSource);
+    var lcs = [], i, j;
+    for (i = 0; i <= a.length; i++) lcs.push(new Uint16Array(b.length + 1));
+    for (i = a.length - 1; i >= 0; i--) {
+      for (j = b.length - 1; j >= 0; j--) {
+        lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+      }
+    }
+    var html = '', same = '', diff = '';
+    function flush() {
+      if (same) { html += esc(same); same = ''; }
+      if (diff) { html += '<span class="cat-diff-ins">' + esc(diff) + '</span>'; diff = ''; }
+    }
+    i = 0; j = 0;
+    while (i < a.length && j < b.length) {
+      if (a[i] === b[j]) { if (diff) flush(); same += b[j]; i++; j++; }
+      else if (lcs[i + 1][j] >= lcs[i][j + 1]) { i++; }
+      else { if (same) flush(); diff += b[j]; j++; }
+    }
+    while (j < b.length) { if (same) flush(); diff += b[j]; j++; }
+    flush();
+    return html;
+  }
   /* 失敗の知らせは画面のいちばん上に出る。長い一覧の下を編集していると視界に入らず、
      「押したのに何も起きない」と受け取られるので、必ずそこまで運ぶ。 */
   /* 画面の不具合そのもの（TypeError など）を、そのまま利用者へ見せない。
@@ -772,6 +815,9 @@
       if (seq !== candidateSeq || !scopeIsCurrent(requestScope, true) || Number(activeIndex) !== Number(index)) return;
       var terms = (data.terms || []).filter(function (item) { return item.kind === 'term'; });
       var items = (data.segment_matches || []).filter(function (item) { return item.kind === 'memory' || item.kind === 'prior'; });
+      var activeSegmentNow = activeSegment();
+      var activeSource = activeSegmentNow ? String(activeSegmentNow.source || '') : '';
+      var diffHintShown = false;
       var panel = el('cat-candidates'); panel.hidden = false;
       el('cat-candidate-count').textContent = String(terms.length + items.length);
       el('cat-terms-list').innerHTML = terms.length ? terms.map(function (item, termIndex) {
@@ -794,19 +840,30 @@
         var place = Number(item.page) > 0 ? ('ページ ' + Number(item.page)) : '';
         var location = item.location ? String(item.location) : '';
         var ratio = Number(item.score != null ? item.score : (item.source_match_ratio != null ? item.source_match_ratio : item.ratio)) || 0;
-        var match = item.kind === 'prior' ? (item.exact ? '前回と原文が同じ' : '前回から原文に変更あり') : (ratio >= .999 || item.exact ? '原文が同じ' : ('原文が ' + Math.round(ratio * 100) + '% 同じ'));
+        /* 一致率は、市販CATと同じくカードの先頭に大きく出す。どこが違うかは
+           原文側の印で示すので、下の説明文は日付だけでよくなった。 */
+        var exact = (item.kind === 'prior' ? !!item.exact : (ratio >= .999 || !!item.exact));
+        var percent = exact ? 100 : Math.max(1, Math.min(99, Math.round(ratio * 100)));
+        var scoreClass = exact ? 'is-exact' : (percent >= 85 ? 'is-high' : 'is-low');
+        var scoreBadge = '<span class="cat-cand-score ' + scoreClass + '" title="いまの原文とどれだけ同じか">' + percent + '%</span>';
+        /* 一致率は先頭の札が持っているので、ここで数字を繰り返さない。 */
+        var match = item.kind === 'prior' ? (item.exact ? '前回と原文が同じ' : '前回から原文に変更あり') : '';
         var translation = item.translation != null ? item.translation : item.target;
         var number = terms.length + itemIndex + 1;
         /* 日時は「いつ確認した訳か」だけ分かればよい。秒まで出すと、
            見比べたい原文・訳文より目立つ（2026-08-12）。 */
-        var saved = item.saved ? ('・' + String(item.saved).slice(0, 10) + ' 確認') : '';
+        var saved = item.saved ? (String(item.saved).slice(0, 10) + ' 確認') : '';
+        /* 「太字が違うところ」は、最初に印が付いたカードで一度だけ言う。
+           全部のカードに書くと、読むのは印そのものではなく説明文になる。 */
+        var diffHint = '';
+        if (!exact && !diffHintShown) { diffHint = '太字がいまの原文と違うところ'; diffHintShown = true; }
         var deleteButton = item.kind === 'memory' ? '<button type="button" class="secondary-button" data-cat-tm-delete="' + esc(item.reference_id || '') + '" data-cat-index="' + index + '">この候補を今後は出さない</button>' : '';
-        return '<article class="cat-candidate-card"><span class="cat-candidate-number">' + number + '</span>' + (number <= 9 ? '<span class="cat-candidate-shortcut"><kbd>Ctrl</kbd>+<kbd>' + number + '</kbd></span>' : '') + '<div class="cat-candidate-meta"><span class="cat-cand-tag">' + esc(label) + '</span><span>' + esc(material) + '</span>' + (location ? '<span>' + esc(location) + '</span>' : '') + (place ? '<span>' + esc(place) + '</span>' : '') + '</div>' +
-          '<div><strong>原文</strong><p class="cat-cand-src">' + esc(item.source) + '</p></div><div><strong>訳文</strong><p class="cat-cand-tgt">' + esc(translation) + '</p></div>' +
+        return '<article class="cat-candidate-card"><span class="cat-candidate-number">' + number + '</span>' + (number <= 9 ? '<span class="cat-candidate-shortcut"><kbd>Ctrl</kbd>+<kbd>' + number + '</kbd></span>' : '') + '<div class="cat-candidate-meta">' + scoreBadge + '<span class="cat-cand-tag">' + esc(label) + '</span><span>' + esc(material) + '</span>' + (location ? '<span>' + esc(location) + '</span>' : '') + (place ? '<span>' + esc(place) + '</span>' : '') + '</div>' +
+          '<div><strong>原文</strong><p class="cat-cand-src">' + diffMarkup(item.source, activeSource) + '</p></div><div><strong>訳文</strong><p class="cat-cand-tgt">' + esc(translation) + '</p></div>' +
           /* 「原文が似ているというだけです。訳文が正しいかは…」は消した。
              見出しが「似ている過去の訳」で、入れるかどうかは押して決める。
              読む人はそれを分かっている（2026-08-12、利用者の指摘）。 */
-          '<p class="muted">' + esc(match + saved) + '</p>' +
+          '<p class="muted">' + esc([match, saved, diffHint].filter(Boolean).join('・')) + '</p>' +
           '<div class="cat-row-actions"><button type="button" class="secondary-button" data-cat-insert="' + esc(translation) + '" data-cat-reference-id="' + esc(item.reference_id || '') + '" data-cat-project-id="' + esc(requestScope.id) + '" data-cat-index="' + index + '">' + number + ' この訳を挿入</button>' + deleteButton + '</div></article>';
       }).join('') : '<p class="muted">確認済みにした訳が、次の資料から候補に出ます。</p>';
     }).catch(function () { if (seq === candidateSeq) { el('cat-candidate-count').textContent = '0'; el('cat-terms-list').innerHTML = '<p class="muted">用語を読み込めませんでした。行を選び直すと、もう一度探します。</p>'; el('cat-candidates-list').innerHTML = '<p class="muted">似た訳を読み込めませんでした。行を選び直すと、もう一度探します。</p>'; } });

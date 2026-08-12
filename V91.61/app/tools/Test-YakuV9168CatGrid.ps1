@@ -61,5 +61,16 @@ Check-YakuGrid ($catHtml -match 'id="cat-inspector-toggle"') '右の参考情報
 Check-YakuGrid ($catJs -match "localStorage.setItem\('yaku-cat-inspector-hidden'") '畳んだかどうかを次回も引き継ぐ'
 Check-YakuGrid ($catCss -match '\.cat-editor-layout\.is-inspector-hidden \{ grid-template-columns: minmax\(0, 1fr\); \}') '畳んだ分の幅は一覧が使う'
 
+# 一致率と差分。市販CATは率だけでなく「どこが違うか」を必ず出す。
+Check-YakuGrid ($catJs -match 'function diffMarkup\(') '過去訳の原文といまの原文の差分を作る'
+Check-YakuGrid ($catJs -match 'cat-diff-ins') '違うところに印を付ける'
+Check-YakuGrid ($catJs -match 'cat-cand-score') '一致率をカードの先頭に出す'
+Check-YakuGrid ($catJs -notmatch "'原文が ' \+ Math\.round") '一致率を文章側で繰り返さない'
+Check-YakuGrid ($catJs -match 'a\.length \* b\.length > 160000') '長すぎる文では差分をあきらめる（重くしない）'
+Check-YakuGrid ($catJs -match 'diffHintShown') '差分の説明は最初の1枚だけに出す'
+$styles = Get-Content -LiteralPath (Join-Path $root 'www\assets\styles.css') -Raw -Encoding UTF8
+Check-YakuGrid ($styles -match '\.cat-diff-ins \{[^}]*font-weight: 700[^}]*text-decoration: underline') '差分の印は色だけに頼らない'
+Check-YakuGrid ($styles -match '\.cat-cand-score\.is-exact') '100%一致は他と見分けが付く'
+
 if ($script:failed -gt 0) { Write-Host ('CAT grid tests failed: ' + $script:failed) -ForegroundColor Red; exit 1 }
 Write-Host 'CAT grid tests passed.' -ForegroundColor Green
