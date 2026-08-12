@@ -4404,7 +4404,9 @@ function Set-YakuCopilotModel {
     $body = @'
 const candidates = __MODEL_NAMES__;
 const operationDeadline = Date.now() + 15000;
-const ensureBudget = () => { if (Date.now() > operationDeadline) throw new Error('MODEL_SELECTION_DEADLINE'); };
+// 持ち時間切れは例外にしない。投げると、どこまで見えていたか（menuItems・skipped）が
+// 全部消えて、あとから原因を追えなくなる。時間切れも「結果」として返す。
+const outOfBudget = () => Date.now() > operationDeadline;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
 const visible = (el) => {
@@ -4575,6 +4577,12 @@ const clickAndConfirm = async (hit, cand) => {
       picked = subHit.label;
       clickedEl = subHit.el;
       await fireMenuClick(clickedEl);
+    } else {
+      // 子メニューが開かなかったとき、そのまま下の確認へ進むと、押してもいない
+      // 「GPT」という親の名前で 5 秒待つことになる。待っても変わるはずがないので、
+      // ここで切り上げて次の候補（上の階層にある Think Deeper など）へ回す。
+      // 実測 2026-08-13: この空振りだけで 7 秒使い、15 秒の持ち時間を食い潰していた。
+      return { applied:false, reason:'submenu_not_opened', after:'', picked, waitedMs:2000, subMenuItems };
     }
   }
   let after = '';
@@ -4602,7 +4610,7 @@ const clickAndConfirm = async (hit, cand) => {
   return { applied:false, reason:'confirm_failed', after, picked, waitedMs:Date.now() - t0, subMenuItems, confirmSamples, menuStillOpen, clickMethod };
 };
 for (let pi = 0; pi < candidates.length; pi++) {
-  ensureBudget();
+  if (outOfBudget()) { skipped.push({ cand:candidates[pi], reason:'deadline' }); break; }
   const cand = candidates[pi];
   const hit = findHit(labeled, cand);
   if (!hit) { skipped.push({ cand, reason:'not_matched' }); continue; }
@@ -4621,8 +4629,17 @@ for (let pi = 0; pi < candidates.length; pi++) {
   skipped.push({ cand, reason:r.reason || 'confirm_failed', confirmSamples:r.confirmSamples || [], menuStillOpen:r.menuStillOpen === true, clickMethod:r.clickMethod || 'pointer' });
   const switcher = findSwitcher();
   if (!switcher) break;
-  fireClick(switcher); await sleep(300);
-  items = collectItems();
+  // 次の候補のためにメニューを開き直す。300ms 決め打ちで開いていなければ諦める作りだった
+  // ため、1つ目が外れた時点で残りの候補を一度も試さずに終わっていた（実測 2026-08-13:
+  // 「Think Deeper」は上の階層にあり、試していれば選べていた）。開くまで待つ。
+  fireClick(switcher);
+  items = [];
+  for (let i = 0; i < 20; i++) {
+    items = collectItems();
+    if (items.length) break;
+    if (outOfBudget()) break;
+    await sleep(100);
+  }
   if (!items.length) break;
   labeled = labelItems(items);
   menuItems = menuDiagnostics(labeled);
