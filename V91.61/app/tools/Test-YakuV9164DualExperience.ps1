@@ -168,8 +168,9 @@ Check-YakuDual ($catClient -match 'data\.review_blocked' -and $catClient -match 
 Check-YakuDual ($catClient -match 'function redrawAfterFlush\(\)[\s\S]*?return flush\(\)\.then' -and $catClient -match "button\.hasAttribute\('data-cat-filter'\)[\s\S]{0,180}redrawAfterFlush\(\)") 'filter redraw waits for the shared save barrier'
 
 Write-Host 'CAT H1 focused workspace contract' -ForegroundColor Cyan
-Check-YakuDual ($catPage -match 'cat-workspace\.css' -and $catPage -match 'id="cat-editor-toolbar"' -and $catPage -match 'id="cat-nav-pane"' -and $catPage -match 'id="cat-editor-pane"' -and $catPage -match 'id="cat-inspector-pane"') 'CAT uses one WebView workspace with sticky toolbar and three named regions'
-Check-YakuDual ($catWorkspaceStyle -match '(?s)\.cat-editor-toolbar\s*\{[^}]*position:\s*sticky' -and $catWorkspaceStyle -match 'grid-template-columns:\s*var\(--pane-nav\)\s+minmax\(0,\s*1fr\)\s+var\(--pane-inspector\)' -and $catWorkspaceStyle -match '--pane-nav:\s*clamp\(' -and $catWorkspaceStyle -match '--pane-inspector:\s*clamp\(') 'desktop CAT workspace has the approved sticky three-region layout'
+Check-YakuDual ($catPage -match 'cat-workspace\.css' -and $catPage -match 'id="cat-editor-toolbar"' -and $catPage -match 'id="cat-editor-pane"' -and $catPage -match 'id="cat-inspector-pane"') 'CAT uses one WebView workspace with a sticky toolbar and named regions'
+# 2026-08-12: 左の絞り込み列を廃止し、帯を表の上へ移した。右の参考情報は畳める。
+Check-YakuDual ($catWorkspaceStyle -match '(?s)\.cat-editor-toolbar\s*\{[^}]*position:\s*sticky' -and $catWorkspaceStyle -match 'grid-template-columns:\s*minmax\(0,\s*1fr\)\s+var\(--pane-inspector\)' -and $catWorkspaceStyle -match '--pane-inspector:\s*clamp\(' -and $catWorkspaceStyle -match '\.cat-editor-layout\.is-inspector-hidden' -and $catWorkspaceStyle -notmatch '--pane-nav') 'desktop CAT workspace filters above the grid and can fold the reference pane'
 # ツールバーは行数が3桁（200行など）になっても壊れてはいけない。実測（窓1380px）で
 # 2つの壊れ方を踏んだ。1つは進捗が min-width: 0 で枠より小さくなり検索欄の上へ
 # 重なる。もう1つは使う量の1文がボタンと同じ列で幅を奪い、列の合計が 1,460px と

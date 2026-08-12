@@ -3,15 +3,14 @@
    2段目に落ちてツールバーが伸びるので、固定値(旧 84px)では表の見出しが隠れていた。
    1320px 以上では器を窓へ固定するので、この値は使わない。 */
 :root {
-  --cat-toolbar-h: 76px;
+  --cat-toolbar-h: 118px;
   /* 主役は中央（原文と訳文）。脇役2つを可変にして、主役に幅を回す。
      固定220+380では、1240のウィンドウで主役が半分を切っていた。 */
   /* 脇役の2ペインで窓の39%を使い、原文と訳文が39%しか残っていなかった。
      MateCat は原文・訳文に45%ずつ割いている。器を詰めて主役へ回す。 */
-  /* 左ナビの幅は、いちばん長い絞り込みラベルが1行に収まるかで決まる。
-     「点検で気になる点」は実測119pxで、詰めた幅には収まらず3行に折り返していた。
-     ラベルを「点検の指摘」（実測74px）に縮めて、幅は主役へ回す。全文は title に置く。 */
-  --pane-nav: clamp(11rem, 13vw, 13rem);
+  /* 左ナビは 2026-08-12 に廃止。絞り込みは表の上の帯へ移した
+     （memoQ・Trados・Phrase も同じ）。実測 1380px で、原文と訳文は
+     1列 321px から広がる。 */
   /* 右の参考ペイン。19vw では実機（1380px）で262px＝日本語20字/行しかなく、
      過去訳の原文と訳文が細切れになって読めない。21vw まで広げて 23字/行にする。
      これ以上広げると主役（原文・訳文）が痩せるので、上限は 22rem で止める。 */
@@ -187,27 +186,20 @@
 
 .cat-editor-layout {
   display: grid;
-  grid-template-columns: var(--pane-nav) minmax(0, 1fr) var(--pane-inspector);
+  grid-template-columns: minmax(0, 1fr) var(--pane-inspector);
   gap: 12px;
   align-items: start;
   min-height: 62vh;
 }
 
-/* 左右の脇ペインは、白い面と余白で十分に分かれている。角丸の枠で囲むと、
-   3つの箱が並んだ見た目になる。枠を外し、主役（中央の一覧）との境目だけ
-   罫線1本で示す（2026-08-12）。 */
-.cat-nav-pane,
+/* 右の脇ペインは、白い面と余白で十分に分かれている。角丸の枠で囲むと、箱が
+   並んだ見た目になる。枠を外し、主役（左の一覧）との境目だけ罫線1本で示す。 */
 .cat-inspector-pane {
   overflow: auto;
   border: 0;
   border-radius: 0;
+  border-left: 1px solid var(--line);
   background: var(--surface);
-}
-.cat-nav-pane { border-right: 1px solid var(--line); }
-.cat-inspector-pane { border-left: 1px solid var(--line); }
-
-.cat-nav-pane {
-  padding: 12px;
 }
 
 /* 器が窓に固定される幅では、ペイン自体は動かさない。左ナビは「資料内の場所」
@@ -217,10 +209,6 @@
 @media (min-width: 1320px) {
   .cat-editor-layout { align-items: stretch; min-height: 0; }
   .cat-inspector-pane { min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
-  /* 左ナビは中の節を伸縮させない。拡大すると絞り込みだけで枠を超え、hidden に
-     切られて押せなくなる（実測で確認）。ペインごと動かして、切れることを原理的に
-     無くす。動くのは枠の中だけで、ページも見出しも動かない。 */
-  .cat-nav-pane { min-height: 0; overflow: auto; }
   /* 状態行の上下 17px は、器が固定の画面では一覧2行ぶんに相当する。 */
   .app-cat #cat-status { margin: var(--space-1) 0; }
   .cat-editor-pane { display: flex; flex-direction: column; min-height: 0; }
@@ -229,58 +217,80 @@
   .cat-inspector-pane [role="tabpanel"] { flex: 1; min-height: 0; overflow: auto; }
 }
 
-.cat-nav-pane h2 {
-  margin-bottom: var(--space-1);
-  color: var(--faint);
-  font-size: var(--font-meta);
-  letter-spacing: .06em;
-}
-
-.cat-nav-pane section + section {
-  margin-top: 18px;
-  padding-top: 14px;
+/* 絞り込みの帯（表の上）。市販CATと同じく、行を絞る道具は表の直前に置く。 */
+.cat-toolbar-filters {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-0) 6px;
+  padding-top: 6px;
   border-top: 1px solid var(--line);
 }
 
-.cat-state-filters,
-.cat-location-list {
-  display: grid;
-  gap: 5px;
-}
+.cat-state-filters { display: flex; flex-wrap: wrap; gap: 5px; }
+.cat-location-list { display: grid; gap: 5px; }
 
-.app-cat .cat-nav-pane .cat-state-filters button,
-.app-cat .cat-nav-pane .cat-location-list button {
-  justify-content: space-between;
-  width: 100%;
-  min-height: 44px;
-  padding: 7px 10px;
+.app-cat .cat-toolbar-filters .cat-state-filters button,
+.app-cat .cat-location-list button {
+  min-height: 1.9rem;
+  padding: 2px 10px;
   border-color: transparent;
   background: transparent;
   color: var(--text);
-  text-align: left;
   font-size: var(--font-meta);
 }
 
-.app-cat .cat-nav-pane .cat-state-filters button[aria-pressed="true"],
-.app-cat .cat-nav-pane .cat-location-list button[aria-pressed="true"] {
+.app-cat .cat-toolbar-filters .cat-state-filters button[aria-pressed="true"],
+.app-cat .cat-location-list button[aria-pressed="true"] {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent-text);
   font-weight: 700;
 }
 
-/* 左の絞り込みと、一覧の行の左端に、同じ色の帯を置く。これまでは左で「未確認」を
+/* 絞り込みと、一覧の行の左端に、同じ色の帯を置く。これまでは「未確認」を
    押しても、一覧の行に「未確認」という色が無く、対応を推測させていた。
-   border-left-color だけを触るので、選択中（aria-pressed）の面と文字は踏まない。
+   色は3つまで。「残り＝これから触る」「点検の指摘＝例外」「確認済み＝終わった」
+   （2026-08-12、利用者の指摘「色分けが多すぎて意味不明」）。 */
+.app-cat .cat-toolbar-filters .cat-state-filters button { border-left-width: 4px; }
+.app-cat .cat-toolbar-filters .cat-state-filters button[data-cat-filter="actionable"] { border-left-color: var(--warning); }
+.app-cat .cat-toolbar-filters .cat-state-filters button[data-cat-filter="qc"] { border-left-color: var(--error); }
+.app-cat .cat-toolbar-filters .cat-state-filters button[data-cat-filter="reviewed"] { border-left-color: var(--success); }
 
-   色は3つまで。6つあった絞り込みを3つ（＋例外の「点検の指摘」）に減らしたので、
-   帯も「残り＝これから触る」「点検の指摘＝例外」「確認済み＝終わった」の
-   3色で足りる（2026-08-12、利用者の指摘「色分けが多すぎて意味不明」）。
-   「すべて」は状態ではないので帯を持たない。 */
-.app-cat .cat-nav-pane .cat-state-filters button { border-left-width: 4px; }
-.app-cat .cat-nav-pane .cat-state-filters button[data-cat-filter="actionable"] { border-left-color: var(--warning); }
-.app-cat .cat-nav-pane .cat-state-filters button[data-cat-filter="qc"] { border-left-color: var(--error); }
-.app-cat .cat-nav-pane .cat-state-filters button[data-cat-filter="reviewed"] { border-left-color: var(--success); }
+/* 「資料内の場所」「前回からの変更」は、押したときだけ開く。常時見えていると
+   場所の一覧は資料しだいで無制限に伸び、帯が表を押し下げる。 */
+.cat-toolbar-menu { position: relative; }
+.cat-toolbar-menu > summary {
+  min-height: 1.9rem;
+  padding: 2px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  color: var(--text);
+  font-size: var(--font-meta);
+  white-space: nowrap;
+}
+.cat-toolbar-menu[open] > summary { border-color: var(--accent); }
+.cat-toolbar-menu > div {
+  position: absolute;
+  left: 0;
+  z-index: 30;
+  min-width: 15rem;
+  max-height: 60vh;
+  overflow: auto;
+  margin-top: var(--space-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: 0 10px 30px rgba(24,24,27,.16);
+  padding: var(--space-1);
+}
+.cat-location-list button { justify-content: space-between; width: 100%; text-align: left; }
+
+/* 参考情報を畳む。閉じている間は主役（原文・訳文）が右端まで使う。 */
+.cat-inspector-toggle { margin-left: auto; font-size: var(--font-meta); }
+.cat-editor-layout.is-inspector-hidden { grid-template-columns: minmax(0, 1fr); }
+.cat-editor-layout.is-inspector-hidden .cat-inspector-pane { display: none; }
 
 .cat-state-filters button span,
 .cat-location-list button span {
@@ -751,16 +761,15 @@
   .app-cat .tab-panel,
   .app-cat #cat-workspace { display: block; }
   .app-cat .workspace-heading { display: flex; }
-  .app-cat .cat-nav-pane,
   .app-cat .cat-inspector-pane { overflow: auto; }
   .app-cat .cat-grid-wrap { max-height: calc(100dvh - var(--cat-toolbar-h) - 73px); }
 }
 
-/* 3列（220 + 560 + 380 + gap 24）に必要なのは 1184px。.shell は画面幅 -32px なので
-   ビューポート 1216px を下回ると横スクロールが出ていた。2列化をそこまで引き上げる。 */
+/* 狭い窓では、参考情報を横ではなく下に置く。左の絞り込み列は廃止したので、
+   ここで確保するのは一覧の幅だけでよい（2026-08-12）。 */
 @media (max-width: 1319px) {
   .cat-editor-layout {
-    grid-template-columns: 190px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
   .cat-inspector-pane {
     position: static;
@@ -795,7 +804,6 @@
   .cat-toolbar-search {
     grid-template-columns: 1fr;
   }
-  .cat-nav-pane,
   .cat-inspector-pane {
     position: static;
     max-height: none;

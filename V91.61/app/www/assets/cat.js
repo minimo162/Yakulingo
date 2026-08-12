@@ -303,8 +303,14 @@
        「すべての場所」と「本文」が同じものを指す。選べない選択肢は出さない
        （2026-08-12、利用者の指摘）。 */
     var locationNames = Object.keys(groups);
-    var locationSection = el('cat-location-list').closest('section');
-    if (locationSection) locationSection.hidden = locationNames.length < 2;
+    /* 場所は表の上の帯に畳んで置く（2026-08-12）。閉じている summary に、いま
+       どこを見ているかを書く。書かないと、絞り込んだことが画面から消える。 */
+    var locationMenu = el('cat-location-menu');
+    if (locationMenu) {
+      locationMenu.hidden = locationNames.length < 2;
+      var summary = el('cat-location-summary');
+      if (summary) summary.textContent = currentLocation === 'all' ? '資料内の場所' : ('場所: ' + currentLocation);
+    }
     el('cat-location-list').innerHTML = '<button type="button" data-cat-location="all" aria-pressed="' + String(currentLocation === 'all') + '">すべての場所 <span>' + all.length + '</span></button>' + locationNames.map(function (name) {
       return '<button type="button" data-cat-location="' + esc(name) + '" aria-pressed="' + String(currentLocation === name) + '">' + esc(name) + ' <span>' + groups[name] + '</span></button>';
     }).join('');
@@ -1112,6 +1118,22 @@
     el('cat-translate').addEventListener('click', translate); el('cat-export').addEventListener('click', openExportPreflight);
     el('cat-export-reviewed').addEventListener('click', exportReviewed);
     el('cat-danger-zone').addEventListener('toggle', function () { if (this.open) loadPersonalGlossary(); });
+    /* 右の参考情報は畳める。閉じると、原文と訳文が右端まで使う。次に開いたときも
+       同じ状態にする（市販CATでもペインの開閉は覚える）。 */
+    (function () {
+      var toggle = el('cat-inspector-toggle'), layout = el('cat-editor-layout');
+      if (!toggle || !layout) return;
+      function apply(hidden) {
+        layout.classList.toggle('is-inspector-hidden', hidden);
+        toggle.setAttribute('aria-expanded', String(!hidden));
+        toggle.textContent = hidden ? '参考情報を出す' : '参考情報を隠す';
+        try { window.localStorage.setItem('yaku-cat-inspector-hidden', hidden ? '1' : '0'); } catch (_) {}
+      }
+      var stored = '0';
+      try { stored = window.localStorage.getItem('yaku-cat-inspector-hidden') || '0'; } catch (_) {}
+      apply(stored === '1');
+      toggle.addEventListener('click', function () { apply(!layout.classList.contains('is-inspector-hidden')); });
+    })();
     /* 訳文欄に入った時点で、その行が開いている行になる。押して開く操作は無くした。
        行を作り直すので、カーソルの位置を持ち越して同じ場所へ戻す。 */
     document.addEventListener('focusin', function (event) {
@@ -1139,7 +1161,11 @@
       var button = event.target.closest('button'); if (!button) return;
       if (busy && (button.id === 'cat-confirm-bulk' || button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-shorten') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
       if (button.hasAttribute('data-cat-filter')) { currentFilter = button.getAttribute('data-cat-filter') || 'actionable'; return redrawAfterFlush(); }
-      if (button.hasAttribute('data-cat-location')) { currentLocation = button.getAttribute('data-cat-location') || 'all'; return redrawAfterFlush(); }
+      if (button.hasAttribute('data-cat-location')) {
+        currentLocation = button.getAttribute('data-cat-location') || 'all';
+        var menu = el('cat-location-menu'); if (menu) menu.open = false;
+        return redrawAfterFlush();
+      }
       if (button.hasAttribute('data-cat-change')) { currentChange = button.getAttribute('data-cat-change') || 'all'; return redrawAfterFlush(); }
       if (button.hasAttribute('data-cat-inspector')) { inspectorTab = button.getAttribute('data-cat-inspector') || 'candidates'; renderInspector(); return; }
       if (button.hasAttribute('data-yaku-cancel-job')) {

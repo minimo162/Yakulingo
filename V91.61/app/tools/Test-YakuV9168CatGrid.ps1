@@ -52,5 +52,14 @@ Check-YakuGrid ($catCss -match 'tr:not\(\.is-active\) \.cat-col-no') '閉じて�
 # 確認と操作は、開いている行にだけ出す（閉じた行に並べると表が読めなくなる）。
 Check-YakuGrid ($catJs -match "var extras = !isActive \? '' :") '操作と点検結果は開いている行だけに出す'
 
+# 幅は主役（原文と訳文）へ回す。左に絞り込みの列を常時立てない。
+$catHtml = Get-Content -LiteralPath (Join-Path $root 'www\cat.html') -Raw -Encoding UTF8
+Check-YakuGrid ($catHtml -notmatch 'id="cat-nav-pane"') '左の絞り込み列は無い'
+Check-YakuGrid ($catHtml -match 'class="cat-toolbar-filters"') '絞り込みは表の上の帯にある'
+Check-YakuGrid ($catHtml -match 'id="cat-location-menu"' -and $catHtml -match 'id="cat-change-filter"[^>]*hidden') '場所と前回からの変更は、押したときだけ開く'
+Check-YakuGrid ($catHtml -match 'id="cat-inspector-toggle"') '右の参考情報は畳める'
+Check-YakuGrid ($catJs -match "localStorage.setItem\('yaku-cat-inspector-hidden'") '畳んだかどうかを次回も引き継ぐ'
+Check-YakuGrid ($catCss -match '\.cat-editor-layout\.is-inspector-hidden \{ grid-template-columns: minmax\(0, 1fr\); \}') '畳んだ分の幅は一覧が使う'
+
 if ($script:failed -gt 0) { Write-Host ('CAT grid tests failed: ' + $script:failed) -ForegroundColor Red; exit 1 }
 Write-Host 'CAT grid tests passed.' -ForegroundColor Green
