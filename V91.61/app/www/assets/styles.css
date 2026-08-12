@@ -526,12 +526,16 @@ summary { cursor: pointer; color: var(--text); font-size: var(--font-meta); min-
 /* その場で訳す状態は、確認作業と同じ器（幅の広い画面）の中に居る。文章を読む
    1カラムなので、器の幅をそのまま使うと1行が長くなりすぎる。分かれていた頃の
    820px をここで保つ。 */
-.cat-instant { max-width: 820px; margin-inline: auto; width: 100%; }
-html.yaku-compact .cat-instant { max-width: none; }
-/* その場で訳す状態は自分で見出しを持ち、戻る導線も自分の下に持っている。
-   画面全体の見出しを重ねると、Ctrl+Alt+J で出る小さな窓では、読み込んだ文章が
-   見出し2つと戻るボタンに押し下げられて見えなくなる（実機で確認）。 */
-body[data-cat-view="instant"] .workspace-heading { display: none; }
+.cat-instant { width: 100%; }
+/* Ctrl+Alt+J で出る小さな窓では、画面全体の見出しに押し下げられて、読み込んだ
+   文章が見えなくなる（実機で確認）。始める画面では見出しを1つにする。 */
+body[data-cat-view="start"] .workspace-heading { display: none; }
+/* 貼り付け欄は始める画面の中身なので、カードの中にカードを置かない。 */
+.quick-inline { display: block; }
+/* 実測（窓 1380x860）: 325px の入力欄だと、下の「Word・Excelを取り込む」(900px) と
+   「保存した作業」(914px) が折り返しの外へ出てスクロールが要った。1画面に
+   収めるため丈を詰める。長い文章は中でスクロールし、字数も下に出る。 */
+.quick-inline #quick-input { min-height: 150px; height: 150px; }
 /* 1回で送れる量を超えたときだけ出る案内。押せる出口を同じ枠の中に置く。 */
 .quick-long-notice { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); justify-content: space-between; margin: var(--space-2) 0 0; padding: 12px 14px; border-left: 4px solid var(--warning); border-radius: var(--radius-control); background: var(--surface-subtle); }
 .quick-long-notice p { margin: 0; font-size: var(--font-meta); }

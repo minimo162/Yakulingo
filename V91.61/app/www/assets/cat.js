@@ -56,12 +56,12 @@
     return YakuCommon.post('/api/cat/' + action, body);
   }
   function directionName(value) { return value === 'to_jp' ? '日本語に訳す作業' : '英語に訳す作業'; }
-  /* 画面は一つで、状態が三つある。どれが出ているかは body の data-cat-view に書く。
+  /* 画面は一つで、状態は二つ（始める／1文ずつ確認する）。どれが出ているかは
+     body の data-cat-view に書く。
      器の高さを窓に固定する規則（cat-workspace.css）は、一覧が主役の確認作業に
      しか合わない。選ぶ画面とその場で訳す状態は、内容の丈だけ縦に伸びてよい。 */
   function setView(name) { document.body.setAttribute('data-cat-view', name); }
-  function hideInstant() { if (window.YakuInstant) window.YakuInstant.hide(); }
-  function showPicker() { syncLocation(''); viewEpoch++; candidateSeq++; project = null; activeSegmentId = ''; activeIndex = -1; revisionComparison = null; currentFilter = 'actionable'; currentLocation = 'all'; currentChange = 'all'; termSelection = { index: -1, source: '', target: '' }; dirty.clear(); clearOutputDisplay(); hideInstant(); setView('picker'); el('cat-picker').hidden = false; el('cat-workspace').hidden = true; el('cat-current-summary').hidden = true; closeStartPanels(); loadRecent(); }
+  function showPicker() { syncLocation(''); viewEpoch++; candidateSeq++; project = null; activeSegmentId = ''; activeIndex = -1; revisionComparison = null; currentFilter = 'actionable'; currentLocation = 'all'; currentChange = 'all'; termSelection = { index: -1, source: '', target: '' }; dirty.clear(); clearOutputDisplay(); setView('start'); el('cat-picker').hidden = false; el('cat-workspace').hidden = true; el('cat-current-summary').hidden = true; closeStartPanels(); loadRecent(); }
   function closeStartPanels() { document.querySelectorAll('.cat-start-panel').forEach(function (panel) { panel.hidden = true; }); el('cat-direction-choice').hidden = true; }
   function showStart(mode) { closeStartPanels(); var panel = el('cat-source-' + mode); if (panel) { panel.hidden = false; YakuCommon.focus(panel.querySelector('input,textarea,[role="button"],button')); } }
   /* 翻訳中に画面ごと凍らせない。数十分かかるあいだ、できた訳を読む・探す・コピーする、
@@ -389,7 +389,7 @@
        外枠の広げ直しは読み込み完了に紐づいているので、その道では効かない。
        状態が変わったことを外枠へ知らせる。 */
     if (el('cat-workspace').hidden) YakuCommon.notifyDesktopShell('cat-workspace-opened');
-    hideInstant(); setView('workspace');
+    setView('workspace');
     el('cat-picker').hidden = true; el('cat-workspace').hidden = false; el('cat-current-summary').hidden = true;
     el('cat-current-title').textContent = project.file_name || '貼り付けた文章';
     el('cat-current-progress').textContent = directionName(project.direction) + '・全' + project.total + '行のうち' + project.confirmed + '行を確認済み・残り' + Math.max(0, project.total - project.confirmed) + '行';
@@ -1163,16 +1163,14 @@
       }).catch(function (error) { setBusy(false); if (project && String(project.id || '') === target.id) status(error.message, true); });
     });
   }
-  /* その場で訳す状態は quick.js が中身を持つ。出し入れだけをここで受け、
-     ほかの状態と重ならないようにする。 */
+  /* 貼り付け欄は最初の画面の中にある（cat.html）。中身は quick.js が持つ。
+     状態としては出し入れしないので、ここで受けるのは「最初の画面へ戻して
+     入力欄を使えるようにする」ことだけ。 */
   function bindInstant() {
-    var open = el('cat-open-instant');
-    if (open) open.addEventListener('click', function () { if (window.YakuInstant) window.YakuInstant.show(); });
     window.addEventListener('yaku-instant-open', function () {
-      el('cat-picker').hidden = true; el('cat-workspace').hidden = true; el('cat-current-summary').hidden = true;
-      closeStartPanels();
+      if (el('cat-workspace').hidden) return;
+      showPicker();
     });
-    window.addEventListener('yaku-instant-close', function () { showPicker(); });
     /* 1回の依頼に入りきらない長さの文章は、その場で訳す状態では分けて送れない。
        貼り付けた本文をそのまま確認作業へ渡し、1文ずつ確認しながら進めてもらう。
        （本文をブラウザーから送るのは、もともと「長い文章を貼り付ける」が通って
