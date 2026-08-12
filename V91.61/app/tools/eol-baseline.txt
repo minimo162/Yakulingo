@@ -37,6 +37,7 @@ src/Runtime.ps1	crlf
 src/Selection.ps1	lf
 src/Server.ps1	crlf
 src/Settings.ps1	lf
+src/SheetLayout.ps1	crlf
 src/SrcModules.ps1	crlf
 src/Terminology.ps1	lf
 src/Translation.ps1	crlf

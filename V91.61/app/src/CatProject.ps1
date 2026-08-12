@@ -1884,10 +1884,25 @@ function ConvertTo-YakuCatProjectJson {
         if (-not [string]::IsNullOrWhiteSpace($page)) { $where = ($where + ' p.' + $page).Trim() }
         [void]$corpusRows.Add([ordered]@{ text = $text; where = $where })
     }
+    # 体裁（列幅・折り返し・結合）。原本の写しから Office 抜きで読む。
+    # 同じ資料で何度も読まないよう、作業ごとに1回だけ覚える。読めなくても翻訳は続く。
+    $sheetLayout = @()
+    try {
+        $layoutPath = [string]$Project.Path
+        if ((-not [string]::IsNullOrWhiteSpace($layoutPath)) -and ($layoutPath.ToLowerInvariant().EndsWith('.xlsx') -or $layoutPath.ToLowerInvariant().EndsWith('.xlsm'))) {
+            if ($null -eq $script:YakuSheetLayoutCache) { $script:YakuSheetLayoutCache = @{} }
+            $layoutKey = [string]$Project.Id + '|' + [string]$Project.Revision
+            if (-not $script:YakuSheetLayoutCache.ContainsKey($layoutKey)) {
+                $script:YakuSheetLayoutCache[$layoutKey] = @(Get-YakuSheetLayoutFromXlsx -Path $layoutPath)
+            }
+            $sheetLayout = @($script:YakuSheetLayoutCache[$layoutKey])
+        }
+    } catch { $sheetLayout = @() }
     return ([ordered]@{
         id         = [string]$Project.Id
         revision   = [int]$Project.Revision
         source     = $(try { [string]$Project.Source } catch { 'file' })
+        sheet_layout = @($sheetLayout)
         # 出力できない状態かどうか。押す前に画面へ出す。
         export_blocked = [bool]$exportBlocked
         translation_list_eligibility = [bool]$eligibility.TranslationListEligible

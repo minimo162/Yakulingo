@@ -730,6 +730,12 @@
   font: inherit;
   white-space: pre-wrap;
 }
+/* Excel と同じ見え方にする。折り返し OFF のセルは、幅を超えたら切って見せる
+   （はみ出しに気づけるのは、切れて見えるからである）。ON のセルは折り返す。 */
+.app-cat .cat-preview-cell { overflow: hidden; text-overflow: clip; white-space: nowrap; }
+.app-cat .cat-preview-cell.is-wrap { white-space: pre-wrap; }
+.cat-preview-grid thead th { min-width: 0; }
+
 .app-cat .cat-preview-cell:hover,
 .app-cat .cat-preview-paragraph:hover { background: var(--accent-soft); }
 .app-cat .cat-preview-cell.is-active,

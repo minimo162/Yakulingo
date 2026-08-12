@@ -1166,10 +1166,68 @@
     if (target.trim()) return { text: target, missing: false };
     return { text: String(segment.source || ''), missing: true };
   }
-  function previewCellHtml(segment) {
+  /* 原本から読んだ体裁を、シート名で引く。 */
+  function previewLayout(sheetName) {
+    var sheets = (project && project.sheet_layout) || [];
+    var found = null;
+    sheets.forEach(function (sheet) { if (String(sheet.name) === String(sheetName)) found = sheet; });
+    if (!found) return null;
+    if (found.__prepared) return found.__prepared;
+    var widths = {}, wrap = {}, align = {}, spans = {}, covered = {};
+    (found.columns || []).forEach(function (col) {
+      for (var c = Number(col.min); c <= Number(col.max); c++) widths[c] = col.hidden ? 0 : Number(col.width);
+    });
+    (found.cells || []).forEach(function (cell) {
+      var ref = previewCellRef('x, ' + cell.address);
+      if (!ref) return;
+      if (cell.wrap) wrap[ref.row + ':' + ref.column] = true;
+      if (cell.align) align[ref.row + ':' + ref.column] = String(cell.align);
+    });
+    /* 結合は「左上のセルが何列ぶん占めるか」と「隠れるセル」に分けて持つ。 */
+    (found.merges || []).forEach(function (range) {
+      var parts = String(range).split(':');
+      if (parts.length !== 2) return;
+      var from = previewCellRef('x, ' + parts[0]), to = previewCellRef('x, ' + parts[1]);
+      if (!from || !to) return;
+      spans[from.row + ':' + from.column] = { columns: (to.column - from.column + 1), rows: (to.row - from.row + 1) };
+      for (var r = from.row; r <= to.row; r++) {
+        for (var c = from.column; c <= to.column; c++) {
+          if (r === from.row && c === from.column) continue;
+          covered[r + ':' + c] = true;
+        }
+      }
+    });
+    found.__prepared = {
+      defaultWidth: Number(found.default_width) || 8.43,
+      widths: widths, wrap: wrap, align: align, spans: spans, covered: covered
+    };
+    return found.__prepared;
+  }
+  /* 列幅は「標準フォントの文字数」。1文字ぶんを 7px として px に直す（Excel の既定）。
+     境目ぎりぎりは信用しない。ここでは幅を与えるだけで、はみ出しの判定はしない。 */
+  function previewColumnPx(layout, column, span) {
+    if (!layout) return 0;
+    var total = 0, count = (span && span.columns) || 1;
+    for (var i = 0; i < count; i++) {
+      var width = layout.widths[column + i];
+      if (width === undefined) width = layout.defaultWidth;
+      total += Number(width) * 7 + 5;
+    }
+    return Math.max(24, Math.round(total));
+  }
+  function previewCellHtml(segment, layout, row, column, span) {
     var value = previewText(segment);
+    var key = row + ':' + column;
+    var wrap = layout ? !!layout.wrap[key] : false;
+    var align = layout ? (layout.align[key] || '') : '';
+    var style = '';
+    if (layout) {
+      style = ' style="width:' + previewColumnPx(layout, column, span) + 'px' +
+        (align === 'center' ? ';text-align:center' : align === 'right' ? ';text-align:right' : '') + '"';
+    }
     return '<button type="button" class="cat-preview-cell' + (value.missing ? ' is-missing' : '') +
-      (Number(segment.index) === Number(activeIndex) ? ' is-active' : '') + '" data-cat-qa-jump="' + Number(segment.index) + '">' +
+      (wrap ? ' is-wrap' : '') + (Number(segment.index) === Number(activeIndex) ? ' is-active' : '') +
+      '"' + style + ' data-cat-qa-jump="' + Number(segment.index) + '">' +
       esc(value.text) + '</button>';
   }
   function buildPreview() {
@@ -1187,22 +1245,32 @@
     var html = sheets.map(function (sheet) {
       var grid = {};
       sheet.cells.forEach(function (item) { grid[item.ref.row + ':' + item.ref.column] = item.segment; });
+      /* 元の体裁（列幅・折り返し・結合）。原本から読んだものがあれば使う。
+         無ければ今までどおり均等幅で出す（体裁は足しであって前提ではない）。 */
+      var layout = previewLayout(sheet.name);
       var rows = '';
       for (var row = 1; row <= sheet.maxRow; row++) {
         var cells = '<th scope="row">' + row + '</th>';
         for (var column = 1; column <= sheet.maxColumn; column++) {
+          if (layout && layout.covered[row + ':' + column]) continue;
           var segment = grid[row + ':' + column];
-          cells += '<td>' + (segment ? previewCellHtml(segment) : '') + '</td>';
+          var span = (layout && layout.spans[row + ':' + column]) || null;
+          var attrs = span ? (' colspan="' + span.columns + '" rowspan="' + span.rows + '"') : '';
+          cells += '<td' + attrs + '>' + (segment ? previewCellHtml(segment, layout, row, column, span) : '') + '</td>';
         }
         rows += '<tr>' + cells + '</tr>';
       }
+      /* 幅を効かせるには table-layout: fixed と colgroup が要る。auto のままだと
+         中身の長さが勝ち、Excel なら切れるはずの文字で列が広がる。 */
+      var group = '<col style="width:2.6rem">';
+      for (var g = 1; g <= sheet.maxColumn; g++) group += '<col style="width:' + (layout ? previewColumnPx(layout, g, null) : 120) + 'px">';
       var head = '<th scope="col"><span class="sr-only">行番号</span></th>';
       for (var c = 1; c <= sheet.maxColumn; c++) {
         var letters = '', n = c;
         while (n > 0) { var mod = (n - 1) % 26; letters = String.fromCharCode(65 + mod) + letters; n = Math.floor((n - mod) / 26); }
         head += '<th scope="col">' + letters + '</th>';
       }
-      return '<section class="cat-preview-sheet"><h3>' + esc(sheet.name) + '</h3><table class="cat-preview-grid"><thead><tr>' + head + '</tr></thead><tbody>' + rows + '</tbody></table></section>';
+      return '<section class="cat-preview-sheet"><h3>' + esc(sheet.name) + '</h3><table class="cat-preview-grid"><colgroup>' + group + '</colgroup><thead><tr>' + head + '</tr></thead><tbody>' + rows + '</tbody></table></section>';
     }).join('');
     if (flow.length) {
       html += '<section class="cat-preview-flow">' + flow.map(function (segment) {
