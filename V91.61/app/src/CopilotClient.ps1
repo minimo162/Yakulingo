@@ -5437,8 +5437,10 @@ function Initialize-YakuProtectedPromptBoundary {
                     $safeItems.Add($safeItem) | Out-Null
                     $itemIndex++
                 }
+                $promptNotation = 'oku'
+                try { if ([string]$Arguments.Notation -eq 'billion') { $promptNotation = 'billion' } } catch { $promptNotation = 'oku' }
                 $prompt = New-YakuTranslationBatchPrompt -Root $trustedRoot -Items @($safeItems.ToArray()) -Settings $Arguments.Settings -Direction $Direction `
-                    -RequestId $requestIdArgument -Workflow ([string]$Arguments.Workflow)
+                    -RequestId $requestIdArgument -Workflow ([string]$Arguments.Workflow) -Notation $promptNotation
                 $additional = & $getField 'additional_instruction' -Optional
                 if (-not [string]::IsNullOrWhiteSpace($additional)) { $prompt += "`n`n$additional" }
             }

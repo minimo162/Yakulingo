@@ -406,6 +406,20 @@ $filePromptJp = New-YakuCatPrompt -Root $root -Items $fileItems -Settings $setti
 Assert-YakuMask ($filePromptJp -like '*oku -> 億円*') 'to_jp のCAT用プロンプトに単位表記の指示が入る'
 Assert-YakuMask (-not ($filePromptJp -like '*{numeric_rules}*')) 'to_jp でもテンプレート変数が残らない'
 
+# billion を選んだ作業では、原文だけでなく規則も billion で送る。
+# 2026-08-12 まで New-YakuCatPrompt は書き方を受け取らず、原文を
+# 「[[N1]] billion yen」へ換算しておきながら、規則は既定の oku 用
+# （「oku をそのまま保て。million/billion は使うな」）を渡していた。
+# 資料翻訳・ファイル翻訳はどちらもこの経路を通る。
+$billionItems = @([pscustomobject]@{ Index=1; Text='2026年3月期の売上高は115.77億円' })
+foreach ($bi in $billionItems) { $bi | Add-Member -NotePropertyName BlockIds -NotePropertyValue (New-Object System.Collections.Generic.List[string]) -Force }
+$null = Protect-YakuCatItems -Items $billionItems -Root $root -Direction 'to_en' -Notation 'billion'
+$billionPrompt = New-YakuCatPrompt -Root $root -Items $billionItems -Settings $settings -Direction 'to_en' -RequestId ([guid]::NewGuid().ToString('N')) -Notation 'billion'
+Assert-YakuMask ($billionItems[0].MaskedText -like '*billion yen*') 'billion の作業は原文を billion へ換算して送る'
+Assert-YakuMask ($billionPrompt -like '*billion*' -and -not ($billionPrompt -like '*Never million, billion, trillion*')) 'billion の作業には billion 用の規則を送る'
+$okuPrompt = New-YakuCatPrompt -Root $root -Items $fileItems -Settings $settings -Direction 'to_en' -RequestId ([guid]::NewGuid().ToString('N')) -Notation 'oku'
+Assert-YakuMask ($okuPrompt -like '*Never million, billion, trillion*') 'oku の作業には従来どおり oku 用の規則を送る'
+
 # 復元
 $fileTranslations = @{ 1 = 'Net sales for FY[[N1]]/[[N2]] were [[N3]] oku'; 2 = 'OPM [[N1]]%' }
 foreach ($fi in $fileItems) {

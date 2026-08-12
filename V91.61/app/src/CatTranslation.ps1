@@ -120,14 +120,22 @@ function New-YakuCatPrompt {
         [Parameter(Mandatory=$true)][object[]]$Items,
         [Parameter(Mandatory=$true)]$Settings,
         [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
-        [Parameter(Mandatory=$true)][string]$RequestId
+        [Parameter(Mandatory=$true)][string]$RequestId,
+        # 金額の書き方は作業ごとに固定した値が渡ってくる。設定から読み直さない。
+        # 作業の途中で設定を変えられても、その作業の原文の換算と食い違わせないため。
+        [ValidateSet('oku','billion')][string]$Notation='oku'
     )
     $sourceList = New-YakuFileSourceList -Items $Items
     $templateName = if ($Direction -eq 'to_en') { 'cat_translate_to_en.txt' } else { 'cat_translate_to_jp.txt' }
     $template = Get-YakuPromptTemplate -Root $Root -Name $templateName
     $vars = @{
         source_list = $sourceList
-        numeric_rules = Get-YakuNumericRulesSection -InputText $sourceList -Direction $Direction
+        # ここが書き方を受け取っていなかった（2026-08-12）。原文は
+        # 「[[N1]] billion yen」へ換算して送っているのに、規則だけ既定の oku 用
+        # （「oku をそのまま保て。million/billion は使うな」）を渡していた。
+        # 資料翻訳・ファイル翻訳はこの経路を通るので、billion を選んだ利用者は
+        # 原文と規則が矛盾したまま訳されることになる。
+        numeric_rules = Get-YakuNumericRulesSection -InputText $sourceList -Direction $Direction -Notation $Notation
         terminology_rules = New-YakuCatTerminologyRules -Items $Items -Direction $Direction
         request_id = $RequestId
     }
@@ -153,6 +161,9 @@ function Invoke-YakuCatTranslationItems {
     Assert-YakuCatProtectedItems -Items $Items
     Assert-YakuCatProtectedItemsMatchOriginal -Items $Items -Root $Root -Direction $Direction -Notation $Notation
     $Context['Workflow'] = 'cat'
+    # 書き方はここから先、Context に載せて運ぶ。プロンプトを組む場所は
+    # 呼び出しが数段離れており、そこで設定を読み直すと作業ごとの固定が崩れる。
+    $Context['AmountNotation'] = $Notation
     $Context['PromptContractVersion'] = Get-YakuCatPromptContractVersion
     return Invoke-YakuTranslationBatchItems -Root $Root -Items $Items -Settings $Settings -Direction $Direction -MaxChars $MaxChars -Warnings $Warnings -ProgressState $ProgressState -Context $Context -Depth $Depth -Reason $Reason
 }

@@ -3064,7 +3064,13 @@ function Invoke-YakuRoute {
                         return
                     }
                     # 文例は候補ペインでの参考表示に限定し、翻訳promptへは入れない。
-                    $catJson = ([ordered]@{ project_id = [string]$project.Id; expected_project_revision = [int]$project.Revision; direction = [string]$project.Direction; mode = $catMode; items = @($pending) } | ConvertTo-Json -Depth 6 -Compress)
+                    # 金額の書き方を積み忘れていた（2026-08-12、実機のCAT往復で判明）。
+                    # ジョブは別のランスペースで走るので、この JSON に載せたものしか
+                    # 届かない。載せていなかったため、受け側の
+                    # 「$cat.amount_notation が billion なら…」は常に偽になり、
+                    # billion を選んだ作業でも oku で換算・指示していた
+                    # （実測: 1兆3,150億円 -> 13,150 oku）。
+                    $catJson = ([ordered]@{ project_id = [string]$project.Id; expected_project_revision = [int]$project.Revision; direction = [string]$project.Direction; mode = $catMode; amount_notation = (Get-YakuCatProjectAmountNotation -Project $project); items = @($pending) } | ConvertTo-Json -Depth 6 -Compress)
                     $state = Start-YakuTranslationJob -InputText '' -Settings $settings -Kind 'cat' -CatJson $catJson
                     Send-YakuTextResponse -Context $Context -Text (Convert-YakuTranslationJobStartedHtml -State $state)
                 }

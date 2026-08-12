@@ -213,36 +213,6 @@ function Get-YakuCatAuditableNumericValueCount {
     return $count
 }
 
-function Get-YakuCatAuditableNumericValues {
-    param(
-        [AllowNull()][string]$Text,
-        [ValidateSet('source','target')][string]$Side,
-        [ValidateSet('to_en','to_jp')][string]$Direction
-    )
-    $value = ConvertTo-YakuMaskNormalizedText -Text ([string]$Text)
-    if ($Side -eq 'source' -or $Side -eq 'target') {
-        try {
-            $chars = $value.ToCharArray()
-            foreach ($span in @(Get-YakuNumericMaskProtectedSpans -Text $value -Direction $Direction)) {
-                for ($i = [int]$span.Start; $i -lt [int]$span.End -and $i -lt $chars.Length; $i++) { $chars[$i] = ' ' }
-            }
-            $value = -join $chars
-        } catch {}
-        if ($Side -eq 'source' -and $Direction -eq 'to_en') {
-            try { $value = [string](Convert-YakuNumericUnits -Text $value -Location 'cat-review-values').Text } catch {}
-        }
-    }
-    $out = New-Object System.Collections.Generic.List[string]
-    foreach ($match in [regex]::Matches($value, '(?<![A-Za-z0-9])[-+]?(?:\d[\d,]*)(?:\.\d+)?')) {
-        $canonical = ([string]$match.Value).Replace(',','')
-        $number = [decimal]0
-        if ([decimal]::TryParse($canonical, [Globalization.NumberStyles]::Number -bor [Globalization.NumberStyles]::AllowLeadingSign, [Globalization.CultureInfo]::InvariantCulture, [ref]$number)) {
-            $out.Add($number.ToString('0.############################', [Globalization.CultureInfo]::InvariantCulture)) | Out-Null
-        }
-    }
-    return @($out.ToArray())
-}
-
 function Initialize-YakuCatProjectState {
     param([Parameter(Mandatory=$true)]$Project)
     if (-not ($Project.PSObject.Properties.Name -contains 'Revision')) { $Project | Add-Member -NotePropertyName Revision -NotePropertyValue 0 -Force }
