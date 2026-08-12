@@ -28,24 +28,26 @@
       <p class="tutorial-kicker">このアプリについて</p>
       <h1 id="tutorial-title" tabindex="-1">日本語と英語を訳すアプリです</h1>
       <p class="tutorial-lead">Microsoft 365 Copilotへ文章を送り、訳案（下書きの訳）を受け取ります。そのまま使える訳ではありませんので、内容はご自身で確かめてください。</p>
-      <div class="tutorial-example-grid" aria-label="翻訳方法の使い分け">
-        <div class="tutorial-example"><strong>文章を貼り付ける</strong><span>メール・Web・数文</span></div>
-        <div class="tutorial-example"><strong>資料を取り込む</strong><span>Word・Excel・長い文章</span></div>
+      <div class="tutorial-example-grid" aria-label="訳しかたの2とおり">
+        <div class="tutorial-example"><strong>貼り付けて訳す</strong><span>メール・Web・数文。保存しません</span></div>
+        <div class="tutorial-example"><strong>1文ずつ確認する</strong><span>Word・Excel・長い文章。途中で保存されます</span></div>
       </div>
+      <p class="tutorial-note">どちらも同じ画面です。貼り付けて訳したあとで「1文ずつ確認して保存する」へ移れます。</p>
     </section>
 
     <section class="tutorial-step" data-step="1" aria-labelledby="tutorial-hotkey-title" hidden>
       <p class="tutorial-kicker">すぐ開く</p>
       <h1 id="tutorial-hotkey-title" tabindex="-1">選んだ文章をすぐ訳す</h1>
-      <p class="tutorial-lead"><kbd>Ctrl</kbd>＋<kbd>Alt</kbd>＋<kbd>J</kbd>で、どの画面からでも入力欄を開けます。文章は自動では読み取りません。</p>
-      <p class="tutorial-note">文章を貼り付けて「翻訳」を押すまで、Copilotには送信されません。</p>
+      <p class="tutorial-lead"><kbd>Ctrl</kbd>＋<kbd>Alt</kbd>＋<kbd>J</kbd>で、どの画面からでも入力欄を開けます。Word・Excel・PowerPoint が前面にあるときは、そのとき選んでいた範囲の文字を入力欄へ読み込みます。</p>
+      <p class="tutorial-note">読み込むのは、このキーを押した時だけです。ふだん画面を見張ることはありません。読み込んだあとも、「訳案を作る」を押すまでCopilotへは送りません。ほかのアプリ（Outlookなど）からは読み込めないので、コピーして貼り付けてください。</p>
     </section>
 
     <section class="tutorial-step" data-step="2" aria-labelledby="tutorial-safety-title" hidden>
       <p class="tutorial-kicker">送信前の確認</p>
       <h1 id="tutorial-safety-title" tabindex="-1">送信される内容</h1>
-      <p class="tutorial-lead">金額などの数値は、Copilotへ送る前に自動で伏せます。社名・人名・文章はそのまま送信されます。</p>
-      <div class="tutorial-safety-box"><strong>自動では送信しません</strong><span>貼り付けて「翻訳」を押した文章だけを送信します。</span></div>
+      <p class="tutorial-lead">金額などの数値は、Copilotへ送る前に自動で伏せます。社名・人名・文章はそのまま送信されます。伏せた数値は、訳文へ戻すときにこのパソコンの中で書き戻します。</p>
+      <div class="tutorial-safety-box"><strong>自動では送信しません</strong><span>入力欄に入れて「訳案を作る」を押した文章だけを送信します。</span></div>
+      <p class="tutorial-note">英訳の金額の書き方（<code>13,150 oku</code> か <code>¥1,315 billion</code>）は、訳す画面で選べます。桁の計算はこのパソコンの中で済ませます。</p>
     </section>
 
     <section class="tutorial-step" data-step="3" aria-labelledby="tutorial-settings-title" hidden>
@@ -56,7 +58,7 @@
       <form id="tutorial-preferences" class="tutorial-preferences">
         <label class="tutorial-check-row" for="startup-enabled">
           <input id="startup-enabled" name="startup_enabled" type="checkbox" checked>
-          <span><strong>WindowsにサインインしたらYakuLingoを準備する（おすすめ）</strong><small>パソコンを起動すると、画面右下の時計のとなりにYakuLingoのアイコンが出ます。翻訳を押したときだけ動き、文章を勝手に読み取ったり送ったりすることはありません。</small></span>
+          <span><strong>WindowsにサインインしたらYakuLingoを準備する（おすすめ）</strong><small>パソコンを起動すると、画面右下の時計のとなりにYakuLingoのアイコンが出ます。文章を読み込むのは <kbd>Ctrl</kbd>＋<kbd>Alt</kbd>＋<kbd>J</kbd> を押したときだけ、送るのは「訳案を作る」を押したときだけです。</small></span>
         </label>
         <label class="tutorial-check-row" for="desktop-shortcut">
           <input id="desktop-shortcut" name="desktop_shortcut" type="checkbox" checked>
@@ -71,7 +73,7 @@
       <button id="tutorial-back" type="button" class="secondary-button" hidden>戻る</button>
       <button id="tutorial-next" type="button">次へ</button>
       <a id="tutorial-home" class="button" href="/" hidden>開始画面へ</a>
-      <a class="button secondary-button tutorial-escape" href="/quick">設定はあとで。まず翻訳を使う</a>
+      <a class="button secondary-button tutorial-escape" href="/cat">設定はあとで。まず翻訳を使う</a>
     </nav>
   </main>
 </body>

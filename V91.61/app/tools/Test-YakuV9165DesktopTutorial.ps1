@@ -35,7 +35,16 @@ $commonJs = Read-YakuTutorialFile 'www\assets\common.js'
 Check-YakuTutorial ([regex]::Matches($html, 'class="tutorial-step"').Count -eq 4) 'tutorial has exactly four stages'
 Check-YakuTutorial ($html.Contains('1 / 4') -and $js.Contains("String(currentStep + 1) + ' / 4'")) 'tutorial exposes progress in text'
 Check-YakuTutorial ($html.Contains('設定画面へ進む') -and -not $html.Contains('>スキップ<')) 'skip action leads explicitly to settings'
-Check-YakuTutorial ($html.Contains('文章は自動では読み取りません') -and $html.Contains('貼り付けて「翻訳」を押すまで')) 'tutorial states the no-monitoring and explicit-send boundary'
+# 2026-08-12: Ctrl+Alt+J が Word・Excel・PowerPoint の選択範囲を読み込むようになったので、
+# 「文章は自動では読み取りません」は事実と違う。境界は2つに分かれた。
+#   読み込む境界: このキーを押したときだけ。見張らない
+#   送る境界:     「訳案を作る」を押すまで送らない
+# 送信ボタンの名前も「翻訳」から変わっている。実物の名前で書く。
+Check-YakuTutorial ($html.Contains('このキーを押した時だけ') -and $html.Contains('ふだん画面を見張ることはありません')) 'tutorial states when text is read from the foreground app'
+Check-YakuTutorial ($html.Contains('「訳案を作る」を押すまでCopilotへは送りません') -and $html.Contains('「訳案を作る」を押した文章だけを送信します')) 'tutorial states the explicit-send boundary with the real button name'
+Check-YakuTutorial (-not ($html -match '文章は自動では読み取りません|貼り付けて「翻訳」を押す')) 'the retired no-reading claim must not come back'
+$quickClientForTutorial = Read-YakuTutorialFile 'www\assets\quick.js'
+Check-YakuTutorial ($quickClientForTutorial.Contains("'訳案を作る'") -and $quickClientForTutorial.Contains('/api/quick/selection')) 'the tutorial button name and the reading path still exist in the app'
 Check-YakuTutorial ($html -match 'id="startup-enabled"[^>]*type="checkbox"[^>]*checked') 'startup is visibly ON by default'
 Check-YakuTutorial ($html -match 'id="desktop-shortcut"[^>]*type="checkbox"[^>]*checked') 'desktop shortcut is visibly ON by default'
 Check-YakuTutorial ($html.Contains('それまではパソコンの設定を変更しません') -and $html.Contains('この設定で始める')) 'final confirmation explains the side-effect boundary'
