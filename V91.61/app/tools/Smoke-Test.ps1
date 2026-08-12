@@ -336,6 +336,11 @@ Assert-Yaku -Condition (-not ($indexSource -match '122 oku|設定とデータ管
 Assert-Yaku -Condition ($catIndex -match 'class="secondary-button" data-cat-source-show="file"') -Message 'the file entry must not compete with the paste action as a second filled button'
 Assert-Yaku -Condition ($catClient.Contains('var RESUME_VISIBLE = 3') -and $catIndex.Contains('id="cat-resume-more"')) -Message 'the saved work list must fold to the most recent few with a count of the rest'
 Assert-Yaku -Condition ($stylesSource -match 'button:not\(\.secondary-button, \.tab-button, \.file-clear-button, \.link-button, \.danger-button, \[disabled\]\)') -Message 'destructive and link buttons must be excluded from the filled base style without raising its specificity'
+# 2026-08-12: 実機のCAT往復で、billion を選んだ作業が oku で訳された。
+# 翻訳ジョブは別のランスペースで走るため、この JSON に載せたものしか届かない。
+# 受け側（Protect-YakuCatItems / Invoke-YakuCatTranslationItems）は
+# $cat.amount_notation を見ているので、送り側が積んでいるかを字面で押さえる。
+Assert-Yaku -Condition ($server -match 'mode = \$catMode; amount_notation = \(Get-YakuCatProjectAmountNotation -Project \$project\)') -Message 'the CAT translation job payload must carry the project amount notation into the worker runspace'
 Assert-Yaku -Condition ($stylesSource -match '\.entry-more-actions \{ display: none;' -and $stylesSource -match '\.entry-more\[open\] \.entry-more-actions \{ display: flex; \}') -Message 'collapsed alternative entries must actually be hidden instead of being forced visible by their own display rule'
 Assert-Yaku -Condition ($catClient.Contains("exportButton.classList.toggle('secondary-button', drafting)") -and $catClient.Contains("translate.classList.toggle('secondary-button', !drafting)")) -Message 'the toolbar filled button must follow the next step instead of staying on a finished action'
 Assert-Yaku -Condition (-not ($homeIndex -match 'amount-notation') -and

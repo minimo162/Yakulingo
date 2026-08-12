@@ -208,10 +208,11 @@ function New-YakuTranslationBatchPrompt {
         [Parameter(Mandatory=$true)]$Settings,
         [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
         [Parameter(Mandatory=$true)][string]$RequestId,
-        [ValidateSet('cat')][string]$Workflow = 'cat'
+        [ValidateSet('cat')][string]$Workflow = 'cat',
+        [ValidateSet('oku','billion')][string]$Notation = 'oku'
     )
     if (-not (Get-Command New-YakuCatPrompt -ErrorAction SilentlyContinue)) { throw 'CAT_PROMPT_CONTRACT_UNAVAILABLE' }
-    return New-YakuCatPrompt -Root $Root -Items $Items -Settings $Settings -Direction $Direction -RequestId $RequestId
+    return New-YakuCatPrompt -Root $Root -Items $Items -Settings $Settings -Direction $Direction -RequestId $RequestId -Notation $Notation
 }
 
 function Test-YakuSplitRequestResponse {
@@ -962,6 +963,9 @@ function Invoke-YakuTranslationBatchItems {
     if ($Items.Count -le 0) { return $map }
     $workflow = ''
     try { $workflow = [string]$Context['Workflow'] } catch { $workflow = '' }
+    # 金額の書き方は作業ごとに固定した値。Context に無ければ従来どおり oku。
+    $amountNotation = 'oku'
+    try { if ([string]$Context['AmountNotation'] -eq 'billion') { $amountNotation = 'billion' } } catch { $amountNotation = 'oku' }
     if ($workflow -ne 'cat') { throw 'CAT_TRANSLATION_FACADE_REQUIRED: バッチ送信はCAT専用入口からのみ実行できます。' }
     Assert-YakuCatProtectedItems -Items $Items
     if (-not $Context.ContainsKey('FailedItems') -or $null -eq $Context['FailedItems']) { $Context['FailedItems'] = New-Object System.Collections.Generic.List[object] }
@@ -1031,7 +1035,7 @@ function Invoke-YakuTranslationBatchItems {
         }
         for ($contractAttempt = 1; $contractAttempt -le $contractMaxAttempts; $contractAttempt++) {
             $promptPackage = New-YakuProtectedPromptPackage -Kind cat -Root $Root -Direction $Direction -Fields @($batchProtectedFields.ToArray()) `
-                -Arguments ([pscustomobject]@{ Items=@($batch.Items); Settings=$Settings; Workflow=$workflow })
+                -Arguments ([pscustomobject]@{ Items=@($batch.Items); Settings=$Settings; Workflow=$workflow; Notation=$amountNotation })
             $requestId = [string]$promptPackage.RequestId
             $prompt = [string]$promptPackage.Prompt
             $skipFresh = ([int]$Context['CopilotCalls'] -gt 0)
@@ -1146,7 +1150,7 @@ function Invoke-YakuTranslationBatchItems {
                     Add-YakuWarning -Warnings $Warnings -Category 'hangul-retry' -Location ("ID $($item.Index)") -Message "Hangul混入を検出したため再翻訳しました: $(Get-YakuShortTextPreview -Text $sourceForValidation -MaxLength 40)"
                     $retryFields = @([pscustomobject]@{ Name='item:0'; OriginalText=[string]$item.OriginalText; ProtectedText=[string]$item.Text; NumericMaskMaps=@($item.NumericMaskMap) })
                     $retryPackage = New-YakuProtectedPromptPackage -Kind cat -Root $Root -Direction $Direction -Fields $retryFields `
-                        -Arguments ([pscustomobject]@{ Items=@($item); Settings=$Settings; Workflow=$workflow })
+                        -Arguments ([pscustomobject]@{ Items=@($item); Settings=$Settings; Workflow=$workflow; Notation=$amountNotation })
                     $retryRequestId = [string]$retryPackage.RequestId
                     $retryPrompt = [string]$retryPackage.Prompt
                     $retrySkipFresh = ([int]$Context['CopilotCalls'] -gt 0)
@@ -1169,7 +1173,7 @@ function Invoke-YakuTranslationBatchItems {
                             [pscustomobject]@{ Name='additional_instruction'; OriginalText=$numericCorrection; ProtectedText=$numericCorrection }
                         )
                         $numericRetryPackage = New-YakuProtectedPromptPackage -Kind cat -Root $Root -Direction $Direction -Fields $numericRetryFields `
-                            -Arguments ([pscustomobject]@{ Items=@($item); Settings=$Settings; Workflow=$workflow })
+                            -Arguments ([pscustomobject]@{ Items=@($item); Settings=$Settings; Workflow=$workflow; Notation=$amountNotation })
                         $numericRetryRequestId = [string]$numericRetryPackage.RequestId
                         $numericRetryPrompt = [string]$numericRetryPackage.Prompt
                         $Context['CopilotCalls'] = [int]$Context['CopilotCalls'] + 1
