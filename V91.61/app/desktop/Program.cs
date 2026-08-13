@@ -240,8 +240,12 @@ namespace YakuLingo.Desktop
         private readonly NotifyIcon tray = new NotifyIcon();
         private readonly ToolStripMenuItem trayStatus = new ToolStripMenuItem("準備しています");
         private readonly ToolStripMenuItem startupItem = new ToolStripMenuItem("次回から、サインイン時に自動で準備する");
-        private readonly ToolStripMenuItem quickItem = new ToolStripMenuItem("その場で訳す    Ctrl+Alt+J");
-        private readonly ToolStripMenuItem catItem = new ToolStripMenuItem("資料翻訳を開く");
+        // 2026-08-13: 「その場で訳す」「資料翻訳」という2つの呼び名をやめた。
+        // 貼り付けた文章も資料と同じ確認作業になり、/quick と /cat は同じ画面を返す。
+        // 2つの項目が同じ所へ着くのに違う名前で並んでいると、片方だけの機能が
+        // あるように読める。違うのは「選択を読んでから開くか」だけなので、そう書く。
+        private readonly ToolStripMenuItem quickItem = new ToolStripMenuItem("選んでいる文章を訳す    Ctrl+Alt+J");
+        private readonly ToolStripMenuItem catItem = new ToolStripMenuItem("YakuLingo を開く");
         private readonly System.Windows.Forms.Timer backendTimer = new System.Windows.Forms.Timer();
         private Thread pipeThread;
         private volatile bool stopping;
@@ -889,7 +893,7 @@ namespace YakuLingo.Desktop
             string body;
             if (quick)
             {
-                body = "<h1>その場で訳す</h1><p>再準備しています。文章はまだ送信されていません。</p><label for='pending-input'>訳したい文章</label><textarea id='pending-input' autofocus></textarea><button id='pending-send' type='button'>準備でき次第、この文章を翻訳</button><button type='button' onclick=\"document.getElementById('pending-input').value='';document.getElementById('pending-input').readOnly=false;window.pendingRequested=false;window.pendingSnapshot='';document.getElementById('wait-status').textContent='取り消しました。';\">取消</button><p id='wait-status' role='status'></p><script>window.pendingRequested=false;window.pendingSnapshot='';document.getElementById('pending-send').onclick=function(){var x=document.getElementById('pending-input');window.pendingSnapshot=x.value;window.pendingRequested=!!window.pendingSnapshot.trim();x.readOnly=window.pendingRequested;document.getElementById('wait-status').textContent=window.pendingRequested?'準備でき次第、押した時点の文章を翻訳します。':'文章を入力してください。';};document.getElementById('pending-input').onkeydown=function(e){if(e.ctrlKey&&e.key==='Enter'){e.preventDefault();document.getElementById('pending-send').click();}};</script>";
+                body = "<h1>訳したい文章</h1><p>再準備しています。文章はまだ送信されていません。</p><label for='pending-input'>訳したい文章</label><textarea id='pending-input' autofocus></textarea><button id='pending-send' type='button'>準備でき次第、この文章を翻訳</button><button type='button' onclick=\"document.getElementById('pending-input').value='';document.getElementById('pending-input').readOnly=false;window.pendingRequested=false;window.pendingSnapshot='';document.getElementById('wait-status').textContent='取り消しました。';\">取消</button><p id='wait-status' role='status'></p><script>window.pendingRequested=false;window.pendingSnapshot='';document.getElementById('pending-send').onclick=function(){var x=document.getElementById('pending-input');window.pendingSnapshot=x.value;window.pendingRequested=!!window.pendingSnapshot.trim();x.readOnly=window.pendingRequested;document.getElementById('wait-status').textContent=window.pendingRequested?'準備でき次第、押した時点の文章を翻訳します。':'文章を入力してください。';};document.getElementById('pending-input').onkeydown=function(e){if(e.ctrlKey&&e.key==='Enter'){e.preventDefault();document.getElementById('pending-send').click();}};</script>";
             }
             else body = "<h1>YakuLingo</h1><p>再準備しています。文章はまだ送信されていません。</p>";
             string html = "<!doctype html><html lang='ja'><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>YakuLingo</title><style>body{font-family:'Segoe UI','Yu Gothic UI',sans-serif;font-size:17px;line-height:1.7;margin:0;padding:28px;color:#202124;background:#fafafa}h1{font-size:25px}label{display:block;font-weight:700;margin-top:18px}textarea{box-sizing:border-box;width:100%;height:280px;padding:14px;font:inherit;border:2px solid #60646c;border-radius:10px}button{min-height:44px;margin:16px 10px 0 0;padding:8px 18px;font:inherit;font-weight:700;border-radius:9px;border:1px solid #3c5bdc;background:#3c5bdc;color:white}button+button{background:white;color:#30333a}</style><body>" + body + "</body></html>";
@@ -1138,7 +1142,7 @@ namespace YakuLingo.Desktop
             string activeKind = GetActiveTranslationKind();
             bool running = !String.IsNullOrEmpty(activeKind);
             string message = running
-                ? ((activeKind == "cat" ? "資料翻訳" : "翻訳処理") + "を実行中です。終了すると現在の処理を中止します。保存済みの確認内容は残ります。\r\n\r\n中止してYakuLingoを完全に終了しますか？")
+                ? ((activeKind == "cat" ? "資料の取り込み" : "翻訳処理") + "を実行中です。終了すると現在の処理を中止します。保存済みの確認内容は残ります。\r\n\r\n中止してYakuLingoを完全に終了しますか？")
                 : "YakuLingoを完全に終了しますか？";
             DialogResult answer = MessageBox.Show(this,
                 message,

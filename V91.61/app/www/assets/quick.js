@@ -306,8 +306,8 @@
      いても利用者が気づけない。 */
   function applyOfficeSelection(windowClass, hwnd) {
     if (!windowClass) return;
-    /* Ctrl+Alt+J は「その場で訳す」へ着地させる。取り込んで1文ずつ確認したく
-       なったら、訳したあとに移れる。 */
+    /* Ctrl+Alt+J は貼り付け欄へ着地させる。押した文章はここに入るだけで、
+       送信はしない。送るのは利用者がボタンを押したときだけ。 */
     show();
     var note = el('quick-selection-note');
     YakuCommon.post('/api/quick/selection', { window_class: windowClass, foreground_hwnd: hwnd }).then(function (data) {
@@ -337,7 +337,7 @@
       if (!note) return;
       var reason = String(data && data.reason || '');
       note.textContent = reason === 'instance_mismatch' ? '前面のOfficeを読めませんでした。ファイルを取り込んでお使いください。'
-        : reason === 'too_large' ? '選んだ範囲が大きすぎます。資料翻訳でファイルを取り込んでください。'
+        : reason === 'too_large' ? '選んだ範囲が大きすぎます。下の「Word・Excelを取り込む」からファイルごと取り込んでください。'
         : reason === 'multi_area' ? '複数の範囲が選ばれています。1つの範囲を選んでください。'
         /* 実測で分かった2つ（2026-08-12）。どちらも以前は事実と違う理由が出ていた。
            数式のセルだけ → 「文字がありませんでした」（文字は見えているので通じない）

@@ -534,8 +534,6 @@
     var previousProjectId = project ? String(project.id || '') : '';
     if (data) project = data;
     if (!project) return;
-    /* 資料を開いたら資料のタブへ移す。利用者が自分でその場で訳す側を選んでいる
-       ときは奪わない（開いたままにしておく決まりなので、戻れば続きが出る）。 */
     syncLocation(String(project.id || ''));
     if (el('cat-editor-layout').classList.contains('is-docs-open')) renderDocsPane();
     if (previousProjectId && previousProjectId !== String(project.id || '')) { activeSegmentId = ''; activeIndex = -1; revisionComparison = null; currentFilter = 'actionable'; currentLocation = 'all'; currentChange = 'all'; }
@@ -684,7 +682,10 @@
   /* 別のアプリで仕事をしていても、終わったことに気づけるようにする。
      タスクバーのタイトルは、画面を見ていなくても目に入る唯一の場所。 */
   function setJobTitle(text) {
-    document.title = (text ? text + ' - ' : '') + '資料翻訳 - YakuLingo';
+    /* 呼び名は画面の題（cat.html の <title>）に合わせて「翻訳」に統一する。
+       貼り付けた文章も資料と同じ作業になったので、「資料翻訳」だけを名乗ると
+       貼り付けから来た人のタスクバーに違う名前が出る（2026-08-13）。 */
+    document.title = (text ? text + ' - ' : '') + '翻訳 - YakuLingo';
   }
   function pollJob(id, token, failureCount) {
     window.clearTimeout(jobTimer);
