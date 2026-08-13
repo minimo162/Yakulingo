@@ -66,6 +66,12 @@ body[data-cat-view="workspace"] #cat-help-links { display: none; }
 /* 確認作業に入ったら、始めるための入口は出さない。次の資料を始める入口は
    資料名（F7）から開く一覧が持つ（2026-08-13、帯を外したときに移した）。 */
 body[data-cat-view="workspace"] #cat-instant { display: none; }
+/* 資料を開いた形で読み込むときは、始める画面の器も最初から出さない。
+   hidden を付けるのは JavaScript が動いたあとなので、それまでのあいだ
+   貼り付け欄と保存した作業が描かれ、入れ替わるときに点滅して見えた
+   （2026-08-13、利用者の指摘）。サーバが ?project= を見て body へ
+   data-cat-view="workspace" を入れるので、1回目の描画から効く。 */
+body[data-cat-view="workspace"] #cat-picker { display: none; }
 
 /* 左上の資料名が切替口。押せることは分かる必要があるが、道具の帯の主役は
    「残りの訳案を作る」なので、塗らずに下線と ▾ だけで示す。 */
@@ -480,7 +486,14 @@ body[data-cat-view="workspace"] #cat-instant { display: none; }
   outline: 3px solid var(--accent);
   outline-offset: -3px;
   /* 印は outline と面の2つで足りる。3つ目を足しても強調は増えず、
-     左端の状態の帯と紛らわしくなるだけだった。 */
+     左端の状態の帯と紛らわしくなるだけだった。
+
+     その「紛らわしい」が実際に起きていた（2026-08-13、利用者の指摘）。
+     行は左端に状態の帯（4px、確認済みなら緑）を持ち、選んだ行はその内側に
+     accent の枠（3px）が来る。左だけ色の違う線が2本並び、どちらが「選んでいる」
+     印なのか読めない。選んでいる行では帯を消す。その行の状態は、同じ行の
+     いちばん左に丸章と「確認済」の文字が出ているので失われない。 */
+  border-left-color: transparent;
 }
 
 /* 主役の行だけ息をさせる。脇役は詰めて、一覧としての一望性を保つ。 */

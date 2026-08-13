@@ -1750,7 +1750,11 @@ function Serve-YakuAppPage {
     param(
         [Parameter(Mandatory=$true)]$Context,
         [Parameter(Mandatory=$true)][ValidateSet('cat.html','tutorial.html')][string]$PageName,
-        [switch]$StartTour
+        [switch]$StartTour,
+        # 開いた瞬間の状態。?project= で来たと分かっているなら、始める画面を
+        # 一度も描かずに確認作業として開く。付けないと、貼り付け欄が一瞬出てから
+        # 入れ替わり、画面が点滅して見える（2026-08-13、利用者の指摘）。
+        [ValidateSet('','workspace')][string]$InitialView = ''
     )
     $path = Join-Path (Join-Path $script:YakuRoot 'www') $PageName
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -1768,6 +1772,7 @@ function Serve-YakuAppPage {
     $html = $html.Replace('__YAKU_MAX_BATCH_CHARS__', [string](Get-YakuMaxCharsPerFileBatch -Settings $settings))
     $html = $html.Replace('__YAKU_AMOUNT_NOTATION__', (ConvertTo-YakuHtml (Get-YakuAmountNotation -Settings $settings)))
     $html = $html.Replace('__YAKU_TOUR__', $(if ($StartTour) { '1' } else { '' }))
+    $html = $html.Replace('__YAKU_VIEW__', $(if ($InitialView -eq 'workspace') { ' data-cat-view="workspace"' } else { '' }))
     Send-YakuTextResponse -Context $Context -Text $html -ContentType 'text/html; charset=utf-8'
 }
 
@@ -1814,7 +1819,13 @@ function Invoke-YakuRoute {
     # 同じ画面の「その場で訳す」状態として残す。Ctrl+Alt+J、外枠、開始画面、
     # チュートリアルがこの経路を持っているため、消さずに同じページを返す。
     if ($method -eq 'GET' -and ($path -eq '/quick' -or $path -eq '/cat')) {
-        Serve-YakuAppPage -Context $Context -PageName 'cat.html'
+        # ?project= で来たなら、始める画面を一度も描かずに確認作業として開く。
+        # QueryString は使わない（日本語が CP932 で化ける。Get-YakuQueryValue の説明を参照）。
+        # ここは16進のIDしか見ないが、例外を作ると次の人が真似る。
+        $wantedProject = ''
+        try { $wantedProject = [string](Get-YakuQueryValue -Request $req -Name 'project') } catch {}
+        $initialView = if ($wantedProject -match '^[a-f0-9]{32}$') { 'workspace' } else { '' }
+        Serve-YakuAppPage -Context $Context -PageName 'cat.html' -InitialView $initialView
         return
     }
     if ($method -eq 'GET' -and $path -eq '/tutorial') {

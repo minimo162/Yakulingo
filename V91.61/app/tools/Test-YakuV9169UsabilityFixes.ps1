@@ -104,20 +104,22 @@ Check-YakuUse ($catHtml -match 'id="cat-help-links"') '使い方への出口に�
 Check-YakuUse ($catHtml -match '(?s)id="cat-direction-choice"[\s\S]*?</section>[\s\S]*?id="cat-help-links"') '出口は資料側のパネルの外にある'
 Check-YakuUse ($catCss -match 'body\[data-cat-view="workspace"\] #cat-help-links \{ display: none; \}') '確認作業中は出さない'
 
-# 資料の側にも、外へ送ることと伏せることを書く（2026-08-13）。
-# 貼り付けの側にだけ書いてあり、資料を選んだ人は読まずに送れてしまっていた。
-Check-YakuUse ($catHtml -match '(?s)data-cat-source-show="file"[\s\S]{0,400}?Copilotへ送ります') '資料の側にも送信の説明がある'
+# 資料の側にも、外へ送ることと伏せることを書いた（2026-08-13 午前）。
+# 同じ日の夕方に、それが原因で同じ文が1画面に2回出ていると分かった
+# （実測 y438 と y680）。1つに寄せ、資料の話もその1行に含める。
+# 開始画面は1枚なので、貼り付け欄の下にあれば取り込みボタンより前に必ず通る。
+Check-YakuUse ($catHtml -match '資料は訳す文だけを送り、ファイルそのものは送りません') '資料のことも同じ1行で書く'
+Check-YakuUse (([regex]::Matches($catHtml, '社名・人名・文章はそのまま送信されます')).Count -eq 1) '同じ文を1画面に2回出さない'
 Check-YakuUse ($catHtml -match 'ファイルそのものは送りません') '送るのは文だけだと書く'
 
-# DRAFT の約束を3か所で揃える。実装は名前だけでなく中にも印を入れている。
-#   Word  … WordAdapter.ps1 が本文の先頭へ「DRAFT — YakuLingo（確認用）」を挿入
-#   Excel … FileProcessors.ps1 が定義名 _YakuLingoArtifactStatus を追加
+# ファイルの中の印は 2026-08-13 に利用者判断で外した（「そもそもその機能自体
+# いらない」）。形式ごとに書き分ける相手も無くなったので、言うのは
+# 「原本は触らない」「名前の先頭に DRAFT_ が付く」の2つだけ。
 $catProject = Get-Content -LiteralPath (Join-Path $root 'src\CatProject.ps1') -Raw -Encoding UTF8
 $tutorial = Get-Content -LiteralPath (Join-Path $root 'www\tutorial.html') -Raw -Encoding UTF8
-Check-YakuUse ($catProject -match "mode -eq 'word_draft'" -and $catProject -match "mode -eq 'excel_draft'") '出す前の確認は形式ごとに書き分ける'
-Check-YakuUse ($catProject -match 'DRAFT — YakuLingo（確認用）') 'Wordは本文に入る印まで書く'
-Check-YakuUse ($tutorial -match 'コピーの中にも下書きの印が入ります') '説明ページも中の印に触れる'
-Check-YakuUse ($catJs -match "document_format === 'docx'[\s\S]{0,200}?本文の1行目") '作業画面も形式ごとに書き分ける'
+Check-YakuUse ($catProject -match '名前の先頭に「DRAFT_」が付きます。' -and $catProject -notmatch '本文の1行目') '出す前の確認は、名前のことだけを言う'
+Check-YakuUse ($tutorial -notmatch '下書きの印' -and $tutorial -match 'DRAFT_</code> が付いた別のコピー') '説明ページも名前のことだけを言う'
+Check-YakuUse ($catJs -notmatch '本文の1行目' -and $catJs -notmatch '見えない DRAFT の印') '作業画面にも中の印の話を残さない'
 Check-YakuUse ($catJs -notmatch '名前と文書内に DRAFT が付きます') '曖昧な言い方は残さない'
 
 # 押す前に、どちらへ訳すのかが出る（自動判定のときは決め方を書く）。
@@ -155,7 +157,9 @@ Check-YakuUse ($catJs -notmatch "(?s)function showStart\(mode\) \{ closeStartPan
 # した（2026-08-12）のに、押せる状態のまま「あと2行を確認済みにしてください。」と
 # 出しており、命令に読めた。押せるボタンには起きることを書く。
 Check-YakuUse ($catJs -match 'まだ確認していない.{0,20}行も、そのまま入ります。') '押せるときは、起きることを書く'
-Check-YakuUse ($catJs -notmatch '行を確認済みにしてください。') '押せるボタンに命令を書かない'
+# 注釈にも同じ字面を書いていて、自分の説明に引っかかっていた。
+# 見るのは出している文言（title に入る戻り値）のほう。
+Check-YakuUse ($catJs -notmatch "return 'あと' \+ left \+ '行を確認済みにしてください。'") '押せるボタンに命令を書かない'
 # 押せない理由は、押せるかどうかが決まったあとで作る。先に作ると、待っているあいだの
 # 「全部押せない」状態を読んで、押せるボタンにも「押せません」と書いてしまう。
 Check-YakuUse ($catJs -match "(?s)saveStatus\('保存済み', false\); setBusy\(false\);[\s\S]{0,400}?var outputReasons = \[\];") '押せない理由は、状態が決まってから作る'
@@ -163,4 +167,32 @@ Check-YakuUse ($catJs -match "(?s)saveStatus\('保存済み', false\); setBusy\(
 # Excel の場所は、どのセルかがいちばん要る情報。列が狭く、長いシート名だと番地まで
 # 届かない（実測 1760px: 366px 必要なところに 89px）。全文を指せば読めるようにする。
 Check-YakuUse ($catJs -match 'class="cat-location-main" title="') '場所は全文を指せば読める'
+# 「訳して確認する」を押したのに、原文が並ぶだけで訳が始まらなかった
+# （2026-08-13、利用者の指摘）。ボタン名も案内も「送る」と言っているので、
+# 送るところまでがこの操作。資料の取り込みは「取り込んで確認を始める」と
+# 名乗っているので、そちらは取り込むだけのままにする。
+Check-YakuUse ($quickJs -match "encodeURIComponent\(data\.id\) \+ '&translate=1'") '貼り付けから来たことを行き先に渡す'
+Check-YakuUse ($catJs -match 'function translateWhenReady') '着いたらそのまま訳しにいく'
+Check-YakuUse ($catJs -match "params\.get\('translate'\) === '1'") '貼り付けから来たときだけ自動で送る'
+Check-YakuUse ($catJs -match 'autoTranslateDone') '自動で送るのは1回だけ'
+Check-YakuUse ($catJs -match 'Copilotの準備ができ次第、送ります') '準備前に押しても、待って送ると書く'
+
+# 資料を開いた形で読み込むとき、貼り付け欄が一瞬出てから入れ替わり、点滅して見えた。
+# サーバが ?project= を見て body へ状態を入れ、1回目の描画から確認作業として出す。
+$serverForView = Get-Content -LiteralPath (Join-Path $root 'src\Server.ps1') -Raw -Encoding UTF8
+Check-YakuUse ($catHtml -match '<body class="app-cat"__YAKU_VIEW__>') '開いた瞬間の状態を差し込む口がある'
+Check-YakuUse ($serverForView -match "InitialView -eq 'workspace'") 'サーバが確認作業として開く'
+Check-YakuUse ($serverForView -match 'wantedProject -match') '住所の project を見て決める'
+Check-YakuUse ($catCss -match 'body\[data-cat-view="workspace"\] #cat-picker \{ display: none; \}') '始める画面の器も最初から出さない'
+# 読み込んだ時点で ?project= が付いていたら履歴を積まない。積むと戻るが1回増え、
+# 戻った先の住所は translate=1 付きで、読み直すとまた訳しにいく。
+Check-YakuUse ($catJs -match 'var locationSynced = false;' -and $catJs -match 'if \(projectId && !first\)') '最初の1回は履歴を積まない'
+
+# 選んだ行の左に、状態の帯（4px）と選択の枠（3px）が色違いで2本並んでいた。
+# 選んでいる行では帯を消す。その行の状態は丸章と文字で同じ行に出ている。
+Check-YakuUse ($catCss -match '(?s)\.cat-grid tbody tr\.is-active \{[^}]*border-left-color: transparent;') '選んだ行では状態の帯を出さない'
+
+# 2026-08-13: この行を自分で消してしまい、赤が出ても緑と報告される状態を
+# 1コミットぶん作った。判定を消したまま「41本緑」と言っていた。
+if ($script:failed -gt 0) { Write-Host ('Usability tests failed: ' + $script:failed) -ForegroundColor Red; exit 1 }
 Write-Host 'Usability tests passed.' -ForegroundColor Green

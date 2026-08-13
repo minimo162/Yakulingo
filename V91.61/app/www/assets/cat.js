@@ -100,11 +100,19 @@
      /cat -> /cat?project=… と変わるのに historyLength が増えず、ブラウザの戻るで
      アプリの外へ出ていた（実測 2026-08-13）。戻る＝始める画面へ、が期待に合う。
      始める画面へ戻すときは積まない。積むと、戻るを2回押さないと外へ出られない。 */
+  /* 読み込んだ時点で既に ?project= が付いていたときは、履歴を積まずに書き換える。
+     積んでいたころは、貼り付けから来ると履歴が
+       /cat → /cat?project=X&translate=1 → /cat?project=X
+     の3段になり、戻るを1回押しても同じ資料に戻るだけだった（2026-08-13）。
+     しかも戻った先の住所は translate=1 付きなので、読み直すとまた訳しにいく。 */
+  var locationSynced = false;
   function syncLocation(projectId) {
     try {
       var next = projectId ? ('/cat?project=' + encodeURIComponent(projectId)) : '/cat';
+      var first = !locationSynced;
+      locationSynced = true;
       if (location.pathname + location.search === next) return;
-      if (projectId) window.history.pushState(null, '', next);
+      if (projectId && !first) window.history.pushState(null, '', next);
       else window.history.replaceState(null, '', next);
     } catch (_) {}
   }
@@ -768,6 +776,22 @@
       if (!scopeIsCurrent(glossaryScope, true) || !data || String(data.id || '') !== glossaryScope.id) throw new Error('表示している資料が切り替わったため、翻訳をやめました。もう一度「残りの訳案を作る」を押してください。');
       project = data; jobScope = currentScope(); status('残りの訳案を作っています…'); return YakuCommon.postText('/api/cat/translate', { id: jobScope.id, expected_revision: jobScope.revision, mode: 'translate' });
     }).then(function (html) { startJobHtml(html, { type: 'translate', scope: jobScope }); }).catch(function (error) { setBusy(false); status(error.message, true); });
+  }
+  /* 貼り付けから来たときだけ、そのまま訳しにいく。Copilot の準備は起動直後だと
+     まだ終わっていないので、終わるのを待ってから1回だけ送る。押しっぱなしに
+     ならないよう、送ったら二度と自動では送らない。 */
+  var autoTranslateDone = false;
+  function translateWhenReady() {
+    if (autoTranslateDone) return;
+    if (!project || Number(project.untranslated) <= 0) { autoTranslateDone = true; return; }
+    if (ready) { autoTranslateDone = true; translate(); return; }
+    status('Copilotの準備ができ次第、送ります。このままお待ちください。');
+    YakuCommon.onReady(function (value) {
+      if (autoTranslateDone || !value) return;
+      if (!project || Number(project.untranslated) <= 0) { autoTranslateDone = true; return; }
+      autoTranslateDone = true;
+      translate();
+    });
   }
   function revise(form, instructionOverride) {
     var index = Number(form.getAttribute('data-cat-revise')), instruction = String(instructionOverride || form.querySelector('input').value || '').trim(), jobScope = null;
@@ -2046,7 +2070,11 @@
     var cameFromInstant = location.pathname === '/quick';
     var params = new URLSearchParams(location.search);
     var wanted = params.get('project');
-    if (wanted) { resume(wanted); return; }
+    if (wanted) {
+      var autoTranslate = params.get('translate') === '1';
+      resume(wanted).then(function () { if (autoTranslate) translateWhenReady(); });
+      return;
+    }
     showPicker();
     if (cameFromInstant && window.YakuInstant) window.YakuInstant.show();
   }

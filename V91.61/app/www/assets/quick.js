@@ -157,7 +157,12 @@
     busy = true; jobStartedAt = Date.now(); update(); renderJob('取り込んでいます', 0, '', '');
     YakuCommon.post('/api/cat/open', { text: text, direction_intent: explicitDirection || 'auto' }).then(function (data) {
       if (!data.id) throw new Error('確認する作業を作れませんでした。1分ほど待ってから、もう一度お試しください。');
-      window.location.assign('/cat?project=' + encodeURIComponent(data.id));
+      /* translate=1 を付けて渡す。付けないと、押したのに原文が並ぶだけで訳が
+         始まらない（2026-08-13、利用者の指摘）。ボタンは「訳して確認する」で、
+         案内も「押すとCopilotへ送ります」と言っているので、送るところまでが
+         この操作である。資料の取り込みボタンは「取り込んで確認を始める」と
+         名乗っているので、そちらは今までどおり取り込むだけにする。 */
+      window.location.assign('/cat?project=' + encodeURIComponent(data.id) + '&translate=1');
     }).catch(function (error) {
       busy = false; update();
       if (error.status === 409 && error.data && error.data.code === 'DIRECTION_CONFIRMATION_REQUIRED') { showChoice(error.data.error); return; }
