@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-  「その場で訳す」と「資料を訳す」を、上の帯で行き来できる状態を固定する。
+  始める画面（貼り付け欄と資料の入口）と、資料を開いたあとの行き来を固定する。
 
 .DESCRIPTION
   2026-08-13 まで、2つの仕事の繋がりが画面から読めなかった。実測:
@@ -12,11 +12,13 @@
               （replaceState）。ブラウザの戻るでアプリの外へ出ていた
     出口      ロゴ（全体を読み直す）と、折りたたみの中の「ほかの資料に切り替える」
 
-  上部に常設の帯を置き、資料を開いていても1回で行き来できるようにした。
-  資料の作業は開いたまま保持する（読み直さない）ので、戻れば同じ行・同じ位置から続く。
+  同じ日に上部の帯（タブ）を足し、同じ日に外した。外したのは、貼り付けた文章も
+  資料と同じ確認作業になり（利用者判断「保存しない約束は要らない」）、
+  切り替える相手そのものが無くなったため。帯を押しても同じ入口に着くだけだった。
 
-  #cat-instant は #cat-picker の外に出してある。中にあると、資料を開いたときに
-  picker ごと隠れて、帯で戻れなくなる。ここが崩れると繋がりが元に戻るので固定する。
+  いま繋がりを担うのは次の2つ。ここが崩れると 08-13 以前へ戻るので固定する。
+    始める画面  貼り付け欄と資料の入口が縦に同居する（どちらも最初から見える）
+    作業画面    左上の資料名（F7）から、ほかの資料も新しい貼り付けも始められる
 #>
 [CmdletBinding()]
 param()
@@ -36,12 +38,11 @@ $html = Get-Content -LiteralPath (Join-Path $root 'www\cat.html') -Raw -Encoding
 $js   = Get-Content -LiteralPath (Join-Path $root 'www\assets\cat.js') -Raw -Encoding UTF8
 $css  = Get-Content -LiteralPath (Join-Path $root 'www\assets\cat-workspace.css') -Raw -Encoding UTF8
 
-Write-Host 'Quick and document work stay one switch apart' -ForegroundColor Cyan
+Write-Host 'Quick and document work start from one screen' -ForegroundColor Cyan
 
-# 帯があること
-Check-YakuTab ($html -match 'class="cat-tabs" role="tablist"') '上に帯がある'
-Check-YakuTab ($html -match 'data-cat-tab-to="quick"' -and $html -match 'data-cat-tab-to="docs"') '行き先は2つ'
-Check-YakuTab ($html -match 'id="cat-tab-docs-count"') '資料側に件数を出す場所がある'
+# 帯は残していない。切り替える相手が無いのに帯だけ残すと、押しても同じ所に着く。
+Check-YakuTab ($html -notmatch 'cat-tabs') 'もう帯は無い'
+Check-YakuTab ($css -notmatch 'data-cat-tab=' -and $js -notmatch 'function setTab') '帯の名残（CSS・関数）も残っていない'
 
 # いちばん大事な構造: その場で訳す は picker の外に居る
 $instantPos = $html.IndexOf('id="cat-instant"')
@@ -53,31 +54,18 @@ $pickerEnd = $pickerFragment.IndexOf('id="cat-workspace"')
 if ($pickerEnd -lt 0) { $pickerEnd = $pickerFragment.Length }
 Check-YakuTab (-not $pickerFragment.Substring(0, $pickerEnd).Contains('id="cat-instant"')) '資料側の中にその場で訳すを入れていない'
 
-# 帯で出し分ける（picker/workspace の hidden とは別の軸）
-Check-YakuTab ($css -match 'body\[data-cat-tab="quick"\] #cat-picker') 'その場で訳す のときは資料側を出さない'
-Check-YakuTab ($css -match 'body\[data-cat-tab="quick"\] #cat-workspace') 'その場で訳す のときは作業画面も出さない'
-Check-YakuTab ($css -match 'body\[data-cat-tab="docs"\] #cat-instant') '資料のときはその場で訳すを出さない'
+# 確認作業に入ったら、始めるための入口は出さない。#cat-instant は #cat-picker の
+# 外に居るので、picker の hidden では消えない。view で消す。
+Check-YakuTab ($css -match 'body\[data-cat-view="workspace"\] #cat-instant \{ display: none; \}') '確認作業のあいだは貼り付け欄を出さない'
 
 # 箱を増やさない（2026-08-12 の決定）
 Check-YakuTab ($html -notmatch 'id="cat-instant" class="cat-instant translate-form"') 'その場で訳すにカードの器を付けない'
 Check-YakuTab ($css -match '(?s)\.cat-picker,\s*\r?\n?\s*\.cat-instant \{') '器の作法は1か所で決める'
 
-# 戻るが効く
-Check-YakuTab ($js -match 'history\.pushState') 'タブの移動を履歴に積む'
-Check-YakuTab ($js -match "addEventListener\('popstate'") '戻るを受けてタブを戻す'
-
-# 資料の作業を読み直さない（開いたまま保持）
-Check-YakuTab ($js -match 'function setTab') '帯の切替に専用の関数がある'
-Check-YakuTab ($js -notmatch '(?s)function setTab[\s\S]{0,900}?(loadProject|resume\(|location\.reload)') 'タブを移るだけでは資料を読み直さない'
-
-# 押しやすさと縦の消費
-Check-YakuTab ($css -match 'min-height: 2\.75rem') '帯は押しやすい高さを保つ'
-Check-YakuTab ($css -match 'body\[data-cat-view="workspace"\] \.cat-tabs \{ margin-bottom') '作業中は帯の下の余白を詰める'
-
-# 読み上げの作法
-Check-YakuTab ($js -match "setAttribute\('aria-selected'") 'どちらが選ばれているかを伝える'
-Check-YakuTab ($js -match "event\.key !== 'ArrowLeft'") '矢印でも移れる'
-Check-YakuTab ($html -match 'role="tabpanel"') '中身は tabpanel として結び付ける'
+# 戻るが効く（資料を開くと履歴が1つ積まれ、戻ると始める画面へ戻る）
+Check-YakuTab ($js -match 'history\.pushState') '資料を開いたら履歴に積む'
+Check-YakuTab ($js -match "addEventListener\('popstate'") '戻るを受けて始める画面へ戻す'
+Check-YakuTab ($js -match '(?s)popstate[\s\S]{0,300}?showPicker\(\)') '戻るでアプリの外へ出さない'
 
 # 資料の切り替えは、作業画面に居たまま行う（市販ツールを調べた結果に合わせる）。
 #   Crowdin  エディタは全画面。左上のナビゲーションパスと、畳めるファイル一覧（Ctrl+[）
@@ -107,11 +95,11 @@ Check-YakuTab ($js -match "el\('cat-switch-project'\)[\s\S]{0,200}?openDocDialog
 # 幅で条件を分ける。実測 2026-08-13:
 #   1380px 既定は閉じる（1列 412.6px）。開いても 323.8px で 321px を下回らない
 #   1920px 既定で開く（1列 501.7px。1380px で閉じているときの 421px より広い）
-# 初回（保存した作業ゼロ）の画面。実機で確認した2点。
-# タブが「資料を訳す」と言っているので、同じ語の見出しは置かない。
-Check-YakuTab ($html -notmatch 'id="cat-docs-title"') 'タブと同じ語の見出しを重ねない'
-Check-YakuTab ($html -match 'id="cat-picker"[^>]*aria-labelledby="cat-tab-docs"') '読み上げにはタブを見出しとして結び付ける'
-Check-YakuTab ($css -match '\.cat-picker > \.entry-secondary:first-child') '区切る相手がいない罫線を出さない'
+# 見出しは目には出さない（すぐ下に「ファイルを選ぶ」ボタンがあり、語が重なる）。
+# ただし読み上げには要る。帯を外したので、帯のラベルの代わりを sr-only で置く。
+Check-YakuTab ($html -match 'id="cat-docs-entry-title" class="sr-only"') '読み上げ用の見出しがある'
+Check-YakuTab ($html -match 'id="cat-picker"[^>]*aria-labelledby="cat-docs-entry-title"') '資料側をその見出しに結び付ける'
+Check-YakuTab ($html -match 'id="cat-instant"[^>]*aria-labelledby="cat-start-title"') '貼り付け側も見出しに結び付ける'
 
 Check-YakuTab ($html -match 'id="cat-docs-pane"') '資料の一覧が作業画面の中にある'
 Check-YakuTab ($html -match 'id="cat-docs-toggle"') '畳む・出すの操作がある'
@@ -134,15 +122,13 @@ Check-YakuTab ($css -match '--pane-docs: clamp\(9rem, 12vw, 15rem\)') '狭い窓
 Check-YakuTab ($css -match '(?s)@media \(min-width: 1700px\)[^}]*\[data-cat-view="workspace"\] \.shell') '広い画面では確認作業の幅の上限を上げる'
 Check-YakuTab ($css -match '(?s)@media \(min-width: 1700px\)[^}]*max-width: 2200px') '上げ幅にも上限は置く'
 
-# 高さを窓に固定してよいのは、確認作業の一覧を実際に見ているときだけ。
-# 資料を開いたまま「その場で訳す」タブへ移ると view は workspace のままなので、
-# タブを条件に入れないと貼り付け側が断ち切られる。
-# 実測 2026-08-13（窓の高さ 700px）: 直す前は body が height:700px/overflow:hidden で
-# 中身 733px が切れ、「英訳の金額」の下端 705px に手が届かなかった。
-Check-YakuTab ($css -match 'body\.app-cat\[data-cat-view="workspace"\]\[data-cat-tab="docs"\] \{ height: 100dvh') '高さの固定はタブも条件に入れる'
-Check-YakuTab ($css -notmatch 'body\.app-cat\[data-cat-view="workspace"\] \{ height: 100dvh') 'view だけで固定する書き方に戻さない'
-# overflow を解くだけでは足りない。html と body の高さが窓に固定されたままだと伸びない。
-Check-YakuTab ($css -match 'body\.app-cat\[data-cat-tab="quick"\] \{ height: auto; \}') '貼り付け側では高さも解く'
+# 高さを窓に固定してよいのは、確認作業の一覧を見ているときだけ。始める画面には
+# 貼り付け欄と保存した作業が縦に並ぶので、固定すると下が切れて手が届かなくなる。
+# 実測 2026-08-13（窓の高さ 700px）: 帯があった頃、資料を開いたまま貼り付け側へ
+# 移ると view は workspace のままで、中身 733px が切れ、下端 705px に届かなかった。
+# 帯を外し、確認作業では #cat-instant を出さないので、view だけで判定してよい。
+Check-YakuTab ($css -match 'body\.app-cat\[data-cat-view="workspace"\] \{ height: 100dvh') '確認作業のときだけ高さを窓に固定する'
+Check-YakuTab ($css -notmatch 'body\.app-cat\[data-cat-view="start"\] \{ height: 100dvh') '始める画面は固定しない'
 
-if ($script:failed -gt 0) { Write-Host ('Tab structure tests failed: ' + $script:failed) -ForegroundColor Red; exit 1 }
-Write-Host 'Tab structure tests passed.' -ForegroundColor Green
+if ($script:failed -gt 0) { Write-Host ('Start structure tests failed: ' + $script:failed) -ForegroundColor Red; exit 1 }
+Write-Host 'Start structure tests passed.' -ForegroundColor Green

@@ -96,62 +96,21 @@
   function dirtyKey(projectId, index) { return String(projectId || '') + ':' + String(index); }
   /* 開いている資料をアドレスに残す。スリープ復帰やネットワーク切替でシェルが
      読み込み直したとき、ここが空だと作業一覧へ戻ってしまう。 */
+  /* 資料を開いたときだけ履歴に1つ積む。ずっと replaceState だった頃は、URL が
+     /cat -> /cat?project=… と変わるのに historyLength が増えず、ブラウザの戻るで
+     アプリの外へ出ていた（実測 2026-08-13）。戻る＝始める画面へ、が期待に合う。
+     始める画面へ戻すときは積まない。積むと、戻るを2回押さないと外へ出られない。 */
   function syncLocation(projectId) {
     try {
       var next = projectId ? ('/cat?project=' + encodeURIComponent(projectId)) : '/cat';
-      if (currentTab === 'quick') next += (next.indexOf('?') === -1 ? '?' : '&') + 'tab=quick';
-      if (location.pathname + location.search !== next) window.history.replaceState(null, '', next);
+      if (location.pathname + location.search === next) return;
+      if (projectId) window.history.pushState(null, '', next);
+      else window.history.replaceState(null, '', next);
     } catch (_) {}
   }
-  /* 上の帯（その場で訳す／資料を訳す）。資料を開いても消えないので、
-     どちらへも1回で戻れる。開いている資料はそのまま残す（読み直さない）ので、
-     戻ったときに同じ行・同じ位置から続けられる。 */
-  var currentTab = 'quick';
-  function tabPanelFor(name) { return name === 'docs' ? el('cat-picker') : el('cat-instant'); }
-  function setTab(name, options) {
-    var next = (name === 'docs') ? 'docs' : 'quick';
-    var opts = options || {};
-    var changed = next !== currentTab;
-    currentTab = next;
-    document.body.setAttribute('data-cat-tab', currentTab);
-    document.querySelectorAll('[data-cat-tab-to]').forEach(function (tab) {
-      var selected = tab.getAttribute('data-cat-tab-to') === currentTab;
-      tab.setAttribute('aria-selected', selected ? 'true' : 'false');
-      /* 選ばれていないタブも Tab キーで飛べる必要はない。矢印で移る作法に揃える。 */
-      tab.tabIndex = selected ? 0 : -1;
-    });
-    if (changed && !opts.silent) {
-      /* 履歴に積む。いままで replaceState だけだったので、ブラウザの戻るを押すと
-         画面が戻らずアプリの外へ出ていた（実測 2026-08-13: historyLength が
-         3 のまま変わらない）。 */
-      try { window.history.pushState({ yakuTab: currentTab }, '', tabUrl(currentTab)); } catch (_) {}
-    }
-    if (changed && opts.focusPanel) {
-      var panel = tabPanelFor(currentTab);
-      var first = panel && panel.querySelector('textarea,input,button:not([disabled]),[href]');
-      if (first) YakuCommon.focus(first);
-    }
-  }
-  function tabUrl(name) {
-    var base = (project && project.id) ? ('/cat?project=' + encodeURIComponent(String(project.id))) : '/cat';
-    if (name === 'quick') base += (base.indexOf('?') === -1 ? '?' : '&') + 'tab=quick';
-    return base;
-  }
-  /* 資料のタブに、開いている資料と保存した作業の件数を出す。押す前に、
-     そちらに何があるかが分かるようにする。 */
-  function updateTabCount() {
-    var badge = el('cat-tab-docs-count');
-    if (!badge) return;
-    var count = resumeItems.length;
-    badge.hidden = count < 1;
-    badge.textContent = count ? String(count) : '';
-    var docsTab = document.querySelector('[data-cat-tab-to="docs"]');
-    if (docsTab) {
-      docsTab.setAttribute('aria-label', project && project.id
-        ? ('資料を訳す（' + String(project.file_name || '資料') + ' を開いています）')
-        : (count ? ('資料を訳す（保存した作業 ' + count + '件）') : '資料を訳す'));
-    }
-  }
+  /* 帯は外した（2026-08-13）。貼り付けも取り込みも同じ経路で作業を作るように
+     なったので、行き来する2つの仕事が無くなり、選ぶ相手が消えたため。
+     資料を開いているあいだの入口は、資料名（F7）から開く一覧が持つ。 */
   function clearOutputDisplay() {
     outputScope = null;
     el('cat-output-row').hidden = true; el('cat-output-row').removeAttribute('data-cat-output-project');
@@ -272,7 +231,6 @@
     more.hidden = hiddenCount <= 0;
     more.textContent = resumeExpanded ? '直近3件だけ表示する' : ('保存した作業をすべて表示（あと' + hiddenCount + '件）');
     more.setAttribute('aria-expanded', resumeExpanded ? 'true' : 'false');
-    updateTabCount();
     /* 左の資料一覧も同じ元データで描く。読み込みが終わってから呼ぶ必要がある
        （開いた時点では resumeItems がまだ空のことがある）。 */
     if (el('cat-editor-layout') && el('cat-editor-layout').classList.contains('is-docs-open')) renderDocsPane();
@@ -578,9 +536,7 @@
     if (!project) return;
     /* 資料を開いたら資料のタブへ移す。利用者が自分でその場で訳す側を選んでいる
        ときは奪わない（開いたままにしておく決まりなので、戻れば続きが出る）。 */
-    if (currentTab !== 'quick' || !previousProjectId) setTab('docs', { silent: true });
     syncLocation(String(project.id || ''));
-    updateTabCount();
     if (el('cat-editor-layout').classList.contains('is-docs-open')) renderDocsPane();
     if (previousProjectId && previousProjectId !== String(project.id || '')) { activeSegmentId = ''; activeIndex = -1; revisionComparison = null; currentFilter = 'actionable'; currentLocation = 'all'; currentChange = 'all'; }
     if (outputScope && (outputScope.id !== String(project.id || '') || outputScope.revision !== revision())) clearOutputDisplay();
@@ -1656,16 +1612,6 @@
   function bind() {
     trackToolbarHeight();
     /* 帯の操作。role="tablist" の作法どおり、左右の矢印でも移れるようにする。 */
-    document.querySelectorAll('[data-cat-tab-to]').forEach(function (tab) {
-      tab.addEventListener('click', function () { setTab(tab.getAttribute('data-cat-tab-to'), { focusPanel: true }); });
-    });
-    el('cat-tab-quick').parentElement.addEventListener('keydown', function (event) {
-      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-      event.preventDefault();
-      setTab(currentTab === 'quick' ? 'docs' : 'quick', {});
-      var selected = document.querySelector('[data-cat-tab-to][aria-selected="true"]');
-      if (selected) selected.focus();
-    });
     /* 資料の切り替え。左上の資料名と、折りたたみの中の項目の両方から同じ口を開く。
        以前の「ほかの資料に切り替える」は作業画面を畳んで一覧へ戻していた。 */
     el('cat-doc-switch').addEventListener('click', openDocDialog);
@@ -1686,6 +1632,13 @@
       showPicker();
       showStart('file');
     });
+    /* 貼り付けも同じ扱いの入口になったので、ここから始められるようにする。
+       開始画面へ戻して、貼り付け欄へ焦点を置くだけでよい。 */
+    el('cat-doc-dialog-paste').addEventListener('click', function () {
+      el('cat-doc-dialog').close();
+      showPicker();
+      YakuCommon.focus(el('quick-input'));
+    });
     el('cat-doc-dialog-list').addEventListener('click', function (event) {
       var choice = event.target.closest ? event.target.closest('[data-cat-doc-open]') : null;
       if (!choice || choice.disabled) return;
@@ -1695,10 +1648,11 @@
          打ちかけの訳文は先に保存する。保存できなければ入れ替えない。 */
       flush().then(function () { resume(id); }).catch(function (error) { status(error.message, true); });
     });
-    /* ブラウザの戻る。タブは履歴に積んでいるので、押せば前のタブへ戻る。 */
+    /* ブラウザの戻る。資料を開くかどうかだけで決まるようになった（帯を外したため）。 */
     window.addEventListener('popstate', function () {
-      var params = new URLSearchParams(location.search);
-      setTab(params.get('tab') === 'quick' ? 'quick' : (params.get('project') ? 'docs' : 'quick'), { silent: true });
+      var wanted = new URLSearchParams(location.search).get('project');
+      if (wanted) { if (!project || String(project.id || '') !== wanted) resume(wanted); }
+      else if (project) showPicker();
     });
     /* 保存は入力欄からフォーカスが外れたときにだけ走る。打ちかけたままホームへ戻る、
        トレイのアイコンを押す、ウィンドウを閉じる、のいずれでも黙って消えていた。 */
@@ -2033,10 +1987,6 @@
     var cameFromInstant = location.pathname === '/quick';
     var params = new URLSearchParams(location.search);
     var wanted = params.get('project');
-    /* 開いていた資料があれば資料のタブから始める。アドレスで tab=quick を
-       指していれば、資料を読み直したうえで、その場で訳す側を出す。 */
-    var wantedTab = params.get('tab') === 'quick' ? 'quick' : (wanted ? 'docs' : 'quick');
-    setTab(wantedTab, { silent: true });
     if (wanted) { resume(wanted); return; }
     showPicker();
     if (cameFromInstant && window.YakuInstant) window.YakuInstant.show();

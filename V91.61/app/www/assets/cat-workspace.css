@@ -51,68 +51,21 @@
   padding-inline: 0;
 }
 
-/* 2つの仕事を行き来する帯。資料を開いても消えないので、どちらへも1回で戻れる。
-   箱は増やさない方針なので、枠で囲わず下の罫線1本と、選択中だけ主色の下線にする。 */
-.cat-tabs {
-  display: flex;
-  gap: var(--space-3);
-  /* 帯の左端は、下に出る中身の左端に合わせる。合わせないと、貼り付け欄が
-     920px の中央寄せなのに帯だけ器いっぱいに伸びて、実測 136px ずれていた
-     （2026-08-13、実機 1224px の窓で確認）。 */
-  max-width: 920px;
-  margin-inline: auto;
-  margin-bottom: var(--space-3);
-  border-bottom: 1px solid var(--line);
-}
-/* 確認作業のときは中身が器いっぱいなので、帯もそろえて広げる。 */
-body[data-cat-view="workspace"] .cat-tabs { max-width: none; margin-inline: 0; }
-
-/* 使い方への出口は両方のタブから届く場所に置いてある。確認作業に入ったら、
+/* 使い方への出口は、始める画面のどこからでも届く場所に置いてある。確認作業に入ったら、
    道具の帯とキーボード操作の一覧が案内を持つので、ここは出さない。 */
 body[data-cat-view="workspace"] #cat-help-links { display: none; }
 .home-help-links { max-width: 920px; margin-inline: auto; }
 
-/* 「ほかの始め方」の区切り線は、上に貼り付け欄があってこそ意味を持っていた。
-   その貼り付け欄を別のタブへ移したので、区切る相手がもう無い。保存した作業の一覧も
-   この器の中にあるため、.entry-secondary は常に先頭に来る（＝この規則は常に効く）。
-   罫線と余白で約60px を使い、押すものが1つだけの初回画面が間延びしていた
-   （2026-08-13 実測: タブの下端からボタンまで 120px -> 60px）。
-   :first-child は、将来この器の先頭に何かが入ったら区切りが戻るようにするための保険。 */
-.cat-picker > .entry-secondary:first-child {
-  margin-top: 0;
-  padding-top: 0;
-  border-top: 0;
-}
-
 /* 空の帯が高さを持つのをやめる。同じ規則が @media (min-width:1320px) の中にあったが、
-   実機のホームの窓は 1224px なので効いておらず、見出しとタブのあいだに 156px の
-   空白が空いていた（2026-08-13 実測）。幅に関係なく、空なら場所を取らない。 */
+   実機のホームの窓は 1224px なので効いておらず、見出しの下に 156px の空白が
+   空いていた（2026-08-13 実測）。幅に関係なく、空なら場所を取らない。 */
 .app-cat #cat-status:empty,
 .app-cat #cat-export-blocked:empty,
 .app-cat #cat-job:empty { display: none; min-height: 0; margin: 0; }
-/* 資料を開いているあいだは、帯の下の余白を詰める。押しやすさ（46.75px）は
-   そのままで、余白だけを 25.5px -> 8px にする。実測 2026-08-13: 詰める前は
-   表の開始位置が 194px -> 267px（+73px）まで下がり、見える行が減っていた。 */
-body[data-cat-view="workspace"] .cat-tabs { margin-bottom: var(--space-1); }
-.app-cat .cat-tabs .cat-tab {
-  min-height: 2.75rem;
-  padding: var(--space-1) var(--space-2);
-  border: 0;
-  border-bottom: 3px solid transparent;
-  border-radius: 0;
-  background: transparent;
-  color: var(--muted);
-  font-weight: 600;
-}
-.app-cat .cat-tabs .cat-tab:hover { color: var(--text); background: transparent; }
-.app-cat .cat-tabs .cat-tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
-.cat-tab-count { margin-left: var(--space-1); color: var(--muted); font-size: var(--font-meta); font-weight: 400; }
 
-/* 帯で選んだほうだけを出す。picker と workspace の出し分け（hidden 属性）は
-   今までどおりで、こちらはそれと直交する軸として重ねる。 */
-body[data-cat-tab="quick"] #cat-picker,
-body[data-cat-tab="quick"] #cat-workspace { display: none; }
-body[data-cat-tab="docs"] #cat-instant { display: none; }
+/* 確認作業に入ったら、始めるための入口は出さない。次の資料を始める入口は
+   資料名（F7）から開く一覧が持つ（2026-08-13、帯を外したときに移した）。 */
+body[data-cat-view="workspace"] #cat-instant { display: none; }
 
 /* 左上の資料名が切替口。押せることは分かる必要があるが、道具の帯の主役は
    「残りの訳案を作る」なので、塗らずに下線と ▾ だけで示す。 */
@@ -190,19 +143,14 @@ body[data-cat-tab="docs"] #cat-instant { display: none; }
    はみ出した下端を取り戻す手段が無くなる。 */
 @media (min-width: 1320px) {
   html, body.app-cat { height: 100%; }
-  /* 「その場で訳す」を見ているあいだは高さを解く。overflow だけ解いても、
-     html と body の高さが窓に固定されたままだと中身が伸びず、結局動かせない
-     （実測 2026-08-13: overflow を visible にしても window.scrollY は 0 のまま）。 */
-  html:has(body.app-cat[data-cat-tab="quick"]), body.app-cat[data-cat-tab="quick"] { height: auto; }
-  /* 高さを窓に固定するのは、一覧が主役の確認作業のときだけ。画面を一つにして
-     「選ぶ」と「その場で訳す」が同じ body に同居したため、状態を見ずに固定すると
-     訳案や伏せた数値の一覧が窓の下で切れて、触る手段が無くなる。 */
-  /* 高さを窓に固定してよいのは、確認作業の一覧を実際に見ているときだけ。
-     資料を開いたまま「その場で訳す」タブへ移ると view は workspace のままなので、
-     貼り付け側にも固定が掛かり、下がはみ出したまま動かせなくなっていた
-     （実測 2026-08-13、窓の高さ 700px: 中身 733px・scrollTop は 0 のまま・
-     「英訳の金額」の下端 705px が画面外）。タブも条件に入れる。 */
-  body.app-cat[data-cat-view="workspace"][data-cat-tab="docs"] { height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
+  /* 高さを窓に固定するのは、一覧が主役の確認作業のときだけ。始める画面には
+     貼り付け欄と保存した作業が縦に並ぶので、状態を見ずに固定すると下が切れて
+     触る手段が無くなる。
+     一時、帯で「その場で訳す」を見ているあいだも view が workspace のままになり、
+     貼り付け側が断ち切られていた（実測 2026-08-13、窓700px: 中身733px が
+     動かせず「英訳の金額」の下端705pxが画面外）。帯を外し、確認作業では
+     #cat-instant を出さないようにしたので、view だけで判定してよくなった。 */
+  body.app-cat[data-cat-view="workspace"] { height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
   .app-cat .shell { flex: 1; min-height: 0; display: flex; flex-direction: column; padding-bottom: 0; }
   .app-cat .hero { flex: 0 0 auto; }
   /* 51px の余白が、そのまま一覧の半行ぶんだった。 */

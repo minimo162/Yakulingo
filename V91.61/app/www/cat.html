@@ -57,22 +57,12 @@
       <div id="cat-status" class="cat-status muted" role="status" aria-live="polite" tabindex="-1"></div>
       <div id="cat-job" class="result-target" aria-live="polite"></div>
 
-      <!-- 2つの仕事を、上の帯で行き来する（2026-08-13）。それまでは資料を開くと
-           「その場で訳す」が画面から消え、戻る道はロゴ（全体を読み直す）か、
-           折りたたみの中の「ほかの資料に切り替える」しか無かった。URL は変わるのに
-           履歴は増えず（replaceState）、ブラウザの戻るではアプリの外へ出ていた。 -->
-      <div class="cat-tabs" role="tablist" aria-label="訳し方">
-        <button type="button" role="tab" id="cat-tab-quick" class="cat-tab" data-cat-tab-to="quick" aria-controls="cat-instant" aria-selected="true">その場で訳す</button>
-        <button type="button" role="tab" id="cat-tab-docs" class="cat-tab" data-cat-tab-to="docs" aria-controls="cat-picker" aria-selected="false">資料を訳す<span id="cat-tab-docs-count" class="cat-tab-count" hidden></span></button>
-      </div>
-
-      <!-- その場で訳す。保存しない状態。ここで作った文章と訳文はディスクへ書かず、
-           登録した訳語・過去訳・コーパスも使わない（決定_ちょっと翻訳と資料翻訳の分離 §3.2）。
-           保存したくなったら「1文ずつ確認して保存する」で、同じ画面の確認作業へ移る。
-
-           #cat-picker の外に置く。中にあると、資料を開いたとき picker ごと隠れて
-           タブで戻れなくなる（資料の作業は開いたまま保持する決まりのため）。 -->
-      <section id="cat-instant" class="cat-instant" role="tabpanel" aria-labelledby="cat-tab-quick">
+      <!-- 訳し方は一つになった（2026-08-13、利用者判断「保存しない約束は要らない」）。
+           貼り付けも取り込みも同じ経路で作業を作るので、上の帯で行き来する2つの
+           仕事は無くなった。ここに並ぶのは「何から始めるか」の入口だけである。
+           一時は帯を置いていたが、選ぶ相手が消えたので外した。
+           資料を開いているあいだの入口は、資料名（F7）から開く一覧が持つ。 -->
+      <section id="cat-instant" class="cat-instant" aria-labelledby="cat-start-title">
         <h2 id="cat-start-title">訳したい文章を貼り付ける</h2>
         <form id="quick-form" class="quick-inline">
           <p id="quick-selection-note" class="quick-selection-note" role="status" aria-live="polite" hidden></p>
@@ -165,7 +155,8 @@
            付いている。同じ語を2回書くのは、この画面から間引いてきたもの
            （2026-08-12「見出しが言っていることを、本文で言い直さない」）。
            読み上げには aria-labelledby でタブを見出しとして結び付けてある。 -->
-      <section id="cat-picker" class="translate-form cat-picker" role="tabpanel" aria-labelledby="cat-tab-docs">
+      <section id="cat-picker" class="translate-form cat-picker" aria-labelledby="cat-docs-entry-title">
+        <h2 id="cat-docs-entry-title" class="sr-only">資料から始める</h2>
 
         <!-- 「保存する／しない」で入口を分けない。初見の人は、訳案を見る前に
              1文ずつ直したいかを決められない。まず訳し、訳案の下の
@@ -381,6 +372,9 @@
     <h2 id="cat-doc-dialog-title">資料を切り替える</h2>
     <div id="cat-doc-dialog-list" class="cat-doc-dialog-list"></div>
     <div class="cat-doc-dialog-actions">
+      <!-- 資料を開いているあいだも、新しく始められる入口を両方置く（2026-08-13）。
+           貼り付けと取り込みは、いまは同じ扱いの入口なので並べる。 -->
+      <button type="button" id="cat-doc-dialog-paste" class="secondary-button">文章を貼り付けて訳す</button>
       <button type="button" id="cat-doc-dialog-import" class="secondary-button">Word・Excelを取り込む</button>
       <button type="button" id="cat-doc-dialog-close" class="secondary-button">閉じる</button>
     </div>
