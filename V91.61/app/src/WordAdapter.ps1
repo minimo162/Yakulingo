@@ -286,15 +286,10 @@ function Export-YakuWordDraft {
                 if (-not $translations.ContainsKey($id)) { continue }
                 Set-YakuWordParagraphTranslation -Paragraph $p -Namespaces $ns -Text ([string]$translations[$id]); $written++
             }
-            $body=$doc.SelectSingleNode('/w:document/w:body',$ns)
-            $marker=$doc.CreateElement('w','p','http://schemas.openxmlformats.org/wordprocessingml/2006/main')
-            $run=$doc.CreateElement('w','r','http://schemas.openxmlformats.org/wordprocessingml/2006/main'); $null=$marker.AppendChild($run)
-            # 作業の進み具合はファイルへ書かない（2026-08-12、利用者の指摘
-            # 「ファイルに出したら完成品にならないのでは」）。何行が未確認かは
-            # 作業中に知りたいことで、受け取った人が読むものではない。画面と
-            # 出力前の確認では必ず数を出す。ファイルに残すのは DRAFT の帯だけ。
-            $textNode=$doc.CreateElement('w','t','http://schemas.openxmlformats.org/wordprocessingml/2006/main'); $textNode.InnerText='DRAFT — YakuLingo（確認用）'; $null=$run.AppendChild($textNode)
-            $null=$body.InsertBefore($marker,$body.FirstChild)
+            # 本文の1行目へ「DRAFT — YakuLingo（確認用）」を入れていたが、2026-08-13 に
+            # 利用者判断で外した（「そもそもその機能自体いらない」）。2026-08-12 に
+            # 進み具合を書かないと決めたのと同じ筋で、原本に無い行を足さないほうが
+            # 資料として素直である。下書きであることは、ファイル名の DRAFT_ が示す。
             $entry=$package.Archive.GetEntry('word/document.xml'); $entry.Delete()
             $newEntry=$package.Archive.CreateEntry('word/document.xml',[IO.Compression.CompressionLevel]::Optimal)
             $writer=New-Object IO.StreamWriter($newEntry.Open(),(New-Object Text.UTF8Encoding($false)))

@@ -32,7 +32,6 @@ src/JobObject.ps1	crlf
 src/Paths.ps1	crlf
 src/PersonalGlossary.ps1	lf
 src/PromptBuilder.ps1	lf
-src/QuickArtifact.ps1	lf
 src/Runtime.ps1	crlf
 src/Selection.ps1	lf
 src/Server.ps1	crlf
@@ -93,7 +92,6 @@ tools/Test-YakuV9162Horizon1.ps1	lf
 tools/Test-YakuV9163VersionUpdate.ps1	crlf
 tools/Test-YakuV9163WordAdapter.ps1	crlf
 tools/Test-YakuV9164DualExperience.ps1	lf
-tools/Test-YakuV9164QuickArtifact.ps1	lf
 tools/Test-YakuV9165DesktopExperience.ps1	lf
 tools/Test-YakuV9165DesktopShell.ps1	lf
 tools/Test-YakuV9165DesktopTutorial.ps1	lf
@@ -104,6 +102,8 @@ tools/Test-YakuV9168CatGrid.ps1	lf
 tools/Test-YakuV9168CopilotModelFallback.ps1	lf
 tools/Test-YakuV9168SheetLayout.ps1	lf
 tools/Test-YakuV9168WordStructure.ps1	lf
+tools/Test-YakuV9169StartStructure.ps1	lf
+tools/Test-YakuV9169UsabilityFixes.ps1	lf
 tools/Test-YakuV917RuntimeWarnings.ps1	crlf
 tools/V64-HTTP-Boundary-Test.ps1	crlf
 tools/V65-Saving-Validation-Test.ps1	crlf
@@ -114,6 +114,7 @@ www/assets/cat.js	lf
 www/assets/cat-workspace.css	lf
 www/assets/common.js	lf
 www/assets/htmx.min.js	none
+www/assets/pdf-extract.js	lf
 www/assets/quick.js	lf
 www/assets/styles.css	crlf
 www/assets/tour.js	lf

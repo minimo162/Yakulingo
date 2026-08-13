@@ -220,7 +220,6 @@ function Initialize-YakuCatProjectState {
     if (-not ($Project.PSObject.Properties.Name -contains 'DirectionBasis')) { $Project | Add-Member -NotePropertyName DirectionBasis -NotePropertyValue 'fixed' -Force }
     if (-not ($Project.PSObject.Properties.Name -contains 'DirectionConfidence')) { $Project | Add-Member -NotePropertyName DirectionConfidence -NotePropertyValue 'not_applicable' -Force }
     if (-not ($Project.PSObject.Properties.Name -contains 'DirectionSourceFingerprint')) { $Project | Add-Member -NotePropertyName DirectionSourceFingerprint -NotePropertyValue '' -Force }
-    if (-not ($Project.PSObject.Properties.Name -contains 'QuickArtifactId')) { $Project | Add-Member -NotePropertyName QuickArtifactId -NotePropertyValue '' -Force }
     if (-not ($Project.PSObject.Properties.Name -contains 'TerminologySnapshotHash')) { $Project | Add-Member -NotePropertyName TerminologySnapshotHash -NotePropertyValue '' -Force }
     if (-not ($Project.PSObject.Properties.Name -contains 'TmOutbox')) { $Project | Add-Member -NotePropertyName TmOutbox -NotePropertyValue @() -Force }
     foreach ($segment in @($Project.Segments)) {
@@ -705,8 +704,12 @@ function Get-YakuCatOutputPreflight {
     # 未確認のまま出せるようにした以上、何行が未確認かは押す前に必ず言う。
     # 数を言わずに出すと、確認し終えたものと見分けがつかなくなる。
     $unconfirmedCount = [int]$eligibility.UnconfirmedCount
+    # 出す先はファイルとは限らない。copy_text はクリップボードへ写すだけなので、
+    # 「ファイルに入れます」と言うと、作られていないものを作ったと伝えることになる
+    # （2026-08-13、初回利用者として実機で確認。出力名も「訳文」だった）。
     if ($mode -ne 'blocked' -and $unconfirmedCount -gt 0) {
-        $warnings.Add(('まだ確認していない行が ' + $unconfirmedCount + ' 行あります。そのままファイルに入れます。')) | Out-Null
+        $destination = if ($mode -eq 'copy_text') { 'そのままコピーに入れます。' } else { 'そのままファイルに入れます。' }
+        $warnings.Add(('まだ確認していない行が ' + $unconfirmedCount + ' 行あります。' + $destination)) | Out-Null
     }
 
     return [pscustomobject]@{
@@ -718,7 +721,10 @@ function Get-YakuCatOutputPreflight {
         UnconfirmedCount = $unconfirmedCount
         Blockers = @($blockers)
         Warnings = @($warnings.ToArray())
-        DraftNotice = if ($mode -in @('word_draft','excel_draft')) { '原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。' } else { '確認済みの訳文をまとめてコピーします。' }
+        # ファイルの中の印を外したので（2026-08-13）、形式ごとに書き分けるものが
+        # 無くなった。言うのは「原本は触らない」「別名のコピーができる」の2つだけ。
+        DraftNotice = if ($mode -eq 'word_draft' -or $mode -eq 'excel_draft') { '原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。' }
+                      else { '' }
     }
 }
 
@@ -871,34 +877,11 @@ function New-YakuCatTextProject {
     return $project
 }
 
-function New-YakuCatProjectFromQuickArtifact {
-    <# Quick の本文をブラウザーから再送させず、server memory の artifact を
-       そのまま未確認 CAT project として commit する。 #>
-    param(
-        [Parameter(Mandatory=$true)][string]$Root,
-        [Parameter(Mandatory=$true)]$Artifact,
-        [Parameter(Mandatory=$true)][AllowNull()]$Settings
-    )
-    if ([string]$Artifact.Id -notmatch '^[a-f0-9]{32}$') { throw 'QUICK_ARTIFACT_ID_INVALID' }
-    if ([string]$Artifact.Status -ne 'ready') { throw 'QUICK_ARTIFACT_NOT_READY' }
-    if ([string]$Artifact.Direction -notin @('to_en','to_jp')) { throw 'QUICK_ARTIFACT_DIRECTION_INVALID' }
-    if ([string]::IsNullOrWhiteSpace([string]$Artifact.SourceText) -or
-        [string]::IsNullOrWhiteSpace([string]$Artifact.Translation)) { throw 'QUICK_ARTIFACT_CONTENT_MISSING' }
-
-    $project = New-YakuCatTextProject -Root $Root -Text ([string]$Artifact.SourceText) -Settings $Settings `
-        -Direction ([string]$Artifact.Direction) -Translation ([string]$Artifact.Translation) -Register $false
-    $project.FileName = 'その場で訳した文章'
-    $project | Add-Member -NotePropertyName QuickArtifactId -NotePropertyValue ([string]$Artifact.Id) -Force
-    $project | Add-Member -NotePropertyName DirectionBasis -NotePropertyValue 'inherited' -Force
-    $project | Add-Member -NotePropertyName DirectionConfidence -NotePropertyValue ([string]$Artifact.DirectionConfidence) -Force
-    $project | Add-Member -NotePropertyName DirectionSourceFingerprint -NotePropertyValue ([string]$Artifact.SourceFingerprint) -Force
-    foreach ($segment in @($project.Segments)) {
-        $segment.Confirmed = $false
-        $segment | Add-Member -NotePropertyName State -NotePropertyValue $(if ([string]::IsNullOrWhiteSpace([string]$segment.Translation)) { 'untranslated' } else { 'machine_draft' }) -Force
-        Reset-YakuCatSegmentQc -Segment $segment -KeepState
-    }
-    return (Commit-YakuNewCatProject -Project $project)
-}
+# New-YakuCatProjectFromQuickArtifact は 2026-08-13 に外した。
+# 訳案を1枚返す状態（その場で訳す）を廃止し、貼り付けた文章も最初から
+# New-YakuCatTextProject で作業になったため、昇格するもとが無くなった。
+# QuickArtifactId / quick_artifact_id も同時に外している。保存済みの作業に
+# 残っている分は、読むときに無視される（既定は空文字だった）。
 
 function New-YakuCatAlignProject {
     <#
@@ -942,11 +925,12 @@ function New-YakuCatAlignProject {
 
     if ($jaLines.Count -eq 0 -or $enLines.Count -eq 0) {
         return (New-YakuCatProjectFromPairs -Pairs @() -Direction $Direction -FileName $FileName `
-                -Warnings @('日本語と英語の両方が必要です。片方が空でした。'))
+                -Settings $Settings -Warnings @('日本語と英語の両方が必要です。片方が空でした。'))
     }
     $aligned = Invoke-YakuDocumentAlignment -JaLines $jaLines -EnLines $enLines -Settings $Settings
     return (New-YakuCatProjectFromPairs -Pairs @($aligned.Pairs) -Direction $Direction -FileName $FileName `
-            -JaCoverage ([double]$aligned.JaCoverage) -Dropped ([int]$aligned.Dropped))
+            -Settings $Settings -JaCoverage ([double]$aligned.JaCoverage) -Dropped ([int]$aligned.Dropped) `
+            -Completed ([bool]$aligned.Completed) -StoppedAt ([int]$aligned.StoppedAt) -JaLineCount ([int]@($jaLines).Count))
 }
 
 function New-YakuCatProjectFromPairs {
@@ -964,7 +948,16 @@ function New-YakuCatProjectFromPairs {
         [AllowNull()][string[]]$Warnings,
         [double]$JaCoverage = 1.0,
         [int]$Dropped = 0,
-        [bool]$Register = $true
+        [bool]$Register = $true,
+        # $Settings を引数に持たないまま Get-YakuAmountNotation へ渡していた。
+        # PowerShell の動的スコープで呼び出し元の $settings を拾って偶然動いており、
+        # 呼び出し元が変数名を変えた瞬間に既定（oku）へ落ちる状態だった
+        # （2026-08-13、実測で確認: 呼び出し元に無いと oku、billion があると billion）。
+        [AllowNull()]$Settings = $null,
+        # 途中で打ち切られたときの位置。呼び出し側が「どこまで進んだか」を出せるように。
+        [bool]$Completed = $true,
+        [int]$StoppedAt = -1,
+        [int]$JaLineCount = 0
     )
     $toEn = ([string]$Direction -eq 'to_en')
     $warn = New-Object System.Collections.Generic.List[string]
@@ -986,6 +979,12 @@ function New-YakuCatProjectFromPairs {
             Origin      = 'align'
             Confirmed   = $false
         })
+    }
+    # 途中で打ち切られたことは、網羅率とは別に言う。「網羅率が低い」だけでは
+    # 「対応が取れなかった」のか「最後まで行っていない」のか区別がつかない。
+    if (-not $Completed -and $StoppedAt -ge 0) {
+        $totalText = if ($JaLineCount -gt 0) { $JaLineCount.ToString('N0') + '行のうち' } else { '' }
+        [void]$warn.Add(($totalText + ($StoppedAt + 1).ToString('N0') + '行目で止まりました。ここまでの対応は残っています。続きは、同じ資料をもう一度取り込んでください。'))
     }
     # 黙って少ない結果を返すと、取れているように見えてしまう。
     if ($segments.Count -gt 0 -and $JaCoverage -lt 0.9) {
@@ -1373,7 +1372,6 @@ function Save-YakuCatProject {
             direction_basis = [string]$Project.DirectionBasis
             direction_confidence = [string]$Project.DirectionConfidence
             direction_source_fingerprint = [string]$Project.DirectionSourceFingerprint
-            quick_artifact_id = [string]$Project.QuickArtifactId
             terminology_snapshot_hash = [string]$Project.TerminologySnapshotHash
             tm_outbox = @($Project.TmOutbox)
             source = [string]$Project.Source
@@ -1634,7 +1632,6 @@ function Restore-YakuCatProject {
         DirectionBasis = $(if (-not [string]::IsNullOrWhiteSpace([string]$o.direction_basis)) { [string]$o.direction_basis } else { 'fixed' })
         DirectionConfidence = $(if (-not [string]::IsNullOrWhiteSpace([string]$o.direction_confidence)) { [string]$o.direction_confidence } else { 'not_applicable' })
         DirectionSourceFingerprint = [string]$o.direction_source_fingerprint
-        QuickArtifactId = [string]$o.quick_artifact_id
         TerminologySnapshotHash = [string]$o.terminology_snapshot_hash
         TmOutbox = @($o.tm_outbox)
         Blocks    = @($savedBlocks.ToArray())
@@ -3116,7 +3113,7 @@ function Export-YakuCatProject {
         throw 'CAT_EXPORT_SOURCE_CHANGED_BEFORE_COPY: 元の Excel が出力直前に変更されました。訳文はまだ書き込んでいません。もう一度出力してください。'
     }
     $writeResult = Write-YakuFileTranslations -InputPath ([string]$Project.Path) -OutputPath $OutputPath -Blocks @($currentExtract.Blocks) `
-        -TranslationByBlockId $currentByBlock -Warnings $Warnings -Settings $Settings -ProgressState $ProgressState -DraftMarker -FailOnIncomplete
+        -TranslationByBlockId $currentByBlock -Warnings $Warnings -Settings $Settings -ProgressState $ProgressState -FailOnIncomplete
     return [pscustomobject]@{
         OutputPath = [string]$writeResult.PublishedPath
         OutputName = [System.IO.Path]::GetFileName([string]$writeResult.PublishedPath)

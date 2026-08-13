@@ -15,18 +15,33 @@
      過去訳の原文と訳文が細切れになって読めない。21vw まで広げて 23字/行にする。
      これ以上広げると主役（原文・訳文）が痩せるので、上限は 22rem で止める。 */
   --pane-inspector: clamp(16rem, 21vw, 22rem);
+  /* 資料の一覧の幅。既定で開くのは広い窓だけだが、狭い窓でも利用者は自分で開ける。
+     そのとき原文・訳文が 2026-08-12 に却下された 321px を下回らない幅に収める。
+     実測 2026-08-13: 1380px で 187px を渡すと 1列 313px（下回る）。12vw まで詰める。 */
+  --pane-docs: clamp(9rem, 12vw, 15rem);
 }
 
 .app-cat .shell {
   width: min(1600px, calc(100% - 32px));
   max-width: 1600px;
 }
+/* 広い画面では上限を上げる。1920px の画面で 1600px に頭打ちにすると 320px が
+   使われないまま余っていた（実測 2026-08-13）。上げたぶんは原文・訳文の列に回る。
+   確認作業の画面だけに効かせる。読み物（貼り付け欄・チュートリアル）は
+   1行が長くなりすぎるので、920px のままにする。 */
+@media (min-width: 1700px) {
+  .app-cat[data-cat-view="workspace"] .shell { width: calc(100% - 48px); max-width: 2200px; }
+}
 
 /* 最初の画面は、白いカードで全体を囲まない（2026-08-12）。生成された画面の指紋の
    ひとつが「角丸カードの入れ子」で、ここは中身を1つも区切っていない只の器だった。
    枠と影を外し、地の紙に直接置く。区切りが要るところは罫線（.quick-fineprint /
    .entry-secondary の border-top）が既に持っている。 */
-.cat-picker {
+/* 帯で分けたあとも同じ扱い。#cat-instant を外へ出したとき translate-form を
+   付けてしまい、外したはずのカード（枠1px・角丸10px・影）が戻っていた
+   （実測 2026-08-13）。器の作法はここ1か所で決める。 */
+.cat-picker,
+.cat-instant {
   max-width: 920px;
   margin-inline: auto;
   border: 0;
@@ -35,6 +50,83 @@
   background: transparent;
   padding-inline: 0;
 }
+
+/* 使い方への出口は、始める画面のどこからでも届く場所に置いてある。確認作業に入ったら、
+   道具の帯とキーボード操作の一覧が案内を持つので、ここは出さない。 */
+body[data-cat-view="workspace"] #cat-help-links { display: none; }
+.home-help-links { max-width: 920px; margin-inline: auto; }
+
+/* 空の帯が高さを持つのをやめる。同じ規則が @media (min-width:1320px) の中にあったが、
+   実機のホームの窓は 1224px なので効いておらず、見出しの下に 156px の空白が
+   空いていた（2026-08-13 実測）。幅に関係なく、空なら場所を取らない。 */
+.app-cat #cat-status:empty,
+.app-cat #cat-export-blocked:empty,
+.app-cat #cat-job:empty { display: none; min-height: 0; margin: 0; }
+
+/* 確認作業に入ったら、始めるための入口は出さない。次の資料を始める入口は
+   資料名（F7）から開く一覧が持つ（2026-08-13、帯を外したときに移した）。 */
+body[data-cat-view="workspace"] #cat-instant { display: none; }
+/* 資料を開いた形で読み込むときは、始める画面の器も最初から出さない。
+   hidden を付けるのは JavaScript が動いたあとなので、それまでのあいだ
+   貼り付け欄と保存した作業が描かれ、入れ替わるときに点滅して見えた
+   （2026-08-13、利用者の指摘）。サーバが ?project= を見て body へ
+   data-cat-view="workspace" を入れるので、1回目の描画から効く。 */
+body[data-cat-view="workspace"] #cat-picker { display: none; }
+
+/* 過去の対訳の読み込み。日本語版と英語版を左右に並べ、同じ形で選ばせる。
+   縦に積むと、対応するページを見比べるのに画面を往復することになる。 */
+.align-file-row,
+.align-range-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: var(--space-2); }
+.align-range { display: grid; gap: 4px; }
+.align-range-label { font-weight: 700; }
+.align-range label { display: inline-flex; align-items: baseline; gap: 6px; margin-right: var(--space-2); }
+.align-range input[type="number"] { width: 5.5rem; }
+/* ページの冒頭。長い一覧なので、この中だけで動かす。 */
+.align-page-list { max-height: 14rem; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-control); }
+.align-page-row { display: flex; gap: var(--space-2); padding: 2px var(--space-1); border-bottom: 1px solid var(--line); font-size: var(--font-meta); }
+.align-page-row:last-child { border-bottom: 0; }
+.align-page-no { min-width: 2.5rem; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+
+/* 左上の資料名が切替口。押せることは分かる必要があるが、道具の帯の主役は
+   訳すボタンなので、塗らずに下線と ▾ だけで示す。 */
+.app-cat .cat-doc-switch {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  min-height: 2.25rem;
+  padding: 2px 6px;
+  margin-inline-start: -6px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.app-cat .cat-doc-switch:hover { background: var(--accent-soft); }
+.cat-doc-switch-caret { color: var(--muted); font-size: var(--font-meta); }
+
+/* 資料の切り替え。一覧と同じく、箱を並べず罫線で区切った行にする。 */
+.cat-doc-dialog { min-width: min(30rem, 92vw); }
+.cat-doc-dialog-list { margin-block: var(--space-2); max-height: 50vh; overflow-y: auto; }
+.app-cat .cat-doc-choice {
+  display: block;
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.app-cat .cat-doc-choice:hover:not([disabled]),
+.app-cat .cat-doc-choice:focus-visible { background: var(--accent-soft); }
+.app-cat .cat-doc-choice.is-current { color: var(--muted); }
+.cat-doc-choice-name { display: block; font-weight: 600; }
+.cat-doc-choice-meta { display: block; color: var(--muted); font-size: var(--font-meta); }
+.cat-doc-dialog-actions { display: flex; gap: var(--space-2); justify-content: flex-end; }
 
 /* 保存した作業は「押せる行の一覧」。1件ずつ角丸の箱に入れると、数が増えるほど
    箱が並ぶ。罫線で区切った行にして、触れたときだけ面を出す。 */
@@ -48,6 +140,11 @@
 .cat-resume-row .cat-resume-card:hover,
 .cat-resume-row .cat-resume-card:focus-visible { background: var(--accent-soft); }
 .cat-resume-row .cat-resume-drop { border: 0; }
+/* 同じ資料を2回取り込むと、名前も残り行数も同じ行が並ぶ。見分けるのは時刻なので、
+   主たる文言のあとに、弱い字で添える（読む順序は名前が先のまま）。 */
+.cat-resume-row .cat-resume-time { margin-left: var(--space-2); color: var(--muted); font-size: var(--font-meta); }
+/* キーの名前は操作名より弱く。読む順序は「確認済みにする」が先のまま。 */
+.cat-op .cat-op-key { margin-left: var(--space-2); opacity: 0.75; font-size: var(--font-meta); font-weight: 400; }
 
 .cat-workspace {
   margin-top: 12px;
@@ -66,9 +163,13 @@
    はみ出した下端を取り戻す手段が無くなる。 */
 @media (min-width: 1320px) {
   html, body.app-cat { height: 100%; }
-  /* 高さを窓に固定するのは、一覧が主役の確認作業のときだけ。画面を一つにして
-     「選ぶ」と「その場で訳す」が同じ body に同居したため、状態を見ずに固定すると
-     訳案や伏せた数値の一覧が窓の下で切れて、触る手段が無くなる。 */
+  /* 高さを窓に固定するのは、一覧が主役の確認作業のときだけ。始める画面には
+     貼り付け欄と保存した作業が縦に並ぶので、状態を見ずに固定すると下が切れて
+     触る手段が無くなる。
+     一時、帯で「その場で訳す」を見ているあいだも view が workspace のままになり、
+     貼り付け側が断ち切られていた（実測 2026-08-13、窓700px: 中身733px が
+     動かせず「英訳の金額」の下端705pxが画面外）。帯を外し、確認作業では
+     #cat-instant を出さないようにしたので、view だけで判定してよくなった。 */
   body.app-cat[data-cat-view="workspace"] { height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
   .app-cat .shell { flex: 1; min-height: 0; display: flex; flex-direction: column; padding-bottom: 0; }
   .app-cat .hero { flex: 0 0 auto; }
@@ -79,8 +180,13 @@
      2px まで潰れた）。それでも入りきらないときだけ、この器がスクロールする。 */
   .app-cat #cat-workspace { overflow: auto; }
   .app-cat #cat-editor-layout { flex: 1 1 auto; min-height: 15rem; }
-  /* 資料名も訳す向きもツールバーが持っている。二重に出して1行を使わない。 */
-  .app-cat .workspace-heading { display: none; }
+  /* 資料名も訳す向きもツールバーが持っている。二重に出して1行を使わない。
+     ただし display:none にすると h1 が読み上げの見出し一覧から消えるので、
+     場所を取らせないだけにする（2026-08-13）。 */
+  .app-cat .workspace-heading {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
   /* 空でも高さを持っていた帯。合わせて約97px を一覧へ回す。 */
   .app-cat #cat-status:empty,
   .app-cat #cat-export-blocked:empty,
@@ -292,6 +398,36 @@
 .cat-editor-layout.is-inspector-hidden { grid-template-columns: minmax(0, 1fr); }
 .cat-editor-layout.is-inspector-hidden .cat-inspector-pane { display: none; }
 
+/* 資料の一覧は既定で畳む。開閉の4通りを、列の指定だけで表す。
+   実測 2026-08-13（原文/訳文 1列の幅）:
+     1380px 左欄なし 421px / 左欄240px 295px … 2026-08-12 に却下した 321px を下回る
+     1920px 左欄なし 505px / 左欄240px 379px … 上回る
+   よって既定で開くのは広い窓のときだけにする（下の @media）。 */
+.cat-docs-pane { display: none; }
+.cat-editor-layout.is-docs-open { grid-template-columns: var(--pane-docs) minmax(0, 1fr) var(--pane-inspector); }
+.cat-editor-layout.is-docs-open.is-inspector-hidden { grid-template-columns: var(--pane-docs) minmax(0, 1fr); }
+.cat-editor-layout.is-docs-open .cat-docs-pane { display: flex; flex-direction: column; min-height: 0; }
+.cat-docs-pane-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
+.cat-docs-pane-title { margin: 0; font-size: var(--font-meta); color: var(--muted); font-weight: 600; }
+.cat-docs-pane-list { overflow-y: auto; min-height: 0; margin-top: var(--space-1); }
+.app-cat .cat-docs-pane-item {
+  display: block;
+  width: 100%;
+  padding: var(--space-1);
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.app-cat .cat-docs-pane-item:hover:not([disabled]),
+.app-cat .cat-docs-pane-item:focus-visible { background: var(--accent-soft); }
+.app-cat .cat-docs-pane-item.is-current { color: var(--muted); }
+.cat-docs-pane-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cat-docs-pane-meta { display: block; color: var(--muted); font-size: var(--font-meta); }
+
 .cat-state-filters button span,
 .cat-location-list button span {
   color: inherit;
@@ -364,7 +500,14 @@
   outline: 3px solid var(--accent);
   outline-offset: -3px;
   /* 印は outline と面の2つで足りる。3つ目を足しても強調は増えず、
-     左端の状態の帯と紛らわしくなるだけだった。 */
+     左端の状態の帯と紛らわしくなるだけだった。
+
+     その「紛らわしい」が実際に起きていた（2026-08-13、利用者の指摘）。
+     行は左端に状態の帯（4px、確認済みなら緑）を持ち、選んだ行はその内側に
+     accent の枠（3px）が来る。左だけ色の違う線が2本並び、どちらが「選んでいる」
+     印なのか読めない。選んでいる行では帯を消す。その行の状態は、同じ行の
+     いちばん左に丸章と「確認済」の文字が出ているので失われない。 */
+  border-left-color: transparent;
 }
 
 /* 主役の行だけ息をさせる。脇役は詰めて、一覧としての一望性を保つ。 */

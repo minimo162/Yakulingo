@@ -45,18 +45,30 @@ function Get-YakuAlignmentNumbers {
         $k = [string]$ch
         if ($map.ContainsKey($k)) { $null = $sb.Append($map[$k]) } else { $null = $sb.Append($ch) }
     }
-    $s = $sb.ToString() -replace '[\s,]', ''
+    # 桁区切りだけを消す。空白は残す。
+    #
+    # 以前は '[\s,]' で空白ごと消していた。PDF 抽出で「1, 234」のように桁区切りの
+    # あとへ空白が入る、という手当てだったが、効きすぎて**表の列の区切り**まで
+    # 消していた。決算短信の表はこうなる（2026-08-13 実測）。
+    #   JA  △46,115 32,836      -> 4611532836      （2つがくっついて1つの数になる）
+    #   EN  (46,115) 32,836     -> 46115 と 32836  （括弧で切れるので正しく2つ）
+    # 同じ数字が書いてあるのに不一致と判定され、表の行が軒並み捨てられていた。
+    # 桁区切りは必ず数字と数字の間にあるので、そこだけを詰める。
+    $s = [regex]::Replace($sb.ToString(), '(?<=\d),\s*(?=\d)', '')
+    $s = $s -replace ',', ''
 
     if ($Language -eq 'ja') {
         # 百万・千万を万より先に並べる。後ろに置くと 3,501,499百万円 の
         # 百万を取り逃がし、桁が6つ狂った値で照合してしまう。
         $mul = @{ '兆' = [decimal]1000000000000; '億' = [decimal]100000000; '百万' = [decimal]1000000; '千万' = [decimal]10000000; '万' = [decimal]10000; '千' = [decimal]1000 }
-        $pattern = '(\d+(?:\.\d+)?)(兆|億|千万|百万|万|千)?'
+        # 単位との間の空白は許す。空白を全部消していたころは、詰めることで
+        # 「12.2 billion」を1つに読んでいた。空白を残す以上、ここで吸収する。
+        $pattern = '(\d+(?:\.\d+)?)[ \t]*(兆|億|千万|百万|万|千)?'
         $opts = [Text.RegularExpressions.RegexOptions]::None
     }
     else {
         $mul = @{ 'trillion' = [decimal]1000000000000; 'billion' = [decimal]1000000000; 'million' = [decimal]1000000; 'thousand' = [decimal]1000 }
-        $pattern = '(\d+(?:\.\d+)?)(trillion|billion|million|thousand)?'
+        $pattern = '(\d+(?:\.\d+)?)[ \t]*(trillion|billion|million|thousand)?'
         $opts = [Text.RegularExpressions.RegexOptions]::IgnoreCase
     }
     # 隣り合ったまま続く数（1兆2345億円）はひとつの金額なので、
@@ -324,6 +336,35 @@ function Invoke-YakuAlignmentChunk {
     }
 }
 
+function Set-YakuAlignmentProgress {
+    <#
+      塊ごとに進み具合を出す。長い資料では往復が3桁になるので、
+      出さないと「10% のまま20分」になり、止まったのか進んでいるのか
+      利用者に分からない（実測 2026-08-13: 144ページで最低128往復）。
+      ProgressState が無いときは何もしない（単独実行・試験のため）。
+    #>
+    param(
+        [AllowNull()]$ProgressState,
+        [int]$ChunkIndex,
+        [int]$ChunkTotal,
+        [int]$PairCount,
+        [AllowNull()][string]$Detail
+    )
+    if ($null -eq $ProgressState) { return }
+    if (-not (Get-Command Set-YakuTranslationProgress -ErrorAction SilentlyContinue)) { return }
+    $total = [Math]::Max(1, $ChunkTotal)
+    # 10%〜95% を塊の進みに割り当てる。0 や 100 にはしない。
+    # 「これから ChunkIndex 塊目を送る」時点で呼ぶので、割合は済んだ数（-1）で出す。
+    # ChunkIndex をそのまま使うと、1塊しかない資料が始まった瞬間に 95% になる。
+    $done = [Math]::Max(0, $ChunkIndex - 1)
+    $pct = 10 + [int][Math]::Floor(85.0 * $done / $total)
+    $text = if ([string]::IsNullOrWhiteSpace($Detail)) { ($ChunkIndex.ToString() + ' / ' + $total.ToString() + ' 塊目。ここまでに ' + $PairCount + ' 対。') } else { [string]$Detail }
+    try {
+        Set-YakuTranslationProgress -ProgressState $ProgressState -Mode 'working' -Label '対訳を突き合わせ中' `
+            -Progress $pct -Detail $text -Phase 'translating'
+    } catch {}
+}
+
 function Invoke-YakuDocumentAlignment {
     <#
       文書ひとつを通しでアライメントする。
@@ -338,7 +379,14 @@ function Invoke-YakuDocumentAlignment {
         [int]$MaxLines = 50,
         [int]$Overlap = 5,
         [double]$MinCoverage = 0.85,
-        [switch]$KeepNumberMismatch
+        [switch]$KeepNumberMismatch,
+        # 進み具合の出し先。長い資料では Copilot への往復が3桁になる
+        # （実測 2026-08-13: 144ページの有価証券報告書で 5,742行 = 最低128往復）。
+        # 渡さないと 10% のまま20分以上動かず、止まったのか進んでいるのか分からない。
+        [AllowNull()]$ProgressState = $null,
+        # Copilot が「時間を置くまで戻らない」状態に入ったとき、待って続ける。
+        # 待たずに諦めると、長い資料は必ずどこかで切れる（下の catch の注釈を参照）。
+        [int[]]$RetryWaitSeconds = @(60, 180, 300)
     )
     $ja = @($JaLines); $en = @($EnLines)
     if ($ja.Count -eq 0 -or $en.Count -eq 0) {
@@ -348,7 +396,7 @@ function Invoke-YakuDocumentAlignment {
     $chunks = @(Split-YakuAlignmentChunks -Count $ja.Count -MaxLines $MaxLines -Overlap $Overlap)
     $accepted = New-Object System.Collections.Generic.List[object]
     $usedJa = @{}; $usedEn = @{}; $jaToEn = @{}
-    $enCursor = 0; $calls = 0; $splits = 0; $dropped = 0
+    $enCursor = 0; $calls = 0; $splits = 0; $dropped = 0; $chunkIndex = 0
     # 途中で止まった位置。-1 なら最後まで通った。
     $stoppedAt = -1; $stopReason = ''
 
@@ -366,18 +414,42 @@ function Invoke-YakuDocumentAlignment {
         # Copilot は一定量を使うと「問題が発生しました」を返すようになり、
         # 時間を置くまで戻らない。長い資料は必ずどこかで当たるので、
         # 例外で抜けると 50塊ぶんの成果が丸ごと消える（2026-08-08 に発生）。
-        try {
-            $res = Invoke-YakuAlignmentChunk -JaLines $ja -EnLines $en -JaStart $c.Start -JaEnd $c.End `
-                -EnStart $enStart -EnEnd $enEnd -Settings $Settings -MinCoverage $MinCoverage
-        } catch {
-            $stopReason = [string]$_.Exception.Message
-            # 数値マスクの失敗だけは握り潰さない。統制なので、続けてはいけない。
-            # 途中まで貯める仕組みを入れたとき、ここを分けずに一度緩めた。
-            if ($stopReason -match 'Alignment masking left a number|^(?:EXTERNAL_SEND_|PROTECTION_RECEIPT_|PROTECTED_PROMPT_)') { throw }
-            $stoppedAt = $c.Start
-            try { Write-YakuLog ("Alignment stopped mid-document. jaLine=$($c.Start) pairs=$($accepted.Count) reason=" + $stopReason) 'WARN' } catch {}
-            break
+        $chunkIndex++
+        Set-YakuAlignmentProgress -ProgressState $ProgressState -ChunkIndex $chunkIndex -ChunkTotal $chunks.Count `
+            -PairCount $accepted.Count -Detail ''
+        # 待って続ける。Copilot が「時間を置くまで戻らない」状態に入ったとき、
+        # そこで諦めると長い資料は必ず途中で切れる。待つのは機械の仕事にする。
+        $res = $null
+        $attempt = 0
+        while ($true) {
+            try {
+                $res = Invoke-YakuAlignmentChunk -JaLines $ja -EnLines $en -JaStart $c.Start -JaEnd $c.End `
+                    -EnStart $enStart -EnEnd $enEnd -Settings $Settings -MinCoverage $MinCoverage
+                break
+            } catch {
+                $stopReason = [string]$_.Exception.Message
+                # 数値マスクの失敗だけは握り潰さない。統制なので、続けてはいけない。
+                # 途中まで貯める仕組みを入れたとき、ここを分けずに一度緩めた。
+                if ($stopReason -match 'Alignment masking left a number|^(?:EXTERNAL_SEND_|PROTECTION_RECEIPT_|PROTECTED_PROMPT_)') { throw }
+                # 待ってよいのは「Copilot 自身がエラーを返した」ときだけ。
+                # CopilotClient がこの場合だけ COPILOT_SERVICE_ERROR を投げ、
+                # 注釈も「待って出直すのが正解で、他の失敗とは対処が違う」と書いている。
+                # ここを絞らずに全部待つと、別の原因の失敗でも1塊あたり9分止まる
+                # （2026-08-13、回帰試験が実際に止まって気づいた）。
+                if ($stopReason -notmatch 'COPILOT_SERVICE_ERROR' -or $attempt -ge @($RetryWaitSeconds).Count) {
+                    $stoppedAt = $c.Start
+                    try { Write-YakuLog ("Alignment stopped mid-document. jaLine=$($c.Start) pairs=$($accepted.Count) attempts=$attempt reason=" + $stopReason) 'WARN' } catch {}
+                    break
+                }
+                $wait = [int]@($RetryWaitSeconds)[$attempt]
+                $attempt++
+                try { Write-YakuLog ("Alignment waiting for Copilot. jaLine=$($c.Start) attempt=$attempt waitSeconds=$wait reason=" + $stopReason) 'WARN' } catch {}
+                Set-YakuAlignmentProgress -ProgressState $ProgressState -ChunkIndex $chunkIndex -ChunkTotal $chunks.Count `
+                    -PairCount $accepted.Count -Detail ('Copilotが応答しません。' + [Math]::Round($wait / 60.0, 1) + '分待ってから続けます（' + $attempt + '回目）。ここまでの対訳は残ります。')
+                Start-Sleep -Seconds $wait
+            }
         }
+        if ($null -eq $res) { break }
         $calls += [int]$res.Calls; $splits += [int]$res.Splits
 
         foreach ($p in @($res.Pairs)) {

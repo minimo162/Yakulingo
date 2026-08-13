@@ -8,6 +8,8 @@
   <meta name="yaku-max-batch-chars" content="__YAKU_MAX_BATCH_CHARS__">
   <meta name="yaku-amount-notation" content="__YAKU_AMOUNT_NOTATION__">
   <meta name="yaku-tour" content="__YAKU_TOUR__">
+  <!-- 過去の対訳の取り込みで来たかどうか。1 のときだけ WebAssembly が使える。 -->
+  <meta name="yaku-import" content="__YAKU_IMPORT__">
   <title>翻訳 - YakuLingo</title>
   <link rel="stylesheet" href="/assets/styles.css">
   <link rel="stylesheet" href="/assets/cat-workspace.css">
@@ -16,7 +18,7 @@
   <script src="/assets/cat.js" defer></script>
   <script src="/assets/tour.js" defer></script>
 </head>
-<body class="app-cat">
+<body class="app-cat"__YAKU_VIEW__>
     <!-- 行の状態を示す記号。輪郭が5つとも違うので、白黒でも色覚特性でも区別できる。
          ○（空）→ ◐（途中）→ ✓（完了）は塗り量の階段で、言葉を介さずに読める。
          画像ファイルを増やさないため、文書内の symbol として持つ。色は currentColor。 -->
@@ -57,12 +59,13 @@
       <div id="cat-status" class="cat-status muted" role="status" aria-live="polite" tabindex="-1"></div>
       <div id="cat-job" class="result-target" aria-live="polite"></div>
 
-      <section id="cat-picker" class="translate-form cat-picker" aria-labelledby="cat-start-title">
-        <h2 id="cat-start-title">訳したい文章を貼り付ける</h2>
-      <!-- その場で訳す。保存しない状態。ここで作った文章と訳文はディスクへ書かず、
-           登録した訳語・過去訳・コーパスも使わない（決定_ちょっと翻訳と資料翻訳の分離 §3.2）。
-           保存したくなったら「1文ずつ確認して保存する」で、同じ画面の確認作業へ移る。 -->
+      <!-- 訳し方は一つになった（2026-08-13、利用者判断「保存しない約束は要らない」）。
+           貼り付けも取り込みも同じ経路で作業を作るので、上の帯で行き来する2つの
+           仕事は無くなった。ここに並ぶのは「何から始めるか」の入口だけである。
+           一時は帯を置いていたが、選ぶ相手が消えたので外した。
+           資料を開いているあいだの入口は、資料名（F7）から開く一覧が持つ。 -->
       <section id="cat-instant" class="cat-instant" aria-labelledby="cat-start-title">
+        <h2 id="cat-start-title">訳したい文章を貼り付ける</h2>
         <form id="quick-form" class="quick-inline">
           <p id="quick-selection-note" class="quick-selection-note" role="status" aria-live="polite" hidden></p>
           <!-- 選んだ範囲だけでは、Word・Excelの体裁を保った社内確認用ファイルは
@@ -93,12 +96,14 @@
               <button type="button" class="secondary-button direction-choice-button" data-quick-direction="to_jp"><strong>日本語に訳す</strong><span>外国語の内容を日本語で確認します</span></button>
             </div>
           </fieldset>
-          <div class="command-bar"><button id="quick-submit" type="submit" disabled>文章を入力してください</button><span class="command-bar-note">ここで訳しただけでは保存しません。登録した訳語も使いません。</span></div>
+          <div class="command-bar"><button id="quick-submit" type="submit" disabled>文章を入力してください</button><!-- 2026-08-13、利用者判断「保存しない約束は要らない」。貼り付けた文章も資料と
+     同じ扱いになったので、逆のことを書く。登録した訳語も過去訳も効くようになった。 -->
+<span class="command-bar-note">1行ずつ確認する画面に移ります。保存されるので、あとから続けられます。</span></div>
           <!-- 送る前の約束と、金額の書き方。押す前に読む必要はないが、押したあとの
                結果を説明するものなので、ボタンの下に小さく置く。以前は入力欄と
                ボタンの間に太い枠で挟まっていて、入力とその実行を分断していた。 -->
           <div class="quick-fineprint">
-            <p class="quick-fineprint-line">金額などの数値は、Copilotへ送る前に自動で伏せます。社名・人名・文章はそのまま送信されます。</p>
+            <p class="quick-fineprint-line">金額などの数値は、Copilotへ送る前に自動で伏せます。社名・人名・文章はそのまま送信されます。資料は訳す文だけを送り、ファイルそのものは送りません。</p>
             <p class="quick-fineprint-line">
               <label for="amount-notation">英訳の金額</label>
               <select id="amount-notation">
@@ -111,42 +116,16 @@
         </form>
 
         <section id="quick-job" class="result-target" aria-live="polite"></section>
-        <section id="quick-result" class="quick-result" aria-labelledby="quick-result-title" hidden>
-          <div class="result-card">
-            <div class="result-card-header"><div><span class="eyebrow">訳案</span><h3 id="quick-result-title"></h3></div></div>
-            <pre id="quick-result-text" class="translation"></pre><p id="quick-notation-hint" class="quick-notation-note" hidden></p>
-            <div class="result-actions">
-              <button id="quick-copy" type="button">コピー</button>
-              <button id="quick-revise-open" type="button" class="secondary-button" aria-expanded="false" aria-controls="quick-revise-form">この訳案を直す</button>
-              <button id="quick-promote" type="button" class="secondary-button">1文ずつ確認して保存する（あとから開けます）</button>
-            </div>
-            <form id="quick-revise-form" class="quick-revise-panel" hidden>
-              <div>
-                <h4>訳案の表現を直す</h4>
-                <p class="muted">直したい表現をCopilotに伝えます。原文の内容や数値を変えないよう依頼し、数値はアプリでも確認します。結果はご自身で確認してください。</p>
-              </div>
-              <label for="quick-revise-instruction">どこを、どう変えますか？</label>
-              <textarea id="quick-revise-instruction" rows="3" maxlength="300" placeholder="例：「Thank you for contacting me.」を「Thank you for your email.」に変える"></textarea>
-              <div class="result-actions">
-                <button id="quick-revise-submit" type="submit">この指示で訳案を直す</button>
-                <button id="quick-revise-cancel" type="button" class="secondary-button">やめる</button>
-              </div>
-            </form>
-            <p id="quick-revise-status" class="muted" role="status" aria-live="polite"></p>
-            <p id="quick-result-note" class="muted"></p>
-            <div id="quick-mask-summary" class="privacy-note mask-summary" hidden>
-              <p class="mask-summary-line"><strong id="quick-mask-count"></strong>を伏せてCopilotへ送り、訳案では元の数値に戻しました。</p>
-              <details id="quick-mask-detail" class="mask-detail" hidden>
-                <summary>伏せた数値を確かめる</summary>
-                <ul id="quick-mask-list" class="mask-list"></ul>
-                <p class="mask-detail-note">この一覧はこのパソコンの中だけで作っています。Copilotへは記号で送りました。</p>
-              </details>
-            </div>
-            <p id="quick-copy-status" class="muted" role="status" aria-live="polite"></p>
-            <textarea id="quick-copy-fallback" class="quick-copy-fallback" readonly hidden aria-label="コピー用の訳文"></textarea>
-          </div>
-        </section>
+        <!-- 訳案を1枚返すカード（コピー・この訳案を直す・1文ずつ確認して保存する）は
+             2026-08-13 に外した。貼り付けた文章も資料と同じ確認画面へ移るので、
+             出す場面が無くなった。訳文・伏せた数値・直す操作は、すべて確認画面が持つ。 -->
       </section>
+
+      <!-- 見出しは目には出さない。すぐ下の「Word・Excelを取り込む」が同じことを
+           言うので、2回書かない（2026-08-12「見出しが言っていることを、本文で
+           言い直さない」）。読み上げには sr-only の見出しを結び付けてある。 -->
+      <section id="cat-picker" class="translate-form cat-picker" aria-labelledby="cat-docs-entry-title">
+        <h2 id="cat-docs-entry-title" class="sr-only">資料から始める</h2>
 
         <!-- 「保存する／しない」で入口を分けない。初見の人は、訳案を見る前に
              1文ずつ直したいかを決められない。まず訳し、訳案の下の
@@ -162,11 +141,22 @@
              取り込みが主役に見えていた（2026-08-12、実機 1380px で確認）。 -->
         <div class="entry-secondary">
           <div class="entry-actions cat-entry-actions">
-            <button type="button" class="secondary-button" data-cat-source-show="file">Word・Excelを取り込む</button>
+            <!-- 押したらファイル選択がそのまま開く（2026-08-13、利用者の指摘
+                 「押しても下にちょっとスクロールされるだけで何も起こらない。
+                 さらにその下に Word・Excel を選ぶがあるので訳が分からなくなっている」）。
+                 以前は下に欄が開くだけで、そこにもう一度「選ぶ」があり、さらに
+                 「取り込んで確認を始める」を押す必要があった。押す回数は3回。 -->
+            <button type="button" id="cat-open-file-entry" class="secondary-button">Word・Excelを取り込む<input id="cat-file-input" type="file" accept=".docx,.xlsx,.xlsm" hidden></button>
           </div>
+          <!-- 資料の側にも同じことを書く（2026-08-13）。貼り付けの側にだけ書いてあり、
+               資料を選んだ人は、外へ送ることも数値を伏せることも読まないまま
+               訳すボタンを押せてしまっていた（実測: この面の可視テキストに
+               「Copilot」が1回も出てこなかった）。 -->
+          
           <details class="entry-more"><summary>そのほかの始め方</summary><div class="entry-more-actions">
             <button type="button" class="secondary-button" data-cat-source-show="prior">前回の資料をもとに、今回の分だけ訳す</button>
-            <button type="button" class="secondary-button" data-cat-source-show="align">前回の日本語と英語を、参考として読み込む</button>
+            <button type="button" id="cat-open-align-entry" class="secondary-button">過去の日本語と英語の資料を読み込む</button>
+            <button type="button" class="secondary-button" data-cat-source-show="file">ファイルの保存場所を入力して取り込む</button>
           </div></details>
           <!-- 保存した作業は溜まる。実機で10件あり、この一覧だけで画面の44%
                （685px / 全体1555px）を占めていた。既定は直近3件だけ出す。 -->
@@ -177,54 +167,99 @@
           </div>
         </div>
 
+        <!-- 選んだ時点で取り込みが始まるので、確認のボタンは置かない。
+             ボタン自身がドロップ先も兼ねるので、ドロップ用の枠も置かない。
+             ファイルを選べない環境のために、保存場所の入力だけを残す。 -->
         <div id="cat-source-file" class="cat-start-panel" hidden>
-          <h3>Word・Excelを選ぶ</h3>
-          <label class="file-drop" for="cat-file-input" id="cat-drop" role="button" tabindex="0"><input id="cat-file-input" type="file" accept=".docx,.xlsx,.xlsm" hidden><span>ここにファイルをドロップ、またはクリックして選択</span><span id="cat-file-name" class="muted">.docx / .xlsx / .xlsm</span></label>
-          <details><summary>ファイルを選べない場合</summary><label class="field-label" for="cat-path">ファイルの保存場所<input id="cat-path" type="text" placeholder="例: C:\Documents\資料.docx"></label></details>
-          <button type="button" data-cat-open="file">取り込んで確認を始める</button>
+          <label class="field-label" for="cat-path">ファイルの保存場所<input id="cat-path" type="text" placeholder="例: C:\Documents\資料.docx"></label>
+          <button type="button" data-cat-open="file">この場所から取り込む</button>
         </div>
         <div id="cat-source-text" class="cat-start-panel" hidden>
           <h3>長い文章を貼り付ける</h3><label for="cat-text" class="sr-only">翻訳したい文章</label><textarea id="cat-text" rows="9" placeholder="翻訳したい文章を貼り付け"></textarea><button type="button" data-cat-open="text">確認を始める</button>
         </div>
         <div id="cat-source-prior" class="cat-start-panel" hidden>
-          <p class="muted">前回の英語は「前回版」と出所を明示して表示し、自動では反映しません。ここでは3つの文章を貼り付け、出力は確認済み訳文のコピーです。3つのWordを体裁付きで更新する機能ではありません。</p>
+          <p class="muted">前回の英語は「前回版」として参考に出します。自動では反映しません。</p>
           <label class="field-label" for="cat-prior-ja">前回の日本語<textarea id="cat-prior-ja" rows="4"></textarea></label>
           <label class="field-label" for="cat-prior-en">前回の英語<textarea id="cat-prior-en" rows="4"></textarea></label>
           <label class="field-label" for="cat-current-ja">今回の日本語<textarea id="cat-current-ja" rows="4"></textarea></label>
           <label class="field-label" for="cat-prior-name">資料名<input id="cat-prior-name" type="text"></label>
           <button type="button" id="cat-prior-open">貼り付けた文章で始める</button>
         </div>
+        <!-- 過去の日英資料の取り込み。PDF を直接読めるようにした（2026-08-13）。
+             利用者の実情として、正式版は PDF で、元の Word・Excel は章ごとに
+             細切れだったり印刷範囲外にゴミがあったりして、そのままでは使えない。
+             市販ツールも memoQ・Trados が PDF での突き合わせを公式に認めている。
+             PDF の解析はこの画面の中（WebAssembly）で行い、ファイルは送らない。 -->
         <div id="cat-source-align" class="cat-start-panel" hidden>
-          <p class="muted">左に前回の日本語、右に対応する前回の英語を貼り付けます。取り込んだ訳は「前回版」として、この作業だけで参照できます。</p>
-          <label class="field-label" for="cat-align-source">日本語版<textarea id="cat-align-source" rows="5"></textarea></label>
-          <label class="field-label" for="cat-align-target">英語版<textarea id="cat-align-target" rows="5"></textarea></label>
+          <p class="muted">同じ資料の日本語版と英語版を読み込みます。取り込んだ訳は、次の資料から候補として出ます。</p>
+          <div class="align-file-row">
+            <label class="field-label" for="cat-align-source-file">日本語版のPDF<input id="cat-align-source-file" type="file" accept=".pdf"></label>
+            <label class="field-label" for="cat-align-target-file">英語版のPDF<input id="cat-align-target-file" type="file" accept=".pdf"></label>
+          </div>
+          <p id="cat-align-file-status" class="muted" role="status" aria-live="polite"></p>
+          <!-- 範囲を選べるようにする。資料まるごとは Copilot への往復が3桁になり
+               （実測 2026-08-13: 144ページで最低128回）、参考にしたいのは普通
+               特定の章である。ページの冒頭をここに出すので、別のアプリで開いて
+               対応するページを調べ直す必要はない。 -->
+          <div id="cat-align-ranges" class="align-range-row" hidden>
+            <div class="align-range">
+              <span class="align-range-label">日本語版</span>
+              <label for="cat-align-source-from">から<input id="cat-align-source-from" type="number" min="1" step="1"></label>
+              <label for="cat-align-source-to">まで<input id="cat-align-source-to" type="number" min="1" step="1"></label>
+              <details><summary>ページの冒頭を見る</summary><div id="cat-align-source-pages" class="align-page-list"></div></details>
+            </div>
+            <div class="align-range">
+              <span class="align-range-label">英語版</span>
+              <label for="cat-align-target-from">から<input id="cat-align-target-from" type="number" min="1" step="1"></label>
+              <label for="cat-align-target-to">まで<input id="cat-align-target-to" type="number" min="1" step="1"></label>
+              <details><summary>ページの冒頭を見る</summary><div id="cat-align-target-pages" class="align-page-list"></div></details>
+            </div>
+          </div>
+          <details id="cat-align-paste"><summary>PDFが無い（文章を貼り付ける）</summary>
+            <label class="field-label" for="cat-align-source">日本語版<textarea id="cat-align-source" rows="5"></textarea></label>
+            <label class="field-label" for="cat-align-target">英語版<textarea id="cat-align-target" rows="5"></textarea></label>
+          </details>
           <label class="field-label" for="cat-align-name">資料名<input id="cat-align-name" type="text"></label>
-          <button type="button" id="cat-align-open">前回版として取り込む</button>
+          <button type="button" id="cat-align-open">読み込んで突き合わせる</button>
         </div>
         <fieldset id="cat-direction-choice" class="direction-choice" hidden><legend>どちらに訳しますか？</legend><p class="muted">入力内容だけでは自動で決められません。</p><div class="direction-choice-grid"><button type="button" class="secondary-button" data-cat-direction="to_en">英語に訳す</button><button type="button" class="secondary-button" data-cat-direction="to_jp">日本語に訳す</button></div></fieldset>
 
-        <!-- 起動して最初に出るのはこの画面になった（2026-08-12）。以前あった
-             「何を訳しますか」の選択画面は消し、その出口だけをここへ移した。 -->
-        <nav class="home-help-links" aria-label="使い方と起動設定">
-          <a href="/tutorial#settings">起動とショートカット</a>
-          <a href="/cat?tour=1">使い方を見る</a>
-          <a href="/tutorial">このアプリについて</a>
-        </nav>
       </section>
+
+      <!-- 使い方への出口は、どちらのタブからも届く場所に置く（2026-08-13）。
+           資料側のパネルの中に入れていたため、起動して最初に出る「その場で訳す」
+           からは一つも見えず（実測: 可視のリンク0本）、初めての人が案内へ
+           たどり着けなかった。資料を開いているあいだは道具の帯が主役なので出さない。 -->
+      <!-- 出口は1つ（2026-08-13、利用者の指摘「3つもリンクがあってどれを選べば
+           よいかわからない」）。行き先の /tutorial が、使い方・送るもの・
+           起動とショートカットを1枚で持っている。案内の再生もその画面の
+           「使い方をもう一度見る」から始められる。 -->
+      <nav id="cat-help-links" class="home-help-links" aria-label="使い方と設定">
+        <a href="/tutorial">使い方と設定</a>
+      </nav>
 
       <section id="cat-workspace" class="cat-workspace" hidden>
         <header id="cat-editor-toolbar" class="cat-editor-toolbar">
+          <!-- 資料名そのものを切替口にする（2026-08-13）。市販ツールを調べたところ、
+               作業画面を畳んで一覧へ戻らせるものは無かった。Crowdin はエディタ左上の
+               ナビゲーションパスと畳めるファイル一覧（Ctrl+[）で、memoQ は資料ごとの
+               タブで、Phrase は資料ごとのブラウザタブで、作業画面に居たまま切り替える。
+               ここは1度に1つの資料しか開かないので、左上の資料名を押すと一覧が出る形に
+               した。押しても作業画面は畳まない。 -->
           <div class="cat-toolbar-document">
             <span class="cat-current-kicker">現在の確認作業</span>
-            <strong id="cat-toolbar-title"></strong>
-            <span id="cat-toolbar-direction" class="muted"></span>
+            <button type="button" id="cat-doc-switch" class="cat-doc-switch" aria-haspopup="dialog" title="ほかの資料に切り替える（F7）" aria-keyshortcuts="F7">
+              <strong id="cat-toolbar-title"></strong>
+              <span id="cat-toolbar-direction" class="muted"></span>
+              <span class="cat-doc-switch-caret" aria-hidden="true">▾</span>
+            </button>
           </div>
           <div class="cat-toolbar-progress">
             <div id="cat-progress-row" class="cat-progress-row"><div class="cat-progress" role="progressbar" aria-label="確認の進捗" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="cat-progress-bar" class="cat-progress-bar"></span></div><span id="cat-progress-text"></span></div>
             <span id="cat-save-status" class="cat-save-status" role="status" aria-live="polite">保存済み</span>
           </div>
           <label class="cat-toolbar-search" for="cat-search"><span>検索</span><input id="cat-search" type="search" placeholder="原文・訳文を検索"></label>
-         <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">残りの訳案を作る</button><button id="cat-export" type="button" class="secondary-button">訳文を取り出す</button><button id="cat-qa-open" type="button" class="secondary-button" title="出す前に、直すところを一覧で見ます（F8）">点検</button><details class="cat-more-actions"><summary>そのほか</summary><div class="cat-more-actions-list"><button id="cat-preview-open" type="button" class="secondary-button">体裁で見る</button><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みの行だけコピー</button><button id="cat-switch-project" type="button" class="secondary-button">ほかの資料に切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>右の候補を上から順に訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></dt><dd>原文をそのまま訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd></dt><dd>確認を取り消す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>M</kbd> / <kbd>Alt</kbd>+<kbd>K</kbd></dt><dd>次の行とつなげる / つなげた行を戻す</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や右側から訳文欄へ戻る</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
+         <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">訳していない行を訳す</button><button id="cat-export" type="button" class="secondary-button">訳文を取り出す</button><button id="cat-qa-open" type="button" class="secondary-button" title="出す前に、直すところを一覧で見ます（F8）">点検</button><details class="cat-more-actions"><summary>そのほか</summary><div class="cat-more-actions-list"><button id="cat-preview-open" type="button" class="secondary-button">体裁で見る</button><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みの行だけコピー</button><button id="cat-switch-project" type="button" class="secondary-button">ほかの資料に切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>右の候補を上から順に訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></dt><dd>原文をそのまま訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd></dt><dd>確認を取り消す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>M</kbd> / <kbd>Alt</kbd>+<kbd>K</kbd></dt><dd>次の行とつなげる / つなげた行を戻す</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>F7</kbd></dt><dd>ほかの資料に切り替える</dd></div><div><dt><kbd>F8</kbd></dt><dd>点検の一覧</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や右側から訳文欄へ戻る</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
           <section aria-labelledby="cat-personal-glossary-title">
             <h3 id="cat-personal-glossary-title">今後も使う訳</h3>
             <p class="muted">取り消しても、訳した文章は残ります。</p>
@@ -232,7 +267,6 @@
           </section>
           <section aria-labelledby="cat-delete-title">
             <h3 id="cat-delete-title">この作業を削除する</h3>
-            <p class="muted">元のファイルは削除しません。</p>
             <button id="cat-delete" type="button" class="danger-button">この作業を削除</button>
           </section>
         </details></div></details></div>
@@ -264,14 +298,34 @@
             </details>
             <span id="cat-filter-count" class="muted"></span>
             <button id="cat-confirm-bulk" type="button" class="secondary-button compact" hidden></button>
+            <!-- 左の資料一覧も畳める。Crowdin の Ctrl+[ に合わせる。 -->
+            <button id="cat-docs-toggle" type="button" class="link-button" aria-expanded="false" aria-controls="cat-docs-pane" aria-keyshortcuts="Control+[" title="資料の一覧を出す・隠す（Ctrl+[）">資料一覧</button>
             <!-- 右の参考情報は畳める。市販CATでも横のペインは閉じられる。 -->
             <button id="cat-inspector-toggle" type="button" class="link-button cat-inspector-toggle" aria-expanded="true" aria-controls="cat-inspector-pane">参考情報を隠す</button>
           </div>
          </header>
 
-        <p id="cat-output-help" class="sr-only"></p><p id="cat-export-blocked" class="cat-export-blocked" role="status"></p>
+        <p id="cat-output-help" class="sr-only"></p><p id="cat-output-reason" class="sr-only" role="status"></p><p id="cat-export-blocked" class="cat-export-blocked" role="status"></p>
 
         <div id="cat-editor-layout" class="cat-editor-layout">
+
+          <!-- 資料の一覧を、作業画面の中に置く（2026-08-13）。市販ツールの調査より:
+               Crowdin はエディタ内にファイル一覧を持ち Ctrl+[ で開閉（"a more fluid and
+               efficient user experience"）、Trados は左のナビゲーション欄を最小化/展開できる
+               （"to give yourself more room in the Editor window"）。Phrase・Smartcat・
+               memoQ webtrans は常設の一覧を持たない。よって「常設」ではなく「畳める」を採る。
+
+               2026-08-12 に左の列を廃止した根拠は「1列 321px しか取れない」だったが、
+               あれは 1380px での測定である。実測 2026-08-13: 1920px なら左欄240pxを入れても
+               1列 379px、.shell の1600px上限を外せば 523px（左欄なしの今より広い）。
+               前提の幅が変わるので、狭い窓では畳み、広い窓でだけ開く。 -->
+          <aside id="cat-docs-pane" class="cat-docs-pane" aria-label="資料の一覧">
+            <div class="cat-docs-pane-head">
+              <h2 class="cat-docs-pane-title">資料</h2>
+              <button type="button" id="cat-docs-import" class="link-button">取り込む</button>
+            </div>
+            <div id="cat-docs-pane-list" class="cat-docs-pane-list"></div>
+          </aside>
 
           <section id="cat-editor-pane" class="cat-editor-pane" aria-label="原文と訳文の確認">
             <div id="cat-complete-state" class="cat-complete-state" hidden><strong>すべての行を確認し終えました</strong></div>
@@ -311,7 +365,7 @@
               </section>
     </section>
   </main>
-  <dialog id="cat-export-dialog" class="confirm-dialog cat-export-dialog"><form method="dialog"><h2 id="cat-export-title">取り出す前のご確認</h2><p id="cat-export-mode"></p><p id="cat-export-name" class="muted"></p><div id="cat-export-checks" role="status"></div><p class="cat-human-review-note">自動で点検しているのは、数字と単位の写しちがいだけです。言い回しが適切かどうかは、ご自身でお確かめください。</p><p id="cat-export-notice" class="draft-warning">原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。</p><div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>戻って確認する</button><button id="cat-export-qa" type="button" class="secondary-button" hidden>点検一覧を開く</button><button id="cat-export-confirm" value="export">これで取り出す</button></div></form></dialog>
+  <dialog id="cat-export-dialog" class="confirm-dialog cat-export-dialog"><form method="dialog"><h2 id="cat-export-title">取り出す前のご確認</h2><p id="cat-export-mode"></p><p id="cat-export-name" class="muted"></p><div id="cat-export-checks" role="status"></div><p class="cat-human-review-note">自動で点検しているのは、数字と単位の写しちがいだけです。</p><p id="cat-export-notice" class="draft-warning">原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。</p><div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>戻って確認する</button><button id="cat-export-qa" type="button" class="secondary-button" hidden>点検一覧を開く</button><button id="cat-export-confirm" value="export">これで取り出す</button></div></form></dialog>
   <!-- 出す前に、資料ぜんぶの指摘を1枚で見る（市販CATの検証パネルに相当）。
        memoQ・Trados は書き出し前にこの一覧を見て、行へ飛んで直す作りになっている。
        当アプリは行ごとの指摘と「点検の指摘」での絞り込みは持っていたが、
@@ -319,6 +373,20 @@
   <!-- 体裁で見る。市販CAT（Tradosのプレビュー、memoQ の Preview）に当たる。
        Excel はセルの位置、Word・貼り付けた文章は段落の順で並べる。
        元のファイルは開かないし、作らない。画面が既に持っている行だけで組む。 -->
+  <!-- 資料の切り替え。作業画面に居たまま開き、選ぶとその場で入れ替わる。
+       一覧へ戻ってから選び直す往復をなくすためのもの。 -->
+  <dialog id="cat-doc-dialog" class="confirm-dialog cat-doc-dialog" aria-labelledby="cat-doc-dialog-title">
+    <h2 id="cat-doc-dialog-title">資料を切り替える</h2>
+    <div id="cat-doc-dialog-list" class="cat-doc-dialog-list"></div>
+    <div class="cat-doc-dialog-actions">
+      <!-- 資料を開いているあいだも、新しく始められる入口を両方置く（2026-08-13）。
+           貼り付けと取り込みは、いまは同じ扱いの入口なので並べる。 -->
+      <button type="button" id="cat-doc-dialog-paste" class="secondary-button">文章を貼り付けて訳す</button>
+      <button type="button" id="cat-doc-dialog-import" class="secondary-button">Word・Excelを取り込む</button>
+      <button type="button" id="cat-doc-dialog-close" class="secondary-button">閉じる</button>
+    </div>
+  </dialog>
+
   <dialog id="cat-preview-dialog" class="confirm-dialog cat-preview-dialog"><form method="dialog">
     <h2>体裁で見る</h2>
     <div class="cat-preview-controls">

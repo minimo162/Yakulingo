@@ -42,8 +42,17 @@ Check-YakuTutorial (-not ($html -match 'class="tutorial-step"')) 'the page-by-pa
 Check-YakuTutorial ($catPageForTour.Contains('name="yaku-tour"') -and $catPageForTour.Contains('/assets/tour.js')) 'the tour runs on the real translate screen'
 # 「次へ」で読み進めさせない。実際の操作（入力する・押す）で進む。
 # 「次へ」の文字は説明のコメントにも出るので、押せる「次へ」が作られていないかで見る。
-Check-YakuTutorial ($tourJs.Contains("events: ['input']") -and $tourJs.Contains("events: ['click']") -and -not ($tourJs -match "textContent = '次へ'")) 'the tour advances on real actions, not on a Next button'
+# 2026-08-13: 貼り付け欄の段（events: ['input']）を外したので、いまは押す操作だけで進む。
+# 守っているのは「読み進めるためのボタンを作らない」ことなので、そちらを見る。
+Check-YakuTutorial ($tourJs.Contains("events: ['click']") -and -not ($tourJs -match "textContent = '次へ'") -and -not ($tourJs -match "events: \['(?!click)")) 'the tour advances on real actions, not on a Next button'
 Check-YakuTutorial ($tourJs.Contains('案内を閉じる') -and $tourJs.Contains('/api/desktop/tour-complete')) 'the tour can be closed and records only that it finished'
+# 2026-08-13: 送ると確認画面へ移るようになったので、案内の続きを出す場所が無くなる。
+# 送る段を最後に置き、押した時点で終わりを記録する。記録しないと次の起動でまた出る
+# （実機で確認: 2つ目を押した時点でページごと入れ替わり、tour-complete は飛ばなかった）。
+$tourStepOrder = @([regex]::Matches($tourJs, "target: '(#[a-z0-9-]+)'") | ForEach-Object { $_.Groups[1].Value })
+Check-YakuTutorial ($tourStepOrder.Count -ge 2 -and $tourStepOrder[$tourStepOrder.Count - 1] -eq '#quick-submit') '送る段は最後に置く（押すと画面が移るため）'
+Check-YakuTutorial ($tourStepOrder -contains '#cat-open-file-entry') '資料の入口を指す段がある'
+Check-YakuTutorial ($tourJs -match "getElementById\('quick-form'\)[\s\S]{0,200}?finish\('done'\)") '送ったら、どの段に居ても終わりを記録する'
 # 案内を終えても、ショートカットは作らない（起動設定は別の画面で明示的に押す）。
 $desktopIntegration = Read-YakuTutorialFile 'src\DesktopIntegration.ps1'
 $tutorialCompletedBody = ''
@@ -55,7 +64,10 @@ Check-YakuTutorial ($tutorialCompletedBody -ne '' -and $tutorialCompletedBody.Co
 #   送る境界:     「訳案を作る」を押すまで送らない
 # 送信ボタンの名前も「翻訳」から変わっている。実物の名前で書く。
 Check-YakuTutorial ($html.Contains('読み込むのは押した時だけ')) 'tutorial states when text is read from the foreground app'
-Check-YakuTutorial ($html.Contains('「訳案を作る」を押した文章だけ')) 'the about page states the explicit-send boundary with the real button name'
+# 2026-08-13: ボタン名が「訳して確認する」へ変わり、資料の文も同じ経路で送るように
+# なったので、送るものの範囲も書き足した。守るのは「実物の名前で、押すまで送らないと書く」。
+Check-YakuTutorial ($html.Contains('「訳して確認する」を押した文章')) 'the about page states the explicit-send boundary with the real button name'
+Check-YakuTutorial ($html.Contains('ファイルそのものは送りません')) 'the about page says the file itself is not sent'
 Check-YakuTutorial (-not ($html -match '文章は自動では読み取りません|貼り付けて「翻訳」を押す')) 'the retired no-reading claim must not come back'
 # 2026-08-12（同日追記）: 「Outlook などからは読み込めない」と書いたが、実装は
 # Office 以外でも疑似 Ctrl+C を送ってクリップボードから読む（Program.cs の
@@ -63,11 +75,17 @@ Check-YakuTutorial (-not ($html -match '文章は自動では読み取りませ�
 # 変わる。市販側でいちばん良い説明（PowerToys は「選んだ範囲の画素だけを見る」と
 # 具体的に書く）に倣い、2通りの読み方をそのまま書く。
 Check-YakuTutorial (-not ($html -match 'ほかのアプリ（Outlookなど）からは読み込めない')) 'the false claim that other apps cannot be read must not come back'
-Check-YakuTutorial ($html.Contains('選択範囲をそのまま読みます') -and $html.Contains('コピー（<kbd>Ctrl</kbd>＋<kbd>C</kbd>）を代わりに押すので、クリップボードが置き換わります')) 'tutorial states both reading paths and the clipboard side effect'
+# 2026-08-13、利用者判断でクリップボードの説明を外した。「普通の人はそんなに
+# クリップボードの履歴に執着してないと思う。利用する直前にコピーして、貼り付けた後は
+# 皆忘れてる」。読み方が2通りあることも、押す人にとっては同じ1つの動作でしかない。
+# 残すのは「押した時だけ読む」＝勝手に見ていないこと。ここは気にする人が居る。
+Check-YakuTutorial ($html.Contains('読み込むのは押した時だけです') -and -not $html.Contains('クリップボードが置き換わります')) 'tutorial says the selection is read only on the keypress'
 $shellSourceForTutorial = Read-YakuTutorialFile 'desktop\Program.cs'
 Check-YakuTutorial ($shellSourceForTutorial.Contains('CopySelectionFromForeground') -and $shellSourceForTutorial.Contains('GetClipboardSequenceNumber')) 'the described clipboard path still exists in the shell'
 $quickClientForTutorial = Read-YakuTutorialFile 'www\assets\quick.js'
-Check-YakuTutorial ($quickClientForTutorial.Contains("'訳案を作る'") -and $quickClientForTutorial.Contains('/api/quick/selection')) 'the tutorial button name and the reading path still exist in the app'
+# 2026-08-13: ボタンの文言を「訳して確認する」へ変えた（押した先が確認画面に
+# なったため）。説明ページが指すボタン名は、実物と一致していなければならない。
+Check-YakuTutorial ($quickClientForTutorial.Contains("'訳して確認する'") -and $quickClientForTutorial.Contains('/api/quick/selection')) 'the tutorial button name and the reading path still exist in the app'
 # 2026-08-12: 自動起動を既定オフ（オプトイン）にした。実測で、これが節約するのは
 # Copilot の準備 4.3〜15秒。代わりに常駐して 850ms ごとの死活確認を回し続ける
 # （Program.cs の backendTimer）。同じ形の道具でも QTranslate は利用者が入れる
@@ -79,8 +97,10 @@ Check-YakuTutorial ($html.Contains('押すまで、パソコンの設定は変�
 # 「取り消せるか」「チェックを外しても押していいのか」の3つ。押す直前に3つとも書く。
 # とくにスタートメニューは、チェックに関係なく必ず作る（DesktopIntegration.ps1 の
 # start_menu = $true）。書かないと「外したのに作られた」と見える。
-Check-YakuTutorial ($html.Contains('チェックに関係なく必ず作ります') -and $html.Contains('ユーザーフォルダの中')) 'final step states exactly what the button creates, including the always-created start menu entry'
-Check-YakuTutorial ($html.Contains('レジストリへの書き込みも、管理者権限も使いません') -and $html.Contains('あとから開始画面の「起動とショートカット」で変えられます')) 'final step states the limits of the change and that it is reversible'
+Check-YakuTutorial ($html.Contains('チェックに関係なく作ります') -and $html.Contains('ユーザーフォルダの中')) 'final step states exactly what the button creates, including the always-created start menu entry'
+# 「レジストリ」「管理者権限」は、押す人が使う言葉ではない（2026-08-13、利用者の指摘）。
+# 言いたいのは「ほかは変えない」ことなので、そのまま日本語で書く。
+Check-YakuTutorial ($html.Contains('ほかの設定は変えません') -and $html.Contains('あとから開始画面の「使い方と設定」で変えられます')) 'final step states the limits of the change and that it is reversible'
 Check-YakuTutorial ($html.Contains('両方のチェックを外したまま押しても')) 'final step says both boxes may be cleared before pressing'
 $desktopSrc = Read-YakuTutorialFile 'src\DesktopIntegration.ps1'
 # レジストリは「置き場所を読む」だけで、書き込みはしない。書き込む道が入ったら、
@@ -101,7 +121,11 @@ Check-YakuTutorial ($css.Contains('min-height: 48px') -and $css.Contains('width:
 Check-YakuTutorial ($css.Contains('@media (max-width: 640px)') -and $css.Contains('@media (prefers-reduced-motion: reduce)')) 'narrow and reduced-motion layouts are defined'
 Check-YakuTutorial ($css.Contains('font-size: clamp(2rem') -and $css.Contains('font-size: 1.25rem')) 'headings and instructional text remain readable at high zoom'
 
-Check-YakuTutorial ($homeHtml.Contains('起動とショートカット') -and $homeHtml.Contains('使い方を見る') -and $homeHtml.Contains('/tutorial#settings')) 'home exposes help and direct preference routes'
+# 2026-08-13、利用者の指摘「3つもリンクがあってどれを選べばよいかわからない。
+# 一つでよくない？」。行き先の /tutorial が、使い方・送るもの・起動とショートカットを
+# 1枚で持っており、案内の再生もその画面から始められる。出口は1つにする。
+Check-YakuTutorial ($homeHtml.Contains('>使い方と設定</a>') -and (([regex]::Matches($homeHtml, '<a href="/tutorial')).Count -eq 1) -and -not $homeHtml.Contains('/cat?tour=1')) 'home exposes exactly one way into help and settings'
+Check-YakuTutorial ($html.Contains('href="/cat?tour=1"')) 'the tour can still be replayed from that page'
 # 既定オフにしたので、「オフです」と知らせる帯は催促にしかならない。外した。
 Check-YakuTutorial (-not $homeHtml.Contains('id="background-disabled-banner"')) 'the startup-off nag banner must stay removed'
 # 開始画面は状態を変えない。読み取り専用の一覧取得（/api/cat/recent）だけを許し、

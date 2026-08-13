@@ -24,7 +24,6 @@ $script:YakuWarmRunspace = $null
 $script:YakuWarmRunspaceBuild = $null
 $script:YakuWarmupLastGood = $null
 $script:YakuUploadHandles = [hashtable]::Synchronized(@{})
-Initialize-YakuQuickArtifactStore
 $script:YakuSessionToken = New-YakuSecureToken -ByteLength 32
 $script:YakuInstanceId = [guid]::NewGuid().ToString('N')
 $script:YakuProcessStartedAt = Get-YakuProcessStartTimeIso -Id $PID
@@ -246,7 +245,7 @@ function Get-YakuTranslateReadinessState {
             # 実行中はボタンを押せない。ここで Copilot のバッジ（準備完了なら「使えます」）を
             # そのまま返していたので、画面には緑の「使えます」が出たまま操作だけが死んでいた。
             # 押せない理由そのものをバッジに出す。
-            $busyLabel = if ($kind -eq 'quick') { 'その場の翻訳を実行中' } elseif ($kind -eq 'cat' -or $kind -eq 'file') { '資料の翻訳を実行中' } else { 'ほかの翻訳を実行中' }
+            $busyLabel = if ($kind -eq 'cat' -or $kind -eq 'file') { '資料の翻訳を実行中' } else { 'ほかの翻訳を実行中' }
             return [pscustomobject]@{ ready=$ready; canTranslate=$false; mode='working'; label=$busyLabel; class='warn'; detail=$detail; updated_at=(Get-Date).ToString('s'); jobId=$jobId; progress=$progress; kind=$kind; phase=$phase; jobLabel=[string]$job['label'] }
         }
         if ($jobMode -eq 'done' -or $jobMode -eq 'completed_with_warnings') {
@@ -361,6 +360,14 @@ function Convert-YakuExceptionToUserMessage {
     }
     $message = $message -replace '[\r\n\t]+', ' '
     $message = $message.Trim()
+    # .NET の生の例外文をそのまま出さない。壊れた .xlsx を取り込ませたとき、画面には
+    # 「"1" 個の引数を指定して "OpenRead" を呼び出し中に例外が発生しました:
+    # "中央ディレクトリが壊れています。"」と出ていた（2026-08-13、初回利用者として
+    # 実機で確認）。読んでも次に何をすればよいか分からず、そこで手が止まる。
+    # 同じ画面の .txt は「対応しているファイル形式は…」と正しく案内できていた。
+    if ($message -match '(?i)OpenRead|ZipArchive|中央ディレクトリ|End of Central Directory|not a valid (?:zip|archive)|壊れています') {
+        return 'このファイルを開けませんでした。壊れているか、中身が Word・Excel の形式になっていない可能性があります。元のアプリで開き直して保存し直すと、取り込めることがあります。'
+    }
     # 内部のエラーコードをそのまま画面へ出すと、利用者には「重大な障害」に見えて
     # そこで手が止まる。日本語の本文だけを残し、番号は問い合わせ用に末尾へ回す。
     if ($message -match '^([A-Z][A-Z0-9_]{4,}):\s*(.+)$') {
@@ -810,7 +817,9 @@ function Start-YakuTranslationJob {
         [AllowNull()][string]$InputText = '',
         [Parameter(Mandatory=$true)]$Settings,
         [AllowNull()][string]$TextDirectionOverride = '',
-        [ValidateSet('text','quick','quick_revise','revise','shorten','cat')][string]$Kind = 'text',
+        # 2026-08-13: 'quick' と 'quick_revise' を外した。訳案を1枚返す状態を
+        # 廃止したので、この種類で仕事を始める呼出側が無くなった。
+        [ValidateSet('text','revise','shorten','cat')][string]$Kind = 'text',
         [ValidateSet('default','none')][string]$CachePolicy = 'default',
         [ValidateSet('display','none')][string]$ReferencePolicy = 'display',
         # V91.61（2026-08-06）: 修正の依頼。原文・現訳・指示・文体を JSON で運ぶ。
@@ -822,10 +831,6 @@ function Start-YakuTranslationJob {
         [AllowNull()][string]$CatJson = ''
     )
     $null = Assert-YakuBuildIdentity -Root $script:YakuRoot -ExpectedBuildId $script:YakuBuildId
-    if ($Kind -in @('quick','quick_revise')) {
-        $CachePolicy = 'none'
-        $ReferencePolicy = 'none'
-    }
     Update-YakuTranslationJobs
     $active = Get-YakuActiveTranslationJobState
     if (Test-YakuTranslationJobRunning -State $active) { throw '別の翻訳が実行中です。完了してから再実行してください。' }
@@ -900,14 +905,6 @@ function Start-YakuTranslationJob {
             $sectionSw.Stop(); $settingsReadMs = $sectionSw.ElapsedMilliseconds
             try { $script:YakuDiagnosticsLevel = Get-YakuDiagnosticsLevel -Settings $settings } catch { $script:YakuDiagnosticsLevel = 'standard' }
             $script:YakuFullTextDiagnosticsEnabled = ($script:YakuDiagnosticsLevel -eq 'full')
-            if ($Kind -in @('quick','quick_revise')) {
-                # ちょっと翻訳は保存しない契約。利用者設定がfullでも、原文・訳文・
-                # promptを含むsidecar/response diagnosticsはこのrunspaceでは作らない。
-                $settings | Add-Member -NotePropertyName 'diagnostics_level' -NotePropertyValue 'standard' -Force
-                $settings | Add-Member -NotePropertyName 'full_text_diagnostics_enabled' -NotePropertyValue $false -Force
-                $script:YakuDiagnosticsLevel = 'standard'
-                $script:YakuFullTextDiagnosticsEnabled = $false
-            }
             Write-YakuLog "Translation runspace settings snapshot. jobId=$($JobState['id']) buildId=$ExpectedBuildId diagnosticsLevel=$script:YakuDiagnosticsLevel source=job-start" 'INFO'
             $JobState['mode'] = 'working'
             $JobState['label'] = 'Copilotへ送る文章を用意しています'
@@ -945,7 +942,9 @@ function Start-YakuTranslationJob {
                         $alignJa = if ($alignToEn) { $alignSrc } else { $alignTgt }
                         $alignEn = if ($alignToEn) { $alignTgt } else { $alignSrc }
                         if ($alignJa.Count -eq 0 -or $alignEn.Count -eq 0) { throw '日本語と英語の両方が必要です。片方が空でした。' }
-                        $alignRes = Invoke-YakuDocumentAlignment -JaLines $alignJa -EnLines $alignEn -Settings $settings
+                        # 進み具合の出し先を渡す。渡さないと、往復が3桁になる資料で
+                        # 10% のまま20分以上動かない（実測 2026-08-13）。
+                        $alignRes = Invoke-YakuDocumentAlignment -JaLines $alignJa -EnLines $alignEn -Settings $settings -ProgressState $JobState
                         $result = [pscustomobject]@{
                             Kind = 'cat'; Mode = 'align'
                             ProjectId = [string]$cat.project_id
@@ -956,6 +955,12 @@ function Start-YakuTranslationJob {
                             JaCoverage = [double]$alignRes.JaCoverage
                             Dropped = [int]$alignRes.Dropped
                             Calls = [int]$alignRes.Calls
+                            # 途中で打ち切られたかどうか。捨てていたので、画面には
+                            # 「網羅率が低い」としか出ず、止まったことが伝わらなかった。
+                            Completed = [bool]$alignRes.Completed
+                            StoppedAt = [int]$alignRes.StoppedAt
+                            StopReason = [string]$alignRes.StopReason
+                            JaLineCount = [int]@($alignJa).Count
                             Warnings = @($catWarnings.ToArray())
                         }
                     } catch {
@@ -1102,7 +1107,7 @@ function Start-YakuTranslationJob {
                     }
                 }
                 }
-            } elseif ($Kind -in @('revise','quick_revise')) {
+            } elseif ($Kind -eq 'revise') {
                 $rev = $ReviseJson | ConvertFrom-Json
                 $revWarnings = New-Object System.Collections.Generic.List[object]
                 Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label '修正を依頼中' -Progress 20 -Detail '' -Phase 'translating'
@@ -1113,21 +1118,8 @@ function Start-YakuTranslationJob {
                     $unchanged = ([string](@($rev1.Options)[0].MaskedTranslation).Trim() -eq ([string]$rev.current_text).Trim())
                     if ($unchanged) {
                         Add-YakuWarning -Warnings $revWarnings -Category 'revision' -Location '修正' -Details @{ Instruction=[string]$rev.instruction } -Message '訳文は変わりませんでした。指示が原文の事実と食い違うか、判断できなかった可能性があります。言い換えて、もう一度お試しください。'
-                        if ($Kind -eq 'quick_revise') { throw 'QUICK_REVISION_UNCHANGED: 訳案は変わりませんでした。指示を短く具体的にしてください。' }
                     }
-                    $unsafeQuickRevisionWarningCategories = @('numeric-integrity','numeric-placeholder-unresolved','numeric-placeholder-dropped-brief')
-                    if ($Kind -eq 'quick_revise' -and @($revWarnings.ToArray() | Where-Object { $unsafeQuickRevisionWarningCategories -contains [string]$_.Category }).Count -gt 0) {
-                        throw 'QUICK_REVISION_NUMERIC_QC_FAILED: 数値を安全に維持できなかったため、現在の訳案を残しました。'
-                    }
-                    if ($Kind -eq 'quick_revise') {
-                        # Quick APIへRaw/Prompt/原文/指示を載せない。表示候補と
-                        # server内の再修正に必要な保護済み候補だけに縮める。
-                        $result = [pscustomobject]@{
-                            Direction = [string]$rev1.Direction
-                            Options = @($rev1.Options | ForEach-Object { [pscustomobject]@{ Style=[string]$_.Style; Translation=[string]$_.Translation; MaskedTranslation=[string]$_.MaskedTranslation } })
-                            Warnings = @($revWarnings.ToArray() | ForEach-Object { [pscustomobject]@{ Category=[string]$_.Category; Message=[string]$_.Message } })
-                        }
-                    } else { $result = [pscustomobject]@{
+                    $result = [pscustomobject]@{
                         Direction = [string]$rev1.Direction
                         DirectionLabel = $(if ([string]$rev1.Direction -eq 'to_en') { '日本語 → 英語' } else { '英語 → 日本語' })
                         MaskedCount = [int]$rev1.MaskedCount
@@ -1141,9 +1133,9 @@ function Start-YakuTranslationJob {
                         Warnings = @($revWarnings.ToArray())
                         RevisedFrom = [string]$rev.instruction
                         Timestamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
-                    } }
+                    }
                 } catch {
-                    $result = if ($Kind -eq 'quick_revise') { [pscustomobject]@{ Error = $_.Exception.Message; Direction = [string]$rev.direction } } else { [pscustomobject]@{ Error = $_.Exception.Message; Prompt = ''; Direction = [string]$rev.direction } }
+                    $result = [pscustomobject]@{ Error = $_.Exception.Message; Prompt = ''; Direction = [string]$rev.direction }
                 }
             } elseif ($Kind -eq 'shorten') {
                 # 短くするのは押されたときだけ走る。標準の訳は既に画面にある。
@@ -1176,9 +1168,6 @@ function Start-YakuTranslationJob {
                         else { $detail }
                     $result = [pscustomobject]@{ Error = $message; Prompt = ''; Direction = 'to_en' }
                 }
-            } elseif ($Kind -eq 'quick') {
-                # Quick は呼出側の指定にかかわらずcache/reuseを無効化する。
-                $result = Invoke-YakuTextTranslation -Root $Root -InputText $InputText -Settings $settings -ProgressState $JobState -DirectionOverride $TextDirectionOverride -ReferencePolicy 'none' -CachePolicy 'none'
             } else {
                 $result = Invoke-YakuTextTranslation -Root $Root -InputText $InputText -Settings $settings -ProgressState $JobState -DirectionOverride $TextDirectionOverride
             }
@@ -1769,7 +1758,15 @@ function Serve-YakuAppPage {
     param(
         [Parameter(Mandatory=$true)]$Context,
         [Parameter(Mandatory=$true)][ValidateSet('cat.html','tutorial.html')][string]$PageName,
-        [switch]$StartTour
+        [switch]$StartTour,
+        # 開いた瞬間の状態。?project= で来たと分かっているなら、始める画面を
+        # 一度も描かずに確認作業として開く。付けないと、貼り付け欄が一瞬出てから
+        # 入れ替わり、画面が点滅して見える（2026-08-13、利用者の指摘）。
+        [ValidateSet('','workspace')][string]$InitialView = '',
+        # 過去の対訳を取り込むときだけ、この画面で WebAssembly を許す。
+        # PDF の解析（LiteParse）がブラウザ側で走るため。既定は許さない。
+        # 画面は増やさない（利用者から見れば同じ画面のまま）。
+        [switch]$AllowWasm
     )
     $path = Join-Path (Join-Path $script:YakuRoot 'www') $PageName
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -1787,24 +1784,9 @@ function Serve-YakuAppPage {
     $html = $html.Replace('__YAKU_MAX_BATCH_CHARS__', [string](Get-YakuMaxCharsPerFileBatch -Settings $settings))
     $html = $html.Replace('__YAKU_AMOUNT_NOTATION__', (ConvertTo-YakuHtml (Get-YakuAmountNotation -Settings $settings)))
     $html = $html.Replace('__YAKU_TOUR__', $(if ($StartTour) { '1' } else { '' }))
-    Send-YakuTextResponse -Context $Context -Text $html -ContentType 'text/html; charset=utf-8'
-}
-
-function Convert-YakuQuickJobResultJson {
-    param([Parameter(Mandatory=$true)]$State)
-    Update-YakuTranslationJobs
-    $artifact = Complete-YakuQuickArtifactFromJobState -JobState $State
-    $mode = [string]$State['mode']
-    return ([ordered]@{
-        job_id = [string]$State['id']
-        mode = $mode
-        label = [string]$State['label']
-        class = [string]$State['class']
-        detail = [string]$State['detail']
-        progress = [int]$State['progress']
-        error_code = [string]$State['error_code']
-        artifact = ConvertTo-YakuQuickArtifactView -Artifact $artifact -IncludeContent -Root $script:YakuRoot
-    } | ConvertTo-Json -Depth 12 -Compress)
+    $html = $html.Replace('__YAKU_VIEW__', $(if ($InitialView -eq 'workspace') { ' data-cat-view="workspace"' } else { '' }))
+    $html = $html.Replace('__YAKU_IMPORT__', $(if ($AllowWasm) { '1' } else { '' }))
+    Send-YakuTextResponse -Context $Context -Text $html -ContentType 'text/html; charset=utf-8' -AllowWasm:$AllowWasm
 }
 
 function Serve-YakuAdminPage {
@@ -1830,7 +1812,6 @@ function Invoke-YakuRoute {
         return
     }
     Clear-YakuExpiredUploads
-    Clear-YakuExpiredQuickArtifacts
 
     if ($method -eq 'GET' -and $path -eq '/') {
         # 起動したら、選ばせずに貼り付け欄へ着地させる（2026-08-12、利用者の指摘
@@ -1851,7 +1832,17 @@ function Invoke-YakuRoute {
     # 同じ画面の「その場で訳す」状態として残す。Ctrl+Alt+J、外枠、開始画面、
     # チュートリアルがこの経路を持っているため、消さずに同じページを返す。
     if ($method -eq 'GET' -and ($path -eq '/quick' -or $path -eq '/cat')) {
-        Serve-YakuAppPage -Context $Context -PageName 'cat.html'
+        # ?project= で来たなら、始める画面を一度も描かずに確認作業として開く。
+        # QueryString は使わない（日本語が CP932 で化ける。Get-YakuQueryValue の説明を参照）。
+        # ここは16進のIDしか見ないが、例外を作ると次の人が真似る。
+        $wantedProject = ''
+        try { $wantedProject = [string](Get-YakuQueryValue -Request $req -Name 'project') } catch {}
+        $initialView = if ($wantedProject -match '^[a-f0-9]{32}$') { 'workspace' } else { '' }
+        # ?import=1 のときだけ WebAssembly を許す。PDF の解析に要る。
+        # 普段の作業では script-src 'self' のままにしておく。
+        $wantsImport = $false
+        try { $wantsImport = ([string](Get-YakuQueryValue -Request $req -Name 'import') -eq '1') } catch {}
+        Serve-YakuAppPage -Context $Context -PageName 'cat.html' -InitialView $initialView -AllowWasm:$wantsImport
         return
     }
     if ($method -eq 'GET' -and $path -eq '/tutorial') {
@@ -1907,6 +1898,30 @@ function Invoke-YakuRoute {
     # 金額の書き方（oku / billion）。設定ファイルを直接開かせないための、
     # 1項目だけの入口。既に始めた作業の書き方は変えない（作業ごとに固定して
     # あり、原文の換算と点検が同じ書き方でそろっている必要があるため）。
+    # 押す前に、どちらへ訳すのかを出すためだけの口。作業も仕事も作らない。
+    # 画面には「文章を見て、英語か日本語かを決めます」としか出ておらず、
+    # 結局どちらになるのかが分からなかった（2026-08-13、利用者の指摘）。
+    # 判定は Resolve-YakuDirectionDecision 1か所しか持たない決まりなので、
+    # 画面側で当てにいかず、同じ関数へ聞く。
+    if ($method -eq 'POST' -and $path -eq '/api/direction-preview') {
+        try {
+            $payload = Read-YakuRequestJson -Request $req
+            $previewText = [string]$payload['text']
+            if ([string]::IsNullOrWhiteSpace($previewText)) {
+                Send-YakuTextResponse -Context $Context -Text '{"direction":"","confidence":"low"}' -ContentType 'application/json; charset=utf-8'
+                return
+            }
+            $decision = Resolve-YakuDirectionDecision -Text $previewText -Intent 'auto'
+            $response = [ordered]@{
+                direction = $(if ([bool]$decision.RequiresConfirmation) { '' } else { [string]$decision.Resolved })
+                confidence = [string]$decision.Confidence
+            }
+            Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+        } catch {
+            Send-YakuTextResponse -Context $Context -Text '{"direction":"","confidence":"low"}' -ContentType 'application/json; charset=utf-8'
+        }
+        return
+    }
     if ($method -eq 'POST' -and $path -eq '/api/settings/amount-notation') {
         try {
             $payload = Read-YakuRequestJson -Request $req -MaxBytes 2048
@@ -2125,63 +2140,13 @@ function Invoke-YakuRoute {
         return
     }
 
-    # /api/quick/translate は薄い将来shell向けの別名。正本契約はjobsである。
-    if ($method -eq 'POST' -and $path -eq '/api/quick/translate') {
-        $path = '/api/quick/jobs'
-    }
     # --------------------------------------------------------------- Quick JSON
-    # Quick の本文は artifact として server memory にだけ保持する。CAT への
-    # 引継ぎでもブラウザーから本文を再送させない。
-    if ($method -eq 'POST' -and $path -eq '/api/quick/jobs') {
-        try {
-            $payload = Read-YakuRequestJson -Request $req
-            $inputText = [string]$payload['input_text']
-            if ([string]::IsNullOrWhiteSpace($inputText)) { throw '訳したい文章を入力してください。' }
-            $directionIntent = 'auto'
-            try { if (@('auto','to_en','to_jp') -contains [string]$payload['direction_intent']) { $directionIntent = [string]$payload['direction_intent'] } } catch {}
-            $directionBasis = $(if ($directionIntent -eq 'auto') { 'detected' } else { 'explicit' })
-            $decision = Resolve-YakuDirectionDecision -Text $inputText -Intent $directionIntent -Basis $directionBasis
-            if ([bool]$decision.RequiresConfirmation) {
-                $response = [ordered]@{
-                    code='DIRECTION_CONFIRMATION_REQUIRED'
-                    error='翻訳先を選んでください。入力内容だけでは英訳か和訳かを安全に決められません。'
-                    suggested_direction=[string]$decision.SuggestedDirection
-                    confidence=[string]$decision.Confidence
-                    source_fingerprint=[string]$decision.SourceFingerprint
-                }
-                Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Compress) -StatusCode 409 -ContentType 'application/json; charset=utf-8'
-                return
-            }
-            $readyState = Get-YakuTranslateReadinessState
-            if (-not [bool]$readyState.canTranslate) {
-                $message = if ([string]$readyState.mode -eq 'working') { 'いま別の翻訳を実行中です。そちらが終わってからもう一度お試しください。' } else { 'Copilotの準備が終わってから翻訳できます。画面右上が「使えます」になるまでお待ちください。' }
-                $response = [ordered]@{ code='TRANSLATION_NOT_READY'; error=$message; mode=[string]$readyState.mode }
-                Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Compress) -StatusCode 409 -ContentType 'application/json; charset=utf-8'
-                return
-            }
-            $settings = Read-YakuSettings -Root $script:YakuRoot
-            # Experience quick; ReusePolicy none; content CachePolicy none.
-            $state = Start-YakuTranslationJob -InputText $inputText -Settings $settings -TextDirectionOverride ([string]$decision.Resolved) `
-                -Kind 'quick' -CachePolicy 'none' -ReferencePolicy 'none'
-            $artifact = New-YakuQuickArtifact -JobId ([string]$state['id']) -SourceText $inputText `
-                -Direction ([string]$decision.Resolved) -DirectionBasis ([string]$decision.Basis) `
-                -DirectionConfidence ([string]$decision.Confidence) -SourceFingerprint ([string]$decision.SourceFingerprint)
-            $response = [ordered]@{
-                job_id = [string]$state['id']
-                artifact_id = [string]$artifact.Id
-                direction = [string]$artifact.Direction
-                direction_basis = [string]$artifact.DirectionBasis
-                direction_confidence = [string]$artifact.DirectionConfidence
-                source_fingerprint = [string]$artifact.SourceFingerprint
-                expires_at = ([datetime]$artifact.ExpiresAtUtc).ToString('o')
-            }
-            Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Compress) -StatusCode 202 -ContentType 'application/json; charset=utf-8'
-        } catch {
-            $response = [ordered]@{ code='QUICK_JOB_START_FAILED'; error=(Convert-YakuExceptionToUserMessage $_) }
-            Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Compress) -StatusCode 400 -ContentType 'application/json; charset=utf-8'
-        }
-        return
-    }
+    # POST /api/quick/translate、POST /api/quick/jobs、GET /api/quick/jobs/{id}、
+    # GET /api/quick/artifacts/{id}、POST /api/quick/artifacts/{id}/revisions、
+    # POST /api/cat/promote は 2026-08-13 に外した。訳案を1枚返す状態（その場で訳す）
+    # を廃止し、貼り付けた文章も /api/cat/open で作業になったため、呼ぶ側が無くなった。
+    # 残すのは選択の読み取りだけ（/api/quick/selection と selection-capture）。
+    # これは Ctrl+Alt+J の口で、翻訳とは別の仕事をしている。
     if ($method -eq 'POST' -and $path -eq '/api/quick/selection-capture') {
         # Office 以外は、外枠が疑似 Ctrl+C を送ってクリップボードから読む。その経路は
         # サーバを通らないので、読み込んだことだけを画面から報告してもらって記録する。
@@ -2255,138 +2220,6 @@ function Invoke-YakuRoute {
         Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 4 -Compress) -ContentType 'application/json; charset=utf-8'
         return
     }
-    if ($method -eq 'POST' -and $path -match '^/api/quick/artifacts/([a-f0-9]{32})/revisions$') {
-        # Quick の再依頼も本文をブラウザーから送り返さない。利用者が送るのは
-        # 一時 artifact の ID と修正指示だけで、原文・現訳・方向は server memory
-        # の正本から取得する。同じ一時 artifact は成功時だけ原子的に更新し、
-        # 失敗時は現在の訳案を維持する。
-        try {
-            $artifactId = [string]$Matches[1]
-            $artifact = Get-YakuQuickArtifact -Id $artifactId -Touch
-            if ($null -eq $artifact) { throw 'QUICK_ARTIFACT_NOT_FOUND_OR_EXPIRED' }
-            $payload = Read-YakuRequestJson -Request $req
-            foreach ($key in @($payload.Keys)) {
-                if ([string]$key -notin @('expected_version','instruction','request_id')) { throw 'QUICK_REVISION_PAYLOAD_INVALID' }
-            }
-            $instruction = [string]$payload['instruction']
-            $requestId = [string]$payload['request_id']
-            $expectedVersion = 0
-            try { $expectedVersion = [int]$payload['expected_version'] } catch { throw 'QUICK_REVISION_VERSION_INVALID' }
-            if ([string]::IsNullOrWhiteSpace($instruction)) { throw '修正の指示を入力してください。' }
-            if ($instruction.Length -gt 300) { throw '修正の指示は300文字以内にしてください。' }
-            if ($requestId -notmatch '^[a-f0-9]{32}$') { throw 'QUICK_REVISION_REQUEST_ID_INVALID' }
-            $instructionHash = Get-YakuSha256Hex -Bytes ([Text.Encoding]::UTF8.GetBytes($instruction))
-            if ($artifact.RevisionRequests.ContainsKey($requestId)) {
-                $prior = $artifact.RevisionRequests[$requestId]
-                if ([int]$prior.ExpectedVersion -ne $expectedVersion -or [string]$prior.InstructionHash -ne $instructionHash) { throw 'QUICK_REVISION_REQUEST_ID_REUSED' }
-                $response = [ordered]@{ artifact_id=$artifactId; artifact_version=[int]$artifact.Version; job_id=[string]$prior.JobId; reused=$true; expires_at=([datetime]$artifact.ExpiresAtUtc).ToString('o') }
-                Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Compress) -StatusCode 200 -ContentType 'application/json; charset=utf-8'
-                return
-            }
-            if ([string]$artifact.Status -ne 'ready') { throw 'QUICK_ARTIFACT_NOT_READY' }
-            if ([int]$artifact.Version -ne $expectedVersion) { throw 'QUICK_REVISION_STALE_VERSION' }
-            if ([string]::IsNullOrWhiteSpace([string]$artifact.MaskedTranslation)) { throw 'QUICK_MASKED_TRANSLATION_MISSING' }
-            $readyState = Get-YakuTranslateReadinessState
-            if (-not [bool]$readyState.canTranslate) {
-                $message = if ([string]$readyState.mode -eq 'working') { '別の翻訳を実行中です。完了してからお試しください。' } else { 'Copilotの準備が完了してから修正できます。' }
-                $response = [ordered]@{ code='TRANSLATION_NOT_READY'; error=$message; mode=[string]$readyState.mode }
-                Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Compress) -StatusCode 409 -ContentType 'application/json; charset=utf-8'
-                return
-            }
-            $settings = Read-YakuSettings -Root $script:YakuRoot
-            $revisePayload = ([ordered]@{
-                source_text = [string]$artifact.SourceText
-                current_text = [string]$artifact.MaskedTranslation
-                instruction = $instruction
-                style = 'full'
-                direction = [string]$artifact.Direction
-            } | ConvertTo-Json -Depth 5 -Compress)
-            $state = Start-YakuTranslationJob -InputText ([string]$artifact.SourceText) -Settings $settings -Kind 'quick_revise' `
-                -CachePolicy 'none' -ReferencePolicy 'none' -ReviseJson $revisePayload
-            try {
-                $registration = Register-YakuQuickArtifactRevisionJob -ArtifactId $artifactId -ExpectedVersion $expectedVersion `
-                    -RequestId $requestId -Instruction $instruction -JobId ([string]$state['id'])
-                $artifact = $registration.Artifact
-            } catch {
-                try { $null = Stop-YakuTranslationJob -JobId ([string]$state['id']) } catch {}
-                throw
-            }
-            $response = [ordered]@{
-                job_id = [string]$state['id']
-                artifact_id = $artifactId
-                artifact_version = [int]$artifact.Version
-                reused = [bool]$registration.Reused
-                expires_at = ([datetime]$artifact.ExpiresAtUtc).ToString('o')
-            }
-            Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Compress) -StatusCode 202 -ContentType 'application/json; charset=utf-8'
-        } catch {
-            $message = Convert-YakuExceptionToUserMessage $_
-            $statusCode = if ([string]$_.Exception.Message -match 'NOT_FOUND_OR_EXPIRED') { 410 } elseif ([string]$_.Exception.Message -match 'NOT_READY') { 409 } else { 400 }
-            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ code='QUICK_REVISION_FAILED'; error=$message } | ConvertTo-Json -Compress) -StatusCode $statusCode -ContentType 'application/json; charset=utf-8'
-        }
-        return
-    }
-    if ($method -eq 'GET' -and $path -match '^/api/quick/jobs/([a-f0-9]{32})$') {
-        $jobId = [string]$Matches[1]
-        Update-YakuTranslationJobs
-        if (-not $script:YakuTranslateJobs.ContainsKey($jobId)) {
-            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ code='QUICK_JOB_NOT_FOUND'; error='この翻訳の記録が見つかりません。お手数ですが、もう一度最初からお試しください。' } | ConvertTo-Json -Compress) -StatusCode 404 -ContentType 'application/json; charset=utf-8'
-            return
-        }
-        $artifact = Get-YakuQuickArtifactByJobId -JobId $jobId
-        if ($null -eq $artifact) {
-            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ code='QUICK_ARTIFACT_EXPIRED'; error='時間が経ったため、この訳文は消えました。お手数ですが、もう一度「訳案を作る」を押してください。' } | ConvertTo-Json -Compress) -StatusCode 410 -ContentType 'application/json; charset=utf-8'
-            return
-        }
-        Send-YakuTextResponse -Context $Context -Text (Convert-YakuQuickJobResultJson -State $script:YakuTranslateJobs[$jobId]) -ContentType 'application/json; charset=utf-8'
-        return
-    }
-    if ($method -eq 'GET' -and $path -match '^/api/quick/artifacts/([a-f0-9]{32})$') {
-        $artifact = Get-YakuQuickArtifact -Id ([string]$Matches[1]) -Touch
-        if ($null -eq $artifact) {
-            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ code='QUICK_ARTIFACT_EXPIRED'; error='時間が経ったため、この訳文は消えました。お手数ですが、もう一度「訳案を作る」を押してください。' } | ConvertTo-Json -Compress) -StatusCode 410 -ContentType 'application/json; charset=utf-8'
-            return
-        }
-        $artifactJobId = if ([string]$artifact.RevisionStatus -eq 'pending') { [string]$artifact.ActiveRevisionJobId } else { [string]$artifact.JobId }
-        if (([string]$artifact.Status -eq 'pending' -or [string]$artifact.RevisionStatus -eq 'pending') -and $script:YakuTranslateJobs.ContainsKey($artifactJobId)) {
-            Update-YakuTranslationJobs
-            $artifact = Complete-YakuQuickArtifactFromJobState -JobState $script:YakuTranslateJobs[$artifactJobId]
-        }
-        Send-YakuTextResponse -Context $Context -Text ((ConvertTo-YakuQuickArtifactView -Artifact $artifact -IncludeContent -Root $script:YakuRoot) | ConvertTo-Json -Depth 10 -Compress) -ContentType 'application/json; charset=utf-8'
-        return
-    }
-    if ($method -eq 'POST' -and $path -eq '/api/cat/promote') {
-        try {
-            $payload = Read-YakuRequestJson -Request $req
-            foreach ($key in @($payload.Keys)) {
-                if ([string]$key -ne 'artifact_id') { throw 'QUICK_PROMOTION_PAYLOAD_INVALID' }
-            }
-            $artifactId = [string]$payload['artifact_id']
-            if ($artifactId -notmatch '^[a-f0-9]{32}$') { throw 'QUICK_ARTIFACT_ID_INVALID' }
-            $settings = Read-YakuSettings -Root $script:YakuRoot
-            $promotionOperation = {
-                param($innerArtifact,$root,$innerSettings)
-                return (New-YakuCatProjectFromQuickArtifact -Root $root -Artifact $innerArtifact -Settings $innerSettings)
-            }
-            $promotion = Invoke-YakuQuickArtifactPromotion -ArtifactId $artifactId -Operation $promotionOperation -Arguments @($script:YakuRoot,$settings)
-            $project = $promotion.Project
-            if ($null -eq $project) { $project = Get-YakuCatProject -Id ([string]$promotion.ProjectId) }
-            $response = [ordered]@{
-                artifact_id = $artifactId
-                project_id = [string]$promotion.ProjectId
-                revision = $(if ($null -ne $project) { [int]$project.Revision } else { 0 })
-                reused = [bool]$promotion.Reused
-            }
-            $statusCode = $(if ([bool]$promotion.Reused) { 200 } else { 201 })
-            Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Compress) -StatusCode $statusCode -ContentType 'application/json; charset=utf-8'
-        } catch {
-            $message = Convert-YakuExceptionToUserMessage $_
-            $statusCode = if ([string]$_.Exception.Message -match 'NOT_FOUND_OR_EXPIRED') { 410 } elseif ([string]$_.Exception.Message -match 'NOT_READY') { 409 } else { 400 }
-            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ code='QUICK_PROMOTION_FAILED'; error=$message } | ConvertTo-Json -Compress) -StatusCode $statusCode -ContentType 'application/json; charset=utf-8'
-        }
-        return
-    }
-
     # ---------------------------------------------------------------- CAT
     # ファイル翻訳と同じことを、押した分だけ進む形にする。
     # 段階ごとに口を分けているのは、途中を画面へ出すためである。
@@ -2554,7 +2387,10 @@ function Invoke-YakuRoute {
                 if ($alignResult.PSObject.Properties.Name -contains 'Error' -and $alignResult.Error) { throw [string]$alignResult.Error }
                 $incomingPairs = @(@($alignResult.Pairs) | ForEach-Object { [pscustomobject]@{ JaText = [string]$_.JaText; EnText = [string]$_.EnText } })
                 $project = New-YakuCatProjectFromPairs -Pairs $incomingPairs -Direction $direction -FileName $alignName `
-                    -JaCoverage ([double]$alignResult.JaCoverage) -Dropped ([int]$alignResult.Dropped) -Register $false
+                    -Settings $settings -JaCoverage ([double]$alignResult.JaCoverage) -Dropped ([int]$alignResult.Dropped) -Register $false `
+                    -Completed ([bool]$(try { $alignResult.Completed } catch { $true })) `
+                    -StoppedAt ([int]$(try { $alignResult.StoppedAt } catch { -1 })) `
+                    -JaLineCount ([int]$(try { $alignResult.JaLineCount } catch { 0 }))
                 $project | Add-Member -NotePropertyName DirectionBasis -NotePropertyValue 'fixed' -Force
                 $project | Add-Member -NotePropertyName DirectionConfidence -NotePropertyValue 'not_applicable' -Force
                 $project = Commit-YakuNewCatProject -Project $project
@@ -3022,7 +2858,14 @@ function Invoke-YakuRoute {
                             current_text = $maskedCurrent; instruction = $revInstruction
                         })
                     } else {
+                        # index を付けて呼ぶと、その1行だけ訳す。付けなければ残り全部。
+                        # 「1文ずつ依頼するにはどうすればよいか分からない」（2026-08-13、
+                        # 利用者の指摘）。まとめて依頼する道しか無かった。
+                        $onlyIndex = -1
+                        try { if ($null -ne $payload['index']) { $onlyIndex = [int]$payload['index'] } } catch { $onlyIndex = -1 }
+                        if ($onlyIndex -ge 0 -and $onlyIndex -ge $segs.Count) { throw '訳す行が見つかりません。' }
                         for ($i = 0; $i -lt $segs.Count; $i++) {
+                            if ($onlyIndex -ge 0 -and $i -ne $onlyIndex) { continue }
                             if (-not [string]::IsNullOrWhiteSpace([string]$segs[$i].Translation)) { continue }
                             $termRows=@()
                             try {

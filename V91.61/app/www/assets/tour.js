@@ -16,25 +16,35 @@
      当たり前の操作（貼り付け・入力）は説明しない。説明するのは、押すと外部へ
      送られること、あとから開ける保存があること、の2つだけにする。 */
 
+  /* 1つ目に「訳したい文章を貼り付けます」（本文なし）を出していたが、2026-08-13 に
+     外した。理由は2つ。画面の見出しが同じ言葉で同じことを言っており、上に書いた
+     「当たり前の操作は説明しない」に自分で反していた。もう1つは実害で、この吹き出しが
+     すぐ下の1行を覆っていた（実測 1240x860: 吹き出し x153-402/y320-419、
+     隠れた行「1行ずつ確認する画面に移ります。保存されるので、あとから続けられます。」は
+     x153-846/y376-400）。押すと何が起きるかを書いた、いちばん読ませたい1行だった。 */
   var steps = [
+    /* 1つ目は #quick-promote（訳案カードの「1文ずつ確認して保存する」）を指していた。
+       2026-08-13 にそのカードごと外したので、指す先が無くなった。代わりに資料の
+       入口を指す。起動して最初に出るのが貼り付け欄なので、「文章を貼るアプリ」だと
+       思われたまま資料を取り込む道に気づかれない、という懸念に答える場所でもある。
+
+       画面の上から順なら「送る」が先だが、送ると確認画面へ移ってしまい、そこで
+       案内が途切れる（実機で確認: 3つ目を出す前にページごと入れ替わった）。
+       だから資料の入口を先に置き、最後を「送る」にする。押した時点で案内は
+       終わったことにする（下の finish-on-submit）。 */
     {
-      target: '#quick-input',
-      title: '訳したい文章を貼り付けます',
-      body: '',
-      done: function (el) { return String(el.value || '').trim().length > 0; },
-      events: ['input']
-    },
-    {
-      target: '#quick-submit',
-      title: 'ここを押すとCopilotへ送ります',
-      body: '数値は送る前に伏せます。押すまでは送りません。',
+      target: '#cat-open-file-entry',
+      title: 'Word・Excel は丸ごと取り込めます',
+      body: '原本はそのままで、訳文を入れたコピーを作ります。貼り付けた文章と同じ画面で、1行ずつ確認します。',
       done: function () { return false; },
       events: ['click']
     },
     {
-      target: '#quick-promote',
-      title: '保存すると、あとから続けられます',
-      body: '1文ずつ確認して保存すると、次に開いたときに途中から進められます。',
+      target: '#quick-submit',
+      title: 'ここを押すとCopilotへ送ります',
+      /* 2026-08-13、利用者判断「保存しない約束は要らない」。押した先が確認画面に
+         なったので、そこも言う。以前は「その場に訳案が出て、保存はしない」だった。 */
+      body: '数値は送る前に伏せます。押すまでは送りません。押すと1行ずつ確認する画面に移り、保存されます。',
       done: function () { return false; },
       events: ['click']
     }
@@ -92,6 +102,15 @@
     if (!step) { finish('done'); return; }
     var target = document.querySelector(step.target);
     if (!target) { next(); return; }
+    /* 対象が画面の外に居たら、先に見える所へ持ってくる。place() は位置を計算する
+       だけで動かさないので、前の段の操作で画面が動いていると、見えないボタンを
+       指した吹き出しが画面の端で切れたまま残っていた（2026-08-13 実測、
+       1240x860: 資料の入口を押すと画面が 560px 下がり、送るボタンは上へ外れ、
+       吹き出しは上端で切れていた）。既に見えているときは動かさない。 */
+    var box = target.getBoundingClientRect();
+    if (box.top < 12 || box.bottom > window.innerHeight - 12) {
+      try { target.scrollIntoView({ behavior: 'auto', block: 'center' }); } catch (_) { target.scrollIntoView(); }
+    }
     callout.innerHTML = '';
     var title = document.createElement('p');
     title.className = 'yaku-tour-title';
@@ -155,6 +174,12 @@
     callout.setAttribute('role', 'status');
     document.body.appendChild(overlay);
     document.body.appendChild(callout);
+    /* 送ったら、どの段に居ても案内は終わり。送ると確認画面へ移るので、続きを
+       出す場所が無くなる。ここで終わりを記録しないと、次に起動したときにまた
+       最初から出る（実機で確認: 2つ目を押した時点でページごと入れ替わり、
+       /api/desktop/tour-complete は一度も飛ばなかった）。 */
+    var form = document.getElementById('quick-form');
+    if (form) form.addEventListener('submit', function () { if (index >= 0) finish('done'); }, { once: true });
     index = -1;
     next();
   }

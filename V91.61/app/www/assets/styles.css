@@ -222,7 +222,6 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .result-card { padding: 20px 24px; }
 .result-card header, .result-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-2); }
 .eyebrow { color: var(--faint); font-size: var(--font-meta); font-weight: 600; letter-spacing: .06em; }
-.result-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 /* 訳文は画面でいちばん読まれる場所なので、いちばん大きくする。
    本文として無理なく読める大きさ（18px）と、行を追いやすい行間（1.8）にする。
    大きすぎると1行に入る語が減って読みにくくなるので、幅も制限する。 */
@@ -515,16 +514,8 @@ summary { cursor: pointer; color: var(--text); font-size: var(--font-meta); min-
 /* 日本語は1行 35〜45字を超えると目が次の行頭を見失う。長い説明文には必ず幅を与える。 */
 .privacy-summary, .privacy-note { max-width: 42em; margin: var(--space-3) 0 0; border-left: 4px solid var(--accent); background: var(--accent-soft); padding: 12px 14px; color: var(--text); }
 .cat-picker p.muted, .cat-start-panel > p.muted, .hint, .batch-note { max-width: 42em; }
-/* 伏せた数値の確認。件数だけでは「自分のあの数字が伏せられたか」に答えられない。
-   数値そのものは判断材料なので、本文サイズを下回らせない。 */
-.mask-summary-line { margin: 0; }
-.mask-detail { margin-top: 8px; }
-.mask-detail > summary { min-height: 44px; color: var(--text); font-size: var(--font-body); font-weight: 700; }
-.mask-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 0; padding: 0; list-style: none; max-height: 8em; overflow-y: auto; }
-.mask-item { display: inline-flex; align-items: baseline; gap: 6px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); padding: 4px 12px; font-size: var(--font-body); font-variant-numeric: tabular-nums; }
-.mask-token { color: var(--muted); font-size: var(--font-meta); }
-.mask-value { font-weight: 700; }
-.mask-detail-note { margin: 10px 0 0; color: var(--muted); font-size: var(--font-meta); }
+/* 訳案を1枚返すカード（訳文・コピー・直す・伏せた数値の一覧）の作法は、
+   2026-08-13 にカードごと外した。伏せた数値も訳文も、いまは確認画面が持つ。 */
 
 /* その場で訳す状態は、確認作業と同じ器（幅の広い画面）の中に居る。文章を読む
    1カラムなので、器の幅をそのまま使うと1行が長くなりすぎる。分かれていた頃の
@@ -532,7 +523,14 @@ summary { cursor: pointer; color: var(--text); font-size: var(--font-meta); min-
 .cat-instant { width: 100%; }
 /* Ctrl+Alt+J で出る小さな窓では、画面全体の見出しに押し下げられて、読み込んだ
    文章が見えなくなる（実機で確認）。始める画面では見出しを1つにする。 */
-body[data-cat-view="start"] .workspace-heading { display: none; }
+/* 画面からは消すが、文書からは消さない。display:none にしていたため h1 が
+   読み上げの見出し一覧から丸ごと落ち、その場で訳す側は H2、資料側は H3 から
+   始まる文書になっていた（実測 2026-08-13: 可視の h1 は0個）。
+   場所は取らせず、読み上げには残す。 */
+body[data-cat-view="start"] .workspace-heading {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
 /* 貼り付け欄は始める画面の中身なので、カードの中にカードを置かない。 */
 .quick-inline { display: block; }
 /* 実測（窓 1380x860）: 325px の入力欄だと、下の「Word・Excelを取り込む」(900px) と
@@ -548,19 +546,12 @@ html.yaku-compact .translate-form { padding: 16px; }
 html.yaku-compact .section-title-row { margin-bottom: 12px; }
 html.yaku-compact #quick-input { min-height: 220px; height: min(36vh, 280px); }
 html.yaku-compact .privacy-note { margin-top: 12px; padding: 10px 12px; }
-html.yaku-compact .quick-result { margin-top: 12px; }
 .direction-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: var(--space-2); border: 2px solid var(--accent); border-radius: var(--radius-control); background: var(--accent-soft); padding: 10px 12px; }
 .direction-choice { margin-top: var(--space-2); border: 2px solid var(--warning); border-radius: var(--radius-card); background: #fff8e8; padding: 16px; }
 .direction-choice legend { padding: 0 6px; font-size: var(--font-ui); font-weight: 800; }
 .direction-choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .direction-choice-button { display: flex; min-height: 72px; flex-direction: column; align-items: flex-start; text-align: left; }
 .direction-choice-button span { color: var(--muted); font-size: var(--font-meta); font-weight: 400; }
-.quick-result { margin-top: var(--space-3); }
-.quick-copy-fallback { min-height: 160px; margin-top: 12px; }
-.quick-revise-panel { display: grid; gap: 10px; margin-top: 16px; border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--surface); padding: 16px; }
-.quick-revise-panel[hidden] { display: none; }
-.quick-revise-panel h3, .quick-revise-panel p { margin: 0; }
-.quick-revise-panel textarea { min-height: 96px; }
 .cat-entry-actions { margin: 14px 0; }
 .cat-start-panel { display: grid; gap: 12px; margin-top: var(--space-3); border-top: 1px solid var(--line); padding-top: var(--space-3); }
 .cat-start-panel textarea { min-height: 140px; }

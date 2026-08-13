@@ -115,6 +115,41 @@ try {
     Check-YakuLayout ($broken.Count -eq 0) '壊れたファイルは空で返る（例外を投げない）'
     $missing = @(Get-YakuSheetLayoutFromXlsx -Path (Join-Path $workDir 'nope.xlsx'))
     Check-YakuLayout ($missing.Count -eq 0) '無いファイルは空で返る'
+
+    # 訳す向きの判定は、共有表（xl/sharedStrings.xml）だけを見ていた。
+    # 文字列をセルの中へ直に書くブック（t="inlineStr"）では原文を1文字も読めず、
+    # 毎回「このファイルの翻訳先を選んでください。」になっていた（2026-08-13、
+    # 実機で確認。13セルすべて inlineStr、共有表そのものが無いブック）。
+    # 行の取り出しは最初から読めていて同じブックから10行できていたので、
+    # 読めていなかったのは判定だけだった。
+    Write-Host '共有表を持たないブックでも、訳す向きを読める' -ForegroundColor Cyan
+    # FileProcessors は単体で読めない（Runtime のジョブ中断確認などを呼ぶ）。
+    # 一覧のとおり全部読む。並びも一覧に従う。
+    . (Join-Path $root 'src\SrcModules.ps1')
+    foreach ($moduleName in $script:YakuSrcModuleFiles) { . (Join-Path $root ('src\' + $moduleName)) }
+    $inlinePath = Join-Path $workDir 'inline.xlsx'
+    $inlineParts = @{
+        # r: の名前空間は宣言する。宣言しないと XML として読めず、
+        # 判定より手前（整合の読み取り）で落ちる。
+        'xl/workbook.xml' = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="決算概要" sheetId="1" r:id="rId1"/></sheets></workbook>'
+        'xl/styles.xml' = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet><fonts count="1"><font><sz val="11"/></font></fonts><cellXfs count="1"><xf numFmtId="0" fontId="0"/></cellXfs></styleSheet>'
+        'xl/worksheets/sheet1.xml' = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>売上高は1兆3,150億円となりました。</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>営業利益は2,180億円で、前年同期比8.1%の増加です。</t></is></c></row><row r="3"><c r="A3" t="inlineStr"><is><t>為替の影響を含みます。海外売上比率は42%です。</t></is></c></row></sheetData></worksheet>'
+    }
+    $inlineStream = New-Object System.IO.FileStream($inlinePath, 'Create')
+    try {
+        $inlineZip = New-Object System.IO.Compression.ZipArchive($inlineStream, 'Create')
+        try {
+            foreach ($name in $inlineParts.Keys) {
+                $entry = $inlineZip.CreateEntry($name)
+                $writer = New-Object System.IO.StreamWriter($entry.Open(), (New-Object System.Text.UTF8Encoding($false)))
+                try { $writer.Write([string]$inlineParts[$name]) } finally { $writer.Dispose() }
+            }
+        } finally { $inlineZip.Dispose() }
+    } finally { $inlineStream.Dispose() }
+
+    $inlineInfo = Get-YakuOpenXmlFileInfo -Path $inlinePath
+    Check-YakuLayout ([string]$inlineInfo.DirectionConfidence -eq 'high') '共有表が無くても、訳す向きを聞き返さない'
+    Check-YakuLayout ([string]$inlineInfo.DetectedDirection -eq 'to_en') '日本語のブックは英訳と判定する'
 }
 finally {
     Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue

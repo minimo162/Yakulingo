@@ -1,5 +1,20 @@
 ﻿(function () {
   'use strict';
+  /* 「使い方を見る」は /cat?tour=1 へ来る。ところが下の syncLocation がアドレスを
+     /cat（いまは /cat?tab=quick）へ書き換えるため、tour.js が読む前に tour=1 が消え、
+     案内がいつまでも始まらなかった。実測 2026-08-13: /cat?tour=1 を開くと
+     アドレスは /cat?tab=quick、meta は空、案内の要素は0個。
+     変更前のコードも /cat へ書き換えていたので、これは前からの不具合である。
+
+     ここで meta へ写しておく。cat.js は tour.js より先に読まれ、この即時実行は
+     start() より前に走るので、アドレスが書き換わるより先に印が残る。
+     tour.js の wanted() は meta を先に見る。 */
+  try {
+    if (new URLSearchParams(window.location.search).get('tour') === '1') {
+      var tourMeta = document.querySelector('meta[name="yaku-tour"]');
+      if (tourMeta) tourMeta.setAttribute('content', '1');
+    }
+  } catch (_) {}
   var ready = false, busy = false, project = null, pendingDirection = null, uploaded = null;
   var dirty = new Map(), saveChain = Promise.resolve(), jobTimer = null, jobContext = null, candidateSeq = 0;
   var deleteTarget = null, preflightScope = null, jobSerial = 0, viewEpoch = 0, outputScope = null;
@@ -81,12 +96,29 @@
   function dirtyKey(projectId, index) { return String(projectId || '') + ':' + String(index); }
   /* 開いている資料をアドレスに残す。スリープ復帰やネットワーク切替でシェルが
      読み込み直したとき、ここが空だと作業一覧へ戻ってしまう。 */
+  /* 資料を開いたときだけ履歴に1つ積む。ずっと replaceState だった頃は、URL が
+     /cat -> /cat?project=… と変わるのに historyLength が増えず、ブラウザの戻るで
+     アプリの外へ出ていた（実測 2026-08-13）。戻る＝始める画面へ、が期待に合う。
+     始める画面へ戻すときは積まない。積むと、戻るを2回押さないと外へ出られない。 */
+  /* 読み込んだ時点で既に ?project= が付いていたときは、履歴を積まずに書き換える。
+     積んでいたころは、貼り付けから来ると履歴が
+       /cat → /cat?project=X&translate=1 → /cat?project=X
+     の3段になり、戻るを1回押しても同じ資料に戻るだけだった（2026-08-13）。
+     しかも戻った先の住所は translate=1 付きなので、読み直すとまた訳しにいく。 */
+  var locationSynced = false;
   function syncLocation(projectId) {
     try {
       var next = projectId ? ('/cat?project=' + encodeURIComponent(projectId)) : '/cat';
-      if (location.pathname + location.search !== next) window.history.replaceState(null, '', next);
+      var first = !locationSynced;
+      locationSynced = true;
+      if (location.pathname + location.search === next) return;
+      if (projectId && !first) window.history.pushState(null, '', next);
+      else window.history.replaceState(null, '', next);
     } catch (_) {}
   }
+  /* 帯は外した（2026-08-13）。貼り付けも取り込みも同じ経路で作業を作るように
+     なったので、行き来する2つの仕事が無くなり、選ぶ相手が消えたため。
+     資料を開いているあいだの入口は、資料名（F7）から開く一覧が持つ。 */
   function clearOutputDisplay() {
     outputScope = null;
     el('cat-output-row').hidden = true; el('cat-output-row').removeAttribute('data-cat-output-project');
@@ -110,7 +142,27 @@
   function setView(name) { document.body.setAttribute('data-cat-view', name); }
   function showPicker() { syncLocation(''); viewEpoch++; candidateSeq++; project = null; activeSegmentId = ''; activeIndex = -1; revisionComparison = null; currentFilter = 'actionable'; currentLocation = 'all'; currentChange = 'all'; termSelection = { index: -1, source: '', target: '' }; dirty.clear(); clearOutputDisplay(); setView('start'); el('cat-picker').hidden = false; el('cat-workspace').hidden = true; el('cat-current-summary').hidden = true; closeStartPanels(); loadRecent(); }
   function closeStartPanels() { document.querySelectorAll('.cat-start-panel').forEach(function (panel) { panel.hidden = true; }); el('cat-direction-choice').hidden = true; }
-  function showStart(mode) { closeStartPanels(); var panel = el('cat-source-' + mode); if (panel) { panel.hidden = false; YakuCommon.focus(panel.querySelector('input,textarea,[role="button"],button')); } }
+  /* 開いた欄は、いちばん少ない移動で見える所へ入れる（block:'nearest'）。
+     画面の中央へ寄せていたころは、押しただけで 560px 飛び、押したボタン自身が
+     画面の外へ出ていた。初回の案内が次に指すボタンも一緒に外れ、吹き出しだけが
+     上端で切れて残っていた（2026-08-13 実測、1240x860）。 */
+  function showStart(mode) {
+    closeStartPanels();
+    var panel = el('cat-source-' + mode);
+    if (!panel) return;
+    /* 保存場所から取り込む欄を開くときは、選び済みのファイルを忘れる。
+       source() はファイルを先に見るので、前に選んで失敗したファイルが残っていると、
+       入力した場所ではなくそちらを取り込みにいく（2026-08-13、実機で発生）。 */
+    if (mode === 'file') { el('cat-file-input').value = ''; uploaded = null; }
+    panel.hidden = false;
+    var first = panel.querySelector('input,textarea,[role="button"],button');
+    if (!first) return;
+    try { first.focus({ preventScroll: true }); } catch (_) { first.focus(); }
+    var box = first.getBoundingClientRect();
+    if (box.top < 0 || box.bottom > window.innerHeight) {
+      try { first.scrollIntoView({ behavior: 'auto', block: 'nearest' }); } catch (_) { first.scrollIntoView(); }
+    }
+  }
   /* 翻訳中に画面ごと凍らせない。数十分かかるあいだ、できた訳を読む・探す・コピーする、
      そして「やめる」ことは常にできる必要がある。止めるのは作業を壊す操作だけ。 */
   function isAlwaysEnabled(button) {
@@ -127,11 +179,11 @@
     if (translate) {
       translate.textContent = busy ? '翻訳しています…'
         : !ready ? 'Copilotを準備しています（数秒〜十数秒）'
-        : (project && Number(project.untranslated) <= 0) ? '訳案はすべてできています'
-        : '残りの訳案を作る';
+        : (project && Number(project.untranslated) <= 0) ? '訳していない行はありません'
+        : '訳していない行を訳す';
     }
     /* 塗ったボタンは、いつでも「次にやること」1つだけにする。訳案が全部できると
-       「残りの訳案を作る」は灰色の飾りになり、実際の次（取り出す）は輪郭線だけの
+       訳すボタンは灰色の飾りになり、実際の次（取り出す）は輪郭線だけの
        ボタンとして「ほかの資料に切り替える」と同じ見た目で並んでいた。
        訳す仕事が残っていないときは、主役を取り出す側へ渡す（2026-08-12）。 */
     var exportButton = el('cat-export');
@@ -171,6 +223,25 @@
   var resumeItems = [];
   var resumeExpanded = false;
 
+  /* いつ保存したか。同じ資料を2回取り込むと、名前も残り行数も同じ行が並び、
+     どちらが新しいか画面から判断できなかった（実測 2026-08-13: 「spec.docx・
+     英語に訳す作業・あと258行」が2件、区別できる情報なし）。時刻はサーバから
+     saved で既に届いていたので、出すだけでよい。 */
+  function savedLabel(iso) {
+    if (!iso) return '';
+    var when = new Date(iso);
+    if (isNaN(when.getTime())) return '';
+    var hm = String(when.getHours()).padStart(2, '0') + ':' + String(when.getMinutes()).padStart(2, '0');
+    var today = new Date();
+    var sameDay = function (a, b) {
+      return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    };
+    if (sameDay(when, today)) return '今日 ' + hm;
+    var yesterday = new Date(today.getTime() - 86400000);
+    if (sameDay(when, yesterday)) return '昨日 ' + hm;
+    return (when.getMonth() + 1) + '月' + when.getDate() + '日 ' + hm;
+  }
+
   function renderRecent() {
     var list = el('cat-resume-list');
     var more = el('cat-resume-more');
@@ -178,8 +249,9 @@
     list.innerHTML = shown.map(function (item, i) {
       var remaining = Math.max(0, Number(item.total) - Number(item.confirmed));
       var name = esc(item.file_name || '名称未設定');
+      var saved = savedLabel(item.saved);
       return '<div class="cat-resume-row">' +
-        '<button type="button" class="cat-resume-card secondary-button" data-cat-resume="' + esc(item.id) + '">' + (i === 0 ? '<span class="cat-resume-recent">前回開いた作業</span>' : '') + '<span>' + name + '・' + esc(directionName(item.direction)) + '・' + (remaining ? 'あと' + remaining + '行' : '確認完了') + '</span></button>' +
+        '<button type="button" class="cat-resume-card secondary-button" data-cat-resume="' + esc(item.id) + '">' + (i === 0 ? '<span class="cat-resume-recent">前回開いた作業</span>' : '') + '<span>' + name + '・' + esc(directionName(item.direction)) + '・' + (remaining ? 'あと' + remaining + '行' : '確認完了') + '</span>' + (saved ? '<span class="cat-resume-time">' + esc(saved) + '</span>' : '') + '</button>' +
         '<button type="button" class="cat-resume-drop secondary-button" data-cat-resume-drop="' + esc(item.id) + '" data-cat-resume-revision="' + (Number(item.revision) || 0) + '" data-cat-resume-name="' + name + '" title="この作業を一覧から消す" aria-label="' + name + ' の作業を消す">消す</button>' +
         '</div>';
     }).join('');
@@ -187,6 +259,9 @@
     more.hidden = hiddenCount <= 0;
     more.textContent = resumeExpanded ? '直近3件だけ表示する' : ('保存した作業をすべて表示（あと' + hiddenCount + '件）');
     more.setAttribute('aria-expanded', resumeExpanded ? 'true' : 'false');
+    /* 左の資料一覧も同じ元データで描く。読み込みが終わってから呼ぶ必要がある
+       （開いた時点では resumeItems がまだ空のことがある）。 */
+    if (el('cat-editor-layout') && el('cat-editor-layout').classList.contains('is-docs-open')) renderDocsPane();
   }
 
   function loadRecent() {
@@ -238,6 +313,18 @@
     return icon(state === 'reviewed' ? 'i-reviewed' : state === 'human_edited' ? 'i-edited' : state === 'machine_draft' ? 'i-draft' : state === 'stale' ? 'i-stale' : 'i-untranslated');
   }
   function stateTitle(state) { return state === 'reviewed' ? '確認済み' : state === 'human_edited' ? '手直し済み・未確認' : state === 'machine_draft' ? 'Copilotの訳案・未確認' : state === 'stale' ? '原文が変わったので再確認が必要' : 'まだ訳がありません'; }
+  /* 候補から挿入した訳は「手直し」ではない。訳文を書き込む口が1つしかないため、
+     挿入も手打ちも Origin='manual' になり、行の札は「手直し」と出ていた
+     （2026-08-13、実機で確認: 完全一致の候補を挿入した直後の札が「手直し」だった）。
+     出どころは segment.reference_usage に
+     残っているので、そちらを先に見る。挿入したあと自分で書き換えたら、
+     そのことも分かるようにする（決定文書 §5「翻訳例から挿入後に編集」）。 */
+  function referenceOriginLabel(segment) {
+    var usage = segment && segment.reference_usage;
+    if (!usage || String(usage.action || '') !== 'inserted') return '';
+    var base = String(usage.kind || '') === 'memory' ? '自分が確認した訳' : '過去の翻訳例';
+    return usage.edited_after_insert ? (base + 'を直した') : (base + 'から');
+  }
   function originLabel(origin) {
     if (origin === 'glossary') return '用語集';
     if (origin === 'copilot') return 'Copilot訳';
@@ -374,7 +461,7 @@
       var finding = rawFindings[findingIndex] || {}, code = String(finding.code || finding.Code || '').toLowerCase().replace(/_/g, '-');
       var termAction = (code === 'terminology-missing' || code === 'terminology-forbidden') ? '<button type="button" class="secondary-button" data-cat-term-exception="' + Number(segment.index) + '" data-cat-term-id="' + esc(finding.termId || finding.TermId || '') + '" data-cat-term-version="' + Number(finding.termVersion || finding.TermVersion || 0) + '" data-cat-term-source="' + esc(finding.sourceTerm || finding.SourceTerm || '') + '">この行では別の表現を使う</button>' : '';
       return '<div class="cat-qc-card is-' + qcGroup(code) + '"><p>' + esc(message) + '</p>' + termAction + '</div>';
-    }).join('') : '<div class="cat-qc-card">数字と単位の自動点検では、気になる点は見つかりませんでした。言い回しが適切かどうかは、ご自身でお確かめください。</div>';
+    }).join('') : '<div class="cat-qc-card">数字と単位の自動点検では、気になる点は見つかりませんでした。</div>';
     el('cat-next-qc').disabled = !all.some(segmentHasQc);
     var index = Number(segment.index), previous = all.find(function (item) { return Number(item.index) === index - 1; }), next = all.find(function (item) { return Number(item.index) === index + 1; });
     el('cat-context').innerHTML = '<div class="cat-context-card"><span class="cat-context-label">現在の場所</span><p class="cat-context-text">' + esc(segment.location || '本文') + '</p></div>' +
@@ -423,7 +510,7 @@
     el('cat-grid-wrap').hidden = shown.length === 0;
     body.innerHTML = shown.map(function (segment) {
       var index = Number(segment.index), row = index + 1, state = segmentState(segment), isActive = current && Number(current.index) === index;
-      var findings = qcMessages(segment), findingId = 'cat-qc-' + index, origin = originLabel(segment.origin), ops = '';
+      var findings = qcMessages(segment), findingId = 'cat-qc-' + index, origin = referenceOriginLabel(segment) || originLabel(segment.origin), ops = '';
       var nextSegment = all.find(function (candidate) { return Number(candidate.index) === index + 1; });
       var mergeLosesTranslation = !!(String(segment.translation || '').trim() || (nextSegment && String(nextSegment.translation || '').trim()));
       var splitLosesTranslation = !!String(segment.translation || '').trim();
@@ -432,6 +519,13 @@
       /* 原文をそのまま訳文へ。市販CATの定番（memoQ Ctrl+Shift+S / Trados Ctrl+Ins）。
          数字だけ・製品コードだけのセルは訳す必要が無く、打ち直す手間だけが残る。 */
       ops += '<button type="button" class="cat-op secondary-button" data-cat-copy-source="' + index + '">原文をそのまま訳文へ入れる</button>';
+      /* この行だけ Copilot へ送る／この行の訳文だけ写す。どちらも道が無く、
+         「1文ずつ依頼するにはどうすればよいか」「1文だけコピーするにはどうしたら
+         よいか」が分からなかった（2026-08-13、利用者の指摘）。まとめて行う道は
+         道具の帯にあり、どちらも名前で範囲を言っている。 */
+      var rowPrimary = String(segment.translation || '').trim()
+        ? '<button type="button" class="cat-op secondary-button" data-cat-copy-target="' + index + '">この行の訳文をコピー</button>'
+        : '<button type="button" class="cat-op secondary-button" data-cat-translate-row="' + index + '">この行だけ訳す</button>';
       var prior = (segment.prior_translation || segment.prior_source) ? '<details><summary>前回版を見る</summary>' + (segment.prior_source ? '<div><strong>前回の原文</strong><br>' + esc(segment.prior_source) + '</div>' : '') + (segment.prior_translation ? '<div><strong>前回の訳文</strong><br>' + esc(segment.prior_translation) + '</div>' : '') + '</details>' : '';
       var qc = findings.length ? '<div id="' + findingId + '" class="cat-qc-findings" role="alert">' + findings.map(function (m) { return '<div>' + esc(m) + '</div>'; }).join('') + '</div>' : '';
       var usage = segment.reference_usage || null;
@@ -445,11 +539,18 @@
          the cell on the right"／未確認でも自動保存）で、押して開く段は無い。
          開いている行だけは、下に操作と点検結果を出す。 */
       var editor = '<textarea rows="1" data-cat-input="' + index + '" data-cat-project-id="' + esc(project.id) + '" data-original="' + esc(segment.translation || '') + '" aria-label="' + row + '行目の訳文" aria-invalid="' + (findings.length ? 'true' : 'false') + '"' + (findings.length ? ' aria-describedby="' + findingId + '"' : '') + '>' + esc(segment.translation || '') + '</textarea>';
-      var extras = !isActive ? '' : prior + referenceTrace + generatedTerms + '<div class="cat-row-primary">' + (segment.confirmed ? '<button type="button" class="cat-op secondary-button" data-cat-unconfirm="' + index + '">' + icon('i-undo') + '確認を取り消す</button>' : '<button type="button" class="cat-op cat-op-ok" data-cat-confirm="' + index + '">' + icon('i-reviewed') + '確認済みにする</button>') + '</div><details class="cat-more-row"><summary>そのほかの操作</summary><div class="cat-ops">' + ops + '</div>' + '<button type="button" class="cat-op secondary-button" data-cat-revert="' + index + '" hidden>編集を取り消す</button>' + (segment.translation ? '<button type="button" class="cat-op secondary-button" data-cat-term-open="' + index + '">用語を登録</button>' : '') + ((segment.kind === 'cell' && segment.translation && String(segment.source).length <= 40) ? '<button type="button" class="cat-op secondary-button" data-cat-glossary="' + index + '">このセルの訳を今後も自動で使う</button>' : '') + '</details>' + qc + compare + (segment.can_revise ? '<details class="cat-more-row"><summary>Copilotに直してもらう</summary><form class="revise-form" data-cat-revise="' + index + '"><button class="secondary-button" type="button" data-cat-shorten="' + index + '">短くする</button><label class="revise-label">または、どこをどう直すか入力</label><div class="revise-row"><input class="revise-input" type="text" placeholder="例：「increase」を「rise」に変える"><button class="secondary-button" type="submit">この指示で直す</button></div></form></details>' : '');
+      var extras = !isActive ? '' : prior + referenceTrace + generatedTerms + '<div class="cat-row-primary">' + (segment.confirmed ? '<button type="button" class="cat-op secondary-button" data-cat-unconfirm="' + index + '">' + icon('i-undo') + '確認を取り消す</button>' : /* 押しどころでキーの名前も言う。一覧は「そのほか」→「キーボード操作」の
+   2段の折りたたみの中にあり、開くまで見えなかった（実測 2026-08-13）。
+   1行ずつ確定していく作業なので、いちばん押す操作のそばに置く。 */
+        '<button type="button" class="cat-op cat-op-ok" data-cat-confirm="' + index + '" title="確認して次の行へ（Ctrl+Enter）" aria-keyshortcuts="Control+Enter">' + icon('i-reviewed') + '確認済みにする<span class="cat-op-key" aria-hidden="true">Ctrl+Enter</span></button>') + rowPrimary + '</div><details class="cat-more-row"><summary>そのほかの操作</summary><div class="cat-ops">' + ops + '</div>' + '<button type="button" class="cat-op secondary-button" data-cat-revert="' + index + '" hidden>編集を取り消す</button>' + (segment.translation ? '<button type="button" class="cat-op secondary-button" data-cat-term-open="' + index + '">用語を登録</button>' : '') + ((segment.kind === 'cell' && segment.translation && String(segment.source).length <= 40) ? '<button type="button" class="cat-op secondary-button" data-cat-glossary="' + index + '">このセルの訳を今後も自動で使う</button>' : '') + '</details>' + qc + compare + (segment.can_revise ? '<details class="cat-more-row"><summary>Copilotに直してもらう</summary><form class="revise-form" data-cat-revise="' + index + '"><button class="secondary-button" type="button" data-cat-shorten="' + index + '">短くする</button><label class="revise-label">または、どこをどう直すか入力</label><div class="revise-row"><input class="revise-input" type="text" placeholder="例：「increase」を「rise」に変える"><button class="secondary-button" type="submit">この指示で直す</button></div></form></details>' : '');
       var change = changeLabel(segment);
       return '<tr class="' + (isActive ? 'is-active' : '') + '" data-cat-row="' + index + '" data-cat-segment-id="' + esc(segment.segment_id || '') + '" data-cat-confirmed="' + (segment.confirmed ? '1' : '0') + '" data-yaku-cat-state="' + esc(state) + '">' +
         '<td class="cat-col-no"><span class="cat-card-label">行番号・状態</span>' + row + '<span class="cat-state cat-state-' + esc(state) + '" title="' + esc(stateTitle(state)) + '">' + stateIcon(state) + '<span>' + esc(stateLabel(state)) + '</span></span>' + ((change && isActive) ? '<span class="cat-change-badge cat-change-' + esc(changeGroup(segment)) + '" title="' + esc(changeTitle(segment)) + '">' + esc(change) + '</span>' : '') + '</td>' +
-        '<td class="cat-col-loc"><span class="cat-card-label">場所</span><span class="cat-location-main">' + esc(segment.location || '本文') + '</span><span class="cat-location-kind">' + esc(kind) + '</span>' + (Number(segment.repetition_count || 1) > 1 ? '<span class="cat-repetition" title="この原文は資料の中に ' + segment.repetition_count + ' 行あります。確認済みにすると、まだ訳が入っていない同じ原文の行へ同じ訳を入れます。">同じ原文×' + segment.repetition_count + '</span>' : '') + (origin ? '<span class="cat-origin">' + esc(origin) + '</span>' : '') + '</td>' +
+        /* 場所は幅が狭く、長いシート名だと番地まで届かない（実測 2026-08-13、
+           窓 1760px: 「2026年3月期 連結決算サマリー, AB123」は 366px 必要なのに
+           89px しか無く、番地が1文字も出ない）。どのセルかは Excel の作業では
+           いちばん要る情報なので、全文を title に持たせて指せば読めるようにする。 */
+        '<td class="cat-col-loc"><span class="cat-card-label">場所</span><span class="cat-location-main" title="' + esc(segment.location || '本文') + '">' + esc(segment.location || '本文') + '</span><span class="cat-location-kind">' + esc(kind) + '</span>' + (Number(segment.repetition_count || 1) > 1 ? '<span class="cat-repetition" title="この原文は資料の中に ' + segment.repetition_count + ' 行あります。確認済みにすると、まだ訳が入っていない同じ原文の行へ同じ訳を入れます。">同じ原文×' + segment.repetition_count + '</span>' : '') + (origin ? '<span class="cat-origin">' + esc(origin) + '</span>' : '') + '</td>' +
         /* 行の作りは、開いていても閉じていても同じ（原文｜訳文）。以前は開いた行だけ
            上下2段のカードに化けていたが、行を移るたびに表がずれて、いま何行目かを
            見失う。市販の CAT（memoQ・Trados・Phrase）はどれも表の形を保ったまま
@@ -465,17 +566,34 @@
     if (current) candidates(Number(current.index)); else { el('cat-candidate-count').textContent = '0'; el('cat-candidates-list').innerHTML = '<p class="muted">行がありません。左の「すべて」を押すと、全部の行が表示されます。</p>'; }
   }
 
+  /* 押せないボタンには「してください」、押せるボタンには「こうなります」を書く。
+     未確認が残っていても取り出せる決まりにした（2026-08-12）のに、押せる状態の
+     ボタンに「あと2行を確認済みにしてください。」と出していた。命令に読めるので、
+     押してはいけないのだと受け取られる（2026-08-13、初回利用者として実機で確認。
+     同じ場面の取り出しダイアログは「まだ確認していない行が 2 行あります。そのまま
+     コピーに入れます。」と、起きることのほうを書いていた）。 */
   function outputGuidance() {
     var left = Math.max(0, Number(project.total) - Number(project.confirmed));
-    if (Number(project.untranslated) > 0) return '残り' + project.untranslated + '行の訳案を作ってください。';
-    if (left > 0) return 'あと' + left + '行を確認済みにしてください。';
-    return project.export_blocked ? '検査結果を確認し、必要な行を直してください。' : '';
+    if (Number(project.untranslated) > 0) return '先に、訳していない' + project.untranslated + '行を訳してください。';
+    if (project.export_blocked) return '検査結果を確認し、必要な行を直してください。';
+    if (left > 0) return 'まだ確認していない' + left + '行も、そのまま入ります。';
+    return '';
+  }
+  /* 「確認済みの行だけコピー」は、押せない理由をどこにも持っていなかった
+     （実測 2026-08-13: title が空）。1行でも確認済みなら押せる決まりなので、
+     言うべきことは「まだ1行も無い」か「保存していない編集がある」かの2つ。 */
+  function reviewedGuidance() {
+    if (!project) return '';
+    if (dirty.size > 0) return '編集中の行があります。保存してからお使いください。';
+    if (Number(project.confirmed) <= 0) return 'まだ確認済みの行がありません。1行でも確認済みにすると押せます。';
+    return '';
   }
   function render(data, focusFirst) {
     var previousProjectId = project ? String(project.id || '') : '';
     if (data) project = data;
     if (!project) return;
     syncLocation(String(project.id || ''));
+    if (el('cat-editor-layout').classList.contains('is-docs-open')) renderDocsPane();
     if (previousProjectId && previousProjectId !== String(project.id || '')) { activeSegmentId = ''; activeIndex = -1; revisionComparison = null; currentFilter = 'actionable'; currentLocation = 'all'; currentChange = 'all'; }
     if (outputScope && (outputScope.id !== String(project.id || '') || outputScope.revision !== revision())) clearOutputDisplay();
     dirty.clear(); candidateSeq++;
@@ -496,15 +614,33 @@
     var wordReady = project.document_format === 'docx' && project.word_file_output_supported && !sourceMissing;
     var draft = isFile && !sourceMissing && (project.document_format !== 'docx' || wordReady);
     /* 読み上げにも同じ言い方を出す。ここだけ硬い言い方にしない。 */
-    el('cat-output-help').textContent = draft ? '原本はそのままで、訳文を入れたコピーを作ります。名前と文書内に DRAFT が付きます。' : '';
-    el('cat-export').textContent = isFile ? (project.document_format === 'docx' && wordReady ? '訳文入りのWordを作る' : project.document_format === 'docx' ? '訳文をコピー' : '訳文入りのExcelを作る') : '訳文をコピー';
+    el('cat-output-help').textContent = draft ? '原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。' : '';
+    /* 行の操作に「この行の訳文をコピー」を足したので、帯の側は範囲を名乗る。
+       並べたときに、どちらが1行でどちらが全部なのかが名前だけで分かる
+       （2026-08-13、利用者の指摘「パッと見て分かりにくいかも」）。 */
+    el('cat-export').textContent = isFile ? (project.document_format === 'docx' && wordReady ? '訳文入りのWordを作る' : project.document_format === 'docx' ? 'すべての訳文をコピー' : '訳文入りのExcelを作る') : 'すべての訳文をコピー';
     /* 出せない理由は、押す前の常時表示ではなく取り出しダイアログの点検で出す。
        常時 35px を占めながら、ほぼ always「あと N 行」としか言っていなかった。 */
     el('cat-export-blocked').textContent = '';
     /* 帯は畳んだが、理由は失わない。押せない理由はボタン自身が持つ（title）。
-       押したあとの詳細は取り出しダイアログの点検一覧が出す。 */
+       押したあとの詳細は取り出しダイアログの点検一覧が出す。
+
+       ただし title だけでは、押せないボタンに触れられない人へ届かない。
+       disabled のボタンはフォーカスを受けないので、キーボードだけで操作すると
+       理由に到達できない（実測 2026-08-13: 画面上の理由テキスト0件、
+       無効ボタンへのフォーカス不可）。読み上げ用の行へ同じ理由を書き、
+       ボタンから aria-describedby で指す。帯は畳んだままで、場所は取らない。 */
     el('cat-export').title = outputGuidance() || '';
+    el('cat-export-reviewed').title = reviewedGuidance() || '';
     saveStatus('保存済み', false); setBusy(false);
+    /* 押せる／押せないを決めるのは setBusy(false) なので、理由はそのあとで作る。
+       先に作っていたころは、待っているあいだの「全部押せない」状態を読んでいて、
+       押せるボタンにも「押せません」と書いていた（実測 2026-08-13:
+       「訳文をコピー」は disabled=false なのに読み上げ行は「押せません」）。 */
+    var outputReasons = [];
+    if (el('cat-export').disabled && outputGuidance()) outputReasons.push('「' + el('cat-export').textContent.trim() + '」が押せません。' + outputGuidance());
+    if (el('cat-export-reviewed').disabled && reviewedGuidance()) outputReasons.push('「確認済みの行だけコピー」が押せません。' + reviewedGuidance());
+    el('cat-output-reason').textContent = outputReasons.join(' ');
     /* 資料名も残り行数も、ツールバーと左ナビが持っている。同じ数字を4か所へ書いて
        いた。この帯は「異常を知らせる」ときだけ使う。読み上げは sr-only の
        #cat-current-summary が担う。 */
@@ -605,7 +741,10 @@
   /* 別のアプリで仕事をしていても、終わったことに気づけるようにする。
      タスクバーのタイトルは、画面を見ていなくても目に入る唯一の場所。 */
   function setJobTitle(text) {
-    document.title = (text ? text + ' - ' : '') + '資料翻訳 - YakuLingo';
+    /* 呼び名は画面の題（cat.html の <title>）に合わせて「翻訳」に統一する。
+       貼り付けた文章も資料と同じ作業になったので、「資料翻訳」だけを名乗ると
+       貼り付けから来た人のタスクバーに違う名前が出る（2026-08-13）。 */
+    document.title = (text ? text + ' - ' : '') + '翻訳 - YakuLingo';
   }
   function pollJob(id, token, failureCount) {
     window.clearTimeout(jobTimer);
@@ -615,8 +754,8 @@
       if (!jobContext || jobContext.token !== token) return;
       el('cat-job').innerHTML = jobHtml(id, data, startedAt);
       if (['done','completed_with_warnings'].indexOf(data.mode) >= 0) { setJobTitle('✔ 翻訳が終わりました'); YakuCommon.notifyDesktopShell('translation-finished'); finishJob(id, token); return; }
-      if (data.mode === 'cancelled') { setJobTitle(''); setBusy(false); el('cat-job').innerHTML = ''; status('翻訳をやめました。ここまでにできた訳文は保存されています。「残りの訳案を作る」を押すと続きから再開できます。'); return; }
-      if (['error','failed'].indexOf(data.mode) >= 0) { setJobTitle(''); setBusy(false); status(data.detail || '翻訳が途中で止まりました。ここまでにできた訳文は保存されています。もう一度「残りの訳案を作る」を押すと、続きから再開します。', true); return; }
+      if (data.mode === 'cancelled') { setJobTitle(''); setBusy(false); el('cat-job').innerHTML = ''; status('翻訳をやめました。ここまでにできた訳文は保存されています。「訳していない行を訳す」を押すと続きから再開できます。'); return; }
+      if (['error','failed'].indexOf(data.mode) >= 0) { setJobTitle(''); setBusy(false); status(data.detail || '翻訳が途中で止まりました。ここまでにできた訳文は保存されています。もう一度「訳していない行を訳す」を押すと、続きから再開します。', true); return; }
       setJobTitle(Math.round(Number(data.progress) || 0) + '% 翻訳中');
       jobTimer = window.setTimeout(function () { pollJob(id, token, 0); }, 1000);
     }).catch(function () {
@@ -648,9 +787,47 @@
   function translate() {
     var glossaryScope = null, jobScope = null;
     return flush().then(function () { glossaryScope = currentScope(); if (!glossaryScope) throw new Error('資料が開かれていません。「ほかの資料に切り替える」から選び直してください。'); setBusy(true); status('用語集を適用しています…'); return post('glossary', {}, true, glossaryScope); }).then(function (data) {
-      if (!scopeIsCurrent(glossaryScope, true) || !data || String(data.id || '') !== glossaryScope.id) throw new Error('表示している資料が切り替わったため、翻訳をやめました。もう一度「残りの訳案を作る」を押してください。');
-      project = data; jobScope = currentScope(); status('残りの訳案を作っています…'); return YakuCommon.postText('/api/cat/translate', { id: jobScope.id, expected_revision: jobScope.revision, mode: 'translate' });
+      if (!scopeIsCurrent(glossaryScope, true) || !data || String(data.id || '') !== glossaryScope.id) throw new Error('表示している資料が切り替わったため、翻訳をやめました。もう一度「訳していない行を訳す」を押してください。');
+      project = data; jobScope = currentScope(); status('訳していない行を訳しています…'); return YakuCommon.postText('/api/cat/translate', { id: jobScope.id, expected_revision: jobScope.revision, mode: 'translate' });
     }).then(function (html) { startJobHtml(html, { type: 'translate', scope: jobScope }); }).catch(function (error) { setBusy(false); status(error.message, true); });
+  }
+  /* 貼り付けから来たときだけ、そのまま訳しにいく。Copilot の準備は起動直後だと
+     まだ終わっていないので、終わるのを待ってから1回だけ送る。押しっぱなしに
+     ならないよう、送ったら二度と自動では送らない。 */
+  var autoTranslateDone = false;
+  function translateWhenReady() {
+    if (autoTranslateDone) return;
+    if (!project || Number(project.untranslated) <= 0) { autoTranslateDone = true; return; }
+    if (ready) { autoTranslateDone = true; translate(); return; }
+    status('Copilotの準備ができ次第、送ります。このままお待ちください。');
+    YakuCommon.onReady(function (value) {
+      if (autoTranslateDone || !value) return;
+      if (!project || Number(project.untranslated) <= 0) { autoTranslateDone = true; return; }
+      autoTranslateDone = true;
+      translate();
+    });
+  }
+  /* この行だけ訳す。まとめて訳すのと同じ口（mode: 'translate'）へ index を足す。
+     別の道を作らないので、用語集も数値の伏せ方も待ち方も全部同じになる。 */
+  function translateRow(index) {
+    var glossaryScope = null, jobScope = null;
+    return flush().then(function () {
+      glossaryScope = currentScope(); if (!glossaryScope) throw new Error('資料が開かれていません。');
+      setBusy(true); status('用語集を適用しています…'); return post('glossary', {}, true, glossaryScope);
+    }).then(function (data) {
+      if (!scopeIsCurrent(glossaryScope, true) || !data || String(data.id || '') !== glossaryScope.id) throw new Error('表示している資料が切り替わったため、翻訳をやめました。');
+      project = data; jobScope = currentScope(); status((index + 1) + '行目を訳しています…');
+      return YakuCommon.postText('/api/cat/translate', { id: jobScope.id, expected_revision: jobScope.revision, mode: 'translate', index: index });
+    }).then(function (html) { startJobHtml(html, { type: 'translate', scope: jobScope }); })
+      .catch(function (error) { setBusy(false); status(error.message, true); });
+  }
+  /* この行の訳文だけ写す。まとめて写すのは道具の帯の「訳文をコピー」。 */
+  function copyRowTarget(index) {
+    var segment = project && (project.segments || []).find(function (item) { return Number(item.index) === index; });
+    var input = document.querySelector('[data-cat-input="' + index + '"]');
+    var text = String((input && input.value) || (segment && segment.translation) || '');
+    if (!text.trim()) { status('この行にはまだ訳文がありません。', true); return Promise.resolve(); }
+    return YakuCommon.copyText(text, input, el('cat-status')).then(function () { status((index + 1) + '行目の訳文をコピーしました。'); });
   }
   function revise(form, instructionOverride) {
     var index = Number(form.getAttribute('data-cat-revise')), instruction = String(instructionOverride || form.querySelector('input').value || '').trim(), jobScope = null;
@@ -795,6 +972,56 @@
   function closeTextOutput() {
     var dialog = el('cat-text-output');
     if (dialog && dialog.open) { try { dialog.close(); } catch (_) { dialog.removeAttribute('open'); } }
+  }
+
+  /* 読み込んだ PDF のページ。範囲を選び直しても読み直さなくて済むよう、
+     解析の結果をそのまま持っておく（本文はこの画面の中だけにある）。 */
+  var alignPages = { source: [], target: [] };
+  var alignSideText = { source: 'cat-align-source', target: 'cat-align-target' };
+
+  /* ページの冒頭を並べる。対応するページを別のアプリで開いて調べ直さずに、
+     この画面の中で左右を見比べて決められるようにする（2026-08-13）。
+     市販ツールも対応づけは人が宣言する作りで、memoQ は名前が違いすぎると
+     間違えると警告し、Phrase は完全一致を要求する。宣言してもらう代わりに、
+     調べる手間はこちらで引き受ける。 */
+  function renderAlignPages(side) {
+    var host = el('cat-align-' + side + '-pages');
+    if (!host) return;
+    host.innerHTML = alignPages[side].map(function (p) {
+      var head = String(p.text || '').split('\n').filter(function (t) { return t.trim(); })[0] || '（文字なし）';
+      return '<div class="align-page-row"><span class="align-page-no">' + p.page + '</span>' + esc(head.slice(0, 48)) + '</div>';
+    }).join('');
+  }
+
+  /* 選んだ範囲のページだけを、送る文へ組み直す。範囲を空にすると全部。 */
+  function applyAlignRange(side) {
+    var pages = alignPages[side];
+    if (!pages || !pages.length) return;
+    var fromInput = el('cat-align-' + side + '-from');
+    var toInput = el('cat-align-' + side + '-to');
+    fromInput.max = pages.length; toInput.max = pages.length;
+    if (!fromInput.value) fromInput.value = 1;
+    if (!toInput.value) toInput.value = pages.length;
+    var from = Math.max(1, Math.min(pages.length, Number(fromInput.value) || 1));
+    var to = Math.max(from, Math.min(pages.length, Number(toInput.value) || pages.length));
+    fromInput.value = from; toInput.value = to;
+    el(alignSideText[side]).value = pages.slice(from - 1, to).map(function (p) { return p.text; }).join('\n');
+  }
+
+  /* 送る前に、Copilot への往復回数と見込み時間を出す。実測 2026-08-13:
+     144ページの資料は 5,742行 = 最低128往復で、20〜40分かかる。
+     押したあとに知るのでは遅い。切り分けは Alignment.ps1 と同じ
+     （日本語を軸に50行ずつ、5行重ね）。 */
+  function updateAlignEstimate() {
+    var status = el('cat-align-file-status');
+    if (!status) return;
+    var ja = String(el('cat-align-source').value || '').split(/\r?\n/).filter(function (t) { return t.trim().length >= 4; }).length;
+    if (ja < 1) return;
+    var chunks = Math.max(1, Math.ceil(Math.max(0, ja - 5) / 45));
+    var lo = Math.round(chunks * 10 / 60), hi = Math.round(chunks * 20 / 60);
+    var time = chunks <= 3 ? '1分ほど' : (Math.max(1, lo) + '〜' + Math.max(2, hi) + '分ほど');
+    status.textContent = '日本語 ' + ja.toLocaleString('ja-JP') + '行。Copilotへ約' + chunks + '回送ります（' + time + '）。'
+      + (chunks > 20 ? ' 途中で止まっても、そこまでの対応は残ります。' : '');
   }
 
   function bindFileDrop(drop, input) {
@@ -1103,19 +1330,22 @@
       /* 「確認済みの内容を出力できます」とは言えなくなった。未確認の行を含んだまま
          出せるので、残っている行数をそのまま出す（2026-08-12）。 */
       var unconfirmed = Number(data.unconfirmed_count || 0);
+      /* 出す先はファイルとは限らない。訳文のコピーはクリップボードへ写すだけで、
+         ファイルは作らない（2026-08-13、初回利用者として実機で確認）。 */
+      var isCopy = mode === 'copy_text';
       var readyLine = !blockers.length
         ? (unconfirmed > 0
-            ? '<div class="cat-preflight-item is-ready">いまの訳文でファイルを作れます。</div>'
+            ? ('<div class="cat-preflight-item is-ready">いまの訳文を' + (isCopy ? 'コピーできます。' : 'ファイルにできます。') + '</div>')
             : '<div class="cat-preflight-item is-ready">すべての行を確認し終えています。</div>')
         : '';
-      el('cat-export-checks').innerHTML = blockers.map(function (item) { return '<div class="cat-preflight-item is-blocked">' + esc(item.message || item.code || 'いまはファイルを作れません。上に出ている項目をご確認ください。') + '</div>'; }).join('') + warnings.map(function (item) { return '<div class="cat-preflight-item">' + esc(item.message || item.code || item) + '</div>'; }).join('') + readyLine;
+      el('cat-export-checks').innerHTML = blockers.map(function (item) { return '<div class="cat-preflight-item is-blocked">' + esc(item.message || item.code || (isCopy ? 'いまはコピーできません。上に出ている項目をご確認ください。' : 'いまはファイルを作れません。上に出ている項目をご確認ください。')) + '</div>'; }).join('') + warnings.map(function (item) { return '<div class="cat-preflight-item">' + esc(item.message || item.code || item) + '</div>'; }).join('') + readyLine;
       el('cat-export-notice').textContent = data.draft_notice || '原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。';
       el('cat-export-notice').hidden = mode === 'copy_text' || mode === 'blocked';
       /* 止まっているときは、どの行かを見に行けるようにする。「作れません」だけを
          出して行き先を示さないと、利用者は資料の中を目で探すことになる。 */
       el('cat-export-qa').hidden = !blockers.length;
       el('cat-export-confirm').disabled = !data.eligible || mode === 'blocked';
-      el('cat-export-confirm').textContent = mode === 'copy_text' ? '訳文をコピー' : 'ファイルを作る';
+      el('cat-export-confirm').textContent = mode === 'copy_text' ? 'すべての訳文をコピー' : 'ファイルを作る';
       var dialog = el('cat-export-dialog'); dialog.returnValue = 'cancel'; dialog.showModal();
     }).catch(function (error) { setBusy(false); preflightScope = null; status(error.message, true); });
   }
@@ -1125,12 +1355,26 @@
      行ごとの指摘と絞り込みは持っていたが、「あと何件残っているか」を出す前に
      見る場所が無かった。数えるのは画面が持っている行そのもので、
      出力を止める条件（訳文が空・数字の点検）と同じ2つを先に並べる。 */
+  /* まだ一度も訳していない状態（作業を作った直後）を、指摘として数えない。
+     数えていたころは、押した直後の画面に赤い「点検 2」が出て、開くと
+     「ファイルを作れない指摘が 2 件あります／訳文が空 2」と出ていた。
+     利用者は何もしていない。次に押すのは訳すボタンだ、と言うべき場面で、
+     欠陥の言い方をしていた（2026-08-13、初回利用者として実機で確認）。
+     同じ画面の取り出しボタンは、最初から「先に訳してください」と
+     正しく言っていたので、言い方はそちらに合わせる。
+     1行でも訳ができていれば、空の行は本物の指摘に戻る。 */
+  function nothingTranslatedYet() {
+    var all = (project && project.segments) || [];
+    if (!all.length) return false;
+    return all.every(function (segment) { return !String(segment.translation || '').trim(); });
+  }
   function qaFindings() {
     var all = (project && project.segments) || [], groups = [
       { key: 'empty', title: '訳文が空', blocking: true, items: [] },
       { key: 'qc', title: '数字の点検', blocking: true, items: [] },
       { key: 'unconfirmed', title: '未確認', blocking: false, items: [] }
     ];
+    if (nothingTranslatedYet()) return groups;
     all.forEach(function (segment) {
       var messages = qcMessages(segment);
       var empty = !String(segment.translation || '').trim();
@@ -1358,6 +1602,101 @@
     var active = el('cat-preview-body').querySelector('.is-active');
     if (active && active.scrollIntoView) active.scrollIntoView({ block: 'center' });
   }
+  /* 資料の切り替え。市販ツール（Crowdin の畳めるファイル一覧、memoQ の資料タブ、
+     Phrase のブラウザタブ）はどれも作業画面に居たまま切り替える。ここもそれに倣い、
+     一覧画面へ戻らずに入れ替える。開いている資料には印を付け、押しても何も起きない
+     ことが分かるようにする。 */
+  function renderDocDialogList() {
+    var list = el('cat-doc-dialog-list');
+    var currentId = project ? String(project.id || '') : '';
+    if (!resumeItems.length) {
+      list.innerHTML = '<p class="muted">保存した作業はまだありません。</p>';
+      return;
+    }
+    list.innerHTML = resumeItems.map(function (item) {
+      var remaining = Math.max(0, Number(item.total) - Number(item.confirmed));
+      var isCurrent = String(item.id) === currentId;
+      var saved = savedLabel(item.saved);
+      return '<button type="button" class="cat-doc-choice' + (isCurrent ? ' is-current' : '') + '"' +
+        (isCurrent ? ' aria-current="true" disabled' : '') +
+        ' data-cat-doc-open="' + esc(item.id) + '">' +
+        '<span class="cat-doc-choice-name">' + esc(item.file_name || '名称未設定') + '</span>' +
+        '<span class="cat-doc-choice-meta">' + esc(directionName(item.direction)) + '・' +
+        (remaining ? 'あと' + remaining + '行' : '確認完了') + (saved ? '・' + esc(saved) : '') +
+        (isCurrent ? '・開いています' : '') + '</span></button>';
+    }).join('');
+  }
+  /* 左の資料一覧。中身は切替ダイアログと同じものを、畳める欄として出す。
+     開いているあいだは、資料名を押さなくても隣の資料へ移れる。 */
+  function renderDocsPane() {
+    var list = el('cat-docs-pane-list');
+    if (!list) return;
+    var currentId = project ? String(project.id || '') : '';
+    if (!resumeItems.length) { list.innerHTML = '<p class="muted">まだありません。</p>'; return; }
+    list.innerHTML = resumeItems.map(function (item) {
+      var remaining = Math.max(0, Number(item.total) - Number(item.confirmed));
+      var isCurrent = String(item.id) === currentId;
+      return '<button type="button" class="cat-docs-pane-item' + (isCurrent ? ' is-current' : '') + '"' +
+        (isCurrent ? ' aria-current="true" disabled' : '') +
+        ' data-cat-doc-open="' + esc(item.id) + '" title="' + esc(item.file_name || '') + '">' +
+        '<span class="cat-docs-pane-name">' + esc(item.file_name || '名称未設定') + '</span>' +
+        /* 同じ資料を2回取り込むと、名前も残り行数も同じ行が並ぶ。左欄でも時刻で
+           見分けられるようにする（実測 2026-08-13: spec.docx が2件、ManualBuilder が
+           2件、01_A4_format が2件並んでいた）。 */
+        '<span class="cat-docs-pane-meta">' + (remaining ? 'あと' + remaining + '行' : '確認完了') +
+        (savedLabel(item.saved) ? '・' + esc(savedLabel(item.saved)) : '') +
+        (isCurrent ? '・開いています' : '') + '</span></button>';
+    }).join('');
+  }
+  /* 開くかどうか。既定は「広い窓のときだけ」。一度でも自分で開閉したら、その選択を覚える
+     （市販CATでもペインの開閉は覚える。MateCat は明記している）。 */
+  var DOCS_PANE_MIN_WIDTH = 1700;
+  function applyDocsPane(open, fromUser) {
+    var layout = el('cat-editor-layout'), toggle = el('cat-docs-toggle');
+    if (!layout || !toggle) return;
+    layout.classList.toggle('is-docs-open', open);
+    toggle.setAttribute('aria-expanded', String(open));
+    toggle.textContent = open ? '資料一覧を隠す' : '資料一覧';
+    if (open) {
+      renderDocsPane();
+      /* 開いた時点で一覧を持っていなければ取りに行く（作業画面から直接開いた場合）。 */
+      if (!resumeItems.length) loadRecent();
+    }
+    /* 覚えるのは、利用者が自分で開閉したときだけ。窓幅による自動の開閉を覚えると、
+       一度狭い窓で見ただけで、以後ずっと閉じたままになる。 */
+    if (fromUser) { try { window.localStorage.setItem('yaku-cat-docs-open', open ? '1' : '0'); } catch (_) {} }
+  }
+  /* 狭い窓では、覚えていても開かない。開くと原文・訳文が 2026-08-12 に
+     却下された幅（1列 321px）を下回るため。 */
+  function applyDocsPaneDefault() {
+    var stored = null;
+    try { stored = window.localStorage.getItem('yaku-cat-docs-open'); } catch (_) {}
+    var roomy = window.innerWidth >= DOCS_PANE_MIN_WIDTH;
+    if (stored === '1') { applyDocsPane(roomy); return; }
+    if (stored === '0') { applyDocsPane(false); return; }
+    applyDocsPane(roomy);
+  }
+  function initDocsPane() {
+    applyDocsPaneDefault();
+    /* 窓の大きさは、起動したあとに変わる。資料翻訳へ入ると外枠が窓を広げるので
+       （実測 2026-08-13: ホーム 1240px -> 資料翻訳 1760px）、起動時の1回だけで
+       決めると、広い窓なのに一覧が閉じたままになる。変わったら決め直す。 */
+    var resizeTimer = null;
+    window.addEventListener('resize', function () {
+      if (resizeTimer) window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(applyDocsPaneDefault, 150);
+    });
+  }
+  function openDocDialog() {
+    var dialog = el('cat-doc-dialog');
+    /* 開いてから読み直す。作業中に別の作業が増えている（別窓・前回の続き）ことがある。
+       読み直しを待たずに一度出すので、押せるまでの間が空かない。 */
+    renderDocDialogList();
+    dialog.showModal();
+    var first = dialog.querySelector('.cat-doc-choice:not([disabled])') || el('cat-doc-dialog-import');
+    if (first) YakuCommon.focus(first);
+    loadRecent().then(function () { if (dialog.open) renderDocDialogList(); }).catch(function () {});
+  }
   function openPreview() {
     if (!project) { status('資料が開かれていません。'); return; }
     renderPreview();
@@ -1379,7 +1718,9 @@
     var groups = qaFindings();
     var blocking = groups.filter(function (group) { return group.blocking; }).reduce(function (sum, group) { return sum + group.items.length; }, 0);
     var unconfirmed = groups[2].items.length;
-    el('cat-qa-summary').textContent = blocking
+    el('cat-qa-summary').textContent = nothingTranslatedYet()
+      ? 'まだ訳していません。「訳していない行を訳す」を押すと、Copilotへ送ります。'
+      : blocking
       ? ('ファイルを作れない指摘が ' + blocking + ' 件あります。' + (unconfirmed ? '未確認は ' + unconfirmed + ' 行です。' : ''))
       : (unconfirmed ? ('止まる指摘はありません。未確認は ' + unconfirmed + ' 行です。') : '指摘はありません。すべての行を確認し終えています。');
     el('cat-qa-list').innerHTML = groups.filter(function (group) { return group.items.length; }).map(function (group) {
@@ -1390,7 +1731,9 @@
             '<span class="cat-qa-source">' + esc(String(item.source || '').slice(0, 40)) + '</span>' +
             (item.message ? '<span class="cat-qa-message">' + esc(item.message) + '</span>' : '') + '</button>';
         }).join('') + '</section>';
-    }).join('') || '<p class="muted">直すところは見つかりませんでした。</p>';
+    }).join('') || (nothingTranslatedYet()
+      ? '<p class="muted">訳ができたら、ここに直すところが並びます。</p>'
+      : '<p class="muted">直すところは見つかりませんでした。</p>');
     var dialog = el('cat-qa-dialog'); dialog.returnValue = 'cancel'; dialog.showModal();
   }
   function jumpFromQa(index) {
@@ -1406,7 +1749,7 @@
     if (!project) return Promise.resolve();
     var all = project.segments || [], after = all.find(function (segment) { return Number(segment.index) > Number(activeIndex) && segmentHasQc(segment); });
     var target = after || all.find(segmentHasQc);
-    if (!target) { status('数字と単位の自動点検では、気になる点は見つかりませんでした。言い回しが適切かどうかは、ご自身でお確かめください。'); return Promise.resolve(); }
+    if (!target) { status('数字と単位の自動点検では、気になる点は見つかりませんでした。'); return Promise.resolve(); }
     currentFilter = 'qc'; currentLocation = 'all'; inspectorTab = 'qc';
     return activateIndex(Number(target.index), true);
   }
@@ -1437,6 +1780,49 @@
 
   function bind() {
     trackToolbarHeight();
+    /* 帯の操作。role="tablist" の作法どおり、左右の矢印でも移れるようにする。 */
+    /* 資料の切り替え。左上の資料名と、折りたたみの中の項目の両方から同じ口を開く。
+       以前の「ほかの資料に切り替える」は作業画面を畳んで一覧へ戻していた。 */
+    el('cat-doc-switch').addEventListener('click', openDocDialog);
+    /* 左の資料一覧。開閉と、その中からの切り替え。 */
+    el('cat-docs-toggle').addEventListener('click', function () {
+      applyDocsPane(!el('cat-editor-layout').classList.contains('is-docs-open'), true);
+    });
+    el('cat-docs-import').addEventListener('click', function () { showPicker(); showStart('file'); });
+    el('cat-docs-pane-list').addEventListener('click', function (event) {
+      var choice = event.target.closest ? event.target.closest('[data-cat-doc-open]') : null;
+      if (!choice || choice.disabled) return;
+      var id = choice.getAttribute('data-cat-doc-open');
+      flush().then(function () { resume(id); }).catch(function (error) { status(error.message, true); });
+    });
+    el('cat-doc-dialog-close').addEventListener('click', function () { el('cat-doc-dialog').close(); });
+    el('cat-doc-dialog-import').addEventListener('click', function () {
+      el('cat-doc-dialog').close();
+      showPicker();
+      showStart('file');
+    });
+    /* 貼り付けも同じ扱いの入口になったので、ここから始められるようにする。
+       開始画面へ戻して、貼り付け欄へ焦点を置くだけでよい。 */
+    el('cat-doc-dialog-paste').addEventListener('click', function () {
+      el('cat-doc-dialog').close();
+      showPicker();
+      YakuCommon.focus(el('quick-input'));
+    });
+    el('cat-doc-dialog-list').addEventListener('click', function (event) {
+      var choice = event.target.closest ? event.target.closest('[data-cat-doc-open]') : null;
+      if (!choice || choice.disabled) return;
+      var id = choice.getAttribute('data-cat-doc-open');
+      el('cat-doc-dialog').close();
+      /* 一覧画面を経由しない。ここで直接その資料へ入れ替える。
+         打ちかけの訳文は先に保存する。保存できなければ入れ替えない。 */
+      flush().then(function () { resume(id); }).catch(function (error) { status(error.message, true); });
+    });
+    /* ブラウザの戻る。資料を開くかどうかだけで決まるようになった（帯を外したため）。 */
+    window.addEventListener('popstate', function () {
+      var wanted = new URLSearchParams(location.search).get('project');
+      if (wanted) { if (!project || String(project.id || '') !== wanted) resume(wanted); }
+      else if (project) showPicker();
+    });
     /* 保存は入力欄からフォーカスが外れたときにだけ走る。打ちかけたままホームへ戻る、
        トレイのアイコンを押す、ウィンドウを閉じる、のいずれでも黙って消えていた。 */
     window.addEventListener('beforeunload', function (event) {
@@ -1455,11 +1841,65 @@
     document.querySelectorAll('[data-cat-source-show]').forEach(function (button) { button.addEventListener('click', function () { showStart(button.getAttribute('data-cat-source-show')); }); });
     document.querySelectorAll('[data-cat-open]').forEach(function (button) { button.addEventListener('click', function () { openSource(button.getAttribute('data-cat-open'), 'auto'); }); });
     document.querySelectorAll('[data-cat-direction]').forEach(function (button) { button.addEventListener('click', function () { el('cat-direction-choice').hidden = true; if (pendingDirection) pendingDirection(button.getAttribute('data-cat-direction')); }); });
-    el('cat-file-input').addEventListener('change', function () { uploaded = null; el('cat-file-name').textContent = this.files.length ? this.files[0].name : '.docx / .xlsx / .xlsm'; });
-    bindFileDrop(el('cat-drop'), el('cat-file-input'));
+    /* 「Word・Excelを取り込む」は、ファイル選択をそのまま開く。押しても欄が
+       開くだけだったころは、そこにもう一度「選ぶ」があり、さらに「取り込んで
+       確認を始める」を押す必要があった（2026-08-13、利用者の指摘）。 */
+    el('cat-open-file-entry').addEventListener('click', function () { el('cat-file-input').value = ''; el('cat-file-input').click(); });
+    /* 選んだ時点で取り込みを始める。押す回数を3回から1回にする。 */
+    el('cat-file-input').addEventListener('change', function () {
+      uploaded = null;
+      if (this.files.length) openSource('file', 'auto');
+    });
+    /* ドロップ先はボタン自身。専用の枠を置くと、押す場所が2つに見える。 */
+    bindFileDrop(el('cat-open-file-entry'), el('cat-file-input'));
     el('cat-prior-open').addEventListener('click', function () { var epoch = ++viewEpoch; setBusy(true); post('from-prior-version', { prior_ja: el('cat-prior-ja').value, prior_en: el('cat-prior-en').value, current_ja: el('cat-current-ja').value, document_name: el('cat-prior-name').value }, false, null).then(function (data) { if (epoch === viewEpoch) render(data, true); }).catch(function (error) { if (epoch !== viewEpoch) return; setBusy(false); status(error.message, true); }); });
+    /* 過去の日英資料の入口。PDF を読むには WebAssembly が要り、それは
+       ?import=1 で開いた画面にしか許していない（普段の作業では CSP を
+       'self' のままにするため）。押したらその画面へ移る。 */
+    el('cat-open-align-entry').addEventListener('click', function () {
+      if (document.querySelector('meta[name="yaku-import"]') &&
+          document.querySelector('meta[name="yaku-import"]').getAttribute('content') === '1') { showStart('align'); return; }
+      window.location.assign('/cat?import=1');
+    });
+    /* PDF を選んだら、この画面の中で解析して貼り付け欄へ入れる。
+       ファイルそのものはサーバへ送らない。送るのは取り出した文だけ。 */
+    function readPdfInto(input, side, label) {
+      var file = input.files && input.files[0];
+      if (!file) return;
+      var status = el('cat-align-file-status');
+      status.textContent = label + 'を読んでいます…';
+      import('/assets/pdf-extract.js').then(function (mod) {
+        return file.arrayBuffer().then(function (buf) { return mod.extractPdfPages(new Uint8Array(buf)); });
+      }).then(function (res) {
+        if (res.lowText) {
+          status.textContent = label + 'は文字が取れませんでした。画像として保存されたPDFのようです。OCRでテキスト付きのPDFにしてから、もう一度お試しください。';
+          input.value = '';
+          return;
+        }
+        alignPages[side] = res.pages;
+        renderAlignPages(side);
+        el('cat-align-ranges').hidden = false;
+        applyAlignRange(side);
+        status.textContent = label + 'を読みました（' + res.pages.length + 'ページ）。';
+        if (!el('cat-align-name').value.trim()) el('cat-align-name').value = file.name;
+        updateAlignEstimate();
+      }).catch(function (error) {
+        status.textContent = label + 'を読めませんでした。' + (error && error.message ? error.message : '');
+      });
+    }
+    el('cat-align-source-file').addEventListener('change', function () { readPdfInto(this, 'source', '日本語版'); });
+    el('cat-align-target-file').addEventListener('change', function () { readPdfInto(this, 'target', '英語版'); });
+    ['source', 'target'].forEach(function (side) {
+      ['from', 'to'].forEach(function (end) {
+        el('cat-align-' + side + '-' + end).addEventListener('change', function () { applyAlignRange(side); updateAlignEstimate(); });
+      });
+    });
+    el('cat-align-source').addEventListener('input', updateAlignEstimate);
+    el('cat-align-target').addEventListener('input', updateAlignEstimate);
     el('cat-align-open').addEventListener('click', function () { var epoch = viewEpoch; setBusy(true); YakuCommon.postText('/api/cat/align', { source_text: el('cat-align-source').value, target_text: el('cat-align-target').value, file_name: el('cat-align-name').value }).then(function (html) { startJobHtml(html, { type: 'align', name: el('cat-align-name').value, viewEpoch: epoch }); }).catch(function (error) { setBusy(false); status(error.message, true); }); });
-    el('cat-switch-project').addEventListener('click', function () { if (busy) return; flush().then(showPicker).catch(function (error) { status(error.message, true); }); });
+    /* 同じ口へ寄せる。畳んで一覧へ戻すのではなく、その場で選ばせる。
+       打ちかけの訳文は先に保存してから開く（開いたあと入れ替わるため）。 */
+    el('cat-switch-project').addEventListener('click', function () { if (busy) return; flush().then(openDocDialog).catch(function (error) { status(error.message, true); }); });
     el('cat-translate').addEventListener('click', translate); el('cat-export').addEventListener('click', openExportPreflight);
     el('cat-export-reviewed').addEventListener('click', exportReviewed);
     el('cat-qa-open').addEventListener('click', openQaList);
@@ -1482,6 +1922,7 @@
       apply(stored === '1');
       toggle.addEventListener('click', function () { apply(!layout.classList.contains('is-inspector-hidden')); });
     })();
+    initDocsPane();
     /* 訳文欄に入った時点で、その行が開いている行になる。押して開く操作は無くした。
        行を作り直すので、カーソルの位置を持ち越して同じ場所へ戻す。 */
     document.addEventListener('focusin', function (event) {
@@ -1507,7 +1948,7 @@
     });
     document.addEventListener('click', function (event) {
       var button = event.target.closest('button'); if (!button) return;
-      if (busy && (button.id === 'cat-confirm-bulk' || button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-shorten') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
+      if (busy && (button.id === 'cat-confirm-bulk' || button.hasAttribute('data-cat-translate-row') || button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-shorten') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
       if (button.hasAttribute('data-cat-preview-side')) { previewSide = button.getAttribute('data-cat-preview-side') || 'target'; renderPreview(); return; }
       if (button.hasAttribute('data-cat-qa-jump')) return jumpFromQa(button.getAttribute('data-cat-qa-jump'));
       if (button.hasAttribute('data-cat-filter')) { currentFilter = button.getAttribute('data-cat-filter') || 'actionable'; return redrawAfterFlush(); }
@@ -1519,7 +1960,7 @@
       if (button.hasAttribute('data-cat-change')) { currentChange = button.getAttribute('data-cat-change') || 'all'; return redrawAfterFlush(); }
       if (button.hasAttribute('data-cat-inspector')) { inspectorTab = button.getAttribute('data-cat-inspector') || 'candidates'; renderInspector(); return; }
       if (button.hasAttribute('data-yaku-cancel-job')) {
-        if (!window.confirm('翻訳をやめますか？\n\nここまでにできあがった訳文は保存されています。\nあとで「残りの訳案を作る」を押すと、続きから再開できます。')) return;
+        if (!window.confirm('翻訳をやめますか？\n\nここまでにできあがった訳文は保存されています。\nあとで「訳していない行を訳す」を押すと、続きから再開できます。')) return;
         button.disabled = true; button.textContent = 'やめています…';
         return YakuCommon.post('/api/cancel-translation', { job_id: button.getAttribute('data-yaku-cancel-job') })
           .catch(function (error) { status(error.message, true); });
@@ -1547,6 +1988,8 @@
         return commit(revertInput).then(function () { status('この行を開いたときの訳文に戻しました。'); });
       }
       if (button.hasAttribute('data-cat-copy-source')) { return copySourceToTarget(Number(button.getAttribute('data-cat-copy-source'))); }
+      if (button.hasAttribute('data-cat-copy-target')) { return copyRowTarget(Number(button.getAttribute('data-cat-copy-target'))); }
+      if (button.hasAttribute('data-cat-translate-row')) { return translateRow(Number(button.getAttribute('data-cat-translate-row'))); }
       if (button.hasAttribute('data-cat-merge')) { if (button.getAttribute('data-cat-loss') === '1' && !window.confirm('この行と次の行をつなげて1文にします。\n\n両方の行に入っている訳文は消えます。消えた訳文は元に戻せません。\n\nつなげますか？')) return; return mutate('merge', { index: Number(button.getAttribute('data-cat-merge')) }, '行をつなげています…'); }
       if (button.hasAttribute('data-cat-split')) { if (button.getAttribute('data-cat-loss') === '1' && !window.confirm('つなげた行を元の2行に戻します。\n\nこの行に入っている訳文は消えます。消えた訳文は元に戻せません。\n\n戻しますか？')) return; return mutate('split', { index: Number(button.getAttribute('data-cat-split')) }, 'つなげた行を元に戻しています…'); }
       if (button.hasAttribute('data-cat-glossary')) {
@@ -1618,6 +2061,14 @@
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') { event.preventDefault(); YakuCommon.focus(el('cat-search')); el('cat-search').select(); return; }
       /* 点検一覧。Trados の検証（F8）に合わせる。 */
       if (event.key === 'F8' && !el('cat-workspace').hidden) { event.preventDefault(); openQaList(); return; }
+      /* 資料の切り替え。作業画面から離れずに開く。 */
+      if (event.key === 'F7' && !el('cat-workspace').hidden) { event.preventDefault(); openDocDialog(); return; }
+      /* 資料一覧の開閉。Crowdin と同じ Ctrl+[ に合わせる。 */
+      if ((event.ctrlKey || event.metaKey) && event.key === '[' && !el('cat-workspace').hidden) {
+        event.preventDefault();
+        applyDocsPane(!el('cat-editor-layout').classList.contains('is-docs-open'), true);
+        return;
+      }
       /* 過去訳を言葉で探す。memoQ / Trados もコンコーダンスに専用キーを割いている。 */
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
@@ -1757,9 +2208,18 @@
        同じ画面を出し、その場で訳す状態から始める。showPicker() がアドレスを
        /cat へ書き換えるので、判定は先に取っておく。 */
     var cameFromInstant = location.pathname === '/quick';
-    var wanted = new URLSearchParams(location.search).get('project');
-    if (wanted) { resume(wanted); return; }
+    var params = new URLSearchParams(location.search);
+    var wanted = params.get('project');
+    if (wanted) {
+      var autoTranslate = params.get('translate') === '1';
+      resume(wanted).then(function () { if (autoTranslate) translateWhenReady(); });
+      return;
+    }
     showPicker();
+    /* ?import=1 で開いたときは、過去の対訳の取り込み欄をそのまま出す。
+       この画面だけ WebAssembly が使える（PDF の解析に要る）。 */
+    var importMeta = document.querySelector('meta[name="yaku-import"]');
+    if (importMeta && importMeta.getAttribute('content') === '1') { showStart('align'); return; }
     if (cameFromInstant && window.YakuInstant) window.YakuInstant.show();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();

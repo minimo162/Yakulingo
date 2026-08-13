@@ -286,18 +286,26 @@ Chk ([string]$texported.Text -match 'We will continue to monitor market conditio
 Chk ([string]$texported.Text -notmatch '今後も市場環境を注視してまいります。') '未訳原文を訳文一覧へ混ぜない'
 Remove-YakuCatProject -Id ([string]$tp.Id)
 
-# 画面に導線があること。ちょっと翻訳の本文をDOM経由で再POSTせず、
-# server内の一時artifactだけを資料翻訳へ昇格する。
+# 2026-08-13: 昇格（一時artifact -> 作業）は要らなくなった。貼り付けた文章は
+# 最初から作業として作られるので、移る段が無い。守るものは変わっていない
+# ＝「訳文をブラウザーから送り返さない」。原文だけを送る経路は、もともと
+# 「長い文章を貼り付ける」が通っていたものと同じ。
 $appJsText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'assets\cat.js'))
 $quickJsText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'assets\quick.js'))
-Chk ($quickJsText.Contains('/api/cat/promote') -and $quickJsText.Contains('artifact_id')) 'ちょっと翻訳から資料翻訳へserver artifactで昇格できる'
+Chk ($quickJsText.Contains('/api/cat/open') -and -not $quickJsText.Contains('/api/cat/promote')) '貼り付けた文章は最初から作業として作る'
+Chk (-not $quickJsText.Contains('translation:') -and -not $quickJsText.Contains('target_text')) '訳文を送り返す経路は作らない'
 $indexText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'cat.html'))
 # 貼り付けの入口は1つで、まずその場で訳す状態へ入る（2026-08-11）。長すぎて1回で
 # 送れないときだけ、貼り付けた本文をそのまま確認作業へ渡す。
 # 貼り付けは「入口」ではなく、始める画面にそのまま置いてある（2026-08-12）。
 # 押して別の画面へ入れ替わる作りをやめたので、開く導線ではなく同居を見る。
 Chk ($indexText.Contains('data-cat-source-show="file"') -and $indexText -notmatch 'id="cat-open-instant"') 'ファイルの入口はあり、貼り付けを開く導線は要らなくなった'
-Chk ($indexText -match '(?s)<section id="cat-picker".*?id="quick-input".*?</section>') '貼り付け欄は始める画面の中にある'
+# 2026-08-13 に帯（タブ）を足し、同じ日に外した。外した理由は、貼り付けた文章も
+# 資料と同じ確認作業になったので、切り替える相手そのものが無くなったこと
+# （利用者判断「保存しない約束は要らない」）。帯を押しても同じ入口に着くだけの
+# 飾りになっていた。守るべきもの（起動したら貼り付け欄に着地する）は変わらない。
+Chk ($indexText -match 'id="cat-instant"' -and $indexText -match 'id="quick-input"') '貼り付け欄は起動して最初の画面にある'
+Chk ($indexText -notmatch 'data-cat-tab-to=') '切り替える相手が無いのに帯だけ残す、をしていない'
 Chk ($quickJsText.Contains('yaku-instant-handoff') -and $appJsText.Contains('yaku-instant-handoff') -and $appJsText -match "showPicker\(\);\s*\r?\n\s*el\('cat-text'\)\.value = text;") '長すぎる文章は確認作業へ渡せる'
 Chk ($indexText -match 'id="cat-text"') 'CAT に貼り付け欄がある'
 
@@ -323,7 +331,10 @@ Chk ($indexText -match 'id="cat-progress-bar"') '進捗バーがある'
 # 触っただけのセグメントを「手直し」にしない。以前は離れるたびに保存して
 # いたので、一覧を上から見ていくだけで全部が手直し扱いになっていた。
 Chk ($appJsText.Contains("data-original")) '変更が無ければ保存しない（触っただけで手直しにしない）'
-Chk ($appJsText.Contains("bindFileDrop(el('cat-drop'), el('cat-file-input'))") -and $appJsText.Contains("event.key === 'Enter' || event.key === ' '")) 'CAT のファイル欄へドロップとキーボード操作を結線する'
+# 2026-08-13: ドロップ用の枠を外し、取り込みボタン自身をドロップ先にした。
+# 押しても欄が開くだけで、その中にもう一度「選ぶ」があり、さらに確認のボタンが
+# あった（利用者の指摘「押しても何も起こらない。訳が分からなくなっている」）。
+Chk ($appJsText.Contains("bindFileDrop(el('cat-open-file-entry'), el('cat-file-input'))") -and $appJsText.Contains("event.key === 'Enter' || event.key === ' '")) '取り込みボタンへドロップとキーボード操作を結線する'
 Chk ($appJsText.Contains("'行目の訳文`"")) '動的な訳文欄に行ごとの読み上げ名がある'
 Chk ($appJsText.Contains("data-cat-loss")) '結合・解除ボタンが訳文消失の有無を持つ'
 Chk ($appJsText -match "data-cat-merge[\s\S]{0,200}?window\.confirm\('[^']*訳文は消えます[^']*元に戻せません") '訳文がある行の結合前に、消えることを告げて確認する'

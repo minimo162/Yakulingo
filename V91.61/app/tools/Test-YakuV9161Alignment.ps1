@@ -39,6 +39,17 @@ $v = @(Get-YakuAlignmentNumbers -Text '¥12.2 billion was invested' -Language 'e
 Chk ($v -contains [decimal]12200000000) 'billion を実数に直す'
 $v = @(Get-YakuAlignmentNumbers -Text 'Net sales were 3,501,499 million yen' -Language 'en')
 Chk ($v -contains [decimal]3501499000000) '桁区切りのある million を読む'
+# 表の行。以前は空白ごと消していたので、隣の列の数がくっついて1つの巨大な数に
+# なっていた（2026-08-13、マツダの決算短信で実測）。
+#   JA  △46,115 32,836   -> 4611532836        （2つがくっつく）
+#   EN  (46,115) 32,836  -> 46115 と 32836    （括弧で切れるので正しい）
+# 同じ数字が書いてあるのに不一致と判定され、表の行が軒並み捨てられていた。
+$v = @(Get-YakuAlignmentNumbers -Text ' 営業利益又は営業損失（△） △46,115 32,836' -Language 'ja')
+Chk ($v -contains [decimal]46115 -and $v -contains [decimal]32836 -and -not ($v -contains [decimal]4611532836)) '表の列は、隣の数とくっつけない'
+Chk ((Test-YakuAlignmentNumbersAgree -JaText ' 営業利益又は営業損失（△） △46,115 32,836' -EnText ' Operating income/(loss) (46,115) 32,836').Agree) '△と括弧で書き方が違っても、同じ数なら一致する'
+# 桁区切りのあとに空白が入る PDF 抽出（1, 234）は、今までどおり1つの数として読む。
+$v = @(Get-YakuAlignmentNumbers -Text '前期比 1, 234百万円の増加' -Language 'ja')
+Chk ($v -contains [decimal]1234000000) '桁区切りのあとの空白は、今までどおり詰める'
 
 Write-Host '数値の照合' -ForegroundColor Cyan
 $r = Test-YakuAlignmentNumbersAgree -JaText '北米では、生産設備等に122億円を投資しました' -EnText 'In North America, ¥12.2 billion was invested in production facilities'

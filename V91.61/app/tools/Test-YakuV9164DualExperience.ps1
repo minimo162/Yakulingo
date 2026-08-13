@@ -3,8 +3,10 @@
   V91.64 dual-experience contract regression.
 
 .DESCRIPTION
-  This is intentionally a forward contract.  It is expected to fail until the
-  Quick/CAT split, ephemeral QuickArtifact handoff, and reuse boundaries exist.
+  もとは Quick/CAT の分離と一時 artifact の受け渡しを固定するための契約だった。
+  分離は 2026-08-11 に、その場で訳す状態そのものは 2026-08-13 に取り消されたので、
+  いま残っているのは「入口は1つ」「向きは送る前に決める」「数値保護は必ず通る」
+  「機械キャッシュを跨がない」といった、廃止に依らない不変条件のほうである。
   Production files are read or invoked, but never modified by this test.
 #>
 [CmdletBinding()]
@@ -51,7 +53,6 @@ $assetsRoot = Join-Path $wwwRoot 'assets'
 $quickClientPath = Join-Path $assetsRoot 'quick.js'
 $catClientPath = Join-Path $assetsRoot 'cat.js'
 $catWorkspaceStylePath = Join-Path $assetsRoot 'cat-workspace.css'
-$quickArtifactPath = Join-Path $srcRoot 'QuickArtifact.ps1'
 
 $server = Read-YakuDualText $serverPath
 $translationSource = Read-YakuDualText $translationPath
@@ -84,17 +85,30 @@ Check-YakuDual ($catPage -match 'id\s*=\s*[\x22\x27]cat-picker[\x22\x27]' -and $
 # 中身になった。以前は押すと画面ごと入れ替わり、画面を一つにしたと言いながら
 # 実際は入れ替えていただけだった（利用者の指摘）。
 Check-YakuDual ($catPage -notmatch 'id="cat-instant"[^>]*\shidden') 'the paste box is part of the start view, not a separate state'
-Check-YakuDual ($catPage -match '(?s)<section id="cat-picker".*?id="quick-input".*?id="cat-resume".*?</section>') 'the paste box, the file entry and the saved works live in one view'
+# 2026-08-13 に帯（タブ）を足し、同じ日に外した。貼り付けた文章も資料と同じ
+# 確認作業になったので、切り替える相手そのものが無くなったため（利用者判断
+# 「保存しない約束は要らない」）。08-12 の指摘「入れ替わったことが画面に出ない」は、
+# 資料を開いたら資料名が出て、そこから一覧に戻れることで満たす。
+$catCssText = Get-Content -LiteralPath (Join-Path $wwwRoot 'assets\cat-workspace.css') -Raw -Encoding UTF8
+Check-YakuDual ($catPage -notmatch 'class="cat-tabs"' -and $catCssText -notmatch 'data-cat-tab=') 'no tab bar is left behind once there is nothing to switch between'
+Check-YakuDual ($catPage -match 'id="cat-doc-dialog-paste"') 'a new paste can still be started while a document is open'
 Check-YakuDual ($catPage -match 'id="cat-workspace"[^>]*\shidden') 'the review workspace stays hidden until a document is open'
 Check-YakuDual ($catClient -notmatch 'hideInstant' -and $catClient -notmatch 'yaku-instant-close') 'the swap between the paste box and the picker is gone'
 Check-YakuDual ($catClient -match "setView\('start'\)" -and $catClient -match "setView\('workspace'\)") 'the screen names only the two states it still has'
-Check-YakuDual ($quickClient -notmatch '/api/cat/(?!promote)' -and $catClient -notmatch '/api/quick/') 'active clients cannot call the other experience API'
+# 2026-08-13 に利用者判断で変更（「保存しない約束は要らない」）。
+# 貼り付けた文章と資料を別の経路にしていたのをやめ、貼り付けも資料と同じ
+# /api/cat/open で作業を作る。これで登録した訳語・過去訳・数値の点検が
+# 貼り付けた文章にも効く。以前は「片方がもう片方の劣化版に見える」原因だった。
+# 守るべきものは「2つの経路が混ざらないこと」ではなく「入口が1つであること」に変わった。
+Check-YakuDual ($quickClient -match '/api/cat/open') '貼り付けた文章も資料と同じ経路で作業を作る'
+Check-YakuDual ($quickClient -notmatch "post\('/api/quick/jobs'") '保存しない一時経路はもう使わない'
+Check-YakuDual ($catClient -notmatch '/api/quick/') '確認画面は貼り付け側のAPIを呼ばない'
 
 Write-Host 'Load production helpers for dynamic contracts' -ForegroundColor Cyan
 foreach ($name in @(
     'Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1',
     'CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1',
-    'CorpusReference.ps1','CellSegments.ps1','CellAlign.ps1','TranslationMemory.ps1','CatProject.ps1','QuickArtifact.ps1'
+    'CorpusReference.ps1','CellSegments.ps1','CellAlign.ps1','TranslationMemory.ps1','CatProject.ps1'
 )) {
     $path = Join-Path $srcRoot $name
     if (Test-Path -LiteralPath $path -PathType Leaf) { . $path }
@@ -107,39 +121,25 @@ Check-YakuDual ([bool]$decision.RequiresConfirmation -and [string]::IsNullOrWhit
 $simulatedTransportCalls = 0
 if (-not [bool]$decision.RequiresConfirmation) { $simulatedTransportCalls++ }
 Check-YakuDual ($simulatedTransportCalls -eq 0) 'low-confidence decision produces zero transport calls'
-$textRoute = Get-YakuDualSlice -Text $server -Start "if (`$method -eq 'POST' -and `$path -eq '/api/quick/jobs')" -End "if (`$method -eq 'POST' -and `$path -match '^/api/quick/artifacts/(...)/revisions`$')"
+# 向きを決める門は /api/cat/open へ移った（2026-08-13）。貼り付けた文章も資料も
+# 同じ口を通るので、門も1つで足りる。順序は変わらない: 決まってから仕事を始める。
+$textRoute = Get-YakuDualSlice -Text $server -Start "if (`$action -eq 'open')" -End "if (`$action -eq 'translate')"
 $directionGateAt = $textRoute.IndexOf('RequiresConfirmation', [StringComparison]::Ordinal)
-$jobStartAt = $textRoute.IndexOf('Start-YakuTranslationJob', [StringComparison]::Ordinal)
-Check-YakuDual ($directionGateAt -ge 0 -and $jobStartAt -gt $directionGateAt) 'Quick route gates direction before starting a job'
+$projectAt = $textRoute.IndexOf('New-YakuCatTextProject', [StringComparison]::Ordinal)
+Check-YakuDual ($directionGateAt -ge 0 -and $projectAt -gt $directionGateAt) 'the single open route gates direction before it creates work'
 Check-YakuDual ($quickClient -notmatch 'function\s+analysis\s*\(|YakuZhSimplifiedChars|YAKU_ZH_ONLY' -and $quickClient -match "direction_intent:\s*explicitDirection\s*\|\|\s*'auto'") 'browser delegates automatic direction decisions to the single server classifier'
 $noLanguage = Resolve-YakuDirectionDecision -Text '123' -Intent auto
 Check-YakuDual ([bool]$noLanguage.RequiresConfirmation -and [string]::IsNullOrWhiteSpace([string]$noLanguage.Resolved)) 'numeric-only input is stopped for confirmation before transport'
 
-Write-Host 'Quick is ephemeral and has no content cache' -ForegroundColor Cyan
-Check-YakuDual (Test-Path -LiteralPath $quickArtifactPath -PathType Leaf) 'QuickArtifact implementation exists'
-$quickArtifactSource = Read-YakuDualText $quickArtifactPath
-Check-YakuDual ($quickArtifactSource -match '\$script:YakuQuickArtifacts|ConcurrentDictionary|Synchronized') 'QuickArtifact uses an in-memory store'
-Check-YakuDual ($quickArtifactSource -match 'ExpiresAt|TtlSeconds|TTL') 'QuickArtifact has an explicit TTL'
-Check-YakuDual ($quickArtifactSource -notmatch '(?i)WriteAllText|WriteAllLines|Set-Content|Add-Content|Out-File|Write-Yaku(?:Json|Text)Atomic|Save-YakuQuickArtifact') 'QuickArtifact has no disk writer'
-Check-YakuDual ($translationSource -match 'DisableCache|CachePolicy' -and $server -match '(?s)/api/quick/jobs.*?(?:DisableCache|CachePolicy)') 'Quick translation explicitly disables content cache'
-Check-YakuDual ($server -match 'if \(\$Kind -(?:eq ''quick''|in @\(''quick'',''quick_revise''\))\)[\s\S]{0,700}Add-Member -NotePropertyName ''diagnostics_level'' -NotePropertyValue ''standard''[\s\S]{0,300}full_text_diagnostics_enabled'' -NotePropertyValue \$false[\s\S]{0,300}YakuFullTextDiagnosticsEnabled = \$false') 'Quick and Quick revision override the settings object and content diagnostics even when the user setting is full'
-$quickDiagnosticSettings = [pscustomobject]@{ diagnostics_level='full'; full_text_diagnostics_enabled=$true }
-$quickDiagnosticSettings | Add-Member -NotePropertyName 'diagnostics_level' -NotePropertyValue 'standard' -Force
-$quickDiagnosticSettings | Add-Member -NotePropertyName 'full_text_diagnostics_enabled' -NotePropertyValue $false -Force
-Check-YakuDual ((Get-YakuDiagnosticsLevel -Settings $quickDiagnosticSettings) -eq 'standard') 'raw transport re-reading Quick settings cannot reactivate full-text diagnostics'
-Check-YakuDual ($server -match 'ConvertTo-YakuQuickResultView|New-YakuQuickArtifact') 'Quick result is reduced before job publication'
-$quickResultBlock = Get-YakuDualSlice -Text $server -Start 'function Convert-YakuQuickJobResultJson' -End 'function Serve-YakuAdminPage'
-Check-YakuDual ($quickResultBlock -notmatch '(?m)^\s*(?:Raw|Prompt|Batches)\s*=') 'published Quick result excludes raw prompt/response/batches'
-Check-YakuDual ($server -match 'Clear-YakuExpiredQuickArtifacts' -and $quickArtifactSource -match 'Clear-YakuExpiredQuickArtifacts') 'Quick artifacts are purged by TTL'
+# 「その場で訳す」は保存せず、用語集も過去訳も引かない、という契約を固定していた節を
+# ここから外した（2026-08-13、利用者判断「保存しない約束は要らない」）。契約の対象が
+# 無くなったのであって、緩めたのではない。貼り付けた文章は資料と同じ道を通るので、
+# 保存も用語集も過去訳も、資料と同じに効く。残す不変条件は「一時の店を持たない」。
+Check-YakuDual (-not (Test-Path -LiteralPath (Join-Path $srcRoot 'QuickArtifact.ps1'))) 'no ephemeral artifact store is left behind'
+Check-YakuDual ($server -notmatch 'QuickArtifact' -and $server -notmatch "path -eq '/api/cat/promote'") 'the server keeps no route that can only feed the removed store'
+Check-YakuDual ($server -match "\[ValidateSet\('text','revise','shorten','cat'\)\]\[string\]\`$Kind") 'no job kind exists that nothing can start'
 
-Write-Host 'Reuse is opt-in in CAT and absent from Quick' -ForegroundColor Cyan
-$quickRoute = Get-YakuDualSlice -Text $server -Start "if (`$method -eq 'POST' -and `$path -eq '/api/quick/translate')" -End "if (`$method -eq 'GET' -and `$path -match '^/api/quick/jobs/"
-$quickHasNoReusePolicy = ($quickRoute -match '(?i)(?:ReusePolicy\s+none|Experience\s+quick|Disable(?:Reuse|Corpus|PastExamples))')
-Check-YakuDual $quickHasNoReusePolicy 'Quick route explicitly selects a no-reuse translation policy'
-$translationHasNoReuseBranch = ($translationSource -match '(?i)(?:ReusePolicy|Experience).*(?:quick|none)' -and $translationSource -match '(?i)(?:quick|none).*(?:Find-YakuCorpusPairsByTerms|CorpusSection)')
-Check-YakuDual $translationHasNoReuseBranch 'Quick production call graph has an explicit branch that cannot query corpus, TM, or past examples'
-Check-YakuDual ($quickResultBlock -notmatch '(?i)Corpus(?:Reference|Section|Examples)|TranslationMemory|Past(?:Pairs|Examples)') 'Quick response contains no corpus, TM, or past-example field'
-Check-YakuDual ($quickClient -notmatch '(?i)Corpus(?:Reference|Section|Examples)|TranslationMemory|Past(?:Pairs|Examples)|/api/cat/candidates') 'Quick UI has no reuse lookup or past-example surface'
+Write-Host 'Reuse in CAT stays opt-in' -ForegroundColor Cyan
 Check-YakuDual (-not (Test-Path -LiteralPath (Join-Path (Join-Path (Join-Path $root 'www') 'assets') 'app.js')) -and $rendererSource -notmatch 'data-yaku-to-cat|data-yaku-shorten') 'legacy shared UI and DOM/base64 handoff are removed'
 $catTranslateRoute = Get-YakuDualSlice -Text $server -Start "'translate' {" -End "'apply' {"
 Check-YakuDual ($catTranslateRoute -notmatch '(?i)CorpusSection|CorpusExamples|PastPairs|ReferenceUsage') 'CAT translation request does not automatically inject a past example'
@@ -162,7 +162,8 @@ Check-YakuDual ($catClient -match 'scopeIsCurrent\(packet\.scope, true\)' -and $
 Check-YakuDual ($catClient -match 'deleteTarget = currentScope\(\)' -and $catClient -match "post\('delete', \{ id: target\.id \}, true, target\)") 'delete confirmation stays bound to its displayed project'
 Check-YakuDual ($catClient -match "type: 'translate', scope: jobScope" -and $catClient -match "post\('apply', \{ job_id: jobId \}, true, context\.scope\)") 'job apply stays bound to its starting project and revision'
 Check-YakuDual ($catClient -match "event\.key === 'Enter'" -and $catClient -match '処理中は確認できません' -and $catClient -match 'function focusAfter\(index\)') 'Ctrl+Enter is guarded while busy and advances after confirmation'
-Check-YakuDual ($catClient -match "bindFileDrop\(el\('cat-drop'\), el\('cat-file-input'\)\)" -and $catClient -match "event\.key === 'Enter' \|\| event\.key === ' '") 'file drop supports drag-drop and keyboard activation'
+# 2026-08-13: ドロップ先は取り込みボタン自身になった（枠を1つ減らした）。
+Check-YakuDual ($catClient -match "bindFileDrop\(el\('cat-open-file-entry'\), el\('cat-file-input'\)\)" -and $catClient -match "event\.key === 'Enter' \|\| event\.key === ' '") 'file drop supports drag-drop and keyboard activation'
 Check-YakuDual ($catClient -match 'data-cat-loss' -and $catClient -match 'この行と次の行をつなげて1文にします。' -and $catClient -match 'つなげた行を元の2行に戻します。' -and ([regex]::Matches($catClient, '消えた訳文は元に戻せません').Count -ge 2)) 'merge and split warn before discarding a translation'
 Check-YakuDual ($catClient -match 'data\.review_blocked' -and $catClient -match 'var same = document\.querySelector') 'QC-blocked confirmation returns focus to the same row'
 Check-YakuDual ($catClient -match 'function redrawAfterFlush\(\)[\s\S]*?return flush\(\)\.then' -and $catClient -match "button\.hasAttribute\('data-cat-filter'\)[\s\S]{0,180}redrawAfterFlush\(\)") 'filter redraw waits for the shared save barrier'
@@ -227,14 +228,14 @@ Check-YakuDual ($catClient -match "currentFilter = 'all'" -and $catPage -match '
 Check-YakuDual ($catPage -match 'id="cat-export-dialog"' -and $catClient -match "post\('preflight', \{\}, true, requestScope\)" -and $catClient -match 'data\.project_id' -and $catClient -match 'Number\(data\.revision\) !== requestScope\.revision') 'DRAFT dialog uses the server preflight bound to the current project revision'
 Check-YakuDual ($catPage -match 'data-cat-change="unchanged"' -and $catPage -match 'data-cat-change="changed"' -and $catPage -match 'data-cat-change="new"' -and $catClient -match 'changeGroup\(segment\)' -and $catClient -match 'segment\.prior_source') '3-way workspace exposes prior-same, changed, and new counts with previous/current context'
 Check-YakuDual ($catClient -match 'data-cat-shorten' -and $catClient -match '修正結果を確認' -and $catClient -match 'data-cat-revert-revision' -and $catClient -match 'data-cat-accept-revision') 'CAT offers a dedicated shorten action with before/after review and revert controls'
-Check-YakuDual ($catPage -match '自動で点検しているのは、数字と単位の写しちがいだけです' -and $catPage -match '言い回しが適切かどうか' -and $catClient -match '気になる点は見つかりませんでした') 'CAT labels mechanical checks without implying translation quality approval'
+# 2026-08-13、利用者の指摘「余計な文章が多い」。「言い回しが適切かどうかは、ご自身で
+# お確かめください。」は責任放棄に読める一文で、前半（何を点検しているか）だけで
+# 同じことが伝わる。守るのは「機械の点検を、訳の良し悪しの保証に見せない」ことなので、
+# 点検の範囲を言い切っていることを見る。
+Check-YakuDual ($catPage -match '自動で点検しているのは、数字と単位の写しちがいだけです' -and $catPage -notmatch 'ご自身でお確かめください' -and $catClient -match '気になる点は見つかりませんでした') 'CAT states what the mechanical check covers, without claiming quality'
 Check-YakuDual ($catClient -match "el\('cat-export-dialog'\)\.addEventListener\('close'" -and $catClient -match 'scopeIsCurrent\(scope, true\)' -and $catClient -match 'exportProject\(\)') 'export runs only after an unchanged preflight scope is confirmed'
 
-Write-Host 'QuickArtifact promotion contract' -ForegroundColor Cyan
-$artifactFunctions = @('New-YakuQuickArtifact','Get-YakuQuickArtifact','Clear-YakuExpiredQuickArtifacts','Invoke-YakuQuickArtifactPromotion','New-YakuCatProjectFromQuickArtifact')
-foreach ($fn in $artifactFunctions) {
-    Check-YakuDual ($null -ne (Get-Command $fn -ErrorAction SilentlyContinue)) ('QuickArtifact helper exists: ' + $fn)
-}
+Write-Host 'Inserted reference keeps its provenance through save and resume' -ForegroundColor Cyan
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('yaku-dual-' + [guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $tempRoot -Force
 function Get-YakuCatProjectStoreDir { return $tempRoot }
@@ -258,37 +259,10 @@ try {
     $restoredReference = Restore-YakuCatProject -Id ([string]$referenceProject.Id)
     Check-YakuDual ($savedReference -and [bool]$restoredReference.Segments[0].ReferenceUsage.edited_after_insert -and [string]$restoredReference.Segments[0].ReferenceUsage.source_name -eq '前年度資料.docx' -and [int]$restoredReference.Segments[0].ReferenceUsage.page -eq 7) 'reference_usage survives save and resume'
 
-    $allArtifactFunctions = @($artifactFunctions | Where-Object { $null -ne (Get-Command $_ -ErrorAction SilentlyContinue) }).Count -eq $artifactFunctions.Count
-    if ($allArtifactFunctions) {
-        $sourceText = (-join @([char]0x58F2,[char]0x4E0A,[char]0x9AD8)) + "`n" + (-join @([char]0x55B6,[char]0x696D,[char]0x5229,[char]0x76CA))
-        $targetText = 'Net sales and operating profit improved.'
-        $filesBeforeArtifact = @(Get-ChildItem -LiteralPath $tempRoot -Recurse -File -ErrorAction SilentlyContinue).Count
-        $artifact = New-YakuQuickArtifact -JobId ([guid]::NewGuid().ToString('N')) -SourceText $sourceText -Direction to_en -TtlMinutes 30
-        $artifact.Translation = $targetText
-        $artifact.Status = 'ready'
-        $artifactId = [string]$artifact.Id
-        Check-YakuDual (-not [string]::IsNullOrWhiteSpace($artifactId)) 'QuickArtifact receives an opaque id'
-        Check-YakuDual (@(Get-ChildItem -LiteralPath $tempRoot -Recurse -File -ErrorAction SilentlyContinue).Count -eq $filesBeforeArtifact) 'creating a QuickArtifact writes no file'
-        $operation = { param($innerArtifact,$innerRoot,$innerSettings) New-YakuCatProjectFromQuickArtifact -Root $innerRoot -Artifact $innerArtifact -Settings $innerSettings }
-        $first = Invoke-YakuQuickArtifactPromotion -ArtifactId $artifactId -Operation $operation -Arguments @($root,[pscustomobject]@{})
-        $second = Invoke-YakuQuickArtifactPromotion -ArtifactId $artifactId -Operation $operation -Arguments @($root,[pscustomobject]@{})
-        $firstProject = if ($first.PSObject.Properties.Name -contains 'Project') { $first.Project } else { $first }
-        $secondProject = if ($second.PSObject.Properties.Name -contains 'Project') { $second.Project } else { $second }
-        Check-YakuDual ([string]$first.ProjectId -eq [string]$second.ProjectId -and [bool]$second.Reused) 'promotion is idempotent'
-        Check-YakuDual (@($firstProject.Segments | Where-Object { [string]$_.State -eq 'reviewed' -or [bool]$_.Confirmed }).Count -eq 0) 'promotion never inherits reviewed state'
-        $serialized = $firstProject | ConvertTo-Json -Depth 30 -Compress
-        Check-YakuDual ($serialized.Contains($targetText)) 'split-mismatched draft is preserved instead of discarded'
-        $eligibility = Get-YakuCatOutputEligibility -Project $firstProject
-        Check-YakuDual (-not [bool]$eligibility.TranslationListEligible) 'promoted draft is output-blocked until review and current QC'
-
-        $expiring = New-YakuQuickArtifact -JobId ([guid]::NewGuid().ToString('N')) -SourceText 'SAFE' -Direction to_en -TtlMinutes 1
-        $expiringId = [string]$expiring.Id
-        $expiring.ExpiresAtUtc = [datetime]::UtcNow.AddSeconds(-1)
-        Clear-YakuExpiredQuickArtifacts
-        Check-YakuDual ($null -eq (Get-YakuQuickArtifact -Id $expiringId)) 'expired QuickArtifact is unavailable'
-    } else {
-        Check-YakuDual $false 'dynamic promotion checks are pending QuickArtifact helpers'
-    }
+    # ここにあった昇格（一時 artifact -> 作業）の動的検査は 2026-08-13 に外した。
+    # 昇格するもとが無く、貼り付けた文章は最初から作業として作られる。
+    # 「確認済みを引き継がない」「出力できない状態から始まる」は、いま
+    # New-YakuCatTextProject 側の検査（Test-YakuV9161CatProject）が見ている。
 } finally {
     try { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue } catch {}
 }
