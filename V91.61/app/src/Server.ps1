@@ -942,7 +942,9 @@ function Start-YakuTranslationJob {
                         $alignJa = if ($alignToEn) { $alignSrc } else { $alignTgt }
                         $alignEn = if ($alignToEn) { $alignTgt } else { $alignSrc }
                         if ($alignJa.Count -eq 0 -or $alignEn.Count -eq 0) { throw '日本語と英語の両方が必要です。片方が空でした。' }
-                        $alignRes = Invoke-YakuDocumentAlignment -JaLines $alignJa -EnLines $alignEn -Settings $settings
+                        # 進み具合の出し先を渡す。渡さないと、往復が3桁になる資料で
+                        # 10% のまま20分以上動かない（実測 2026-08-13）。
+                        $alignRes = Invoke-YakuDocumentAlignment -JaLines $alignJa -EnLines $alignEn -Settings $settings -ProgressState $JobState
                         $result = [pscustomobject]@{
                             Kind = 'cat'; Mode = 'align'
                             ProjectId = [string]$cat.project_id
@@ -953,6 +955,12 @@ function Start-YakuTranslationJob {
                             JaCoverage = [double]$alignRes.JaCoverage
                             Dropped = [int]$alignRes.Dropped
                             Calls = [int]$alignRes.Calls
+                            # 途中で打ち切られたかどうか。捨てていたので、画面には
+                            # 「網羅率が低い」としか出ず、止まったことが伝わらなかった。
+                            Completed = [bool]$alignRes.Completed
+                            StoppedAt = [int]$alignRes.StoppedAt
+                            StopReason = [string]$alignRes.StopReason
+                            JaLineCount = [int]@($alignJa).Count
                             Warnings = @($catWarnings.ToArray())
                         }
                     } catch {
@@ -2370,7 +2378,10 @@ function Invoke-YakuRoute {
                 if ($alignResult.PSObject.Properties.Name -contains 'Error' -and $alignResult.Error) { throw [string]$alignResult.Error }
                 $incomingPairs = @(@($alignResult.Pairs) | ForEach-Object { [pscustomobject]@{ JaText = [string]$_.JaText; EnText = [string]$_.EnText } })
                 $project = New-YakuCatProjectFromPairs -Pairs $incomingPairs -Direction $direction -FileName $alignName `
-                    -JaCoverage ([double]$alignResult.JaCoverage) -Dropped ([int]$alignResult.Dropped) -Register $false
+                    -Settings $settings -JaCoverage ([double]$alignResult.JaCoverage) -Dropped ([int]$alignResult.Dropped) -Register $false `
+                    -Completed ([bool]$(try { $alignResult.Completed } catch { $true })) `
+                    -StoppedAt ([int]$(try { $alignResult.StoppedAt } catch { -1 })) `
+                    -JaLineCount ([int]$(try { $alignResult.JaLineCount } catch { 0 }))
                 $project | Add-Member -NotePropertyName DirectionBasis -NotePropertyValue 'fixed' -Force
                 $project | Add-Member -NotePropertyName DirectionConfidence -NotePropertyValue 'not_applicable' -Force
                 $project = Commit-YakuNewCatProject -Project $project

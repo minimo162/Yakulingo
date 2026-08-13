@@ -925,11 +925,12 @@ function New-YakuCatAlignProject {
 
     if ($jaLines.Count -eq 0 -or $enLines.Count -eq 0) {
         return (New-YakuCatProjectFromPairs -Pairs @() -Direction $Direction -FileName $FileName `
-                -Warnings @('日本語と英語の両方が必要です。片方が空でした。'))
+                -Settings $Settings -Warnings @('日本語と英語の両方が必要です。片方が空でした。'))
     }
     $aligned = Invoke-YakuDocumentAlignment -JaLines $jaLines -EnLines $enLines -Settings $Settings
     return (New-YakuCatProjectFromPairs -Pairs @($aligned.Pairs) -Direction $Direction -FileName $FileName `
-            -JaCoverage ([double]$aligned.JaCoverage) -Dropped ([int]$aligned.Dropped))
+            -Settings $Settings -JaCoverage ([double]$aligned.JaCoverage) -Dropped ([int]$aligned.Dropped) `
+            -Completed ([bool]$aligned.Completed) -StoppedAt ([int]$aligned.StoppedAt) -JaLineCount ([int]@($jaLines).Count))
 }
 
 function New-YakuCatProjectFromPairs {
@@ -947,7 +948,16 @@ function New-YakuCatProjectFromPairs {
         [AllowNull()][string[]]$Warnings,
         [double]$JaCoverage = 1.0,
         [int]$Dropped = 0,
-        [bool]$Register = $true
+        [bool]$Register = $true,
+        # $Settings を引数に持たないまま Get-YakuAmountNotation へ渡していた。
+        # PowerShell の動的スコープで呼び出し元の $settings を拾って偶然動いており、
+        # 呼び出し元が変数名を変えた瞬間に既定（oku）へ落ちる状態だった
+        # （2026-08-13、実測で確認: 呼び出し元に無いと oku、billion があると billion）。
+        [AllowNull()]$Settings = $null,
+        # 途中で打ち切られたときの位置。呼び出し側が「どこまで進んだか」を出せるように。
+        [bool]$Completed = $true,
+        [int]$StoppedAt = -1,
+        [int]$JaLineCount = 0
     )
     $toEn = ([string]$Direction -eq 'to_en')
     $warn = New-Object System.Collections.Generic.List[string]
@@ -969,6 +979,12 @@ function New-YakuCatProjectFromPairs {
             Origin      = 'align'
             Confirmed   = $false
         })
+    }
+    # 途中で打ち切られたことは、網羅率とは別に言う。「網羅率が低い」だけでは
+    # 「対応が取れなかった」のか「最後まで行っていない」のか区別がつかない。
+    if (-not $Completed -and $StoppedAt -ge 0) {
+        $totalText = if ($JaLineCount -gt 0) { $JaLineCount.ToString('N0') + '行のうち' } else { '' }
+        [void]$warn.Add(($totalText + ($StoppedAt + 1).ToString('N0') + '行目で止まりました。ここまでの対応は残っています。続きは、同じ資料をもう一度取り込んでください。'))
     }
     # 黙って少ない結果を返すと、取れているように見えてしまう。
     if ($segments.Count -gt 0 -and $JaCoverage -lt 0.9) {
