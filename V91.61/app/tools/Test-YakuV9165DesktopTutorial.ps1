@@ -44,6 +44,13 @@ Check-YakuTutorial ($catPageForTour.Contains('name="yaku-tour"') -and $catPageFo
 # 「次へ」の文字は説明のコメントにも出るので、押せる「次へ」が作られていないかで見る。
 Check-YakuTutorial ($tourJs.Contains("events: ['input']") -and $tourJs.Contains("events: ['click']") -and -not ($tourJs -match "textContent = '次へ'")) 'the tour advances on real actions, not on a Next button'
 Check-YakuTutorial ($tourJs.Contains('案内を閉じる') -and $tourJs.Contains('/api/desktop/tour-complete')) 'the tour can be closed and records only that it finished'
+# 2026-08-13: 送ると確認画面へ移るようになったので、案内の続きを出す場所が無くなる。
+# 送る段を最後に置き、押した時点で終わりを記録する。記録しないと次の起動でまた出る
+# （実機で確認: 2つ目を押した時点でページごと入れ替わり、tour-complete は飛ばなかった）。
+$tourStepOrder = @([regex]::Matches($tourJs, "target: '(#[a-z0-9-]+)'") | ForEach-Object { $_.Groups[1].Value })
+Check-YakuTutorial ($tourStepOrder.Count -ge 2 -and $tourStepOrder[$tourStepOrder.Count - 1] -eq '#quick-submit') '送る段は最後に置く（押すと画面が移るため）'
+Check-YakuTutorial ($tourStepOrder -contains '#cat-open-file-entry') '資料の入口を指す段がある'
+Check-YakuTutorial ($tourJs -match "getElementById\('quick-form'\)[\s\S]{0,200}?finish\('done'\)") '送ったら、どの段に居ても終わりを記録する'
 # 案内を終えても、ショートカットは作らない（起動設定は別の画面で明示的に押す）。
 $desktopIntegration = Read-YakuTutorialFile 'src\DesktopIntegration.ps1'
 $tutorialCompletedBody = ''

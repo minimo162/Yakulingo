@@ -24,24 +24,28 @@
       done: function (el) { return String(el.value || '').trim().length > 0; },
       events: ['input']
     },
+    /* 2つ目は #quick-promote（訳案カードの「1文ずつ確認して保存する」）を指していた。
+       2026-08-13 にそのカードごと外したので、指す先が無くなった。代わりに資料の
+       入口を指す。起動して最初に出るのが貼り付け欄なので、「文章を貼るアプリ」だと
+       思われたまま資料を取り込む道に気づかれない、という懸念に答える場所でもある。
+
+       画面の上から順なら「送る」が先だが、送ると確認画面へ移ってしまい、そこで
+       案内が途切れる（実機で確認: 3つ目を出す前にページごと入れ替わった）。
+       だから資料の入口を先に置き、最後を「送る」にする。押した時点で案内は
+       終わったことにする（下の finish-on-submit）。 */
+    {
+      target: '#cat-open-file-entry',
+      title: 'Word・Excel は丸ごと取り込めます',
+      body: '原本はそのままで、訳文を入れたコピーを作ります。貼り付けた文章と同じ画面で、1行ずつ確認します。',
+      done: function () { return false; },
+      events: ['click']
+    },
     {
       target: '#quick-submit',
       title: 'ここを押すとCopilotへ送ります',
       /* 2026-08-13、利用者判断「保存しない約束は要らない」。押した先が確認画面に
          なったので、そこも言う。以前は「その場に訳案が出て、保存はしない」だった。 */
       body: '数値は送る前に伏せます。押すまでは送りません。押すと1行ずつ確認する画面に移り、保存されます。',
-      done: function () { return false; },
-      events: ['click']
-    },
-    /* 3つ目は #quick-promote（訳案カードの「1文ずつ確認して保存する」）を指していた。
-       2026-08-13 にそのカードごと外したので、指す先が無くなった。
-       代わりに資料の入口を指す。起動して最初に出るのが貼り付け欄なので、
-       「文章を貼るアプリ」だと思われたまま資料を取り込む道に気づかれない、
-       という懸念に答える場所でもある。 */
-    {
-      target: '#cat-open-file-entry',
-      title: 'Word・Excel は丸ごと取り込めます',
-      body: '原本はそのままで、訳文を入れたコピーを作ります。貼り付けた文章と同じ画面で、1行ずつ確認します。',
       done: function () { return false; },
       events: ['click']
     }
@@ -162,6 +166,12 @@
     callout.setAttribute('role', 'status');
     document.body.appendChild(overlay);
     document.body.appendChild(callout);
+    /* 送ったら、どの段に居ても案内は終わり。送ると確認画面へ移るので、続きを
+       出す場所が無くなる。ここで終わりを記録しないと、次に起動したときにまた
+       最初から出る（実機で確認: 2つ目を押した時点でページごと入れ替わり、
+       /api/desktop/tour-complete は一度も飛ばなかった）。 */
+    var form = document.getElementById('quick-form');
+    if (form) form.addEventListener('submit', function () { if (index >= 0) finish('done'); }, { once: true });
     index = -1;
     next();
   }
