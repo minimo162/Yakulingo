@@ -1762,7 +1762,11 @@ function Serve-YakuAppPage {
         # 開いた瞬間の状態。?project= で来たと分かっているなら、始める画面を
         # 一度も描かずに確認作業として開く。付けないと、貼り付け欄が一瞬出てから
         # 入れ替わり、画面が点滅して見える（2026-08-13、利用者の指摘）。
-        [ValidateSet('','workspace')][string]$InitialView = ''
+        [ValidateSet('','workspace')][string]$InitialView = '',
+        # 過去の対訳を取り込むときだけ、この画面で WebAssembly を許す。
+        # PDF の解析（LiteParse）がブラウザ側で走るため。既定は許さない。
+        # 画面は増やさない（利用者から見れば同じ画面のまま）。
+        [switch]$AllowWasm
     )
     $path = Join-Path (Join-Path $script:YakuRoot 'www') $PageName
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -1781,7 +1785,8 @@ function Serve-YakuAppPage {
     $html = $html.Replace('__YAKU_AMOUNT_NOTATION__', (ConvertTo-YakuHtml (Get-YakuAmountNotation -Settings $settings)))
     $html = $html.Replace('__YAKU_TOUR__', $(if ($StartTour) { '1' } else { '' }))
     $html = $html.Replace('__YAKU_VIEW__', $(if ($InitialView -eq 'workspace') { ' data-cat-view="workspace"' } else { '' }))
-    Send-YakuTextResponse -Context $Context -Text $html -ContentType 'text/html; charset=utf-8'
+    $html = $html.Replace('__YAKU_IMPORT__', $(if ($AllowWasm) { '1' } else { '' }))
+    Send-YakuTextResponse -Context $Context -Text $html -ContentType 'text/html; charset=utf-8' -AllowWasm:$AllowWasm
 }
 
 function Serve-YakuAdminPage {
@@ -1833,7 +1838,11 @@ function Invoke-YakuRoute {
         $wantedProject = ''
         try { $wantedProject = [string](Get-YakuQueryValue -Request $req -Name 'project') } catch {}
         $initialView = if ($wantedProject -match '^[a-f0-9]{32}$') { 'workspace' } else { '' }
-        Serve-YakuAppPage -Context $Context -PageName 'cat.html' -InitialView $initialView
+        # ?import=1 のときだけ WebAssembly を許す。PDF の解析に要る。
+        # 普段の作業では script-src 'self' のままにしておく。
+        $wantsImport = $false
+        try { $wantsImport = ([string](Get-YakuQueryValue -Request $req -Name 'import') -eq '1') } catch {}
+        Serve-YakuAppPage -Context $Context -PageName 'cat.html' -InitialView $initialView -AllowWasm:$wantsImport
         return
     }
     if ($method -eq 'GET' -and $path -eq '/tutorial') {

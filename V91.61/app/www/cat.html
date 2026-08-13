@@ -8,6 +8,8 @@
   <meta name="yaku-max-batch-chars" content="__YAKU_MAX_BATCH_CHARS__">
   <meta name="yaku-amount-notation" content="__YAKU_AMOUNT_NOTATION__">
   <meta name="yaku-tour" content="__YAKU_TOUR__">
+  <!-- 過去の対訳の取り込みで来たかどうか。1 のときだけ WebAssembly が使える。 -->
+  <meta name="yaku-import" content="__YAKU_IMPORT__">
   <title>翻訳 - YakuLingo</title>
   <link rel="stylesheet" href="/assets/styles.css">
   <link rel="stylesheet" href="/assets/cat-workspace.css">
@@ -153,7 +155,7 @@
           
           <details class="entry-more"><summary>そのほかの始め方</summary><div class="entry-more-actions">
             <button type="button" class="secondary-button" data-cat-source-show="prior">前回の資料をもとに、今回の分だけ訳す</button>
-            <button type="button" class="secondary-button" data-cat-source-show="align">前回の日本語と英語を、参考として読み込む</button>
+            <button type="button" id="cat-open-align-entry" class="secondary-button">過去の日本語と英語の資料を読み込む</button>
             <button type="button" class="secondary-button" data-cat-source-show="file">ファイルの保存場所を入力して取り込む</button>
           </div></details>
           <!-- 保存した作業は溜まる。実機で10件あり、この一覧だけで画面の44%
@@ -183,12 +185,24 @@
           <label class="field-label" for="cat-prior-name">資料名<input id="cat-prior-name" type="text"></label>
           <button type="button" id="cat-prior-open">貼り付けた文章で始める</button>
         </div>
+        <!-- 過去の日英資料の取り込み。PDF を直接読めるようにした（2026-08-13）。
+             利用者の実情として、正式版は PDF で、元の Word・Excel は章ごとに
+             細切れだったり印刷範囲外にゴミがあったりして、そのままでは使えない。
+             市販ツールも memoQ・Trados が PDF での突き合わせを公式に認めている。
+             PDF の解析はこの画面の中（WebAssembly）で行い、ファイルは送らない。 -->
         <div id="cat-source-align" class="cat-start-panel" hidden>
-          <p class="muted">左に前回の日本語、右に対応する前回の英語を貼り付けます。取り込んだ訳は「前回版」として、この作業だけで参照できます。</p>
-          <label class="field-label" for="cat-align-source">日本語版<textarea id="cat-align-source" rows="5"></textarea></label>
-          <label class="field-label" for="cat-align-target">英語版<textarea id="cat-align-target" rows="5"></textarea></label>
+          <p class="muted">同じ資料の日本語版と英語版を読み込みます。取り込んだ訳は、次の資料から候補として出ます。</p>
+          <div class="align-file-row">
+            <label class="field-label" for="cat-align-source-file">日本語版のPDF<input id="cat-align-source-file" type="file" accept=".pdf"></label>
+            <label class="field-label" for="cat-align-target-file">英語版のPDF<input id="cat-align-target-file" type="file" accept=".pdf"></label>
+          </div>
+          <p id="cat-align-file-status" class="muted" role="status" aria-live="polite"></p>
+          <details id="cat-align-paste"><summary>PDFが無い（文章を貼り付ける）</summary>
+            <label class="field-label" for="cat-align-source">日本語版<textarea id="cat-align-source" rows="5"></textarea></label>
+            <label class="field-label" for="cat-align-target">英語版<textarea id="cat-align-target" rows="5"></textarea></label>
+          </details>
           <label class="field-label" for="cat-align-name">資料名<input id="cat-align-name" type="text"></label>
-          <button type="button" id="cat-align-open">前回版として取り込む</button>
+          <button type="button" id="cat-align-open">読み込んで突き合わせる</button>
         </div>
         <fieldset id="cat-direction-choice" class="direction-choice" hidden><legend>どちらに訳しますか？</legend><p class="muted">入力内容だけでは自動で決められません。</p><div class="direction-choice-grid"><button type="button" class="secondary-button" data-cat-direction="to_en">英語に訳す</button><button type="button" class="secondary-button" data-cat-direction="to_jp">日本語に訳す</button></div></fieldset>
 

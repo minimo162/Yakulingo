@@ -974,6 +974,22 @@
     if (dialog && dialog.open) { try { dialog.close(); } catch (_) { dialog.removeAttribute('open'); } }
   }
 
+  /* 送る前に、Copilot への往復回数と見込み時間を出す。実測 2026-08-13:
+     144ページの資料は 5,742行 = 最低128往復で、20〜40分かかる。
+     押したあとに知るのでは遅い。切り分けは Alignment.ps1 と同じ
+     （日本語を軸に50行ずつ、5行重ね）。 */
+  function updateAlignEstimate() {
+    var status = el('cat-align-file-status');
+    if (!status) return;
+    var ja = String(el('cat-align-source').value || '').split(/\r?\n/).filter(function (t) { return t.trim().length >= 4; }).length;
+    if (ja < 1) return;
+    var chunks = Math.max(1, Math.ceil(Math.max(0, ja - 5) / 45));
+    var lo = Math.round(chunks * 10 / 60), hi = Math.round(chunks * 20 / 60);
+    var time = chunks <= 3 ? '1分ほど' : (Math.max(1, lo) + '〜' + Math.max(2, hi) + '分ほど');
+    status.textContent = '日本語 ' + ja.toLocaleString('ja-JP') + '行。Copilotへ約' + chunks + '回送ります（' + time + '）。'
+      + (chunks > 20 ? ' 途中で止まっても、そこまでの対応は残ります。' : '');
+  }
+
   function bindFileDrop(drop, input) {
     if (!drop || !input) return;
     drop.addEventListener('keydown', function (event) { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); input.click(); } });
@@ -1803,6 +1819,43 @@
     /* ドロップ先はボタン自身。専用の枠を置くと、押す場所が2つに見える。 */
     bindFileDrop(el('cat-open-file-entry'), el('cat-file-input'));
     el('cat-prior-open').addEventListener('click', function () { var epoch = ++viewEpoch; setBusy(true); post('from-prior-version', { prior_ja: el('cat-prior-ja').value, prior_en: el('cat-prior-en').value, current_ja: el('cat-current-ja').value, document_name: el('cat-prior-name').value }, false, null).then(function (data) { if (epoch === viewEpoch) render(data, true); }).catch(function (error) { if (epoch !== viewEpoch) return; setBusy(false); status(error.message, true); }); });
+    /* 過去の日英資料の入口。PDF を読むには WebAssembly が要り、それは
+       ?import=1 で開いた画面にしか許していない（普段の作業では CSP を
+       'self' のままにするため）。押したらその画面へ移る。 */
+    el('cat-open-align-entry').addEventListener('click', function () {
+      if (document.querySelector('meta[name="yaku-import"]') &&
+          document.querySelector('meta[name="yaku-import"]').getAttribute('content') === '1') { showStart('align'); return; }
+      window.location.assign('/cat?import=1');
+    });
+    /* PDF を選んだら、この画面の中で解析して貼り付け欄へ入れる。
+       ファイルそのものはサーバへ送らない。送るのは取り出した文だけ。 */
+    function readPdfInto(input, targetId, label) {
+      var file = input.files && input.files[0];
+      if (!file) return;
+      var status = el('cat-align-file-status');
+      status.textContent = label + 'を読んでいます…';
+      import('/assets/pdf-extract.js').then(function (mod) {
+        return file.arrayBuffer().then(function (buf) { return mod.extractPdfPages(new Uint8Array(buf)); });
+      }).then(function (res) {
+        if (res.lowText) {
+          status.textContent = label + 'は文字が取れませんでした。画像として保存されたPDFのようです。OCRでテキスト付きのPDFにしてから、もう一度お試しください。';
+          input.value = '';
+          return;
+        }
+        var text = res.pages.map(function (p) { return p.text; }).join('\n');
+        el(targetId).value = text;
+        var chars = text.length;
+        status.textContent = label + 'を読みました（' + res.pages.length + 'ページ、' + chars.toLocaleString('ja-JP') + '字）。';
+        if (!el('cat-align-name').value.trim()) el('cat-align-name').value = file.name;
+        updateAlignEstimate();
+      }).catch(function (error) {
+        status.textContent = label + 'を読めませんでした。' + (error && error.message ? error.message : '');
+      });
+    }
+    el('cat-align-source-file').addEventListener('change', function () { readPdfInto(this, 'cat-align-source', '日本語版'); });
+    el('cat-align-target-file').addEventListener('change', function () { readPdfInto(this, 'cat-align-target', '英語版'); });
+    el('cat-align-source').addEventListener('input', updateAlignEstimate);
+    el('cat-align-target').addEventListener('input', updateAlignEstimate);
     el('cat-align-open').addEventListener('click', function () { var epoch = viewEpoch; setBusy(true); YakuCommon.postText('/api/cat/align', { source_text: el('cat-align-source').value, target_text: el('cat-align-target').value, file_name: el('cat-align-name').value }).then(function (html) { startJobHtml(html, { type: 'align', name: el('cat-align-name').value, viewEpoch: epoch }); }).catch(function (error) { setBusy(false); status(error.message, true); }); });
     /* 同じ口へ寄せる。畳んで一覧へ戻すのではなく、その場で選ばせる。
        打ちかけの訳文は先に保存してから開く（開いたあと入れ替わるため）。 */
@@ -2123,6 +2176,10 @@
       return;
     }
     showPicker();
+    /* ?import=1 で開いたときは、過去の対訳の取り込み欄をそのまま出す。
+       この画面だけ WebAssembly が使える（PDF の解析に要る）。 */
+    var importMeta = document.querySelector('meta[name="yaku-import"]');
+    if (importMeta && importMeta.getAttribute('content') === '1') { showStart('align'); return; }
     if (cameFromInstant && window.YakuInstant) window.YakuInstant.show();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();

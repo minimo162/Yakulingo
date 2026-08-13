@@ -281,7 +281,10 @@ Assert-Yaku -Condition ($catIndex.Contains('Word・Excelを取り込む') -and $
 Assert-Yaku -Condition ((([regex]::Matches($catIndex, 'class="entry-actions cat-entry-actions">(?s).*?</div>')) | ForEach-Object { ([regex]::Matches($_.Value, '<button')).Count }) -eq 1 -and (([regex]::Matches($catIndex, 'id="quick-input"')).Count -eq 1)) -Message 'the front door must not offer two different ways to paste text'
 # 長さの境目は画面が決めない。確認作業が分割に使っている設定値をそのまま使う。
 Assert-Yaku -Condition ($catIndex.Contains('__YAKU_MAX_BATCH_CHARS__') -and $quickClient.Contains('yaku-max-batch-chars') -and $quickClient -notmatch 'length > 3000|length > 2000') -Message 'the long-text threshold must come from the server batch budget, not a number chosen in the page'
-Assert-Yaku -Condition ($catIndex.Contains('前回の日本語と英語を、参考として読み込む') -and $catIndex.Contains('そのほかの始め方')) -Message 'project-bound prior bilingual import must remain available without appearing as a primary mode choice'
+# 2026-08-13: 名前を「過去の日本語と英語の資料を読み込む」へ変えた。「前回」と
+# 言っていたので、手持ちの過去資料全般に使えるものだと読めなかった（利用者の指摘
+# 「どうやって取り込めばよいか分からない」）。主役の入口にはしない、は変えない。
+Assert-Yaku -Condition ($catIndex.Contains('過去の日本語と英語の資料を読み込む') -and $catIndex.Contains('そのほかの始め方')) -Message 'project-bound prior bilingual import must remain available without appearing as a primary mode choice'
 # 訳案カードを外したので「訳案」の見出しは無い。呼び名で守っていたのは
 # 「未確認のものを完成訳と呼ばない」ことなので、そちらを直接見る（2026-08-13）。
 Assert-Yaku -Condition (-not $indexSource.Contains('すぐ訳した完成訳') -and -not $indexSource.Contains('完成訳')) -Message 'unreviewed output must never be called a finished translation'

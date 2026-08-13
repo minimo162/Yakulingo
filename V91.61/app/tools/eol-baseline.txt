@@ -114,6 +114,7 @@ www/assets/cat.js	lf
 www/assets/cat-workspace.css	lf
 www/assets/common.js	lf
 www/assets/htmx.min.js	none
+www/assets/pdf-extract.js	lf
 www/assets/quick.js	lf
 www/assets/styles.css	crlf
 www/assets/tour.js	lf

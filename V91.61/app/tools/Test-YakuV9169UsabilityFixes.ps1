@@ -228,6 +228,28 @@ Check-YakuUse ($catJs -match 'data-cat-copy-target') 'この行の訳文をコ�
 Check-YakuUse ($catJs -match "(?s)function translateRow[\s\S]{0,700}?mode: 'translate', index: index") '1行だけの依頼も、まとめて訳すのと同じ口を使う'
 Check-YakuUse ($serverForView -match '\$onlyIndex') 'サーバは index を受けたらその行だけ訳す'
 
+
+# 過去の日英資料を PDF から取り込む（2026-08-13）。利用者の実情として、正式版は
+# PDF で、元の Word・Excel は章ごとに細切れだったり印刷範囲外にゴミがあったりする。
+# memoQ・Trados も PDF での突き合わせを公式に認めている（memoQ「you can align a
+# PDF with a Word document」／Trados は Word原文↔PDF訳文の設定手順まで書いている）。
+$serverPdf = Get-Content -LiteralPath (Join-Path $root 'src\Server.ps1') -Raw -Encoding UTF8
+$pdfJs = Get-Content -LiteralPath (Join-Path $root 'www\assets\pdf-extract.js') -Raw -Encoding UTF8
+$adminJs = Get-Content -LiteralPath (Join-Path $root 'www\assets\admin.js') -Raw -Encoding UTF8
+# 利用者の画面は普段 script-src 'self' のまま。取り込みで開いたときだけ緩める。
+Check-YakuUse ($serverPdf -match "AllowWasm:\`$wantsImport") '取り込みで開いたときだけ WebAssembly を許す'
+Check-YakuUse ($serverPdf -match "Get-YakuQueryValue -Request \`$req -Name 'import'") '住所の import を見て決める'
+Check-YakuUse ($catHtml -match 'name="yaku-import"') '画面側にも、取り込みで来たことを渡す'
+# 段組みの判定は測って決めた実装。写すと必ず食い違うので、共通部品に1つだけ置く。
+Check-YakuUse ($pdfJs -match 'export function yakuPageTextByColumns') '段組みの判定は共通部品にある'
+Check-YakuUse ($adminJs -match "from '/assets/pdf-extract.js'" -and $adminJs -notmatch 'function yakuPageTextByColumns') '管理画面も同じ部品を使う（写しを持たない）'
+# 画像PDFは受けない。市販ツールも memoQ・Trados が外部OCRへ回している。
+Check-YakuUse ($pdfJs -match 'lowText') '文字が取れないPDFを見分ける'
+Check-YakuUse ($catJs -match 'OCRでテキスト付きのPDFにしてから') '画像PDFは、OCRしてからと案内する'
+# 押す前に、往復回数と見込み時間を出す（実測 2026-08-13: 144ページで128回）。
+Check-YakuUse ($catJs -match 'function updateAlignEstimate') '送る前に見込みを出す関数がある'
+Check-YakuUse ($catJs -match 'Copilotへ約') '往復回数を押す前に出す'
+
 # 2026-08-13: この行を自分で消してしまい、赤が出ても緑と報告される状態を
 # 1コミットぶん作った。判定を消したまま「41本緑」と言っていた。
 if ($script:failed -gt 0) { Write-Host ('Usability tests failed: ' + $script:failed) -ForegroundColor Red; exit 1 }
