@@ -134,7 +134,23 @@
   function setView(name) { document.body.setAttribute('data-cat-view', name); }
   function showPicker() { syncLocation(''); viewEpoch++; candidateSeq++; project = null; activeSegmentId = ''; activeIndex = -1; revisionComparison = null; currentFilter = 'actionable'; currentLocation = 'all'; currentChange = 'all'; termSelection = { index: -1, source: '', target: '' }; dirty.clear(); clearOutputDisplay(); setView('start'); el('cat-picker').hidden = false; el('cat-workspace').hidden = true; el('cat-current-summary').hidden = true; closeStartPanels(); loadRecent(); }
   function closeStartPanels() { document.querySelectorAll('.cat-start-panel').forEach(function (panel) { panel.hidden = true; }); el('cat-direction-choice').hidden = true; }
-  function showStart(mode) { closeStartPanels(); var panel = el('cat-source-' + mode); if (panel) { panel.hidden = false; YakuCommon.focus(panel.querySelector('input,textarea,[role="button"],button')); } }
+  /* 開いた欄は、いちばん少ない移動で見える所へ入れる（block:'nearest'）。
+     画面の中央へ寄せていたころは、押しただけで 560px 飛び、押したボタン自身が
+     画面の外へ出ていた。初回の案内が次に指すボタンも一緒に外れ、吹き出しだけが
+     上端で切れて残っていた（2026-08-13 実測、1240x860）。 */
+  function showStart(mode) {
+    closeStartPanels();
+    var panel = el('cat-source-' + mode);
+    if (!panel) return;
+    panel.hidden = false;
+    var first = panel.querySelector('input,textarea,[role="button"],button');
+    if (!first) return;
+    try { first.focus({ preventScroll: true }); } catch (_) { first.focus(); }
+    var box = first.getBoundingClientRect();
+    if (box.top < 0 || box.bottom > window.innerHeight) {
+      try { first.scrollIntoView({ behavior: 'auto', block: 'nearest' }); } catch (_) { first.scrollIntoView(); }
+    }
+  }
   /* 翻訳中に画面ごと凍らせない。数十分かかるあいだ、できた訳を読む・探す・コピーする、
      そして「やめる」ことは常にできる必要がある。止めるのは作業を壊す操作だけ。 */
   function isAlwaysEnabled(button) {
@@ -1183,12 +1199,15 @@
       /* 「確認済みの内容を出力できます」とは言えなくなった。未確認の行を含んだまま
          出せるので、残っている行数をそのまま出す（2026-08-12）。 */
       var unconfirmed = Number(data.unconfirmed_count || 0);
+      /* 出す先はファイルとは限らない。訳文のコピーはクリップボードへ写すだけで、
+         ファイルは作らない（2026-08-13、初回利用者として実機で確認）。 */
+      var isCopy = mode === 'copy_text';
       var readyLine = !blockers.length
         ? (unconfirmed > 0
-            ? '<div class="cat-preflight-item is-ready">いまの訳文でファイルを作れます。</div>'
+            ? ('<div class="cat-preflight-item is-ready">いまの訳文を' + (isCopy ? 'コピーできます。' : 'ファイルにできます。') + '</div>')
             : '<div class="cat-preflight-item is-ready">すべての行を確認し終えています。</div>')
         : '';
-      el('cat-export-checks').innerHTML = blockers.map(function (item) { return '<div class="cat-preflight-item is-blocked">' + esc(item.message || item.code || 'いまはファイルを作れません。上に出ている項目をご確認ください。') + '</div>'; }).join('') + warnings.map(function (item) { return '<div class="cat-preflight-item">' + esc(item.message || item.code || item) + '</div>'; }).join('') + readyLine;
+      el('cat-export-checks').innerHTML = blockers.map(function (item) { return '<div class="cat-preflight-item is-blocked">' + esc(item.message || item.code || (isCopy ? 'いまはコピーできません。上に出ている項目をご確認ください。' : 'いまはファイルを作れません。上に出ている項目をご確認ください。')) + '</div>'; }).join('') + warnings.map(function (item) { return '<div class="cat-preflight-item">' + esc(item.message || item.code || item) + '</div>'; }).join('') + readyLine;
       el('cat-export-notice').textContent = data.draft_notice || '原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。';
       el('cat-export-notice').hidden = mode === 'copy_text' || mode === 'blocked';
       /* 止まっているときは、どの行かを見に行けるようにする。「作れません」だけを
@@ -1205,12 +1224,26 @@
      行ごとの指摘と絞り込みは持っていたが、「あと何件残っているか」を出す前に
      見る場所が無かった。数えるのは画面が持っている行そのもので、
      出力を止める条件（訳文が空・数字の点検）と同じ2つを先に並べる。 */
+  /* まだ一度も訳していない状態（作業を作った直後）を、指摘として数えない。
+     数えていたころは、押した直後の画面に赤い「点検 2」が出て、開くと
+     「ファイルを作れない指摘が 2 件あります／訳文が空 2」と出ていた。
+     利用者は何もしていない。次に押すのが「残りの訳案を作る」だと言うべき場面で、
+     欠陥の言い方をしていた（2026-08-13、初回利用者として実機で確認）。
+     同じ画面の「訳文を取り出す」は最初から「残り2行の訳案を作ってください。」と
+     正しく言っていたので、言い方はそちらに合わせる。
+     1行でも訳ができていれば、空の行は本物の指摘に戻る。 */
+  function nothingTranslatedYet() {
+    var all = (project && project.segments) || [];
+    if (!all.length) return false;
+    return all.every(function (segment) { return !String(segment.translation || '').trim(); });
+  }
   function qaFindings() {
     var all = (project && project.segments) || [], groups = [
       { key: 'empty', title: '訳文が空', blocking: true, items: [] },
       { key: 'qc', title: '数字の点検', blocking: true, items: [] },
       { key: 'unconfirmed', title: '未確認', blocking: false, items: [] }
     ];
+    if (nothingTranslatedYet()) return groups;
     all.forEach(function (segment) {
       var messages = qcMessages(segment);
       var empty = !String(segment.translation || '').trim();
@@ -1554,7 +1587,9 @@
     var groups = qaFindings();
     var blocking = groups.filter(function (group) { return group.blocking; }).reduce(function (sum, group) { return sum + group.items.length; }, 0);
     var unconfirmed = groups[2].items.length;
-    el('cat-qa-summary').textContent = blocking
+    el('cat-qa-summary').textContent = nothingTranslatedYet()
+      ? 'まだ訳していません。「残りの訳案を作る」を押すと、Copilotへ送ります。'
+      : blocking
       ? ('ファイルを作れない指摘が ' + blocking + ' 件あります。' + (unconfirmed ? '未確認は ' + unconfirmed + ' 行です。' : ''))
       : (unconfirmed ? ('止まる指摘はありません。未確認は ' + unconfirmed + ' 行です。') : '指摘はありません。すべての行を確認し終えています。');
     el('cat-qa-list').innerHTML = groups.filter(function (group) { return group.items.length; }).map(function (group) {
@@ -1565,7 +1600,9 @@
             '<span class="cat-qa-source">' + esc(String(item.source || '').slice(0, 40)) + '</span>' +
             (item.message ? '<span class="cat-qa-message">' + esc(item.message) + '</span>' : '') + '</button>';
         }).join('') + '</section>';
-    }).join('') || '<p class="muted">直すところは見つかりませんでした。</p>';
+    }).join('') || (nothingTranslatedYet()
+      ? '<p class="muted">訳ができたら、ここに直すところが並びます。</p>'
+      : '<p class="muted">直すところは見つかりませんでした。</p>');
     var dialog = el('cat-qa-dialog'); dialog.returnValue = 'cancel'; dialog.showModal();
   }
   function jumpFromQa(index) {

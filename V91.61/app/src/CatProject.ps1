@@ -704,8 +704,12 @@ function Get-YakuCatOutputPreflight {
     # 未確認のまま出せるようにした以上、何行が未確認かは押す前に必ず言う。
     # 数を言わずに出すと、確認し終えたものと見分けがつかなくなる。
     $unconfirmedCount = [int]$eligibility.UnconfirmedCount
+    # 出す先はファイルとは限らない。copy_text はクリップボードへ写すだけなので、
+    # 「ファイルに入れます」と言うと、作られていないものを作ったと伝えることになる
+    # （2026-08-13、初回利用者として実機で確認。出力名も「訳文」だった）。
     if ($mode -ne 'blocked' -and $unconfirmedCount -gt 0) {
-        $warnings.Add(('まだ確認していない行が ' + $unconfirmedCount + ' 行あります。そのままファイルに入れます。')) | Out-Null
+        $destination = if ($mode -eq 'copy_text') { 'そのままコピーに入れます。' } else { 'そのままファイルに入れます。' }
+        $warnings.Add(('まだ確認していない行が ' + $unconfirmedCount + ' 行あります。' + $destination)) | Out-Null
     }
 
     return [pscustomobject]@{

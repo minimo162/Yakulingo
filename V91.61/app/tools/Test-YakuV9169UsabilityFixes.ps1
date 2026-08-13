@@ -125,5 +125,31 @@ Check-YakuUse ($quickJs -match "hidden = !text\.trim\(\);") '文章を入れた�
 Check-YakuUse ($quickJs -match '文章を見て、英語か日本語かを決めます') '自動のときは決め方を書く'
 Check-YakuUse ($quickJs -notmatch "hidden = !text\.trim\(\) \|\| !explicitDirection") '自分で選んだときだけ出す作りに戻さない'
 
+# 2026-08-13、初回利用者として実機を通して見つけたもの。
+
+# 作った直後に「点検 2」を赤く出さない。中身は「訳文が空 2」で、まだ訳していない
+# だけだった。何もしていない利用者に、いきなり欠陥の言い方をしていた。
+# 同じ画面の「訳文を取り出す」は最初から「残り2行の訳案を作ってください。」と
+# 正しく言っていたので、言い方はそちらへ揃える。1行でも訳ができれば指摘に戻る。
+Check-YakuUse ($catJs -match 'function nothingTranslatedYet') 'まだ一度も訳していない状態を見分ける'
+Check-YakuUse ($catJs -match '(?s)function qaFindings\(\)[\s\S]{0,600}?if \(nothingTranslatedYet\(\)\) return groups;') '訳す前は指摘を数えない'
+Check-YakuUse ($catJs -match 'まだ訳していません。「残りの訳案を作る」を押すと') '点検一覧は次にやることを書く'
+
+# 出す先はファイルとは限らない。訳文のコピーはクリップボードへ写すだけで、
+# ファイルは作らない。作られていないものを作ったと言わない。
+Check-YakuUse ($catJs -match "isCopy = mode === 'copy_text'" -and $catJs -match "isCopy \? 'コピーできます。' : 'ファイルにできます。'") 'コピーのときはコピーと言う'
+Check-YakuUse ($catProject -match "mode -eq 'copy_text'.*そのままコピーに入れます") '未確認の断りも出す先に合わせる'
+
+# 初回の案内。1つ目に本文の無い「訳したい文章を貼り付けます」を出していたが、
+# 画面の見出しが同じことを言っており、しかもすぐ下の1行を覆っていた
+# （実測 1240x860: 吹き出し y320-419 が「1行ずつ確認する画面に移ります。…」y376-400 を覆う）。
+$tourJsUse = Get-Content -LiteralPath (Join-Path $root 'www\assets\tour.js') -Raw -Encoding UTF8
+Check-YakuUse ($tourJsUse -notmatch "target: '#quick-input'") '当たり前の操作を説明する段は置かない'
+# 前の段の操作で画面が動くと、次の段のボタンが画面の外へ出て、吹き出しだけが端で切れる。
+Check-YakuUse ($tourJsUse -match 'box\.top < 12 \|\| box\.bottom > window\.innerHeight - 12') '指す先が画面の外なら、先に見える所へ戻す'
+# 中央へ寄せると押しただけで大きく飛ぶ。開いた欄はいちばん少ない移動で見せる。
+Check-YakuUse ($catJs -match "(?s)function showStart\(mode\)[\s\S]{0,600}?block: 'nearest'") '開いた欄は最小の移動で見せる'
+Check-YakuUse ($catJs -notmatch "(?s)function showStart\(mode\) \{ closeStartPanels\(\); var panel[\s\S]{0,120}?YakuCommon\.focus\(") '中央へ寄せる作りに戻さない'
+
 if ($script:failed -gt 0) { Write-Host ('Usability tests failed: ' + $script:failed) -ForegroundColor Red; exit 1 }
 Write-Host 'Usability tests passed.' -ForegroundColor Green

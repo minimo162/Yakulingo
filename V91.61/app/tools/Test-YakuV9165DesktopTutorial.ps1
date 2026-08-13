@@ -42,7 +42,9 @@ Check-YakuTutorial (-not ($html -match 'class="tutorial-step"')) 'the page-by-pa
 Check-YakuTutorial ($catPageForTour.Contains('name="yaku-tour"') -and $catPageForTour.Contains('/assets/tour.js')) 'the tour runs on the real translate screen'
 # 「次へ」で読み進めさせない。実際の操作（入力する・押す）で進む。
 # 「次へ」の文字は説明のコメントにも出るので、押せる「次へ」が作られていないかで見る。
-Check-YakuTutorial ($tourJs.Contains("events: ['input']") -and $tourJs.Contains("events: ['click']") -and -not ($tourJs -match "textContent = '次へ'")) 'the tour advances on real actions, not on a Next button'
+# 2026-08-13: 貼り付け欄の段（events: ['input']）を外したので、いまは押す操作だけで進む。
+# 守っているのは「読み進めるためのボタンを作らない」ことなので、そちらを見る。
+Check-YakuTutorial ($tourJs.Contains("events: ['click']") -and -not ($tourJs -match "textContent = '次へ'") -and -not ($tourJs -match "events: \['(?!click)")) 'the tour advances on real actions, not on a Next button'
 Check-YakuTutorial ($tourJs.Contains('案内を閉じる') -and $tourJs.Contains('/api/desktop/tour-complete')) 'the tour can be closed and records only that it finished'
 # 2026-08-13: 送ると確認画面へ移るようになったので、案内の続きを出す場所が無くなる。
 # 送る段を最後に置き、押した時点で終わりを記録する。記録しないと次の起動でまた出る
