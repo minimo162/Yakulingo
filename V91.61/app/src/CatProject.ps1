@@ -220,7 +220,6 @@ function Initialize-YakuCatProjectState {
     if (-not ($Project.PSObject.Properties.Name -contains 'DirectionBasis')) { $Project | Add-Member -NotePropertyName DirectionBasis -NotePropertyValue 'fixed' -Force }
     if (-not ($Project.PSObject.Properties.Name -contains 'DirectionConfidence')) { $Project | Add-Member -NotePropertyName DirectionConfidence -NotePropertyValue 'not_applicable' -Force }
     if (-not ($Project.PSObject.Properties.Name -contains 'DirectionSourceFingerprint')) { $Project | Add-Member -NotePropertyName DirectionSourceFingerprint -NotePropertyValue '' -Force }
-    if (-not ($Project.PSObject.Properties.Name -contains 'QuickArtifactId')) { $Project | Add-Member -NotePropertyName QuickArtifactId -NotePropertyValue '' -Force }
     if (-not ($Project.PSObject.Properties.Name -contains 'TerminologySnapshotHash')) { $Project | Add-Member -NotePropertyName TerminologySnapshotHash -NotePropertyValue '' -Force }
     if (-not ($Project.PSObject.Properties.Name -contains 'TmOutbox')) { $Project | Add-Member -NotePropertyName TmOutbox -NotePropertyValue @() -Force }
     foreach ($segment in @($Project.Segments)) {
@@ -878,34 +877,11 @@ function New-YakuCatTextProject {
     return $project
 }
 
-function New-YakuCatProjectFromQuickArtifact {
-    <# Quick の本文をブラウザーから再送させず、server memory の artifact を
-       そのまま未確認 CAT project として commit する。 #>
-    param(
-        [Parameter(Mandatory=$true)][string]$Root,
-        [Parameter(Mandatory=$true)]$Artifact,
-        [Parameter(Mandatory=$true)][AllowNull()]$Settings
-    )
-    if ([string]$Artifact.Id -notmatch '^[a-f0-9]{32}$') { throw 'QUICK_ARTIFACT_ID_INVALID' }
-    if ([string]$Artifact.Status -ne 'ready') { throw 'QUICK_ARTIFACT_NOT_READY' }
-    if ([string]$Artifact.Direction -notin @('to_en','to_jp')) { throw 'QUICK_ARTIFACT_DIRECTION_INVALID' }
-    if ([string]::IsNullOrWhiteSpace([string]$Artifact.SourceText) -or
-        [string]::IsNullOrWhiteSpace([string]$Artifact.Translation)) { throw 'QUICK_ARTIFACT_CONTENT_MISSING' }
-
-    $project = New-YakuCatTextProject -Root $Root -Text ([string]$Artifact.SourceText) -Settings $Settings `
-        -Direction ([string]$Artifact.Direction) -Translation ([string]$Artifact.Translation) -Register $false
-    $project.FileName = 'その場で訳した文章'
-    $project | Add-Member -NotePropertyName QuickArtifactId -NotePropertyValue ([string]$Artifact.Id) -Force
-    $project | Add-Member -NotePropertyName DirectionBasis -NotePropertyValue 'inherited' -Force
-    $project | Add-Member -NotePropertyName DirectionConfidence -NotePropertyValue ([string]$Artifact.DirectionConfidence) -Force
-    $project | Add-Member -NotePropertyName DirectionSourceFingerprint -NotePropertyValue ([string]$Artifact.SourceFingerprint) -Force
-    foreach ($segment in @($project.Segments)) {
-        $segment.Confirmed = $false
-        $segment | Add-Member -NotePropertyName State -NotePropertyValue $(if ([string]::IsNullOrWhiteSpace([string]$segment.Translation)) { 'untranslated' } else { 'machine_draft' }) -Force
-        Reset-YakuCatSegmentQc -Segment $segment -KeepState
-    }
-    return (Commit-YakuNewCatProject -Project $project)
-}
+# New-YakuCatProjectFromQuickArtifact は 2026-08-13 に外した。
+# 訳案を1枚返す状態（その場で訳す）を廃止し、貼り付けた文章も最初から
+# New-YakuCatTextProject で作業になったため、昇格するもとが無くなった。
+# QuickArtifactId / quick_artifact_id も同時に外している。保存済みの作業に
+# 残っている分は、読むときに無視される（既定は空文字だった）。
 
 function New-YakuCatAlignProject {
     <#
@@ -1380,7 +1356,6 @@ function Save-YakuCatProject {
             direction_basis = [string]$Project.DirectionBasis
             direction_confidence = [string]$Project.DirectionConfidence
             direction_source_fingerprint = [string]$Project.DirectionSourceFingerprint
-            quick_artifact_id = [string]$Project.QuickArtifactId
             terminology_snapshot_hash = [string]$Project.TerminologySnapshotHash
             tm_outbox = @($Project.TmOutbox)
             source = [string]$Project.Source
@@ -1641,7 +1616,6 @@ function Restore-YakuCatProject {
         DirectionBasis = $(if (-not [string]::IsNullOrWhiteSpace([string]$o.direction_basis)) { [string]$o.direction_basis } else { 'fixed' })
         DirectionConfidence = $(if (-not [string]::IsNullOrWhiteSpace([string]$o.direction_confidence)) { [string]$o.direction_confidence } else { 'not_applicable' })
         DirectionSourceFingerprint = [string]$o.direction_source_fingerprint
-        QuickArtifactId = [string]$o.quick_artifact_id
         TerminologySnapshotHash = [string]$o.terminology_snapshot_hash
         TmOutbox = @($o.tm_outbox)
         Blocks    = @($savedBlocks.ToArray())

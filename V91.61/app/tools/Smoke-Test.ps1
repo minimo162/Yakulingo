@@ -263,12 +263,12 @@ Assert-Yaku -Condition (-not (Test-Path -LiteralPath (Join-Path $root 'www\index
 Assert-Yaku -Condition ($server -match "path -eq '/'" -and $server -notmatch "PageName 'index.html'" -and
     ([regex]::Matches($server, [regex]::Escape("Serve-YakuAppPage -Context `$Context -PageName 'cat.html'")).Count -ge 2)) -Message 'the root route must land on the translation screen itself'
 Assert-Yaku -Condition ($catIndex.Contains('href="/tutorial#settings"') -and $catIndex.Contains('href="/cat?tour=1"') -and $catIndex.Contains('href="/tutorial"')) -Message 'the ways out of the deleted landing screen must live on the translation screen'
-# 画面は一つになったので「ファイルの機能がページに無いこと」では測れない。
-# その場で訳す状態の中に、保存しないことと登録した訳語を使わないことが書いてあり、
-# その状態が既定では出ていないことを見る。
+# 2026-08-13、利用者判断「保存しない約束は要らない」。貼り付けた文章も資料と同じ
+# 経路で作業になったので、「保存しません」「登録した訳語も使いません」は嘘になった。
+# 押す前に言うべきことが入れ替わった＝どこへ移り、保存されるのか。
 $instantBlock = ''
-if ($quickIndex -match '(?s)<section id="cat-instant".*?</section>\s*<section id="cat-workspace"') { $instantBlock = $Matches[0] }
-Assert-Yaku -Condition ($instantBlock.Contains('ここで訳しただけでは保存しません') -and $instantBlock.Contains('登録した訳語も使いません') -and $instantBlock.Contains('id="quick-form"')) -Message 'the instant state must state that it does not save and does not use registered terms'
+if ($quickIndex -match '(?s)<section id="cat-instant".*?</section>\s*<!--') { $instantBlock = $Matches[0] }
+Assert-Yaku -Condition ($instantBlock.Contains('1行ずつ確認する画面に移ります') -and $instantBlock.Contains('保存される') -and -not $instantBlock.Contains('登録した訳語も使いません') -and $instantBlock.Contains('id="quick-form"')) -Message 'the paste box must state where pressing takes you and that the work is saved'
 Assert-Yaku -Condition ($quickIndex -notmatch 'id="cat-instant"[^>]*\shidden' -and $quickIndex -match 'id="cat-workspace"[^>]*\shidden') -Message 'the paste box is available on the start view while the review workspace waits for a document'
 # 貼り付け先は1つ。「保存する／しない」で入口を分けない（2026-08-11）。初見の人は
 # 訳案を見る前に1文ずつ直したいかを決められないので、選択は訳案のあとへ置く。
@@ -279,9 +279,14 @@ Assert-Yaku -Condition ((([regex]::Matches($catIndex, 'class="entry-actions cat-
 # 長さの境目は画面が決めない。確認作業が分割に使っている設定値をそのまま使う。
 Assert-Yaku -Condition ($catIndex.Contains('__YAKU_MAX_BATCH_CHARS__') -and $quickClient.Contains('yaku-max-batch-chars') -and $quickClient -notmatch 'length > 3000|length > 2000') -Message 'the long-text threshold must come from the server batch budget, not a number chosen in the page'
 Assert-Yaku -Condition ($catIndex.Contains('前回の日本語と英語を、参考として読み込む') -and $catIndex.Contains('そのほかの始め方')) -Message 'project-bound prior bilingual import must remain available without appearing as a primary mode choice'
-Assert-Yaku -Condition ($quickIndex.Contains('<span class="eyebrow">訳案</span>') -and -not $indexSource.Contains('すぐ訳した完成訳')) -Message 'unreviewed Quick output must consistently be called a draft translation'
+# 訳案カードを外したので「訳案」の見出しは無い。呼び名で守っていたのは
+# 「未確認のものを完成訳と呼ばない」ことなので、そちらを直接見る（2026-08-13）。
+Assert-Yaku -Condition (-not $indexSource.Contains('すぐ訳した完成訳') -and -not $indexSource.Contains('完成訳')) -Message 'unreviewed output must never be called a finished translation'
 Assert-Yaku -Condition ($catIndex.Contains('前回の英語は「前回版」と出所を明示して表示し、自動では反映しません') -and -not $catIndex.Contains('cat-prior-evidence') -and -not $catClient.Contains('prior_evidence:')) -Message 'prior English must stay reference-only without a self-attested approval selector or evidence payload'
-Assert-Yaku -Condition ($quickClient.Contains('/api/cat/promote') -and $quickClient.Contains('artifact_id') -and -not $quickClient.Contains('source_text:') -and -not $quickClient.Contains('translation:')) -Message 'Quick handoff must promote one server artifact without reposting source or target text from the browser'
+# 昇格は 2026-08-13 に廃止（移るもとが無くなった）。守るものは変わらない＝
+# ブラウザーから訳文を送り返さない。原文だけは、もともと「長い文章を貼り付ける」が
+# 通っていた経路と同じで、/api/cat/open が受ける。
+Assert-Yaku -Condition ($quickClient.Contains('/api/cat/open') -and -not $quickClient.Contains('/api/cat/promote') -and -not $quickClient.Contains('translation:')) -Message 'the paste box must create work through one route without reposting a translation from the browser'
 Assert-Yaku -Condition ($commonClient.Contains('function plainError') -and $commonClient.Contains("box.textContent || box.innerText") -and $commonClient.Contains('new Error(plainError(body)')) -Message 'HTML API errors must be reduced to readable text before rendering'
 Assert-Yaku -Condition ($catClient.Contains('dirty = new Map()') -and $catClient.Contains('function flush()') -and $catClient.Contains('return flush().then') -and $catClient.Contains('dirty.set(dirtyKey(')) -Message 'CAT edits must become dirty on input and pass through the shared save barrier before commands'
 Assert-Yaku -Condition ($catClient.Contains('var projectId = input.getAttribute(') -and $catClient.Contains('scopeIsCurrent(packet.scope, true)') -and $catClient.Contains("String(packet.data.id || '') !== projectId")) -Message 'late CAT save responses must remain scoped to their originating project and revision'
@@ -428,7 +433,10 @@ Assert-Yaku -Condition ($copilot.Contains('unverified-send-aria-label:') -and $c
 Assert-Yaku -Condition ($copilot.Contains('switcherWaitedMs += 500') -and $copilot.Contains('i < 10 && !btn')) -Message 'model switcher must be allowed five seconds to appear after navigation'
 Assert-Yaku -Condition ($copilotAutomationTest.Contains('V83_TEST_REAL_SEND_BUTTON_NOT_FOUND_AFTER_FILL') -and $copilotAutomationTest.Contains('obf-YakuRegression') -and $copilotAutomationTest.Contains('V83_TEST_SURVEY_SEND_BUTTON_NOT_REJECTED') -and $copilotAutomationTest.Contains('V83_TEST_VOICE_CHAT_BUTTON_NOT_REJECTED')) -Message 'live automation gate must verify real send discovery and reject injected survey and voice-chat buttons'
 Assert-Yaku -Condition ($catIndex.Contains('id="cat-job"') -and $catIndex.Contains('aria-live="polite"') -and $commonClient.Contains('prefers-reduced-motion: reduce') -and $catClient.Contains('render(data, true)')) -Message 'terminal CAT results must be announced and return focus without forced motion'
-Assert-Yaku -Condition ($quickIndex.Contains('id="quick-job"') -and $catIndex.Contains('id="cat-job"') -and $quickClient.Contains('/api/quick/jobs/') -and $catClient.Contains('/api/jobs/')) -Message 'Quick and CAT results and job progress must stay in their separate experience state'
+# 2026-08-13: 貼り付け側は自分で翻訳を回さなくなった（作業を作って移るだけ）ので、
+# 進み具合の欄は「取り込んでいます」を出すために残っている。翻訳の進み具合は
+# 確認画面の cat-job が持つ。別々の状態に置く、という形だけが残った。
+Assert-Yaku -Condition ($quickIndex.Contains('id="quick-job"') -and $catIndex.Contains('id="cat-job"') -and -not $quickClient.Contains('/api/quick/jobs/') -and $catClient.Contains('/api/jobs/')) -Message 'progress for creating work and for translating must stay in their own places'
 Assert-Yaku -Condition ($copilot.Contains("`$sliceLimit = if (`$firstActivitySeen) { 3 } else { 2 }")) -Message 'active response completion polling must use three-second slices'
 Assert-Yaku -Condition ($copilot.Contains("reason:'already-fresh'") -and $copilot.Contains('const seenCandidatesThisRound = new Set();')) -Message 'fresh-chat and watcher duplicate work must be eliminated'
 Assert-Yaku -Condition ($copilot.Contains('FRESH_MAIN_TEXT_MAX = 4000') -and $copilot.Contains("reason:freshVerified ? 'fresh-state-confirmed' : 'fresh-state-not-confirmed'")) -Message 'fresh-chat acceptance must reject stale main content even when response selectors report zero'

@@ -58,6 +58,18 @@ Check-YakuTab (-not $pickerFragment.Substring(0, $pickerEnd).Contains('id="cat-i
 # 外に居るので、picker の hidden では消えない。view で消す。
 Check-YakuTab ($css -match 'body\[data-cat-view="workspace"\] #cat-instant \{ display: none; \}') '確認作業のあいだは貼り付け欄を出さない'
 
+# 訳案を1枚返すカードは外した（2026-08-13）。Test-YakuV9164QuickArtifact.ps1 が
+# 見ていたもののうち、廃止に依らないものだけをここへ引き取る。
+#   - 押す前に、移る先と保存されることが書いてある
+#   - 「登録した訳語も使いません」のような、もう嘘になった断りを残さない
+#   - /quick と /cat は同じ1つのサーバの後ろにある
+$serverText = Get-Content -LiteralPath (Join-Path $root 'src\Server.ps1') -Raw -Encoding UTF8
+$quickJs = Get-Content -LiteralPath (Join-Path $root 'www\assets\quick.js') -Raw -Encoding UTF8
+Check-YakuTab ($html -match '1行ずつ確認する画面に移ります' -and $html -match '保存される') '移る先と保存されることを押す前に書く'
+Check-YakuTab ($html -notmatch '登録した訳語も使いません') '効かないという古い断りを残さない'
+Check-YakuTab ($serverText -match "path -eq '/quick'" -and $serverText -match "path -eq '/cat'") '/quick と /cat は同じサーバの後ろにある'
+Check-YakuTab ($quickJs -notmatch 'quick-result' -and $html -notmatch 'id="quick-result"') '訳案カードの残骸を置かない'
+
 # 箱を増やさない（2026-08-12 の決定）
 Check-YakuTab ($html -notmatch 'id="cat-instant" class="cat-instant translate-form"') 'その場で訳すにカードの器を付けない'
 Check-YakuTab ($css -match '(?s)\.cat-picker,\s*\r?\n?\s*\.cat-instant \{') '器の作法は1か所で決める'

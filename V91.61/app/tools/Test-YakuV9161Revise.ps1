@@ -103,7 +103,10 @@ $html = Convert-YakuTextResultToHtml -Result $result -IncludeStatusOob:$false
 # 直す機能が両方にあると、どちらでやるべきか毎回考えることになる。
 Chk (-not ($html -match 'data-yaku-revise')) 'すぐ訳すには修正の依頼口を置かない'
 $quickClientText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'assets\quick.js'))
-Chk ($quickClientText.Contains('/api/cat/promote')) '直したいときはserver artifactから資料翻訳へ移れる'
+# 2026-08-13: 移る先ではなく、最初からそこに居るようになった。貼り付けた文章も
+# /api/cat/open で作業になるので、直すのは常に「見比べて訳す」側の役目になる。
+Chk ($quickClientText.Contains('/api/cat/open')) '貼り付けた文章も、直せる側（作業）で始まる'
+Chk (-not $quickClientText.Contains('/revisions')) '貼り付け側に直す口を持たない'
 # 内部の英字ラベルを画面に出さない。利用者が読む言葉にする。
 Chk (-not ($html -match '>FULL<|>BRIEF<')) '内部の英字ラベルを画面に出さない'
 Chk (-not ($html -match 'STYLE_REFERENCE')) 'プロンプト内部の語を画面に出さない'

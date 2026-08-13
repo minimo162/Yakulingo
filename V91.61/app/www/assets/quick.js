@@ -4,18 +4,9 @@
   var ready = false;
   var busy = false;
   var explicitDirection = '';
-  var artifact = null;
-  var pollTimer = null;
-  var revisionInFlight = false;
-  var activeSourceSnapshot = '';
   var jobStartedAt = 0;
-  var activeJobId = '';
   /* Ctrl+Alt+J で読んだ選択の出どころ（保存済みのファイルのときだけ入る）。 */
   var sourceFilePath = '';
-
-  /* 昇格ボタンの文言は1つだけ。失敗して戻したときに別の名前へ化けると、
-     同じボタンが2つの操作に見える。 */
-  var PROMOTE_LABEL = '1文ずつ確認して保存する（あとから開けます）';
 
   /* 1回の依頼に入る文字数。サーバの設定（max_chars_per_batch_file）そのもので、
      確認作業が分割の境目に使っているのと同じ値。ここを超える文章は、その場で
@@ -34,18 +25,10 @@
     var value = node ? String(node.getAttribute('content') || '') : '';
     return value === 'billion' ? 'billion' : 'oku';
   }
-  function notationExample(value) {
-    return value === 'billion' ? '金額は ¥1,315 billion のように書いています。' : '金額は 13,150 oku のように書いています。';
-  }
-  /* 金額があったかどうか。見るのは訳案の文だけにする。原文はこの画面が持ち回らない
-     決まりで、Quick の試験が「原文と現在の訳を送り返さない」を字面で固定している。
-     注記自体が「訳案での金額の書き方」の説明なので、訳案を見るほうが直接的でもある。
-     外しても消えるのは説明の1行だけで、訳案そのものには関わらない。 */
-  function hasAmount(translationText) {
-    var translation = String(translationText || '');
-    if (/[¥￥$＄]\s*[0-9]/.test(translation)) return true;
-    return /\b[0-9][0-9,.]*\s*(billion|million|trillion|oku)\b/i.test(translation);
-  }
+  /* 訳案のそばに出していた「金額は ¥1,315 billion のように書いています」は、
+     訳案カードごと外した（2026-08-13）。書き方は、選ぶところ（上の <select>）が
+     両方の例を並べて言っている。訳文は確認画面に出るので、そこでは実際の
+     書き方がそのまま読める。説明を2か所に持たない。 */
   /* Office 以外は外枠が疑似 Ctrl+C で読むため、サーバを通らない。読み込んだ事実
      （文字数だけ、本文は送らない）を報告して記録に残す。Office 側はサーバが自分で
      記録するので、ここでは扱わない。 */
@@ -112,17 +95,6 @@
       : explicitDirection === 'to_en' ? '英語に訳す（確認画面へ）' : explicitDirection === 'to_jp' ? '日本語に訳す（確認画面へ）' : '訳して確認する';
     submit.disabled = !text.trim() || busy;
     el('quick-input').readOnly = busy;
-    ['quick-copy', 'quick-revise-open', 'quick-promote'].forEach(function (id) {
-      var button = el(id); if (button) button.disabled = busy;
-    });
-    var reviseForm = el('quick-revise-form');
-    var reviseInput = el('quick-revise-instruction');
-    var reviseSubmit = el('quick-revise-submit');
-    var reviseCancel = el('quick-revise-cancel');
-    if (reviseForm) reviseForm.setAttribute('aria-busy', busy && revisionInFlight ? 'true' : 'false');
-    if (reviseInput) reviseInput.readOnly = busy;
-    if (reviseSubmit) reviseSubmit.disabled = busy;
-    if (reviseCancel) reviseCancel.disabled = busy;
   }
 
   function showChoice(message) {
@@ -154,111 +126,11 @@
     document.title = percent > 0 ? percent + '% 翻訳中 - 翻訳 - YakuLingo' : '翻訳 - YakuLingo';
   }
 
-  function finish(data) {
-    var wasRevision = revisionInFlight;
-    revisionInFlight = false;
-    var sourceStillMatches = el('quick-input').value.trim() === activeSourceSnapshot;
-    activeSourceSnapshot = '';
-    busy = false;
-    activeJobId = '';
-    el('quick-job').innerHTML = '';
-    document.title = '✔ 訳案ができました - 翻訳 - YakuLingo';
-    window.setTimeout(function () { document.title = '翻訳 - YakuLingo'; }, 8000);
-    if (!sourceStillMatches) {
-      artifact = null;
-      el('quick-result').hidden = true;
-      update();
-      showError('文章が変わったため、受け取った訳案は表示していません。現在の文章でもう一度お試しください。');
-      return;
-    }
-    artifact = data.artifact || null;
-    if (!artifact || !artifact.translation) { showError('訳案を取得できませんでした。'); return; }
-    var toEnglish = artifact.direction === 'to_en';
-    el('quick-result-title').textContent = toEnglish ? '英語の訳案（未確認）' : '日本語の訳案（内容確認用）';
-    el('quick-result-text').textContent = artifact.translation;
-    el('quick-result-note').textContent = toEnglish ? '外部へ配布する資料に使う場合は、1文ずつ確認して保存してからお使いください。' : '内容確認用の訳案です。';
-    /* どちらの書き方で換算したかを訳案のそばで言う。設定を変えられるように
-       なったので、文言も設定から作る。和訳では換算が起きないので出さない。
-
-       金額が1つも無い文にも出していた（実測 2026-08-13: 数字ゼロの文を訳しても
-       「金額は ¥1,315 billion のように書いています」と出た）。換算していないのに
-       換算の説明をするのは、下の伏せ字の要約を件数0でも出すのと同じことである。
-       あちらは maskCount で隠しているので、こちらも金額があったときだけにする。 */
-    var showNotation = toEnglish && hasAmount(artifact.translation || '');
-    el('quick-notation-hint').hidden = !showNotation;
-    el('quick-notation-hint').textContent = showNotation ? notationExample(notation()) : '';
-    /* 件数だけでは「自分のあの数字が伏せられたか」が確かめられない。
-       伏せた値そのものを並べる。値はこのパソコンの中で作り直したもので、
-       Copilotへは記号として送っている。 */
-    var maskCount = Number(artifact.masked_count || 0);
-    var maskValues = Array.isArray(artifact.masked_values) ? artifact.masked_values : [];
-    el('quick-mask-summary').hidden = maskCount < 1;
-    if (maskCount > 0) {
-      el('quick-mask-count').textContent = maskCount.toLocaleString('ja-JP') + '件の数値';
-      var maskDetail = el('quick-mask-detail');
-      var maskList = el('quick-mask-list');
-      maskList.innerHTML = '';
-      maskDetail.hidden = maskValues.length < 1;
-      maskValues.forEach(function (value, index) {
-        var item = document.createElement('li');
-        item.className = 'mask-item';
-        var token = document.createElement('span');
-        token.className = 'mask-token';
-        token.textContent = '[[N' + (index + 1) + ']]';
-        var shown = document.createElement('span');
-        shown.className = 'mask-value';
-        shown.textContent = value;
-        item.appendChild(token);
-        item.appendChild(shown);
-        maskList.appendChild(item);
-      });
-      /* 少なければ開いたまま見せ、多いときは畳んで画面を埋めない。 */
-      maskDetail.open = maskValues.length > 0 && maskValues.length <= 6;
-    }
-    el('quick-promote').hidden = false;
-    el('quick-result').hidden = false;
-    if (wasRevision) {
-      if (artifact.revision_error) {
-        el('quick-revise-status').textContent = '直せませんでした。現在の訳案は変わっていません。' + artifact.revision_error;
-      } else {
-        el('quick-revise-status').textContent = '指示に合わせて訳案を更新しました。Copilotが作った、まだ確認していない訳案です。';
-        el('quick-revise-instruction').value = '';
-        el('quick-revise-form').hidden = true;
-        el('quick-revise-open').setAttribute('aria-expanded', 'false');
-      }
-    } else {
-      el('quick-revise-status').textContent = '';
-    }
-    update();
-    YakuCommon.focus(el('quick-result-title'));
-  }
-
-  function poll(jobId, failureCount) {
-    window.clearTimeout(pollTimer);
-    failureCount = Number(failureCount || 0);
-    YakuCommon.json('/api/quick/jobs/' + encodeURIComponent(jobId)).then(function (data) {
-      if (data.artifact && (data.mode === 'done' || data.mode === 'completed_with_warnings')) { finish(data); return; }
-      if (data.mode === 'cancelled') {
-        revisionInFlight = false; activeSourceSnapshot = ''; busy = false; activeJobId = ''; update();
-        el('quick-job').innerHTML = '';
-        document.title = '翻訳 - YakuLingo';
-        el('quick-revise-status').textContent = '';
-        el('quick-copy-status').textContent = '翻訳をやめました。もう一度「訳案を作る」を押せば、やり直せます。';
-        return;
-      }
-      if (['error', 'failed'].indexOf(data.mode) >= 0) {
-        var failedRevision = revisionInFlight; revisionInFlight = false; activeSourceSnapshot = ''; busy = false; activeJobId = ''; update();
-        if (failedRevision) el('quick-revise-status').textContent = '直せませんでした。いまの訳案は変わっていません。';
-        showError(data.error || data.detail || '翻訳が終わりませんでした。文章を少し短くして、もう一度お試しください。'); return;
-      }
-      renderJob(data.label || data.phase || '訳案を作っています', data.progress || 0, data.detail, jobId);
-      pollTimer = window.setTimeout(function () { poll(jobId, 0); }, 900);
-    }).catch(function () {
-      var nextFailure = failureCount + 1;
-      renderJob(nextFailure < 3 ? '進み具合をもう一度確認しています' : '接続の回復を待っています', 0, '翻訳は続いています。文章を送り直してはいません。', jobId);
-      pollTimer = window.setTimeout(function () { poll(jobId, nextFailure); }, Math.min(5000, 700 * Math.pow(2, Math.min(nextFailure, 3))));
-    });
-  }
+  /* 訳案を1枚返す状態（その場で訳す）は 2026-08-13 に廃止した。ここにあった
+     finish / poll と、訳案カード・直す・昇格の配線をまとめて外す。到達できる道が
+     無くなっていた（finish は poll からしか呼ばれず、poll は artifact が要る
+     「直す」からしか呼ばれず、その artifact を作るのは finish だけだった）。
+     いまは submit が /api/cat/open で作業を作り、確認画面へ移る。 */
 
   function showError(message) {
     el('quick-job').innerHTML = '<div class="alert alert-error">' + YakuCommon.escape(message || '処理を完了できませんでした。') + '</div>';
@@ -282,13 +154,12 @@
        そのため同じ「訳す」が2つあり、片方が劣化版に見えていた。
        いまは資料と同じ経路（/api/cat/open）で作業を作り、確認画面へ入る。
        これで登録した訳語も過去訳も数値の点検も、貼り付けた文章に効く。 */
-    activeSourceSnapshot = text;
-    busy = true; artifact = null; jobStartedAt = Date.now(); el('quick-result').hidden = true; update(); renderJob('取り込んでいます', 0, '', '');
+    busy = true; jobStartedAt = Date.now(); update(); renderJob('取り込んでいます', 0, '', '');
     YakuCommon.post('/api/cat/open', { text: text, direction_intent: explicitDirection || 'auto' }).then(function (data) {
       if (!data.id) throw new Error('確認する作業を作れませんでした。1分ほど待ってから、もう一度お試しください。');
       window.location.assign('/cat?project=' + encodeURIComponent(data.id));
     }).catch(function (error) {
-      activeSourceSnapshot = ''; busy = false; activeJobId = ''; update();
+      busy = false; update();
       if (error.status === 409 && error.data && error.data.code === 'DIRECTION_CONFIRMATION_REQUIRED') { showChoice(error.data.error); return; }
       showError(error.message);
     });
@@ -418,7 +289,7 @@
     /* 文章を書き換えたら、読み込んだ出どころの案内は外す。手で直した文と
        「このブック全体」は、もう同じものを指していない。 */
     el('quick-input').addEventListener('input', function () {
-      explicitDirection = ''; artifact = null; el('quick-result').hidden = true;
+      explicitDirection = '';
       sourceFilePath = '';
       var host = el('quick-source-file'); if (host) host.hidden = true;
       var note = el('quick-selection-note'); if (note) note.hidden = true;
@@ -429,52 +300,6 @@
     /* 訳す向きを選んだら、そのまま翻訳へ進む。資料翻訳（cat.js）は選んだ時点で
        再実行しており、同じアプリで挙動が違うと「選んだのに何も起きない」と受け取られる。 */
     document.querySelectorAll('[data-quick-direction]').forEach(function (button) { button.addEventListener('click', function () { explicitDirection = button.getAttribute('data-quick-direction'); el('quick-direction-choice').hidden = true; update(); if (el('quick-input').value.trim() && ready && !busy) el('quick-form').requestSubmit(); else YakuCommon.focus(el('quick-submit')); }); });
-    el('quick-copy').addEventListener('click', function () { if (!artifact) return; var fallback = el('quick-copy-fallback'); fallback.hidden = true; YakuCommon.copyText(artifact.translation, fallback, el('quick-copy-status')); });
-    el('quick-revise-open').addEventListener('click', function () {
-      if (!artifact || busy) return;
-      var form = el('quick-revise-form'); form.hidden = false;
-      el('quick-revise-open').setAttribute('aria-expanded', 'true');
-      el('quick-revise-status').textContent = '';
-      YakuCommon.focus(el('quick-revise-instruction'));
-    });
-    el('quick-revise-cancel').addEventListener('click', function () {
-      if (busy) return;
-      el('quick-revise-instruction').value = '';
-      el('quick-revise-form').hidden = true;
-      el('quick-revise-open').setAttribute('aria-expanded', 'false');
-      YakuCommon.focus(el('quick-revise-open'));
-    });
-    el('quick-revise-form').addEventListener('submit', function (event) {
-      event.preventDefault();
-      var instruction = el('quick-revise-instruction').value.trim();
-      if (!artifact || busy || !instruction) { if (!instruction) YakuCommon.focus(el('quick-revise-instruction')); return; }
-      activeSourceSnapshot = el('quick-input').value.trim();
-      busy = true; revisionInFlight = true; jobStartedAt = Date.now(); update();
-      el('quick-revise-status').textContent = '指示に合わせて訳案を直しています。いまの訳案は、終わるまで変わりません。このまま待つだけで大丈夫です。';
-      renderJob('表現を直しています', 0, '', '');
-      var requestId = window.crypto.randomUUID().replace(/-/g, '');
-      YakuCommon.post('/api/quick/artifacts/' + encodeURIComponent(artifact.artifact_id) + '/revisions', {
-        expected_version: artifact.version,
-        instruction: instruction,
-        request_id: requestId
-      }).then(function (data) {
-        if (!data.job_id) throw new Error('直す作業を始められませんでした。もう一度「この指示で訳案を直す」を押してください。');
-        activeJobId = data.job_id;
-        poll(data.job_id);
-      }).catch(function (error) {
-        activeSourceSnapshot = ''; revisionInFlight = false; busy = false; activeJobId = ''; update();
-        el('quick-revise-status').textContent = '直せませんでした。いまの訳案は変わっていません。';
-        showError(error.message);
-      });
-    });
-    el('quick-promote').addEventListener('click', function () {
-      if (!artifact || !artifact.artifact_id) return;
-      var button = el('quick-promote'); button.disabled = true; button.textContent = '資料翻訳へ移しています…';
-      YakuCommon.post('/api/cat/promote', { artifact_id: artifact.artifact_id }).then(function (data) {
-        if (!data.project_id) throw new Error('資料翻訳へ移せませんでした。');
-        window.location.assign('/cat?project=' + encodeURIComponent(data.project_id));
-      }).catch(function (error) { button.disabled = false; button.textContent = PROMOTE_LABEL; showError(error.message); });
-    });
     /* 「翻訳をやめる」は、進捗表示のたびに作り直されるので document で受ける。 */
     document.addEventListener('click', function (event) {
       var button = event.target.closest('[data-yaku-cancel-job]');

@@ -44,13 +44,16 @@ $catHtml = Get-Content -LiteralPath (Join-Path $root 'www\cat.html') -Raw -Encod
 
 Write-Host 'Findings from using the app on the real screen stay fixed' -ForegroundColor Cyan
 
-# 1. 金額の注記は、金額があったときだけ
-Check-YakuUse ($quickJs -match 'function hasAmount') '金額があったかを見る関数がある'
-Check-YakuUse ($quickJs -match 'showNotation\s*=\s*toEnglish\s*&&\s*hasAmount\(') '注記は英訳かつ金額ありのときだけ'
-Check-YakuUse ($quickJs -notmatch "hidden\s*=\s*!toEnglish;") '英訳だけを条件にしていない'
-Check-YakuUse ($quickJs -match 'billion\|million\|trillion\|oku') '訳文の金額の書き方を見る'
+# 1. 金額の書き方は、選ぶところで言う（2026-08-13 に置き換えた）
+# もとは訳案のそばに「金額は ¥1,315 billion のように書いています」を出し、
+# 金額が1つも無い文にも出ていたのを、金額があるときだけに直したものだった。
+# 訳案カードを外したので、注記の置き場そのものが無くなった。選ぶところの
+# <option> が両方の例を並べて言っており、実際の書き方は確認画面の訳文に出る。
+# 守るのは「説明を2か所に持たない」と「選ぶ前に例が読める」こと。
+Check-YakuUse ($catHtml -match 'oku（1兆3,150億円' -and $catHtml -match 'billion（1兆3,150億円') '選ぶところに両方の例が出ている'
+Check-YakuUse ($quickJs -notmatch 'notationExample' -and $quickJs -notmatch 'hasAmount') '置き場の無い注記を作りに行かない'
+Check-YakuUse ($quickJs -match 'function notation\(') '既定は設定から読む（画面側で決めない）'
 # 原文はこの画面が持ち回らない（Quick の試験が固定している不変条件）。
-# 最初 source_text を見に行って、その試験に止められた。判定は訳文だけで足りる。
 Check-YakuUse ($quickJs -notmatch 'source_text') '原文には触らない'
 
 # 2. 保存した作業に、いつのものかを出す

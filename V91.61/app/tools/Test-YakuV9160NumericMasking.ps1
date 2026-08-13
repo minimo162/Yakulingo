@@ -828,7 +828,9 @@ $quickJsSrc = [IO.File]::ReadAllText((Join-Path $root 'www/assets/quick.js'))
 $settingsSrc = [IO.File]::ReadAllText((Join-Path $root 'src/Settings.ps1'))
 $serverSrc = [IO.File]::ReadAllText((Join-Path $root 'src/Server.ps1'))
 Assert-YakuMask ($quickPageSrc -match 'amount-notation' -and $quickPageSrc -match 'oku' -and $quickPageSrc -match 'billion') '画面で金額の書き方を選べる'
-Assert-YakuMask ($quickJsSrc -match 'quick-notation-hint') '訳文の隣にも書き方を出す'
+# 2026-08-13: 訳案カードを外したので、訳文の隣という置き場が無くなった。
+# 書き方は選ぶところの <option> が両方の例で言い、実際の書き方は確認画面の訳文に出る。
+Assert-YakuMask ($quickPageSrc -match 'oku（1兆3,150億円' -and $quickPageSrc -match 'billion（1兆3,150億円') '選ぶ前に、両方の書き方の例が読める'
 Assert-YakuMask ($quickJsSrc -match 'yaku-amount-notation') '画面側で既定を決めず、設定の値を読む'
 Assert-YakuMask ($settingsSrc -match "amount_notation.*Values=@\('oku','billion'\)") '設定は oku と billion の2つ'
 Assert-YakuMask ($serverSrc -match '/api/settings/amount-notation') '書き方を保存する入口がある'

@@ -286,11 +286,14 @@ Chk ([string]$texported.Text -match 'We will continue to monitor market conditio
 Chk ([string]$texported.Text -notmatch '今後も市場環境を注視してまいります。') '未訳原文を訳文一覧へ混ぜない'
 Remove-YakuCatProject -Id ([string]$tp.Id)
 
-# 画面に導線があること。ちょっと翻訳の本文をDOM経由で再POSTせず、
-# server内の一時artifactだけを資料翻訳へ昇格する。
+# 2026-08-13: 昇格（一時artifact -> 作業）は要らなくなった。貼り付けた文章は
+# 最初から作業として作られるので、移る段が無い。守るものは変わっていない
+# ＝「訳文をブラウザーから送り返さない」。原文だけを送る経路は、もともと
+# 「長い文章を貼り付ける」が通っていたものと同じ。
 $appJsText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'assets\cat.js'))
 $quickJsText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'assets\quick.js'))
-Chk ($quickJsText.Contains('/api/cat/promote') -and $quickJsText.Contains('artifact_id')) 'ちょっと翻訳から資料翻訳へserver artifactで昇格できる'
+Chk ($quickJsText.Contains('/api/cat/open') -and -not $quickJsText.Contains('/api/cat/promote')) '貼り付けた文章は最初から作業として作る'
+Chk (-not $quickJsText.Contains('translation:') -and -not $quickJsText.Contains('target_text')) '訳文を送り返す経路は作らない'
 $indexText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'cat.html'))
 # 貼り付けの入口は1つで、まずその場で訳す状態へ入る（2026-08-11）。長すぎて1回で
 # 送れないときだけ、貼り付けた本文をそのまま確認作業へ渡す。

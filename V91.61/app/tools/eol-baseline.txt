@@ -32,7 +32,6 @@ src/JobObject.ps1	crlf
 src/Paths.ps1	crlf
 src/PersonalGlossary.ps1	lf
 src/PromptBuilder.ps1	lf
-src/QuickArtifact.ps1	lf
 src/Runtime.ps1	crlf
 src/Selection.ps1	lf
 src/Server.ps1	crlf
@@ -93,7 +92,6 @@ tools/Test-YakuV9162Horizon1.ps1	lf
 tools/Test-YakuV9163VersionUpdate.ps1	crlf
 tools/Test-YakuV9163WordAdapter.ps1	crlf
 tools/Test-YakuV9164DualExperience.ps1	lf
-tools/Test-YakuV9164QuickArtifact.ps1	lf
 tools/Test-YakuV9165DesktopExperience.ps1	lf
 tools/Test-YakuV9165DesktopShell.ps1	lf
 tools/Test-YakuV9165DesktopTutorial.ps1	lf

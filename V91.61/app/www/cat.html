@@ -114,47 +114,14 @@
         </form>
 
         <section id="quick-job" class="result-target" aria-live="polite"></section>
-        <section id="quick-result" class="quick-result" aria-labelledby="quick-result-title" hidden>
-          <div class="result-card">
-            <div class="result-card-header"><div><span class="eyebrow">訳案</span><h3 id="quick-result-title"></h3></div></div>
-            <pre id="quick-result-text" class="translation"></pre><p id="quick-notation-hint" class="quick-notation-note" hidden></p>
-            <div class="result-actions">
-              <button id="quick-copy" type="button">コピー</button>
-              <button id="quick-revise-open" type="button" class="secondary-button" aria-expanded="false" aria-controls="quick-revise-form">この訳案を直す</button>
-              <button id="quick-promote" type="button" class="secondary-button">1文ずつ確認して保存する（あとから開けます）</button>
-            </div>
-            <form id="quick-revise-form" class="quick-revise-panel" hidden>
-              <div>
-                <h4>訳案の表現を直す</h4>
-                <p class="muted">直したい表現をCopilotに伝えます。原文の内容や数値を変えないよう依頼し、数値はアプリでも確認します。結果はご自身で確認してください。</p>
-              </div>
-              <label for="quick-revise-instruction">どこを、どう変えますか？</label>
-              <textarea id="quick-revise-instruction" rows="3" maxlength="300" placeholder="例：「Thank you for contacting me.」を「Thank you for your email.」に変える"></textarea>
-              <div class="result-actions">
-                <button id="quick-revise-submit" type="submit">この指示で訳案を直す</button>
-                <button id="quick-revise-cancel" type="button" class="secondary-button">やめる</button>
-              </div>
-            </form>
-            <p id="quick-revise-status" class="muted" role="status" aria-live="polite"></p>
-            <p id="quick-result-note" class="muted"></p>
-            <div id="quick-mask-summary" class="privacy-note mask-summary" hidden>
-              <p class="mask-summary-line"><strong id="quick-mask-count"></strong>を伏せてCopilotへ送り、訳案では元の数値に戻しました。</p>
-              <details id="quick-mask-detail" class="mask-detail" hidden>
-                <summary>伏せた数値を確かめる</summary>
-                <ul id="quick-mask-list" class="mask-list"></ul>
-                <p class="mask-detail-note">この一覧はこのパソコンの中だけで作っています。Copilotへは記号で送りました。</p>
-              </details>
-            </div>
-            <p id="quick-copy-status" class="muted" role="status" aria-live="polite"></p>
-            <textarea id="quick-copy-fallback" class="quick-copy-fallback" readonly hidden aria-label="コピー用の訳文"></textarea>
-          </div>
-        </section>
+        <!-- 訳案を1枚返すカード（コピー・この訳案を直す・1文ずつ確認して保存する）は
+             2026-08-13 に外した。貼り付けた文章も資料と同じ確認画面へ移るので、
+             出す場面が無くなった。訳文・伏せた数値・直す操作は、すべて確認画面が持つ。 -->
       </section>
 
-      <!-- 見出しは置かない。すぐ上のタブが「資料を訳す」と言っており、選ばれている印も
-           付いている。同じ語を2回書くのは、この画面から間引いてきたもの
-           （2026-08-12「見出しが言っていることを、本文で言い直さない」）。
-           読み上げには aria-labelledby でタブを見出しとして結び付けてある。 -->
+      <!-- 見出しは目には出さない。すぐ下の「Word・Excelを取り込む」が同じことを
+           言うので、2回書かない（2026-08-12「見出しが言っていることを、本文で
+           言い直さない」）。読み上げには sr-only の見出しを結び付けてある。 -->
       <section id="cat-picker" class="translate-form cat-picker" aria-labelledby="cat-docs-entry-title">
         <h2 id="cat-docs-entry-title" class="sr-only">資料から始める</h2>
 
@@ -172,7 +139,7 @@
              取り込みが主役に見えていた（2026-08-12、実機 1380px で確認）。 -->
         <div class="entry-secondary">
           <div class="entry-actions cat-entry-actions">
-            <button type="button" class="secondary-button" data-cat-source-show="file">Word・Excelを取り込む</button>
+            <button type="button" id="cat-open-file-entry" class="secondary-button" data-cat-source-show="file">Word・Excelを取り込む</button>
           </div>
           <!-- 資料の側にも同じことを書く（2026-08-13）。貼り付けの側にだけ書いてあり、
                資料を選んだ人は、外へ送ることも数値を伏せることも読まないまま
