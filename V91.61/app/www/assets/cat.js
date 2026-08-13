@@ -179,11 +179,11 @@
     if (translate) {
       translate.textContent = busy ? '翻訳しています…'
         : !ready ? 'Copilotを準備しています（数秒〜十数秒）'
-        : (project && Number(project.untranslated) <= 0) ? '訳案はすべてできています'
-        : '残りの訳案を作る';
+        : (project && Number(project.untranslated) <= 0) ? '訳していない行はありません'
+        : '訳していない行を訳す';
     }
     /* 塗ったボタンは、いつでも「次にやること」1つだけにする。訳案が全部できると
-       「残りの訳案を作る」は灰色の飾りになり、実際の次（取り出す）は輪郭線だけの
+       訳すボタンは灰色の飾りになり、実際の次（取り出す）は輪郭線だけの
        ボタンとして「ほかの資料に切り替える」と同じ見た目で並んでいた。
        訳す仕事が残っていないときは、主役を取り出す側へ渡す（2026-08-12）。 */
     var exportButton = el('cat-export');
@@ -522,7 +522,7 @@
       /* この行だけ Copilot へ送る／この行の訳文だけ写す。どちらも道が無く、
          「1文ずつ依頼するにはどうすればよいか」「1文だけコピーするにはどうしたら
          よいか」が分からなかった（2026-08-13、利用者の指摘）。まとめて行う道は
-         道具の帯の「残りの訳案を作る」「訳文をコピー」で、名前もそう言っている。 */
+         道具の帯にあり、どちらも名前で範囲を言っている。 */
       var rowPrimary = String(segment.translation || '').trim()
         ? '<button type="button" class="cat-op secondary-button" data-cat-copy-target="' + index + '">この行の訳文をコピー</button>'
         : '<button type="button" class="cat-op secondary-button" data-cat-translate-row="' + index + '">この行だけ訳す</button>';
@@ -574,7 +574,7 @@
      コピーに入れます。」と、起きることのほうを書いていた）。 */
   function outputGuidance() {
     var left = Math.max(0, Number(project.total) - Number(project.confirmed));
-    if (Number(project.untranslated) > 0) return '残り' + project.untranslated + '行の訳案を作ってください。';
+    if (Number(project.untranslated) > 0) return '先に、訳していない' + project.untranslated + '行を訳してください。';
     if (project.export_blocked) return '検査結果を確認し、必要な行を直してください。';
     if (left > 0) return 'まだ確認していない' + left + '行も、そのまま入ります。';
     return '';
@@ -615,7 +615,10 @@
     var draft = isFile && !sourceMissing && (project.document_format !== 'docx' || wordReady);
     /* 読み上げにも同じ言い方を出す。ここだけ硬い言い方にしない。 */
     el('cat-output-help').textContent = draft ? '原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。' : '';
-    el('cat-export').textContent = isFile ? (project.document_format === 'docx' && wordReady ? '訳文入りのWordを作る' : project.document_format === 'docx' ? '訳文をコピー' : '訳文入りのExcelを作る') : '訳文をコピー';
+    /* 行の操作に「この行の訳文をコピー」を足したので、帯の側は範囲を名乗る。
+       並べたときに、どちらが1行でどちらが全部なのかが名前だけで分かる
+       （2026-08-13、利用者の指摘「パッと見て分かりにくいかも」）。 */
+    el('cat-export').textContent = isFile ? (project.document_format === 'docx' && wordReady ? '訳文入りのWordを作る' : project.document_format === 'docx' ? 'すべての訳文をコピー' : '訳文入りのExcelを作る') : 'すべての訳文をコピー';
     /* 出せない理由は、押す前の常時表示ではなく取り出しダイアログの点検で出す。
        常時 35px を占めながら、ほぼ always「あと N 行」としか言っていなかった。 */
     el('cat-export-blocked').textContent = '';
@@ -751,8 +754,8 @@
       if (!jobContext || jobContext.token !== token) return;
       el('cat-job').innerHTML = jobHtml(id, data, startedAt);
       if (['done','completed_with_warnings'].indexOf(data.mode) >= 0) { setJobTitle('✔ 翻訳が終わりました'); YakuCommon.notifyDesktopShell('translation-finished'); finishJob(id, token); return; }
-      if (data.mode === 'cancelled') { setJobTitle(''); setBusy(false); el('cat-job').innerHTML = ''; status('翻訳をやめました。ここまでにできた訳文は保存されています。「残りの訳案を作る」を押すと続きから再開できます。'); return; }
-      if (['error','failed'].indexOf(data.mode) >= 0) { setJobTitle(''); setBusy(false); status(data.detail || '翻訳が途中で止まりました。ここまでにできた訳文は保存されています。もう一度「残りの訳案を作る」を押すと、続きから再開します。', true); return; }
+      if (data.mode === 'cancelled') { setJobTitle(''); setBusy(false); el('cat-job').innerHTML = ''; status('翻訳をやめました。ここまでにできた訳文は保存されています。「訳していない行を訳す」を押すと続きから再開できます。'); return; }
+      if (['error','failed'].indexOf(data.mode) >= 0) { setJobTitle(''); setBusy(false); status(data.detail || '翻訳が途中で止まりました。ここまでにできた訳文は保存されています。もう一度「訳していない行を訳す」を押すと、続きから再開します。', true); return; }
       setJobTitle(Math.round(Number(data.progress) || 0) + '% 翻訳中');
       jobTimer = window.setTimeout(function () { pollJob(id, token, 0); }, 1000);
     }).catch(function () {
@@ -784,8 +787,8 @@
   function translate() {
     var glossaryScope = null, jobScope = null;
     return flush().then(function () { glossaryScope = currentScope(); if (!glossaryScope) throw new Error('資料が開かれていません。「ほかの資料に切り替える」から選び直してください。'); setBusy(true); status('用語集を適用しています…'); return post('glossary', {}, true, glossaryScope); }).then(function (data) {
-      if (!scopeIsCurrent(glossaryScope, true) || !data || String(data.id || '') !== glossaryScope.id) throw new Error('表示している資料が切り替わったため、翻訳をやめました。もう一度「残りの訳案を作る」を押してください。');
-      project = data; jobScope = currentScope(); status('残りの訳案を作っています…'); return YakuCommon.postText('/api/cat/translate', { id: jobScope.id, expected_revision: jobScope.revision, mode: 'translate' });
+      if (!scopeIsCurrent(glossaryScope, true) || !data || String(data.id || '') !== glossaryScope.id) throw new Error('表示している資料が切り替わったため、翻訳をやめました。もう一度「訳していない行を訳す」を押してください。');
+      project = data; jobScope = currentScope(); status('訳していない行を訳しています…'); return YakuCommon.postText('/api/cat/translate', { id: jobScope.id, expected_revision: jobScope.revision, mode: 'translate' });
     }).then(function (html) { startJobHtml(html, { type: 'translate', scope: jobScope }); }).catch(function (error) { setBusy(false); status(error.message, true); });
   }
   /* 貼り付けから来たときだけ、そのまま訳しにいく。Copilot の準備は起動直後だと
@@ -1292,7 +1295,7 @@
          出して行き先を示さないと、利用者は資料の中を目で探すことになる。 */
       el('cat-export-qa').hidden = !blockers.length;
       el('cat-export-confirm').disabled = !data.eligible || mode === 'blocked';
-      el('cat-export-confirm').textContent = mode === 'copy_text' ? '訳文をコピー' : 'ファイルを作る';
+      el('cat-export-confirm').textContent = mode === 'copy_text' ? 'すべての訳文をコピー' : 'ファイルを作る';
       var dialog = el('cat-export-dialog'); dialog.returnValue = 'cancel'; dialog.showModal();
     }).catch(function (error) { setBusy(false); preflightScope = null; status(error.message, true); });
   }
@@ -1305,9 +1308,9 @@
   /* まだ一度も訳していない状態（作業を作った直後）を、指摘として数えない。
      数えていたころは、押した直後の画面に赤い「点検 2」が出て、開くと
      「ファイルを作れない指摘が 2 件あります／訳文が空 2」と出ていた。
-     利用者は何もしていない。次に押すのが「残りの訳案を作る」だと言うべき場面で、
+     利用者は何もしていない。次に押すのは訳すボタンだ、と言うべき場面で、
      欠陥の言い方をしていた（2026-08-13、初回利用者として実機で確認）。
-     同じ画面の「訳文を取り出す」は最初から「残り2行の訳案を作ってください。」と
+     同じ画面の取り出しボタンは、最初から「先に訳してください」と
      正しく言っていたので、言い方はそちらに合わせる。
      1行でも訳ができていれば、空の行は本物の指摘に戻る。 */
   function nothingTranslatedYet() {
@@ -1666,7 +1669,7 @@
     var blocking = groups.filter(function (group) { return group.blocking; }).reduce(function (sum, group) { return sum + group.items.length; }, 0);
     var unconfirmed = groups[2].items.length;
     el('cat-qa-summary').textContent = nothingTranslatedYet()
-      ? 'まだ訳していません。「残りの訳案を作る」を押すと、Copilotへ送ります。'
+      ? 'まだ訳していません。「訳していない行を訳す」を押すと、Copilotへ送ります。'
       : blocking
       ? ('ファイルを作れない指摘が ' + blocking + ' 件あります。' + (unconfirmed ? '未確認は ' + unconfirmed + ' 行です。' : ''))
       : (unconfirmed ? ('止まる指摘はありません。未確認は ' + unconfirmed + ' 行です。') : '指摘はありません。すべての行を確認し終えています。');
@@ -1864,7 +1867,7 @@
       if (button.hasAttribute('data-cat-change')) { currentChange = button.getAttribute('data-cat-change') || 'all'; return redrawAfterFlush(); }
       if (button.hasAttribute('data-cat-inspector')) { inspectorTab = button.getAttribute('data-cat-inspector') || 'candidates'; renderInspector(); return; }
       if (button.hasAttribute('data-yaku-cancel-job')) {
-        if (!window.confirm('翻訳をやめますか？\n\nここまでにできあがった訳文は保存されています。\nあとで「残りの訳案を作る」を押すと、続きから再開できます。')) return;
+        if (!window.confirm('翻訳をやめますか？\n\nここまでにできあがった訳文は保存されています。\nあとで「訳していない行を訳す」を押すと、続きから再開できます。')) return;
         button.disabled = true; button.textContent = 'やめています…';
         return YakuCommon.post('/api/cancel-translation', { job_id: button.getAttribute('data-yaku-cancel-job') })
           .catch(function (error) { status(error.message, true); });

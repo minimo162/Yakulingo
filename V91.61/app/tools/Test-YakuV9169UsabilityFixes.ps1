@@ -138,7 +138,16 @@ Check-YakuUse ($quickJs -notmatch "hidden = !text\.trim\(\) \|\| !explicitDirect
 # 正しく言っていたので、言い方はそちらへ揃える。1行でも訳ができれば指摘に戻る。
 Check-YakuUse ($catJs -match 'function nothingTranslatedYet') 'まだ一度も訳していない状態を見分ける'
 Check-YakuUse ($catJs -match '(?s)function qaFindings\(\)[\s\S]{0,600}?if \(nothingTranslatedYet\(\)\) return groups;') '訳す前は指摘を数えない'
-Check-YakuUse ($catJs -match 'まだ訳していません。「残りの訳案を作る」を押すと') '点検一覧は次にやることを書く'
+Check-YakuUse ($catJs -match 'まだ訳していません。「訳していない行を訳す」を押すと') '点検一覧は次にやることを書く'
+
+# 帯と行で、同じことを違う名前で呼んでいた（帯は「訳案」、行は「訳文」）。
+# 範囲も帯の側だけ名乗っていなかった（2026-08-13、利用者の指摘
+# 「パッと見て分かりにくいかも」）。並べて読めるように、範囲を名前へ入れる。
+#   訳す   この行だけ訳す        / 訳していない行を訳す
+#   コピー この行の訳文をコピー  / すべての訳文をコピー / 確認済みの行だけコピー
+Check-YakuUse ($catHtml -match '>訳していない行を訳す</button>') 'まとめて訳すボタンが範囲を名乗る'
+Check-YakuUse ($catJs -match "'すべての訳文をコピー'") 'まとめてコピーが範囲を名乗る'
+Check-YakuUse ($catJs -notmatch '残りの訳案を作る' -and $catHtml -notmatch '残りの訳案を作る') '古い呼び名を画面に残さない'
 
 # 出す先はファイルとは限らない。訳文のコピーはクリップボードへ写すだけで、
 # ファイルは作らない。作られていないものを作ったと言わない。

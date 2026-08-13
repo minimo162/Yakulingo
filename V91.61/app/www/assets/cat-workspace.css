@@ -74,7 +74,7 @@ body[data-cat-view="workspace"] #cat-instant { display: none; }
 body[data-cat-view="workspace"] #cat-picker { display: none; }
 
 /* 左上の資料名が切替口。押せることは分かる必要があるが、道具の帯の主役は
-   「残りの訳案を作る」なので、塗らずに下線と ▾ だけで示す。 */
+   訳すボタンなので、塗らずに下線と ▾ だけで示す。 */
 .app-cat .cat-doc-switch {
   display: inline-flex;
   align-items: baseline;
