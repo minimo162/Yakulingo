@@ -515,7 +515,11 @@
       var change = changeLabel(segment);
       return '<tr class="' + (isActive ? 'is-active' : '') + '" data-cat-row="' + index + '" data-cat-segment-id="' + esc(segment.segment_id || '') + '" data-cat-confirmed="' + (segment.confirmed ? '1' : '0') + '" data-yaku-cat-state="' + esc(state) + '">' +
         '<td class="cat-col-no"><span class="cat-card-label">行番号・状態</span>' + row + '<span class="cat-state cat-state-' + esc(state) + '" title="' + esc(stateTitle(state)) + '">' + stateIcon(state) + '<span>' + esc(stateLabel(state)) + '</span></span>' + ((change && isActive) ? '<span class="cat-change-badge cat-change-' + esc(changeGroup(segment)) + '" title="' + esc(changeTitle(segment)) + '">' + esc(change) + '</span>' : '') + '</td>' +
-        '<td class="cat-col-loc"><span class="cat-card-label">場所</span><span class="cat-location-main">' + esc(segment.location || '本文') + '</span><span class="cat-location-kind">' + esc(kind) + '</span>' + (Number(segment.repetition_count || 1) > 1 ? '<span class="cat-repetition" title="この原文は資料の中に ' + segment.repetition_count + ' 行あります。確認済みにすると、まだ訳が入っていない同じ原文の行へ同じ訳を入れます。">同じ原文×' + segment.repetition_count + '</span>' : '') + (origin ? '<span class="cat-origin">' + esc(origin) + '</span>' : '') + '</td>' +
+        /* 場所は幅が狭く、長いシート名だと番地まで届かない（実測 2026-08-13、
+           窓 1760px: 「2026年3月期 連結決算サマリー, AB123」は 366px 必要なのに
+           89px しか無く、番地が1文字も出ない）。どのセルかは Excel の作業では
+           いちばん要る情報なので、全文を title に持たせて指せば読めるようにする。 */
+        '<td class="cat-col-loc"><span class="cat-card-label">場所</span><span class="cat-location-main" title="' + esc(segment.location || '本文') + '">' + esc(segment.location || '本文') + '</span><span class="cat-location-kind">' + esc(kind) + '</span>' + (Number(segment.repetition_count || 1) > 1 ? '<span class="cat-repetition" title="この原文は資料の中に ' + segment.repetition_count + ' 行あります。確認済みにすると、まだ訳が入っていない同じ原文の行へ同じ訳を入れます。">同じ原文×' + segment.repetition_count + '</span>' : '') + (origin ? '<span class="cat-origin">' + esc(origin) + '</span>' : '') + '</td>' +
         /* 行の作りは、開いていても閉じていても同じ（原文｜訳文）。以前は開いた行だけ
            上下2段のカードに化けていたが、行を移るたびに表がずれて、いま何行目かを
            見失う。市販の CAT（memoQ・Trados・Phrase）はどれも表の形を保ったまま
@@ -531,11 +535,18 @@
     if (current) candidates(Number(current.index)); else { el('cat-candidate-count').textContent = '0'; el('cat-candidates-list').innerHTML = '<p class="muted">行がありません。左の「すべて」を押すと、全部の行が表示されます。</p>'; }
   }
 
+  /* 押せないボタンには「してください」、押せるボタンには「こうなります」を書く。
+     未確認が残っていても取り出せる決まりにした（2026-08-12）のに、押せる状態の
+     ボタンに「あと2行を確認済みにしてください。」と出していた。命令に読めるので、
+     押してはいけないのだと受け取られる（2026-08-13、初回利用者として実機で確認。
+     同じ場面の取り出しダイアログは「まだ確認していない行が 2 行あります。そのまま
+     コピーに入れます。」と、起きることのほうを書いていた）。 */
   function outputGuidance() {
     var left = Math.max(0, Number(project.total) - Number(project.confirmed));
     if (Number(project.untranslated) > 0) return '残り' + project.untranslated + '行の訳案を作ってください。';
-    if (left > 0) return 'あと' + left + '行を確認済みにしてください。';
-    return project.export_blocked ? '検査結果を確認し、必要な行を直してください。' : '';
+    if (project.export_blocked) return '検査結果を確認し、必要な行を直してください。';
+    if (left > 0) return 'まだ確認していない' + left + '行も、そのまま入ります。';
+    return '';
   }
   /* 「確認済みの行だけコピー」は、押せない理由をどこにも持っていなかった
      （実測 2026-08-13: title が空）。1行でも確認済みなら押せる決まりなので、
@@ -593,11 +604,15 @@
        ボタンから aria-describedby で指す。帯は畳んだままで、場所は取らない。 */
     el('cat-export').title = outputGuidance() || '';
     el('cat-export-reviewed').title = reviewedGuidance() || '';
+    saveStatus('保存済み', false); setBusy(false);
+    /* 押せる／押せないを決めるのは setBusy(false) なので、理由はそのあとで作る。
+       先に作っていたころは、待っているあいだの「全部押せない」状態を読んでいて、
+       押せるボタンにも「押せません」と書いていた（実測 2026-08-13:
+       「訳文をコピー」は disabled=false なのに読み上げ行は「押せません」）。 */
     var outputReasons = [];
     if (el('cat-export').disabled && outputGuidance()) outputReasons.push('「' + el('cat-export').textContent.trim() + '」が押せません。' + outputGuidance());
     if (el('cat-export-reviewed').disabled && reviewedGuidance()) outputReasons.push('「確認済みの行だけコピー」が押せません。' + reviewedGuidance());
     el('cat-output-reason').textContent = outputReasons.join(' ');
-    saveStatus('保存済み', false); setBusy(false);
     /* 資料名も残り行数も、ツールバーと左ナビが持っている。同じ数字を4か所へ書いて
        いた。この帯は「異常を知らせる」ときだけ使う。読み上げは sr-only の
        #cat-current-summary が担う。 */

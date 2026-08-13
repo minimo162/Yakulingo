@@ -151,5 +151,16 @@ Check-YakuUse ($tourJsUse -match 'box\.top < 12 \|\| box\.bottom > window\.inner
 Check-YakuUse ($catJs -match "(?s)function showStart\(mode\)[\s\S]{0,600}?block: 'nearest'") '開いた欄は最小の移動で見せる'
 Check-YakuUse ($catJs -notmatch "(?s)function showStart\(mode\) \{ closeStartPanels\(\); var panel[\s\S]{0,120}?YakuCommon\.focus\(") '中央へ寄せる作りに戻さない'
 
-if ($script:failed -gt 0) { Write-Host ('Usability tests failed: ' + $script:failed) -ForegroundColor Red; exit 1 }
+# 押せるボタンに「してください」と書かない。未確認が残っていても取り出せる決まりに
+# した（2026-08-12）のに、押せる状態のまま「あと2行を確認済みにしてください。」と
+# 出しており、命令に読めた。押せるボタンには起きることを書く。
+Check-YakuUse ($catJs -match 'まだ確認していない.{0,20}行も、そのまま入ります。') '押せるときは、起きることを書く'
+Check-YakuUse ($catJs -notmatch '行を確認済みにしてください。') '押せるボタンに命令を書かない'
+# 押せない理由は、押せるかどうかが決まったあとで作る。先に作ると、待っているあいだの
+# 「全部押せない」状態を読んで、押せるボタンにも「押せません」と書いてしまう。
+Check-YakuUse ($catJs -match "(?s)saveStatus\('保存済み', false\); setBusy\(false\);[\s\S]{0,400}?var outputReasons = \[\];") '押せない理由は、状態が決まってから作る'
+
+# Excel の場所は、どのセルかがいちばん要る情報。列が狭く、長いシート名だと番地まで
+# 届かない（実測 1760px: 366px 必要なところに 89px）。全文を指せば読めるようにする。
+Check-YakuUse ($catJs -match 'class="cat-location-main" title="') '場所は全文を指せば読める'
 Write-Host 'Usability tests passed.' -ForegroundColor Green

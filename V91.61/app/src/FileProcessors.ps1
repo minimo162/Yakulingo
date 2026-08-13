@@ -4099,15 +4099,36 @@ function Get-YakuOpenXmlFileInfo {
     $archive = [System.IO.Compression.ZipFile]::OpenRead($Path)
     try {
         $sample = ''
+        $texts = New-Object System.Collections.Generic.List[string]
         $shared = Get-YakuZipEntryBytes -Archive $archive -Name 'xl/sharedStrings.xml'
         if ($shared) {
             $xml = [System.Text.Encoding]::UTF8.GetString($shared)
-            $texts = New-Object System.Collections.Generic.List[string]
             foreach ($m in ([regex]::Matches($xml, '(?is)<t(?:\s[^>]*)?>(.*?)</t>') | Select-Object -First 200)) {
                 $texts.Add([System.Net.WebUtility]::HtmlDecode($m.Groups[1].Value)) | Out-Null
             }
-            $sample = ($texts.ToArray() -join "`n")
         }
+        # 文字列を共有表に置かず、セルの中へ直に書くブックがある（t="inlineStr"）。
+        # Excel 自身は共有表を使うが、他の道具が書き出した .xlsx はこちらが多い。
+        # 共有表しか見ていなかったので、そういうブックでは原文を1文字も読めず、
+        # 訳す向きが毎回「決められません」になっていた（2026-08-13、実機で確認。
+        # 13セルすべて inlineStr のブックで sharedStrings.xml が無く、判定に渡る
+        # 文字列が空だった）。行の取り出しのほうは最初から読めていて、同じブックから
+        # 10行できていたので、読めていなかったのは判定だけである。
+        if ($texts.Count -lt 1) {
+            foreach ($entry in @($archive.Entries | Where-Object { $_.FullName -like 'xl/worksheets/*.xml' })) {
+                if ($texts.Count -ge 200) { break }
+                $bytes = Get-YakuZipEntryBytes -Archive $archive -Name ([string]$entry.FullName)
+                if (-not $bytes) { continue }
+                $sheetXml = [System.Text.Encoding]::UTF8.GetString($bytes)
+                foreach ($m in [regex]::Matches($sheetXml, '(?is)<is>(.*?)</is>')) {
+                    if ($texts.Count -ge 200) { break }
+                    foreach ($t in [regex]::Matches($m.Groups[1].Value, '(?is)<t(?:\s[^>]*)?>(.*?)</t>')) {
+                        $texts.Add([System.Net.WebUtility]::HtmlDecode($t.Groups[1].Value)) | Out-Null
+                    }
+                }
+            }
+        }
+        if ($texts.Count -gt 0) { $sample = ($texts.ToArray() -join "`n") }
         $analysis = if (Get-Command Get-YakuDirectionAnalysis -ErrorAction SilentlyContinue) { Get-YakuDirectionAnalysis -Text $sample } else { [pscustomobject]@{ Direction='to_en'; Confidence='low'; Reason='detector-unavailable' } }
         $direction = [string]$analysis.Direction
         $sheets = @($snapshot.SheetNames | ForEach-Object { [pscustomobject]@{ Name=[string]$_; UsedRange='-'; ShapeCount=0; ChartCount=0 } })
