@@ -30,6 +30,20 @@ Assert-YakuDesktopShell ($text -match 'ModControl \| ModAlt \| ModNoRepeat, VkJ'
 # 決定（「利用者は Ctrl+Alt+J を押すだけ。office は COM、それ以外は Ctrl+C」）で
 # Office 以外への疑似 Ctrl+C を入れたため、語ではなく守るべき性質を検査する。
 Assert-YakuDesktopShell ($text -notmatch 'SetWindowsHookEx|RegisterRawInputDevices') 'shell must not monitor input'
+# 確認作業の窓は、画面の作業領域から決める（2026-08-13）。1400x900 で固定していたため、
+# 1920px の画面でも 1400px に縮め、原文と訳文へ回せる幅を自分で捨てていた。
+# 実測: 1380px で 1列 421px、1760px（新しい既定）で 443px かつ資料一覧つき。
+Assert-YakuDesktopShell ($text -match 'private Size PreferredCatWindowSize\(\)') 'cat window size must be derived, not a constant'
+Assert-YakuDesktopShell ($text -match 'Screen\.FromControl\(this\)\.WorkingArea') 'cat window size must come from the screen working area'
+Assert-YakuDesktopShell ($text -match 'Math\.Min\(work\.Width - 64, 1760\)') 'cat window must stop widening at a readable limit'
+Assert-YakuDesktopShell ($text -match 'if \(catWindowSizeChosenByUser\) return catWindowSize;') 'a size the user chose must win over the computed one'
+Assert-YakuDesktopShell ($text -notmatch 'Size = catWindowSize;') 'the fixed 1400x900 must not be applied directly any more'
+# 大きさだけ変えると窓が画面の外へ出る。実機で確認（2026-08-13）: ホームの窓は
+# 中央寄せで x=340 に居り、幅 1760 にすると右端が 2100 となって画面（1920）から
+# 180px はみ出していた。直したあとは 1760x1040 at (160,112) で収まる。
+Assert-YakuDesktopShell ($text -match 'private void ApplyCatWindowSize\(Size target\)') 'resizing the cat window must go through one place'
+Assert-YakuDesktopShell ($text -match 'if \(x \+ target\.Width > work\.Right\) x = work\.Right - target\.Width;') 'the window must be pulled back inside the screen when it grows'
+Assert-YakuDesktopShell ($text -match 'Location = new Point\(x, y\);') 'growing the window must also move it'
 Assert-YakuDesktopShell ($text -match 'GetClipboardSequenceNumber\(\) == before\) continue') 'stale clipboard must never be read as a selection'
 Assert-YakuDesktopShell ((([regex]::Matches($text, 'Clipboard\.GetText')).Count -eq 1) -and $text -match 'private string CopySelectionFromForeground') 'clipboard may be read only in the hotkey copy path'
 Assert-YakuDesktopShell ($text -notmatch 'Clipboard\.SetText|Clipboard\.SetDataObject') 'shell must not write the clipboard (no restore attempt)'

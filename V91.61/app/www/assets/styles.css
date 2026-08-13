@@ -532,7 +532,14 @@ summary { cursor: pointer; color: var(--text); font-size: var(--font-meta); min-
 .cat-instant { width: 100%; }
 /* Ctrl+Alt+J で出る小さな窓では、画面全体の見出しに押し下げられて、読み込んだ
    文章が見えなくなる（実機で確認）。始める画面では見出しを1つにする。 */
-body[data-cat-view="start"] .workspace-heading { display: none; }
+/* 画面からは消すが、文書からは消さない。display:none にしていたため h1 が
+   読み上げの見出し一覧から丸ごと落ち、その場で訳す側は H2、資料側は H3 から
+   始まる文書になっていた（実測 2026-08-13: 可視の h1 は0個）。
+   場所は取らせず、読み上げには残す。 */
+body[data-cat-view="start"] .workspace-heading {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
 /* 貼り付け欄は始める画面の中身なので、カードの中にカードを置かない。 */
 .quick-inline { display: block; }
 /* 実測（窓 1380x860）: 325px の入力欄だと、下の「Word・Excelを取り込む」(900px) と

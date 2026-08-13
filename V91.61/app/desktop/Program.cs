@@ -277,7 +277,44 @@ namespace YakuLingo.Desktop
         private string loadedPath = "";
         private string navigatingPath = "";
         private Size quickWindowSize = new Size(650, 640);
+        // 確認作業の窓。1400x900 で固定していたため、1920px の画面でも 1400px に
+        // 縮めており、原文と訳文の列に回せる幅を自分で捨てていた（実測 2026-08-13:
+        // 1920px なら 1列 501px 取れるのに、1400px では 421px）。画面の作業領域から
+        // 決める。利用者が自分で変えたら RememberCurrentWindowSize がここへ書き戻す
+        // ので、以後はその大きさが優先される。
         private Size catWindowSize = new Size(1400, 900);
+        private bool catWindowSizeChosenByUser;
+        private Size PreferredCatWindowSize()
+        {
+            if (catWindowSizeChosenByUser) return catWindowSize;
+            Rectangle work;
+            try { work = Screen.FromControl(this).WorkingArea; }
+            catch { return catWindowSize; }
+            // 端に少し余白を残す。上限は、これ以上広げても1行が長くなりすぎる幅で止める。
+            int width = Math.Min(work.Width - 64, 1760);
+            int height = Math.Min(work.Height - 64, 1040);
+            if (width < 900) width = Math.Min(work.Width, 900);
+            if (height < 620) height = Math.Min(work.Height, 620);
+            return new Size(width, height);
+        }
+        // 大きさだけ変えると、窓が画面の外へ出る。実機で確認（2026-08-13）:
+        // ホームの窓は中央寄せで x=340 に居り、そこから幅 1760 にすると右端が 2100 と
+        // なって、画面（1920）から 180px はみ出していた。広げたら位置も戻す。
+        private void ApplyCatWindowSize(Size target)
+        {
+            MinimumSize = new Size(900, 620);
+            Size = target;
+            Rectangle work;
+            try { work = Screen.FromControl(this).WorkingArea; }
+            catch { return; }
+            int x = Left;
+            int y = Top;
+            if (x + target.Width > work.Right) x = work.Right - target.Width;
+            if (y + target.Height > work.Bottom) y = work.Bottom - target.Height;
+            if (x < work.Left) x = work.Left;
+            if (y < work.Top) y = work.Top;
+            Location = new Point(x, y);
+        }
         private Size homeWindowSize = new Size(1240, 840);
         private Process backendProcess;
         private Icon appIcon;
@@ -570,10 +607,10 @@ namespace YakuLingo.Desktop
             {
                 desiredRoute = "/cat";
                 desiredQuery = webView.Source.Query;
-                if (WindowState == FormWindowState.Normal && Width < catWindowSize.Width && !catWindowResizedByUser)
+                Size preferredCat = PreferredCatWindowSize();
+                if (WindowState == FormWindowState.Normal && Width < preferredCat.Width && !catWindowResizedByUser)
                 {
-                    MinimumSize = new Size(900, 620);
-                    Size = catWindowSize;
+                    ApplyCatWindowSize(preferredCat);
                     catWindowResizedByUser = true;
                 }
             }
@@ -626,10 +663,10 @@ namespace YakuLingo.Desktop
                     // 確認作業は3列で、狭いとツールバーが折り返す。画面を一つに
                     // したので、その場で訳す状態から画面遷移なしで確認作業へ入る
                     // 道ができた。NavigationCompleted の広げ直しはその道を通らない。
-                    if (WindowState == FormWindowState.Normal && Width < catWindowSize.Width && !catWindowResizedByUser)
+                    Size preferredCatOpen = PreferredCatWindowSize();
+                    if (WindowState == FormWindowState.Normal && Width < preferredCatOpen.Width && !catWindowResizedByUser)
                     {
-                        MinimumSize = new Size(900, 620);
-                        Size = catWindowSize;
+                        ApplyCatWindowSize(preferredCatOpen);
                         catWindowResizedByUser = true;
                     }
                 }
@@ -879,7 +916,7 @@ namespace YakuLingo.Desktop
             bool changed = !String.Equals(desiredRoute, "/cat", StringComparison.OrdinalIgnoreCase);
             desiredRoute = "/cat";
             MinimumSize = new Size(900, 620);
-            if (changed) Size = catWindowSize;
+            if (changed) Size = PreferredCatWindowSize();
             ShowAndActivate();
             if (!String.IsNullOrEmpty(activeBaseUrl)) NavigateDesired(); else if (webReady) ShowLocalWaitingPage(false);
         }
@@ -910,7 +947,7 @@ namespace YakuLingo.Desktop
         {
             if (WindowState != FormWindowState.Normal || Width < MinimumSize.Width || Height < MinimumSize.Height) return;
             if (String.Equals(desiredRoute, "/quick", StringComparison.OrdinalIgnoreCase)) quickWindowSize = Size;
-            else if (String.Equals(desiredRoute, "/cat", StringComparison.OrdinalIgnoreCase)) catWindowSize = Size;
+            else if (String.Equals(desiredRoute, "/cat", StringComparison.OrdinalIgnoreCase)) { catWindowSize = Size; catWindowSizeChosenByUser = true; }
             else homeWindowSize = Size;
         }
 

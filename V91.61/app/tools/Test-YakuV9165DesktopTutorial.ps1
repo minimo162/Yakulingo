@@ -55,7 +55,10 @@ Check-YakuTutorial ($tutorialCompletedBody -ne '' -and $tutorialCompletedBody.Co
 #   送る境界:     「訳案を作る」を押すまで送らない
 # 送信ボタンの名前も「翻訳」から変わっている。実物の名前で書く。
 Check-YakuTutorial ($html.Contains('読み込むのは押した時だけ')) 'tutorial states when text is read from the foreground app'
-Check-YakuTutorial ($html.Contains('「訳案を作る」を押した文章だけ')) 'the about page states the explicit-send boundary with the real button name'
+# 2026-08-13: ボタン名が「訳して確認する」へ変わり、資料の文も同じ経路で送るように
+# なったので、送るものの範囲も書き足した。守るのは「実物の名前で、押すまで送らないと書く」。
+Check-YakuTutorial ($html.Contains('「訳して確認する」を押した文章')) 'the about page states the explicit-send boundary with the real button name'
+Check-YakuTutorial ($html.Contains('ファイルそのものは送りません')) 'the about page says the file itself is not sent'
 Check-YakuTutorial (-not ($html -match '文章は自動では読み取りません|貼り付けて「翻訳」を押す')) 'the retired no-reading claim must not come back'
 # 2026-08-12（同日追記）: 「Outlook などからは読み込めない」と書いたが、実装は
 # Office 以外でも疑似 Ctrl+C を送ってクリップボードから読む（Program.cs の
@@ -67,7 +70,9 @@ Check-YakuTutorial ($html.Contains('選択範囲をそのまま読みます') -a
 $shellSourceForTutorial = Read-YakuTutorialFile 'desktop\Program.cs'
 Check-YakuTutorial ($shellSourceForTutorial.Contains('CopySelectionFromForeground') -and $shellSourceForTutorial.Contains('GetClipboardSequenceNumber')) 'the described clipboard path still exists in the shell'
 $quickClientForTutorial = Read-YakuTutorialFile 'www\assets\quick.js'
-Check-YakuTutorial ($quickClientForTutorial.Contains("'訳案を作る'") -and $quickClientForTutorial.Contains('/api/quick/selection')) 'the tutorial button name and the reading path still exist in the app'
+# 2026-08-13: ボタンの文言を「訳して確認する」へ変えた（押した先が確認画面に
+# なったため）。説明ページが指すボタン名は、実物と一致していなければならない。
+Check-YakuTutorial ($quickClientForTutorial.Contains("'訳して確認する'") -and $quickClientForTutorial.Contains('/api/quick/selection')) 'the tutorial button name and the reading path still exist in the app'
 # 2026-08-12: 自動起動を既定オフ（オプトイン）にした。実測で、これが節約するのは
 # Copilot の準備 4.3〜15秒。代わりに常駐して 850ms ごとの死活確認を回し続ける
 # （Program.cs の backendTimer）。同じ形の道具でも QTranslate は利用者が入れる

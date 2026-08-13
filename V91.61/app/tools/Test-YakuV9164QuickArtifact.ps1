@@ -175,8 +175,11 @@ Check-YakuQuick ($quickClient -notmatch "quick-promote'\)\.hidden = !toEnglish")
 Check-YakuQuick ($quickClient -match 'PROMOTE_LABEL' -and ($quickClient -split '資料翻訳で1文ずつ確認する').Count -eq 1) '昇格ボタンの文言が1つに揃っている'
 # 「保存しません」が昇格で反転することを、押す前に書く。
 Check-YakuQuick ($quickPage -match '1文ずつ確認して保存する') '移した先では保存されると押す前に書く'
-# 用語集が Quick に効かないことを、登録した人が読む場所に書く。
-Check-YakuQuick ($quickPage -match '登録した訳語も使いません') '用語集が効かない境界を画面に書く'
+# 2026-08-13 に利用者判断で変更（「保存しない約束は要らない」）。
+# 貼り付けた文章も資料と同じ経路になったので、用語集も過去訳も効く。
+# 「使いません」と書くほうが嘘になった。押す前に、移る先と保存されることを書く。
+Check-YakuQuick ($quickPage -notmatch '登録した訳語も使いません') '効かないという古い断りを残さない'
+Check-YakuQuick ($quickPage -match '1行ずつ確認する画面に移ります' -and $quickPage -match '保存される') '移る先と保存されることを押す前に書く'
 # 文数不一致のとき、サーバは訳案全文を保持する。画面がそれを読まないと「移したら訳が消えた」になる。
 Check-YakuQuick ($catClient2 -match 'promotion_reference_translation' -and $catPage2 -match 'id="cat-promotion-reference"') '行に割り当てできなかった訳案を画面に残す'
 

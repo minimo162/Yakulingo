@@ -1,5 +1,20 @@
 ﻿(function () {
   'use strict';
+  /* 「使い方を見る」は /cat?tour=1 へ来る。ところが下の syncLocation がアドレスを
+     /cat（いまは /cat?tab=quick）へ書き換えるため、tour.js が読む前に tour=1 が消え、
+     案内がいつまでも始まらなかった。実測 2026-08-13: /cat?tour=1 を開くと
+     アドレスは /cat?tab=quick、meta は空、案内の要素は0個。
+     変更前のコードも /cat へ書き換えていたので、これは前からの不具合である。
+
+     ここで meta へ写しておく。cat.js は tour.js より先に読まれ、この即時実行は
+     start() より前に走るので、アドレスが書き換わるより先に印が残る。
+     tour.js の wanted() は meta を先に見る。 */
+  try {
+    if (new URLSearchParams(window.location.search).get('tour') === '1') {
+      var tourMeta = document.querySelector('meta[name="yaku-tour"]');
+      if (tourMeta) tourMeta.setAttribute('content', '1');
+    }
+  } catch (_) {}
   var ready = false, busy = false, project = null, pendingDirection = null, uploaded = null;
   var dirty = new Map(), saveChain = Promise.resolve(), jobTimer = null, jobContext = null, candidateSeq = 0;
   var deleteTarget = null, preflightScope = null, jobSerial = 0, viewEpoch = 0, outputScope = null;
@@ -84,8 +99,58 @@
   function syncLocation(projectId) {
     try {
       var next = projectId ? ('/cat?project=' + encodeURIComponent(projectId)) : '/cat';
+      if (currentTab === 'quick') next += (next.indexOf('?') === -1 ? '?' : '&') + 'tab=quick';
       if (location.pathname + location.search !== next) window.history.replaceState(null, '', next);
     } catch (_) {}
+  }
+  /* 上の帯（その場で訳す／資料を訳す）。資料を開いても消えないので、
+     どちらへも1回で戻れる。開いている資料はそのまま残す（読み直さない）ので、
+     戻ったときに同じ行・同じ位置から続けられる。 */
+  var currentTab = 'quick';
+  function tabPanelFor(name) { return name === 'docs' ? el('cat-picker') : el('cat-instant'); }
+  function setTab(name, options) {
+    var next = (name === 'docs') ? 'docs' : 'quick';
+    var opts = options || {};
+    var changed = next !== currentTab;
+    currentTab = next;
+    document.body.setAttribute('data-cat-tab', currentTab);
+    document.querySelectorAll('[data-cat-tab-to]').forEach(function (tab) {
+      var selected = tab.getAttribute('data-cat-tab-to') === currentTab;
+      tab.setAttribute('aria-selected', selected ? 'true' : 'false');
+      /* 選ばれていないタブも Tab キーで飛べる必要はない。矢印で移る作法に揃える。 */
+      tab.tabIndex = selected ? 0 : -1;
+    });
+    if (changed && !opts.silent) {
+      /* 履歴に積む。いままで replaceState だけだったので、ブラウザの戻るを押すと
+         画面が戻らずアプリの外へ出ていた（実測 2026-08-13: historyLength が
+         3 のまま変わらない）。 */
+      try { window.history.pushState({ yakuTab: currentTab }, '', tabUrl(currentTab)); } catch (_) {}
+    }
+    if (changed && opts.focusPanel) {
+      var panel = tabPanelFor(currentTab);
+      var first = panel && panel.querySelector('textarea,input,button:not([disabled]),[href]');
+      if (first) YakuCommon.focus(first);
+    }
+  }
+  function tabUrl(name) {
+    var base = (project && project.id) ? ('/cat?project=' + encodeURIComponent(String(project.id))) : '/cat';
+    if (name === 'quick') base += (base.indexOf('?') === -1 ? '?' : '&') + 'tab=quick';
+    return base;
+  }
+  /* 資料のタブに、開いている資料と保存した作業の件数を出す。押す前に、
+     そちらに何があるかが分かるようにする。 */
+  function updateTabCount() {
+    var badge = el('cat-tab-docs-count');
+    if (!badge) return;
+    var count = resumeItems.length;
+    badge.hidden = count < 1;
+    badge.textContent = count ? String(count) : '';
+    var docsTab = document.querySelector('[data-cat-tab-to="docs"]');
+    if (docsTab) {
+      docsTab.setAttribute('aria-label', project && project.id
+        ? ('資料を訳す（' + String(project.file_name || '資料') + ' を開いています）')
+        : (count ? ('資料を訳す（保存した作業 ' + count + '件）') : '資料を訳す'));
+    }
   }
   function clearOutputDisplay() {
     outputScope = null;
@@ -171,6 +236,25 @@
   var resumeItems = [];
   var resumeExpanded = false;
 
+  /* いつ保存したか。同じ資料を2回取り込むと、名前も残り行数も同じ行が並び、
+     どちらが新しいか画面から判断できなかった（実測 2026-08-13: 「spec.docx・
+     英語に訳す作業・あと258行」が2件、区別できる情報なし）。時刻はサーバから
+     saved で既に届いていたので、出すだけでよい。 */
+  function savedLabel(iso) {
+    if (!iso) return '';
+    var when = new Date(iso);
+    if (isNaN(when.getTime())) return '';
+    var hm = String(when.getHours()).padStart(2, '0') + ':' + String(when.getMinutes()).padStart(2, '0');
+    var today = new Date();
+    var sameDay = function (a, b) {
+      return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    };
+    if (sameDay(when, today)) return '今日 ' + hm;
+    var yesterday = new Date(today.getTime() - 86400000);
+    if (sameDay(when, yesterday)) return '昨日 ' + hm;
+    return (when.getMonth() + 1) + '月' + when.getDate() + '日 ' + hm;
+  }
+
   function renderRecent() {
     var list = el('cat-resume-list');
     var more = el('cat-resume-more');
@@ -178,8 +262,9 @@
     list.innerHTML = shown.map(function (item, i) {
       var remaining = Math.max(0, Number(item.total) - Number(item.confirmed));
       var name = esc(item.file_name || '名称未設定');
+      var saved = savedLabel(item.saved);
       return '<div class="cat-resume-row">' +
-        '<button type="button" class="cat-resume-card secondary-button" data-cat-resume="' + esc(item.id) + '">' + (i === 0 ? '<span class="cat-resume-recent">前回開いた作業</span>' : '') + '<span>' + name + '・' + esc(directionName(item.direction)) + '・' + (remaining ? 'あと' + remaining + '行' : '確認完了') + '</span></button>' +
+        '<button type="button" class="cat-resume-card secondary-button" data-cat-resume="' + esc(item.id) + '">' + (i === 0 ? '<span class="cat-resume-recent">前回開いた作業</span>' : '') + '<span>' + name + '・' + esc(directionName(item.direction)) + '・' + (remaining ? 'あと' + remaining + '行' : '確認完了') + '</span>' + (saved ? '<span class="cat-resume-time">' + esc(saved) + '</span>' : '') + '</button>' +
         '<button type="button" class="cat-resume-drop secondary-button" data-cat-resume-drop="' + esc(item.id) + '" data-cat-resume-revision="' + (Number(item.revision) || 0) + '" data-cat-resume-name="' + name + '" title="この作業を一覧から消す" aria-label="' + name + ' の作業を消す">消す</button>' +
         '</div>';
     }).join('');
@@ -187,6 +272,10 @@
     more.hidden = hiddenCount <= 0;
     more.textContent = resumeExpanded ? '直近3件だけ表示する' : ('保存した作業をすべて表示（あと' + hiddenCount + '件）');
     more.setAttribute('aria-expanded', resumeExpanded ? 'true' : 'false');
+    updateTabCount();
+    /* 左の資料一覧も同じ元データで描く。読み込みが終わってから呼ぶ必要がある
+       （開いた時点では resumeItems がまだ空のことがある）。 */
+    if (el('cat-editor-layout') && el('cat-editor-layout').classList.contains('is-docs-open')) renderDocsPane();
   }
 
   function loadRecent() {
@@ -445,7 +534,10 @@
          the cell on the right"／未確認でも自動保存）で、押して開く段は無い。
          開いている行だけは、下に操作と点検結果を出す。 */
       var editor = '<textarea rows="1" data-cat-input="' + index + '" data-cat-project-id="' + esc(project.id) + '" data-original="' + esc(segment.translation || '') + '" aria-label="' + row + '行目の訳文" aria-invalid="' + (findings.length ? 'true' : 'false') + '"' + (findings.length ? ' aria-describedby="' + findingId + '"' : '') + '>' + esc(segment.translation || '') + '</textarea>';
-      var extras = !isActive ? '' : prior + referenceTrace + generatedTerms + '<div class="cat-row-primary">' + (segment.confirmed ? '<button type="button" class="cat-op secondary-button" data-cat-unconfirm="' + index + '">' + icon('i-undo') + '確認を取り消す</button>' : '<button type="button" class="cat-op cat-op-ok" data-cat-confirm="' + index + '">' + icon('i-reviewed') + '確認済みにする</button>') + '</div><details class="cat-more-row"><summary>そのほかの操作</summary><div class="cat-ops">' + ops + '</div>' + '<button type="button" class="cat-op secondary-button" data-cat-revert="' + index + '" hidden>編集を取り消す</button>' + (segment.translation ? '<button type="button" class="cat-op secondary-button" data-cat-term-open="' + index + '">用語を登録</button>' : '') + ((segment.kind === 'cell' && segment.translation && String(segment.source).length <= 40) ? '<button type="button" class="cat-op secondary-button" data-cat-glossary="' + index + '">このセルの訳を今後も自動で使う</button>' : '') + '</details>' + qc + compare + (segment.can_revise ? '<details class="cat-more-row"><summary>Copilotに直してもらう</summary><form class="revise-form" data-cat-revise="' + index + '"><button class="secondary-button" type="button" data-cat-shorten="' + index + '">短くする</button><label class="revise-label">または、どこをどう直すか入力</label><div class="revise-row"><input class="revise-input" type="text" placeholder="例：「increase」を「rise」に変える"><button class="secondary-button" type="submit">この指示で直す</button></div></form></details>' : '');
+      var extras = !isActive ? '' : prior + referenceTrace + generatedTerms + '<div class="cat-row-primary">' + (segment.confirmed ? '<button type="button" class="cat-op secondary-button" data-cat-unconfirm="' + index + '">' + icon('i-undo') + '確認を取り消す</button>' : /* 押しどころでキーの名前も言う。一覧は「そのほか」→「キーボード操作」の
+   2段の折りたたみの中にあり、開くまで見えなかった（実測 2026-08-13）。
+   1行ずつ確定していく作業なので、いちばん押す操作のそばに置く。 */
+        '<button type="button" class="cat-op cat-op-ok" data-cat-confirm="' + index + '" title="確認して次の行へ（Ctrl+Enter）" aria-keyshortcuts="Control+Enter">' + icon('i-reviewed') + '確認済みにする<span class="cat-op-key" aria-hidden="true">Ctrl+Enter</span></button>') + '</div><details class="cat-more-row"><summary>そのほかの操作</summary><div class="cat-ops">' + ops + '</div>' + '<button type="button" class="cat-op secondary-button" data-cat-revert="' + index + '" hidden>編集を取り消す</button>' + (segment.translation ? '<button type="button" class="cat-op secondary-button" data-cat-term-open="' + index + '">用語を登録</button>' : '') + ((segment.kind === 'cell' && segment.translation && String(segment.source).length <= 40) ? '<button type="button" class="cat-op secondary-button" data-cat-glossary="' + index + '">このセルの訳を今後も自動で使う</button>' : '') + '</details>' + qc + compare + (segment.can_revise ? '<details class="cat-more-row"><summary>Copilotに直してもらう</summary><form class="revise-form" data-cat-revise="' + index + '"><button class="secondary-button" type="button" data-cat-shorten="' + index + '">短くする</button><label class="revise-label">または、どこをどう直すか入力</label><div class="revise-row"><input class="revise-input" type="text" placeholder="例：「increase」を「rise」に変える"><button class="secondary-button" type="submit">この指示で直す</button></div></form></details>' : '');
       var change = changeLabel(segment);
       return '<tr class="' + (isActive ? 'is-active' : '') + '" data-cat-row="' + index + '" data-cat-segment-id="' + esc(segment.segment_id || '') + '" data-cat-confirmed="' + (segment.confirmed ? '1' : '0') + '" data-yaku-cat-state="' + esc(state) + '">' +
         '<td class="cat-col-no"><span class="cat-card-label">行番号・状態</span>' + row + '<span class="cat-state cat-state-' + esc(state) + '" title="' + esc(stateTitle(state)) + '">' + stateIcon(state) + '<span>' + esc(stateLabel(state)) + '</span></span>' + ((change && isActive) ? '<span class="cat-change-badge cat-change-' + esc(changeGroup(segment)) + '" title="' + esc(changeTitle(segment)) + '">' + esc(change) + '</span>' : '') + '</td>' +
@@ -471,11 +563,25 @@
     if (left > 0) return 'あと' + left + '行を確認済みにしてください。';
     return project.export_blocked ? '検査結果を確認し、必要な行を直してください。' : '';
   }
+  /* 「確認済みの行だけコピー」は、押せない理由をどこにも持っていなかった
+     （実測 2026-08-13: title が空）。1行でも確認済みなら押せる決まりなので、
+     言うべきことは「まだ1行も無い」か「保存していない編集がある」かの2つ。 */
+  function reviewedGuidance() {
+    if (!project) return '';
+    if (dirty.size > 0) return '編集中の行があります。保存してからお使いください。';
+    if (Number(project.confirmed) <= 0) return 'まだ確認済みの行がありません。1行でも確認済みにすると押せます。';
+    return '';
+  }
   function render(data, focusFirst) {
     var previousProjectId = project ? String(project.id || '') : '';
     if (data) project = data;
     if (!project) return;
+    /* 資料を開いたら資料のタブへ移す。利用者が自分でその場で訳す側を選んでいる
+       ときは奪わない（開いたままにしておく決まりなので、戻れば続きが出る）。 */
+    if (currentTab !== 'quick' || !previousProjectId) setTab('docs', { silent: true });
     syncLocation(String(project.id || ''));
+    updateTabCount();
+    if (el('cat-editor-layout').classList.contains('is-docs-open')) renderDocsPane();
     if (previousProjectId && previousProjectId !== String(project.id || '')) { activeSegmentId = ''; activeIndex = -1; revisionComparison = null; currentFilter = 'actionable'; currentLocation = 'all'; currentChange = 'all'; }
     if (outputScope && (outputScope.id !== String(project.id || '') || outputScope.revision !== revision())) clearOutputDisplay();
     dirty.clear(); candidateSeq++;
@@ -496,14 +602,31 @@
     var wordReady = project.document_format === 'docx' && project.word_file_output_supported && !sourceMissing;
     var draft = isFile && !sourceMissing && (project.document_format !== 'docx' || wordReady);
     /* 読み上げにも同じ言い方を出す。ここだけ硬い言い方にしない。 */
-    el('cat-output-help').textContent = draft ? '原本はそのままで、訳文を入れたコピーを作ります。名前と文書内に DRAFT が付きます。' : '';
+    /* 3か所で言うことが食い違っていたので、事実に揃える（2026-08-13）。
+       ここだけが「文書内に」と言っており、それが正しかった。 */
+    el('cat-output-help').textContent = draft
+      ? (project && project.document_format === 'docx'
+          ? '原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付き、本文の1行目に「DRAFT — YakuLingo（確認用）」が入ります。'
+          : '原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付き、ブックの中に見えない DRAFT の印が入ります。')
+      : '';
     el('cat-export').textContent = isFile ? (project.document_format === 'docx' && wordReady ? '訳文入りのWordを作る' : project.document_format === 'docx' ? '訳文をコピー' : '訳文入りのExcelを作る') : '訳文をコピー';
     /* 出せない理由は、押す前の常時表示ではなく取り出しダイアログの点検で出す。
        常時 35px を占めながら、ほぼ always「あと N 行」としか言っていなかった。 */
     el('cat-export-blocked').textContent = '';
     /* 帯は畳んだが、理由は失わない。押せない理由はボタン自身が持つ（title）。
-       押したあとの詳細は取り出しダイアログの点検一覧が出す。 */
+       押したあとの詳細は取り出しダイアログの点検一覧が出す。
+
+       ただし title だけでは、押せないボタンに触れられない人へ届かない。
+       disabled のボタンはフォーカスを受けないので、キーボードだけで操作すると
+       理由に到達できない（実測 2026-08-13: 画面上の理由テキスト0件、
+       無効ボタンへのフォーカス不可）。読み上げ用の行へ同じ理由を書き、
+       ボタンから aria-describedby で指す。帯は畳んだままで、場所は取らない。 */
     el('cat-export').title = outputGuidance() || '';
+    el('cat-export-reviewed').title = reviewedGuidance() || '';
+    var outputReasons = [];
+    if (el('cat-export').disabled && outputGuidance()) outputReasons.push('「' + el('cat-export').textContent.trim() + '」が押せません。' + outputGuidance());
+    if (el('cat-export-reviewed').disabled && reviewedGuidance()) outputReasons.push('「確認済みの行だけコピー」が押せません。' + reviewedGuidance());
+    el('cat-output-reason').textContent = outputReasons.join(' ');
     saveStatus('保存済み', false); setBusy(false);
     /* 資料名も残り行数も、ツールバーと左ナビが持っている。同じ数字を4か所へ書いて
        いた。この帯は「異常を知らせる」ときだけ使う。読み上げは sr-only の
@@ -1358,6 +1481,101 @@
     var active = el('cat-preview-body').querySelector('.is-active');
     if (active && active.scrollIntoView) active.scrollIntoView({ block: 'center' });
   }
+  /* 資料の切り替え。市販ツール（Crowdin の畳めるファイル一覧、memoQ の資料タブ、
+     Phrase のブラウザタブ）はどれも作業画面に居たまま切り替える。ここもそれに倣い、
+     一覧画面へ戻らずに入れ替える。開いている資料には印を付け、押しても何も起きない
+     ことが分かるようにする。 */
+  function renderDocDialogList() {
+    var list = el('cat-doc-dialog-list');
+    var currentId = project ? String(project.id || '') : '';
+    if (!resumeItems.length) {
+      list.innerHTML = '<p class="muted">保存した作業はまだありません。</p>';
+      return;
+    }
+    list.innerHTML = resumeItems.map(function (item) {
+      var remaining = Math.max(0, Number(item.total) - Number(item.confirmed));
+      var isCurrent = String(item.id) === currentId;
+      var saved = savedLabel(item.saved);
+      return '<button type="button" class="cat-doc-choice' + (isCurrent ? ' is-current' : '') + '"' +
+        (isCurrent ? ' aria-current="true" disabled' : '') +
+        ' data-cat-doc-open="' + esc(item.id) + '">' +
+        '<span class="cat-doc-choice-name">' + esc(item.file_name || '名称未設定') + '</span>' +
+        '<span class="cat-doc-choice-meta">' + esc(directionName(item.direction)) + '・' +
+        (remaining ? 'あと' + remaining + '行' : '確認完了') + (saved ? '・' + esc(saved) : '') +
+        (isCurrent ? '・開いています' : '') + '</span></button>';
+    }).join('');
+  }
+  /* 左の資料一覧。中身は切替ダイアログと同じものを、畳める欄として出す。
+     開いているあいだは、資料名を押さなくても隣の資料へ移れる。 */
+  function renderDocsPane() {
+    var list = el('cat-docs-pane-list');
+    if (!list) return;
+    var currentId = project ? String(project.id || '') : '';
+    if (!resumeItems.length) { list.innerHTML = '<p class="muted">まだありません。</p>'; return; }
+    list.innerHTML = resumeItems.map(function (item) {
+      var remaining = Math.max(0, Number(item.total) - Number(item.confirmed));
+      var isCurrent = String(item.id) === currentId;
+      return '<button type="button" class="cat-docs-pane-item' + (isCurrent ? ' is-current' : '') + '"' +
+        (isCurrent ? ' aria-current="true" disabled' : '') +
+        ' data-cat-doc-open="' + esc(item.id) + '" title="' + esc(item.file_name || '') + '">' +
+        '<span class="cat-docs-pane-name">' + esc(item.file_name || '名称未設定') + '</span>' +
+        /* 同じ資料を2回取り込むと、名前も残り行数も同じ行が並ぶ。左欄でも時刻で
+           見分けられるようにする（実測 2026-08-13: spec.docx が2件、ManualBuilder が
+           2件、01_A4_format が2件並んでいた）。 */
+        '<span class="cat-docs-pane-meta">' + (remaining ? 'あと' + remaining + '行' : '確認完了') +
+        (savedLabel(item.saved) ? '・' + esc(savedLabel(item.saved)) : '') +
+        (isCurrent ? '・開いています' : '') + '</span></button>';
+    }).join('');
+  }
+  /* 開くかどうか。既定は「広い窓のときだけ」。一度でも自分で開閉したら、その選択を覚える
+     （市販CATでもペインの開閉は覚える。MateCat は明記している）。 */
+  var DOCS_PANE_MIN_WIDTH = 1700;
+  function applyDocsPane(open, fromUser) {
+    var layout = el('cat-editor-layout'), toggle = el('cat-docs-toggle');
+    if (!layout || !toggle) return;
+    layout.classList.toggle('is-docs-open', open);
+    toggle.setAttribute('aria-expanded', String(open));
+    toggle.textContent = open ? '資料一覧を隠す' : '資料一覧';
+    if (open) {
+      renderDocsPane();
+      /* 開いた時点で一覧を持っていなければ取りに行く（作業画面から直接開いた場合）。 */
+      if (!resumeItems.length) loadRecent();
+    }
+    /* 覚えるのは、利用者が自分で開閉したときだけ。窓幅による自動の開閉を覚えると、
+       一度狭い窓で見ただけで、以後ずっと閉じたままになる。 */
+    if (fromUser) { try { window.localStorage.setItem('yaku-cat-docs-open', open ? '1' : '0'); } catch (_) {} }
+  }
+  /* 狭い窓では、覚えていても開かない。開くと原文・訳文が 2026-08-12 に
+     却下された幅（1列 321px）を下回るため。 */
+  function applyDocsPaneDefault() {
+    var stored = null;
+    try { stored = window.localStorage.getItem('yaku-cat-docs-open'); } catch (_) {}
+    var roomy = window.innerWidth >= DOCS_PANE_MIN_WIDTH;
+    if (stored === '1') { applyDocsPane(roomy); return; }
+    if (stored === '0') { applyDocsPane(false); return; }
+    applyDocsPane(roomy);
+  }
+  function initDocsPane() {
+    applyDocsPaneDefault();
+    /* 窓の大きさは、起動したあとに変わる。資料翻訳へ入ると外枠が窓を広げるので
+       （実測 2026-08-13: ホーム 1240px -> 資料翻訳 1760px）、起動時の1回だけで
+       決めると、広い窓なのに一覧が閉じたままになる。変わったら決め直す。 */
+    var resizeTimer = null;
+    window.addEventListener('resize', function () {
+      if (resizeTimer) window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(applyDocsPaneDefault, 150);
+    });
+  }
+  function openDocDialog() {
+    var dialog = el('cat-doc-dialog');
+    /* 開いてから読み直す。作業中に別の作業が増えている（別窓・前回の続き）ことがある。
+       読み直しを待たずに一度出すので、押せるまでの間が空かない。 */
+    renderDocDialogList();
+    dialog.showModal();
+    var first = dialog.querySelector('.cat-doc-choice:not([disabled])') || el('cat-doc-dialog-import');
+    if (first) YakuCommon.focus(first);
+    loadRecent().then(function () { if (dialog.open) renderDocDialogList(); }).catch(function () {});
+  }
   function openPreview() {
     if (!project) { status('資料が開かれていません。'); return; }
     renderPreview();
@@ -1437,6 +1655,51 @@
 
   function bind() {
     trackToolbarHeight();
+    /* 帯の操作。role="tablist" の作法どおり、左右の矢印でも移れるようにする。 */
+    document.querySelectorAll('[data-cat-tab-to]').forEach(function (tab) {
+      tab.addEventListener('click', function () { setTab(tab.getAttribute('data-cat-tab-to'), { focusPanel: true }); });
+    });
+    el('cat-tab-quick').parentElement.addEventListener('keydown', function (event) {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      event.preventDefault();
+      setTab(currentTab === 'quick' ? 'docs' : 'quick', {});
+      var selected = document.querySelector('[data-cat-tab-to][aria-selected="true"]');
+      if (selected) selected.focus();
+    });
+    /* 資料の切り替え。左上の資料名と、折りたたみの中の項目の両方から同じ口を開く。
+       以前の「ほかの資料に切り替える」は作業画面を畳んで一覧へ戻していた。 */
+    el('cat-doc-switch').addEventListener('click', openDocDialog);
+    /* 左の資料一覧。開閉と、その中からの切り替え。 */
+    el('cat-docs-toggle').addEventListener('click', function () {
+      applyDocsPane(!el('cat-editor-layout').classList.contains('is-docs-open'), true);
+    });
+    el('cat-docs-import').addEventListener('click', function () { showPicker(); showStart('file'); });
+    el('cat-docs-pane-list').addEventListener('click', function (event) {
+      var choice = event.target.closest ? event.target.closest('[data-cat-doc-open]') : null;
+      if (!choice || choice.disabled) return;
+      var id = choice.getAttribute('data-cat-doc-open');
+      flush().then(function () { resume(id); }).catch(function (error) { status(error.message, true); });
+    });
+    el('cat-doc-dialog-close').addEventListener('click', function () { el('cat-doc-dialog').close(); });
+    el('cat-doc-dialog-import').addEventListener('click', function () {
+      el('cat-doc-dialog').close();
+      showPicker();
+      showStart('file');
+    });
+    el('cat-doc-dialog-list').addEventListener('click', function (event) {
+      var choice = event.target.closest ? event.target.closest('[data-cat-doc-open]') : null;
+      if (!choice || choice.disabled) return;
+      var id = choice.getAttribute('data-cat-doc-open');
+      el('cat-doc-dialog').close();
+      /* 一覧画面を経由しない。ここで直接その資料へ入れ替える。
+         打ちかけの訳文は先に保存する。保存できなければ入れ替えない。 */
+      flush().then(function () { resume(id); }).catch(function (error) { status(error.message, true); });
+    });
+    /* ブラウザの戻る。タブは履歴に積んでいるので、押せば前のタブへ戻る。 */
+    window.addEventListener('popstate', function () {
+      var params = new URLSearchParams(location.search);
+      setTab(params.get('tab') === 'quick' ? 'quick' : (params.get('project') ? 'docs' : 'quick'), { silent: true });
+    });
     /* 保存は入力欄からフォーカスが外れたときにだけ走る。打ちかけたままホームへ戻る、
        トレイのアイコンを押す、ウィンドウを閉じる、のいずれでも黙って消えていた。 */
     window.addEventListener('beforeunload', function (event) {
@@ -1459,7 +1722,9 @@
     bindFileDrop(el('cat-drop'), el('cat-file-input'));
     el('cat-prior-open').addEventListener('click', function () { var epoch = ++viewEpoch; setBusy(true); post('from-prior-version', { prior_ja: el('cat-prior-ja').value, prior_en: el('cat-prior-en').value, current_ja: el('cat-current-ja').value, document_name: el('cat-prior-name').value }, false, null).then(function (data) { if (epoch === viewEpoch) render(data, true); }).catch(function (error) { if (epoch !== viewEpoch) return; setBusy(false); status(error.message, true); }); });
     el('cat-align-open').addEventListener('click', function () { var epoch = viewEpoch; setBusy(true); YakuCommon.postText('/api/cat/align', { source_text: el('cat-align-source').value, target_text: el('cat-align-target').value, file_name: el('cat-align-name').value }).then(function (html) { startJobHtml(html, { type: 'align', name: el('cat-align-name').value, viewEpoch: epoch }); }).catch(function (error) { setBusy(false); status(error.message, true); }); });
-    el('cat-switch-project').addEventListener('click', function () { if (busy) return; flush().then(showPicker).catch(function (error) { status(error.message, true); }); });
+    /* 同じ口へ寄せる。畳んで一覧へ戻すのではなく、その場で選ばせる。
+       打ちかけの訳文は先に保存してから開く（開いたあと入れ替わるため）。 */
+    el('cat-switch-project').addEventListener('click', function () { if (busy) return; flush().then(openDocDialog).catch(function (error) { status(error.message, true); }); });
     el('cat-translate').addEventListener('click', translate); el('cat-export').addEventListener('click', openExportPreflight);
     el('cat-export-reviewed').addEventListener('click', exportReviewed);
     el('cat-qa-open').addEventListener('click', openQaList);
@@ -1482,6 +1747,7 @@
       apply(stored === '1');
       toggle.addEventListener('click', function () { apply(!layout.classList.contains('is-inspector-hidden')); });
     })();
+    initDocsPane();
     /* 訳文欄に入った時点で、その行が開いている行になる。押して開く操作は無くした。
        行を作り直すので、カーソルの位置を持ち越して同じ場所へ戻す。 */
     document.addEventListener('focusin', function (event) {
@@ -1618,6 +1884,14 @@
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') { event.preventDefault(); YakuCommon.focus(el('cat-search')); el('cat-search').select(); return; }
       /* 点検一覧。Trados の検証（F8）に合わせる。 */
       if (event.key === 'F8' && !el('cat-workspace').hidden) { event.preventDefault(); openQaList(); return; }
+      /* 資料の切り替え。作業画面から離れずに開く。 */
+      if (event.key === 'F7' && !el('cat-workspace').hidden) { event.preventDefault(); openDocDialog(); return; }
+      /* 資料一覧の開閉。Crowdin と同じ Ctrl+[ に合わせる。 */
+      if ((event.ctrlKey || event.metaKey) && event.key === '[' && !el('cat-workspace').hidden) {
+        event.preventDefault();
+        applyDocsPane(!el('cat-editor-layout').classList.contains('is-docs-open'), true);
+        return;
+      }
       /* 過去訳を言葉で探す。memoQ / Trados もコンコーダンスに専用キーを割いている。 */
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
@@ -1757,7 +2031,12 @@
        同じ画面を出し、その場で訳す状態から始める。showPicker() がアドレスを
        /cat へ書き換えるので、判定は先に取っておく。 */
     var cameFromInstant = location.pathname === '/quick';
-    var wanted = new URLSearchParams(location.search).get('project');
+    var params = new URLSearchParams(location.search);
+    var wanted = params.get('project');
+    /* 開いていた資料があれば資料のタブから始める。アドレスで tab=quick を
+       指していれば、資料を読み直したうえで、その場で訳す側を出す。 */
+    var wantedTab = params.get('tab') === 'quick' ? 'quick' : (wanted ? 'docs' : 'quick');
+    setTab(wantedTab, { silent: true });
     if (wanted) { resume(wanted); return; }
     showPicker();
     if (cameFromInstant && window.YakuInstant) window.YakuInstant.show();

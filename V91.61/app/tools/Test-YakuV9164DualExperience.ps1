@@ -84,11 +84,28 @@ Check-YakuDual ($catPage -match 'id\s*=\s*[\x22\x27]cat-picker[\x22\x27]' -and $
 # 中身になった。以前は押すと画面ごと入れ替わり、画面を一つにしたと言いながら
 # 実際は入れ替えていただけだった（利用者の指摘）。
 Check-YakuDual ($catPage -notmatch 'id="cat-instant"[^>]*\shidden') 'the paste box is part of the start view, not a separate state'
-Check-YakuDual ($catPage -match '(?s)<section id="cat-picker".*?id="quick-input".*?id="cat-resume".*?</section>') 'the paste box, the file entry and the saved works live in one view'
+# 2026-08-13 に利用者判断で変更（「タブですぐに切り替えられる構造にしたい」）。
+# 貼り付け欄と資料の入口は、同じ view の中ではなく、上の帯で選ぶ2つになった。
+# 08-12 の指摘は「入れ替わったことが画面に出ない」ことだったので、帯を常設し、
+# 資料を開いているあいだも消さないことで置き換える。実測（2026-08-13）:
+# 帯を入れる前は資料を開くと貼り付け欄が消え、戻る道はロゴ（全体を読み直す）か
+# 折りたたみの中の1項目だけだった。履歴も replaceState で増えず、戻るで外へ出ていた。
+Check-YakuDual ($catPage -match 'class="cat-tabs" role="tablist"') 'the two kinds of work are switched from one always-visible bar'
+Check-YakuDual ($catPage -match 'data-cat-tab-to="quick"' -and $catPage -match 'data-cat-tab-to="docs"') 'both destinations are named on the bar'
+# 帯は資料を開いても消えない。消えると、また片道になる。
+$catCssText = Get-Content -LiteralPath (Join-Path $wwwRoot 'assets\cat-workspace.css') -Raw -Encoding UTF8
+Check-YakuDual ($catCssText -match 'body\[data-cat-tab="quick"\] #cat-workspace') 'the bar keeps working while a document is open'
 Check-YakuDual ($catPage -match 'id="cat-workspace"[^>]*\shidden') 'the review workspace stays hidden until a document is open'
 Check-YakuDual ($catClient -notmatch 'hideInstant' -and $catClient -notmatch 'yaku-instant-close') 'the swap between the paste box and the picker is gone'
 Check-YakuDual ($catClient -match "setView\('start'\)" -and $catClient -match "setView\('workspace'\)") 'the screen names only the two states it still has'
-Check-YakuDual ($quickClient -notmatch '/api/cat/(?!promote)' -and $catClient -notmatch '/api/quick/') 'active clients cannot call the other experience API'
+# 2026-08-13 に利用者判断で変更（「保存しない約束は要らない」）。
+# 貼り付けた文章と資料を別の経路にしていたのをやめ、貼り付けも資料と同じ
+# /api/cat/open で作業を作る。これで登録した訳語・過去訳・数値の点検が
+# 貼り付けた文章にも効く。以前は「片方がもう片方の劣化版に見える」原因だった。
+# 守るべきものは「2つの経路が混ざらないこと」ではなく「入口が1つであること」に変わった。
+Check-YakuDual ($quickClient -match '/api/cat/open') '貼り付けた文章も資料と同じ経路で作業を作る'
+Check-YakuDual ($quickClient -notmatch "post\('/api/quick/jobs'") '保存しない一時経路はもう使わない'
+Check-YakuDual ($catClient -notmatch '/api/quick/') '確認画面は貼り付け側のAPIを呼ばない'
 
 Write-Host 'Load production helpers for dynamic contracts' -ForegroundColor Cyan
 foreach ($name in @(

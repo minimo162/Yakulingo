@@ -718,7 +718,14 @@ function Get-YakuCatOutputPreflight {
         UnconfirmedCount = $unconfirmedCount
         Blockers = @($blockers)
         Warnings = @($warnings.ToArray())
-        DraftNotice = if ($mode -in @('word_draft','excel_draft')) { '原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。' } else { '確認済みの訳文をまとめてコピーします。' }
+        # 名前だけでなく、ファイルの中にも DRAFT の印を入れている。名前しか言わないと、
+        # 受け取った人に見える行が増えることを利用者が知らないまま出すことになる
+        # （2026-08-13、3か所で言うことが食い違っていた）。形式ごとに、入る印を書く。
+        #   Word  … 本文の1行目に「DRAFT — YakuLingo（確認用）」（WordAdapter.ps1）
+        #   Excel … 見えない定義名 _YakuLingoArtifactStatus（FileProcessors.ps1）
+        DraftNotice = if ($mode -eq 'word_draft') { '原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付き、本文の1行目に「DRAFT — YakuLingo（確認用）」が入ります。' }
+                      elseif ($mode -eq 'excel_draft') { '原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付き、ブックの中に見えない DRAFT の印が入ります。' }
+                      else { '確認済みの訳文をまとめてコピーします。' }
     }
 }
 

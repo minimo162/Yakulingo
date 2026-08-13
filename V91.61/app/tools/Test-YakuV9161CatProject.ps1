@@ -297,7 +297,13 @@ $indexText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'c
 # 貼り付けは「入口」ではなく、始める画面にそのまま置いてある（2026-08-12）。
 # 押して別の画面へ入れ替わる作りをやめたので、開く導線ではなく同居を見る。
 Chk ($indexText.Contains('data-cat-source-show="file"') -and $indexText -notmatch 'id="cat-open-instant"') 'ファイルの入口はあり、貼り付けを開く導線は要らなくなった'
-Chk ($indexText -match '(?s)<section id="cat-picker".*?id="quick-input".*?</section>') '貼り付け欄は始める画面の中にある'
+# 2026-08-13 に利用者判断で変更。貼り付け欄は始める画面の「中」ではなく、上の帯で
+# 選ぶ2つのうちの片方になった（「タブですぐに切り替えられる構造にしたい」）。
+# 08-12 の指摘は「押すと画面が入れ替わるのに、入れ替わったことが画面に出ない」
+# ことだった。帯は常に出ていて、どちらに居るかと行き先が両方見えるので、
+# 守るべきもの（起動したら貼り付け欄に着地する）は変えずに済んでいる。
+Chk ($indexText -match 'id="cat-instant"' -and $indexText -match 'id="quick-input"') '貼り付け欄は起動して最初の画面にある'
+Chk ($indexText -match 'data-cat-tab-to="quick"' -and $indexText -match 'data-cat-tab-to="docs"') '行き先は帯に両方出ている（黙って入れ替えない）'
 Chk ($quickJsText.Contains('yaku-instant-handoff') -and $appJsText.Contains('yaku-instant-handoff') -and $appJsText -match "showPicker\(\);\s*\r?\n\s*el\('cat-text'\)\.value = text;") '長すぎる文章は確認作業へ渡せる'
 Chk ($indexText -match 'id="cat-text"') 'CAT に貼り付け欄がある'
 

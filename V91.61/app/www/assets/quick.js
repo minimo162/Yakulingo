@@ -37,6 +37,15 @@
   function notationExample(value) {
     return value === 'billion' ? '金額は ¥1,315 billion のように書いています。' : '金額は 13,150 oku のように書いています。';
   }
+  /* 金額があったかどうか。見るのは訳案の文だけにする。原文はこの画面が持ち回らない
+     決まりで、Quick の試験が「原文と現在の訳を送り返さない」を字面で固定している。
+     注記自体が「訳案での金額の書き方」の説明なので、訳案を見るほうが直接的でもある。
+     外しても消えるのは説明の1行だけで、訳案そのものには関わらない。 */
+  function hasAmount(translationText) {
+    var translation = String(translationText || '');
+    if (/[¥￥$＄]\s*[0-9]/.test(translation)) return true;
+    return /\b[0-9][0-9,.]*\s*(billion|million|trillion|oku)\b/i.test(translation);
+  }
   /* Office 以外は外枠が疑似 Ctrl+C で読むため、サーバを通らない。読み込んだ事実
      （文字数だけ、本文は送らない）を報告して記録に残す。Office 側はサーバが自分で
      記録するので、ここでは扱わない。 */
@@ -82,16 +91,25 @@
         el('quick-long-text').textContent = '1回で送れるのは ' + limit.toLocaleString('ja-JP') + '字 までです。この文章は ' + length.toLocaleString('ja-JP') + '字 あるので、分けて送りながら1文ずつ確認するほうが確実です。';
       }
     }
-    el('quick-direction-summary').hidden = !text.trim() || !explicitDirection;
+    /* 押す前に、どちらへ訳すのかを出す。以前は利用者が自分で選んだときにしか出ず、
+       既定（自動判定）では何も出ていなかった。実測 2026-08-13: 日本語だけを貼っても
+       日英を混ぜても、方向を示すものは画面に現れなかった。
+       向きの判定はサーバが文章を見て決めるので、ここで先回りして当てにはいかない
+       （外すと、押す前に嘘を見せることになる）。決め方のほうを書く。 */
+    el('quick-direction-summary').hidden = !text.trim();
     el('quick-direction-choice').hidden = true;
-    if (explicitDirection) el('quick-direction-label').textContent = explicitDirection === 'to_en' ? '英語に訳します' : '日本語に訳します';
+    el('quick-direction-label').textContent = explicitDirection
+      ? (explicitDirection === 'to_en' ? '英語に訳します' : '日本語に訳します')
+      : '文章を見て、英語か日本語かを決めます';
     var submit = el('quick-submit');
     /* 押せないときは、押せない理由をボタン自身に書く。ラベルが「訳案を作る」のまま
        灰色になると、利用者は理由が分からず押し続けて諦める。 */
+    /* 押した先が確認画面になったので、ラベルもそう書く（2026-08-13）。
+       「訳案を作る」のままだと、その場に訳文が出ると読めてしまう。 */
     submit.textContent = !text.trim() ? '文章を入力してください'
-      : busy ? '翻訳しています…'
+      : busy ? '取り込んでいます…'
       : !ready ? 'いま準備中です（このまま押せば予約します）'
-      : explicitDirection === 'to_en' ? '英語の訳案を作る' : explicitDirection === 'to_jp' ? '日本語の訳案を作る' : '訳案を作る';
+      : explicitDirection === 'to_en' ? '英語に訳す（確認画面へ）' : explicitDirection === 'to_jp' ? '日本語に訳す（確認画面へ）' : '訳して確認する';
     submit.disabled = !text.trim() || busy;
     el('quick-input').readOnly = busy;
     ['quick-copy', 'quick-revise-open', 'quick-promote'].forEach(function (id) {
@@ -160,9 +178,15 @@
     el('quick-result-text').textContent = artifact.translation;
     el('quick-result-note').textContent = toEnglish ? '外部へ配布する資料に使う場合は、1文ずつ確認して保存してからお使いください。' : '内容確認用の訳案です。';
     /* どちらの書き方で換算したかを訳案のそばで言う。設定を変えられるように
-       なったので、文言も設定から作る。和訳では換算が起きないので出さない。 */
-    el('quick-notation-hint').hidden = !toEnglish;
-    el('quick-notation-hint').textContent = toEnglish ? notationExample(notation()) : '';
+       なったので、文言も設定から作る。和訳では換算が起きないので出さない。
+
+       金額が1つも無い文にも出していた（実測 2026-08-13: 数字ゼロの文を訳しても
+       「金額は ¥1,315 billion のように書いています」と出た）。換算していないのに
+       換算の説明をするのは、下の伏せ字の要約を件数0でも出すのと同じことである。
+       あちらは maskCount で隠しているので、こちらも金額があったときだけにする。 */
+    var showNotation = toEnglish && hasAmount(artifact.translation || '');
+    el('quick-notation-hint').hidden = !showNotation;
+    el('quick-notation-hint').textContent = showNotation ? notationExample(notation()) : '';
     /* 件数だけでは「自分のあの数字が伏せられたか」が確かめられない。
        伏せた値そのものを並べる。値はこのパソコンの中で作り直したもので、
        Copilotへは記号として送っている。 */
@@ -252,12 +276,17 @@
       el('quick-job').innerHTML = '<div class="alert">Copilotの準備ができ次第、この文章を送ります。そのままお待ちください。</div>';
       return;
     }
+    /* 貼り付けた文章も、資料と同じ扱いにする（2026-08-13、利用者判断
+       「保存しない約束は要らない」）。以前はここから /api/quick/jobs を叩き、
+       保存しない・用語集を使わない・過去訳を引かない一時的な訳案を作っていた。
+       そのため同じ「訳す」が2つあり、片方が劣化版に見えていた。
+       いまは資料と同じ経路（/api/cat/open）で作業を作り、確認画面へ入る。
+       これで登録した訳語も過去訳も数値の点検も、貼り付けた文章に効く。 */
     activeSourceSnapshot = text;
-    busy = true; artifact = null; jobStartedAt = Date.now(); el('quick-result').hidden = true; update(); renderJob('翻訳を始めています', 0, '', '');
-    YakuCommon.post('/api/quick/jobs', { input_text: text, direction_intent: explicitDirection || 'auto' }).then(function (data) {
-      if (!data.job_id) throw new Error('翻訳を始められませんでした。1分ほど待ってから、もう一度お試しください。');
-      activeJobId = data.job_id;
-      poll(data.job_id);
+    busy = true; artifact = null; jobStartedAt = Date.now(); el('quick-result').hidden = true; update(); renderJob('取り込んでいます', 0, '', '');
+    YakuCommon.post('/api/cat/open', { text: text, direction_intent: explicitDirection || 'auto' }).then(function (data) {
+      if (!data.id) throw new Error('確認する作業を作れませんでした。1分ほど待ってから、もう一度お試しください。');
+      window.location.assign('/cat?project=' + encodeURIComponent(data.id));
     }).catch(function (error) {
       activeSourceSnapshot = ''; busy = false; activeJobId = ''; update();
       if (error.status === 409 && error.data && error.data.code === 'DIRECTION_CONFIRMATION_REQUIRED') { showChoice(error.data.error); return; }
