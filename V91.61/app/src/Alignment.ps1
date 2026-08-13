@@ -45,18 +45,30 @@ function Get-YakuAlignmentNumbers {
         $k = [string]$ch
         if ($map.ContainsKey($k)) { $null = $sb.Append($map[$k]) } else { $null = $sb.Append($ch) }
     }
-    $s = $sb.ToString() -replace '[\s,]', ''
+    # 桁区切りだけを消す。空白は残す。
+    #
+    # 以前は '[\s,]' で空白ごと消していた。PDF 抽出で「1, 234」のように桁区切りの
+    # あとへ空白が入る、という手当てだったが、効きすぎて**表の列の区切り**まで
+    # 消していた。決算短信の表はこうなる（2026-08-13 実測）。
+    #   JA  △46,115 32,836      -> 4611532836      （2つがくっついて1つの数になる）
+    #   EN  (46,115) 32,836     -> 46115 と 32836  （括弧で切れるので正しく2つ）
+    # 同じ数字が書いてあるのに不一致と判定され、表の行が軒並み捨てられていた。
+    # 桁区切りは必ず数字と数字の間にあるので、そこだけを詰める。
+    $s = [regex]::Replace($sb.ToString(), '(?<=\d),\s*(?=\d)', '')
+    $s = $s -replace ',', ''
 
     if ($Language -eq 'ja') {
         # 百万・千万を万より先に並べる。後ろに置くと 3,501,499百万円 の
         # 百万を取り逃がし、桁が6つ狂った値で照合してしまう。
         $mul = @{ '兆' = [decimal]1000000000000; '億' = [decimal]100000000; '百万' = [decimal]1000000; '千万' = [decimal]10000000; '万' = [decimal]10000; '千' = [decimal]1000 }
-        $pattern = '(\d+(?:\.\d+)?)(兆|億|千万|百万|万|千)?'
+        # 単位との間の空白は許す。空白を全部消していたころは、詰めることで
+        # 「12.2 billion」を1つに読んでいた。空白を残す以上、ここで吸収する。
+        $pattern = '(\d+(?:\.\d+)?)[ \t]*(兆|億|千万|百万|万|千)?'
         $opts = [Text.RegularExpressions.RegexOptions]::None
     }
     else {
         $mul = @{ 'trillion' = [decimal]1000000000000; 'billion' = [decimal]1000000000; 'million' = [decimal]1000000; 'thousand' = [decimal]1000 }
-        $pattern = '(\d+(?:\.\d+)?)(trillion|billion|million|thousand)?'
+        $pattern = '(\d+(?:\.\d+)?)[ \t]*(trillion|billion|million|thousand)?'
         $opts = [Text.RegularExpressions.RegexOptions]::IgnoreCase
     }
     # 隣り合ったまま続く数（1兆2345億円）はひとつの金額なので、
