@@ -75,7 +75,11 @@ Check-YakuTutorial (-not ($html -match '文章は自動では読み取りませ�
 # 変わる。市販側でいちばん良い説明（PowerToys は「選んだ範囲の画素だけを見る」と
 # 具体的に書く）に倣い、2通りの読み方をそのまま書く。
 Check-YakuTutorial (-not ($html -match 'ほかのアプリ（Outlookなど）からは読み込めない')) 'the false claim that other apps cannot be read must not come back'
-Check-YakuTutorial ($html.Contains('選択範囲をそのまま読みます') -and $html.Contains('コピー（<kbd>Ctrl</kbd>＋<kbd>C</kbd>）を代わりに押すので、クリップボードが置き換わります')) 'tutorial states both reading paths and the clipboard side effect'
+# 2026-08-13、利用者判断でクリップボードの説明を外した。「普通の人はそんなに
+# クリップボードの履歴に執着してないと思う。利用する直前にコピーして、貼り付けた後は
+# 皆忘れてる」。読み方が2通りあることも、押す人にとっては同じ1つの動作でしかない。
+# 残すのは「押した時だけ読む」＝勝手に見ていないこと。ここは気にする人が居る。
+Check-YakuTutorial ($html.Contains('読み込むのは押した時だけです') -and -not $html.Contains('クリップボードが置き換わります')) 'tutorial says the selection is read only on the keypress'
 $shellSourceForTutorial = Read-YakuTutorialFile 'desktop\Program.cs'
 Check-YakuTutorial ($shellSourceForTutorial.Contains('CopySelectionFromForeground') -and $shellSourceForTutorial.Contains('GetClipboardSequenceNumber')) 'the described clipboard path still exists in the shell'
 $quickClientForTutorial = Read-YakuTutorialFile 'www\assets\quick.js'
@@ -93,8 +97,10 @@ Check-YakuTutorial ($html.Contains('押すまで、パソコンの設定は変�
 # 「取り消せるか」「チェックを外しても押していいのか」の3つ。押す直前に3つとも書く。
 # とくにスタートメニューは、チェックに関係なく必ず作る（DesktopIntegration.ps1 の
 # start_menu = $true）。書かないと「外したのに作られた」と見える。
-Check-YakuTutorial ($html.Contains('チェックに関係なく必ず作ります') -and $html.Contains('ユーザーフォルダの中')) 'final step states exactly what the button creates, including the always-created start menu entry'
-Check-YakuTutorial ($html.Contains('レジストリへの書き込みも、管理者権限も使いません') -and $html.Contains('あとから開始画面の「起動とショートカット」で変えられます')) 'final step states the limits of the change and that it is reversible'
+Check-YakuTutorial ($html.Contains('チェックに関係なく作ります') -and $html.Contains('ユーザーフォルダの中')) 'final step states exactly what the button creates, including the always-created start menu entry'
+# 「レジストリ」「管理者権限」は、押す人が使う言葉ではない（2026-08-13、利用者の指摘）。
+# 言いたいのは「ほかは変えない」ことなので、そのまま日本語で書く。
+Check-YakuTutorial ($html.Contains('ほかの設定は変えません') -and $html.Contains('あとから開始画面の「起動とショートカット」で変えられます')) 'final step states the limits of the change and that it is reversible'
 Check-YakuTutorial ($html.Contains('両方のチェックを外したまま押しても')) 'final step says both boxes may be cleared before pressing'
 $desktopSrc = Read-YakuTutorialFile 'src\DesktopIntegration.ps1'
 # レジストリは「置き場所を読む」だけで、書き込みはしない。書き込む道が入ったら、

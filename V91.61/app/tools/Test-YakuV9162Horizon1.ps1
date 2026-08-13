@@ -509,8 +509,11 @@ try {
     $digestPart = @($key1 -split '\|')[-1]
     Check-YakuH1 (-not [string]::IsNullOrWhiteSpace($key1) -and $key1 -eq $key2 -and $key1.IndexOf($sourceSentinel, [StringComparison]::Ordinal) -lt 0 -and $digestPart -match '^[0-9a-f]{64}$') 'cache key uses a stable keyed digest without source text'
 
+    # ブックの中へ見えない定義名を足す機能は、2026-08-13 に利用者判断で外した
+    # （「そもそもその機能自体いらない」）。下書きであることはファイル名の DRAFT_ が
+    # 示す。守るべきは「原本に無いものをブックへ足さない」こと側になった。
     $processors = [IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'FileProcessors.ps1'))
-    Check-YakuH1 ($processors -match 'YakuLingoArtifactStatus' -and $processors -match 'CAT_DRAFT_MARKER_FAILED') 'DRAFT Excel requires an in-workbook marker'
+    Check-YakuH1 ($processors -notmatch 'YakuLingoArtifactStatus' -and $processors -notmatch 'CAT_DRAFT_MARKER_FAILED') 'DRAFT Excel adds nothing of its own to the workbook'
 } finally {
     if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
 }

@@ -101,7 +101,7 @@
                結果を説明するものなので、ボタンの下に小さく置く。以前は入力欄と
                ボタンの間に太い枠で挟まっていて、入力とその実行を分断していた。 -->
           <div class="quick-fineprint">
-            <p class="quick-fineprint-line">金額などの数値は、Copilotへ送る前に自動で伏せます。社名・人名・文章はそのまま送信されます。</p>
+            <p class="quick-fineprint-line">金額などの数値は、Copilotへ送る前に自動で伏せます。社名・人名・文章はそのまま送信されます。資料は訳す文だけを送り、ファイルそのものは送りません。</p>
             <p class="quick-fineprint-line">
               <label for="amount-notation">英訳の金額</label>
               <select id="amount-notation">
@@ -145,7 +145,7 @@
                資料を選んだ人は、外へ送ることも数値を伏せることも読まないまま
                「残りの訳案を作る」を押せてしまっていた（実測: この面の可視テキストに
                「Copilot」が1回も出てこなかった）。 -->
-          <p class="quick-fineprint-line">訳す文だけをCopilotへ送ります。ファイルそのものは送りません。金額などの数値は送る前に自動で伏せます。社名・人名・文章はそのまま送信されます。</p>
+          
           <details class="entry-more"><summary>そのほかの始め方</summary><div class="entry-more-actions">
             <button type="button" class="secondary-button" data-cat-source-show="prior">前回の資料をもとに、今回の分だけ訳す</button>
             <button type="button" class="secondary-button" data-cat-source-show="align">前回の日本語と英語を、参考として読み込む</button>
@@ -169,7 +169,7 @@
           <h3>長い文章を貼り付ける</h3><label for="cat-text" class="sr-only">翻訳したい文章</label><textarea id="cat-text" rows="9" placeholder="翻訳したい文章を貼り付け"></textarea><button type="button" data-cat-open="text">確認を始める</button>
         </div>
         <div id="cat-source-prior" class="cat-start-panel" hidden>
-          <p class="muted">前回の英語は「前回版」と出所を明示して表示し、自動では反映しません。ここでは3つの文章を貼り付け、出力は確認済み訳文のコピーです。3つのWordを体裁付きで更新する機能ではありません。</p>
+          <p class="muted">前回の英語は「前回版」として参考に出します。自動では反映しません。</p>
           <label class="field-label" for="cat-prior-ja">前回の日本語<textarea id="cat-prior-ja" rows="4"></textarea></label>
           <label class="field-label" for="cat-prior-en">前回の英語<textarea id="cat-prior-en" rows="4"></textarea></label>
           <label class="field-label" for="cat-current-ja">今回の日本語<textarea id="cat-current-ja" rows="4"></textarea></label>
@@ -226,7 +226,6 @@
           </section>
           <section aria-labelledby="cat-delete-title">
             <h3 id="cat-delete-title">この作業を削除する</h3>
-            <p class="muted">元のファイルは削除しません。</p>
             <button id="cat-delete" type="button" class="danger-button">この作業を削除</button>
           </section>
         </details></div></details></div>
@@ -325,7 +324,7 @@
               </section>
     </section>
   </main>
-  <dialog id="cat-export-dialog" class="confirm-dialog cat-export-dialog"><form method="dialog"><h2 id="cat-export-title">取り出す前のご確認</h2><p id="cat-export-mode"></p><p id="cat-export-name" class="muted"></p><div id="cat-export-checks" role="status"></div><p class="cat-human-review-note">自動で点検しているのは、数字と単位の写しちがいだけです。言い回しが適切かどうかは、ご自身でお確かめください。</p><p id="cat-export-notice" class="draft-warning">原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。</p><div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>戻って確認する</button><button id="cat-export-qa" type="button" class="secondary-button" hidden>点検一覧を開く</button><button id="cat-export-confirm" value="export">これで取り出す</button></div></form></dialog>
+  <dialog id="cat-export-dialog" class="confirm-dialog cat-export-dialog"><form method="dialog"><h2 id="cat-export-title">取り出す前のご確認</h2><p id="cat-export-mode"></p><p id="cat-export-name" class="muted"></p><div id="cat-export-checks" role="status"></div><p class="cat-human-review-note">自動で点検しているのは、数字と単位の写しちがいだけです。</p><p id="cat-export-notice" class="draft-warning">原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。</p><div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>戻って確認する</button><button id="cat-export-qa" type="button" class="secondary-button" hidden>点検一覧を開く</button><button id="cat-export-confirm" value="export">これで取り出す</button></div></form></dialog>
   <!-- 出す前に、資料ぜんぶの指摘を1枚で見る（市販CATの検証パネルに相当）。
        memoQ・Trados は書き出し前にこの一覧を見て、行へ飛んで直す作りになっている。
        当アプリは行ごとの指摘と「点検の指摘」での絞り込みは持っていたが、

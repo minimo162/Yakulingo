@@ -282,7 +282,10 @@ Assert-Yaku -Condition ($catIndex.Contains('前回の日本語と英語を、参
 # 訳案カードを外したので「訳案」の見出しは無い。呼び名で守っていたのは
 # 「未確認のものを完成訳と呼ばない」ことなので、そちらを直接見る（2026-08-13）。
 Assert-Yaku -Condition (-not $indexSource.Contains('すぐ訳した完成訳') -and -not $indexSource.Contains('完成訳')) -Message 'unreviewed output must never be called a finished translation'
-Assert-Yaku -Condition ($catIndex.Contains('前回の英語は「前回版」と出所を明示して表示し、自動では反映しません') -and -not $catIndex.Contains('cat-prior-evidence') -and -not $catClient.Contains('prior_evidence:')) -Message 'prior English must stay reference-only without a self-attested approval selector or evidence payload'
+# 2026-08-13、利用者の指摘「余計な文章が多い」。機能の否定を2文重ねていた
+# （「3つのWordを体裁付きで更新する機能ではありません」等）。守るのは
+# 「前回の英語を自動で採らない」ことなので、そこだけを見る。
+Assert-Yaku -Condition ($catIndex.Contains('前回の英語は「前回版」として参考に出します。自動では反映しません') -and -not $catIndex.Contains('cat-prior-evidence') -and -not $catClient.Contains('prior_evidence:')) -Message 'prior English must stay reference-only without a self-attested approval selector or evidence payload'
 # 昇格は 2026-08-13 に廃止（移るもとが無くなった）。守るものは変わらない＝
 # ブラウザーから訳文を送り返さない。原文だけは、もともと「長い文章を貼り付ける」が
 # 通っていた経路と同じで、/api/cat/open が受ける。

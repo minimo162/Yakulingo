@@ -90,7 +90,11 @@ try {
     Check-YakuWord ((Test-Path -LiteralPath $output) -and $result.Written -eq 2) 'DRAFT DOCX is written only after review'
     $after=Get-YakuWordDocumentInventory -Path $output
     $afterText=@($after.Blocks | ForEach-Object {[string]$_.Text}) -join '|'
-    Check-YakuWord ($afterText -match 'DRAFT — YakuLingo' -and $afterText -match 'About net sales' -and $afterText -match 'This is the outlook') 'DRAFT marker and reviewed translations are visible'
+    # 本文の1行目へ入れていた「DRAFT — YakuLingo（確認用）」は 2026-08-13 に
+    # 利用者判断で外した（「そもそもその機能自体いらない」）。下書きであることは
+    # ファイル名の DRAFT_ が示す。原本に無い行を足さないことのほうを固定する。
+    Check-YakuWord ($afterText -notmatch 'DRAFT — YakuLingo' -and $afterText -match 'About net sales' -and $afterText -match 'This is the outlook') '確認済みの訳文だけが入り、原本に無い行を足さない'
+    Check-YakuWord (@($after.Blocks).Count -eq @($inventory.Blocks).Count) '段落の数が原本と変わらない'
     Check-YakuWord ([string]$after.StructureHash -eq [string]$inventory.StructureHash -and (Compare-Object @($after.EntryNames) @($inventory.EntryNames)).Count -eq 0) 'OOXML structure and package graph survive round trip'
     $id=[string]$project.Id; Remove-YakuCatProject -Id $id
     $restored=Restore-YakuCatProject -Id $id

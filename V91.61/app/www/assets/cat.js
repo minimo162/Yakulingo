@@ -301,6 +301,18 @@
     return icon(state === 'reviewed' ? 'i-reviewed' : state === 'human_edited' ? 'i-edited' : state === 'machine_draft' ? 'i-draft' : state === 'stale' ? 'i-stale' : 'i-untranslated');
   }
   function stateTitle(state) { return state === 'reviewed' ? '確認済み' : state === 'human_edited' ? '手直し済み・未確認' : state === 'machine_draft' ? 'Copilotの訳案・未確認' : state === 'stale' ? '原文が変わったので再確認が必要' : 'まだ訳がありません'; }
+  /* 候補から挿入した訳は「手直し」ではない。訳文を書き込む口が1つしかないため、
+     挿入も手打ちも Origin='manual' になり、行の札は「手直し」と出ていた
+     （2026-08-13、実機で確認: 完全一致の候補を挿入した直後の札が「手直し」だった）。
+     出どころは segment.reference_usage に
+     残っているので、そちらを先に見る。挿入したあと自分で書き換えたら、
+     そのことも分かるようにする（決定文書 §5「翻訳例から挿入後に編集」）。 */
+  function referenceOriginLabel(segment) {
+    var usage = segment && segment.reference_usage;
+    if (!usage || String(usage.action || '') !== 'inserted') return '';
+    var base = String(usage.kind || '') === 'memory' ? '自分が確認した訳' : '過去の翻訳例';
+    return usage.edited_after_insert ? (base + 'を直した') : (base + 'から');
+  }
   function originLabel(origin) {
     if (origin === 'glossary') return '用語集';
     if (origin === 'copilot') return 'Copilot訳';
@@ -437,7 +449,7 @@
       var finding = rawFindings[findingIndex] || {}, code = String(finding.code || finding.Code || '').toLowerCase().replace(/_/g, '-');
       var termAction = (code === 'terminology-missing' || code === 'terminology-forbidden') ? '<button type="button" class="secondary-button" data-cat-term-exception="' + Number(segment.index) + '" data-cat-term-id="' + esc(finding.termId || finding.TermId || '') + '" data-cat-term-version="' + Number(finding.termVersion || finding.TermVersion || 0) + '" data-cat-term-source="' + esc(finding.sourceTerm || finding.SourceTerm || '') + '">この行では別の表現を使う</button>' : '';
       return '<div class="cat-qc-card is-' + qcGroup(code) + '"><p>' + esc(message) + '</p>' + termAction + '</div>';
-    }).join('') : '<div class="cat-qc-card">数字と単位の自動点検では、気になる点は見つかりませんでした。言い回しが適切かどうかは、ご自身でお確かめください。</div>';
+    }).join('') : '<div class="cat-qc-card">数字と単位の自動点検では、気になる点は見つかりませんでした。</div>';
     el('cat-next-qc').disabled = !all.some(segmentHasQc);
     var index = Number(segment.index), previous = all.find(function (item) { return Number(item.index) === index - 1; }), next = all.find(function (item) { return Number(item.index) === index + 1; });
     el('cat-context').innerHTML = '<div class="cat-context-card"><span class="cat-context-label">現在の場所</span><p class="cat-context-text">' + esc(segment.location || '本文') + '</p></div>' +
@@ -486,7 +498,7 @@
     el('cat-grid-wrap').hidden = shown.length === 0;
     body.innerHTML = shown.map(function (segment) {
       var index = Number(segment.index), row = index + 1, state = segmentState(segment), isActive = current && Number(current.index) === index;
-      var findings = qcMessages(segment), findingId = 'cat-qc-' + index, origin = originLabel(segment.origin), ops = '';
+      var findings = qcMessages(segment), findingId = 'cat-qc-' + index, origin = referenceOriginLabel(segment) || originLabel(segment.origin), ops = '';
       var nextSegment = all.find(function (candidate) { return Number(candidate.index) === index + 1; });
       var mergeLosesTranslation = !!(String(segment.translation || '').trim() || (nextSegment && String(nextSegment.translation || '').trim()));
       var splitLosesTranslation = !!String(segment.translation || '').trim();
@@ -583,13 +595,7 @@
     var wordReady = project.document_format === 'docx' && project.word_file_output_supported && !sourceMissing;
     var draft = isFile && !sourceMissing && (project.document_format !== 'docx' || wordReady);
     /* 読み上げにも同じ言い方を出す。ここだけ硬い言い方にしない。 */
-    /* 3か所で言うことが食い違っていたので、事実に揃える（2026-08-13）。
-       ここだけが「文書内に」と言っており、それが正しかった。 */
-    el('cat-output-help').textContent = draft
-      ? (project && project.document_format === 'docx'
-          ? '原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付き、本文の1行目に「DRAFT — YakuLingo（確認用）」が入ります。'
-          : '原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付き、ブックの中に見えない DRAFT の印が入ります。')
-      : '';
+    el('cat-output-help').textContent = draft ? '原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。' : '';
     el('cat-export').textContent = isFile ? (project.document_format === 'docx' && wordReady ? '訳文入りのWordを作る' : project.document_format === 'docx' ? '訳文をコピー' : '訳文入りのExcelを作る') : '訳文をコピー';
     /* 出せない理由は、押す前の常時表示ではなく取り出しダイアログの点検で出す。
        常時 35px を占めながら、ほぼ always「あと N 行」としか言っていなかった。 */
@@ -1633,7 +1639,7 @@
     if (!project) return Promise.resolve();
     var all = project.segments || [], after = all.find(function (segment) { return Number(segment.index) > Number(activeIndex) && segmentHasQc(segment); });
     var target = after || all.find(segmentHasQc);
-    if (!target) { status('数字と単位の自動点検では、気になる点は見つかりませんでした。言い回しが適切かどうかは、ご自身でお確かめください。'); return Promise.resolve(); }
+    if (!target) { status('数字と単位の自動点検では、気になる点は見つかりませんでした。'); return Promise.resolve(); }
     currentFilter = 'qc'; currentLocation = 'all'; inspectorTab = 'qc';
     return activateIndex(Number(target.index), true);
   }

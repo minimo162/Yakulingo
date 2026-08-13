@@ -360,6 +360,14 @@ function Convert-YakuExceptionToUserMessage {
     }
     $message = $message -replace '[\r\n\t]+', ' '
     $message = $message.Trim()
+    # .NET の生の例外文をそのまま出さない。壊れた .xlsx を取り込ませたとき、画面には
+    # 「"1" 個の引数を指定して "OpenRead" を呼び出し中に例外が発生しました:
+    # "中央ディレクトリが壊れています。"」と出ていた（2026-08-13、初回利用者として
+    # 実機で確認）。読んでも次に何をすればよいか分からず、そこで手が止まる。
+    # 同じ画面の .txt は「対応しているファイル形式は…」と正しく案内できていた。
+    if ($message -match '(?i)OpenRead|ZipArchive|中央ディレクトリ|End of Central Directory|not a valid (?:zip|archive)|壊れています') {
+        return 'このファイルを開けませんでした。壊れているか、中身が Word・Excel の形式になっていない可能性があります。元のアプリで開き直して保存し直すと、取り込めることがあります。'
+    }
     # 内部のエラーコードをそのまま画面へ出すと、利用者には「重大な障害」に見えて
     # そこで手が止まる。日本語の本文だけを残し、番号は問い合わせ用に末尾へ回す。
     if ($message -match '^([A-Z][A-Z0-9_]{4,}):\s*(.+)$') {

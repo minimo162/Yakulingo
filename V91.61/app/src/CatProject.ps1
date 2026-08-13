@@ -721,14 +721,10 @@ function Get-YakuCatOutputPreflight {
         UnconfirmedCount = $unconfirmedCount
         Blockers = @($blockers)
         Warnings = @($warnings.ToArray())
-        # 名前だけでなく、ファイルの中にも DRAFT の印を入れている。名前しか言わないと、
-        # 受け取った人に見える行が増えることを利用者が知らないまま出すことになる
-        # （2026-08-13、3か所で言うことが食い違っていた）。形式ごとに、入る印を書く。
-        #   Word  … 本文の1行目に「DRAFT — YakuLingo（確認用）」（WordAdapter.ps1）
-        #   Excel … 見えない定義名 _YakuLingoArtifactStatus（FileProcessors.ps1）
-        DraftNotice = if ($mode -eq 'word_draft') { '原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付き、本文の1行目に「DRAFT — YakuLingo（確認用）」が入ります。' }
-                      elseif ($mode -eq 'excel_draft') { '原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付き、ブックの中に見えない DRAFT の印が入ります。' }
-                      else { '確認済みの訳文をまとめてコピーします。' }
+        # ファイルの中の印を外したので（2026-08-13）、形式ごとに書き分けるものが
+        # 無くなった。言うのは「原本は触らない」「別名のコピーができる」の2つだけ。
+        DraftNotice = if ($mode -eq 'word_draft' -or $mode -eq 'excel_draft') { '原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。' }
+                      else { '' }
     }
 }
 
@@ -3101,7 +3097,7 @@ function Export-YakuCatProject {
         throw 'CAT_EXPORT_SOURCE_CHANGED_BEFORE_COPY: 元の Excel が出力直前に変更されました。訳文はまだ書き込んでいません。もう一度出力してください。'
     }
     $writeResult = Write-YakuFileTranslations -InputPath ([string]$Project.Path) -OutputPath $OutputPath -Blocks @($currentExtract.Blocks) `
-        -TranslationByBlockId $currentByBlock -Warnings $Warnings -Settings $Settings -ProgressState $ProgressState -DraftMarker -FailOnIncomplete
+        -TranslationByBlockId $currentByBlock -Warnings $Warnings -Settings $Settings -ProgressState $ProgressState -FailOnIncomplete
     return [pscustomobject]@{
         OutputPath = [string]$writeResult.PublishedPath
         OutputName = [System.IO.Path]::GetFileName([string]$writeResult.PublishedPath)

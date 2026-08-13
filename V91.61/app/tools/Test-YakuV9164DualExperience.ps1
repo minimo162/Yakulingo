@@ -227,7 +227,11 @@ Check-YakuDual ($catClient -match "currentFilter = 'all'" -and $catPage -match '
 Check-YakuDual ($catPage -match 'id="cat-export-dialog"' -and $catClient -match "post\('preflight', \{\}, true, requestScope\)" -and $catClient -match 'data\.project_id' -and $catClient -match 'Number\(data\.revision\) !== requestScope\.revision') 'DRAFT dialog uses the server preflight bound to the current project revision'
 Check-YakuDual ($catPage -match 'data-cat-change="unchanged"' -and $catPage -match 'data-cat-change="changed"' -and $catPage -match 'data-cat-change="new"' -and $catClient -match 'changeGroup\(segment\)' -and $catClient -match 'segment\.prior_source') '3-way workspace exposes prior-same, changed, and new counts with previous/current context'
 Check-YakuDual ($catClient -match 'data-cat-shorten' -and $catClient -match '修正結果を確認' -and $catClient -match 'data-cat-revert-revision' -and $catClient -match 'data-cat-accept-revision') 'CAT offers a dedicated shorten action with before/after review and revert controls'
-Check-YakuDual ($catPage -match '自動で点検しているのは、数字と単位の写しちがいだけです' -and $catPage -match '言い回しが適切かどうか' -and $catClient -match '気になる点は見つかりませんでした') 'CAT labels mechanical checks without implying translation quality approval'
+# 2026-08-13、利用者の指摘「余計な文章が多い」。「言い回しが適切かどうかは、ご自身で
+# お確かめください。」は責任放棄に読める一文で、前半（何を点検しているか）だけで
+# 同じことが伝わる。守るのは「機械の点検を、訳の良し悪しの保証に見せない」ことなので、
+# 点検の範囲を言い切っていることを見る。
+Check-YakuDual ($catPage -match '自動で点検しているのは、数字と単位の写しちがいだけです' -and $catPage -notmatch 'ご自身でお確かめください' -and $catClient -match '気になる点は見つかりませんでした') 'CAT states what the mechanical check covers, without claiming quality'
 Check-YakuDual ($catClient -match "el\('cat-export-dialog'\)\.addEventListener\('close'" -and $catClient -match 'scopeIsCurrent\(scope, true\)' -and $catClient -match 'exportProject\(\)') 'export runs only after an unchanged preflight scope is confirmed'
 
 Write-Host 'Inserted reference keeps its provenance through save and resume' -ForegroundColor Cyan
