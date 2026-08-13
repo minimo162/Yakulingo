@@ -262,7 +262,10 @@ Assert-Yaku -Condition ($appJs -notmatch 'readAsDataURL|file_b64|application/x-w
 Assert-Yaku -Condition (-not (Test-Path -LiteralPath (Join-Path $root 'www\index.html'))) -Message 'the launcher must not present a choice screen before the translator'
 Assert-Yaku -Condition ($server -match "path -eq '/'" -and $server -notmatch "PageName 'index.html'" -and
     ([regex]::Matches($server, [regex]::Escape("Serve-YakuAppPage -Context `$Context -PageName 'cat.html'")).Count -ge 2)) -Message 'the root route must land on the translation screen itself'
-Assert-Yaku -Condition ($catIndex.Contains('href="/tutorial#settings"') -and $catIndex.Contains('href="/cat?tour=1"') -and $catIndex.Contains('href="/tutorial"')) -Message 'the ways out of the deleted landing screen must live on the translation screen'
+# 2026-08-13、利用者の指摘「3つもリンクがあってどれを選べばよいかわからない。
+# 一つでよくない？」。行き先の /tutorial が、使い方・送るもの・起動とショートカットを
+# 1枚で持ち、案内の再生もその画面から始められる。出口は1つに寄せた。
+Assert-Yaku -Condition ($catIndex.Contains('>使い方と設定</a>') -and (([regex]::Matches($catIndex, '<a href="/tutorial')).Count -eq 1)) -Message 'the way out of the deleted landing screen is a single link on the translation screen'
 # 2026-08-13、利用者判断「保存しない約束は要らない」。貼り付けた文章も資料と同じ
 # 経路で作業になったので、「保存しません」「登録した訳語も使いません」は嘘になった。
 # 押す前に言うべきことが入れ替わった＝どこへ移り、保存されるのか。

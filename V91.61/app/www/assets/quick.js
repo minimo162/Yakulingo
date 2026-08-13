@@ -62,6 +62,34 @@
   }
 
   function el(id) { return document.getElementById(id); }
+
+  /* どちらへ訳すのかを、押す前に出す。以前は「文章を見て、英語か日本語かを
+     決めます」としか出ておらず、結局どちらになるのかが分からなかった
+     （2026-08-13、利用者の指摘）。判定は Resolve-YakuDirectionDecision の
+     1か所しか持たない決まりなので、画面側で当てにいかず同じ判定へ聞く。
+     打つたびに聞かず、手が止まってから聞く。 */
+  var detectedDirection = '';
+  var directionTimer = null;
+  var directionSeq = 0;
+  function refreshDirection() {
+    var text = el('quick-input').value.trim();
+    window.clearTimeout(directionTimer);
+    if (!text) { detectedDirection = ''; update(); return; }
+    detectedDirection = '';
+    update();
+    directionTimer = window.setTimeout(function () {
+      var seq = ++directionSeq;
+      YakuCommon.post('/api/direction-preview', { text: text }).then(function (data) {
+        if (seq !== directionSeq) return;
+        detectedDirection = String(data && data.direction || '') || 'unknown';
+        update();
+      }).catch(function () {
+        if (seq !== directionSeq) return;
+        detectedDirection = 'unknown';
+        update();
+      });
+    }, 350);
+  }
   function update() {
     var text = el('quick-input').value;
     var length = Array.from(text).length;
@@ -77,13 +105,17 @@
     /* 押す前に、どちらへ訳すのかを出す。以前は利用者が自分で選んだときにしか出ず、
        既定（自動判定）では何も出ていなかった。実測 2026-08-13: 日本語だけを貼っても
        日英を混ぜても、方向を示すものは画面に現れなかった。
-       向きの判定はサーバが文章を見て決めるので、ここで先回りして当てにはいかない
-       （外すと、押す前に嘘を見せることになる）。決め方のほうを書く。 */
+       そこで「文章を見て、英語か日本語かを決めます」と決め方を書いたが、結局
+       どちらになるのかが分からない一文だった（同日、利用者の指摘）。いまは
+       サーバの判定へ聞いて、決まった向きそのものを出す。画面側では当てない。 */
     el('quick-direction-summary').hidden = !text.trim();
     el('quick-direction-choice').hidden = true;
     el('quick-direction-label').textContent = explicitDirection
       ? (explicitDirection === 'to_en' ? '英語に訳します' : '日本語に訳します')
-      : '文章を見て、英語か日本語かを決めます';
+      : detectedDirection === 'to_en' ? '英語に訳します'
+      : detectedDirection === 'to_jp' ? '日本語に訳します'
+      : detectedDirection === 'unknown' ? 'どちらに訳すかを選んでください'
+      : '訳す言語を調べています…';
     var submit = el('quick-submit');
     /* 押せないときは、押せない理由をボタン自身に書く。ラベルが「訳案を作る」のまま
        灰色になると、利用者は理由が分からず押し続けて諦める。 */
@@ -295,6 +327,7 @@
        「このブック全体」は、もう同じものを指していない。 */
     el('quick-input').addEventListener('input', function () {
       explicitDirection = '';
+      refreshDirection();
       sourceFilePath = '';
       var host = el('quick-source-file'); if (host) host.hidden = true;
       var note = el('quick-selection-note'); if (note) note.hidden = true;

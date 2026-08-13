@@ -162,7 +162,8 @@ Check-YakuDual ($catClient -match 'scopeIsCurrent\(packet\.scope, true\)' -and $
 Check-YakuDual ($catClient -match 'deleteTarget = currentScope\(\)' -and $catClient -match "post\('delete', \{ id: target\.id \}, true, target\)") 'delete confirmation stays bound to its displayed project'
 Check-YakuDual ($catClient -match "type: 'translate', scope: jobScope" -and $catClient -match "post\('apply', \{ job_id: jobId \}, true, context\.scope\)") 'job apply stays bound to its starting project and revision'
 Check-YakuDual ($catClient -match "event\.key === 'Enter'" -and $catClient -match '処理中は確認できません' -and $catClient -match 'function focusAfter\(index\)') 'Ctrl+Enter is guarded while busy and advances after confirmation'
-Check-YakuDual ($catClient -match "bindFileDrop\(el\('cat-drop'\), el\('cat-file-input'\)\)" -and $catClient -match "event\.key === 'Enter' \|\| event\.key === ' '") 'file drop supports drag-drop and keyboard activation'
+# 2026-08-13: ドロップ先は取り込みボタン自身になった（枠を1つ減らした）。
+Check-YakuDual ($catClient -match "bindFileDrop\(el\('cat-open-file-entry'\), el\('cat-file-input'\)\)" -and $catClient -match "event\.key === 'Enter' \|\| event\.key === ' '") 'file drop supports drag-drop and keyboard activation'
 Check-YakuDual ($catClient -match 'data-cat-loss' -and $catClient -match 'この行と次の行をつなげて1文にします。' -and $catClient -match 'つなげた行を元の2行に戻します。' -and ([regex]::Matches($catClient, '消えた訳文は元に戻せません').Count -ge 2)) 'merge and split warn before discarding a translation'
 Check-YakuDual ($catClient -match 'data\.review_blocked' -and $catClient -match 'var same = document\.querySelector') 'QC-blocked confirmation returns focus to the same row'
 Check-YakuDual ($catClient -match 'function redrawAfterFlush\(\)[\s\S]*?return flush\(\)\.then' -and $catClient -match "button\.hasAttribute\('data-cat-filter'\)[\s\S]{0,180}redrawAfterFlush\(\)") 'filter redraw waits for the shared save barrier'

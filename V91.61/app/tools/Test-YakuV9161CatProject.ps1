@@ -331,7 +331,10 @@ Chk ($indexText -match 'id="cat-progress-bar"') '進捗バーがある'
 # 触っただけのセグメントを「手直し」にしない。以前は離れるたびに保存して
 # いたので、一覧を上から見ていくだけで全部が手直し扱いになっていた。
 Chk ($appJsText.Contains("data-original")) '変更が無ければ保存しない（触っただけで手直しにしない）'
-Chk ($appJsText.Contains("bindFileDrop(el('cat-drop'), el('cat-file-input'))") -and $appJsText.Contains("event.key === 'Enter' || event.key === ' '")) 'CAT のファイル欄へドロップとキーボード操作を結線する'
+# 2026-08-13: ドロップ用の枠を外し、取り込みボタン自身をドロップ先にした。
+# 押しても欄が開くだけで、その中にもう一度「選ぶ」があり、さらに確認のボタンが
+# あった（利用者の指摘「押しても何も起こらない。訳が分からなくなっている」）。
+Chk ($appJsText.Contains("bindFileDrop(el('cat-open-file-entry'), el('cat-file-input'))") -and $appJsText.Contains("event.key === 'Enter' || event.key === ' '")) '取り込みボタンへドロップとキーボード操作を結線する'
 Chk ($appJsText.Contains("'行目の訳文`"")) '動的な訳文欄に行ごとの読み上げ名がある'
 Chk ($appJsText.Contains("data-cat-loss")) '結合・解除ボタンが訳文消失の有無を持つ'
 Chk ($appJsText -match "data-cat-merge[\s\S]{0,200}?window\.confirm\('[^']*訳文は消えます[^']*元に戻せません") '訳文がある行の結合前に、消えることを告げて確認する'

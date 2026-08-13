@@ -139,7 +139,12 @@
              取り込みが主役に見えていた（2026-08-12、実機 1380px で確認）。 -->
         <div class="entry-secondary">
           <div class="entry-actions cat-entry-actions">
-            <button type="button" id="cat-open-file-entry" class="secondary-button" data-cat-source-show="file">Word・Excelを取り込む</button>
+            <!-- 押したらファイル選択がそのまま開く（2026-08-13、利用者の指摘
+                 「押しても下にちょっとスクロールされるだけで何も起こらない。
+                 さらにその下に Word・Excel を選ぶがあるので訳が分からなくなっている」）。
+                 以前は下に欄が開くだけで、そこにもう一度「選ぶ」があり、さらに
+                 「取り込んで確認を始める」を押す必要があった。押す回数は3回。 -->
+            <button type="button" id="cat-open-file-entry" class="secondary-button">Word・Excelを取り込む<input id="cat-file-input" type="file" accept=".docx,.xlsx,.xlsm" hidden></button>
           </div>
           <!-- 資料の側にも同じことを書く（2026-08-13）。貼り付けの側にだけ書いてあり、
                資料を選んだ人は、外へ送ることも数値を伏せることも読まないまま
@@ -149,6 +154,7 @@
           <details class="entry-more"><summary>そのほかの始め方</summary><div class="entry-more-actions">
             <button type="button" class="secondary-button" data-cat-source-show="prior">前回の資料をもとに、今回の分だけ訳す</button>
             <button type="button" class="secondary-button" data-cat-source-show="align">前回の日本語と英語を、参考として読み込む</button>
+            <button type="button" class="secondary-button" data-cat-source-show="file">ファイルの保存場所を入力して取り込む</button>
           </div></details>
           <!-- 保存した作業は溜まる。実機で10件あり、この一覧だけで画面の44%
                （685px / 全体1555px）を占めていた。既定は直近3件だけ出す。 -->
@@ -159,11 +165,12 @@
           </div>
         </div>
 
+        <!-- 選んだ時点で取り込みが始まるので、確認のボタンは置かない。
+             ボタン自身がドロップ先も兼ねるので、ドロップ用の枠も置かない。
+             ファイルを選べない環境のために、保存場所の入力だけを残す。 -->
         <div id="cat-source-file" class="cat-start-panel" hidden>
-          <h3>Word・Excelを選ぶ</h3>
-          <label class="file-drop" for="cat-file-input" id="cat-drop" role="button" tabindex="0"><input id="cat-file-input" type="file" accept=".docx,.xlsx,.xlsm" hidden><span>ここにファイルをドロップ、またはクリックして選択</span><span id="cat-file-name" class="muted">.docx / .xlsx / .xlsm</span></label>
-          <details><summary>ファイルを選べない場合</summary><label class="field-label" for="cat-path">ファイルの保存場所<input id="cat-path" type="text" placeholder="例: C:\Documents\資料.docx"></label></details>
-          <button type="button" data-cat-open="file">取り込んで確認を始める</button>
+          <label class="field-label" for="cat-path">ファイルの保存場所<input id="cat-path" type="text" placeholder="例: C:\Documents\資料.docx"></label>
+          <button type="button" data-cat-open="file">この場所から取り込む</button>
         </div>
         <div id="cat-source-text" class="cat-start-panel" hidden>
           <h3>長い文章を貼り付ける</h3><label for="cat-text" class="sr-only">翻訳したい文章</label><textarea id="cat-text" rows="9" placeholder="翻訳したい文章を貼り付け"></textarea><button type="button" data-cat-open="text">確認を始める</button>
@@ -191,10 +198,12 @@
            資料側のパネルの中に入れていたため、起動して最初に出る「その場で訳す」
            からは一つも見えず（実測: 可視のリンク0本）、初めての人が案内へ
            たどり着けなかった。資料を開いているあいだは道具の帯が主役なので出さない。 -->
-      <nav id="cat-help-links" class="home-help-links" aria-label="使い方と起動設定">
-        <a href="/tutorial#settings">起動とショートカット</a>
-        <a href="/cat?tour=1">使い方を見る</a>
-        <a href="/tutorial">このアプリについて</a>
+      <!-- 出口は1つ（2026-08-13、利用者の指摘「3つもリンクがあってどれを選べば
+           よいかわからない」）。行き先の /tutorial が、使い方・送るもの・
+           起動とショートカットを1枚で持っている。案内の再生もその画面の
+           「使い方をもう一度見る」から始められる。 -->
+      <nav id="cat-help-links" class="home-help-links" aria-label="使い方と設定">
+        <a href="/tutorial">使い方と設定</a>
       </nav>
 
       <section id="cat-workspace" class="cat-workspace" hidden>

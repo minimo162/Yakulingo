@@ -122,9 +122,12 @@ Check-YakuUse ($tutorial -notmatch '下書きの印' -and $tutorial -match 'DRAF
 Check-YakuUse ($catJs -notmatch '本文の1行目' -and $catJs -notmatch '見えない DRAFT の印') '作業画面にも中の印の話を残さない'
 Check-YakuUse ($catJs -notmatch '名前と文書内に DRAFT が付きます') '曖昧な言い方は残さない'
 
-# 押す前に、どちらへ訳すのかが出る（自動判定のときは決め方を書く）。
+# 押す前に、どちらへ訳すのかが出る。
+# 2026-08-13 の午前は「決め方を書く」で満足していたが、それでは結局どちらに
+# なるのか分からない、という指摘を同じ日に受けた。いまは決まった向きを出す。
+# この検査は私の注釈に引っかかって通っていた（字面ではなく出す値を見る）。
 Check-YakuUse ($quickJs -match "hidden = !text\.trim\(\);") '文章を入れたら方向の欄を出す'
-Check-YakuUse ($quickJs -match '文章を見て、英語か日本語かを決めます') '自動のときは決め方を書く'
+Check-YakuUse ($quickJs -match "detectedDirection === 'to_jp' \? '日本語に訳します'") '自動のときも、決まった向きを出す'
 Check-YakuUse ($quickJs -notmatch "hidden = !text\.trim\(\) \|\| !explicitDirection") '自分で選んだときだけ出す作りに戻さない'
 
 # 2026-08-13、初回利用者として実機を通して見つけたもの。
@@ -150,7 +153,7 @@ Check-YakuUse ($tourJsUse -notmatch "target: '#quick-input'") '当たり前の�
 # 前の段の操作で画面が動くと、次の段のボタンが画面の外へ出て、吹き出しだけが端で切れる。
 Check-YakuUse ($tourJsUse -match 'box\.top < 12 \|\| box\.bottom > window\.innerHeight - 12') '指す先が画面の外なら、先に見える所へ戻す'
 # 中央へ寄せると押しただけで大きく飛ぶ。開いた欄はいちばん少ない移動で見せる。
-Check-YakuUse ($catJs -match "(?s)function showStart\(mode\)[\s\S]{0,600}?block: 'nearest'") '開いた欄は最小の移動で見せる'
+Check-YakuUse ($catJs -match "(?s)function showStart\(mode\)[\s\S]{0,1200}?block: 'nearest'") '開いた欄は最小の移動で見せる'
 Check-YakuUse ($catJs -notmatch "(?s)function showStart\(mode\) \{ closeStartPanels\(\); var panel[\s\S]{0,120}?YakuCommon\.focus\(") '中央へ寄せる作りに戻さない'
 
 # 押せるボタンに「してください」と書かない。未確認が残っていても取り出せる決まりに
@@ -191,6 +194,30 @@ Check-YakuUse ($catJs -match 'var locationSynced = false;' -and $catJs -match 'i
 # 選んだ行の左に、状態の帯（4px）と選択の枠（3px）が色違いで2本並んでいた。
 # 選んでいる行では帯を消す。その行の状態は丸章と文字で同じ行に出ている。
 Check-YakuUse ($catCss -match '(?s)\.cat-grid tbody tr\.is-active \{[^}]*border-left-color: transparent;') '選んだ行では状態の帯を出さない'
+
+# どちらへ訳すのかを、押す前に出す。「文章を見て、英語か日本語かを決めます」では
+# 結局どちらになるのか分からなかった（2026-08-13、利用者の指摘）。判定は
+# Resolve-YakuDirectionDecision 1か所しか持たない決まりなので、同じ判定へ聞く。
+Check-YakuUse ($serverForView -match "path -eq '/api/direction-preview'") '向きを聞くだけの口がある'
+Check-YakuUse ($serverForView -match "(?s)/api/direction-preview[\s\S]{0,900}?Resolve-YakuDirectionDecision") '判定は同じ関数へ聞く'
+Check-YakuUse ($quickJs -match 'function refreshDirection' -and $quickJs -match "'/api/direction-preview'") '打ち終わったら聞きにいく'
+# 注釈にも同じ字面を書いているので、字面ではなく「画面へ出す値」を見る。
+Check-YakuUse ($quickJs -notmatch ": '文章を見て、英語か日本語かを決めます';") '決め方だけを書く一文は残さない'
+Check-YakuUse ($quickJs -match "detectedDirection === 'to_en' \? '英語に訳します'") '決まった向きそのものを出す'
+
+# 「Word・Excelを取り込む」を押しても、下に欄が開くだけで何も起きないように見えた。
+# その欄の中にもう一度「選ぶ」があり、さらに確認のボタンがあった（押す回数3回）。
+Check-YakuUse ($catJs -match "el\('cat-open-file-entry'\)\.addEventListener\('click'[\s\S]{0,160}?cat-file-input'\)\.click\(\)") '取り込みボタンはファイル選択をそのまま開く'
+Check-YakuUse ($catJs -match "(?s)cat-file-input'\)\.addEventListener\('change'[\s\S]{0,220}?openSource\('file', 'auto'\)") '選んだ時点で取り込みが始まる'
+Check-YakuUse ($catHtml -notmatch 'Word・Excelを選ぶ' -and $catHtml -notmatch 'ここにファイルをドロップ') '同じことを言う欄を下に置かない'
+Check-YakuUse ($catJs -match "(?s)function showStart\(mode\)[\s\S]{0,600}?if \(mode === 'file'\) \{ el\('cat-file-input'\)\.value = ''") '保存場所から取り込むときは、選び済みのファイルを忘れる'
+
+# 1文ずつ依頼する道と、1文だけコピーする道が無かった（2026-08-13、利用者の指摘）。
+# まとめて行う道は道具の帯にあり、名前もそう言っている。
+Check-YakuUse ($catJs -match 'data-cat-translate-row') 'この行だけ訳すがある'
+Check-YakuUse ($catJs -match 'data-cat-copy-target') 'この行の訳文をコピーがある'
+Check-YakuUse ($catJs -match "(?s)function translateRow[\s\S]{0,700}?mode: 'translate', index: index") '1行だけの依頼も、まとめて訳すのと同じ口を使う'
+Check-YakuUse ($serverForView -match '\$onlyIndex') 'サーバは index を受けたらその行だけ訳す'
 
 # 2026-08-13: この行を自分で消してしまい、赤が出ても緑と報告される状態を
 # 1コミットぶん作った。判定を消したまま「41本緑」と言っていた。

@@ -1881,6 +1881,30 @@ function Invoke-YakuRoute {
     # 金額の書き方（oku / billion）。設定ファイルを直接開かせないための、
     # 1項目だけの入口。既に始めた作業の書き方は変えない（作業ごとに固定して
     # あり、原文の換算と点検が同じ書き方でそろっている必要があるため）。
+    # 押す前に、どちらへ訳すのかを出すためだけの口。作業も仕事も作らない。
+    # 画面には「文章を見て、英語か日本語かを決めます」としか出ておらず、
+    # 結局どちらになるのかが分からなかった（2026-08-13、利用者の指摘）。
+    # 判定は Resolve-YakuDirectionDecision 1か所しか持たない決まりなので、
+    # 画面側で当てにいかず、同じ関数へ聞く。
+    if ($method -eq 'POST' -and $path -eq '/api/direction-preview') {
+        try {
+            $payload = Read-YakuRequestJson -Request $req
+            $previewText = [string]$payload['text']
+            if ([string]::IsNullOrWhiteSpace($previewText)) {
+                Send-YakuTextResponse -Context $Context -Text '{"direction":"","confidence":"low"}' -ContentType 'application/json; charset=utf-8'
+                return
+            }
+            $decision = Resolve-YakuDirectionDecision -Text $previewText -Intent 'auto'
+            $response = [ordered]@{
+                direction = $(if ([bool]$decision.RequiresConfirmation) { '' } else { [string]$decision.Resolved })
+                confidence = [string]$decision.Confidence
+            }
+            Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+        } catch {
+            Send-YakuTextResponse -Context $Context -Text '{"direction":"","confidence":"low"}' -ContentType 'application/json; charset=utf-8'
+        }
+        return
+    }
     if ($method -eq 'POST' -and $path -eq '/api/settings/amount-notation') {
         try {
             $payload = Read-YakuRequestJson -Request $req -MaxBytes 2048
@@ -2814,7 +2838,14 @@ function Invoke-YakuRoute {
                             current_text = $maskedCurrent; instruction = $revInstruction
                         })
                     } else {
+                        # index を付けて呼ぶと、その1行だけ訳す。付けなければ残り全部。
+                        # 「1文ずつ依頼するにはどうすればよいか分からない」（2026-08-13、
+                        # 利用者の指摘）。まとめて依頼する道しか無かった。
+                        $onlyIndex = -1
+                        try { if ($null -ne $payload['index']) { $onlyIndex = [int]$payload['index'] } } catch { $onlyIndex = -1 }
+                        if ($onlyIndex -ge 0 -and $onlyIndex -ge $segs.Count) { throw '訳す行が見つかりません。' }
                         for ($i = 0; $i -lt $segs.Count; $i++) {
+                            if ($onlyIndex -ge 0 -and $i -ne $onlyIndex) { continue }
                             if (-not [string]::IsNullOrWhiteSpace([string]$segs[$i].Translation)) { continue }
                             $termRows=@()
                             try {

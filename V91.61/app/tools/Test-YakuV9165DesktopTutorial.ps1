@@ -100,7 +100,7 @@ Check-YakuTutorial ($html.Contains('押すまで、パソコンの設定は変�
 Check-YakuTutorial ($html.Contains('チェックに関係なく作ります') -and $html.Contains('ユーザーフォルダの中')) 'final step states exactly what the button creates, including the always-created start menu entry'
 # 「レジストリ」「管理者権限」は、押す人が使う言葉ではない（2026-08-13、利用者の指摘）。
 # 言いたいのは「ほかは変えない」ことなので、そのまま日本語で書く。
-Check-YakuTutorial ($html.Contains('ほかの設定は変えません') -and $html.Contains('あとから開始画面の「起動とショートカット」で変えられます')) 'final step states the limits of the change and that it is reversible'
+Check-YakuTutorial ($html.Contains('ほかの設定は変えません') -and $html.Contains('あとから開始画面の「使い方と設定」で変えられます')) 'final step states the limits of the change and that it is reversible'
 Check-YakuTutorial ($html.Contains('両方のチェックを外したまま押しても')) 'final step says both boxes may be cleared before pressing'
 $desktopSrc = Read-YakuTutorialFile 'src\DesktopIntegration.ps1'
 # レジストリは「置き場所を読む」だけで、書き込みはしない。書き込む道が入ったら、
@@ -121,7 +121,11 @@ Check-YakuTutorial ($css.Contains('min-height: 48px') -and $css.Contains('width:
 Check-YakuTutorial ($css.Contains('@media (max-width: 640px)') -and $css.Contains('@media (prefers-reduced-motion: reduce)')) 'narrow and reduced-motion layouts are defined'
 Check-YakuTutorial ($css.Contains('font-size: clamp(2rem') -and $css.Contains('font-size: 1.25rem')) 'headings and instructional text remain readable at high zoom'
 
-Check-YakuTutorial ($homeHtml.Contains('起動とショートカット') -and $homeHtml.Contains('使い方を見る') -and $homeHtml.Contains('/tutorial#settings')) 'home exposes help and direct preference routes'
+# 2026-08-13、利用者の指摘「3つもリンクがあってどれを選べばよいかわからない。
+# 一つでよくない？」。行き先の /tutorial が、使い方・送るもの・起動とショートカットを
+# 1枚で持っており、案内の再生もその画面から始められる。出口は1つにする。
+Check-YakuTutorial ($homeHtml.Contains('>使い方と設定</a>') -and (([regex]::Matches($homeHtml, '<a href="/tutorial')).Count -eq 1) -and -not $homeHtml.Contains('/cat?tour=1')) 'home exposes exactly one way into help and settings'
+Check-YakuTutorial ($html.Contains('href="/cat?tour=1"')) 'the tour can still be replayed from that page'
 # 既定オフにしたので、「オフです」と知らせる帯は催促にしかならない。外した。
 Check-YakuTutorial (-not $homeHtml.Contains('id="background-disabled-banner"')) 'the startup-off nag banner must stay removed'
 # 開始画面は状態を変えない。読み取り専用の一覧取得（/api/cat/recent）だけを許し、
