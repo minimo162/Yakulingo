@@ -73,6 +73,20 @@ body[data-cat-view="workspace"] #cat-instant { display: none; }
    data-cat-view="workspace" を入れるので、1回目の描画から効く。 */
 body[data-cat-view="workspace"] #cat-picker { display: none; }
 
+/* 過去の対訳の読み込み。日本語版と英語版を左右に並べ、同じ形で選ばせる。
+   縦に積むと、対応するページを見比べるのに画面を往復することになる。 */
+.align-file-row,
+.align-range-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: var(--space-2); }
+.align-range { display: grid; gap: 4px; }
+.align-range-label { font-weight: 700; }
+.align-range label { display: inline-flex; align-items: baseline; gap: 6px; margin-right: var(--space-2); }
+.align-range input[type="number"] { width: 5.5rem; }
+/* ページの冒頭。長い一覧なので、この中だけで動かす。 */
+.align-page-list { max-height: 14rem; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-control); }
+.align-page-row { display: flex; gap: var(--space-2); padding: 2px var(--space-1); border-bottom: 1px solid var(--line); font-size: var(--font-meta); }
+.align-page-row:last-child { border-bottom: 0; }
+.align-page-no { min-width: 2.5rem; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+
 /* 左上の資料名が切替口。押せることは分かる必要があるが、道具の帯の主役は
    訳すボタンなので、塗らずに下線と ▾ だけで示す。 */
 .app-cat .cat-doc-switch {

@@ -197,6 +197,24 @@
             <label class="field-label" for="cat-align-target-file">英語版のPDF<input id="cat-align-target-file" type="file" accept=".pdf"></label>
           </div>
           <p id="cat-align-file-status" class="muted" role="status" aria-live="polite"></p>
+          <!-- 範囲を選べるようにする。資料まるごとは Copilot への往復が3桁になり
+               （実測 2026-08-13: 144ページで最低128回）、参考にしたいのは普通
+               特定の章である。ページの冒頭をここに出すので、別のアプリで開いて
+               対応するページを調べ直す必要はない。 -->
+          <div id="cat-align-ranges" class="align-range-row" hidden>
+            <div class="align-range">
+              <span class="align-range-label">日本語版</span>
+              <label for="cat-align-source-from">から<input id="cat-align-source-from" type="number" min="1" step="1"></label>
+              <label for="cat-align-source-to">まで<input id="cat-align-source-to" type="number" min="1" step="1"></label>
+              <details><summary>ページの冒頭を見る</summary><div id="cat-align-source-pages" class="align-page-list"></div></details>
+            </div>
+            <div class="align-range">
+              <span class="align-range-label">英語版</span>
+              <label for="cat-align-target-from">から<input id="cat-align-target-from" type="number" min="1" step="1"></label>
+              <label for="cat-align-target-to">まで<input id="cat-align-target-to" type="number" min="1" step="1"></label>
+              <details><summary>ページの冒頭を見る</summary><div id="cat-align-target-pages" class="align-page-list"></div></details>
+            </div>
+          </div>
           <details id="cat-align-paste"><summary>PDFが無い（文章を貼り付ける）</summary>
             <label class="field-label" for="cat-align-source">日本語版<textarea id="cat-align-source" rows="5"></textarea></label>
             <label class="field-label" for="cat-align-target">英語版<textarea id="cat-align-target" rows="5"></textarea></label>

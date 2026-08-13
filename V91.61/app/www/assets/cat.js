@@ -974,6 +974,40 @@
     if (dialog && dialog.open) { try { dialog.close(); } catch (_) { dialog.removeAttribute('open'); } }
   }
 
+  /* 読み込んだ PDF のページ。範囲を選び直しても読み直さなくて済むよう、
+     解析の結果をそのまま持っておく（本文はこの画面の中だけにある）。 */
+  var alignPages = { source: [], target: [] };
+  var alignSideText = { source: 'cat-align-source', target: 'cat-align-target' };
+
+  /* ページの冒頭を並べる。対応するページを別のアプリで開いて調べ直さずに、
+     この画面の中で左右を見比べて決められるようにする（2026-08-13）。
+     市販ツールも対応づけは人が宣言する作りで、memoQ は名前が違いすぎると
+     間違えると警告し、Phrase は完全一致を要求する。宣言してもらう代わりに、
+     調べる手間はこちらで引き受ける。 */
+  function renderAlignPages(side) {
+    var host = el('cat-align-' + side + '-pages');
+    if (!host) return;
+    host.innerHTML = alignPages[side].map(function (p) {
+      var head = String(p.text || '').split('\n').filter(function (t) { return t.trim(); })[0] || '（文字なし）';
+      return '<div class="align-page-row"><span class="align-page-no">' + p.page + '</span>' + esc(head.slice(0, 48)) + '</div>';
+    }).join('');
+  }
+
+  /* 選んだ範囲のページだけを、送る文へ組み直す。範囲を空にすると全部。 */
+  function applyAlignRange(side) {
+    var pages = alignPages[side];
+    if (!pages || !pages.length) return;
+    var fromInput = el('cat-align-' + side + '-from');
+    var toInput = el('cat-align-' + side + '-to');
+    fromInput.max = pages.length; toInput.max = pages.length;
+    if (!fromInput.value) fromInput.value = 1;
+    if (!toInput.value) toInput.value = pages.length;
+    var from = Math.max(1, Math.min(pages.length, Number(fromInput.value) || 1));
+    var to = Math.max(from, Math.min(pages.length, Number(toInput.value) || pages.length));
+    fromInput.value = from; toInput.value = to;
+    el(alignSideText[side]).value = pages.slice(from - 1, to).map(function (p) { return p.text; }).join('\n');
+  }
+
   /* 送る前に、Copilot への往復回数と見込み時間を出す。実測 2026-08-13:
      144ページの資料は 5,742行 = 最低128往復で、20〜40分かかる。
      押したあとに知るのでは遅い。切り分けは Alignment.ps1 と同じ
@@ -1829,7 +1863,7 @@
     });
     /* PDF を選んだら、この画面の中で解析して貼り付け欄へ入れる。
        ファイルそのものはサーバへ送らない。送るのは取り出した文だけ。 */
-    function readPdfInto(input, targetId, label) {
+    function readPdfInto(input, side, label) {
       var file = input.files && input.files[0];
       if (!file) return;
       var status = el('cat-align-file-status');
@@ -1842,18 +1876,24 @@
           input.value = '';
           return;
         }
-        var text = res.pages.map(function (p) { return p.text; }).join('\n');
-        el(targetId).value = text;
-        var chars = text.length;
-        status.textContent = label + 'を読みました（' + res.pages.length + 'ページ、' + chars.toLocaleString('ja-JP') + '字）。';
+        alignPages[side] = res.pages;
+        renderAlignPages(side);
+        el('cat-align-ranges').hidden = false;
+        applyAlignRange(side);
+        status.textContent = label + 'を読みました（' + res.pages.length + 'ページ）。';
         if (!el('cat-align-name').value.trim()) el('cat-align-name').value = file.name;
         updateAlignEstimate();
       }).catch(function (error) {
         status.textContent = label + 'を読めませんでした。' + (error && error.message ? error.message : '');
       });
     }
-    el('cat-align-source-file').addEventListener('change', function () { readPdfInto(this, 'cat-align-source', '日本語版'); });
-    el('cat-align-target-file').addEventListener('change', function () { readPdfInto(this, 'cat-align-target', '英語版'); });
+    el('cat-align-source-file').addEventListener('change', function () { readPdfInto(this, 'source', '日本語版'); });
+    el('cat-align-target-file').addEventListener('change', function () { readPdfInto(this, 'target', '英語版'); });
+    ['source', 'target'].forEach(function (side) {
+      ['from', 'to'].forEach(function (end) {
+        el('cat-align-' + side + '-' + end).addEventListener('change', function () { applyAlignRange(side); updateAlignEstimate(); });
+      });
+    });
     el('cat-align-source').addEventListener('input', updateAlignEstimate);
     el('cat-align-target').addEventListener('input', updateAlignEstimate);
     el('cat-align-open').addEventListener('click', function () { var epoch = viewEpoch; setBusy(true); YakuCommon.postText('/api/cat/align', { source_text: el('cat-align-source').value, target_text: el('cat-align-target').value, file_name: el('cat-align-name').value }).then(function (html) { startJobHtml(html, { type: 'align', name: el('cat-align-name').value, viewEpoch: epoch }); }).catch(function (error) { setBusy(false); status(error.message, true); }); });

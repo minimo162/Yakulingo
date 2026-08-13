@@ -250,6 +250,18 @@ Check-YakuUse ($catJs -match 'OCRでテキスト付きのPDFにしてから') '�
 Check-YakuUse ($catJs -match 'function updateAlignEstimate') '送る前に見込みを出す関数がある'
 Check-YakuUse ($catJs -match 'Copilotへ約') '往復回数を押す前に出す'
 
+# ページ範囲。資料まるごとは往復が3桁になるので、章だけを選べるようにする。
+# 実測 2026-08-13: 144ページ全部で約128回（21〜43分）、50〜60ページに絞ると
+# 約13回（2〜4分）。対応づけの宣言は人がする（市販ツールも全社そう）が、
+# 対応するページを調べる手間はこちらで引き受ける（ページの冒頭を並べる）。
+Check-YakuUse ($catHtml -match 'id="cat-align-source-from"' -and $catHtml -match 'id="cat-align-target-to"') '日英それぞれに範囲の欄がある'
+Check-YakuUse ($catJs -match 'function applyAlignRange') '選んだ範囲だけを送る文へ組み直す'
+Check-YakuUse ($catJs -match 'function renderAlignPages') 'ページの冒頭を並べる'
+Check-YakuUse ($catHtml -match 'ページの冒頭を見る') '別のアプリで開かずに対応を探せる'
+# 解析し直さずに範囲を変えられること（読み込みは1回だけで済ませる）。
+Check-YakuUse ($catJs -match 'var alignPages = \{ source: \[\], target: \[\] \}') '読み込んだページを持っておく'
+Check-YakuUse ($catCss -match '\.align-page-list') 'ページ一覧はその中だけで動かす'
+
 # 2026-08-13: この行を自分で消してしまい、赤が出ても緑と報告される状態を
 # 1コミットぶん作った。判定を消したまま「41本緑」と言っていた。
 if ($script:failed -gt 0) { Write-Host ('Usability tests failed: ' + $script:failed) -ForegroundColor Red; exit 1 }
