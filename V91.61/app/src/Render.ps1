@@ -249,7 +249,13 @@ function New-YakuCatSourceFaithfulRender {
     $renderDir = Join-Path $RenderRoot $renderId
     $null = New-Item -ItemType Directory -Path $renderDir -Force
     $sourceInputPath = Join-Path $renderDir ('source-input' + [IO.Path]::GetExtension([string]$Project.Path))
-    $draftPath = Join-Path $renderDir ('DRAFT_' + [IO.Path]::GetFileName([string]$Project.FileName))
+    # 描画ディレクトリの下書きは提出物ではなく中間成果物である。名前を利用者の
+    # ファイル名から作ると、日本語名の原本（本アプリの通常入力）で manifest の
+    # output_xlsx が Resolve-YakuCatRenderPdf の文字種検査に落ちる。同じ
+    # ディレクトリの source-input / preview.pdf / source-preview.pdf と同様、
+    # 固定のASCII名にする。利用者に渡す DRAFT_ 名は Get-YakuCatDraftOutputPath が
+    # 別に作るので、見える名前は変わらない。
+    $draftPath = Join-Path $renderDir ('draft.' + [string]$Project.DocumentFormat)
     $pdfPath = Join-Path $renderDir 'preview.pdf'
     $sourcePdfPath = Join-Path $renderDir 'source-preview.pdf'
     try {
@@ -267,6 +273,12 @@ function New-YakuCatSourceFaithfulRender {
         $draft = Export-YakuCatProject -Project $renderProject -OutputPath $draftPath -Settings $Settings -Warnings $warnings
         $publishedDraft = [string]$draft.OutputPath
         if (-not (Test-Path -LiteralPath $publishedDraft -PathType Leaf)) { throw 'CAT_RENDER_DRAFT_MISSING' }
+        # 公開名は Get-YakuAvailableOutputPath が決めるので、こちらの希望どおりとは
+        # 限らない（衝突で (2) が付く）。manifest へ書く前に、Resolve-YakuCatRenderPdf が
+        # 使うのと同じ規則でここで検査する。作った名前を自分の検証で弾く事故を、
+        # 解決時ではなく作った側で落とす。
+        $publishedDraftName = [IO.Path]::GetFileName($publishedDraft)
+        if ($publishedDraftName -notmatch '^[A-Za-z0-9_.-]+\.(xlsx|xlsm)$' -or (Join-Path $renderDir $publishedDraftName) -cne $publishedDraft) { throw 'CAT_RENDER_DRAFT_NAME_INVALID' }
         $writebackCompleteness=Get-YakuCatDraftWritebackCompleteness -Project $Project -DraftPath $publishedDraft
         if([string]$writebackCompleteness.status -ne 'verified'){throw 'CAT_RENDER_WRITEBACK_COMPLETENESS_VIOLATED'}
         $draftPrint = Get-YakuExcelPrintContractSnapshot -Path $publishedDraft

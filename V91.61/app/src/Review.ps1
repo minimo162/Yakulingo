@@ -184,6 +184,55 @@ function ConvertTo-YakuSanitizedDocumentReviewPacket {
     return [pscustomobject]@{request_id=[string]$Request.RequestId;alias_to_segment_id=$Request.AliasToSegmentId;contract_version=[string]$Request.ContractVersion;dependency_fingerprint=[string]$Request.DependencyFingerprint;project_revision=[int]$Request.ProjectRevision;review_purpose=[string]$Request.ReviewPurpose;index_lens=[string]$Request.IndexLens;index_group_id=[string]$Request.IndexGroupId;sanitized=$true;parsed_result=[pscustomobject]@{ContractVersion=[string]$ParsedResult.ContractVersion;Findings=$findings;LensCoverage=@($ParsedResult.LensCoverage)}}
 }
 
+function Invoke-YakuCatDocumentReviewRequests {
+    <# Copilotへ送るのはここだけ。数値maskを作るのが同じファイルの
+       New-YakuCatProtectedDocumentReviewRequest なので、送信も同じファイルに
+       置く。ジョブのランスペースから直接Copilotを叩くと、「どこで伏せたか」を
+       ファイル単位の統制（tools/Test-YakuV9160NumericMasking.ps1 §10-21）で
+       名指しできない。返すのはsanitized packetだけで、placeholder辞書と
+       masked sidecarはこの関数の外へ出さない。 #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Root,
+        [Parameter(Mandatory=$true)]$Project,
+        [Parameter(Mandatory=$true)]$DocumentIndex,
+        [Parameter(Mandatory=$true)][AllowNull()]$Settings,
+        [AllowNull()]$Warnings,
+        [AllowNull()]$ProgressState
+    )
+    $packets=New-Object System.Collections.Generic.List[object];$skipped=New-Object System.Collections.Generic.List[string]
+    $batchSize=20;$segmentCount=@($Project.Segments).Count;$requestNumber=0;$start=0;$promptLimit=0
+    try{$promptLimit=[int]$Settings.copilotPromptCharLimit}catch{}
+    while($start -lt $segmentCount){
+        $count=[Math]::Min($batchSize,$segmentCount-$start);$request=$null
+        while($count -ge 1){
+            try{$candidateRequest=New-YakuCatProtectedDocumentReviewRequest -Root $Root -Project $Project -StartIndex $start -Count $count}
+            catch{if([string]$_.Exception.Message -eq 'CAT_REVIEW_TEXT_EMPTY'){$skipped.Add([string]@($Project.Segments)[$start].SegmentId)|Out-Null;$start++;$count=0;break};throw}
+            if($promptLimit -le 0 -or ([string]$candidateRequest.Envelope.Prompt).Length -le $promptLimit){$request=$candidateRequest;break}
+            if($count -eq 1){$skipped.Add([string]@($Project.Segments)[$start].SegmentId)|Out-Null;$start++;$count=0;break}
+            $count=[Math]::Max(1,[Math]::Floor($count/2))
+        }
+        if($null -eq $request){continue}
+        $requestNumber++
+        $progress=[Math]::Min(90,10+[int](80*$start/[Math]::Max(1,$segmentCount)))
+        Set-YakuTranslationProgress -ProgressState $ProgressState -Mode 'working' -Label '文書全体を確認しています' -Progress $progress -Detail ("確認範囲 {0}～{1} / {2}" -f ($start+1),($start+$count),$segmentCount) -Phase 'document_review'
+        $raw=Invoke-YakuProtectedCopilotPrompt -Envelope $request.Envelope -Settings $Settings -SkipFreshChatWait:($requestNumber -gt 1) -AnswerFormat labeled -PreserveEndMarker -Warnings $Warnings -ProgressState $ProgressState
+        $parsed=ConvertFrom-YakuDocumentReviewResponse -Response $raw -Request $request
+        $packets.Add((ConvertTo-YakuSanitizedDocumentReviewPacket -Request $request -ParsedResult $parsed))|Out-Null
+        $start+=$count
+    }
+    foreach($group in @($DocumentIndex.groups)){
+        if($group.PSObject.Properties.Name -contains 'automated' -and -not [bool]$group.automated){continue}
+        $request=$null
+        try{$request=New-YakuCatProtectedDocumentReviewRequest -Root $Root -Project $Project -SegmentIndices @($group.segment_indices) -ReviewPurpose document_index -IndexLens ([string]$group.lens) -IndexGroupId ([string]$group.group_id)}catch{continue}
+        if($promptLimit -gt 0 -and ([string]$request.Envelope.Prompt).Length -gt $promptLimit){continue}
+        $requestNumber++;Set-YakuTranslationProgress -ProgressState $ProgressState -Mode 'working' -Label '文書全体を確認しています' -Progress 92 -Detail '文書内の一貫性を索引単位で比較しています' -Phase 'document_review_index'
+        $raw=Invoke-YakuProtectedCopilotPrompt -Envelope $request.Envelope -Settings $Settings -SkipFreshChatWait:($requestNumber -gt 1) -AnswerFormat labeled -PreserveEndMarker -Warnings $Warnings -ProgressState $ProgressState
+        $parsed=ConvertFrom-YakuDocumentReviewResponse -Response $raw -Request $request
+        $packets.Add((ConvertTo-YakuSanitizedDocumentReviewPacket -Request $request -ParsedResult $parsed))|Out-Null
+    }
+    return [pscustomobject]@{Packets=@($packets.ToArray());SkippedSegmentIds=@($skipped.ToArray())}
+}
+
 function Apply-YakuCatCopilotDocumentReviewResult {
     param(
         [Parameter(Mandatory=$true)]$Project,

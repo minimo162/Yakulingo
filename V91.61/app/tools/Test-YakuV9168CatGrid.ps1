@@ -89,7 +89,15 @@ Check-YakuGrid ($catJs -match 'function previewCellRef\(') 'Excel はセルの�
 Check-YakuGrid ($catJs -match 'cat-preview-grid' -and $catJs -match 'cat-preview-flow') 'セルの格子と、段落の並びの両方を組む'
 Check-YakuGrid ($catJs -match 'data-cat-preview-side') '訳文と原文を切り替えられる'
 Check-YakuGrid ($catJs -match 'is-missing') '訳文が無いところは原文を薄く出す（空白にしない）'
-Check-YakuGrid ($catJs -match 'function openPreview[\s\S]{0,200}showModal') '開くときに組み直す'
+# 開く経路は、必ず組み直しを通ってから出す。これを「openPreview から showModal まで
+# 200 字以内」で代用していたが、それは作りではなく関数の長さを固定していた。#52 が
+# openPreview へ PDF タブの出し入れを4行足した時点で 164 字→577 字になり破れた
+# （2026-08-14）。しかも組み直しの呼び出し自体を要求していないので、renderPreview();
+# を消しても緑のままだった（b040c4b の cat.js で実測）。本体を切り出し（末尾は2字下げ
+# の閉じ括弧）、呼ぶ順序そのものを見る。
+$openPreviewBody = ''
+if ($catJs -match '(?s)function openPreview\(\) \{.*?\n  \}') { $openPreviewBody = $Matches[0] }
+Check-YakuGrid ($openPreviewBody -match '(?s)renderPreview\(\);.*showModal') '開くときに組み直す'
 Check-YakuGrid ($catJs -notmatch 'preview[\s\S]{0,40}fetch\(' ) 'プレビューのためにファイルを作らない・開かない'
 
 if ($script:failed -gt 0) { Write-Host ('CAT grid tests failed: ' + $script:failed) -ForegroundColor Red; exit 1 }

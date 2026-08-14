@@ -137,6 +137,31 @@ function Complete-YakuCatPublicationCandidateSet {
     return [pscustomobject]@{candidate_set_id=[string]$Parsed.CandidateSetId;project_id=[string]$Project.Id;segment_id=[string]$Request.SegmentId;base_revision=[int]$Request.ProjectRevision;source_hash=[string]$Request.SourceHash;canonical_hash=[string]$Request.CanonicalHash;source_facts_hash=[string]$Request.SourceFactsHash;terminology_hash=[string]$Request.TerminologyHash;abbreviation_registry_hash=[string]$Request.AbbreviationRegistryHash;placement_budget=$Request.PlacementBudget;placement_budget_hash=[string]$Request.PlacementBudgetHash;dependency_fingerprint=[string]$Request.DependencyFingerprint;request_contract_version=[string]$Request.ContractVersion;candidates=@($Parsed.Candidates);cannot_fit_reason=[string]$Parsed.CannotFitReason}
 }
 
+function Invoke-YakuCatPublicationCandidateRequest {
+    <# Copilotへ送るのはここだけ。数値maskを作るのが同じファイルの
+       New-YakuCatProtectedPublicationCandidateRequest なので、送信も同じ
+       ファイルに置く。ジョブのランスペースから直接Copilotを叩くと、
+       「どこで伏せたか」をファイル単位の統制
+       （tools/Test-YakuV9160NumericMasking.ps1 §10-21）で名指しできない。 #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Root,
+        [Parameter(Mandatory=$true)]$Project,
+        [Parameter(Mandatory=$true)][int]$Index,
+        [Parameter(Mandatory=$true)]$PlacementBudget,
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$StartedDependencyFingerprint,
+        [Parameter(Mandatory=$true)][AllowNull()]$Settings,
+        [AllowNull()]$Warnings,
+        [AllowNull()]$ProgressState
+    )
+    $request=New-YakuCatProtectedPublicationCandidateRequest -Root $Root -Project $Project -Index $Index -PlacementBudget $PlacementBudget
+    if([string]$request.DependencyFingerprint -ne $StartedDependencyFingerprint){throw 'CAT_PUBLICATION_DEPENDENCY_STALE'}
+    Set-YakuTranslationProgress -ProgressState $ProgressState -Mode 'working' -Label 'Excelに入れる候補を作っています' -Progress 35 -Detail '情報を削らずに短くできる案を確認しています。' -Phase 'publication_candidates'
+    $raw=Invoke-YakuProtectedCopilotPrompt -Envelope $request.Envelope -Settings $Settings -AnswerFormat labeled -PreserveEndMarker -Warnings $Warnings -ProgressState $ProgressState
+    $parsed=ConvertFrom-YakuPublicationCandidateResponse -Response $raw -Request $request
+    $candidateSet=Complete-YakuCatPublicationCandidateSet -Project $Project -Request $request -Parsed $parsed
+    return [pscustomobject]@{CandidateSet=$candidateSet;SegmentId=[string]$request.SegmentId;PlacementBudgetHash=[string]$request.PlacementBudgetHash;DependencyFingerprint=[string]$request.DependencyFingerprint}
+}
+
 function Apply-YakuCatPublicationCandidate {
     param([Parameter(Mandatory=$true)]$Project,[Parameter(Mandatory=$true)]$CandidateSet,[Parameter(Mandatory=$true)][string]$CandidateSetId,[Parameter(Mandatory=$true)][string]$CandidateId,[Parameter(Mandatory=$true)][string]$CandidateTextHash,[Parameter(Mandatory=$true)][bool]$MeaningPreservationConfirmed,[Parameter(Mandatory=$true)][string]$Reason)
     if(-not $MeaningPreservationConfirmed){throw 'CAT_PUBLICATION_MEANING_CONFIRMATION_REQUIRED'}

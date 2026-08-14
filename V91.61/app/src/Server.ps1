@@ -1039,15 +1039,13 @@ function Start-YakuTranslationJob {
                     $publicationProject=Restore-YakuCatProject -Id ([string]$cat.project_id)
                     if($null -eq $publicationProject){throw 'CAT_PUBLICATION_PROJECT_NOT_FOUND'}
                     if([int]$publicationProject.Revision -ne [int]$cat.expected_project_revision){throw 'CAT_PROJECT_REVISION_CONFLICT'}
-                    $request=New-YakuCatProtectedPublicationCandidateRequest -Root $Root -Project $publicationProject -Index ([int]$cat.index) -PlacementBudget $cat.placement_budget
-                    if([string]$request.DependencyFingerprint -ne [string]$cat.started_dependency_fingerprint){throw 'CAT_PUBLICATION_DEPENDENCY_STALE'}
-                    Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label 'Excelに入れる候補を作っています' -Progress 35 -Detail '情報を削らずに短くできる案を確認しています。' -Phase 'publication_candidates'
-                    $raw=Invoke-YakuProtectedCopilotPrompt -Envelope $request.Envelope -Settings $settings -AnswerFormat labeled -PreserveEndMarker -Warnings $catWarnings -ProgressState $JobState
-                    $parsed=ConvertFrom-YakuPublicationCandidateResponse -Response $raw -Request $request
-                    $candidateSet=Complete-YakuCatPublicationCandidateSet -Project $publicationProject -Request $request -Parsed $parsed
+                    # 送信は Publication.ps1 が持つ。伏せる関数と送る関数を同じ
+                    # ファイルに置かないと、統制がマスクを名指しで確かめられない。
+                    $publicationRun=Invoke-YakuCatPublicationCandidateRequest -Root $Root -Project $publicationProject -Index ([int]$cat.index) -PlacementBudget $cat.placement_budget -StartedDependencyFingerprint ([string]$cat.started_dependency_fingerprint) -Settings $settings -Warnings $catWarnings -ProgressState $JobState
+                    $candidateSet=$publicationRun.CandidateSet
                     $completedProject=Restore-YakuCatProject -Id ([string]$cat.project_id)
-                    $completedFingerprint='';if($null -ne $completedProject){$completedSegment=@($completedProject.Segments|Where-Object{[string]$_.SegmentId -eq [string]$request.SegmentId}|Select-Object -First 1);if($completedSegment.Count){$completedFingerprint=Get-YakuCatPublicationCandidateDependencyFingerprint -Project $completedProject -Segment $completedSegment[0] -PlacementBudgetHash ([string]$request.PlacementBudgetHash)}}
-                    $result=[pscustomobject]@{Kind='cat';Mode='publication_candidates';ResultKind='publication_candidates';ResultId=[string]$candidateSet.candidate_set_id;ProjectId=[string]$publicationProject.Id;StartedDependencyFingerprint=[string]$request.DependencyFingerprint;CompletedDependencyFingerprint=$completedFingerprint;ApplicationStatus=$(if([string]$request.DependencyFingerprint -eq $completedFingerprint){'current'}else{'stale'});CandidateSet=$candidateSet;Warnings=@($catWarnings.ToArray())}
+                    $completedFingerprint='';if($null -ne $completedProject){$completedSegment=@($completedProject.Segments|Where-Object{[string]$_.SegmentId -eq [string]$publicationRun.SegmentId}|Select-Object -First 1);if($completedSegment.Count){$completedFingerprint=Get-YakuCatPublicationCandidateDependencyFingerprint -Project $completedProject -Segment $completedSegment[0] -PlacementBudgetHash ([string]$publicationRun.PlacementBudgetHash)}}
+                    $result=[pscustomobject]@{Kind='cat';Mode='publication_candidates';ResultKind='publication_candidates';ResultId=[string]$candidateSet.candidate_set_id;ProjectId=[string]$publicationProject.Id;StartedDependencyFingerprint=[string]$publicationRun.DependencyFingerprint;CompletedDependencyFingerprint=$completedFingerprint;ApplicationStatus=$(if([string]$publicationRun.DependencyFingerprint -eq $completedFingerprint){'current'}else{'stale'});CandidateSet=$candidateSet;Warnings=@($catWarnings.ToArray())}
                 } elseif ($catMode -eq 'document_review') {
                     Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label '文書全体を確認しています' -Progress 5 -Detail '送信前に数値を伏せ、原文と訳文を文章単位で確認しています。' -Phase 'document_review'
                     $reviewProject=Restore-YakuCatProject -Id ([string]$cat.project_id)
@@ -1056,39 +1054,11 @@ function Start-YakuTranslationJob {
                     $startedFingerprint=Get-YakuCatDocumentReviewDependencyFingerprint -Project $reviewProject
                     if($startedFingerprint -ne [string]$cat.started_dependency_fingerprint){throw 'CAT_REVIEW_DEPENDENCY_STALE'}
                     $documentIndex=New-YakuCatDocumentIndexSnapshot -Project $reviewProject
-                    $packets=New-Object System.Collections.Generic.List[object];$skipped=New-Object System.Collections.Generic.List[string]
-                    $batchSize=20;$segmentCount=@($reviewProject.Segments).Count;$requestNumber=0;$start=0;$promptLimit=0
-                    try{$promptLimit=[int]$settings.copilotPromptCharLimit}catch{}
-                    while($start -lt $segmentCount){
-                        $count=[Math]::Min($batchSize,$segmentCount-$start);$request=$null
-                        while($count -ge 1){
-                            try{$candidateRequest=New-YakuCatProtectedDocumentReviewRequest -Root $Root -Project $reviewProject -StartIndex $start -Count $count}
-                            catch{if([string]$_.Exception.Message -eq 'CAT_REVIEW_TEXT_EMPTY'){$skipped.Add([string]$reviewProject.Segments[$start].SegmentId)|Out-Null;$start++;$count=0;break};throw}
-                            if($promptLimit -le 0 -or ([string]$candidateRequest.Envelope.Prompt).Length -le $promptLimit){$request=$candidateRequest;break}
-                            if($count -eq 1){$skipped.Add([string]$reviewProject.Segments[$start].SegmentId)|Out-Null;$start++;$count=0;break}
-                            $count=[Math]::Max(1,[Math]::Floor($count/2))
-                        }
-                        if($null -eq $request){continue}
-                        $requestNumber++
-                        $progress=[Math]::Min(90,10+[int](80*$start/[Math]::Max(1,$segmentCount)))
-                        Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label '文書全体を確認しています' -Progress $progress -Detail ("確認範囲 {0}～{1} / {2}" -f ($start+1),($start+$count),$segmentCount) -Phase 'document_review'
-                        $raw=Invoke-YakuProtectedCopilotPrompt -Envelope $request.Envelope -Settings $settings -SkipFreshChatWait:($requestNumber -gt 1) -AnswerFormat labeled -PreserveEndMarker -Warnings $catWarnings -ProgressState $JobState
-                        $parsed=ConvertFrom-YakuDocumentReviewResponse -Response $raw -Request $request
-                        $packets.Add((ConvertTo-YakuSanitizedDocumentReviewPacket -Request $request -ParsedResult $parsed))|Out-Null
-                        $start+=$count
-                    }
-                    foreach($group in @($documentIndex.groups)){
-                        if($group.PSObject.Properties.Name -contains 'automated' -and -not [bool]$group.automated){continue}
-                        $request=$null
-                        try{$request=New-YakuCatProtectedDocumentReviewRequest -Root $Root -Project $reviewProject -SegmentIndices @($group.segment_indices) -ReviewPurpose document_index -IndexLens ([string]$group.lens) -IndexGroupId ([string]$group.group_id)}catch{continue}
-                        if($promptLimit -gt 0 -and ([string]$request.Envelope.Prompt).Length -gt $promptLimit){continue}
-                        $requestNumber++;Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label '文書全体を確認しています' -Progress 92 -Detail '文書内の一貫性を索引単位で比較しています' -Phase 'document_review_index'
-                        $raw=Invoke-YakuProtectedCopilotPrompt -Envelope $request.Envelope -Settings $settings -SkipFreshChatWait:($requestNumber -gt 1) -AnswerFormat labeled -PreserveEndMarker -Warnings $catWarnings -ProgressState $JobState
-                        $parsed=ConvertFrom-YakuDocumentReviewResponse -Response $raw -Request $request
-                        $packets.Add((ConvertTo-YakuSanitizedDocumentReviewPacket -Request $request -ParsedResult $parsed))|Out-Null
-                    }
+                    # 送信は Review.ps1 が持つ。伏せる関数と送る関数を同じファイルに
+                    # 置かないと、統制がマスクを名指しで確かめられない。
+                    $reviewRun=Invoke-YakuCatDocumentReviewRequests -Root $Root -Project $reviewProject -DocumentIndex $documentIndex -Settings $settings -Warnings $catWarnings -ProgressState $JobState
                     $completedProject=Restore-YakuCatProject -Id ([string]$cat.project_id);$completedFingerprint=$(if($null -ne $completedProject){Get-YakuCatDocumentReviewDependencyFingerprint -Project $completedProject}else{''})
-                    $result=[pscustomobject]@{Kind='cat';Mode='document_review';ResultKind='document_review';ResultId=[guid]::NewGuid().ToString('N');ProjectId=[string]$reviewProject.Id;StartedDependencyFingerprint=$startedFingerprint;CompletedDependencyFingerprint=$completedFingerprint;ApplicationStatus=$(if($startedFingerprint -eq $completedFingerprint){'current'}else{'stale'});DocumentIndexSnapshot=$documentIndex;Packets=@($packets.ToArray());SkippedSegmentIds=@($skipped.ToArray());Warnings=@($catWarnings.ToArray())}
+                    $result=[pscustomobject]@{Kind='cat';Mode='document_review';ResultKind='document_review';ResultId=[guid]::NewGuid().ToString('N');ProjectId=[string]$reviewProject.Id;StartedDependencyFingerprint=$startedFingerprint;CompletedDependencyFingerprint=$completedFingerprint;ApplicationStatus=$(if($startedFingerprint -eq $completedFingerprint){'current'}else{'stale'});DocumentIndexSnapshot=$documentIndex;Packets=@($reviewRun.Packets);SkippedSegmentIds=@($reviewRun.SkippedSegmentIds);Warnings=@($catWarnings.ToArray())}
                 } elseif ($catMode -eq 'corpus') {
                     throw 'CAT_CORPUS_MODE_RETIRED: 過去の翻訳例は候補一覧から明示的に挿入してください。'
                 } elseif ($catMode -eq 'align') {

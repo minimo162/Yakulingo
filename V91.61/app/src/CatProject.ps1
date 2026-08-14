@@ -415,6 +415,33 @@ function Get-YakuCatProjectMutationReplay {
     return (Invoke-YakuCatProjectLock -ProjectId $ProjectId -Operation $operation -Arguments @($state))
 }
 
+function Assert-YakuCatProjectPersisted {
+    <# 永続化できなかった Project を registry へ公開しないための1点。
+       Save-YakuCatProject は失敗を2通りで伝える（catch 末尾の return $false と、
+       同じ catch の -ThrowOnError 再送出）。片方だけを見ると、もう片方の失敗が
+       素通りして未保存の candidate が registry へ載る。両方をここで受けて、
+       同じ CAT_PROJECT_SAVE_FAILED に揃える。下位の原因はメッセージへ残す。
+       registry を差し替える行は、必ずこの呼び出しより後に置くこと。
+
+       ただし下位が既に CAT_ の安定コードを持つときは、包まずにそのまま通す。
+       Server.ps1 は応答コードを '^(CAT_[A-Z0-9_]+)' と行頭固定で抜き、その値で
+       409 か 400 かを決める。包むと CAT_COMMIT_MANIFEST_CONFLICT が先頭から消え、
+       別プロセスが先に保存した競合が 409 から 400 へ落ちて current_revision も
+       返らなくなる。2026-08-14 に実際にそう壊し、47本すべて緑のまま素通りした
+       （見張っている表明が Server.ps1 の本文を字面で見るだけで、挙動を計算して
+       いなかったため）。緑は、壊れていないことの証拠にならない。 #>
+    param([Parameter(Mandatory=$true)]$Project)
+    $saved = $false
+    try {
+        $saved = [bool](Save-YakuCatProject -Project $Project -ThrowOnError)
+    } catch {
+        $inner = [string]$_.Exception.Message
+        if ($inner -match '^CAT_[A-Z0-9_]+') { throw $_ }
+        throw ('CAT_PROJECT_SAVE_FAILED: 作業内容を保存できませんでした。 ' + $inner)
+    }
+    if (-not $saved) { throw 'CAT_PROJECT_SAVE_FAILED: 作業内容を保存できませんでした。' }
+}
+
 function Invoke-YakuCatProjectMutation {
     <# ExpectedRevision の確認、candidate への変更、世代/manifest 保存、registry
        差替えを同じ project lock 内で行う。Mutation は共有 Project を受け取らない。 #>
@@ -487,7 +514,7 @@ function Invoke-YakuCatProjectMutation {
             # 件数だけ残し、projectの肥大化を防ぐ。
             $candidate.MutationReceipts = @(@($candidate.MutationReceipts) + @($receipt) | Select-Object -Last 256)
         }
-        $null = Save-YakuCatProject -Project $candidate -ThrowOnError
+        Assert-YakuCatProjectPersisted -Project $candidate
         $script:YakuCatProjects[$id] = $candidate
         return [pscustomobject]@{ Project=$candidate; Result=$mutationResult; Replayed=$false; Receipt=$receipt }
     }
@@ -513,7 +540,7 @@ function Commit-YakuNewCatProject {
         }
         $candidate = Copy-YakuCatProjectForMutation -Project $newProject
         # newProject は未コミットなので、保存失敗時はIDを返す前に破棄する。
-        $null = Save-YakuCatProject -Project $candidate -ThrowOnError
+        Assert-YakuCatProjectPersisted -Project $candidate
         $script:YakuCatProjects[$id] = $candidate
         return $candidate
     }

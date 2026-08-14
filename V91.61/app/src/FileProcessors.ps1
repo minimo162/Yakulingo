@@ -593,7 +593,14 @@ function Get-YakuExcelCellStructureContract {
             row_height=$rowHeight; column_width=$columnWidth; row_hidden=$rowHidden; column_hidden=$columnHidden
         }
         $json=$contract|ConvertTo-Json -Depth 5 -Compress
-        return [pscustomobject]@{Contract=[pscustomobject]$contract;Fingerprint=(Get-YakuCatSourceIntegrityHash -Text $json)}
+        # ハッシュは Runtime.ps1 の Get-YakuSha256Hex を使う。CatProject.ps1 の
+        # Get-YakuCatSourceIntegrityHash も同じ値（UTF8 バイトの SHA256 を64桁小文字hex）を返すが、
+        # SrcModules.ps1 の並びでは CatProject.ps1 が FileProcessors.ps1 より後ろにある。
+        # 低層から高層を呼ぶと SrcModules.ps1 冒頭の依存順に反し、FileProcessors.ps1 までしか
+        # 読まない回帰テストでは CommandNotFoundException になる。しかもそれは下の
+        # cell-extract-skip の catch に畳み込まれ、0ブロックとして無音で通ってしまう。
+        # なお $json は必ず1文字以上あるため、Mandatory な -Bytes が空配列になることはない。
+        return [pscustomobject]@{Contract=[pscustomobject]$contract;Fingerprint=(Get-YakuSha256Hex -Bytes ([System.Text.Encoding]::UTF8.GetBytes($json)))}
     } finally {
         Release-YakuComObject $columnRange;Release-YakuComObject $rowRange;Release-YakuComObject $validation;Release-YakuComObject $mergeArea;Release-YakuComObject $cell
     }

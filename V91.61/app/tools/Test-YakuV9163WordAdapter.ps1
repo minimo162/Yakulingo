@@ -105,7 +105,14 @@ try {
     $project=New-YakuCatProject -Root $root -Path $source -Settings $settings -Direction to_en
     Check-YakuWord ([string]$project.DocumentFormat -eq 'docx' -and @($project.Segments).Count -eq 2) 'generic CAT open dispatches DOCX to Word adapter'
     Check-YakuWord (Save-YakuCatProject -Project $project) 'Word project and owned source persist'
-    Check-YakuWord ([string]$project.Path -match 'source\\original\.docx$' -and (Test-Path -LiteralPath $project.Path)) 'Word source is copied into the project'
+    # 原本の置き場は cat-source-v2（source\revisions\<原本hashの先頭32桁>\original.ext）。
+    # Save-YakuCatProject 側の CatProject.ps1:1813,1841 が決め、
+    # Resolve-YakuCatSavedSourceArtifact（CatProject.ps1:1873）が契約として検査する。
+    # source\original.docx は v1 の旧形。#52 で v2 へ移ったとき、この1行だけ取り残された。
+    # 表明の中身は緩めない。利用者の元ファイルではなく作業領域の複製を指していること
+    # （-ne $source）と、契約そのもの（cat-source-v2）を足して、次に配置が変わったら
+    # 黙って通らないようにする。
+    Check-YakuWord ([string]$project.Path -ne [string]$source -and [string]$project.Path -match '\\source\\revisions\\[a-f0-9]{32}\\original\.docx$' -and [string]$project.SourceArtifactContractVersion -eq 'cat-source-v2' -and (Test-Path -LiteralPath $project.Path)) 'Word source is copied into the project'
     Check-YakuWord ([string]$project.FileName -eq 'quarter.docx') 'owned source keeps the user-facing original file name'
     $suggestedOutput=Get-YakuCatDraftOutputPath -Project $project -OutputDirectory $tempRoot
     Check-YakuWord ([IO.Path]::GetFileName($suggestedOutput) -eq 'DRAFT_quarter_translated.docx') 'DRAFT output name uses the imported file name instead of original.docx'
