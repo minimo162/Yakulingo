@@ -52,6 +52,12 @@ Check-YakuTutorial ($tourJs.Contains('案内を閉じる') -and $tourJs.Contains
 $tourStepOrder = @([regex]::Matches($tourJs, "target: '(#[a-z0-9-]+)'") | ForEach-Object { $_.Groups[1].Value })
 Check-YakuTutorial ($tourStepOrder.Count -ge 2 -and $tourStepOrder[$tourStepOrder.Count - 1] -eq '#quick-submit') '送る段は最後に置く（押すと画面が移るため）'
 Check-YakuTutorial ($tourStepOrder -contains '#cat-open-file-entry') '資料の入口を指す段がある'
+Check-YakuTutorial ($tourJs -match "target: '#cat-open-file-entry'[\s\S]{0,500}?preservePosition: true" -and
+    $tourJs.Contains('if (step.preservePosition) { next(); return; }')) '狭い初回画面を資料入口まで勝手にスクロールしない'
+Check-YakuTutorial ($tourJs -match "target: '#cat-open-file-entry'[\s\S]{0,700}?nextAtTop: true" -and
+    $tourJs.Contains('target.blur();') -and $tourJs.Contains('window.scrollTo(0, 0);')) '資料選択後は入力欄へ戻して次の案内を見せる'
+Check-YakuTutorial ($tourJs.Contains("document.getElementById('quick-form')") -and
+    $tourJs.Contains('new MutationObserver') -and $tourJs.Contains('mutationObserver.disconnect()')) '入力後に送信ボタンが動いても案内枠が追従する'
 Check-YakuTutorial ($tourJs -match "getElementById\('quick-form'\)[\s\S]{0,200}?finish\('done'\)") '送ったら、どの段に居ても終わりを記録する'
 # 案内を終えても、ショートカットは作らない（起動設定は別の画面で明示的に押す）。
 $desktopIntegration = Read-YakuTutorialFile 'src\DesktopIntegration.ps1'
@@ -63,10 +69,10 @@ Check-YakuTutorial ($tutorialCompletedBody -ne '' -and $tutorialCompletedBody.Co
 #   読み込む境界: このキーを押したときだけ。見張らない
 #   送る境界:     「訳案を作る」を押すまで送らない
 # 送信ボタンの名前も「翻訳」から変わっている。実物の名前で書く。
-Check-YakuTutorial ($html.Contains('読み込むのは押した時だけ')) 'tutorial states when text is read from the foreground app'
+Check-YakuTutorial (-not $html.Contains('Ctrl</kbd>＋<kbd>Alt') -and -not $html.Contains('読み込むのは押した時だけ')) 'retired global hotkey must not remain in the tutorial'
 # 2026-08-13: ボタン名が「訳して確認する」へ変わり、資料の文も同じ経路で送るように
 # なったので、送るものの範囲も書き足した。守るのは「実物の名前で、押すまで送らないと書く」。
-Check-YakuTutorial ($html.Contains('「訳して確認する」を押した文章')) 'the about page states the explicit-send boundary with the real button name'
+Check-YakuTutorial ($html.Contains('「日本語に訳す」「英語に訳す」') -and $html.Contains('「この文章を保存して確認画面へ」')) 'the about page states the explicit-send boundary with the real button names'
 Check-YakuTutorial ($html.Contains('ファイルそのものは送りません')) 'the about page says the file itself is not sent'
 Check-YakuTutorial (-not ($html -match '文章は自動では読み取りません|貼り付けて「翻訳」を押す')) 'the retired no-reading claim must not come back'
 # 2026-08-12（同日追記）: 「Outlook などからは読み込めない」と書いたが、実装は
@@ -79,18 +85,18 @@ Check-YakuTutorial (-not ($html -match 'ほかのアプリ（Outlookなど）か
 # クリップボードの履歴に執着してないと思う。利用する直前にコピーして、貼り付けた後は
 # 皆忘れてる」。読み方が2通りあることも、押す人にとっては同じ1つの動作でしかない。
 # 残すのは「押した時だけ読む」＝勝手に見ていないこと。ここは気にする人が居る。
-Check-YakuTutorial ($html.Contains('読み込むのは押した時だけです') -and -not $html.Contains('クリップボードが置き換わります')) 'tutorial says the selection is read only on the keypress'
+Check-YakuTutorial ($html.Contains('右上の×で完全に終了します') -and $html.Contains('翻訳中だけ、閉じてよいか確認します')) 'tutorial explains the new complete-exit contract'
 $shellSourceForTutorial = Read-YakuTutorialFile 'desktop\Program.cs'
 Check-YakuTutorial ($shellSourceForTutorial.Contains('CopySelectionFromForeground') -and $shellSourceForTutorial.Contains('GetClipboardSequenceNumber')) 'the described clipboard path still exists in the shell'
 $quickClientForTutorial = Read-YakuTutorialFile 'www\assets\quick.js'
 # 2026-08-13: ボタンの文言を「訳して確認する」へ変えた（押した先が確認画面に
 # なったため）。説明ページが指すボタン名は、実物と一致していなければならない。
-Check-YakuTutorial ($quickClientForTutorial.Contains("'訳して確認する'") -and $quickClientForTutorial.Contains('/api/quick/selection')) 'the tutorial button name and the reading path still exist in the app'
+Check-YakuTutorial ($quickClientForTutorial.Contains("'日本語に訳す'") -and $quickClientForTutorial.Contains("'英語に訳す'")) 'the tutorial button names still exist in the app'
 # 2026-08-12: 自動起動を既定オフ（オプトイン）にした。実測で、これが節約するのは
 # Copilot の準備 4.3〜15秒。代わりに常駐して 850ms ごとの死活確認を回し続ける
 # （Program.cs の backendTimer）。同じ形の道具でも QTranslate は利用者が入れる
 # チェックにしている。デスクトップのショートカットは常駐しないので既定オンのまま。
-Check-YakuTutorial ($html -match 'id="startup-enabled"[^>]*type="checkbox"(?![^>]*checked)') 'startup must be opt-in (unchecked by default)'
+Check-YakuTutorial (-not $html.Contains('id="startup-enabled"') -and $html.Contains('自動起動しません')) 'background startup must be removed from the UI'
 Check-YakuTutorial ($html -match 'id="desktop-shortcut"[^>]*type="checkbox"[^>]*checked') 'desktop shortcut is visibly ON by default'
 Check-YakuTutorial ($html.Contains('押すまで、パソコンの設定は変わりません') -and $html.Contains('この設定で始める')) 'final confirmation explains the side-effect boundary'
 # 2026-08-12: 押してよいか迷う人がいる、という指摘。迷いの中身は「何が起きるか」
@@ -100,8 +106,8 @@ Check-YakuTutorial ($html.Contains('押すまで、パソコンの設定は変�
 Check-YakuTutorial ($html.Contains('チェックに関係なく作ります') -and $html.Contains('ユーザーフォルダの中')) 'final step states exactly what the button creates, including the always-created start menu entry'
 # 「レジストリ」「管理者権限」は、押す人が使う言葉ではない（2026-08-13、利用者の指摘）。
 # 言いたいのは「ほかは変えない」ことなので、そのまま日本語で書く。
-Check-YakuTutorial ($html.Contains('ほかの設定は変えません') -and $html.Contains('あとから開始画面の「使い方と設定」で変えられます')) 'final step states the limits of the change and that it is reversible'
-Check-YakuTutorial ($html.Contains('両方のチェックを外したまま押しても')) 'final step says both boxes may be cleared before pressing'
+Check-YakuTutorial ($html.Contains('Windowsへのサインイン時には自動起動しません') -and $html.Contains('あとから開始画面の「使い方と設定」で変えられます')) 'final step states the limits of the change and that it is reversible'
+Check-YakuTutorial ($html.Contains('チェックを外したまま押しても')) 'final step says the optional shortcut may stay cleared'
 $desktopSrc = Read-YakuTutorialFile 'src\DesktopIntegration.ps1'
 # レジストリは「置き場所を読む」だけで、書き込みはしない。書き込む道が入ったら、
 # チュートリアルの説明が嘘になるのでここで止める。
@@ -109,8 +115,13 @@ Check-YakuTutorial ($desktopSrc -match 'start_menu\s*=\s*\$true') 'the tutorial 
 Check-YakuTutorial (-not ($desktopSrc -match '(Set|New|Remove)-ItemProperty|reg\.exe|RegistryKey.*SetValue')) 'the tutorial claim matches the implementation: nothing is written to the registry'
 
 Check-YakuTutorial ([regex]::Matches($js, [regex]::Escape("YakuCommon.post('/api/desktop/preferences'")).Count -eq 1) 'desktop preferences have one POST call site'
-Check-YakuTutorial ($js.Contains('startup_enabled: !!startupInput.checked') -and $js.Contains('desktop_shortcut: !!desktopInput.checked')) 'POST carries both explicit checkbox values'
+Check-YakuTutorial ($js.Contains('startup_enabled: false') -and $js.Contains('desktop_shortcut: !!desktopInput.checked')) 'POST permanently disables startup and carries the shortcut choice'
 Check-YakuTutorial ($js.Contains("YakuCommon.json('/api/desktop/preferences')")) 'existing preferences are read without changing them'
+Check-YakuTutorial ($html.Contains('id="tutorial-replay" class="button secondary-button" href="/cat?tour=1" hidden') -and
+    $html.Contains('id="tutorial-home" class="button secondary-button" href="/" hidden') -and
+    $js.Contains('replayLink.hidden = firstRun') -and $js.Contains('homeLink.hidden = firstRun')) 'first run exposes one clear action instead of unusable replay and home links'
+Check-YakuTutorial ($js.Contains("data.tutorial_completed === false") -and
+    $js.Contains("window.location.assign('/cat?tour=1')")) 'first confirmation opens the real translation screen and starts its contextual tour'
 Check-YakuTutorial (-not ($js -match 'clipboard|execCommand|localStorage|sessionStorage')) 'tutorial neither reads clipboard nor persists text in browser storage'
 Check-YakuTutorial ($js.Contains('data.message') -and $js.Contains('data.warnings') -and $js.Contains('data.available')) 'server response, warnings, and availability are surfaced'
 Check-YakuTutorial ($js.Contains("YakuCommon.notifyDesktopShell('desktop-preferences-changed')") -and

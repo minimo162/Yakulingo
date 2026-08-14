@@ -160,7 +160,24 @@ function Install-YakuVersion {
     if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
     try {
         Write-YakuBootstrapInfo "複製しています: $SourceDir"
-        Copy-Item -LiteralPath $SourceDir -Destination $stage -Recurse -Force
+        New-Item -ItemType Directory -Path $stage -Force | Out-Null
+        # 共有フォルダに開発用ファイルや一時データが残っていても、製品として検証した
+        # manifestの列挙物だけを導入する。フォルダ全体を先にコピーすると、正規ファイルが
+        # すべて一致していても未記載の実験プロファイル1件で導入不能になっていた。
+        foreach ($item in @($Manifest.files)) {
+            $relative = [string]$item.path
+            $sourceFile = Join-YakuPath -Base $SourceDir -Relative $relative
+            if (!(Test-Path -LiteralPath $sourceFile -PathType Leaf)) {
+                throw "INSTALL_SOURCE_MISSING: manifest記載ファイルが共有側にありません: $relative"
+            }
+            $targetFile = Join-YakuPath -Base $stage -Relative $relative
+            $targetParent = Split-Path -Parent $targetFile
+            if (!(Test-Path -LiteralPath $targetParent -PathType Container)) {
+                New-Item -ItemType Directory -Path $targetParent -Force | Out-Null
+            }
+            Copy-Item -LiteralPath $sourceFile -Destination $targetFile -Force
+        }
+        Copy-Item -LiteralPath (Join-Path $SourceDir 'manifest.json') -Destination (Join-Path $stage 'manifest.json') -Force
 
         $reason = ''
         if (-not (Test-YakuTreeAgainstManifest -Root $stage -Manifest $Manifest -Reason ([ref]$reason))) {
@@ -370,7 +387,7 @@ $startScript = Join-YakuPath -Base $runDir -Relative 'app/Start-YakuLingo.ps1'
 if (!(Test-Path -LiteralPath $startScript -PathType Leaf)) {
     throw "START_SCRIPT_NOT_FOUND: 起動スクリプトがありません: $startScript"
 }
-$desktopShell = Join-YakuPath -Base $runDir -Relative 'app/desktop/YakuLingo.exe'
+$appLauncher = Join-YakuPath -Base $runDir -Relative 'app/Start-YakuLingoApp.ps1'
 
 $env:YAKULINGO_SHARED_ROOT = $SharedRoot
 
@@ -386,7 +403,9 @@ if ($Admin -or $NoBrowser) {
     & $startScript -NoBrowser:$NoBrowser -Admin:$Admin
     return
 }
-if (!(Test-Path -LiteralPath $desktopShell -PathType Leaf)) {
-    throw "DESKTOP_SHELL_MISSING: YakuLingo.exe がありません: $desktopShell"
+if (!(Test-Path -LiteralPath $appLauncher -PathType Leaf)) {
+    throw "APP_LAUNCHER_MISSING: Edgeアプリ版の起動スクリプトがありません: $appLauncher"
 }
-Start-Process -FilePath $desktopShell -WorkingDirectory (Split-Path -Parent $desktopShell) | Out-Null
+$powerShell = Join-Path $PSHOME 'powershell.exe'
+$launcherArgs = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $appLauncher + '"'
+Start-Process -FilePath $powerShell -ArgumentList $launcherArgs -WorkingDirectory (Split-Path -Parent $appLauncher) -WindowStyle Hidden | Out-Null

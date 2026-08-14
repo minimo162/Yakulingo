@@ -30,6 +30,11 @@ try {
             # 並列用に開いた Copilot ウィンドウを先に閉じる。プロセスを止めてからでは
             # 誰も閉じないまま残る。この経路は /shutdown を通らない。
             try { if (Get-Command Close-YakuCopilotOwnedWindows -ErrorAction SilentlyContinue) { $null = Close-YakuCopilotOwnedWindows } } catch {}
+            try {
+                if (Get-Command Stop-YakuCopilotEdgeProfile -ErrorAction SilentlyContinue) {
+                    $null = Stop-YakuCopilotEdgeProfile -UserDataDir (Join-Path (Get-YakuDataDir) 'edge-profile')
+                }
+            } catch {}
             Stop-Process -Id $serverPid -ErrorAction Stop
             Write-Host "YakuLingo server stopped. PID=$serverPid" -ForegroundColor Green
             exit 0
@@ -57,6 +62,11 @@ foreach ($url in $urls) {
     if ($tried.ContainsKey($url)) { continue }
     $tried[$url] = $true
     try {
+        try {
+            if (Get-Command Stop-YakuCopilotEdgeProfile -ErrorAction SilentlyContinue) {
+                $null = Stop-YakuCopilotEdgeProfile -UserDataDir (Join-Path (Get-YakuDataDir) 'edge-profile')
+            }
+        } catch {}
         Invoke-WebRequest -UseBasicParsing -Method Post -Uri $url -ContentType 'application/json' -Body '{}' -TimeoutSec 2 | Out-Null
         Write-Host "Shutdown request sent: $url" -ForegroundColor Green
         exit 0

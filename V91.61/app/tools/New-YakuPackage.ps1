@@ -27,11 +27,10 @@ if ($forbidden.Count -gt 0) {
     throw "PACKAGE_FORBIDDEN_FILE: 配布物に含められないファイルがあります: $names"
 }
 
-# desktop\YakuLingo.exe はビルド成果物で git では追跡しない。ビルドを忘れたまま
-# 配布物を作ると、起動できないパッケージが黙って出来上がる。ここで止める。
-$desktopExe = Join-Path $source 'app\desktop\YakuLingo.exe'
-if (-not (Test-Path -LiteralPath $desktopExe -PathType Leaf)) {
-    throw "PACKAGE_DESKTOP_SHELL_MISSING: $desktopExe がありません。app\desktop\Build-DesktopShell.ps1 を実行してから配布物を作ってください。"
+# Normal builds use PowerShell + Microsoft Edge app mode and contain no custom EXE.
+$appLauncher = Join-Path $source 'app\Start-YakuLingoApp.ps1'
+if (-not (Test-Path -LiteralPath $appLauncher -PathType Leaf)) {
+    throw "PACKAGE_APP_LAUNCHER_MISSING: $appLauncher がありません。"
 }
 
 # A release starts with an empty termbase and translation memory.  Historical
@@ -57,6 +56,10 @@ if (Test-Path -LiteralPath $manifestPath) { Remove-Item -LiteralPath $manifestPa
 $map = @{}
 foreach ($file in @(Get-ChildItem -LiteralPath $source -Recurse -File -Force)) {
     $relative = $file.FullName.Substring($source.Length).TrimStart([char[]]@('\','/')).Replace('\','/')
+    # app/desktop and app/experiments are retained only as development history
+    # and WebView2 probes. The product uses PowerShell + Edge app mode and ships
+    # no custom executable or WebView2 runtime.
+    if ($relative -match '(?i)^app/(desktop|experiments)(/|$)') { continue }
     $map[$relative] = $file.FullName
 }
 if ($map.Count -eq 0) { throw "PACKAGE_SOURCE_EMPTY: 配布対象のファイルがありません: $source" }

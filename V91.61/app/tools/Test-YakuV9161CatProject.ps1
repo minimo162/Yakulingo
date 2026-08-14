@@ -64,6 +64,19 @@ try {
 
 $settings = Read-YakuSettings -Root $root
 
+# ------------------------------------------------ UTF-8 BOMなしCSVをそのまま読む
+# 実機で、ブラウザから選んだUTF-8 CSVをExcel COMで開いてしまい、日本語が
+# 「鬆・岼」のように文字化けした。CSVは専用の厳密UTF-8→CP932判定を通し、
+# Excelのロケール依存読込へ渡さない。
+$csvPath = Join-Path $tmp 'utf8-no-bom.csv'
+[IO.File]::WriteAllText($csvPath, "項目,内容`n売上高,前年同期比10%増加`n営業利益,コスト削減により5%改善`n", [Text.UTF8Encoding]::new($false))
+$csvProject = New-YakuCatProject -Root $root -Path $csvPath -Settings $settings -Direction 'to_en'
+$csvTexts = @($csvProject.Segments | ForEach-Object { [string]$_.Text })
+Chk ($csvTexts -contains '項目' -and $csvTexts -contains '内容') 'UTF-8 BOMなしCSVの見出しが文字化けしない'
+Chk ($csvTexts -contains '売上高' -and $csvTexts -contains '前年同期比10%増加') 'UTF-8 BOMなしCSVの本文が文字化けしない'
+Chk (@($csvProject.Blocks | Where-Object { [string]$_.Meta.Kind -ne 'csv-cell' }).Count -eq 0) 'CSVはExcel COMではなくCSV専用経路で取り込む'
+Remove-YakuCatProject -Id ([string]$csvProject.Id)
+
 # ---------------------------------------------------------------- 取り込む
 Write-Host '取り込んでセグメントに分ける'
 $project = New-YakuCatProject -Root $root -Path $srcPath -Settings $settings -Direction 'to_en'
@@ -292,7 +305,8 @@ Remove-YakuCatProject -Id ([string]$tp.Id)
 # 「長い文章を貼り付ける」が通っていたものと同じ。
 $appJsText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'assets\cat.js'))
 $quickJsText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'assets\quick.js'))
-Chk ($quickJsText.Contains('/api/cat/open') -and -not $quickJsText.Contains('/api/cat/promote')) '貼り付けた文章は最初から作業として作る'
+Chk ($quickJsText.Contains('/api/quick/jobs') -and $quickJsText.Contains('/api/cat/open') -and -not $quickJsText.Contains('/api/cat/promote')) '貼り付けは保存しない訳と確認作業を明示して分ける'
+Chk ($catProjectSource -match "DocumentFormat\s*=\s*\[IO\.Path\]::GetExtension\(\`$Path\)") 'Excel取り込み時に出力形式を作業へ保持する'
 Chk (-not $quickJsText.Contains('translation:') -and -not $quickJsText.Contains('target_text')) '訳文を送り返す経路は作らない'
 $indexText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'cat.html'))
 # 貼り付けの入口は1つで、まずその場で訳す状態へ入る（2026-08-11）。長すぎて1回で

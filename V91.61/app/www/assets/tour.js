@@ -36,6 +36,13 @@
       target: '#cat-open-file-entry',
       title: 'Word・Excel は丸ごと取り込めます',
       body: '原本はそのままで、訳文を入れたコピーを作ります。貼り付けた文章と同じ画面で、1行ずつ確認します。',
+      /* 小さい窓ではこの入口が最初の表示範囲より下にある。初回表示をここまで
+         勝手にスクロールすると、主役の入力欄も画面名も消えてしまう。その場合だけ
+         この補助段を飛ばし、見えている「送る」段へ進む。 */
+      preservePosition: true,
+      /* ファイル選択をキャンセルしても click は発生する。次の「送る」案内だけが
+         下へずれた画面に残らないよう、翻訳入力の先頭へ戻す。 */
+      nextAtTop: true,
       done: function () { return false; },
       events: ['click']
     },
@@ -109,6 +116,7 @@
        吹き出しは上端で切れていた）。既に見えているときは動かさない。 */
     var box = target.getBoundingClientRect();
     if (box.top < 12 || box.bottom > window.innerHeight - 12) {
+      if (step.preservePosition) { next(); return; }
       try { target.scrollIntoView({ behavior: 'auto', block: 'center' }); } catch (_) { target.scrollIntoView(); }
     }
     callout.innerHTML = '';
@@ -133,16 +141,40 @@
     detach();
     var handler = function () {
       if (step.done(target)) { next(); }
-      else if (step.events.indexOf('click') >= 0) { next(); }
+      else if (step.events.indexOf('click') >= 0) {
+        if (step.nextAtTop) {
+          target.blur();
+          window.scrollTo(0, 0);
+        }
+        next();
+      }
     };
     step.events.forEach(function (name) { target.addEventListener(name, handler); });
     var onMove = function () { place(); };
     window.addEventListener('resize', onMove);
     window.addEventListener('scroll', onMove, true);
+    /* 入力後の言語判定などで、対象の手前に欄が差し込まれる。resize/scroll は
+       その配置変更では発火しないため、枠だけ古い位置に残って別の操作を指していた。
+       翻訳フォーム内の変更だけを見て、次の描画で位置を取り直す。 */
+    var watchedForm = document.getElementById('quick-form');
+    var mutationObserver = null;
+    if (watchedForm && window.MutationObserver) {
+      mutationObserver = new MutationObserver(function () {
+        window.requestAnimationFrame(place);
+      });
+      mutationObserver.observe(watchedForm, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: ['hidden', 'class', 'style', 'aria-hidden', 'disabled']
+      });
+    }
     cleanup = function () {
       step.events.forEach(function (name) { target.removeEventListener(name, handler); });
       window.removeEventListener('resize', onMove);
       window.removeEventListener('scroll', onMove, true);
+      if (mutationObserver) mutationObserver.disconnect();
     };
   }
 

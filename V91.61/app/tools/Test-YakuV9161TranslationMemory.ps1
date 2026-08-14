@@ -191,6 +191,22 @@ try {
     $sum = Get-YakuCatProjectSummary -Project $proj
     Chk ([int]$sum.Confirmed -eq 1 -and [int]$sum.Unconfirmed -eq 0) '直さずに確定できる'
 
+    Write-Host 'PDF対訳をメモリへ登録する空白' -ForegroundColor Cyan
+    $alignMemory = New-YakuCatTextProject -Root $root -Settings $null -Direction 'to_en' `
+        -Text '  決算補足説明資料作成の有無                    ： 有  ' `
+        -Translation '  Supplementary Material                         :      Yes  '
+    $alignMemory.Source = 'align'
+    $alignMemory.TmOutbox = @()
+    $null = Add-YakuCatTranslationMemoryOutboxEvent -Project $alignMemory -Segment @($alignMemory.Segments)[0]
+    Chk ([string]$alignMemory.TmOutbox[0].source -eq '決算補足説明資料作成の有無 ： 有') 'PDF表の原文から桁合わせ用の空白を除く'
+    Chk ([string]$alignMemory.TmOutbox[0].target -eq 'Supplementary Material : Yes') 'PDF表の訳文から桁合わせ用の空白を除く'
+
+    $ordinaryMemory = New-YakuCatTextProject -Root $root -Settings $null -Direction 'to_en' `
+        -Text 'A  B' -Translation 'C  D'
+    $ordinaryMemory.TmOutbox = @()
+    $null = Add-YakuCatTranslationMemoryOutboxEvent -Project $ordinaryMemory -Segment @($ordinaryMemory.Segments)[0]
+    Chk ([string]$ordinaryMemory.TmOutbox[0].source -eq 'A  B' -and [string]$ordinaryMemory.TmOutbox[0].target -eq 'C  D') '通常翻訳で利用者が入力した空白は変えない'
+
     $empty = New-YakuCatTextProject -Root $root -Settings $null -Direction 'to_en' -Text "訳の無い文です。"
     $threw = $false
     try { $null = Set-YakuCatSegmentConfirmed -Project $empty -Index 0 } catch { $threw = $true }

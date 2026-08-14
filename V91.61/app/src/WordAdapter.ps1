@@ -202,14 +202,11 @@ function Get-YakuWordDocumentInventory {
             $storyNs = New-YakuWordNamespaceManager -Document $story
             $storyText = @($story.SelectNodes('//w:t', $storyNs) | ForEach-Object { [string]$_.InnerText }) -join ''
             if (-not [string]::IsNullOrWhiteSpace($storyText)) {
-                $unsupported.Add(('元のファイルへ書き戻せない箇所があります: ' + $entry.FullName)) | Out-Null
                 $storyOrdinal=0
                 foreach($storyParagraph in @($story.SelectNodes('//w:p',$storyNs))){
                     $storyOrdinal++; $paragraphText=Get-YakuWordParagraphText -Paragraph $storyParagraph -Namespaces $storyNs
                     if([string]::IsNullOrWhiteSpace($paragraphText)){continue}
                     $storyKind=if($entry.FullName -match 'header'){'word_header'}elseif($entry.FullName -match 'footer'){'word_footer'}else{'word_story'}
-                    # 画面の「場所」列にそのまま出る。word/footnotes.xml のような内部の名前だと、
-                    # 利用者は自分がどこを訳しているのか分からなくなる。Wordの用語へ直す。
                     $storyLabel = switch -Regex ($entry.FullName) {
                         'footnotes' { '脚注'; break }
                         'endnotes'  { '文末脚注'; break }
@@ -218,10 +215,39 @@ function Get-YakuWordDocumentInventory {
                         'comments'  { 'コメント'; break }
                         default     { '本文以外'; break }
                     }
+                    # 単純なヘッダー／フッターは本文と同じ方法で安全に書き戻せる。
+                    # 脚注・コメント、および複雑な要素や複数書式を含む段落は従来どおり止める。
+                    $storyWriteSupported = ($storyKind -in @('word_header','word_footer'))
+                    if ($storyWriteSupported -and $storyParagraph.SelectNodes($forbiddenXPath, $storyNs).Count -gt 0) { $storyWriteSupported=$false }
+                    $storyRunStyles=New-Object Collections.Generic.List[string]
+                    foreach($storyTextNode in @($storyParagraph.SelectNodes('.//w:t',$storyNs))){
+                        $storyRun=$storyTextNode.SelectSingleNode('ancestor::w:r[1]',$storyNs)
+                        $storyRPr=if($storyRun){$storyRun.SelectSingleNode('./w:rPr',$storyNs)}else{$null}
+                        $storyRunStyles.Add((Get-YakuWordRunStyleKey -RunProperties $storyRPr))|Out-Null
+                    }
+                    $storyHasMultipleStyles=(@($storyRunStyles.ToArray()|Select-Object -Unique).Count -gt 1)
+                    # ヘッダー内で「英語ロゴは太字、日本語の日付は通常」のように
+                    # 書式が分かれる場合は、段落を潰さず文字runごとに翻訳対象へする。
+                    if($storyWriteSupported -and $storyHasMultipleStyles){
+                        $storyTextOrdinal=0
+                        foreach($storyTextNode in @($storyParagraph.SelectNodes('.//w:t',$storyNs))){
+                            $storyTextOrdinal++; $storyRunText=[string]$storyTextNode.InnerText
+                            if([string]::IsNullOrWhiteSpace($storyRunText)){continue}
+                            $blocks.Add([pscustomobject]@{
+                                Id=('word:'+$entry.FullName+':p:'+$storyOrdinal+':t:'+$storyTextOrdinal);Text=$storyRunText;Location=($storyLabel+' '+$storyOrdinal)
+                                Meta=[pscustomobject]@{Kind=$storyKind;Part=$entry.FullName;ParagraphOrdinal=$storyOrdinal;TextNodeOrdinal=$storyTextOrdinal;WriteSupported=$true}
+                            })|Out-Null
+                            $writeSupportedCount++
+                        }
+                        continue
+                    }
+                    if($storyHasMultipleStyles){$storyWriteSupported=$false}
+                    if(-not $storyWriteSupported){$unsupported.Add(('元のファイルへ安全に書き戻せない箇所があります: '+$entry.FullName+' 段落 '+$storyOrdinal))|Out-Null}
                     $blocks.Add([pscustomobject]@{
                         Id=('word:'+$entry.FullName+':p:'+$storyOrdinal);Text=$paragraphText;Location=($storyLabel+' '+$storyOrdinal)
-                        Meta=[pscustomobject]@{Kind=$storyKind;Part=$entry.FullName;ParagraphOrdinal=$storyOrdinal;WriteSupported=$false}
+                        Meta=[pscustomobject]@{Kind=$storyKind;Part=$entry.FullName;ParagraphOrdinal=$storyOrdinal;WriteSupported=$storyWriteSupported}
                     })|Out-Null
+                    if($storyWriteSupported){$writeSupportedCount++}
                 }
             }
         }
@@ -294,6 +320,37 @@ function Export-YakuWordDraft {
             $newEntry=$package.Archive.CreateEntry('word/document.xml',[IO.Compression.CompressionLevel]::Optimal)
             $writer=New-Object IO.StreamWriter($newEntry.Open(),(New-Object Text.UTF8Encoding($false)))
             try { $doc.Save($writer) } finally { $writer.Dispose() }
+
+            # 本文とは別のXMLにある単純なヘッダー／フッターも、同じ段落単位で置換する。
+            $storyNames=@($package.Archive.Entries|ForEach-Object{[string]$_.FullName}|Where-Object{$_ -match '^word/(?:header\d+|footer\d+)\.xml$'})
+            foreach($storyName in $storyNames){
+                $story=Read-YakuWordXmlEntry -Archive $package.Archive -Name $storyName
+                $storyNs=New-YakuWordNamespaceManager -Document $story
+                $storyOrdinal=0; $storyChanged=$false
+                foreach($storyParagraph in @($story.SelectNodes('//w:p',$storyNs))){
+                    $storyOrdinal++; $storyId='word:'+$storyName+':p:'+$storyOrdinal
+                    if($translations.ContainsKey($storyId)){
+                        Set-YakuWordParagraphTranslation -Paragraph $storyParagraph -Namespaces $storyNs -Text ([string]$translations[$storyId])
+                        $written++; $storyChanged=$true
+                        continue
+                    }
+                    $storyTextOrdinal=0
+                    foreach($storyTextNode in @($storyParagraph.SelectNodes('.//w:t',$storyNs))){
+                        $storyTextOrdinal++; $storyTextId='word:'+$storyName+':p:'+$storyOrdinal+':t:'+$storyTextOrdinal
+                        if(-not $translations.ContainsKey($storyTextId)){continue}
+                        $storyTranslation=[string]$translations[$storyTextId]
+                        $storyTextNode.InnerText=$storyTranslation
+                        if($storyTranslation -match '^\s|\s$'){$storyTextNode.SetAttribute('space','http://www.w3.org/XML/1998/namespace','preserve')}
+                        else{$storyTextNode.RemoveAttribute('space','http://www.w3.org/XML/1998/namespace')}
+                        $written++; $storyChanged=$true
+                    }
+                }
+                if(-not $storyChanged){continue}
+                $storyEntry=$package.Archive.GetEntry($storyName); $storyEntry.Delete()
+                $newStoryEntry=$package.Archive.CreateEntry($storyName,[IO.Compression.CompressionLevel]::Optimal)
+                $storyWriter=New-Object IO.StreamWriter($newStoryEntry.Open(),(New-Object Text.UTF8Encoding($false)))
+                try{$story.Save($storyWriter)}finally{$storyWriter.Dispose()}
+            }
         } finally { Close-YakuWordPackage -Package $package }
         $verify=Get-YakuWordDocumentInventory -Path $temp
         if ([string]$verify.StructureHash -ne [string]$inventory.StructureHash) { throw 'CAT_WORD_DRAFT_ROUNDTRIP_STRUCTURE_FAILED' }
@@ -314,6 +371,9 @@ function New-YakuCatWordProject {
     $inventory=Get-YakuWordDocumentInventory -Path $Path
     $segments=New-Object Collections.Generic.List[object]
     foreach ($b in @($inventory.Blocks)) {
+        # 既に訳先の言語で書かれているロゴ・ヘッダー・定型フッターは原文のまま残す。
+        # 翻訳対象へ混ぜるとCopilotは空で返し、未翻訳行としてDRAFT出力を永久に止める。
+        if (-not (Test-YakuShouldTranslateCell -Text ([string]$b.Text) -Direction $Direction)) { continue }
         $segments.Add([pscustomobject]@{
             Text=[string]$b.Text; BlockIds=@([string]$b.Id); Cells=@(); Joined=$false
             Kind=[string]$b.Meta.Kind; Sheet=''; Location=[string]$b.Location

@@ -52,6 +52,18 @@ function New-TestDocx {
     } finally {$zip.Dispose();$stream.Dispose()}
 }
 
+function Add-TestDocxStory {
+    param([string]$Path,[string]$Name,[string]$Text,[string]$RunsXml='')
+    $stream=[IO.File]::Open($Path,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+    $zip=New-Object IO.Compression.ZipArchive($stream,[IO.Compression.ZipArchiveMode]::Update,$false)
+    try {
+        $entry=$zip.CreateEntry(('word/'+$Name+'.xml'),[IO.Compression.CompressionLevel]::Optimal)
+        $writer=New-Object IO.StreamWriter($entry.Open(),(New-Object Text.UTF8Encoding($false)))
+        $storyRuns=if([string]::IsNullOrWhiteSpace($RunsXml)){'<w:r><w:t>'+[Security.SecurityElement]::Escape($Text)+'</w:t></w:r>'}else{$RunsXml}
+        try{$writer.Write('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:'+$(if($Name -like 'header*'){'hdr'}else{'ftr'})+' xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p>'+$storyRuns+'</w:p></w:'+$(if($Name -like 'header*'){'hdr'}else{'ftr'})+'>')}finally{$writer.Dispose()}
+    } finally {$zip.Dispose();$stream.Dispose()}
+}
+
 try {
     $source=Join-Path $tempRoot 'quarter.docx'; New-TestDocx -Path $source
     $settings=[pscustomobject]@{}
@@ -67,6 +79,28 @@ try {
     $wordInfo = Get-YakuFileInfo -Path $source -Settings $settings
     Check-YakuWord ([string]$wordInfo.Kind -eq 'word' -and [string]$wordInfo.FileName -eq 'quarter.docx') 'the import gate accepts DOCX instead of rejecting it as an unsupported type'
     Check-YakuWord (@('to_en','to_jp') -contains [string]$wordInfo.DetectedDirection -and -not [string]::IsNullOrWhiteSpace([string]$wordInfo.DirectionConfidence)) 'the import gate decides a direction for DOCX like it does for Excel'
+
+    $mixedLanguage=Join-Path $tempRoot 'mixed-language.docx'
+    New-TestDocxParagraph -Path $mixedLanguage -RunsXml '<w:r><w:t>お客様へのお知らせです。</w:t></w:r></w:p><w:p><w:r><w:t>Customer Communication</w:t></w:r>'
+    $mixedProject=New-YakuCatProject -Root $root -Path $mixedLanguage -Settings $settings -Direction to_en
+    Check-YakuWord (@($mixedProject.Blocks).Count -eq 2 -and @($mixedProject.Segments).Count -eq 1) 'already-English Word headers remain in the file without becoming untranslated blockers'
+    Check-YakuWord ([string]$mixedProject.Segments[0].Text -eq 'お客様へのお知らせです。') 'only text needing the selected direction appears in the review grid'
+
+    $storyDoc=Join-Path $tempRoot 'header-footer.docx'; New-TestDocx -Path $storyDoc
+    Add-TestDocxStory -Path $storyDoc -Name 'header1' -RunsXml '<w:r><w:rPr><w:b/></w:rPr><w:t>Customer Notice</w:t></w:r><w:r><w:t xml:space="preserve"> 2026年度 お客様向け資料</w:t></w:r>'
+    Add-TestDocxStory -Path $storyDoc -Name 'footer1' -Text 'Customer Communication'
+    $storyProject=New-YakuCatProject -Root $root -Path $storyDoc -Settings $settings -Direction to_en
+    Check-YakuWord ([bool]$storyProject.WordInventory.DraftStructureEligible -and @($storyProject.Blocks).Count -eq 5) 'mixed-format headers and simple footers remain eligible for a Word DRAFT'
+    Check-YakuWord (@($storyProject.Segments).Count -eq 3) 'an English footer stays unchanged while a Japanese header is translated'
+    for($storyIndex=0;$storyIndex -lt @($storyProject.Segments).Count;$storyIndex++){
+        $storyProject.Segments[$storyIndex].Translation=$(if([string]$storyProject.Segments[$storyIndex].Text -match '2026'){'Translated 2026'}else{'Translated text'}); $storyProject.Segments[$storyIndex].Origin='human'
+        $null=Set-YakuCatSegmentConfirmed -Project $storyProject -Index $storyIndex
+    }
+    $storyOutput=Join-Path $tempRoot 'DRAFT_header-footer.docx'
+    $storyResult=Export-YakuCatProject -Project $storyProject -OutputPath $storyOutput -Settings $settings
+    $storyAfter=Get-YakuWordDocumentInventory -Path $storyOutput
+    $storyAfterText=@($storyAfter.Blocks|ForEach-Object{[string]$_.Text}) -join '|'
+    Check-YakuWord ($storyResult.Written -eq 3 -and $storyAfterText -match 'Customer Notice' -and $storyAfterText -match 'Translated 2026' -and $storyAfterText -match 'Customer Communication') 'translated header run is written while its English prefix and footer are preserved'
 
     $project=New-YakuCatProject -Root $root -Path $source -Settings $settings -Direction to_en
     Check-YakuWord ([string]$project.DocumentFormat -eq 'docx' -and @($project.Segments).Count -eq 2) 'generic CAT open dispatches DOCX to Word adapter'

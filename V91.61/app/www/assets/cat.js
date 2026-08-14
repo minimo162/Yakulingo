@@ -133,6 +133,7 @@
     return YakuCommon.post('/api/cat/' + action, body);
   }
   function directionName(value) { return value === 'to_jp' ? '日本語に訳す作業' : '英語に訳す作業'; }
+  function workName(source, direction) { return source === 'align' ? '過去訳の対応確認' : directionName(direction); }
   /* ツールバーは横に長い。向きは記号で足りる（2026-08-12、利用者の指摘）。 */
   function directionMark(value) { return value === 'to_jp' ? '英→日' : '日→英'; }
   /* 画面は一つで、状態は二つ（始める／1文ずつ確認する）。どれが出ているかは
@@ -140,7 +141,7 @@
      器の高さを窓に固定する規則（cat-workspace.css）は、一覧が主役の確認作業に
      しか合わない。選ぶ画面とその場で訳す状態は、内容の丈だけ縦に伸びてよい。 */
   function setView(name) { document.body.setAttribute('data-cat-view', name); }
-  function showPicker() { syncLocation(''); viewEpoch++; candidateSeq++; project = null; activeSegmentId = ''; activeIndex = -1; revisionComparison = null; currentFilter = 'actionable'; currentLocation = 'all'; currentChange = 'all'; termSelection = { index: -1, source: '', target: '' }; dirty.clear(); clearOutputDisplay(); setView('start'); el('cat-picker').hidden = false; el('cat-workspace').hidden = true; el('cat-current-summary').hidden = true; closeStartPanels(); loadRecent(); }
+  function showPicker() { syncLocation(''); viewEpoch++; candidateSeq++; project = null; activeSegmentId = ''; activeIndex = -1; revisionComparison = null; currentFilter = 'actionable'; currentLocation = 'all'; currentChange = 'all'; termSelection = { index: -1, source: '', target: '' }; dirty.clear(); clearOutputDisplay(); document.title = '翻訳 - YakuLingo'; el('cat-page-title').textContent = '翻訳'; setView('start'); el('cat-picker').hidden = false; el('cat-workspace').hidden = true; el('cat-current-summary').hidden = true; closeStartPanels(); loadRecent(); }
   function closeStartPanels() { document.querySelectorAll('.cat-start-panel').forEach(function (panel) { panel.hidden = true; }); el('cat-direction-choice').hidden = true; }
   /* 開いた欄は、いちばん少ない移動で見える所へ入れる（block:'nearest'）。
      画面の中央へ寄せていたころは、押しただけで 560px 飛び、押したボタン自身が
@@ -155,6 +156,7 @@
        入力した場所ではなくそちらを取り込みにいく（2026-08-13、実機で発生）。 */
     if (mode === 'file') { el('cat-file-input').value = ''; uploaded = null; }
     panel.hidden = false;
+    if (mode === 'align') updateAlignEstimate();
     var first = panel.querySelector('input,textarea,[role="button"],button');
     if (!first) return;
     try { first.focus({ preventScroll: true }); } catch (_) { first.focus(); }
@@ -213,6 +215,9 @@
       /* 1行でも確認済みなら取り出せる。全行そろうのを待たせない。 */
       el('cat-export-reviewed').disabled = !project || Number(project && project.confirmed) <= 0 || dirty.size > 0;
       document.querySelectorAll('[data-cat-filter],[data-cat-location],[data-cat-change],[data-cat-inspector]').forEach(function (button) { button.disabled = false; });
+      /* 全体の待機解除は全ボタンを戻すため、日英が揃っていない対訳開始ボタンまで
+         押せる状態にしない。開始条件だけは本文の有無からもう一度決める。 */
+      if (el('cat-align-open')) updateAlignEstimate();
     }
   }
 
@@ -251,13 +256,13 @@
       var name = esc(item.file_name || '名称未設定');
       var saved = savedLabel(item.saved);
       return '<div class="cat-resume-row">' +
-        '<button type="button" class="cat-resume-card secondary-button" data-cat-resume="' + esc(item.id) + '">' + (i === 0 ? '<span class="cat-resume-recent">前回開いた作業</span>' : '') + '<span>' + name + '・' + esc(directionName(item.direction)) + '・' + (remaining ? 'あと' + remaining + '行' : '確認完了') + '</span>' + (saved ? '<span class="cat-resume-time">' + esc(saved) + '</span>' : '') + '</button>' +
+        '<button type="button" class="cat-resume-card secondary-button" data-cat-resume="' + esc(item.id) + '">' + (i === 0 ? '<span class="cat-resume-recent">前回開いた作業</span>' : '') + '<span>' + name + '・' + esc(workName(item.source, item.direction)) + '・' + (remaining ? 'あと' + remaining + '行' : '確認完了') + '</span>' + (saved ? '<span class="cat-resume-time">' + esc(saved) + '</span>' : '') + '</button>' +
         '<button type="button" class="cat-resume-drop secondary-button" data-cat-resume-drop="' + esc(item.id) + '" data-cat-resume-revision="' + (Number(item.revision) || 0) + '" data-cat-resume-name="' + name + '" title="この作業を一覧から消す" aria-label="' + name + ' の作業を消す">消す</button>' +
         '</div>';
     }).join('');
     var hiddenCount = resumeItems.length - RESUME_VISIBLE;
     more.hidden = hiddenCount <= 0;
-    more.textContent = resumeExpanded ? '直近3件だけ表示する' : ('保存した作業をすべて表示（あと' + hiddenCount + '件）');
+    more.textContent = resumeExpanded ? '直近3件だけ表示する' : ('続きの作業をすべて表示（あと' + hiddenCount + '件）');
     more.setAttribute('aria-expanded', resumeExpanded ? 'true' : 'false');
     /* 左の資料一覧も同じ元データで描く。読み込みが終わってから呼ぶ必要がある
        （開いた時点では resumeItems がまだ空のことがある）。 */
@@ -604,9 +609,17 @@
     setView('workspace');
     el('cat-picker').hidden = true; el('cat-workspace').hidden = false; el('cat-current-summary').hidden = true;
     el('cat-current-title').textContent = project.file_name || '貼り付けた文章';
-    el('cat-current-progress').textContent = directionName(project.direction) + '・全' + project.total + '行のうち' + project.confirmed + '行を確認済み・残り' + Math.max(0, project.total - project.confirmed) + '行';
+    var isAlignment = project.source === 'align';
+    document.title = (isAlignment ? '過去訳の対応確認' : '翻訳') + ' - YakuLingo';
+    el('cat-page-title').textContent = isAlignment ? '過去訳の対応確認' : '翻訳';
+    el('cat-current-progress').textContent = workName(project.source, project.direction) + '・全' + project.total + '行のうち' + project.confirmed + '行を確認済み・残り' + Math.max(0, project.total - project.confirmed) + '行';
     el('cat-toolbar-title').textContent = project.file_name || '貼り付けた文章';
     el('cat-toolbar-direction').textContent = directionMark(project.direction);
+    el('cat-current-kicker').textContent = isAlignment ? '過去訳の対応確認' : '現在の確認作業';
+    el('cat-align-review-guide').hidden = !isAlignment;
+    el('cat-source-heading').textContent = isAlignment ? '日本語' : '原文';
+    el('cat-target-heading').textContent = isAlignment ? '英語' : '訳文';
+    el('cat-translate').hidden = isAlignment;
     var pct = project.total ? Math.round(100 * Number(project.confirmed) / Number(project.total)) : 0;
     el('cat-progress-bar').style.width = pct + '%'; el('cat-progress-row').querySelector('[role="progressbar"]').setAttribute('aria-valuenow', String(pct)); el('cat-progress-text').textContent = project.confirmed + '/' + project.total + '行';
     renderRows();
@@ -669,7 +682,7 @@
     setBusy(true); status('取り込んでいます…');
     return source(mode).then(function (payload) { payload.direction_intent = intent || 'auto'; return post('open', payload, false, null); }).then(function (data) { if (epoch !== viewEpoch) return; pendingDirection = null; render(data, true); }).catch(function (error) { if (epoch !== viewEpoch) return; setBusy(false); if (!handleDirection(error, function (dir) { return openSource(mode, dir); })) status(error.message, true); });
   }
-  function resume(id) { var epoch = ++viewEpoch; setBusy(true); status('保存した作業を読み込んでいます…'); return post('resume', { project_id: id }, false, null).then(function (data) { if (epoch === viewEpoch) render(data, true); }).catch(function (error) { if (epoch !== viewEpoch) return; setBusy(false); status(error.message, true); }); }
+  function resume(id) { var epoch = ++viewEpoch; setBusy(true); status('続きの作業を開いています…'); return post('resume', { project_id: id }, false, null).then(function (data) { if (epoch === viewEpoch) render(data, true); }).catch(function (error) { if (epoch !== viewEpoch) return; setBusy(false); status(error.message, true); }); }
 
   function commit(input) {
     if (!input) return Promise.resolve();
@@ -1016,11 +1029,23 @@
     var status = el('cat-align-file-status');
     if (!status) return;
     var ja = String(el('cat-align-source').value || '').split(/\r?\n/).filter(function (t) { return t.trim().length >= 4; }).length;
-    if (ja < 1) return;
+    var en = String(el('cat-align-target').value || '').split(/\r?\n/).filter(function (t) { return t.trim().length >= 4; }).length;
+    var open = el('cat-align-open');
+    var ready = ja > 0 && en > 0;
+    if (open) {
+      open.disabled = !ready;
+      open.textContent = ready ? '対応を作って確認する' : '日本語版と英語版を選んでください';
+    }
+    if (!ready) {
+      if (ja > 0) status.textContent = '日本語 ' + ja.toLocaleString('ja-JP') + '行を読みました。次に英語版を選んでください。';
+      else if (en > 0) status.textContent = '英語 ' + en.toLocaleString('ja-JP') + '行を読みました。次に日本語版を選んでください。';
+      else status.textContent = '日本語版と英語版を1つずつ選んでください。';
+      return;
+    }
     var chunks = Math.max(1, Math.ceil(Math.max(0, ja - 5) / 45));
     var lo = Math.round(chunks * 10 / 60), hi = Math.round(chunks * 20 / 60);
     var time = chunks <= 3 ? '1分ほど' : (Math.max(1, lo) + '〜' + Math.max(2, hi) + '分ほど');
-    status.textContent = '日本語 ' + ja.toLocaleString('ja-JP') + '行。Copilotへ約' + chunks + '回送ります（' + time + '）。'
+    status.textContent = '選んだ範囲は日本語 ' + ja.toLocaleString('ja-JP') + '行、英語 ' + en.toLocaleString('ja-JP') + '行です。両方の文をCopilotへ約' + chunks + '回送ります（' + time + '）。'
       + (chunks > 20 ? ' 途中で止まっても、そこまでの対応は残ります。' : '');
   }
 
@@ -1610,7 +1635,7 @@
     var list = el('cat-doc-dialog-list');
     var currentId = project ? String(project.id || '') : '';
     if (!resumeItems.length) {
-      list.innerHTML = '<p class="muted">保存した作業はまだありません。</p>';
+      list.innerHTML = '<p class="muted">続きから開ける作業はまだありません。</p>';
       return;
     }
     list.innerHTML = resumeItems.map(function (item) {
@@ -1621,7 +1646,7 @@
         (isCurrent ? ' aria-current="true" disabled' : '') +
         ' data-cat-doc-open="' + esc(item.id) + '">' +
         '<span class="cat-doc-choice-name">' + esc(item.file_name || '名称未設定') + '</span>' +
-        '<span class="cat-doc-choice-meta">' + esc(directionName(item.direction)) + '・' +
+        '<span class="cat-doc-choice-meta">' + esc(workName(item.source, item.direction)) + '・' +
         (remaining ? 'あと' + remaining + '行' : '確認完了') + (saved ? '・' + esc(saved) : '') +
         (isCurrent ? '・開いています' : '') + '</span></button>';
     }).join('');
@@ -1722,7 +1747,7 @@
       ? 'まだ訳していません。「訳していない行を訳す」を押すと、Copilotへ送ります。'
       : blocking
       ? ('ファイルを作れない指摘が ' + blocking + ' 件あります。' + (unconfirmed ? '未確認は ' + unconfirmed + ' 行です。' : ''))
-      : (unconfirmed ? ('止まる指摘はありません。未確認は ' + unconfirmed + ' 行です。') : '指摘はありません。すべての行を確認し終えています。');
+      : (unconfirmed ? ('未確認は ' + unconfirmed + ' 行です。数字の点検は、確認済みにするときに行います。') : '指摘はありません。すべての行を確認し終えています。');
     el('cat-qa-list').innerHTML = groups.filter(function (group) { return group.items.length; }).map(function (group) {
       return '<section class="cat-qa-group' + (group.blocking ? ' is-blocking' : '') + '"><h3>' + esc(group.title) + ' <span>' + group.items.length + '</span></h3>' +
         group.items.map(function (item) {
@@ -1789,6 +1814,7 @@
       applyDocsPane(!el('cat-editor-layout').classList.contains('is-docs-open'), true);
     });
     el('cat-docs-import').addEventListener('click', function () { showPicker(); showStart('file'); });
+    el('cat-align-next-document').addEventListener('click', function () { showPicker(); showStart('file'); });
     el('cat-docs-pane-list').addEventListener('click', function (event) {
       var choice = event.target.closest ? event.target.closest('[data-cat-doc-open]') : null;
       if (!choice || choice.disabled) return;
@@ -1823,18 +1849,8 @@
       if (wanted) { if (!project || String(project.id || '') !== wanted) resume(wanted); }
       else if (project) showPicker();
     });
-    /* 保存は入力欄からフォーカスが外れたときにだけ走る。打ちかけたままホームへ戻る、
-       トレイのアイコンを押す、ウィンドウを閉じる、のいずれでも黙って消えていた。 */
-    window.addEventListener('beforeunload', function (event) {
-      var editing = document.activeElement;
-      var hasUnsaved = dirty.size > 0 ||
-        !!(editing && editing.matches && editing.matches('textarea[data-cat-input]') &&
-           editing.value !== editing.getAttribute('data-original'));
-      if (!hasUnsaved) return;
-      event.preventDefault();
-      event.returnValue = '';
-    });
-    /* 画面が隠れる直前に、打ちかけの内容を保存しておく。 */
+    /* 通常の終了では確認を出さない。画面が隠れる直前に打ちかけを保存し、
+       翻訳中の終了確認だけはcommon.jsが担当する。 */
     document.addEventListener('visibilitychange', function () {
       if (document.visibilityState === 'hidden' && !busy) { try { flush(); } catch (_) {} }
     });
@@ -1859,6 +1875,7 @@
     el('cat-open-align-entry').addEventListener('click', function () {
       if (document.querySelector('meta[name="yaku-import"]') &&
           document.querySelector('meta[name="yaku-import"]').getAttribute('content') === '1') { showStart('align'); return; }
+      if (window.YakuInstant && window.YakuInstant.preserveDraft) window.YakuInstant.preserveDraft();
       window.location.assign('/cat?import=1');
     });
     /* PDF を選んだら、この画面の中で解析して貼り付け欄へ入れる。
@@ -1891,7 +1908,9 @@
     el('cat-align-target-file').addEventListener('change', function () { readPdfInto(this, 'target', '英語版'); });
     ['source', 'target'].forEach(function (side) {
       ['from', 'to'].forEach(function (end) {
-        el('cat-align-' + side + '-' + end).addEventListener('change', function () { applyAlignRange(side); updateAlignEstimate(); });
+        ['input', 'change'].forEach(function (eventName) {
+          el('cat-align-' + side + '-' + end).addEventListener(eventName, function () { applyAlignRange(side); updateAlignEstimate(); });
+        });
       });
     });
     el('cat-align-source').addEventListener('input', updateAlignEstimate);
@@ -2222,5 +2241,6 @@
     if (importMeta && importMeta.getAttribute('content') === '1') { showStart('align'); return; }
     if (cameFromInstant && window.YakuInstant) window.YakuInstant.show();
   }
+  window.YakuCat = { isBusy: function () { return busy; } };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();

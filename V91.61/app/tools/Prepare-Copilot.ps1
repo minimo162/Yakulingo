@@ -2,7 +2,10 @@
 param(
     [Parameter(Mandatory=$true)][string]$Root,
     [Parameter(Mandatory=$true)][string]$StatusPath,
-    [int]$TimeoutSeconds = 900
+    [int]$TimeoutSeconds = 900,
+    [int]$ParentProcessId = 0,
+    [string]$ParentStartedUtc = '',
+    [int]$MonitorIntervalSeconds = 20
 )
 
 $ErrorActionPreference = 'Stop'
@@ -87,6 +90,67 @@ function Invoke-YakuWarmupFreshChatWithRetry {
     return $lastFresh
 }
 
+function Watch-YakuCopilotReadiness {
+    param(
+        [Parameter(Mandatory=$true)][int]$Port,
+        [Parameter(Mandatory=$true)][string]$Url
+    )
+
+    if ($ParentProcessId -le 0 -or [string]::IsNullOrWhiteSpace($ParentStartedUtc)) {
+        Write-YakuLog 'Copilot readiness monitor was not started because the parent server identity was not supplied.' 'DEBUG'
+        return
+    }
+
+    $interval = [Math]::Max(10, $MonitorIntervalSeconds)
+    $lastMode = 'ready'
+    Write-YakuLog "Copilot readiness monitor started. parentPid=$ParentProcessId intervalSeconds=$interval" 'INFO'
+    while (Test-YakuProcessIdentity -Id $ParentProcessId -StartTimeUtc $ParentStartedUtc) {
+        Start-Sleep -Seconds $interval
+        if (-not (Test-YakuProcessIdentity -Id $ParentProcessId -StartTimeUtc $ParentStartedUtc)) { break }
+
+        # CDP access is skipped while a translation is running. Even a read-only
+        # second client can disturb a long Copilot interaction at the wrong time.
+        try {
+            $runtimePath = Join-Path (Get-YakuSubDir 'runtime') 'server.json'
+            $runtime = Read-YakuJsonFile -Path $runtimePath
+            if (-not $runtime -or -not $runtime.url) { continue }
+            $instance = Invoke-RestMethod -UseBasicParsing -Uri (([string]$runtime.url).TrimEnd('/') + '/api/instance') -TimeoutSec 3
+            if ([int]$instance.pid -ne $ParentProcessId -or
+                -not [string]::Equals([string]$instance.process_started_at, $ParentStartedUtc, [System.StringComparison]::OrdinalIgnoreCase)) {
+                break
+            }
+            if ([bool]$instance.active_job_running) { continue }
+        } catch {
+            continue
+        }
+
+        try {
+            $page = Get-YakuCopilotPage -Port $Port -Url $Url
+            $state = Get-YakuCopilotState -Page $page -TimeoutSeconds 6
+            if ($state.loginDetected -eq $true) {
+                if ($lastMode -ne 'login') {
+                    $null = Write-YakuWarmupStatus -Mode 'login' -Label 'Copilot：サインインが必要' -Class 'warn' -Detail 'YakuLingo画面の「Copilot画面を開く」を押し、Microsoft 365 Copilotにサインインしてください。サインインが済むとEdge画面は自動で隠れます。' -Ready $false
+                    Write-YakuLog 'Copilot readiness monitor detected that sign-in is required.' 'WARN'
+                    $lastMode = 'login'
+                }
+                continue
+            }
+            if ($state.inputReady -eq $true) {
+                if ($lastMode -ne 'ready') {
+                    $currentUrl = ConvertTo-YakuSafeString -Value $state.url
+                    $null = Write-YakuWarmupStatus -Mode 'ready' -Label 'Copilot：準備完了' -Class 'ok' -Detail $currentUrl -Ready $true
+                    $null = Show-YakuEdgeWindow -Mode hidden
+                    Write-YakuLog 'Copilot sign-in completed; the dedicated Edge window was hidden again.' 'INFO'
+                    $lastMode = 'ready'
+                }
+            }
+        } catch {
+            Write-YakuLog "Copilot readiness monitor check skipped. reason=$($_.Exception.Message)" 'DEBUG'
+        }
+    }
+    Write-YakuLog 'Copilot readiness monitor stopped with its parent server.' 'INFO'
+}
+
 
 try {
     $settings = Read-YakuSettings -Root $script:YakuRoot
@@ -103,7 +167,7 @@ try {
     # 「新しいタブ」）。片付けは入力欄が出た時点で1回だけ走るが、Edge を落として
     # 開き直したときの「前回のタブの復元」はそれより遅れて現れる。片付けの時点では
     # まだ無いので、取り逃がしていた（ログの CDP targets found: 1 がその瞬間）。
-    # 表示はもう「使えます」なので、ここで数秒待っても待たされる人はいない。
+    # 表示はもう「Copilot：準備完了」なので、ここで数秒待っても待たされる人はいない。
     $tidyLate = {
         param([int]$Port, [string]$KeepTargetId)
         if ([string]::IsNullOrWhiteSpace($KeepTargetId)) { return }
@@ -147,7 +211,7 @@ try {
         }
     } catch { $earlyPort = $port }
     if ($earlyPort -ne $port) { Write-YakuEdgeLaunchLog "Speculative Edge launch follows the cached port. configured=$port cached=$earlyPort" 'INFO' }
-    $earlyLaunch = Start-YakuEdgeLaunch -Port $earlyPort -DisplayMode ([string]$settings.browser_display_mode) -Url $copilotUrl -WindowSize ([string]$settings.edge_window_size) -NoWait
+    $earlyLaunch = Start-YakuEdgeLaunch -Port $earlyPort -DisplayMode 'background' -Url $copilotUrl -WindowSize ([string]$settings.edge_window_size) -NoWait
     $earlyLaunchSw.Stop()
 
     $moduleLoadSw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -191,9 +255,11 @@ try {
                     $freshOk = ($fresh -and (Get-YakuObjectPropertyValue -Object $fresh -Name 'ok' -Default $false) -eq $true)
                     if ($freshOk -and $freshAfterReady -and -not [string]::IsNullOrWhiteSpace($freshAfterUrl) -and $freshAfterUrl -notmatch '/(?:chat/)?conversation/') {
                         $freshAfterTitle = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $freshAfter -Name 'title' -Default '')
-                        if (Write-YakuWarmupStatus -Mode 'ready' -Label '使えます' -Class 'ok' -Detail $freshAfterUrl -Ready $true) {
+                        if (Write-YakuWarmupStatus -Mode 'ready' -Label 'Copilot：準備完了' -Class 'ok' -Detail $freshAfterUrl -Ready $true) {
                             Write-YakuLog "Copilot warmup ready from fresh-chat after state. url=$freshAfterUrl title=$freshAfterTitle" 'INFO'
+                            $null = Show-YakuEdgeWindow -Mode hidden
                             & $tidyLate $port $keepTargetId
+                            Watch-YakuCopilotReadiness -Port $port -Url $copilotUrl
                             exit 0
                         }
                         Write-YakuLog 'Ready status write failed; staying in polling loop to retry.' 'WARN'
@@ -205,12 +271,14 @@ try {
                     continue
                 }
 
-                if (Write-YakuWarmupStatus -Mode 'ready' -Label '使えます' -Class 'ok' -Detail $url -Ready $true) {
+                if (Write-YakuWarmupStatus -Mode 'ready' -Label 'Copilot：準備完了' -Class 'ok' -Detail $url -Ready $true) {
                     Write-YakuLog "Copilot warmup ready. url=$url title=$title" 'INFO'
+                    $null = Show-YakuEdgeWindow -Mode hidden
                     if ([string]::IsNullOrWhiteSpace($keepTargetId)) {
                         $keepTargetId = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $page -Name 'id' -Default '')
                     }
                     & $tidyLate $port $keepTargetId
+                    Watch-YakuCopilotReadiness -Port $port -Url $copilotUrl
                     exit 0
                 }
                 Write-YakuLog 'Ready status write failed; staying in polling loop to retry.' 'WARN'
@@ -219,7 +287,7 @@ try {
             }
 
             if ($state.loginDetected -eq $true) {
-                $null = Write-YakuWarmupStatus -Mode 'login' -Label 'サインインが必要です' -Class 'warn' -Detail '別に開いたEdgeの画面で、Microsoft 365 Copilotにサインインしてください。サインインが済むと、この表示は自動で「使えます」に変わります。' -Ready $false
+                $null = Write-YakuWarmupStatus -Mode 'login' -Label 'Copilot：サインインが必要' -Class 'warn' -Detail 'YakuLingo画面の「Copilot画面を開く」を押し、Microsoft 365 Copilotにサインインしてください。サインインが済むとEdge画面は自動で隠れます。' -Ready $false
             } elseif ($state.generating -eq $true) {
                 $null = Write-YakuWarmupStatus -Mode 'busy' -Label 'Copilotの返事を待っています' -Class 'warn' -Detail 'Copilotが前の回答を書き終えるのを待っています。そのままお待ちください。' -Ready $false
             } else {

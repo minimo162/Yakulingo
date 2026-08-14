@@ -266,25 +266,24 @@ Assert-Yaku -Condition ($server -match "path -eq '/'" -and $server -notmatch "Pa
 # 一つでよくない？」。行き先の /tutorial が、使い方・送るもの・起動とショートカットを
 # 1枚で持ち、案内の再生もその画面から始められる。出口は1つに寄せた。
 Assert-Yaku -Condition ($catIndex.Contains('>使い方と設定</a>') -and (([regex]::Matches($catIndex, '<a href="/tutorial')).Count -eq 1)) -Message 'the way out of the deleted landing screen is a single link on the translation screen'
-# 2026-08-13、利用者判断「保存しない約束は要らない」。貼り付けた文章も資料と同じ
-# 経路で作業になったので、「保存しません」「登録した訳語も使いません」は嘘になった。
-# 押す前に言うべきことが入れ替わった＝どこへ移り、保存されるのか。
+# メールなどを少し訳す入口は、この画面だけで完結し、確認作業や翻訳メモリへ残さない。
+# 資料を継続して確認・保存する入口と、初見でも区別できる説明を送信前に置く。
 $instantBlock = ''
 if ($quickIndex -match '(?s)<section id="cat-instant".*?</section>\s*<!--') { $instantBlock = $Matches[0] }
-Assert-Yaku -Condition ($instantBlock.Contains('1行ずつ確認する画面に移ります') -and $instantBlock.Contains('保存される') -and -not $instantBlock.Contains('登録した訳語も使いません') -and $instantBlock.Contains('id="quick-form"')) -Message 'the paste box must state where pressing takes you and that the work is saved'
+Assert-Yaku -Condition ($instantBlock.Contains('この画面に訳を出します') -and $instantBlock.Contains('作業や翻訳メモリには残しません') -and -not $instantBlock.Contains('1行ずつ確認する画面に移ります') -and $instantBlock.Contains('id="quick-form"')) -Message 'the quick paste box must explain that its result stays on this screen and is not saved'
 Assert-Yaku -Condition ($quickIndex -notmatch 'id="cat-instant"[^>]*\shidden' -and $quickIndex -match 'id="cat-workspace"[^>]*\shidden') -Message 'the paste box is available on the start view while the review workspace waits for a document'
 # 貼り付け先は1つ。「保存する／しない」で入口を分けない（2026-08-11）。初見の人は
 # 訳案を見る前に1文ずつ直したいかを決められないので、選択は訳案のあとへ置く。
 # 2026-08-12: 「訳したい文章を貼り付けてください」という説明文で貼り付け口を数えていたが、
 # 見出しと同じことを繰り返す一文だったので消した。数えるのは説明文ではなく貼り付け欄そのもの。
-Assert-Yaku -Condition ($catIndex.Contains('Word・Excelを取り込む') -and $catIndex.Contains('id="quick-input"') -and $catIndex.Contains('保存した作業')) -Message 'the single screen must keep file, paste, and resume entries together'
-Assert-Yaku -Condition ((([regex]::Matches($catIndex, 'class="entry-actions cat-entry-actions">(?s).*?</div>')) | ForEach-Object { ([regex]::Matches($_.Value, '<button')).Count }) -eq 1 -and (([regex]::Matches($catIndex, 'id="quick-input"')).Count -eq 1)) -Message 'the front door must not offer two different ways to paste text'
+Assert-Yaku -Condition ($catIndex.Contains('1文ずつ確認する作業画面') -and $catIndex.Contains('id="quick-input"') -and $catIndex.Contains('続きの作業を開く')) -Message 'the start screen must connect paste and file inputs to the same review workspace'
+Assert-Yaku -Condition ((([regex]::Matches($catIndex, 'id="cat-open-file-entry"')).Count -eq 1) -and (([regex]::Matches($catIndex, 'id="quick-input"')).Count -eq 1)) -Message 'the front door must keep exactly one file entry and one text entry'
 # 長さの境目は画面が決めない。確認作業が分割に使っている設定値をそのまま使う。
 Assert-Yaku -Condition ($catIndex.Contains('__YAKU_MAX_BATCH_CHARS__') -and $quickClient.Contains('yaku-max-batch-chars') -and $quickClient -notmatch 'length > 3000|length > 2000') -Message 'the long-text threshold must come from the server batch budget, not a number chosen in the page'
-# 2026-08-13: 名前を「過去の日本語と英語の資料を読み込む」へ変えた。「前回」と
+# 2026-08-14: 入口で対応形式がPDFだと分かる名前にした。「前回」と
 # 言っていたので、手持ちの過去資料全般に使えるものだと読めなかった（利用者の指摘
 # 「どうやって取り込めばよいか分からない」）。主役の入口にはしない、は変えない。
-Assert-Yaku -Condition ($catIndex.Contains('過去の日本語と英語の資料を読み込む') -and $catIndex.Contains('そのほかの始め方')) -Message 'project-bound prior bilingual import must remain available without appearing as a primary mode choice'
+Assert-Yaku -Condition ($catIndex.Contains('過去の日本語版・英語版PDFを読み込む') -and $catIndex.Contains('そのほかの始め方')) -Message 'project-bound prior bilingual PDF import must remain available without appearing as a primary mode choice'
 # 訳案カードを外したので「訳案」の見出しは無い。呼び名で守っていたのは
 # 「未確認のものを完成訳と呼ばない」ことなので、そちらを直接見る（2026-08-13）。
 Assert-Yaku -Condition (-not $indexSource.Contains('すぐ訳した完成訳') -and -not $indexSource.Contains('完成訳')) -Message 'unreviewed output must never be called a finished translation'
@@ -388,8 +387,14 @@ Assert-Yaku -Condition ($copilot -match 'Get-NetTCPConnection' -and $copilot -ma
 Assert-Yaku -Condition ($edgeLaunch.Contains('Get-Process -Name') -and $edgeLaunch.Contains("if (`$hasAnyEdge)") -and $edgeLaunch.Contains("if (`$stopped -gt 0) { Start-Sleep -Milliseconds 700 }")) -Message 'cold Edge startup must skip WMI and the fixed sleep when no Edge process exists'
 Assert-Yaku -Condition ($edgeLaunch.Contains('--remote-debugging-port=') -and $edgeLaunch.Contains('--user-data-dir=') -and $copilot.Contains('Start-YakuEdgeLaunch')) -Message 'early warmup and normal translation must share one Edge launch argument definition'
 Assert-Yaku -Condition ($edgeLaunch.Contains('--window-size=') -and $copilot.Contains('Browser.getWindowForTarget') -and $copilot.Contains('Browser.setWindowBounds') -and $copilot.Contains('YakuEdgeNeedsWindowNormalization')) -Message 'new Edge windows must be normalized once through launch arguments and CDP'
+Assert-Yaku -Condition ($edgeLaunch.Contains('--start-minimized') -and $edgeLaunch.Contains("-WindowStyle `$startWindowStyle") -and $warmupWorker.Contains("-DisplayMode 'background'")) -Message 'normal Copilot warmup must start the dedicated Edge window minimized'
+Assert-Yaku -Condition ($copilot.Contains("if (`$ForceForeground) { 'foreground' } else { 'background' }") -and $copilot.Contains("windowState='minimized'") -and $edgeLaunch.Contains("`$startWindowStyle -eq 'Minimized' -or `$spec.WindowSize.Enabled")) -Message 'normal startup must minimize the dedicated Edge after readiness while explicit login may foreground it'
+Assert-Yaku -Condition ($edgeLaunch.Contains('FindTopLevelWindows') -and $edgeLaunch.Contains('ShowWindowAsync($window, 0)') -and $edgeLaunch.Contains("ValidateSet('hidden','foreground')")) -Message 'only dedicated-profile Edge windows must be hidden natively so their taskbar buttons disappear'
+Assert-Yaku -Condition ($warmupWorker.Contains("Show-YakuEdgeWindow -Mode hidden") -and $warmupWorker.Contains('Copilot：準備完了') -and $warmupWorker.Contains('Copilot：サインインが必要')) -Message 'warmup must hide Edge after login and publish explicit readiness and login labels'
+Assert-Yaku -Condition ($warmupWorker.Contains('function Watch-YakuCopilotReadiness') -and $warmupWorker.Contains('active_job_running') -and $warmupWorker.Contains('Test-YakuProcessIdentity')) -Message 'the readiness monitor must stop with its server and skip CDP checks during active translations'
+Assert-Yaku -Condition ($server.Contains('-ParentProcessId') -and $server.Contains('-ParentStartedUtc')) -Message 'the server must bind the Copilot readiness monitor to its exact process identity'
 Assert-Yaku -Condition ($edgeLaunch.Contains("Canonical='none'") -and $settingsSource.Contains('edge_window_size')) -Message 'Edge window normalization must be configurable and disableable'
-Assert-Yaku -Condition ($edgeLaunch.IndexOf('if ($alreadyReachable)') -lt $edgeLaunch.IndexOf('$script:YakuEdgeNeedsWindowNormalization =') -and $edgeLaunch.Contains('if ($spec.WindowSize.Enabled)')) -Message 'already-running Edge must return before startup-only normalization is scheduled'
+Assert-Yaku -Condition ($edgeLaunch.IndexOf('if ($alreadyReachable)') -lt $edgeLaunch.IndexOf('$script:YakuEdgeNeedsWindowNormalization =') -and $edgeLaunch.Contains('DisplayMode=$DisplayMode')) -Message 'already-running Edge must return before startup-only foreground or minimized normalization is scheduled'
 Assert-Yaku -Condition ($warmupWorker.IndexOf('Start-YakuEdgeLaunch') -lt $warmupWorker.IndexOf("src\CopilotClient.ps1") -and $warmupWorker.Contains('-NoWait')) -Message 'warmup must launch Edge before loading the large Copilot module'
 Assert-Yaku -Condition ($warmupWorker.Contains('ready from fresh-chat after state') -and $warmupWorker.Contains("fresh-chat after state was insufficient; using polling fallback")) -Message 'fresh-chat warmup must use a verified immediate-ready path with the legacy polling fallback'
 Assert-Yaku -Condition ($warmupWorker.Contains('for ($attempt = 1; $attempt -le 5; $attempt++)') -and $warmupWorker.Contains('copilot-warmup.{0}.tmp') -and $warmupWorker.Contains('Ready status write failed; staying in polling loop to retry.')) -Message 'warmup status writes must be atomic and retry before terminal ready exit'

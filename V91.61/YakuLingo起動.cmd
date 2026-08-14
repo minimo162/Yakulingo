@@ -6,10 +6,10 @@ setlocal
 title YakuLingo
 
 set "HERE=%~dp0"
-set "APP=%HERE%app\desktop\YakuLingo.exe"
+set "APP=%HERE%app\Start-YakuLingoApp.ps1"
 
 if not exist "%APP%" (
-  echo YakuLingo.exe was not found:
+  echo YakuLingo launcher was not found:
   echo   %APP%
   echo Please extract the package again.
   echo.
@@ -17,7 +17,7 @@ if not exist "%APP%" (
   exit /b 1
 )
 
-start "" "%APP%"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%APP%"
 set "CODE=%ERRORLEVEL%"
 
 echo.

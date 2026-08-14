@@ -11,6 +11,18 @@
   var readyTimer = null;
   var readyListeners = [];
   var desktopPreferenceMessageQueue = Promise.resolve();
+  var uiClientId = '';
+  var uiPresenceTimer = null;
+
+  try {
+    uiClientId = sessionStorage.getItem('yaku-ui-client-id') || '';
+    if (!/^[a-f0-9]{32}$/.test(uiClientId)) {
+      var bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      uiClientId = Array.prototype.map.call(bytes, function (value) { return value.toString(16).padStart(2, '0'); }).join('');
+      sessionStorage.setItem('yaku-ui-client-id', uiClientId);
+    }
+  } catch (_) {}
 
   function plainError(value) {
     var raw = String(value || '').trim();
@@ -112,9 +124,8 @@
     return detail;
   }
 
-  /* 起動直後は Copilot を開くために Edge が前へ出て、アプリを覆う。準備が
-     終わった時点で1回だけ、こちらへ戻すよう外枠へ知らせる。以後の再確認では
-     知らせない（作業中に窓を奪い返されるほうが迷惑になる）。 */
+  /* 準備完了時に1回だけ外枠へ知らせる。専用Edgeは通常時には完全非表示だが、
+     起動直後に利用者が別のアプリへ移っている場合もあるので、窓を奪わない条件は残す。 */
   var readyAnnounced = false;
   var startedAt = Date.now();
 
@@ -124,7 +135,7 @@
       readyAnnounced = true;
       if (Date.now() - startedAt < 180000) notifyDesktopShell('copilot-ready');
     }
-    setStatus(data && data.label ? data.label : (ready ? '使えます' : '準備しています'), data && data.class ? data.class : (ready ? 'ok' : 'warn'), readableDetail(data));
+    setStatus(data && data.label ? data.label : (ready ? 'Copilot：準備完了' : '準備しています'), data && data.class ? data.class : (ready ? 'ok' : 'warn'), readableDetail(data));
     readyListeners.forEach(function (listener) { try { listener(ready, data || {}); } catch (_) {} });
   }
 
@@ -225,6 +236,38 @@
     });
   }
 
+  function bindCopilotWindowButton() {
+    var button = document.getElementById('copilot-window-open');
+    if (!button) return;
+    button.addEventListener('click', function () {
+      if (button.disabled) return;
+      button.disabled = true;
+      button.textContent = '開いています…';
+      post('/api/copilot/window', { action: 'show' }).catch(function (error) {
+        setStatus('Copilot画面を開けませんでした', 'warn', plainError(error && error.message ? error.message : error));
+      }).then(function () {
+        button.disabled = false;
+        button.textContent = 'Copilot画面を開く';
+      });
+    });
+  }
+
+  function reportUiPresence(state, keepalive) {
+    if (!uiClientId) return Promise.resolve();
+    return request('/api/ui/presence', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: uiClientId, state: state }),
+      keepalive: !!keepalive
+    }).catch(function () {});
+  }
+
+  function startUiPresence() {
+    reportUiPresence('open', false);
+    window.clearInterval(uiPresenceTimer);
+    uiPresenceTimer = window.setInterval(function () { reportUiPresence('open', false); }, 15000);
+  }
+
   /* 画面を一つにしたので、同じページで cat.js と quick.js の両方が start() を
      呼ぶ。2回呼んで問い合わせを二重に流さない。 */
   var started = false;
@@ -234,7 +277,28 @@
     pollReady();
   }
 
+  function translationIsRunning() {
+    try {
+      return !!((window.YakuInstant && window.YakuInstant.isBusy && window.YakuInstant.isBusy()) ||
+        (window.YakuCat && window.YakuCat.isBusy && window.YakuCat.isBusy()));
+    } catch (_) { return false; }
+  }
+
+  /* YakuLingoタブの×はYakuLingo全体の終了操作になる。通常時は確認を出さず、
+     Copilotとの往復やファイル書き出しの途中だけブラウザー標準の確認を出す。 */
+  window.addEventListener('beforeunload', function (event) {
+    if (!translationIsRunning()) return;
+    event.preventDefault();
+    event.returnValue = '';
+  });
+  window.addEventListener('pagehide', function () {
+    window.clearInterval(uiPresenceTimer);
+    reportUiPresence('closing', true);
+  });
+
   bindDesktopShellMessages();
+  bindCopilotWindowButton();
+  startUiPresence();
 
   window.YakuCommon = {
     request: request, json: json, post: post, postText: postText, upload: upload,
@@ -242,6 +306,7 @@
     reducedMotion: reducedMotion, onReady: onReady, isReady: function () { return ready; },
     copyText: copyText, decodeBase64: decodeBase64, start: start,
     notifyDesktopShell: notifyDesktopShell, onOfficeSelection: onOfficeSelection,
+    translationIsRunning: translationIsRunning,
     maxUploadBytes: Number(meta('yaku-file-max-bytes')) || 50 * 1024 * 1024
   };
 })();

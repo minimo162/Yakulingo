@@ -48,7 +48,8 @@ try {
     Assert-YakuDesktopTest (Test-YakuOwnedShortcut -Path $legacyDesktop -TargetPath $fakeExe) 'official legacy launcher shortcut should be recognized for migration'
 
     $enabled = Set-YakuDesktopPreferences -StartupEnabled $true -DesktopShortcut $true
-    Assert-YakuDesktopTest ([bool]$enabled.startup_enabled) 'startup shortcut should be enabled'
+    Assert-YakuDesktopTest (-not [bool]$enabled.startup_enabled) 'background startup must stay disabled even when an old client requests it'
+    Assert-YakuDesktopTest (-not (Test-Path -LiteralPath (Join-Path $testRoot 'links\Startup\YakuLingo.lnk'))) 'background startup shortcut must not be created'
     Assert-YakuDesktopTest ([bool]$enabled.desktop_shortcut) 'desktop shortcut should be enabled'
     Assert-YakuDesktopTest ([bool]$enabled.start_menu_shortcut) 'start menu shortcut should always exist'
     Assert-YakuDesktopTest ([bool]$enabled.tutorial_completed) 'final confirmation should complete tutorial'

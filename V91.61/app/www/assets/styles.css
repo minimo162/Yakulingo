@@ -520,7 +520,29 @@ summary { cursor: pointer; color: var(--text); font-size: var(--font-meta); min-
 /* その場で訳す状態は、確認作業と同じ器（幅の広い画面）の中に居る。文章を読む
    1カラムなので、器の幅をそのまま使うと1行が長くなりすぎる。分かれていた頃の
    820px をここで保つ。 */
-.cat-instant { width: 100%; }
+.cat-instant {
+  width: 100%;
+  border-left: 5px solid var(--accent);
+  background: linear-gradient(90deg, rgba(31,58,95,.07), rgba(31,58,95,0) 62%);
+  padding: 16px 20px 18px;
+}
+.start-section-heading { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); gap: var(--space-2); align-items: start; margin-bottom: var(--space-2); }
+.start-section-heading h2 { margin: 0; color: var(--text); font-size: clamp(1.2rem, 2vw, 1.45rem); font-weight: 800; }
+.start-section-heading p { max-width: 46rem; margin: 4px 0 0; color: var(--muted); font-size: var(--font-meta); line-height: 1.5; }
+.start-kind { display: inline-flex; align-items: center; justify-content: center; min-height: 2rem; border-radius: 999px; background: var(--accent); padding: 4px 10px; color: #fff; font-size: var(--font-meta); font-weight: 800; white-space: nowrap; }
+.cat-picker { margin-top: 20px; border-color: var(--line-strong); border-left: 5px solid #9299a3; box-shadow: 0 2px 8px rgba(24,24,27,.05); }
+.cat-picker .start-kind { background: #e7e9ed; color: #30323a; }
+.review-entry-heading { display: grid; grid-template-columns: 9.5rem minmax(0, 1fr); gap: var(--space-2); align-items: start; }
+.review-entry-heading h2 { margin: 0; font-size: clamp(1.2rem, 2vw, 1.45rem); font-weight: 800; }
+.review-entry-heading p { max-width: 46rem; margin: 4px 0 0; color: var(--muted); font-size: var(--font-meta); line-height: 1.5; }
+.review-entry-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+.review-entry-option { display: grid; grid-template-rows: 1fr auto; gap: 12px; min-width: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--surface-subtle); padding: 14px; }
+.review-entry-option > span { display: grid; gap: 3px; }
+.review-entry-option strong { color: var(--text); }
+.review-entry-option small { color: var(--muted); font-size: var(--font-meta); line-height: 1.5; }
+.review-entry-option button { width: 100%; border: 2px solid var(--accent); background: var(--surface); color: var(--accent-text); font-weight: 700; }
+.review-entry-option button:hover { background: #e8eef4; }
+.review-entry-option button[disabled] { border-color: #c2c3cc; background: #e4e4e9; color: #3c3d45; }
 /* Ctrl+Alt+J で出る小さな窓では、画面全体の見出しに押し下げられて、読み込んだ
    文章が見えなくなる（実機で確認）。始める画面では見出しを1つにする。 */
 /* 画面からは消すが、文書からは消さない。display:none にしていたため h1 が
@@ -546,13 +568,15 @@ html.yaku-compact .translate-form { padding: 16px; }
 html.yaku-compact .section-title-row { margin-bottom: 12px; }
 html.yaku-compact #quick-input { min-height: 220px; height: min(36vh, 280px); }
 html.yaku-compact .privacy-note { margin-top: 12px; padding: 10px 12px; }
-.direction-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: var(--space-2); border: 2px solid var(--accent); border-radius: var(--radius-control); background: var(--accent-soft); padding: 10px 12px; }
+.direction-summary { display: flex; align-items: center; justify-content: flex-start; gap: 10px; margin-top: var(--space-2); border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--surface-subtle); padding: 10px 12px; }
+.direction-summary label { color: var(--muted); font-size: var(--font-meta); font-weight: 700; }
+.direction-summary select { min-width: 132px; width: auto; background: var(--surface); color: var(--text); font-weight: 700; }
 .direction-choice { margin-top: var(--space-2); border: 2px solid var(--warning); border-radius: var(--radius-card); background: #fff8e8; padding: 16px; }
 .direction-choice legend { padding: 0 6px; font-size: var(--font-ui); font-weight: 800; }
 .direction-choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .direction-choice-button { display: flex; min-height: 72px; flex-direction: column; align-items: flex-start; text-align: left; }
 .direction-choice-button span { color: var(--muted); font-size: var(--font-meta); font-weight: 400; }
-.cat-entry-actions { margin: 14px 0; }
+.cat-entry-actions { margin: 10px 0 14px; }
 .cat-start-panel { display: grid; gap: 12px; margin-top: var(--space-3); border-top: 1px solid var(--line); padding-top: var(--space-3); }
 .cat-start-panel textarea { min-height: 140px; }
 .cat-candidate-card { display: grid; gap: 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--surface); padding: 12px; }
@@ -564,7 +588,10 @@ html.yaku-compact .privacy-note { margin-top: 12px; padding: 10px 12px; }
 @media (max-width: 720px) {
   .home-choice-grid, .direction-choice-grid { grid-template-columns: 1fr; }
   .home-choice-card { min-height: 220px; padding: 20px; }
-  .direction-summary { align-items: stretch; flex-direction: column; }
+  .direction-summary { align-items: center; flex-direction: row; }
+  .start-section-heading { grid-template-columns: 1fr; gap: 6px; }
+  .review-entry-heading, .review-entry-grid { grid-template-columns: 1fr; }
+  .start-kind { justify-self: start; }
   .direction-summary button, .direction-choice-grid button, .cat-entry-actions button, .cat-start-panel > button { width: 100%; }
 }
 
@@ -582,12 +609,15 @@ html.yaku-compact .privacy-note { margin-top: 12px; padding: 10px 12px; }
 #amount-notation-status { color: var(--muted); }
 
 /* ここから下は「ほかの始め方」であることを、見出しと余白で示す。 */
-.entry-secondary { margin-top: var(--space-4); border-top: 1px solid var(--line); padding-top: var(--space-3); }
+.entry-secondary { margin-top: var(--space-3); border-top: 2px solid var(--line); padding-top: var(--space-3); }
 .entry-secondary-title { margin: 0 0 10px; color: var(--muted); font-size: var(--font-meta); font-weight: 600; }
-.entry-secondary .cat-resume h3 { margin: 0 0 8px; font-size: var(--font-meta); font-weight: 600; color: var(--muted); }
+.entry-secondary .cat-resume { margin-top: 16px; border-radius: var(--radius-control); background: var(--surface-subtle); padding: 14px 16px; }
+.entry-secondary .cat-resume h3 { margin: 0 0 6px; color: var(--text); font-size: var(--font-ui); font-weight: 700; }
+.cat-resume-help { margin: -2px 0 8px; color: var(--muted); font-size: var(--font-meta); }
 .link-button { margin-top: 8px; border: 0; background: none; padding: 0; color: var(--accent-text); font-size: var(--font-meta); text-decoration: underline; cursor: pointer; min-height: 0; }
 .link-button[hidden] { display: none; }
 
 /* Ctrl+Alt+J で読み込んだ内容の出どころ。別のブックを読んでいても気づけるよう、
    ブック名・シート名・番地をここに必ず出す。 */
 .quick-selection-note { margin-bottom: var(--space-1); padding: 8px 12px; border-left: 4px solid var(--accent); background: var(--accent-soft); color: var(--accent-text); font-size: var(--font-meta); }
+.quick-result-note { margin: var(--space-2) 0 var(--space-1); color: var(--muted); font-size: var(--font-meta); }
