@@ -166,7 +166,7 @@ try {
     Write-Host '確定と結びついているか' -ForegroundColor Cyan
     $cat = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'CatProject.ps1') -Raw -Encoding UTF8
     $server = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'Server.ps1') -Raw -Encoding UTF8
-    Chk ($server -match 'Add-YakuCatTranslationMemoryOutboxEvent' -and $server -match 'Sync-YakuCatTranslationMemoryOutbox') 'プロジェクト保存後に確認訳を翻訳メモリへ貯める'
+    Chk ($server -match "'tm-register'" -and $server -match 'Register-YakuCatSegmentTranslationMemory' -and $server -match 'Sync-YakuCatTranslationMemoryOutbox') '明示したときだけ確認訳を翻訳メモリへ貯める'
     Chk ($server -match 'OriginProjectId' -and $server -match 'OriginFileName' -and $server -match 'OriginSegmentId' -and $server -match 'OriginLocation' -and $server -match 'ReviewRevision') '確定時に出典契約をTMへ渡す'
     Chk ($server -match 'location\s*=\s*\[string\]\$_\.Location') '候補APIがlocationを返す'
     Chk ($cat -match 'Find-YakuTranslationMemory') '候補ペインが翻訳メモリを引く'
@@ -188,6 +188,7 @@ try {
     Chk ([string]@($proj.Segments)[0].Origin -eq 'copilot') '簡易翻訳から来た訳は機械の訳として印を付ける'
 
     $null = Set-YakuCatSegmentConfirmed -Project $proj -Index 0
+    $null = Set-YakuCatProjectSaved -Project $proj -Reason 'first-translation-review'
     $sum = Get-YakuCatProjectSummary -Project $proj
     Chk ([int]$sum.Confirmed -eq 1 -and [int]$sum.Unconfirmed -eq 0) '直さずに確定できる'
 

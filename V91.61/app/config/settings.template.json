@@ -16,7 +16,7 @@
   "edge_window_size": "1280,900",
   "edge_debug_port": 9433,
   "copilot_url": "https://m365.cloud.microsoft/chat/",
-  "copilot_model": "GPT 5.6 Think deeper,Opus,Think Deeper",
+  "copilot_model": "自動,Auto",
   "copilot_cdp_socket_cache_enabled": true,
   "copilotFirstActivityTimeoutMs": 10000,
   "diagnostics_level": "standard",

@@ -64,38 +64,19 @@ $desktopIntegration = Read-YakuTutorialFile 'src\DesktopIntegration.ps1'
 $tutorialCompletedBody = ''
 if ($desktopIntegration -match '(?s)function Set-YakuTutorialCompleted \{(?<body>.*?)\r?\nfunction ') { $tutorialCompletedBody = $Matches['body'] }
 Check-YakuTutorial ($tutorialCompletedBody -ne '' -and $tutorialCompletedBody.Contains('Write-YakuTextAtomic') -and -not $tutorialCompletedBody.Contains('Set-YakuDesktopShortcutFile')) 'finishing the tour must not create shortcuts'
-# 2026-08-12: Ctrl+Alt+J が Word・Excel・PowerPoint の選択範囲を読み込むようになったので、
-# 「文章は自動では読み取りません」は事実と違う。境界は2つに分かれた。
-#   読み込む境界: このキーを押したときだけ。見張らない
-#   送る境界:     「訳案を作る」を押すまで送らない
-# 送信ボタンの名前も「翻訳」から変わっている。実物の名前で書く。
+# 廃止したデスクトップ版のグローバルホットキーを案内へ戻さない。
 Check-YakuTutorial (-not $html.Contains('Ctrl</kbd>＋<kbd>Alt') -and -not $html.Contains('読み込むのは押した時だけ')) 'retired global hotkey must not remain in the tutorial'
 # 2026-08-13: ボタン名が「訳して確認する」へ変わり、資料の文も同じ経路で送るように
 # なったので、送るものの範囲も書き足した。守るのは「実物の名前で、押すまで送らないと書く」。
 Check-YakuTutorial ($html.Contains('「日本語に訳す」「英語に訳す」') -and $html.Contains('「この文章を保存して確認画面へ」')) 'the about page states the explicit-send boundary with the real button names'
 Check-YakuTutorial ($html.Contains('ファイルそのものは送りません')) 'the about page says the file itself is not sent'
 Check-YakuTutorial (-not ($html -match '文章は自動では読み取りません|貼り付けて「翻訳」を押す')) 'the retired no-reading claim must not come back'
-# 2026-08-12（同日追記）: 「Outlook などからは読み込めない」と書いたが、実装は
-# Office 以外でも疑似 Ctrl+C を送ってクリップボードから読む（Program.cs の
-# CopySelectionFromForeground）。読めないのではなく、読み方が違ってクリップボードが
-# 変わる。市販側でいちばん良い説明（PowerToys は「選んだ範囲の画素だけを見る」と
-# 具体的に書く）に倣い、2通りの読み方をそのまま書く。
-Check-YakuTutorial (-not ($html -match 'ほかのアプリ（Outlookなど）からは読み込めない')) 'the false claim that other apps cannot be read must not come back'
-# 2026-08-13、利用者判断でクリップボードの説明を外した。「普通の人はそんなに
-# クリップボードの履歴に執着してないと思う。利用する直前にコピーして、貼り付けた後は
-# 皆忘れてる」。読み方が2通りあることも、押す人にとっては同じ1つの動作でしかない。
-# 残すのは「押した時だけ読む」＝勝手に見ていないこと。ここは気にする人が居る。
-Check-YakuTutorial ($html.Contains('右上の×で完全に終了します') -and $html.Contains('翻訳中だけ、閉じてよいか確認します')) 'tutorial explains the new complete-exit contract'
-$shellSourceForTutorial = Read-YakuTutorialFile 'desktop\Program.cs'
-Check-YakuTutorial ($shellSourceForTutorial.Contains('CopySelectionFromForeground') -and $shellSourceForTutorial.Contains('GetClipboardSequenceNumber')) 'the described clipboard path still exists in the shell'
+Check-YakuTutorial ($html.Contains('YakuLingoのタブを閉じると終了します') -and $html.Contains('翻訳中だけ、閉じてよいか確認します')) 'tutorial explains the browser-tab exit contract'
 $quickClientForTutorial = Read-YakuTutorialFile 'www\assets\quick.js'
 # 2026-08-13: ボタンの文言を「訳して確認する」へ変えた（押した先が確認画面に
 # なったため）。説明ページが指すボタン名は、実物と一致していなければならない。
 Check-YakuTutorial ($quickClientForTutorial.Contains("'日本語に訳す'") -and $quickClientForTutorial.Contains("'英語に訳す'")) 'the tutorial button names still exist in the app'
-# 2026-08-12: 自動起動を既定オフ（オプトイン）にした。実測で、これが節約するのは
-# Copilot の準備 4.3〜15秒。代わりに常駐して 850ms ごとの死活確認を回し続ける
-# （Program.cs の backendTimer）。同じ形の道具でも QTranslate は利用者が入れる
-# チェックにしている。デスクトップのショートカットは常駐しないので既定オンのまま。
+# ブラウザ版は常駐せず、起動用ショートカットだけを任意で作る。
 Check-YakuTutorial (-not $html.Contains('id="startup-enabled"') -and $html.Contains('自動起動しません')) 'background startup must be removed from the UI'
 Check-YakuTutorial ($html -match 'id="desktop-shortcut"[^>]*type="checkbox"[^>]*checked') 'desktop shortcut is visibly ON by default'
 Check-YakuTutorial ($html.Contains('押すまで、パソコンの設定は変わりません') -and $html.Contains('この設定で始める')) 'final confirmation explains the side-effect boundary'
@@ -124,8 +105,6 @@ Check-YakuTutorial ($js.Contains("data.tutorial_completed === false") -and
     $js.Contains("window.location.assign('/cat?tour=1')")) 'first confirmation opens the real translation screen and starts its contextual tour'
 Check-YakuTutorial (-not ($js -match 'clipboard|execCommand|localStorage|sessionStorage')) 'tutorial neither reads clipboard nor persists text in browser storage'
 Check-YakuTutorial ($js.Contains('data.message') -and $js.Contains('data.warnings') -and $js.Contains('data.available')) 'server response, warnings, and availability are surfaced'
-Check-YakuTutorial ($js.Contains("YakuCommon.notifyDesktopShell('desktop-preferences-changed')") -and
-    -not ($js -match 'chrome\.webview\.postMessage')) 'successful tutorial save uses the shared metadata-only shell notifier'
 
 Check-YakuTutorial ($html.Contains('tabindex="-1"') -and $html.Contains('aria-live="polite"')) 'focus and live-region semantics are present'
 Check-YakuTutorial ($css.Contains('min-height: 48px') -and $css.Contains('width: 26px') -and $css.Contains('height: 26px')) 'interactive controls remain large enough to target'
@@ -145,27 +124,11 @@ Check-YakuTutorial (-not $homeHtml.Contains('id="background-disabled-banner"')) 
 $catJs = Read-YakuTutorialFile 'www\assets\cat.js'
 Check-YakuTutorial (-not ($catJs -match "post\('/api/desktop/preferences'")) 'the landing translation screen must not touch the startup preference at all'
 
-Check-YakuTutorial ($commonJs.Contains("data.type !== 'set-startup-enabled'") -and
-    $commonJs.Contains("typeof data.enabled !== 'boolean'") -and $commonJs.Contains("keys !== 'enabled,type'")) 'shell handler accepts only the exact startup-toggle message contract'
-Check-YakuTutorial ($commonJs.Contains("json('/api/desktop/preferences')") -and
-    $commonJs.Contains('desktop_shortcut: current.desktop_shortcut') -and
-    $commonJs.Contains('startup_enabled: enabled')) 'shell toggle preserves the current desktop shortcut value'
-Check-YakuTutorial ($commonJs.Contains("notifyDesktopShell('desktop-preferences-changed')") -and
-    $commonJs.Contains("notifyDesktopShell('desktop-preferences-error')")) 'shell receives metadata-only success or failure events'
-Check-YakuTutorial ($commonJs.Contains("type !== 'desktop-preferences-changed' && type !== 'desktop-preferences-error'") -and
-    $commonJs.Contains('postMessage({ type: type })')) 'outbound WebMessage is restricted to an allowlisted type with no settings or token'
-Check-YakuTutorial ($commonJs.Contains('desktopPreferenceMessageQueue.then')) 'rapid tray changes are serialized in arrival order'
-
-# 取り込みは必ず記録に残す（本文は書かない）。RegisterHotKey はセキュリティの確認で
-# キーロガーと同じ入口に見えるため、「押したときだけ読む」をログで示せるようにする。
-$serverSourceForCapture = Read-YakuTutorialFile 'src\Server.ps1'
-$quickClientForCapture = Read-YakuTutorialFile 'www\assets\quick.js'
-$shellForCapture = Read-YakuTutorialFile 'desktop\Program.cs'
-Check-YakuTutorial ($serverSourceForCapture.Contains('Selection capture. trigger=hotkey') -and $serverSourceForCapture.Contains('via=office')) 'office captures are logged'
-Check-YakuTutorial ($serverSourceForCapture.Contains('/api/quick/selection-capture') -and $serverSourceForCapture.Contains('via=clipboard')) 'clipboard captures are logged too'
-Check-YakuTutorial ($quickClientForCapture.Contains('reportClipboardCapture') -and $shellForCapture.Contains('yaku-clipboard-selection')) 'the clipboard path reports its capture'
-# 本文はログにも、報告の経路にも載せない。
-Check-YakuTutorial ($serverSourceForCapture -match "notin @\('chars'\)") 'the capture report accepts a character count only'
+Check-YakuTutorial (-not ($commonJs -match 'chrome\.webview|notifyDesktopShell|onOfficeSelection')) 'browser client contains no retired WebView2 shell hooks'
+$serverSource = Read-YakuTutorialFile 'src\Server.ps1'
+$quickClient = Read-YakuTutorialFile 'www\assets\quick.js'
+Check-YakuTutorial (-not ($serverSource -match '/api/quick/selection|Selection capture\. trigger=hotkey')) 'server exposes no retired desktop selection API'
+Check-YakuTutorial (-not ($quickClient -match 'yaku-clipboard-selection|applyOfficeSelection|reportClipboardCapture')) 'browser client contains no retired global-hotkey path'
 
 $node = Get-Command node -ErrorAction SilentlyContinue
 if ($node) {

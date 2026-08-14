@@ -305,7 +305,7 @@ Remove-YakuCatProject -Id ([string]$tp.Id)
 # 「長い文章を貼り付ける」が通っていたものと同じ。
 $appJsText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'assets\cat.js'))
 $quickJsText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'assets\quick.js'))
-Chk ($quickJsText.Contains('/api/quick/jobs') -and $quickJsText.Contains('/api/cat/open') -and -not $quickJsText.Contains('/api/cat/promote')) '貼り付けは保存しない訳と確認作業を明示して分ける'
+Chk (-not $quickJsText.Contains('/api/quick/jobs') -and $quickJsText.Contains('/api/cat/open') -and -not $quickJsText.Contains('/api/cat/promote')) '貼り付けは一時CAT作業へ一本化する'
 Chk ($catProjectSource -match "DocumentFormat\s*=\s*\[IO\.Path\]::GetExtension\(\`$Path\)") 'Excel取り込み時に出力形式を作業へ保持する'
 Chk (-not $quickJsText.Contains('translation:') -and -not $quickJsText.Contains('target_text')) '訳文を送り返す経路は作らない'
 $indexText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'cat.html'))

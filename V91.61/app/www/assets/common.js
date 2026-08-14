@@ -10,7 +10,6 @@
   var ready = false;
   var readyTimer = null;
   var readyListeners = [];
-  var desktopPreferenceMessageQueue = Promise.resolve();
   var uiClientId = '';
   var uiPresenceTimer = null;
 
@@ -133,7 +132,6 @@
     ready = !!(data && data.canTranslate);
     if (ready && !readyAnnounced) {
       readyAnnounced = true;
-      if (Date.now() - startedAt < 180000) notifyDesktopShell('copilot-ready');
     }
     setStatus(data && data.label ? data.label : (ready ? 'Copilot：準備完了' : '準備しています'), data && data.class ? data.class : (ready ? 'ok' : 'warn'), readableDetail(data));
     readyListeners.forEach(function (listener) { try { listener(ready, data || {}); } catch (_) {} });
@@ -158,8 +156,7 @@
 
   /* 独自の「文字を大きく」は廃止した（2026-08-11）。本文は既に 17px、原文と訳文は
      19.04px で、市販CATの編集画面（MateCat 18px）より大きい。拡大したいときは
-     WebView2 の Ctrl+スクロールが使える（desktop/Program.cs の
-     IsZoomControlEnabled = true）。独自に持つと、器の高さが変わるたびに
+     Edge の Ctrl+スクロールが使える。独自に持つと、器の高さが変わるたびに
      ツールバーが3段になる・絞り込みが枠に切られる、といった破綻を各画面で
      個別に面倒みることになり、実際に何度も壊した。 */
 
@@ -181,59 +178,6 @@
     var bytes = new Uint8Array(binary.length);
     for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     return new TextDecoder('utf-8').decode(bytes);
-  }
-
-  function notifyDesktopShell(type) {
-    if (type !== 'desktop-preferences-changed' && type !== 'desktop-preferences-error' && type !== 'translation-finished' && type !== 'copilot-ready' && type !== 'cat-workspace-opened') return;
-    try {
-      if (window.chrome && window.chrome.webview && typeof window.chrome.webview.postMessage === 'function') {
-        window.chrome.webview.postMessage({ type: type });
-      }
-    } catch (_) {}
-  }
-
-  function applyStartupPreferenceFromShell(enabled) {
-    return json('/api/desktop/preferences').then(function (current) {
-      if (!current || current.available === false || typeof current.desktop_shortcut !== 'boolean') {
-        throw new Error('DESKTOP_PREFERENCES_UNAVAILABLE');
-      }
-      return post('/api/desktop/preferences', {
-        startup_enabled: enabled,
-        desktop_shortcut: current.desktop_shortcut
-      });
-    }).then(function (updated) {
-      if (!updated || updated.available === false) throw new Error('DESKTOP_PREFERENCES_UPDATE_FAILED');
-      notifyDesktopShell('desktop-preferences-changed');
-    }).catch(function () {
-      notifyDesktopShell('desktop-preferences-error');
-    });
-  }
-
-  var officeSelectionListeners = [];
-  function onOfficeSelection(listener) { officeSelectionListeners.push(listener); }
-
-  function bindDesktopShellMessages() {
-    if (!(window.chrome && window.chrome.webview && typeof window.chrome.webview.addEventListener === 'function')) return;
-    window.chrome.webview.addEventListener('message', function (event) {
-      var data = event && event.data;
-      if (!data || typeof data !== 'object' || Array.isArray(data)) return;
-      var keys = Object.keys(data).sort().join(',');
-      /* Ctrl+Alt+J で前面にあったのが Office のとき、外枠が窓のクラスとハンドルを
-         寄こす。本文は寄こさない（読むのはバックエンドの COM）。 */
-      if (keys === 'foreground_hwnd,type,window_class' && data.type === 'yaku-office-selection') {
-        officeSelectionListeners.forEach(function (listener) {
-          try { listener(String(data.window_class || ''), Number(data.foreground_hwnd) || 0); } catch (_) {}
-        });
-        return;
-      }
-      if (keys !== 'enabled,type' || data.type !== 'set-startup-enabled' || typeof data.enabled !== 'boolean') return;
-      var enabled = data.enabled;
-      desktopPreferenceMessageQueue = desktopPreferenceMessageQueue.then(function () {
-        return applyStartupPreferenceFromShell(enabled);
-      }, function () {
-        return applyStartupPreferenceFromShell(enabled);
-      });
-    });
   }
 
   function bindCopilotWindowButton() {
@@ -296,7 +240,6 @@
     reportUiPresence('closing', true);
   });
 
-  bindDesktopShellMessages();
   bindCopilotWindowButton();
   startUiPresence();
 
@@ -305,7 +248,7 @@
     escape: escapeHtml, plainError: plainError, focus: focusAndReveal,
     reducedMotion: reducedMotion, onReady: onReady, isReady: function () { return ready; },
     copyText: copyText, decodeBase64: decodeBase64, start: start,
-    notifyDesktopShell: notifyDesktopShell, onOfficeSelection: onOfficeSelection,
+    clientId: function () { return uiClientId; },
     translationIsRunning: translationIsRunning,
     maxUploadBytes: Number(meta('yaku-file-max-bytes')) || 50 * 1024 * 1024
   };

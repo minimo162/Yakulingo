@@ -25,6 +25,10 @@ $script:YakuWarmRunspaceBuild = $null
 $script:YakuWarmupLastGood = $null
 $script:YakuUploadHandles = [hashtable]::Synchronized(@{})
 $script:YakuUiClients = [hashtable]::Synchronized(@{})
+$script:YakuProjectLeases = [hashtable]::Synchronized(@{})
+# Lease はプロセス内情報なので、再起動直後は開いていたタブが再接続するまで
+# cleanup を待つ。これより前に期限切れ作業を消すと、編集中タブを保護できない。
+$script:YakuTransientCleanupNotBeforeUtc = [datetime]::UtcNow.AddSeconds(90)
 $script:YakuSessionToken = New-YakuSecureToken -ByteLength 32
 $script:YakuInstanceId = [guid]::NewGuid().ToString('N')
 $script:YakuProcessStartedAt = Get-YakuProcessStartTimeIso -Id $PID
@@ -64,8 +68,8 @@ function Enter-YakuSingleInstance {
                         if ($stopped) { Write-Host '前回プロセスを停止しました。もう一度起動してください。' -ForegroundColor Green }
                         $mismatchMessage = "別バージョンのYakuLingoが起動中です（起動中=$existingBuildId、今回=$($script:YakuBuildId)、PID=$([int]$existing.pid)）。安全停止できない場合は、該当PowerShellプロセスを終了してから再実行してください。"
                     } else {
-                        # WebView2 shell がバックエンドを確認するための -NoBrowser 起動では、
-                        # 既存serverを見つけても既定ブラウザーを勝手に開かない。
+                        # ブラウザタブ用ランチャーの -NoBrowser 起動では、既存serverを
+                        # 見つけても既定ブラウザーを勝手に開かない。
                         if ($OpenBrowser) { try { Start-Process ([string]$existing.url) | Out-Null } catch {} }
                         $mutex.Dispose()
                         return $false
@@ -794,6 +798,58 @@ function Get-YakuUiPresenceSummary {
     return [pscustomobject]@{ Count=[int]$clients.Count; AllClosing=[bool]$allClosing }
 }
 
+function Remove-YakuExpiredProjectLeases {
+    $now=[datetime]::UtcNow
+    foreach($key in @($script:YakuProjectLeases.Keys)){
+        $expires=try{[datetime]$script:YakuProjectLeases[$key].expires_at}catch{[datetime]::MinValue}
+        if($expires.ToUniversalTime() -le $now){$script:YakuProjectLeases.Remove([string]$key)}
+    }
+}
+
+function Test-YakuProjectLeaseActive {
+    param([Parameter(Mandatory=$true)][string]$ProjectId)
+    Remove-YakuExpiredProjectLeases
+    return (@($script:YakuProjectLeases.Values|Where-Object{[string]$_.project_id -eq $ProjectId}).Count -gt 0)
+}
+
+function Test-YakuProjectJobActive {
+    param([Parameter(Mandatory=$true)][string]$ProjectId)
+    Update-YakuTranslationJobs
+    return (@($script:YakuTranslateJobs.Values|Where-Object{[string]$(try{$_['project_id']}catch{''}) -eq $ProjectId -and (Test-YakuTranslationJobRunning -State $_)}).Count -gt 0)
+}
+
+function Remove-YakuCatProjectWithPolicy {
+    param([Parameter(Mandatory=$true)]$Project,[ValidateSet('retain_tm','revoke_tm')][string]$MemoryPolicy,[string]$ClientId='', [switch]$RequireExpired)
+    $id=[string]$Project.Id
+    if(-not [string]::IsNullOrWhiteSpace($ClientId)){$script:YakuProjectLeases.Remove($id+'|'+$ClientId)}
+    if(Test-YakuProjectLeaseActive -ProjectId $id){throw 'CAT_PROJECT_ACTIVE_LEASE: 別の画面で編集中のため削除できません。'}
+    if(Test-YakuProjectJobActive -ProjectId $id){throw 'CAT_PROJECT_ACTIVE_JOB: 処理中のため削除できません。'}
+    $pending=Sync-YakuCatTranslationMemoryOutbox -Project $Project
+    if($pending -gt 0){throw 'CAT_PROJECT_TM_OUTBOX_PENDING: 翻訳メモリへの反映が終わっていないため削除できません。'}
+    if([string]$Project.Lifecycle -ne 'deleting'){
+        $transition=Start-YakuCatProjectDeletion -ProjectId $id -ExpectedRevision ([int]$Project.Revision) -ExpectedGenerationId ([string]$Project.ActiveGenerationId) -ExpectedLifecycle ([string]$Project.Lifecycle) -MemoryPolicy $MemoryPolicy -RequireExpired:$RequireExpired
+        $Project=$transition.Project
+    }elseif(-not [string]::IsNullOrWhiteSpace([string]$Project.DeletionMemoryPolicy)){$MemoryPolicy=[string]$Project.DeletionMemoryPolicy}
+    if($MemoryPolicy -eq 'revoke_tm'){
+        $null=Revoke-YakuCatTranslationMemoryRegistrations -Project $Project -Reason 'project-deleted-by-user'
+    }
+    Remove-YakuCatProject -Id $id -DeleteStored
+}
+
+function Invoke-YakuExpiredTransientProjectCleanup {
+    if([datetime]::UtcNow -lt $script:YakuTransientCleanupNotBeforeUtc){return 0}
+    $store=Get-YakuCatProjectStoreDir;if(-not(Test-Path -LiteralPath $store -PathType Container)){return 0}
+    $removed=0;$now=[datetime]::UtcNow
+    foreach($dir in @(Get-ChildItem -LiteralPath $store -Directory -ErrorAction SilentlyContinue)){
+        if([string]$dir.Name -notmatch '^[a-fA-F0-9]{32}$'){continue};$manifestPath=Join-Path $dir.FullName 'project.json';if(-not(Test-Path -LiteralPath $manifestPath -PathType Leaf)){continue}
+        try{$manifest=Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8|ConvertFrom-Json}catch{continue}
+        if([string]$manifest.lifecycle -notin @('transient','deleting')){continue};$expiry=try{[datetime]$manifest.retention_until}catch{continue};if([string]$manifest.lifecycle -eq 'transient' -and $expiry.ToUniversalTime() -gt $now){continue}
+        $id=[string]$dir.Name;if((Test-YakuProjectLeaseActive -ProjectId $id) -or (Test-YakuProjectJobActive -ProjectId $id)){continue}
+        try{$project=Restore-YakuCatProject -Id $id;if($null -eq $project){continue};$policy=$(if([string]$project.DeletionMemoryPolicy -eq 'revoke_tm'){'revoke_tm'}else{'retain_tm'});Remove-YakuCatProjectWithPolicy -Project $project -MemoryPolicy $policy -RequireExpired:([string]$project.Lifecycle -eq 'transient');$removed++}catch{try{Write-YakuLog ('Transient cleanup skipped. project='+$id+' error='+$_.Exception.Message) 'WARN'}catch{}}
+    }
+    return $removed
+}
+
 function Stop-YakuTranslationJob {
     param([string]$JobId = '')
     Update-YakuTranslationJobs
@@ -831,8 +887,7 @@ function Start-YakuTranslationJob {
         [Parameter(Mandatory=$true)]$Settings,
         [AllowNull()][string]$TextDirectionOverride = '',
         # 短いメールなどは、確認作業や翻訳メモリを作らず、その場で訳して終える。
-        # quick は内容を保存せず、用語・過去訳も参照しない。
-        [ValidateSet('text','quick','revise','shorten','cat')][string]$Kind = 'text',
+        [ValidateSet('text','revise','shorten','cat')][string]$Kind = 'text',
         [ValidateSet('default','none')][string]$CachePolicy = 'default',
         [ValidateSet('display','none')][string]$ReferencePolicy = 'display',
         # V91.61（2026-08-06）: 修正の依頼。原文・現訳・指示・文体を JSON で運ぶ。
@@ -854,6 +909,8 @@ function Start-YakuTranslationJob {
     $diagnosticsEnabled = ($diagnosticsLevel -eq 'full')
     $fileName = ''
     $inputLength = ([string]$InputText).Length
+    $jobProjectId=''
+    if($Kind -eq 'cat' -and -not [string]::IsNullOrWhiteSpace($CatJson)){try{$jobProjectId=[string](ConvertFrom-Json $CatJson).project_id}catch{}}
     $state = [hashtable]::Synchronized(@{
         id = $jobId
         kind = $Kind
@@ -879,6 +936,7 @@ function Start-YakuTranslationJob {
         diagnostics_enabled = $diagnosticsEnabled
         build_id = $script:YakuBuildId
         session_token = $script:YakuSessionToken
+        project_id = $jobProjectId
     })
     $settingsJson = $Settings | ConvertTo-Json -Depth 20 -Compress
     $root = [string]$script:YakuRoot
@@ -936,7 +994,102 @@ function Start-YakuTranslationJob {
                 $catWarnings = New-Object System.Collections.Generic.List[object]
                 $catMode = ''
                 try { $catMode = [string]$cat.mode } catch { $catMode = '' }
-                if ($catMode -eq 'corpus') {
+                if ($catMode -eq 'rebase_preview') {
+                    Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label '日本語版の変更を調べています' -Progress 10 -Detail '現在の訳を保ったまま、新しい原文との対応を確認しています。' -Phase 'rebase_preview'
+                    try {
+                        $rebaseProject = Restore-YakuCatProject -Id ([string]$cat.project_id)
+                        if ($null -eq $rebaseProject) { throw 'CAT_REBASE_PROJECT_NOT_FOUND' }
+                        if ([int]$rebaseProject.Revision -ne [int]$cat.expected_project_revision) { throw 'CAT_PROJECT_REVISION_CONFLICT' }
+                        $startedFingerprint = Get-YakuCatRebaseDependencyFingerprint -Project $rebaseProject
+                        if ([string]$cat.started_dependency_fingerprint -ne $startedFingerprint) { throw 'CAT_REBASE_DEPENDENCY_STALE' }
+                        Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label '日本語版の変更を調べています' -Progress 35 -Detail '行の追加・削除・移動・変更を分類しています。' -Phase 'rebase_preview'
+                        $plan = New-YakuCatSourceUpdatePreview -Root $Root -Project $rebaseProject -TargetPath ([string]$cat.target_path) -Settings $settings
+                        $completedFingerprint = Get-YakuCatRebaseDependencyFingerprint -Project $rebaseProject
+                        $result = [pscustomobject]@{
+                            Kind='cat'; Mode='rebase_preview'; ResultKind='rebase_preview'; ResultId=[string]$plan.rebase_id
+                            ProjectId=[string]$rebaseProject.Id; ProjectRevision=[int]$rebaseProject.Revision
+                            StartedDependencyFingerprint=$startedFingerprint; CompletedDependencyFingerprint=$completedFingerprint
+                            ApplicationStatus=$(if($startedFingerprint -eq $completedFingerprint){'current'}else{'stale'})
+                        }
+                    } finally {
+                        if (-not [string]::IsNullOrWhiteSpace([string]$cat.upload_handle)) { try { Remove-YakuUploadHandle -Handle ([string]$cat.upload_handle) -DeleteFile } catch {} }
+                    }
+                } elseif ($catMode -eq 'render') {
+                    Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label '確認用PDFを作っています' -Progress 10 -Detail '原本の印刷設定を確認しています。' -Phase 'rendering'
+                    $renderProject = Restore-YakuCatProject -Id ([string]$cat.project_id)
+                    if ($null -eq $renderProject) { throw 'CAT_RENDER_PROJECT_NOT_FOUND' }
+                    if ([int]$renderProject.Revision -ne [int]$cat.expected_project_revision) { throw 'CAT_PROJECT_REVISION_CONFLICT' }
+                    $startedFingerprint = Get-YakuCatRenderInputFingerprint -Project $renderProject
+                    if ([string]$cat.started_dependency_fingerprint -ne $startedFingerprint) { throw 'CAT_RENDER_DEPENDENCY_STALE' }
+                    Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label '確認用PDFを作っています' -Progress 35 -Detail '訳文入りの一時Excelを作っています。' -Phase 'rendering'
+                    $rendered = New-YakuCatSourceFaithfulRender -Project $renderProject -Settings $settings
+                    $completedFingerprint = Get-YakuCatRenderInputFingerprint -Project $renderProject
+                    $result = [pscustomobject]@{
+                        Kind='cat'; Mode='render'; ResultKind='render'; ResultId=[string]$rendered.RenderId
+                        ProjectId=[string]$renderProject.Id; ProjectRevision=[int]$renderProject.Revision
+                        StartedDependencyFingerprint=$startedFingerprint; CompletedDependencyFingerprint=$completedFingerprint
+                        ApplicationStatus=$(if($startedFingerprint -eq $completedFingerprint){'current'}else{'stale'})
+                        PdfSha256=[string]$rendered.Manifest.canonical_pdf_sha256
+                        PrintConformanceStatus=[string]$rendered.Manifest.print_conformance_status
+                        WritebackCompletenessStatus=[string]$rendered.Manifest.writeback_completeness.status
+                        PdfTextCompletenessStatus=[string]$rendered.Manifest.pdf_text_completeness_status
+                    }
+                } elseif ($catMode -eq 'publication_candidates') {
+                    Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label 'Excelに入れる候補を作っています' -Progress 8 -Detail '数値を伏せ、基準訳を変えずに候補だけを作ります。' -Phase 'publication_candidates'
+                    $publicationProject=Restore-YakuCatProject -Id ([string]$cat.project_id)
+                    if($null -eq $publicationProject){throw 'CAT_PUBLICATION_PROJECT_NOT_FOUND'}
+                    if([int]$publicationProject.Revision -ne [int]$cat.expected_project_revision){throw 'CAT_PROJECT_REVISION_CONFLICT'}
+                    $request=New-YakuCatProtectedPublicationCandidateRequest -Root $Root -Project $publicationProject -Index ([int]$cat.index) -PlacementBudget $cat.placement_budget
+                    if([string]$request.DependencyFingerprint -ne [string]$cat.started_dependency_fingerprint){throw 'CAT_PUBLICATION_DEPENDENCY_STALE'}
+                    Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label 'Excelに入れる候補を作っています' -Progress 35 -Detail '情報を削らずに短くできる案を確認しています。' -Phase 'publication_candidates'
+                    $raw=Invoke-YakuProtectedCopilotPrompt -Envelope $request.Envelope -Settings $settings -AnswerFormat labeled -PreserveEndMarker -Warnings $catWarnings -ProgressState $JobState
+                    $parsed=ConvertFrom-YakuPublicationCandidateResponse -Response $raw -Request $request
+                    $candidateSet=Complete-YakuCatPublicationCandidateSet -Project $publicationProject -Request $request -Parsed $parsed
+                    $completedProject=Restore-YakuCatProject -Id ([string]$cat.project_id)
+                    $completedFingerprint='';if($null -ne $completedProject){$completedSegment=@($completedProject.Segments|Where-Object{[string]$_.SegmentId -eq [string]$request.SegmentId}|Select-Object -First 1);if($completedSegment.Count){$completedFingerprint=Get-YakuCatPublicationCandidateDependencyFingerprint -Project $completedProject -Segment $completedSegment[0] -PlacementBudgetHash ([string]$request.PlacementBudgetHash)}}
+                    $result=[pscustomobject]@{Kind='cat';Mode='publication_candidates';ResultKind='publication_candidates';ResultId=[string]$candidateSet.candidate_set_id;ProjectId=[string]$publicationProject.Id;StartedDependencyFingerprint=[string]$request.DependencyFingerprint;CompletedDependencyFingerprint=$completedFingerprint;ApplicationStatus=$(if([string]$request.DependencyFingerprint -eq $completedFingerprint){'current'}else{'stale'});CandidateSet=$candidateSet;Warnings=@($catWarnings.ToArray())}
+                } elseif ($catMode -eq 'document_review') {
+                    Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label '文書全体を確認しています' -Progress 5 -Detail '送信前に数値を伏せ、原文と訳文を文章単位で確認しています。' -Phase 'document_review'
+                    $reviewProject=Restore-YakuCatProject -Id ([string]$cat.project_id)
+                    if($null -eq $reviewProject){throw 'CAT_REVIEW_PROJECT_NOT_FOUND'}
+                    if([int]$reviewProject.Revision -ne [int]$cat.expected_project_revision){throw 'CAT_PROJECT_REVISION_CONFLICT'}
+                    $startedFingerprint=Get-YakuCatDocumentReviewDependencyFingerprint -Project $reviewProject
+                    if($startedFingerprint -ne [string]$cat.started_dependency_fingerprint){throw 'CAT_REVIEW_DEPENDENCY_STALE'}
+                    $documentIndex=New-YakuCatDocumentIndexSnapshot -Project $reviewProject
+                    $packets=New-Object System.Collections.Generic.List[object];$skipped=New-Object System.Collections.Generic.List[string]
+                    $batchSize=20;$segmentCount=@($reviewProject.Segments).Count;$requestNumber=0;$start=0;$promptLimit=0
+                    try{$promptLimit=[int]$settings.copilotPromptCharLimit}catch{}
+                    while($start -lt $segmentCount){
+                        $count=[Math]::Min($batchSize,$segmentCount-$start);$request=$null
+                        while($count -ge 1){
+                            try{$candidateRequest=New-YakuCatProtectedDocumentReviewRequest -Root $Root -Project $reviewProject -StartIndex $start -Count $count}
+                            catch{if([string]$_.Exception.Message -eq 'CAT_REVIEW_TEXT_EMPTY'){$skipped.Add([string]$reviewProject.Segments[$start].SegmentId)|Out-Null;$start++;$count=0;break};throw}
+                            if($promptLimit -le 0 -or ([string]$candidateRequest.Envelope.Prompt).Length -le $promptLimit){$request=$candidateRequest;break}
+                            if($count -eq 1){$skipped.Add([string]$reviewProject.Segments[$start].SegmentId)|Out-Null;$start++;$count=0;break}
+                            $count=[Math]::Max(1,[Math]::Floor($count/2))
+                        }
+                        if($null -eq $request){continue}
+                        $requestNumber++
+                        $progress=[Math]::Min(90,10+[int](80*$start/[Math]::Max(1,$segmentCount)))
+                        Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label '文書全体を確認しています' -Progress $progress -Detail ("確認範囲 {0}～{1} / {2}" -f ($start+1),($start+$count),$segmentCount) -Phase 'document_review'
+                        $raw=Invoke-YakuProtectedCopilotPrompt -Envelope $request.Envelope -Settings $settings -SkipFreshChatWait:($requestNumber -gt 1) -AnswerFormat labeled -PreserveEndMarker -Warnings $catWarnings -ProgressState $JobState
+                        $parsed=ConvertFrom-YakuDocumentReviewResponse -Response $raw -Request $request
+                        $packets.Add((ConvertTo-YakuSanitizedDocumentReviewPacket -Request $request -ParsedResult $parsed))|Out-Null
+                        $start+=$count
+                    }
+                    foreach($group in @($documentIndex.groups)){
+                        if($group.PSObject.Properties.Name -contains 'automated' -and -not [bool]$group.automated){continue}
+                        $request=$null
+                        try{$request=New-YakuCatProtectedDocumentReviewRequest -Root $Root -Project $reviewProject -SegmentIndices @($group.segment_indices) -ReviewPurpose document_index -IndexLens ([string]$group.lens) -IndexGroupId ([string]$group.group_id)}catch{continue}
+                        if($promptLimit -gt 0 -and ([string]$request.Envelope.Prompt).Length -gt $promptLimit){continue}
+                        $requestNumber++;Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label '文書全体を確認しています' -Progress 92 -Detail '文書内の一貫性を索引単位で比較しています' -Phase 'document_review_index'
+                        $raw=Invoke-YakuProtectedCopilotPrompt -Envelope $request.Envelope -Settings $settings -SkipFreshChatWait:($requestNumber -gt 1) -AnswerFormat labeled -PreserveEndMarker -Warnings $catWarnings -ProgressState $JobState
+                        $parsed=ConvertFrom-YakuDocumentReviewResponse -Response $raw -Request $request
+                        $packets.Add((ConvertTo-YakuSanitizedDocumentReviewPacket -Request $request -ParsedResult $parsed))|Out-Null
+                    }
+                    $completedProject=Restore-YakuCatProject -Id ([string]$cat.project_id);$completedFingerprint=$(if($null -ne $completedProject){Get-YakuCatDocumentReviewDependencyFingerprint -Project $completedProject}else{''})
+                    $result=[pscustomobject]@{Kind='cat';Mode='document_review';ResultKind='document_review';ResultId=[guid]::NewGuid().ToString('N');ProjectId=[string]$reviewProject.Id;StartedDependencyFingerprint=$startedFingerprint;CompletedDependencyFingerprint=$completedFingerprint;ApplicationStatus=$(if($startedFingerprint -eq $completedFingerprint){'current'}else{'stale'});DocumentIndexSnapshot=$documentIndex;Packets=@($packets.ToArray());SkippedSegmentIds=@($skipped.ToArray());Warnings=@($catWarnings.ToArray())}
+                } elseif ($catMode -eq 'corpus') {
                     throw 'CAT_CORPUS_MODE_RETIRED: 過去の翻訳例は候補一覧から明示的に挿入してください。'
                 } elseif ($catMode -eq 'align') {
                     # 既にある訳と突き合わせる。訳はしない。
@@ -1302,6 +1455,12 @@ function Convert-YakuResultJsonToHtml {
         if (($result.PSObject.Properties.Name -contains 'Error') -and $result.Error) {
             return (New-YakuAlertHtml -Kind error -Message (ConvertTo-YakuUserFacingError $result.Error))
         }
+        if ([string]$result.Mode -eq 'render') {
+            return (New-YakuAlertHtml -Kind info -Message '確認用PDFを作成しました。')
+        }
+        if ([string]$result.Mode -eq 'document_review') {
+            return (New-YakuAlertHtml -Kind info -Message 'Copilotによる文書全体の確認が完了しました。')
+        }
         return (New-YakuAlertHtml -Kind info -Message ('Copilot翻訳が完了しました。CATタブの一覧へ取り込みます。（' + [string]@($result.Translations).Count + ' セグメント）'))
     }
     return Convert-YakuTextResultToHtml -Result $result -IncludeStatusOob:$false
@@ -1316,6 +1475,7 @@ function Convert-YakuTranslationJobResultJson {
     $label = [string]$State['label']
     $detail = [string]$State['detail']
     $html = ''
+    $resultKind = ''; $resultId = ''; $applicationStatus = ''; $startedDependency = ''; $completedDependency = ''; $printConformance = ''; $writebackCompleteness = ''; $pdfTextCompleteness = ''; $pdfSha256 = ''; $candidateSet = $null
     if ($mode -eq 'cancelled') {
         $html = New-YakuAlertHtml -Kind warning -Message '翻訳をキャンセルしました。'
     } elseif ($mode -in @('done','completed_with_warnings','error','failed','interrupted')) {
@@ -1334,6 +1494,26 @@ function Convert-YakuTranslationJobResultJson {
         }
         if (![string]::IsNullOrWhiteSpace($resultJson)) {
             try {
+                $typedResult = $resultJson | ConvertFrom-Json
+                $resultKind = [string]$typedResult.ResultKind
+                $resultId = [string]$typedResult.ResultId
+                $applicationStatus = [string]$typedResult.ApplicationStatus
+                $startedDependency = [string]$typedResult.StartedDependencyFingerprint
+                $completedDependency = [string]$typedResult.CompletedDependencyFingerprint
+                $printConformance = [string]$typedResult.PrintConformanceStatus
+                $writebackCompleteness = [string]$typedResult.WritebackCompletenessStatus
+                $pdfTextCompleteness = [string]$typedResult.PdfTextCompletenessStatus
+                $pdfSha256 = [string]$typedResult.PdfSha256
+                if($resultKind -eq 'publication_candidates'){$candidateSet=$typedResult.CandidateSet}
+                if ($resultKind -eq 'render') {
+                    $currentRenderProject = Get-YakuCatProject -Id ([string]$typedResult.ProjectId)
+                    if ($null -eq $currentRenderProject) { $applicationStatus = 'stale' }
+                    else {
+                        $currentRenderFingerprint = Get-YakuCatRenderInputFingerprint -Project $currentRenderProject
+                        $completedDependency = $currentRenderFingerprint
+                        $applicationStatus = $(if($startedDependency -eq $currentRenderFingerprint){'current'}else{'stale'})
+                    }
+                }
                 $html = Convert-YakuResultJsonToHtml -ResultJson $resultJson
             } catch {
                 $html = New-YakuAlertHtml -Kind error -Message ('翻訳結果の復元に失敗しました: ' + $_.Exception.Message)
@@ -1373,6 +1553,16 @@ function Convert-YakuTranslationJobResultJson {
         updated_at = [string]$State['updated_at']
         error_code = [string]$State['error_code']
         completion_status = [string]$State['completion_status']
+        result_kind = $resultKind
+        result_id = $resultId
+        application_status = $applicationStatus
+        started_dependency_fingerprint = $startedDependency
+        completed_dependency_fingerprint = $completedDependency
+        print_conformance_status = $printConformance
+        writeback_completeness_status = $writebackCompleteness
+        pdf_text_completeness_status = $pdfTextCompleteness
+        pdf_sha256 = $pdfSha256
+        candidate_set = $candidateSet
     } | ConvertTo-Json -Depth 40 -Compress)
 }
 
@@ -1554,7 +1744,7 @@ function Resolve-YakuIncomingFile {
     #
     # 1. Excel や Word で開いたままだと原本は読めない。実測（2026-08-11）では
     #    ZipFile::OpenRead が共有違反で落ち、写したものは 10 entries を読めた。
-    #    Ctrl+Alt+J から取り込むときは、開いたままであるのが普通の状態である。
+    #    ブラウザから選ぶときも、開いたままであるのが普通の状態である。
     # 2. 確認作業は数十分続く。そのあいだに原本が編集されると、取り込んだ文と
     #    書き戻す先が食い違う。写しを持てば、この作業が見ているものは動かない。
     #
@@ -1589,6 +1779,7 @@ function Get-YakuMimeType {
         '.html' { 'text/html; charset=utf-8' }
         '.css' { 'text/css; charset=utf-8' }
         '.js' { 'application/javascript; charset=utf-8' }
+        '.mjs' { 'application/javascript; charset=utf-8' }
         '.json' { 'application/json; charset=utf-8' }
         # V91.61: WebAssembly.instantiateStreaming は正しい MIME を要求する。
         '.wasm' { 'application/wasm' }
@@ -1754,6 +1945,54 @@ function Send-YakuDownloadResponse {
     finally { $stream.Dispose(); $resp.OutputStream.Close() }
 }
 
+function Send-YakuInlinePdfResponse {
+    param(
+        [Parameter(Mandatory=$true)]$Context,
+        [Parameter(Mandatory=$true)][string]$Path,
+        [switch]$HeadOnly
+    )
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw 'CAT_RENDER_NOT_FOUND' }
+    $length = [int64](Get-Item -LiteralPath $Path).Length
+    $start = [int64]0; $end = [int64]([Math]::Max(0, $length - 1)); $partial = $false
+    $range = [string]$Context.Request.Headers['Range']
+    if (-not [string]::IsNullOrWhiteSpace($range)) {
+        if ($range -notmatch '^bytes=(\d+)-(\d*)$') {
+            $Context.Response.StatusCode = 416; $Context.Response.Headers['Content-Range'] = 'bytes */' + $length
+            $Context.Response.OutputStream.Close(); return
+        }
+        $start = [int64]$Matches[1]
+        if (-not [string]::IsNullOrWhiteSpace([string]$Matches[2])) { $end = [int64]$Matches[2] }
+        if ($start -lt 0 -or $start -ge $length -or $end -lt $start) {
+            $Context.Response.StatusCode = 416; $Context.Response.Headers['Content-Range'] = 'bytes */' + $length
+            $Context.Response.OutputStream.Close(); return
+        }
+        if ($end -ge $length) { $end = $length - 1 }
+        $partial = $true
+    }
+    $count = [int64]($end - $start + 1)
+    $response = $Context.Response
+    $response.StatusCode = $(if($partial){206}else{200})
+    $response.ContentType = 'application/pdf'
+    $response.ContentLength64 = $count
+    $response.Headers['Accept-Ranges'] = 'bytes'
+    $response.Headers['Cache-Control'] = 'no-store, no-cache, max-age=0'
+    $response.Headers['X-Content-Type-Options'] = 'nosniff'
+    if ($partial) { $response.Headers['Content-Range'] = "bytes $start-$end/$length" }
+    if ($HeadOnly) { $response.OutputStream.Close(); return }
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try {
+        $stream.Position = $start
+        $buffer = New-Object byte[] 65536
+        $remaining = $count
+        while ($remaining -gt 0) {
+            $read = $stream.Read($buffer, 0, [int][Math]::Min($buffer.Length, $remaining))
+            if ($read -le 0) { break }
+            $response.OutputStream.Write($buffer, 0, $read)
+            $remaining -= $read
+        }
+    } finally { $stream.Dispose(); $response.OutputStream.Close() }
+}
+
 function Serve-YakuStaticFile {
     param($Context, [string]$RelativePath)
     $base = Join-Path $script:YakuRoot 'www'
@@ -1813,6 +2052,19 @@ function Serve-YakuAdminPage {
     Send-YakuTextResponse -Context $Context -Text $html -ContentType 'text/html; charset=utf-8' -AllowWasm
 }
 
+function ConvertTo-YakuCatMutationResponseJson {
+    <# project は画面を最新化するための現在状態、operation_result とそのhash/revisionは
+       永続receiptに記録した初回操作の結果。同じkeyの再送でも後者を変えない。 #>
+    param([Parameter(Mandatory=$true)]$Commit)
+    if ($null -eq $Commit.Receipt) { throw 'CAT_IDEMPOTENCY_RECEIPT_INVALID: 更新結果の記録がありません。' }
+    $body = (ConvertTo-YakuCatProjectJson -Project $Commit.Project) | ConvertFrom-Json
+    $body | Add-Member -NotePropertyName operation_result -NotePropertyValue $Commit.Result -Force
+    $body | Add-Member -NotePropertyName committed_revision -NotePropertyValue ([int]$Commit.Receipt.committed_revision) -Force
+    $body | Add-Member -NotePropertyName mutation_result_hash -NotePropertyValue ([string]$Commit.Receipt.result_hash) -Force
+    $body | Add-Member -NotePropertyName mutation_replayed -NotePropertyValue ([bool]$Commit.Replayed) -Force
+    return ($body | ConvertTo-Json -Depth 20 -Compress)
+}
+
 function Invoke-YakuRoute {
     param([Parameter(Mandatory=$true)]$Context)
     $req = $Context.Request
@@ -1842,8 +2094,7 @@ function Invoke-YakuRoute {
         return
     }
     # 画面は一つ（2026-08-11 の利用者判断「画面を一つにするのでok」）。/quick は
-    # 同じ画面の「その場で訳す」状態として残す。Ctrl+Alt+J、外枠、開始画面、
-    # チュートリアルがこの経路を持っているため、消さずに同じページを返す。
+    # 同じ画面の旧URLとして残し、ブックマークから開いても同じページを返す。
     if ($method -eq 'GET' -and ($path -eq '/quick' -or $path -eq '/cat')) {
         # ?project= で来たなら、始める画面を一度も描かずに確認作業として開く。
         # QueryString は使わない（日本語が CP932 で化ける。Get-YakuQueryValue の説明を参照）。
@@ -2186,113 +2437,26 @@ function Invoke-YakuRoute {
         return
     }
 
-    # --------------------------------------------------------------- Quick JSON
-    # 短いメールなど、あとで続けず翻訳メモリにも残さない文章の入口。
-    # 結果は既存の GET /api/jobs/{id} で返す。復元用artifactやCATへの昇格は持たない。
-    if ($method -eq 'POST' -and $path -eq '/api/quick/jobs') {
+    if ($method -in @('GET','HEAD') -and $path -eq '/api/cat/render-pdf') {
         try {
-            $payload = Read-YakuRequestJson -Request $req
-            $inputText = [string]$payload['input_text']
-            if ([string]::IsNullOrWhiteSpace($inputText)) { throw '訳したい文章を入力してください。' }
-            $directionIntent = 'auto'
-            try { if (@('auto','to_en','to_jp') -contains [string]$payload['direction_intent']) { $directionIntent = [string]$payload['direction_intent'] } } catch {}
-            $directionBasis = $(if ($directionIntent -eq 'auto') { 'detected' } else { 'explicit' })
-            $decision = Resolve-YakuDirectionDecision -Text $inputText -Intent $directionIntent -Basis $directionBasis
-            if ([bool]$decision.RequiresConfirmation) {
-                $response = [ordered]@{ code='DIRECTION_CONFIRMATION_REQUIRED'; error='翻訳先を選んでください。'; suggested_direction=[string]$decision.SuggestedDirection; confidence=[string]$decision.Confidence }
-                Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Compress) -StatusCode 409 -ContentType 'application/json; charset=utf-8'
-                return
+            $projectId = Get-YakuQueryValue -Request $req -Name 'id'
+            $renderId = Get-YakuQueryValue -Request $req -Name 'render_id'
+            $currentRenderProject = Get-YakuCatProject -Id $projectId
+            if($null -eq $currentRenderProject){throw 'CAT_PROJECT_NOT_FOUND'}
+            $artifact = Get-YakuQueryValue -Request $req -Name 'kind'
+            if ($artifact -notin @('source','target')) { $artifact = 'target' }
+            $resolvedRender = Resolve-YakuCatRenderPdf -ProjectId $projectId -RenderId $renderId -Artifact $artifact
+            if([string]$resolvedRender.Manifest.source_snapshot_id -cne [string]$currentRenderProject.ActiveSourceId -or
+               [string]$resolvedRender.Manifest.input_fingerprint -cne (Get-YakuCatRenderInputFingerprint -Project $currentRenderProject)){
+                throw 'CAT_RENDER_DEPENDENCY_STALE: 内容が変わったため、PDFを作り直してください。'
             }
-            $readyState = Get-YakuTranslateReadinessState
-            if (-not [bool]$readyState.canTranslate) {
-                $message = if ([string]$readyState.mode -eq 'working') { 'いま別の翻訳を実行中です。そちらが終わってからもう一度お試しください。' } else { 'Copilotの準備が終わってから翻訳できます。画面右上が「Copilot：準備完了」になるまでお待ちください。' }
-                Send-YakuTextResponse -Context $Context -Text ([ordered]@{ code='TRANSLATION_NOT_READY'; error=$message; mode=[string]$readyState.mode } | ConvertTo-Json -Compress) -StatusCode 409 -ContentType 'application/json; charset=utf-8'
-                return
-            }
-            $settings = Read-YakuSettings -Root $script:YakuRoot
-            $state = Start-YakuTranslationJob -InputText $inputText -Settings $settings -TextDirectionOverride ([string]$decision.Resolved) -Kind 'quick' -CachePolicy 'none' -ReferencePolicy 'none'
-            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ job_id=[string]$state['id']; direction=[string]$decision.Resolved } | ConvertTo-Json -Compress) -StatusCode 202 -ContentType 'application/json; charset=utf-8'
+            Send-YakuInlinePdfResponse -Context $Context -Path ([string]$resolvedRender.Path) -HeadOnly:($method -eq 'HEAD')
         } catch {
-            $response = [ordered]@{ code='QUICK_JOB_START_FAILED'; error=(Convert-YakuExceptionToUserMessage $_) }
-            Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Compress) -StatusCode 400 -ContentType 'application/json; charset=utf-8'
+            Send-YakuTextResponse -Context $Context -Text (Convert-YakuExceptionToUserMessage $_) -StatusCode 404 -ContentType 'text/plain; charset=utf-8'
         }
         return
     }
 
-    # 選択範囲の読み取り（/api/quick/selection と selection-capture）。
-    if ($method -eq 'POST' -and $path -eq '/api/quick/selection-capture') {
-        # Office 以外は、外枠が疑似 Ctrl+C を送ってクリップボードから読む。その経路は
-        # サーバを通らないので、読み込んだことだけを画面から報告してもらって記録する。
-        # 本文は受け取らない（受け取る経路を作らないのが /api/quick/selection と同じ方針）。
-        $payload = Read-YakuRequestJson -Request $req -MaxBytes 2048
-        foreach ($key in @($payload.Keys)) {
-            if ([string]$key -notin @('chars')) { throw 'QUICK_SELECTION_CAPTURE_PAYLOAD_INVALID' }
-        }
-        $capturedChars = 0
-        try { $capturedChars = [int]$payload['chars'] } catch { $capturedChars = 0 }
-        try { Write-YakuLog ("Selection capture. trigger=hotkey app=other via=clipboard chars=" + $capturedChars) 'INFO' } catch {}
-        Send-YakuTextResponse -Context $Context -Text '{"recorded":true}' -ContentType 'application/json; charset=utf-8'
-        return
-    }
-    if ($method -eq 'POST' -and $path -eq '/api/quick/selection') {
-        # Ctrl+Alt+J で開いたときに、前面にあった Office の選択範囲を読む。
-        # 受け取るのは窓のクラスとハンドルだけで、本文はブラウザーから来ない。
-        # 本文が来る経路を作らないのは、ブラウザー側で書き換えたものを載せられる
-        # ようにしないため（/api/cat/promote と同じ考え方）。
-        $payload = Read-YakuRequestJson -Request $req
-        foreach ($key in @($payload.Keys)) {
-            if ([string]$key -notin @('window_class','foreground_hwnd')) { throw 'QUICK_SELECTION_PAYLOAD_INVALID' }
-        }
-        $windowClass = ''
-        try { $windowClass = [string]$payload['window_class'] } catch { $windowClass = '' }
-        $hwnd = 0
-        try { $hwnd = [int]$payload['foreground_hwnd'] } catch { $hwnd = 0 }
-        if ($windowClass -notin @('OpusApp','XLMAIN','PPTFrameClass')) {
-            Send-YakuTextResponse -Context $Context -Text (([ordered]@{ kind='none'; reason='not_office' } | ConvertTo-Json -Compress)) -ContentType 'application/json; charset=utf-8'
-            return
-        }
-        $result = Get-YakuForegroundSelection -WindowClass $windowClass -ForegroundHwnd $hwnd
-        # 取り込みは必ず記録に残す。本文は書かない（時刻・相手アプリ・文字数だけ）。
-        # 「押したときだけ読む」を、コードを読まずに確かめられるようにするため。
-        # セキュリティの確認では、RegisterHotKey はキーロガーと同じ入口に見える。
-        # 説明を「信じてください」から「ログを見てください」へ変える。
-        try {
-            $capturedChars = 0
-            try { $capturedChars = [int]$result.CharCount } catch { $capturedChars = 0 }
-            Write-YakuLog ("Selection capture. trigger=hotkey app=" + $windowClass + " via=office kind=" + [string]$result.Kind + " chars=" + $capturedChars) 'INFO'
-        } catch {}
-        $body = [ordered]@{ kind = [string]$result.Kind; reason = $(try { [string]$result.Reason } catch { '' }) }
-        if ([string]$result.Kind -eq 'word_text') {
-            $body['text'] = [string]$result.Text
-            $body['document_name'] = [string]$result.DocumentName
-            $body['char_count'] = [int]$result.CharCount
-            # 「この文書を丸ごと取り込む」用。ディスクにある版を読むので、
-            # 保存済みかどうかも一緒に返す。
-            $body['source_path'] = $(try { [string]$result.DocumentPath } catch { '' })
-            $body['saved'] = $(try { [bool]$result.Saved } catch { $false })
-        } elseif ([string]$result.Kind -eq 'powerpoint_text') {
-            # スライドは丸ごと取り込めない（資料翻訳が .pptx を扱わない）ので
-            # source_path は返さない。読んだ本文だけを渡す。
-            $body['text'] = [string]$result.Text
-            $body['presentation_name'] = [string]$result.PresentationName
-            $body['slide_index'] = [int]$result.SlideIndex
-            $body['shape_count'] = [int]$result.ShapeCount
-            $body['char_count'] = [int]$result.CharCount
-        } elseif ([string]$result.Kind -eq 'excel_cells') {
-            # 読んだブック・シート・番地を必ず返す。画面へ出さないと、別のブックを
-            # 読んでいても利用者が気づけない。
-            $body['workbook_name'] = [string]$result.WorkbookName
-            $body['sheet_name'] = [string]$result.SheetName
-            $body['address'] = [string]$result.Address
-            $body['cell_count'] = [int]$result.CellCount
-            $body['formula_skipped'] = [int]$result.FormulaSkipped
-            $body['saved'] = [bool]$result.Saved
-            $body['source_path'] = $(try { [string]$result.WorkbookPath } catch { '' })
-            $body['text'] = (@($result.Cells | ForEach-Object { [string]$_.Text }) -join "`n")
-        }
-        Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 4 -Compress) -ContentType 'application/json; charset=utf-8'
-        return
-    }
     # ---------------------------------------------------------------- CAT
     # ファイル翻訳と同じことを、押した分だけ進む形にする。
     # 段階ごとに口を分けているのは、途中を画面へ出すためである。
@@ -2381,6 +2545,7 @@ function Invoke-YakuRoute {
 
             if ($action -eq 'recent') {
                 # 前回までの作業一覧。取り込む前に「続きから」を選べるようにする。
+                $null=Invoke-YakuExpiredTransientProjectCleanup
                 $rows = @(Get-YakuCatSavedProjects -Limit 10 | ForEach-Object {
                         [ordered]@{ id = [string]$_.Id; file_name = [string]$_.FileName; direction = [string]$_.Direction
                             source = [string]$_.Source
@@ -2482,17 +2647,277 @@ function Invoke-YakuRoute {
             }
             if ($null -eq $project) { throw '取り込んだファイルが見つかりません。もう一度「取り込んで確認を始める」を押してください。' }
 
-            $revisionActions = @('delete','glossary','merge','split','glossary-add','term-add','term-deactivate','term-insert','term-exception','tm-delete','confirm','confirm-bulk','save-corpus','segment','translate','apply','preflight','export','export-reviewed','personal-glossary-list','personal-glossary-remove')
+            $revisionActions = @('delete','project-close-delete','project-retain','glossary','merge','split','placement','publication-candidates','publication-apply','publication-revert','abbreviation-register','glossary-add','term-add','term-deactivate','term-insert','term-exception','tm-delete','tm-register','confirm','confirm-bulk','project-save','render-start','review-start','copilot-review-start','copilot-review-apply','finding-decision','pdf-review-apply','coverage-decision','final-review-decision','source-update-preview','source-update-decision','source-update-apply','save-corpus','segment','translate','apply','preflight','export','export-reviewed','personal-glossary-list','personal-glossary-remove')
+            $receiptActions = @('placement','publication-apply','publication-revert','abbreviation-register','source-update-apply')
+            if ($receiptActions -contains $action -and [string]::IsNullOrWhiteSpace([string]$payload['idempotency_key'])) {
+                throw 'CAT_IDEMPOTENCY_KEY_REQUIRED: この更新には操作識別子が必要です。'
+            }
             if ($revisionActions -contains $action) {
                 $expectedRevision = -1
                 try { $expectedRevision = [int]$payload['expected_revision'] } catch { $expectedRevision = -1 }
-                if ($expectedRevision -ne [int]$project.Revision) { throw 'CAT_PROJECT_REVISION_CONFLICT: 別の操作で作業内容が更新されました。最新状態を読み込んでからやり直してください。' }
+                # receipt対象はproject lock内でreceipt検索を先に行う。同じ要求の
+                # 再送は古いexpected_revisionのまま届くため、ここで先に弾かない。
+                if ($receiptActions -notcontains $action -and $expectedRevision -ne [int]$project.Revision) { throw 'CAT_PROJECT_REVISION_CONFLICT: 別の操作で作業内容が更新されました。最新状態を読み込んでからやり直してください。' }
             }
 
             switch ($action) {
+                'project-presence' {
+                    $clientId=[string]$payload['client_id'];$sequence=[int]$payload['lease_sequence'];$state=[string]$payload['state']
+                    if($clientId -notmatch '^[a-f0-9]{32}$' -or $sequence -lt 1 -or $state -notin @('open','closed')){throw 'CAT_PROJECT_PRESENCE_INVALID'}
+                    $presenceState=[pscustomobject]@{project_id=[string]$project.Id;client_id=$clientId;sequence=$sequence;state=$state;observed_revision=[int]$(try{$payload['observed_revision']}catch{0})}
+                    $presenceOperation={param($inner);$current=Get-YakuCatProject -Id ([string]$inner.project_id);if($null -eq $current -or [string]$current.Lifecycle -in @('deleting','deleted')){throw 'CAT_PROJECT_DELETING'};$leaseKey=[string]$inner.project_id+'|'+[string]$inner.client_id;$existing=$script:YakuProjectLeases[$leaseKey];if($null -ne $existing -and [int]$inner.sequence -le [int]$existing.sequence){return [pscustomobject]@{ok=$true;lease_sequence=[int]$existing.sequence;expires_at=[string]$existing.expires_at}};if([string]$inner.state -eq 'closed'){$script:YakuProjectLeases.Remove($leaseKey);$expires=''}else{$expires=[datetime]::UtcNow.AddSeconds(75).ToString('o');$script:YakuProjectLeases[$leaseKey]=[pscustomobject]@{project_id=[string]$inner.project_id;client_id=[string]$inner.client_id;sequence=[int]$inner.sequence;observed_revision=[int]$inner.observed_revision;expires_at=$expires}};return [pscustomobject]@{ok=$true;lease_sequence=[int]$inner.sequence;expires_at=$expires}}
+                    $presenceResult=Invoke-YakuCatProjectLock -ProjectId ([string]$project.Id) -Operation $presenceOperation -Arguments @($presenceState)
+                    Send-YakuTextResponse -Context $Context -Text ($presenceResult|ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                'publication-candidates' {
+                    $readyState=Get-YakuTranslateReadinessState;if(-not [bool]$readyState.canTranslate){throw 'CAT_PUBLICATION_COPILOT_NOT_READY'}
+                    $index=[int]$payload['index'];$segments=@($project.Segments);if($index -lt 0 -or $index -ge $segments.Count){throw 'CAT_PUBLICATION_SEGMENT_NOT_FOUND'}
+                    $budget=[pscustomobject]@{max_chars=[int]$payload['max_chars'];destination_count=[int]$payload['destination_count']};if([int]$budget.max_chars -lt 1){$budget.max_chars=[Math]::Max(20,[string]$segments[$index].Translation.Length-1)}
+                    $budgetHash=Get-YakuCatSourceIntegrityHash -Text ($budget|ConvertTo-Json -Compress);$fingerprint=Get-YakuCatPublicationCandidateDependencyFingerprint -Project $project -Segment $segments[$index] -PlacementBudgetHash $budgetHash
+                    $catJson=([ordered]@{mode='publication_candidates';project_id=[string]$project.Id;expected_project_revision=[int]$project.Revision;index=$index;placement_budget=$budget;started_dependency_fingerprint=$fingerprint}|ConvertTo-Json -Depth 5 -Compress)
+                    $state=Start-YakuTranslationJob -InputText '' -Settings $settings -Kind cat -CatJson $catJson
+                    Send-YakuTextResponse -Context $Context -Text ([ordered]@{job_id=[string]$state.id;result_kind='publication_candidates';started_dependency_fingerprint=$fingerprint}|ConvertTo-Json -Compress) -StatusCode 202 -ContentType 'application/json; charset=utf-8'
+                }
+                'publication-apply' {
+                    $jobId=[string]$payload['job_id'];$candidateSetId=[string]$payload['candidate_set_id'];$candidateId=[string]$payload['candidate_id'];$candidateTextHash=[string]$payload['candidate_text_hash'];$meaningConfirmed=[bool]$payload['meaning_preservation_confirmed'];$reason=[string]$payload['reason'];$dependencyFingerprint=[string]$payload['dependency_fingerprint'];$idempotencyKey=[string]$payload['idempotency_key']
+                    $requestHash=Get-YakuCatSourceIntegrityHash -Text ([ordered]@{action='publication-apply';project_id=[string]$project.Id;job_id=$jobId;candidate_set_id=$candidateSetId;candidate_id=$candidateId;candidate_text_hash=$candidateTextHash;dependency_fingerprint=$dependencyFingerprint;meaning_preservation_confirmed=$meaningConfirmed;reason=$reason}|ConvertTo-Json -Compress)
+                    # job tableは一時状態なので、再起動後にも残るreceiptを先に引く。
+                    $commit=Get-YakuCatProjectMutationReplay -ProjectId ([string]$project.Id) -IdempotencyKey $idempotencyKey -Action publication-apply -RequestHash $requestHash
+                    $job=$null
+                    if($null -eq $commit){
+                        Update-YakuTranslationJobs
+                        if([string]::IsNullOrWhiteSpace($jobId)-or -not $script:YakuTranslateJobs.ContainsKey($jobId)){throw 'CAT_PUBLICATION_JOB_NOT_FOUND'}
+                        $job=$script:YakuTranslateJobs[$jobId];$resultJson=[string]$job['result_json'];if([string]::IsNullOrWhiteSpace($resultJson)){try{$resultPath=[string]$job['result_path'];if(Test-Path -LiteralPath $resultPath -PathType Leaf){$resultJson=Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8}}catch{}}
+                        if([string]::IsNullOrWhiteSpace($resultJson)){throw 'CAT_PUBLICATION_JOB_NOT_COMPLETE'};$typed=$resultJson|ConvertFrom-Json
+                        if([string]$typed.ResultKind -ne 'publication_candidates' -or [string]$typed.ProjectId -ne [string]$project.Id -or [string]$typed.ApplicationStatus -ne 'current'){throw 'CAT_PUBLICATION_JOB_RESULT_INVALID'}
+                        if([string]$typed.CandidateSet.dependency_fingerprint -cne $dependencyFingerprint){throw 'CAT_PUBLICATION_CANDIDATE_TARGET_CONFLICT'}
+                        $mutation={param($candidate,$innerSet,$innerSetId,$innerId,$innerTextHash,$innerMeaningConfirmed,$innerReason);return (Apply-YakuCatPublicationCandidate -Project $candidate -CandidateSet $innerSet -CandidateSetId $innerSetId -CandidateId $innerId -CandidateTextHash $innerTextHash -MeaningPreservationConfirmed $innerMeaningConfirmed -Reason $innerReason)}
+                        $commit=Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($typed.CandidateSet,$candidateSetId,$candidateId,$candidateTextHash,$meaningConfirmed,$reason) -IdempotencyKey $idempotencyKey -Action publication-apply -RequestHash $requestHash
+                        $job['applied_revision']=[int]$commit.Receipt.committed_revision
+                    }
+                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatMutationResponseJson -Commit $commit) -ContentType 'application/json; charset=utf-8'
+                }
+                'publication-revert' {
+                    $segmentId=[string]$payload['segment_id'];$reason=[string]$payload['reason'];$expectedVariantId=[string]$payload['active_variant_id'];$expectedVariantRevision=[int]$payload['active_variant_revision'];$expectedVariantHash=[string]$payload['active_variant_hash'];$idempotencyKey=[string]$payload['idempotency_key']
+                    $requestHash=Get-YakuCatSourceIntegrityHash -Text ([ordered]@{action='publication-revert';project_id=[string]$project.Id;segment_id=$segmentId;active_variant_id=$expectedVariantId;active_variant_revision=$expectedVariantRevision;active_variant_hash=$expectedVariantHash;reason=$reason}|ConvertTo-Json -Compress)
+                    $mutation={param($candidate,$innerSegmentId,$innerReason,$innerVariantId,$innerVariantRevision,$innerVariantHash);$active=Get-YakuCatActivePublicationVariant -Project $candidate -SegmentId $innerSegmentId;if($null -eq $active -or [string]$active.variant_id -cne $innerVariantId -or [int]$active.revision -ne $innerVariantRevision -or [string]$active.variant_hash -cne $innerVariantHash){throw 'CAT_PUBLICATION_VARIANT_TARGET_CONFLICT'};return (Revert-YakuCatPublicationVariant -Project $candidate -SegmentId $innerSegmentId -Reason $innerReason)}
+                    $commit=Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($segmentId,$reason,$expectedVariantId,$expectedVariantRevision,$expectedVariantHash) -IdempotencyKey $idempotencyKey -Action publication-revert -RequestHash $requestHash
+                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatMutationResponseJson -Commit $commit) -ContentType 'application/json; charset=utf-8'
+                }
+                'abbreviation-register' {
+                    $full=[string]$payload['full_form'];$abbr=[string]$payload['abbreviation'];$meaning=[string]$payload['meaning'];$scope=[string]$payload['scope'];$firstUse=[string]$payload['first_use_rule'];$expectedRegistryHash=[string]$payload['abbreviation_registry_hash'];$idempotencyKey=[string]$payload['idempotency_key']
+                    $normalizedEntry=[ordered]@{full_form=$full.Trim();abbreviation=$abbr.Trim();meaning=$meaning.Trim();scope=$scope;first_use_rule=$firstUse};$entryPayloadHash=Get-YakuCatSourceIntegrityHash -Text ($normalizedEntry|ConvertTo-Json -Compress)
+                    $requestHash=Get-YakuCatSourceIntegrityHash -Text ([ordered]@{action='abbreviation-register';project_id=[string]$project.Id;abbreviation_registry_hash=$expectedRegistryHash;entry_payload_hash=$entryPayloadHash}|ConvertTo-Json -Compress)
+                    $mutation={param($candidate,$innerFull,$innerAbbr,$innerMeaning,$innerScope,$innerFirstUse,$innerRegistryHash);if((Get-YakuCatAbbreviationRegistryHash -Project $candidate) -cne $innerRegistryHash){throw 'CAT_ABBREVIATION_REGISTRY_CONFLICT'};return (Register-YakuCatAbbreviationEntry -Project $candidate -FullForm $innerFull -Abbreviation $innerAbbr -Meaning $innerMeaning -Scope $innerScope -FirstUseRule $innerFirstUse)}
+                    $commit=Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($full,$abbr,$meaning,$scope,$firstUse,$expectedRegistryHash) -IdempotencyKey $idempotencyKey -Action abbreviation-register -RequestHash $requestHash
+                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatMutationResponseJson -Commit $commit) -ContentType 'application/json; charset=utf-8'
+                }
+                'review-start' {
+                    $mutation={param($candidate);return (Invoke-YakuCatDeterministicDocumentReview -Project $candidate)}
+                    $commit=Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation
+                    $project=$commit.Project
+                    $run=$commit.Result
+                    Send-YakuTextResponse -Context $Context -Text ([ordered]@{
+                        review_run=$run;findings=@($project.DocumentFindings);revision=[int]$project.Revision
+                    }|ConvertTo-Json -Depth 18 -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                'qa-report' {
+                    $currentRuns=@(Get-YakuCatCurrentReviewRunsForFinalDecision -Project $project)
+                    $profile=Get-YakuCatRequiredReviewProfileStatus -Project $project -Runs $currentRuns
+                    $openFindings=@($project.DocumentFindings|Where-Object{[string]$_.status -in @('open','fixed_pending_verify','deferred')})
+                    Send-YakuTextResponse -Context $Context -Text ([ordered]@{
+                        schema_version=1;generated_at=(Get-Date).ToString('o')
+                        project=[ordered]@{id=[string]$project.Id;file_name=[string]$project.FileName;direction=[string]$project.Direction;revision=[int]$project.Revision;source_snapshot_id=[string]$project.ActiveSourceId;source_sha256=[string]$project.SourceArtifactSha256}
+                        summary=[ordered]@{segments=@($project.Segments).Count;translation_confirmed=@($project.Segments|Where-Object{[bool]$_.Confirmed}).Count;placements=@($project.PlacementPlans).Count;open_findings=$openFindings.Count;review_profile_complete=[bool]$profile.complete;missing_review_items=@($profile.missing)}
+                        source_snapshots=@($project.SourceSnapshots);placement_plans=@($project.PlacementPlans)
+                        review_runs=@($currentRuns);findings=@($project.DocumentFindings);human_decisions=@($project.ReviewEvents);final_review_decisions=@($project.FinalReviewDecisions)
+                    }|ConvertTo-Json -Depth 20) -ContentType 'application/json; charset=utf-8'
+                }
+                'copilot-review-preview' {
+                    $segmentCount=@($project.Segments).Count
+                    if($segmentCount -eq 0){throw 'CAT_REVIEW_TEXT_EMPTY'}
+                    $previewCount=[Math]::Min(20,$segmentCount)
+                    $request=New-YakuCatProtectedDocumentReviewRequest -Root $Root -Project $project -StartIndex 0 -Count $previewCount
+                    Send-YakuTextResponse -Context $Context -Text ([ordered]@{
+                        contract_version=[string]$request.ContractVersion
+                        dependency_fingerprint=[string]$request.DependencyFingerprint
+                        project_revision=[int]$project.Revision
+                        shown_segments=$previewCount
+                        total_segments=$segmentCount
+                        estimated_local_batches=[int][Math]::Ceiling($segmentCount/20.0)
+                        masked_value_count=@($request.NumericMaskMap).Count
+                        protected_prompt=[string]$request.Envelope.Prompt
+                        disclosure='数値はplaceholderへ置換されます。本文、固有名詞、見出し、原文と訳文は校正に必要なため送信内容に残ります。PDFや原本ファイルは送信しません。'
+                    }|ConvertTo-Json -Depth 8 -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                'copilot-review-start' {
+                    $readyState=Get-YakuTranslateReadinessState;if(-not [bool]$readyState.canTranslate){throw 'CAT_REVIEW_COPILOT_NOT_READY'}
+                    $fingerprint=Get-YakuCatDocumentReviewDependencyFingerprint -Project $project
+                    $catJson=([ordered]@{mode='document_review';project_id=[string]$project.Id;expected_project_revision=[int]$project.Revision;started_dependency_fingerprint=$fingerprint}|ConvertTo-Json -Compress)
+                    $state=Start-YakuTranslationJob -InputText '' -Settings $settings -Kind cat -CatJson $catJson
+                    Send-YakuTextResponse -Context $Context -Text ([ordered]@{job_id=[string]$state.id;result_kind='document_review';started_dependency_fingerprint=$fingerprint}|ConvertTo-Json -Compress) -StatusCode 202 -ContentType 'application/json; charset=utf-8'
+                }
+                'copilot-review-apply' {
+                    $jobId=[string]$payload['job_id'];Update-YakuTranslationJobs
+                    if([string]::IsNullOrWhiteSpace($jobId) -or -not $script:YakuTranslateJobs.ContainsKey($jobId)){throw 'CAT_REVIEW_JOB_NOT_FOUND'}
+                    $job=$script:YakuTranslateJobs[$jobId];$resultJson=[string]$job['result_json']
+                    if([string]::IsNullOrWhiteSpace($resultJson)){try{$resultPath=[string]$job['result_path'];if(Test-Path -LiteralPath $resultPath -PathType Leaf){$resultJson=Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8}}catch{}}
+                    if([string]::IsNullOrWhiteSpace($resultJson)){throw 'CAT_REVIEW_JOB_NOT_COMPLETE'}
+                    $typed=$resultJson|ConvertFrom-Json
+                    if([string]$typed.ResultKind -ne 'document_review' -or [string]$typed.ProjectId -ne [string]$project.Id){throw 'CAT_REVIEW_JOB_RESULT_INVALID'}
+                    $currentFingerprint=Get-YakuCatDocumentReviewDependencyFingerprint -Project $project
+                    if([string]$typed.StartedDependencyFingerprint -ne $currentFingerprint){throw 'CAT_REVIEW_RESULT_STALE'}
+                    $mutation={param($candidate,$innerPackets,$innerSkipped,$innerJobId,$innerDocumentIndex);if($null -eq $innerDocumentIndex){throw 'CAT_REVIEW_DOCUMENT_INDEX_STALE'};$null=Assert-YakuCatDocumentIndexSnapshot -Project $candidate -Snapshot $innerDocumentIndex;$candidate.DocumentIndexSnapshot=$innerDocumentIndex;return (Apply-YakuCatCopilotDocumentReviewPackets -Project $candidate -Packets @($innerPackets) -SkippedSegmentIds @($innerSkipped) -SourceJobId $innerJobId)}
+                    $commit=Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @(@($typed.Packets),@($typed.SkippedSegmentIds),$jobId,$typed.DocumentIndexSnapshot)
+                    $job['applied_revision']=[int]$commit.Project.Revision
+                    Send-YakuTextResponse -Context $Context -Text ([ordered]@{review_run=$commit.Result;findings=@($commit.Project.DocumentFindings);revision=[int]$commit.Project.Revision}|ConvertTo-Json -Depth 18 -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                'findings' {
+                    $currentDependency=Get-YakuCatDocumentReviewDependencyFingerprint -Project $project
+                    Send-YakuTextResponse -Context $Context -Text ([ordered]@{
+                        dependency_fingerprint=$currentDependency
+                        findings=@($project.DocumentFindings|ForEach-Object{
+                            $row=$_|Select-Object *
+                            $row|Add-Member -NotePropertyName current -NotePropertyValue ([string]$_.dependency_fingerprint -eq $currentDependency) -Force
+                            $row
+                        })
+                        review_runs=@($project.ReviewRuns|Where-Object{[string]$_.dependency_fingerprint -eq $currentDependency});revision=[int]$project.Revision
+                    }|ConvertTo-Json -Depth 18 -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                'finding-decision' {
+                    $findingId=[string]$payload['finding_id'];$findingRevision=[int]$payload['finding_revision'];$decisionAction=[string]$payload['decision_action']
+                    $reasonCode=[string]$payload['reason_code'];$note=[string]$payload['note']
+                    $mutation={param($candidate,$innerFindingId,$innerFindingRevision,$innerAction,$innerReason,$innerNote);return (Set-YakuCatDocumentFindingDecision -Project $candidate -FindingId $innerFindingId -FindingRevision $innerFindingRevision -Action $innerAction -ReasonCode $innerReason -Note $innerNote)}
+                    $commit=Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($findingId,$findingRevision,$decisionAction,$reasonCode,$note)
+                    Send-YakuTextResponse -Context $Context -Text ([ordered]@{finding=$commit.Result;revision=[int]$commit.Project.Revision}|ConvertTo-Json -Depth 16 -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                'pdf-review-apply' {
+                    $renderId=[string]$payload['render_id'];$pdfHash=[string]$payload['pdf_sha256'];$extractor=[string]$payload['extractor_contract'];$pageCount=[int]$payload['page_count'];$pages=@($payload['pages'])
+                    $mutation={param($candidate,$innerRenderId,$innerPdfHash,$innerExtractor,$innerPageCount,$innerPages);return (Invoke-YakuCatPdfTextCompletenessReview -Project $candidate -RenderId $innerRenderId -PdfSha256 $innerPdfHash -ExtractorContract $innerExtractor -PageCount $innerPageCount -Pages @($innerPages))}
+                    $commit=Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($renderId,$pdfHash,$extractor,$pageCount,$pages)
+                    Send-YakuTextResponse -Context $Context -Text ([ordered]@{review_run=$commit.Result;findings=@($commit.Project.DocumentFindings|Where-Object{[string]$_.review_run_id -eq [string]$commit.Result.review_run_id});revision=[int]$commit.Project.Revision}|ConvertTo-Json -Depth 18 -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                'coverage-decision' {
+                    $runId=[string]$payload['review_run_id'];$ids=@($payload['coverage_item_ids']|ForEach-Object{[string]$_});$note=[string]$payload['note']
+                    $mutation={param($candidate,$innerRunId,$innerIds,$innerNote);return (Set-YakuCatReviewCoverageDecision -Project $candidate -ReviewRunId $innerRunId -CoverageItemIds @($innerIds) -Note $innerNote)}
+                    $commit=Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($runId,$ids,$note)
+                    Send-YakuTextResponse -Context $Context -Text ([ordered]@{decision=$commit.Result;revision=[int]$commit.Project.Revision}|ConvertTo-Json -Depth 14 -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                'final-review-readiness' {
+                    $renderId=[string]$payload['render_id'];$runs=@(Get-YakuCatCurrentReviewRunsForFinalDecision -Project $project)
+                    $profile=Get-YakuCatRequiredReviewProfileStatus -Project $project -Runs $runs -RenderId $renderId
+                    Send-YakuTextResponse -Context $Context -Text ([ordered]@{complete=[bool]$profile.complete;missing=@($profile.missing);required_review_profile_hash=[string]$profile.profile_hash;revision=[int]$project.Revision}|ConvertTo-Json -Depth 8 -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                'final-review-decision' {
+                    $record=$project.LastOutputRecord;$token=[string]$payload['output_token']
+                    if($null -eq $record -or [string]::IsNullOrWhiteSpace($token) -or [string]$record.output_token -ne $token){throw 'CAT_FINAL_REVIEW_OUTPUT_TOKEN_INVALID'}
+                    if([int]$record.project_revision -ne [int]$project.Revision -or [string]$record.canonical_set_hash -ne (Get-YakuCatCanonicalTranslationSetHash -Project $project) -or [string]$record.publication_set_hash -ne (Get-YakuCatPublicationTranslationSetHash -Project $project)){throw 'CAT_FINAL_REVIEW_OUTPUT_STALE'}
+                    $reason=([string]$payload['reason']).Trim();if($reason.Length -gt 1000 -or $reason -match '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]'){throw 'CAT_FINAL_REVIEW_REASON_INVALID'}
+                    $ack=[bool]$payload['acknowledge_unresolved'];$renderId=[string]$payload['render_id']
+                    $mutation={param($candidate,$innerRecord,$innerReason,$innerAck,$innerRenderId)
+                        $decision=New-YakuCatFinalReviewDecision -Project $candidate -ArtifactKind ([string]$innerRecord.artifact_kind) -ArtifactPath ([string]$innerRecord.path) -ArtifactText ([string]$innerRecord.text) -RenderId $innerRenderId -Reason $innerReason -AcknowledgeUnresolved:$innerAck
+                        $candidate.LastOutputRecord=$null
+                        return $decision
+                    }
+                    $commit=Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($record,$reason,$ack,$renderId)
+                    $status=Get-YakuCatFinalReviewDecisionStatus -Project $commit.Project -Decision $commit.Result
+                    Send-YakuTextResponse -Context $Context -Text ([ordered]@{decision=$commit.Result;status=$status;revision=[int]$commit.Project.Revision}|ConvertTo-Json -Depth 18 -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                'final-review-status' {
+                    $latest=@($project.FinalReviewDecisions|Select-Object -Last 1)
+                    $status=Get-YakuCatFinalReviewDecisionStatus -Project $project -Decision $(if($latest.Count){$latest[0]}else{$null})
+                    Send-YakuTextResponse -Context $Context -Text ([ordered]@{status=$status;revision=[int]$project.Revision}|ConvertTo-Json -Depth 18 -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                'source-update-preview' {
+                    if ([string]$project.Source -ne 'file') { throw 'CAT_SOURCE_UPDATE_FILE_PROJECT_REQUIRED' }
+                    $incoming = Resolve-YakuIncomingFile -Payload $payload -Settings $settings
+                    $fingerprint = Get-YakuCatRebaseDependencyFingerprint -Project $project
+                    try {
+                        $catJson = ([ordered]@{
+                            mode='rebase_preview'; project_id=[string]$project.Id; expected_project_revision=[int]$project.Revision
+                            started_dependency_fingerprint=$fingerprint; target_path=[string]$incoming.Path; upload_handle=[string]$incoming.Handle
+                        } | ConvertTo-Json -Compress)
+                        $state = Start-YakuTranslationJob -InputText '' -Settings $settings -Kind 'cat' -CatJson $catJson
+                    } catch {
+                        if (-not [string]::IsNullOrWhiteSpace([string]$incoming.Handle)) { try { Remove-YakuUploadHandle -Handle ([string]$incoming.Handle) -DeleteFile } catch {} }
+                        throw
+                    }
+                    Send-YakuTextResponse -Context $Context -Text ([ordered]@{
+                        job_id=[string]$state.id; result_kind='rebase_preview'; started_dependency_fingerprint=$fingerprint
+                    } | ConvertTo-Json -Compress) -StatusCode 202 -ContentType 'application/json; charset=utf-8'
+                }
+                'source-update-plan' {
+                    $rebaseId = [string]$payload['rebase_id']
+                    $view = ConvertTo-YakuCatRebasePlanView -Project $project -RebaseId $rebaseId
+                    Send-YakuTextResponse -Context $Context -Text ($view | ConvertTo-Json -Depth 12 -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                'source-update-decision' {
+                    $resolution=New-YakuCatRebaseResolution -Project $project -RebaseId ([string]$payload['rebase_id']) -PlanHash ([string]$payload['plan_hash']) -Decisions @($payload['decisions'])
+                    Send-YakuTextResponse -Context $Context -Text ([ordered]@{resolution_id=[string]$resolution.resolution_id;resolution_hash=[string]$resolution.resolution_hash;decisions_hash=[string]$resolution.decisions_hash}|ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                'source-update-apply' {
+                    $rebaseId=[string]$payload['rebase_id'];$planHash=[string]$payload['plan_hash']
+                    $baseSourceId=[string]$payload['base_source_id'];$baseSourceHash=[string]$payload['base_source_hash'];$baseProjectRevision=[int]$payload['base_project_revision'];$targetSourceId=[string]$payload['target_source_id'];$targetSourceHash=[string]$payload['target_source_hash'];$resolutionId=[string]$payload['resolution_id'];$resolutionHash=[string]$payload['resolution_hash'];$idempotencyKey=[string]$payload['idempotency_key']
+                    $requestHash=Get-YakuCatSourceIntegrityHash -Text ([ordered]@{action='source-update-apply';project_id=[string]$project.Id;rebase_id=$rebaseId;plan_hash=$planHash;resolution_id=$resolutionId;resolution_hash=$resolutionHash;base_source_id=$baseSourceId;base_source_hash=$baseSourceHash;target_source_id=$targetSourceId;target_source_hash=$targetSourceHash;base_project_revision=$baseProjectRevision}|ConvertTo-Json -Compress)
+                    $mutation={param($candidate,$innerRebaseId,$innerPlanHash,$innerResolutionId,$innerResolutionHash,$innerBaseSourceId,$innerBaseSourceHash,$innerBaseRevision,$innerTargetSourceId,$innerTargetSourceHash);if([string]$candidate.ActiveSourceId -ne $innerBaseSourceId -or [string]$candidate.SourceArtifactSha256 -ne $innerBaseSourceHash -or [int]$candidate.Revision -ne $innerBaseRevision){throw 'CAT_REBASE_APPLY_CAS_MISMATCH'};$loaded=Get-YakuCatSourceUpdatePreview -Project $candidate -RebaseId $innerRebaseId;if([string]$loaded.Plan.plan_hash -ne $innerPlanHash -or [string]$loaded.Plan.target_source_id -ne $innerTargetSourceId -or [string]$loaded.Plan.new_source_hash -ne $innerTargetSourceHash){throw 'CAT_REBASE_APPLY_TARGET_MISMATCH'};return (Apply-YakuCatSourceUpdatePlan -Project $candidate -RebaseId $innerRebaseId -PlanHash $innerPlanHash -ResolutionId $innerResolutionId -ResolutionHash $innerResolutionHash)}
+                    $commit=Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($rebaseId,$planHash,$resolutionId,$resolutionHash,$baseSourceId,$baseSourceHash,$baseProjectRevision,$targetSourceId,$targetSourceHash) -IdempotencyKey $idempotencyKey -Action source-update-apply -RequestHash $requestHash
+                    $project=$commit.Project
+                    $body=(ConvertTo-YakuCatMutationResponseJson -Commit $commit)|ConvertFrom-Json
+                    $body|Add-Member -NotePropertyName rebase_applied -NotePropertyValue $true -Force
+                    $body|Add-Member -NotePropertyName rebase_id -NotePropertyValue ([string]$rebaseId) -Force
+                    Send-YakuTextResponse -Context $Context -Text ($body|ConvertTo-Json -Depth 20 -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                'render-start' {
+                    if ([string]$project.Source -ne 'file' -or [string]$project.DocumentFormat -notin @('xlsx','xlsm')) { throw 'CAT_RENDER_EXCEL_REQUIRED' }
+                    $fingerprint = Get-YakuCatRenderInputFingerprint -Project $project
+                    $catJson = ([ordered]@{
+                        mode='render'; project_id=[string]$project.Id; expected_project_revision=[int]$project.Revision
+                        started_dependency_fingerprint=$fingerprint
+                    } | ConvertTo-Json -Compress)
+                    $state = Start-YakuTranslationJob -InputText '' -Settings $settings -Kind 'cat' -CatJson $catJson
+                    Send-YakuTextResponse -Context $Context -Text ([ordered]@{
+                        job_id=[string]$state.id; result_kind='render'; started_dependency_fingerprint=$fingerprint
+                    } | ConvertTo-Json -Compress) -StatusCode 202 -ContentType 'application/json; charset=utf-8'
+                }
+                'placement' {
+                    $index = -1
+                    try { $index = [int]$payload['index'] } catch { $index = -1 }
+                    $slices = @($payload['slices'] | ForEach-Object { [string]$_ })
+                    $spillRightCells=0
+                    try{$spillRightCells=[int]$payload['spill_right_cells']}catch{$spillRightCells=0}
+                    if($spillRightCells -lt 0 -or $spillRightCells -gt 3){throw 'CAT_PLACEMENT_SPILL_COUNT_INVALID'}
+                    $downEmptyCells=0
+                    try{$downEmptyCells=[int]$payload['down_empty_cells']}catch{$downEmptyCells=0}
+                    if($downEmptyCells -lt 0 -or $downEmptyCells -gt 3){throw 'CAT_PLACEMENT_EMPTY_COUNT_INVALID'}
+                    $expectedPlanHash=[string]$payload['placement_plan_hash'];$idempotencyKey=[string]$payload['idempotency_key']
+                    $requestHash=Get-YakuCatSourceIntegrityHash -Text ([ordered]@{action='placement';project_id=[string]$project.Id;index=$index;slices=@($slices);spill_right_cells=$spillRightCells;down_empty_cells=$downEmptyCells;placement_plan_hash=$expectedPlanHash}|ConvertTo-Json -Depth 5 -Compress)
+                    $mutation = {
+                        param($candidate,$innerIndex,$innerSlices,$innerSpillRightCells,$innerDownEmptyCells,$innerPlanHash)
+                        $segments=@($candidate.Segments);if($innerIndex -lt 0 -or $innerIndex -ge $segments.Count){throw 'CAT_PLACEMENT_SEGMENT_NOT_FOUND'}
+                        $segmentId=[string]$segments[$innerIndex].SegmentId
+                        $currentPlan=@($candidate.PlacementPlans|Where-Object{[string]$_.segment_id -eq $segmentId})
+                        if($currentPlan.Count -gt 1){throw 'CAT_PLACEMENT_PLAN_DUPLICATE'}
+                        if($currentPlan.Count -ne 1 -or [string]$currentPlan[0].plan_hash -cne $innerPlanHash){throw 'CAT_PLACEMENT_TARGET_CONFLICT'}
+                        return (Set-YakuCatPlacementSlices -Project $candidate -Index $innerIndex -Slices @($innerSlices) -SpillRightCells $innerSpillRightCells -DownEmptyCells $innerDownEmptyCells)
+                    }
+                    $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($index,@($slices),$spillRightCells,$downEmptyCells,$expectedPlanHash) -IdempotencyKey $idempotencyKey -Action placement -RequestHash $requestHash
+                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatMutationResponseJson -Commit $commit) -ContentType 'application/json; charset=utf-8'
+                }
                 'delete' {
-                    Remove-YakuCatProject -Id ([string]$project.Id) -DeleteStored
+                    $policy=[string]$payload['memory_policy'];$clientId=[string]$payload['client_id']
+                    Remove-YakuCatProjectWithPolicy -Project $project -MemoryPolicy $policy -ClientId $clientId
                     Send-YakuTextResponse -Context $Context -Text '{"deleted":true}' -ContentType 'application/json; charset=utf-8'
+                }
+                'project-close-delete' {
+                    if([string]$project.Lifecycle -ne 'transient'){throw 'CAT_PROJECT_CLOSE_DELETE_NOT_TRANSIENT'}
+                    $policy=[string]$payload['memory_policy'];$clientId=[string]$payload['client_id']
+                    Remove-YakuCatProjectWithPolicy -Project $project -MemoryPolicy $policy -ClientId $clientId
+                    Send-YakuTextResponse -Context $Context -Text '{"deleted":true,"lifecycle":"deleted"}' -ContentType 'application/json; charset=utf-8'
+                }
+                'project-retain' {
+                    $mutation={param($candidate);if([string]$candidate.Lifecycle -ne 'transient'){throw 'CAT_PROJECT_RETAIN_NOT_TRANSIENT'};$candidate.RetentionUntil=(Get-Date).AddDays(7).ToString('o');return [string]$candidate.RetentionUntil}
+                    $commit=Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation
+                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $commit.Project) -ContentType 'application/json; charset=utf-8'
                 }
                 'glossary' {
                     $mutation = {
@@ -2775,8 +3200,9 @@ function Invoke-YakuRoute {
                         }
                         $propagated = 0
                         if ($innerFlag -and -not $blocked) {
-                            $reviewed = @($candidate.Segments)[$innerIndex]
-                            $null = Add-YakuCatTranslationMemoryOutboxEvent -Project $candidate -Segment $reviewed
+                            # 確認、TM登録、project保存は独立した状態である。
+                            # transientでもgenerationへ監査記録は保存できるため、
+                            # 確認を理由に再開一覧へ黙って昇格させない。
                             # 同じ原文の行へ配る。空の行にだけ入れ、確認済みにはしない。
                             $propagated = [int](Copy-YakuCatTranslationToRepetitions -Project $candidate -Index $innerIndex)
                         }
@@ -2786,11 +3212,6 @@ function Invoke-YakuRoute {
                     $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($index,$flag,$script:YakuRoot,$settings)
                     $project = $commit.Project
                     $reviewBlocked = [bool]$commit.Result.ReviewBlocked
-                    if ($flag -and -not $reviewBlocked) {
-                        # projectと同じ世代に保存したoutboxを、commit後に冪等反映する。
-                        # 失敗しても再開時に再試行でき、確認訳が黙って失われない。
-                        $null = Sync-YakuCatTranslationMemoryOutbox -Project $project
-                    }
                     $json = ConvertTo-YakuCatProjectJson -Project $project
                     $propagatedRows = [int]$(try { $commit.Result.Propagated } catch { 0 })
                     if ($reviewBlocked -or $propagatedRows -gt 0) {
@@ -2825,19 +3246,42 @@ function Invoke-YakuRoute {
                             }
                             if ($blocked) { $null = $failed.Add([int]$one); continue }
                             $done++
-                            $reviewed = @($candidate.Segments)[$one]
-                            $null = Add-YakuCatTranslationMemoryOutboxEvent -Project $candidate -Segment $reviewed
                         }
                         try { $candidate | Add-Member -NotePropertyName 'GlossaryCandidates' -NotePropertyValue (Measure-YakuCatGlossaryCandidates -Root $root -Project $candidate -Settings $innerSettings) -Force } catch {}
                         return [pscustomobject]@{ Confirmed=$done; Blocked=@($failed.ToArray()) }
                     }
                     $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($indexes,$script:YakuRoot,$settings)
                     $project = $commit.Project
-                    if ([int]$commit.Result.Confirmed -gt 0) { $null = Sync-YakuCatTranslationMemoryOutbox -Project $project }
                     $body = (ConvertTo-YakuCatProjectJson -Project $project) | ConvertFrom-Json
                     $body | Add-Member -NotePropertyName bulk_confirmed -NotePropertyValue ([int]$commit.Result.Confirmed) -Force
                     $body | Add-Member -NotePropertyName bulk_blocked -NotePropertyValue @($commit.Result.Blocked) -Force
                     Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 8 -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                'tm-register' {
+                    # 確認済みの行だけを、利用者の明示操作で翻訳メモリへ登録する。
+                    # outboxはproject generationと同時にcommitし、外部ストアへの
+                    # 反映はmanifest commit後にevent idで冪等実行する。
+                    $index = -1
+                    try { $index = [int]$payload['index'] } catch { $index = -1 }
+                    $mutation = {
+                        param($candidate,$innerIndex)
+                        return Register-YakuCatSegmentTranslationMemory -Project $candidate -Index $innerIndex
+                    }
+                    $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($index)
+                    $project = $commit.Project
+                    $null = Sync-YakuCatTranslationMemoryOutbox -Project $project
+                    $body = (ConvertTo-YakuCatProjectJson -Project $project) | ConvertFrom-Json
+                    $body | Add-Member -NotePropertyName tm_registered_index -NotePropertyValue $index -Force
+                    Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 8 -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                'project-save' {
+                    $mutation = {
+                        param($candidate)
+                        return Set-YakuCatProjectSaved -Project $candidate -Reason 'user-requested'
+                    }
+                    $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation
+                    $project = $commit.Project
+                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 }
                 'save-corpus' {
                     # グリッドで確かめた対訳をコーパスへ入れる。人が一度見てから
@@ -3080,23 +3524,52 @@ function Invoke-YakuRoute {
                     $outputPath = if ([string]$project.Source -ne 'file') { '' } else {
                         Get-YakuCatDraftOutputPath -Project $project
                     }
-                    $exported = Export-YakuCatProject -Project $project -OutputPath $outputPath -Settings $settings -Warnings $warnings
+                    $renderId=[string]$payload['render_id']
+                    if(-not [string]::IsNullOrWhiteSpace($renderId) -and [string]$project.DocumentFormat -in @('xlsx','xlsm')){
+                        $render=Resolve-YakuCatRenderPdf -ProjectId ([string]$project.Id) -RenderId $renderId
+                        if([string]$render.Manifest.source_snapshot_id -ne [string]$project.ActiveSourceId -or [string]$render.Manifest.input_fingerprint -ne (Get-YakuCatRenderInputFingerprint -Project $project)){throw 'CAT_FINAL_REVIEW_RENDER_STALE'}
+                        if([string]::IsNullOrWhiteSpace([string]$render.DraftPath) -or -not(Test-Path -LiteralPath $render.DraftPath -PathType Leaf)){throw 'CAT_RENDER_DRAFT_NOT_FOUND'}
+                        $outputDir=Split-Path -Parent $outputPath;if(-not(Test-Path -LiteralPath $outputDir -PathType Container)){$null=New-Item -ItemType Directory -Path $outputDir -Force}
+                        $stagedOutput=Join-Path $outputDir ('.'+[IO.Path]::GetFileName($outputPath)+'.'+[guid]::NewGuid().ToString('N')+'.tmp')
+                        try{
+                            Copy-Item -LiteralPath $render.DraftPath -Destination $stagedOutput
+                            $copiedHash=(Get-FileHash -LiteralPath $stagedOutput -Algorithm SHA256).Hash.ToLowerInvariant()
+                            if($copiedHash -ne [string]$render.Manifest.output_xlsx_sha256){throw 'CAT_RENDER_DRAFT_INTEGRITY_FAILED'}
+                            if(Test-Path -LiteralPath $outputPath -PathType Leaf){$backup=$stagedOutput+'.bak';[IO.File]::Replace($stagedOutput,$outputPath,$backup,$true);Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue}else{[IO.File]::Move($stagedOutput,$outputPath)}
+                        }finally{if(Test-Path -LiteralPath $stagedOutput){Remove-Item -LiteralPath $stagedOutput -Force -ErrorAction SilentlyContinue}}
+                        $exported=[pscustomobject]@{OutputPath=$outputPath;OutputName=[IO.Path]::GetFileName($outputPath);Text='';Written=@($project.Segments).Count;Skipped=0}
+                    }else{
+                        $exported = Export-YakuCatProject -Project $project -OutputPath $outputPath -Settings $settings -Warnings $warnings
+                    }
                     # 出した場所を覚えておく。「フォルダを開く」から使う。
                     try { $project | Add-Member -NotePropertyName 'LastOutputPath' -NotePropertyValue ([string]$exported.OutputPath) -Force } catch {}
+                    $artifactKind=$(if([string]$project.Source -ne 'file'){'copied_text'}else{switch([string]$project.DocumentFormat){'docx'{'draft_docx'}'xlsx'{'draft_xlsx'}'xlsm'{'draft_xlsm'}'csv'{'draft_csv'}default{throw 'CAT_FINAL_REVIEW_ARTIFACT_KIND_UNSUPPORTED'}}})
+                    $outputToken=[guid]::NewGuid().ToString('N')
+                    $outputText=$(try{[string]$exported.Text}catch{''});$outputFile=[string]$exported.OutputPath
+                    $outputHash=$(if($artifactKind -eq 'copied_text'){Get-YakuCatSourceIntegrityHash -Text $outputText}else{(Get-FileHash -LiteralPath $outputFile -Algorithm SHA256).Hash.ToLowerInvariant()})
+                    $project.LastOutputRecord=[pscustomobject]@{
+                        output_token=$outputToken;artifact_kind=$artifactKind;path=$outputFile;text=$outputText;sha256=$outputHash;project_revision=[int]$project.Revision
+                        canonical_set_hash=(Get-YakuCatCanonicalTranslationSetHash -Project $project);publication_set_hash=(Get-YakuCatPublicationTranslationSetHash -Project $project);created_at=(Get-Date).ToString('o')
+                    }
                     $body = [ordered]@{
                         output_path = [string]$exported.OutputPath
                         output_name = [string]$exported.OutputName
                         text = $(try { [string]$exported.Text } catch { '' })
                         written = [int]$exported.Written
                         skipped = [int]$exported.Skipped
+                        output_token = $outputToken
                     }
                     Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
                 }
                 default { throw ('不明な操作です: ' + $action) }
             }
         } catch {
-            $body = [ordered]@{ error = (Convert-YakuExceptionToUserMessage $_) }
-            Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
+            $rawMessage=[string]$_.Exception.Message;$code=$(if($rawMessage -match '^(CAT_[A-Z0-9_]+)'){$Matches[1]}else{'CAT_REQUEST_FAILED'})
+            $conflictCodes=@('CAT_PROJECT_REVISION_CONFLICT','CAT_PUBLICATION_CANDIDATE_TARGET_CONFLICT','CAT_PUBLICATION_VARIANT_TARGET_CONFLICT','CAT_ABBREVIATION_REGISTRY_CONFLICT','CAT_IDEMPOTENCY_KEY_REUSED','CAT_REBASE_APPLY_CAS_MISMATCH','CAT_REBASE_APPLY_TARGET_MISMATCH','CAT_COMMIT_MANIFEST_CONFLICT','CAT_PROJECT_DELETE_CAS_MISMATCH','CAT_PROJECT_DELETE_NOT_EXPIRED','CAT_PROJECT_DELETING','CAT_PROJECT_ACTIVE_LEASE','CAT_PROJECT_ACTIVE_JOB')
+            $statusCode=$(if($conflictCodes -contains $code){409}else{400})
+            $body = [ordered]@{ code=$code; error = (Convert-YakuExceptionToUserMessage $_) }
+            if($statusCode -eq 409 -and $null -ne $project){$body['current_revision']=[int]$project.Revision}
+            Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode $statusCode
         }
         return
     }
@@ -3192,6 +3665,8 @@ $startupSettings = Read-YakuSettings -Root $script:YakuRoot
 Invoke-YakuDiagnosticLogRotation -RetentionDays ([int]$startupSettings.diagnostic_retention_days) -MainLogRetentionDays ([int]$startupSettings.log_retention_days)
 Clear-YakuExpiredUploads
 Recover-YakuInterruptedJobs
+$expiredTransientCount=Invoke-YakuExpiredTransientProjectCleanup
+if($expiredTransientCount -gt 0){Write-YakuLog ("Expired transient projects removed. count=$expiredTransientCount") 'INFO'}
 $maintenanceSw.Stop()
 Write-YakuLog "Server startup timing. phase=maintenance elapsedMs=$($maintenanceSw.ElapsedMilliseconds) sinceServerStartedMs=$($serverInitializationSw.ElapsedMilliseconds)" 'INFO'
 Start-YakuWarmTranslationRunspaceBuild -Root $script:YakuRoot

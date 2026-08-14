@@ -54,7 +54,6 @@
     }).then(function (data) {
       if (!data || data.available === false) throw new Error((data && data.message) || 'この環境では起動設定を変更できません。');
       desktopInput.checked = !!data.desktop_shortcut;
-      YakuCommon.notifyDesktopShell('desktop-preferences-changed');
       setResponse(data.message || '起動とショートカットの設定を保存しました。', data.warnings || [], false);
       desktopInput.disabled = true;
       confirmButton.hidden = true;

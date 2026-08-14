@@ -20,6 +20,9 @@
   var deleteTarget = null, preflightScope = null, jobSerial = 0, viewEpoch = 0, outputScope = null;
   var activeSegmentId = '', activeIndex = -1, currentFilter = 'actionable', currentLocation = 'all', currentChange = 'all', inspectorTab = 'candidates';
   var revisionComparison = null;
+  var publicationJobId = '', publicationCandidateSet = null;
+  var pendingMutationKeys = {};
+  var projectLeaseSequence = 0, projectLeaseId = '', projectLeaseTimer = null;
   var termSelection = { index: -1, source: '', target: '' };
   function el(id) { return document.getElementById(id); }
   function esc(value) { return YakuCommon.escape(value); }
@@ -130,7 +133,34 @@
     var requestScope = scope || currentScope();
     if (requestScope && !body.id && ['resume','recent','open','from-prior-version'].indexOf(action) < 0) body.id = requestScope.id;
     if (mutate && requestScope) body.expected_revision = requestScope.revision;
-    return YakuCommon.post('/api/cat/' + action, body);
+    var requestKey = '';
+    if (mutate) {
+      /* 応答が失われて同じ操作を押し直した場合も、server側receiptで二重更新を
+         防げるよう、成功するまでは同じpayloadへ同じkeyを使う。 */
+      var keyBody = Object.assign({}, body); delete keyBody.expected_revision; delete keyBody.idempotency_key;
+      requestKey = action + '|' + JSON.stringify(keyBody);
+      if (!pendingMutationKeys[requestKey]) {
+        pendingMutationKeys[requestKey] = (window.crypto && window.crypto.randomUUID)
+          ? window.crypto.randomUUID().replace(/-/g, '')
+          : (Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2));
+      }
+      body.idempotency_key = pendingMutationKeys[requestKey];
+    }
+    return YakuCommon.post('/api/cat/' + action, body).then(function (result) {
+      if (requestKey) delete pendingMutationKeys[requestKey];
+      return result;
+    });
+  }
+  function reportProjectLease(state) {
+    if (!project || !YakuCommon.clientId || !YakuCommon.clientId()) return Promise.resolve();
+    var id = String(project.id || ''); if (!id) return Promise.resolve();
+    if (projectLeaseId !== id) { projectLeaseId = id; projectLeaseSequence = 0; }
+    projectLeaseSequence++;
+    return post('project-presence', { id: id, client_id: YakuCommon.clientId(), lease_sequence: projectLeaseSequence, observed_revision: Number(project.revision || 0), state: state || 'open' }, false).catch(function () {});
+  }
+  function startProjectLease() {
+    reportProjectLease('open'); window.clearInterval(projectLeaseTimer);
+    projectLeaseTimer = window.setInterval(function () { if (project) reportProjectLease('open'); }, 20000);
   }
   function directionName(value) { return value === 'to_jp' ? '日本語に訳す作業' : '英語に訳す作業'; }
   function workName(source, direction) { return source === 'align' ? '過去訳の対応確認' : directionName(direction); }
@@ -141,7 +171,7 @@
      器の高さを窓に固定する規則（cat-workspace.css）は、一覧が主役の確認作業に
      しか合わない。選ぶ画面とその場で訳す状態は、内容の丈だけ縦に伸びてよい。 */
   function setView(name) { document.body.setAttribute('data-cat-view', name); }
-  function showPicker() { syncLocation(''); viewEpoch++; candidateSeq++; project = null; activeSegmentId = ''; activeIndex = -1; revisionComparison = null; currentFilter = 'actionable'; currentLocation = 'all'; currentChange = 'all'; termSelection = { index: -1, source: '', target: '' }; dirty.clear(); clearOutputDisplay(); document.title = '翻訳 - YakuLingo'; el('cat-page-title').textContent = '翻訳'; setView('start'); el('cat-picker').hidden = false; el('cat-workspace').hidden = true; el('cat-current-summary').hidden = true; closeStartPanels(); loadRecent(); }
+  function showPicker() { if(project) reportProjectLease('closed'); syncLocation(''); viewEpoch++; candidateSeq++; project = null; activeSegmentId = ''; activeIndex = -1; revisionComparison = null; currentFilter = 'actionable'; currentLocation = 'all'; currentChange = 'all'; termSelection = { index: -1, source: '', target: '' }; dirty.clear(); clearOutputDisplay(); document.title = '翻訳 - YakuLingo'; el('cat-page-title').textContent = '翻訳'; setView('start'); el('cat-picker').hidden = false; el('cat-workspace').hidden = true; el('cat-current-summary').hidden = true; closeStartPanels(); loadRecent(); }
   function closeStartPanels() { document.querySelectorAll('.cat-start-panel').forEach(function (panel) { panel.hidden = true; }); el('cat-direction-choice').hidden = true; }
   /* 開いた欄は、いちばん少ない移動で見える所へ入れる（block:'nearest'）。
      画面の中央へ寄せていたころは、押しただけで 560px 飛び、押したボタン自身が
@@ -544,10 +574,10 @@
          the cell on the right"／未確認でも自動保存）で、押して開く段は無い。
          開いている行だけは、下に操作と点検結果を出す。 */
       var editor = '<textarea rows="1" data-cat-input="' + index + '" data-cat-project-id="' + esc(project.id) + '" data-original="' + esc(segment.translation || '') + '" aria-label="' + row + '行目の訳文" aria-invalid="' + (findings.length ? 'true' : 'false') + '"' + (findings.length ? ' aria-describedby="' + findingId + '"' : '') + '>' + esc(segment.translation || '') + '</textarea>';
-      var extras = !isActive ? '' : prior + referenceTrace + generatedTerms + '<div class="cat-row-primary">' + (segment.confirmed ? '<button type="button" class="cat-op secondary-button" data-cat-unconfirm="' + index + '">' + icon('i-undo') + '確認を取り消す</button>' : /* 押しどころでキーの名前も言う。一覧は「そのほか」→「キーボード操作」の
+      var extras = !isActive ? '' : prior + referenceTrace + generatedTerms + '<div class="cat-row-primary">' + (segment.confirmed ? '<button type="button" class="cat-op secondary-button" data-cat-unconfirm="' + index + '">' + icon('i-undo') + '確認を取り消す</button>' + (segment.tm_registered ? '<span class="cat-memory-status">翻訳メモリ登録済み</span>' : '<button type="button" class="cat-op secondary-button" data-cat-tm-register="' + index + '">この訳を翻訳メモリに登録</button>') : /* 押しどころでキーの名前も言う。一覧は「そのほか」→「キーボード操作」の
    2段の折りたたみの中にあり、開くまで見えなかった（実測 2026-08-13）。
    1行ずつ確定していく作業なので、いちばん押す操作のそばに置く。 */
-        '<button type="button" class="cat-op cat-op-ok" data-cat-confirm="' + index + '" title="確認して次の行へ（Ctrl+Enter）" aria-keyshortcuts="Control+Enter">' + icon('i-reviewed') + '確認済みにする<span class="cat-op-key" aria-hidden="true">Ctrl+Enter</span></button>') + rowPrimary + '</div><details class="cat-more-row"><summary>そのほかの操作</summary><div class="cat-ops">' + ops + '</div>' + '<button type="button" class="cat-op secondary-button" data-cat-revert="' + index + '" hidden>編集を取り消す</button>' + (segment.translation ? '<button type="button" class="cat-op secondary-button" data-cat-term-open="' + index + '">用語を登録</button>' : '') + ((segment.kind === 'cell' && segment.translation && String(segment.source).length <= 40) ? '<button type="button" class="cat-op secondary-button" data-cat-glossary="' + index + '">このセルの訳を今後も自動で使う</button>' : '') + '</details>' + qc + compare + (segment.can_revise ? '<details class="cat-more-row"><summary>Copilotに直してもらう</summary><form class="revise-form" data-cat-revise="' + index + '"><button class="secondary-button" type="button" data-cat-shorten="' + index + '">短くする</button><label class="revise-label">または、どこをどう直すか入力</label><div class="revise-row"><input class="revise-input" type="text" placeholder="例：「increase」を「rise」に変える"><button class="secondary-button" type="submit">この指示で直す</button></div></form></details>' : '');
+        '<button type="button" class="cat-op cat-op-ok" data-cat-confirm="' + index + '" title="確認して次の行へ（Ctrl+Enter）" aria-keyshortcuts="Control+Enter">' + icon('i-reviewed') + '確認済みにする<span class="cat-op-key" aria-hidden="true">Ctrl+Enter</span></button>') + rowPrimary + '</div><details class="cat-more-row"><summary>そのほかの操作</summary><div class="cat-ops">' + ops + '</div>' + '<button type="button" class="cat-op secondary-button" data-cat-revert="' + index + '" hidden>編集を取り消す</button>' + (segment.translation ? '<button type="button" class="cat-op secondary-button" data-cat-term-open="' + index + '">用語を登録</button>' : '') + ((segment.kind === 'cell' && segment.translation && String(segment.source).length <= 40) ? '<button type="button" class="cat-op secondary-button" data-cat-glossary="' + index + '">このセルの訳を今後も自動で使う</button>' : '') + '</details>' + qc + compare + (segment.can_revise ? '<details class="cat-more-row"><summary>基準訳をCopilotに直してもらう</summary><form class="revise-form" data-cat-revise="' + index + '"><p class="muted">ここで直すと、確認済み状態は解除されます。Excelの枠に合わせるだけなら「体裁で見る」から掲載候補を作ってください。</p><label class="revise-label">どこをどう直すか入力</label><div class="revise-row"><input class="revise-input" type="text" placeholder="例：「increase」を「rise」に変える"><button class="secondary-button" type="submit">この指示で基準訳を直す</button></div></form></details>' : '');
       var change = changeLabel(segment);
       return '<tr class="' + (isActive ? 'is-active' : '') + '" data-cat-row="' + index + '" data-cat-segment-id="' + esc(segment.segment_id || '') + '" data-cat-confirmed="' + (segment.confirmed ? '1' : '0') + '" data-yaku-cat-state="' + esc(state) + '">' +
         '<td class="cat-col-no"><span class="cat-card-label">行番号・状態</span>' + row + '<span class="cat-state cat-state-' + esc(state) + '" title="' + esc(stateTitle(state)) + '">' + stateIcon(state) + '<span>' + esc(stateLabel(state)) + '</span></span>' + ((change && isActive) ? '<span class="cat-change-badge cat-change-' + esc(changeGroup(segment)) + '" title="' + esc(changeTitle(segment)) + '">' + esc(change) + '</span>' : '') + '</td>' +
@@ -593,10 +623,25 @@
     if (Number(project.confirmed) <= 0) return 'まだ確認済みの行がありません。1行でも確認済みにすると押せます。';
     return '';
   }
+  function previewDependencyToken(value) {
+    if (!value) return '';
+    return JSON.stringify({
+      source: String(value.active_source_id || value.source_snapshot_id || ''),
+      placement: String(value.placement_set_hash || ''),
+      publication: (value.segments || []).map(function (segment) {
+        return [String(segment.segment_id || ''), String(segment.translation || ''), String(segment.publication_translation || ''), String(segment.publication_variant_id || ''), Number(segment.publication_variant_revision || 0)];
+      })
+    });
+  }
   function render(data, focusFirst) {
     var previousProjectId = project ? String(project.id || '') : '';
+    var previousPreviewDependency = previewDependencyToken(project);
     if (data) project = data;
     if (!project) return;
+    if (previousProjectId && previousProjectId === String(project.id || '') && previousPreviewDependency !== previewDependencyToken(project) && previewRenderId) {
+      clearPreviewPdfState();
+      el('cat-preview-pdf-status').textContent = '内容または配置が変わりました。PDFを作り直してください。';
+    }
     syncLocation(String(project.id || ''));
     if (el('cat-editor-layout').classList.contains('is-docs-open')) renderDocsPane();
     if (previousProjectId && previousProjectId !== String(project.id || '')) { activeSegmentId = ''; activeIndex = -1; revisionComparison = null; currentFilter = 'actionable'; currentLocation = 'all'; currentChange = 'all'; }
@@ -605,7 +650,6 @@
     /* 画面遷移なしで確認作業へ入る道（その場で訳す → 長すぎるので渡す）ができた。
        外枠の広げ直しは読み込み完了に紐づいているので、その道では効かない。
        状態が変わったことを外枠へ知らせる。 */
-    if (el('cat-workspace').hidden) YakuCommon.notifyDesktopShell('cat-workspace-opened');
     setView('workspace');
     el('cat-picker').hidden = true; el('cat-workspace').hidden = false; el('cat-current-summary').hidden = true;
     el('cat-current-title').textContent = project.file_name || '貼り付けた文章';
@@ -620,6 +664,14 @@
     el('cat-source-heading').textContent = isAlignment ? '日本語' : '原文';
     el('cat-target-heading').textContent = isAlignment ? '英語' : '訳文';
     el('cat-translate').hidden = isAlignment;
+    var transient = project.lifecycle === 'transient';
+    el('cat-transient-actions').hidden = !transient;
+    if (transient) {
+      var expiry = new Date(project.retention_until || '');
+      el('cat-transient-expiry').textContent = (isNaN(expiry.getTime()) ? 'この一時作業は自動削除の対象です。' : ('この一時作業は ' + expiry.toLocaleString('ja-JP') + ' 以降、開いていなければ削除されます。')) + ' 翻訳メモリへ登録済みの訳は残ります。';
+    }
+    startProjectLease();
+    el('cat-source-update-open').hidden = project.source !== 'file';
     var pct = project.total ? Math.round(100 * Number(project.confirmed) / Number(project.total)) : 0;
     el('cat-progress-bar').style.width = pct + '%'; el('cat-progress-row').querySelector('[role="progressbar"]').setAttribute('aria-valuenow', String(pct)); el('cat-progress-text').textContent = project.confirmed + '/' + project.total + '行';
     renderRows();
@@ -766,7 +818,7 @@
     YakuCommon.json('/api/jobs/' + encodeURIComponent(id)).then(function (data) {
       if (!jobContext || jobContext.token !== token) return;
       el('cat-job').innerHTML = jobHtml(id, data, startedAt);
-      if (['done','completed_with_warnings'].indexOf(data.mode) >= 0) { setJobTitle('✔ 翻訳が終わりました'); YakuCommon.notifyDesktopShell('translation-finished'); finishJob(id, token); return; }
+      if (['done','completed_with_warnings'].indexOf(data.mode) >= 0) { setJobTitle('✔ 翻訳が終わりました'); finishJob(id, token); return; }
       if (data.mode === 'cancelled') { setJobTitle(''); setBusy(false); el('cat-job').innerHTML = ''; status('翻訳をやめました。ここまでにできた訳文は保存されています。「訳していない行を訳す」を押すと続きから再開できます。'); return; }
       if (['error','failed'].indexOf(data.mode) >= 0) { setJobTitle(''); setBusy(false); status(data.detail || '翻訳が途中で止まりました。ここまでにできた訳文は保存されています。もう一度「訳していない行を訳す」を押すと、続きから再開します。', true); return; }
       setJobTitle(Math.round(Number(data.progress) || 0) + '% 翻訳中');
@@ -957,13 +1009,13 @@
     });
   }
 
-  /* 一括確定。取り消せること・翻訳メモリに残ること・点検を通らない行は確定
+  /* 一括確定。取り消せること・点検を通らない行は確定
      されないことを、押す前に伝える。あとから気づいても戻せる操作だが、
      何が起きるか知らずに押させない。 */
   function confirmBulk(button) {
     var indexes = String(button.getAttribute('data-cat-bulk-indexes') || '').split(',').filter(Boolean).map(Number);
     if (!indexes.length) return;
-    if (!window.confirm('表示中の' + indexes.length + '行を、まとめて確認済みにします。\n\n・数字の自動点検を通らない行は、確認済みになりません\n・確認済みにした訳は、次の資料の候補としてこのパソコンに記録されます\n・あとから1行ずつ「確認を取り消す」で戻せます\n\n進めますか？')) return;
+    if (!window.confirm('表示中の' + indexes.length + '行を、まとめて確認済みにします。\n\n・数字の自動点検を通らない行は、確認済みになりません\n・確認だけでは翻訳メモリへ登録しません\n・あとから1行ずつ「確認を取り消す」で戻せます\n\n進めますか？')) return;
     return mutate('confirm-bulk', { indexes: indexes }, '表示中の行をまとめて確認しています…').then(function (data) {
       if (!data) return null;
       var done = Number(data.bulk_confirmed || 0), blocked = (data.bulk_blocked || []).length;
@@ -972,6 +1024,14 @@
       } else {
         status(done + '行を確認済みにしました。');
       }
+      return data;
+    });
+  }
+
+  function registerTranslationMemory(index) {
+    if (!window.confirm('この確認済みの訳を翻訳メモリへ登録します。\n\n次の資料で同じ表現の候補として使われます。登録しますか？')) return;
+    return mutate('tm-register', { index: index }, '翻訳メモリへ登録しています…').then(function (data) {
+      if (data) status('この訳を翻訳メモリへ登録しました。次の資料から候補として使えます。');
       return data;
     });
   }
@@ -1269,15 +1329,26 @@
     return post('tm-delete',{index:index,reference_id:button.getAttribute('data-cat-tm-delete')||''},true,requestScope).then(function(){setBusy(false);status('この候補は、今後は出しません。');candidates(index);}).catch(function(error){setBusy(false);status(error.message,true);});
   }
   function exportProject() {
-    var requestScope = null;
-    return flush().then(function () { requestScope = currentScope(); if (!requestScope) throw new Error('資料が開かれていません。「ほかの資料に切り替える」から選び直してください。'); setBusy(true); status('出力しています…'); return post('export', {}, true, requestScope); }).then(function (data) {
+    var requestScope = null, finalRequested = !!el('cat-export-final-review').checked, finalReason = String(el('cat-export-final-reason').value || '').trim();
+    return flush().then(function () { requestScope = currentScope(); if (!requestScope) throw new Error('資料が開かれていません。「ほかの資料に切り替える」から選び直してください。'); setBusy(true); status('出力しています…'); return post('export', { render_id: previewRenderId || '' }, true, requestScope); }).then(function (data) {
       if (!project || String(project.id || '') !== requestScope.id) { setBusy(false); return; }
+      var recordPromise = Promise.resolve(null);
+      if (finalRequested) {
+        recordPromise = post('final-review-decision', { output_token: data.output_token, reason: finalReason, acknowledge_unresolved: true, render_id: previewRenderId || '' }, true, requestScope).then(function (recorded) {
+          project.revision = Number(recorded.revision); requestScope.revision = Number(recorded.revision);
+          return recorded;
+        }).catch(function (error) { return { record_error: error.message }; });
+      }
+      return recordPromise.then(function (recorded) {
       setBusy(false); outputScope = requestScope;
-      if (data.text) { status(''); openTextOutput(); el('cat-text-output').setAttribute('data-cat-output-project', requestScope.id); el('cat-text-output-value').value = data.text; el('cat-text-output-note').textContent = ''; return YakuCommon.copyText(data.text, el('cat-text-output-value'), el('cat-status')); }
+      if (recorded && recorded.record_error) status('出力は作成しましたが、確認記録は残せませんでした。' + recorded.record_error, true);
+      else if (recorded) status(recorded.decision && recorded.decision.render_reviewed ? '出力内容とPDFの確認記録を残しました。' : '出力内容の確認記録を残しました。PDFの掲載確認は別に表示されます。');
+      if (data.text) { if (!recorded) status(''); openTextOutput(); el('cat-text-output').setAttribute('data-cat-output-project', requestScope.id); el('cat-text-output-value').value = data.text; el('cat-text-output-note').textContent = ''; return YakuCommon.copyText(data.text, el('cat-text-output-value'), el('cat-status')); }
       /* 出したあとに同じことを2度言わない。行にファイル名が出ており、DRAFT_ の
          決まりは押す前の確認で読んでいる（2026-08-12、利用者の指摘
          「いちいち言われなくても、そのまま社外に送るひとなんていない」）。 */
-      status(''); el('cat-output-row').hidden = false; el('cat-output-row').setAttribute('data-cat-output-project', requestScope.id); el('cat-output-name').textContent = data.output_name || data.output_path; YakuCommon.focus(el('cat-output-row'));
+      if (!recorded) status(''); el('cat-output-row').hidden = false; el('cat-output-row').setAttribute('data-cat-output-project', requestScope.id); el('cat-output-name').textContent = data.output_name || data.output_path; YakuCommon.focus(el('cat-output-row'));
+      });
     }).catch(function (error) { setBusy(false); status(error.message, true); });
   }
 
@@ -1371,6 +1442,7 @@
       el('cat-export-qa').hidden = !blockers.length;
       el('cat-export-confirm').disabled = !data.eligible || mode === 'blocked';
       el('cat-export-confirm').textContent = mode === 'copy_text' ? 'すべての訳文をコピー' : 'ファイルを作る';
+      el('cat-export-final-review').checked = false; el('cat-export-final-reason').value = ''; el('cat-export-final-reason').disabled = true;
       var dialog = el('cat-export-dialog'); dialog.returnValue = 'cancel'; dialog.showModal();
     }).catch(function (error) { setBusy(false); preflightScope = null; status(error.message, true); });
   }
@@ -1420,7 +1492,99 @@
      Word と貼り付けた文章は段落の並び順（画面の行の順）がそのまま本文になる。
      体裁そのものの再現ではない。書体や罫線までは持っていないので、
      見出しの大小や色は再現しない。 */
-  var previewSide = 'target';
+  var previewSide = 'target', previewPdfSide = 'target', previewMode = 'layout', previewPdfUrl = '', previewPdfBlob = null, previewPdfSha256 = '', previewRenderJob = '', previewRenderId = '', previewPdfReviewRun = null, sourceUpdateJob = '', sourceUpdatePlan = null;
+  function clearPreviewPdfState() {
+    if (previewPdfUrl) { URL.revokeObjectURL(previewPdfUrl); previewPdfUrl = ''; }
+    previewPdfBlob = null; previewPdfSha256 = ''; previewRenderJob = ''; previewRenderId = ''; previewPdfReviewRun = null;
+    el('cat-preview-pdf-frame').removeAttribute('src'); el('cat-preview-pdf-frame').hidden = true;
+    el('cat-preview-pdf-check').hidden = true; el('cat-preview-pdf-accept').hidden = true;
+  }
+  function setPreviewMode(mode) {
+    previewMode = mode === 'pdf' ? 'pdf' : 'layout';
+    document.querySelectorAll('[data-cat-preview-mode]').forEach(function (button) {
+      button.setAttribute('aria-selected', String(button.getAttribute('data-cat-preview-mode') === previewMode));
+    });
+    el('cat-preview-layout-panel').hidden = previewMode !== 'layout';
+    el('cat-preview-pdf-panel').hidden = previewMode !== 'pdf';
+  }
+  function showRenderedPdf(renderId, side) {
+    side = side === 'source' ? 'source' : 'target';
+    previewPdfSide = side;
+    document.querySelectorAll('[data-cat-pdf-side]').forEach(function (button) { button.setAttribute('aria-pressed', String(button.getAttribute('data-cat-pdf-side') === side)); });
+    var url = '/api/cat/render-pdf?id=' + encodeURIComponent(project.id) + '&render_id=' + encodeURIComponent(renderId) + '&kind=' + encodeURIComponent(side);
+    return YakuCommon.request(url).then(function (response) { return response.blob(); }).then(function (blob) {
+      if (side === 'target') previewPdfBlob = blob;
+      if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
+      previewPdfUrl = URL.createObjectURL(blob);
+      el('cat-preview-pdf-frame').src = previewPdfUrl;
+      el('cat-preview-pdf-frame').hidden = false;
+      el('cat-preview-pdf-status').textContent = side === 'source' ? '原文PDFを表示しています。' : '訳文PDFを表示しています。';
+      el('cat-preview-pdf-check').hidden = side !== 'target';
+      el('cat-preview-pdf-accept').hidden = side !== 'target' || !previewPdfReviewRun;
+    });
+  }
+  function pollRender(jobId) {
+    return YakuCommon.json('/api/jobs/' + encodeURIComponent(jobId)).then(function (data) {
+      if (String(jobId) !== previewRenderJob) return;
+      if (data.mode === 'done' || data.mode === 'completed_with_warnings') {
+        el('cat-preview-pdf-update').disabled = false;
+        if (data.application_status !== 'current') { el('cat-preview-pdf-status').textContent = '作成中に内容が変わりました。もう一度更新してください。'; return; }
+        previewRenderId = String(data.result_id || '');
+        previewPdfSha256 = String(data.pdf_sha256 || '');
+        return showRenderedPdf(previewRenderId, 'target').then(function () {
+          el('cat-preview-pdf-status').textContent = data.writeback_completeness_status === 'verified'
+            ? 'Excelへの書き戻しは照合済みです。PDF上の切れ・重なりは画面で確認してください。'
+            : 'PDF上の文字と体裁を画面で確認してください。';
+        });
+      }
+      if (['error','failed','interrupted','cancelled'].indexOf(data.mode) >= 0) {
+        el('cat-preview-pdf-update').disabled = false;
+        el('cat-preview-pdf-status').textContent = data.detail || 'PDFを作成できませんでした。';
+        return;
+      }
+      el('cat-preview-pdf-status').textContent = (data.label || 'PDFを作成しています') + ' ' + Math.max(0, Number(data.progress || 0)) + '%';
+      window.setTimeout(function () { pollRender(jobId).catch(function (error) { el('cat-preview-pdf-status').textContent = error.message; el('cat-preview-pdf-update').disabled = false; }); }, 900);
+    });
+  }
+  function updatePdfPreview() {
+    if (!project || project.source !== 'file' || ['xlsx','xlsm'].indexOf(String(project.document_format || '')) < 0) {
+      el('cat-preview-pdf-status').textContent = 'PDF確認はExcelファイルで利用できます。'; return;
+    }
+    var button = el('cat-preview-pdf-update'); button.disabled = true; previewRenderId = ''; previewPdfBlob = null; previewPdfSha256 = ''; previewPdfReviewRun = null; el('cat-preview-pdf-check').hidden = true; el('cat-preview-pdf-accept').hidden = true;
+    el('cat-preview-pdf-status').textContent = '作業内容を保存しています…';
+    return flush().then(function () { return post('render-start', {}, true); }).then(function (data) {
+      previewRenderJob = String(data.job_id || '');
+      if (!previewRenderJob) throw new Error('PDF作成を開始できませんでした。');
+      return pollRender(previewRenderJob);
+    }).catch(function (error) { button.disabled = false; el('cat-preview-pdf-status').textContent = error.message; });
+  }
+  function checkPdfPublicationText() {
+    if (!previewPdfBlob || !previewRenderId || !previewPdfSha256) { el('cat-preview-pdf-status').textContent = '先にPDFを作成してください。'; return Promise.resolve(); }
+    var button = el('cat-preview-pdf-check'); button.disabled = true; el('cat-preview-pdf-status').textContent = 'PDFから掲載文字を読み取っています…';
+    return Promise.all([import('/assets/pdf-review.js'), previewPdfBlob.arrayBuffer()]).then(function (values) {
+      return values[0].extractReviewPdfPages(new Uint8Array(values[1]));
+    }).then(function (extracted) {
+      return post('pdf-review-apply', { render_id: previewRenderId, pdf_sha256: previewPdfSha256, extractor_contract: extracted.extractor_contract, page_count: extracted.page_count, pages: extracted.pages }, true);
+    }).then(function (data) {
+      project.revision = Number(data.revision); previewPdfReviewRun = data.review_run;
+      var summary = previewPdfReviewRun && previewPdfReviewRun.coverage_summary || {}, unresolved = (previewPdfReviewRun.coverage_items || []).filter(function (item) { return ['unreadable','unmapped','skipped'].indexOf(String(item.state || '')) >= 0 && !item.human_decision_current; });
+      el('cat-preview-pdf-accept').hidden = unresolved.length === 0;
+      el('cat-preview-pdf-status').textContent = '文字の存在と候補位置を照合しました。' + unresolved.length + 'か所をPDF画面で見て、切れ・重なり・印刷範囲を確認してください。';
+      return loadDocumentFindings();
+    }).catch(function (error) { el('cat-preview-pdf-status').textContent = error.message; }).finally(function () { button.disabled = false; });
+  }
+  function acceptPdfVisualReview() {
+    if (!previewPdfReviewRun) return Promise.resolve();
+    var ids = (previewPdfReviewRun.coverage_items || []).filter(function (item) { return ['unreadable','unmapped','skipped'].indexOf(String(item.state || '')) >= 0 && !item.human_decision_current; }).map(function (item) { return item.coverage_item_id; });
+    if (!ids.length) return Promise.resolve();
+    var note = window.prompt('PDF画面で確認した内容を記録してください。\n例：全ページを見て、文字切れ・重なり・印刷範囲外がないことを確認', 'PDF全ページを目視し、掲載内容を確認した');
+    if (!String(note || '').trim()) return Promise.resolve();
+    var button = el('cat-preview-pdf-accept'); button.disabled = true;
+    return post('coverage-decision', { review_run_id: previewPdfReviewRun.review_run_id, coverage_item_ids: ids, note: String(note).trim() }, true).then(function (data) {
+      project.revision = Number(data.revision); ids.forEach(function (id) { var item = (previewPdfReviewRun.coverage_items || []).find(function (row) { return row.coverage_item_id === id; }); if (item) item.human_decision_current = true; });
+      previewPdfReviewRun.coverage_summary = data.decision.coverage_summary; button.hidden = true; el('cat-preview-pdf-status').textContent = 'PDFを目で確認した記録を残しました。内容が変わると、この記録は失効します。';
+    }).catch(function (error) { el('cat-preview-pdf-status').textContent = error.message; }).finally(function () { button.disabled = false; });
+  }
   function previewCellRef(location) {
     var text = String(location || '');
     var match = text.match(/^(.*?),\s*([A-Z]+)(\d+)$/);
@@ -1497,20 +1661,40 @@
     if (points === undefined) points = layout.defaultHeight;
     return Math.max(1, Math.round(Number(points) * 4 / 3));
   }
+  var previewMeasureCanvas = null;
+  function previewTextWidthPx(text, bold) {
+    if (!previewMeasureCanvas) previewMeasureCanvas = document.createElement('canvas');
+    var context = previewMeasureCanvas.getContext && previewMeasureCanvas.getContext('2d');
+    if (!context) return Array.from(String(text || '')).length * 7;
+    context.font = (bold ? '700 ' : '') + '14.7px Calibri, Arial, sans-serif';
+    return context.measureText(String(text || '')).width;
+  }
   function previewCellHtml(segment, layout, row, column, span) {
     var value = previewText(segment);
     var key = row + ':' + column;
     var wrap = layout ? !!layout.wrap[key] : false;
     var align = layout ? (layout.align[key] || '') : '';
     var style = '';
+    var displayWidth = layout ? previewColumnPx(layout, column, span) : 0;
+    var spillRegion = segment.placement && (segment.placement.display_regions || []).find(function (region) {
+      return region.mode === 'spill_right_display_only' && String(region.anchor_address || '').toUpperCase() === String(segment.location || '').split(',').pop().trim().toUpperCase();
+    });
+    if (layout && spillRegion) {
+      (spillRegion.cells || []).forEach(function (_, offset) { displayWidth += previewColumnPx(layout, column + offset + 1, null); });
+    }
+    var overflowRisk = !!(layout && !wrap && previewTextWidthPx(value.text, !!layout.bold[key]) > Math.max(0, displayWidth - 8));
     if (layout) {
       style = ' style="width:' + previewColumnPx(layout, column, span) + 'px' +
         (align === 'center' ? ';text-align:center' : align === 'right' ? ';text-align:right' : '') + '"';
     }
+    var placementAction = previewSide === 'target' && segment.placement_root_index !== undefined
+      ? ' data-cat-placement-edit="' + Number(segment.placement_root_index) + '" title="セルごとの区切りを調整"'
+      : ' data-cat-qa-jump="' + Number(segment.index) + '"';
     return '<button type="button" class="cat-preview-cell' + (value.missing ? ' is-missing' : '') +
       (wrap ? ' is-wrap' : '') + (layout && layout.bold[key] ? ' is-bold' : '') +
+      (overflowRisk ? ' is-overflow-risk' : '') +
       (Number(segment.index) === Number(activeIndex) ? ' is-active' : '') +
-      '"' + style + ' data-cat-qa-jump="' + Number(segment.index) + '">' +
+      '"' + style + placementAction + (overflowRisk ? ' aria-label="収まり要確認: PDFで切れを確認してください"' : '') + '>' +
       esc(value.text) + '</button>';
   }
   /* Word の並び。見出しは段の深さで、表は格子で出す。Excel と同じ考えで、
@@ -1569,13 +1753,23 @@
     var all = (project && project.segments) || [];
     var sheets = [], sheetIndex = {}, flow = [];
     all.forEach(function (segment) {
-      var ref = segment.kind === 'cell' ? previewCellRef(segment.location) : null;
-      if (!ref) { flow.push(segment); return; }
-      if (!sheetIndex[ref.sheet]) { sheetIndex[ref.sheet] = { name: ref.sheet, cells: [], maxRow: 0, maxColumn: 0 }; sheets.push(sheetIndex[ref.sheet]); }
-      var sheet = sheetIndex[ref.sheet];
-      sheet.cells.push({ ref: ref, segment: segment });
-      sheet.maxRow = Math.max(sheet.maxRow, ref.row);
-      sheet.maxColumn = Math.max(sheet.maxColumn, ref.column);
+      var placed = segment.kind === 'cell' && segment.placement && (segment.placement.destinations || []).length
+        ? segment.placement.destinations.map(function (destination) {
+          return Object.assign({}, segment, {
+            translation: String(destination.text || ''),
+            location: String(destination.sheet || '') + ', ' + String(destination.address || ''),
+            placement_root_index: Number(segment.index)
+          });
+        }) : [segment];
+      placed.forEach(function (part) {
+        var ref = part.kind === 'cell' ? previewCellRef(part.location) : null;
+        if (!ref) { flow.push(part); return; }
+        if (!sheetIndex[ref.sheet]) { sheetIndex[ref.sheet] = { name: ref.sheet, cells: [], maxRow: 0, maxColumn: 0 }; sheets.push(sheetIndex[ref.sheet]); }
+        var sheet = sheetIndex[ref.sheet];
+        sheet.cells.push({ ref: ref, segment: part });
+        sheet.maxRow = Math.max(sheet.maxRow, ref.row);
+        sheet.maxColumn = Math.max(sheet.maxColumn, ref.column);
+      });
     });
     var html = sheets.map(function (sheet) {
       var grid = {};
@@ -1616,16 +1810,200 @@
     return html || '<p class="muted">まだ行がありません。</p>';
   }
   function renderPreview() {
+    setPreviewMode(previewMode);
     document.querySelectorAll('[data-cat-preview-side]').forEach(function (button) {
       button.setAttribute('aria-pressed', String(button.getAttribute('data-cat-preview-side') === previewSide));
     });
     var all = (project && project.segments) || [];
     var missing = all.filter(function (segment) { return !String(segment.translation || '').trim(); }).length;
-    /* 仕組みの説明は書かない。薄い字が何かだけ、見て分からないので書く。 */
-    el('cat-preview-note').textContent = (previewSide === 'target' && missing) ? '薄い字は、訳文がまだ無いところです。' : '';
+    el('cat-preview-note').textContent = previewSide === 'target'
+      ? '訳文セルを押すと、セル配置の調整と「情報を保って短くする候補」を使えます。' + (missing ? ' 薄い字は、訳文がまだ無いところです。' : '')
+      : '';
     el('cat-preview-body').innerHTML = buildPreview();
     var active = el('cat-preview-body').querySelector('.is-active');
     if (active && active.scrollIntoView) active.scrollIntoView({ block: 'center' });
+  }
+  var placementEditorDestinations = [];
+  function renderPlacementSliceEditors(downCount) {
+    var host = el('cat-placement-slices');
+    var base = placementEditorDestinations.filter(function (destination) { return String(destination.mode || 'replace_source_block') !== 'use_confirmed_empty'; });
+    var existing = Array.prototype.map.call(host.querySelectorAll('[data-cat-placement-slice]'), function (input) { return input.value; });
+    if (!existing.length) existing = placementEditorDestinations.map(function (destination) { return String(destination.text || ''); });
+    var desired = base.length + Math.max(0, Math.min(3, Number(downCount || 0)));
+    if (existing.length > desired && desired > 0) existing[desired - 1] += existing.slice(desired).join('');
+    existing = existing.slice(0, desired); while (existing.length < desired) existing.push('');
+    host.innerHTML = existing.map(function (text, sliceIndex) {
+      var original = sliceIndex < base.length ? base[sliceIndex] : null;
+      var label = original ? ((original.sheet || '') + ' ' + (original.address || '')) : ('下の空白 ' + (sliceIndex - base.length + 1) + 'セル目');
+      return '<label>' + esc(label + '（' + (sliceIndex + 1) + '）') + '<textarea data-cat-placement-slice="' + sliceIndex + '">' + esc(text) + '</textarea></label>';
+    }).join('');
+  }
+  function openPlacementEditor(index) {
+    var segment = (project && project.segments || []).find(function (item) { return Number(item.index) === Number(index); });
+    var placement = segment && segment.placement;
+    if (!placement || !(placement.destinations || []).length) { status('この行には調整できるセル配置がありません。', true); return; }
+    el('cat-placement-index').value = String(index);
+    placementEditorDestinations = (placement.destinations || []).slice();
+    var downDestinations = placementEditorDestinations.filter(function (destination) { return String(destination.mode || '') === 'use_confirmed_empty'; });
+    el('cat-placement-down').value = String(downDestinations.length);
+    renderPlacementSliceEditors(downDestinations.length);
+    var spillRegion = (placement.display_regions || []).find(function (region) { return region.mode === 'spill_right_display_only'; });
+    var spillCount = spillRegion && spillRegion.cells ? spillRegion.cells.length : 0;
+    el('cat-placement-spill').value = String(spillCount);
+    var baseDestinationCount = placementEditorDestinations.length - downDestinations.length;
+    var excelPlacement = !!(project && ['xlsx', 'xlsm'].indexOf(project.document_format) >= 0);
+    el('cat-placement-spill-row').hidden = baseDestinationCount !== 1 || !excelPlacement;
+    el('cat-placement-down-row').hidden = !excelPlacement;
+    el('cat-placement-down-note').hidden = !excelPlacement;
+    el('cat-placement-message').textContent = '現在の掲載訳: ' + String(segment.publication_translation || segment.translation || '');
+    el('cat-placement-dialog').showModal();
+    var first = el('cat-placement-slices').querySelector('textarea'); if (first) YakuCommon.focus(first);
+  }
+  function savePlacement(event) {
+    event.preventDefault();
+    var index = Number(el('cat-placement-index').value);
+    var segment = (project && project.segments || []).find(function (item) { return Number(item.index) === index; });
+    var slices = Array.prototype.map.call(el('cat-placement-slices').querySelectorAll('[data-cat-placement-slice]'), function (input) { return input.value; });
+    if (!segment || slices.join('') !== String(segment.publication_translation || segment.translation || '')) {
+      el('cat-placement-message').textContent = '各欄を上からつないだ内容が現在の訳文と一致していません。文字を削らず、セルの境界だけ移してください。';
+      return;
+    }
+    el('cat-placement-save').disabled = true;
+    var spillRightCells = el('cat-placement-spill-row').hidden ? 0 : Number(el('cat-placement-spill').value || 0);
+    var downEmptyCells = el('cat-placement-down-row').hidden ? 0 : Number(el('cat-placement-down').value || 0);
+    return post('placement', { index: index, slices: slices, spill_right_cells: spillRightCells, down_empty_cells: downEmptyCells, placement_plan_hash: String(segment.placement && segment.placement.plan_hash || '') }, true).then(function (data) {
+      el('cat-placement-dialog').close(); render(data, false); renderPreview(); status('セルごとの区切りを保存しました。PDFを更新して収まりを確認してください。');
+    }).catch(function (error) { el('cat-placement-message').textContent = error.message; }).finally(function () { el('cat-placement-save').disabled = false; });
+  }
+  function openPublicationCandidates() {
+    var index = Number(el('cat-placement-index').value);
+    var segment = (project && project.segments || []).find(function (item) { return Number(item.index) === index; });
+    if (!segment) return;
+    publicationJobId = ''; publicationCandidateSet = null;
+    el('cat-publication-index').value = String(index);
+    el('cat-publication-source-heading').textContent = project && project.direction === 'to_jp' ? '英語原文' : '日本語原文';
+    el('cat-publication-canonical-heading').textContent = project && project.direction === 'to_jp' ? '内容を確認する日本語訳' : '内容を確認する英訳';
+    el('cat-publication-source').textContent = String(segment.source || '');
+    el('cat-publication-canonical').textContent = String(segment.translation || '');
+    el('cat-publication-status').textContent = '候補を作っても、まだExcelや基準訳は変わりません。';
+    el('cat-publication-candidates').innerHTML = '';
+    el('cat-publication-dialog').showModal();
+  }
+  function showPublicationCandidateSet(set) {
+    publicationCandidateSet = set || null;
+    var candidates = (set && set.candidates) || [];
+    if (!candidates.length) {
+      el('cat-publication-status').textContent = '正確さを保ったままでは収まりません。' + (set && set.cannot_fit_reason ? ' ' + set.cannot_fit_reason : ' 下セルへ分ける、右の空白を使う、または手動で調整してください。');
+      el('cat-publication-candidates').innerHTML = '';
+      return;
+    }
+    el('cat-publication-status').textContent = 'Copilotの「情報を保った」という申告だけでは確定しません。3つの文章を自分で見比べてください。';
+    el('cat-publication-candidates').innerHTML = candidates.map(function (candidate) {
+      var qc = String(candidate.deterministic_qc_status || '') === 'passed' && String(candidate.fit_verification_status || '') !== 'estimated_overflow';
+      var uses = (candidate.used_abbreviations || []).map(function (use) { return '<li><strong>' + esc(use.abbreviation) + '</strong> — ' + esc(use.full_form) + '（' + esc(use.meaning) + '）</li>'; }).join('');
+      var warnings = (candidate.warnings || []).map(function (warning) { return '<li>' + esc(warning) + '</li>'; }).join('');
+      return '<section class="cat-publication-candidate"><h3>Excelに入れる候補</h3><p class="cat-publication-text">' + esc(candidate.text || '') + '</p>' +
+        '<p class="muted">自動点検: ' + (qc ? '数字・単位などの機械点検を通過' : (String(candidate.fit_verification_status || '') === 'estimated_overflow' ? '指定した文字数の目安を超えるため採用不可' : '不一致の可能性があるため採用不可')) + ' / 収容見込み: ' + esc(candidate.fit_verification_status || candidate.fit_estimate || '未判定') + '</p>' +
+        (uses ? '<details><summary>使用する略語</summary><ul>' + uses + '</ul></details>' : '<p class="muted">登録済み略語は使用していません。</p>') +
+        (warnings ? '<ul class="alert-inline">' + warnings + '</ul>' : '') +
+        '<label><input type="checkbox" data-publication-reviewed="' + esc(candidate.candidate_id) + '"' + (qc ? '' : ' disabled') + '> 原文・基準訳・候補を比較し、情報の欠落がないことを確認しました</label>' +
+        '<button type="button" data-publication-apply="' + esc(candidate.candidate_id) + '" disabled>この候補をExcelに入れる</button></section>';
+    }).join('');
+  }
+  function pollPublicationCandidates(jobId) {
+    return YakuCommon.json('/api/jobs/' + encodeURIComponent(jobId)).then(function (data) {
+      if (jobId !== publicationJobId) return;
+      if (data.mode === 'done' || data.mode === 'completed_with_warnings') {
+        el('cat-publication-generate').disabled = false;
+        if (data.application_status !== 'current') throw new Error('候補作成中に基準訳が変わりました。もう一度作り直してください。');
+        showPublicationCandidateSet(data.candidate_set); return;
+      }
+      if (['error','failed','interrupted','cancelled'].indexOf(data.mode) >= 0) throw new Error(data.detail || '候補を作れませんでした。');
+      el('cat-publication-status').textContent = (data.label || '候補を作っています') + ' ' + Math.max(0, Number(data.progress || 0)) + '%';
+      window.setTimeout(function () { pollPublicationCandidates(jobId).catch(function (error) { el('cat-publication-status').textContent = error.message; el('cat-publication-generate').disabled = false; }); }, 900);
+    });
+  }
+  function generatePublicationCandidates() {
+    var index = Number(el('cat-publication-index').value), segment = (project && project.segments || []).find(function (item) { return Number(item.index) === index; });
+    if (!segment) return;
+    el('cat-publication-generate').disabled = true; el('cat-publication-status').textContent = '候補を作っています…';
+    var destinationCount = segment.placement && segment.placement.destinations ? segment.placement.destinations.length : 1;
+    var maxChars = Math.max(20, Math.floor(String(segment.translation || '').length * 0.8));
+    return flush().then(function () { return post('publication-candidates', { index: index, max_chars: maxChars, destination_count: destinationCount }, true); }).then(function (data) {
+      publicationJobId = String(data.job_id || ''); if (!publicationJobId) throw new Error('候補作成を開始できませんでした。'); return pollPublicationCandidates(publicationJobId);
+    }).catch(function (error) { el('cat-publication-status').textContent = error.message; el('cat-publication-generate').disabled = false; });
+  }
+  function applyPublicationCandidate(candidateId) {
+    if (!publicationCandidateSet || !publicationJobId) return;
+    var candidate = (publicationCandidateSet.candidates || []).find(function (item) { return String(item.candidate_id || '') === String(candidateId || ''); }); if (!candidate) return;
+    el('cat-publication-status').textContent = '掲載訳だけを保存しています…';
+    return post('publication-apply', { job_id: publicationJobId, candidate_set_id: publicationCandidateSet.candidate_set_id, candidate_id: candidateId, candidate_text_hash: candidate.text_hash, dependency_fingerprint: publicationCandidateSet.dependency_fingerprint, meaning_preservation_confirmed: true, reason: '原文・基準訳・候補を比較し、情報の欠落がないことを人が確認' }, true).then(function (data) {
+      el('cat-publication-dialog').close(); el('cat-placement-dialog').close(); render(data, false); renderPreview(); status('Excelに入れる訳を保存しました。基準訳と翻訳メモリは変更していません。PDFを更新して印刷結果を確認してください。');
+    }).catch(function (error) { el('cat-publication-status').textContent = error.message; });
+  }
+  function sourceUpdateKindLabel(kind) {
+    return ({ unchanged: 'そのまま再利用', moved_unchanged: '移動（訳を再利用）', numeric_changed: '数字だけ更新', changed: '修正が必要', added: '新規', removed: '削除', split: '分割を確認', merged: '結合を確認', ambiguous: '対応先を確認' })[kind] || kind;
+  }
+  function showSourceUpdatePlan(plan) {
+    sourceUpdatePlan = plan;
+    var rows = plan.rows || [], blocking = rows.filter(function (row) { return !!row.blocking; }).length;
+    var summary = plan.summary || {};
+    el('cat-source-update-summary').textContent = 'そのまま再利用 ' + Number(summary.unchanged || 0) + '件、移動 ' + Number(summary.moved_unchanged || 0) + '件、数字だけ更新 ' + Number(summary.numeric_changed || 0) + '件、確認が必要 ' + blocking + '件、新規 ' + Number(summary.added || 0) + '件。';
+    el('cat-source-update-list').innerHTML = rows.map(function (row) {
+      var decision='';
+      if(row.blocking){
+        if(row.kind==='changed') decision='<label>扱い<select data-rebase-action data-mapping-id="'+esc(row.mapping_id)+'"><option value="preserve_as_candidate">現在の訳文を参考候補として残す</option><option value="retranslate">訳文を空にして再翻訳する</option></select></label>';
+        else if(row.kind==='removed') decision='<label><input type="checkbox" data-rebase-action data-mapping-id="'+esc(row.mapping_id)+'" value="confirm_removed">新版では削除されたことを確認しました</label>';
+        else if(row.kind==='split'||row.kind==='merged') decision='<label><input type="checkbox" data-rebase-action data-mapping-id="'+esc(row.mapping_id)+'" value="accept_structure_untranslated">新しい分割・結合を未訳として採用します</label>';
+        else if(row.kind==='ambiguous') decision='<label>対応先<select data-rebase-action data-mapping-id="'+esc(row.mapping_id)+'"><option value="">選択してください</option>'+(row.targets||[]).map(function(target){return '<option value="select_target:'+Number(target.target_index)+'">'+esc(target.text||('候補 '+target.target_index))+'</option>';}).join('')+'</select></label>';
+      }
+      return '<section class="cat-source-update-row' + (row.blocking ? ' is-blocking' : '') + '"><h3>' + esc(sourceUpdateKindLabel(row.kind)) + (row.message ? ' — ' + esc(row.message) : '') + '</h3>' +
+        '<p><span class="cat-source-update-label">旧原文</span>' + esc(row.old_source || '—') + '</p>' +
+        '<p><span class="cat-source-update-label">現在の訳文</span>' + esc(row.current_translation || '—') + '</p>' +
+        '<p><span class="cat-source-update-label">新原文</span>' + esc(row.new_source || '—') + '</p>'+(decision?'<div class="cat-source-update-decision">'+decision+'</div>':'')+'</section>';
+    }).join('');
+    el('cat-source-update-apply').disabled = false;
+    el('cat-source-update-apply').title = blocking > 0 ? '赤枠の変更について扱いを選んでから採用します。' : '';
+    el('cat-source-update-dialog').showModal();
+  }
+  function pollSourceUpdate(jobId) {
+    return YakuCommon.json('/api/jobs/' + encodeURIComponent(jobId)).then(function (data) {
+      if (String(jobId) !== sourceUpdateJob) return;
+      if (data.mode === 'done' || data.mode === 'completed_with_warnings') {
+        if (data.application_status !== 'current') throw new Error('確認中に作業内容が変わりました。新版を選び直してください。');
+        return post('source-update-plan', { rebase_id: data.result_id }, false).then(showSourceUpdatePlan);
+      }
+      if (['error','failed','interrupted','cancelled'].indexOf(data.mode) >= 0) throw new Error(data.detail || '新版との比較に失敗しました。');
+      status((data.label || '原文ファイルの変更を調べています') + ' ' + Math.max(0,Number(data.progress || 0)) + '%');
+      window.setTimeout(function () { pollSourceUpdate(jobId).catch(function (error) { status(error.message,true); }); },900);
+    });
+  }
+  function startSourceUpdate(file) {
+    if (!project || project.source !== 'file') { status('ファイルから始めた作業で利用できます。',true); return; }
+    if (!file) return;
+    setBusy(true); status('新版を安全に取り込んでいます…');
+    return flush().then(function () { return YakuCommon.upload('/api/upload',file); }).then(function (uploadedFile) {
+      return post('source-update-preview',{file_handle:uploadedFile.file_handle},true);
+    }).then(function (data) {
+      sourceUpdateJob=String(data.job_id||''); if(!sourceUpdateJob) throw new Error('新版との比較を開始できませんでした。');
+      setBusy(false); return pollSourceUpdate(sourceUpdateJob);
+    }).catch(function (error) { setBusy(false); status(error.message,true); });
+  }
+  function applySourceUpdate() {
+    if (!sourceUpdatePlan || !project) return;
+    var button=el('cat-source-update-apply');button.disabled=true;
+    var decisions=[];Array.prototype.forEach.call(el('cat-source-update-list').querySelectorAll('[data-rebase-action]'),function(control){
+      var raw=control.type==='checkbox'?(control.checked?control.value:''):control.value;if(!raw)return;
+      var parts=String(raw).split(':');decisions.push({mapping_id:control.getAttribute('data-mapping-id'),action:parts[0],target_index:parts.length>1?Number(parts[1]):-1,reason:'新版採用時に画面で確認'});
+    });
+    var blocking=(sourceUpdatePlan.rows||[]).filter(function(row){return !!row.blocking;}).length;
+    if(decisions.length!==blocking){el('cat-source-update-summary').textContent='赤枠の変更すべてについて扱いを選んでください。';button.disabled=false;return;}
+    var resolutionPromise=blocking?post('source-update-decision',{rebase_id:sourceUpdatePlan.rebase_id,plan_hash:sourceUpdatePlan.plan_hash,decisions:decisions},true):Promise.resolve({resolution_id:'',resolution_hash:''});
+    return resolutionPromise.then(function(resolution){return post('source-update-apply',{
+      rebase_id:sourceUpdatePlan.rebase_id,plan_hash:sourceUpdatePlan.plan_hash,resolution_id:resolution.resolution_id||'',resolution_hash:resolution.resolution_hash||'',
+      base_source_id:sourceUpdatePlan.base_source_id,base_source_hash:sourceUpdatePlan.base_source_hash||project.source_artifact_sha256,target_source_id:sourceUpdatePlan.target_source_id,target_source_hash:sourceUpdatePlan.target_source_hash,base_project_revision:sourceUpdatePlan.base_project_revision
+    },true);}).then(function(data){sourceUpdatePlan=null;el('cat-source-update-dialog').close();clearPreviewPdfState();render(data,false);status('原文ファイルを差し替えました。変更された行だけ確認し、PDFを作り直してください。');})
+      .catch(function(error){el('cat-source-update-summary').textContent=error.message;button.disabled=false;});
   }
   /* 資料の切り替え。市販ツール（Crowdin の畳めるファイル一覧、memoQ の資料タブ、
      Phrase のブラウザタブ）はどれも作業画面に居たまま切り替える。ここもそれに倣い、
@@ -1724,7 +2102,12 @@
   }
   function openPreview() {
     if (!project) { status('資料が開かれていません。'); return; }
+    var pdfAvailable = project.source === 'file' && ['xlsx','xlsm'].indexOf(String(project.document_format || '')) >= 0;
+    var pdfTab = document.querySelector('[data-cat-preview-mode="pdf"]');
+    if (pdfTab) { pdfTab.hidden = !pdfAvailable; pdfTab.disabled = !pdfAvailable; }
+    if (!pdfAvailable) previewMode = 'layout';
     renderPreview();
+    if (!pdfAvailable) el('cat-preview-note').textContent = 'PDF確認はExcelファイルの作業で利用できます。';
     var dialog = el('cat-preview-dialog'); dialog.returnValue = 'cancel'; dialog.showModal();
   }
 
@@ -1760,6 +2143,146 @@
       ? '<p class="muted">訳ができたら、ここに直すところが並びます。</p>'
       : '<p class="muted">直すところは見つかりませんでした。</p>');
     var dialog = el('cat-qa-dialog'); dialog.returnValue = 'cancel'; dialog.showModal();
+    loadDocumentFindings();
+  }
+  function segmentIndexById(segmentId) {
+    var found = (project && project.segments || []).find(function (segment) { return String(segment.segment_id || '') === String(segmentId || ''); });
+    return found ? Number(found.index) : -1;
+  }
+  var pendingDocumentCoverage = {};
+  var reviewLensLabels = {
+    bilingual_block: '原文と訳文の対応', names_terms_abbreviations: '固有名詞・用語・略語',
+    structure_notes: '見出し・注記・構造', gap: '見落とし確認',
+    translation_consistency: '訳し方の一貫性',
+    rendered_output_completeness: 'PDFへの掲載'
+  };
+  function renderReviewLenses(runs) {
+    var host = el('cat-document-review-lenses');
+    pendingDocumentCoverage = {};
+    if (!runs || !runs.length) { host.innerHTML = ''; return; }
+    var groups = {};
+    runs.forEach(function (run) { (run.coverage_items || []).forEach(function (item) {
+      var key = String(run.review_run_id || '') + '|' + String(item.scope || '') + '|' + String(item.lens || '');
+      (groups[key] = groups[key] || { run: run, items: [] }).items.push(item);
+    });
+    });
+    host.innerHTML = Object.keys(groups).sort().map(function (key) {
+      var run = groups[key].run, items = groups[key].items, lens = String(items[0].lens || ''), label = lens === 'target_document_consistency' ? (project && project.direction === 'to_jp' ? '日本語訳文としての整合性' : '英語訳文としての整合性') : (reviewLensLabels[lens] || lens || '確認範囲');
+      if (String(run.detector || '') === 'deterministic') label += '（機械比較）'; else if (String(run.detector || '') === 'copilot') label += '（Copilot）';
+      var unresolved = items.filter(function (item) { return ['unreadable','unmapped','skipped'].indexOf(String(item.state || '')) >= 0 && !item.human_decision_current; });
+      var findings = items.reduce(function (sum, item) { return sum + (String(item.state || '') === 'finding' ? 1 : 0); }, 0);
+      var checked = items.reduce(function (sum, item) { return sum + (String(item.state || '') === 'checked' ? 1 : 0); }, 0);
+      var state = unresolved.length ? '自動確認できない範囲 ' + unresolved.length + '件' : (findings ? '確認事項 ' + findings + '件' : '確認完了');
+      var button = '';
+      if (unresolved.length) {
+        pendingDocumentCoverage[key] = { runId: run.review_run_id, ids: unresolved.map(function (item) { return item.coverage_item_id; }), label: label };
+        button = '<button type="button" class="secondary-button compact" data-cat-coverage-key="' + esc(key) + '">この範囲を自分で確認した</button>';
+      }
+      var targetCount = Object.keys(items.reduce(function (set, item) { (item.target_ids || []).forEach(function (id) { set[String(id)] = true; }); return set; }, {})).length;
+      var targetLabel = items.some(function (item) { return String(item.target_kind || '') === 'whole_document_cross_group'; }) ? '文書全体 ' + targetCount + '行' : '対象 ' + targetCount + '件';
+      return '<section class="cat-review-lens"><div><strong>' + esc(label) + '</strong><span>' + esc(state) + '</span></div><p class="muted">' + esc(targetLabel) + '／自動照合 ' + checked + '件</p>' + button + '</section>';
+    }).join('');
+  }
+  function renderDocumentFindings(data) {
+    var findings = (data && data.findings || []).filter(function (finding) { return finding.current !== false && String(finding.status || '') !== 'stale'; });
+    var runs = data && data.review_runs || [];
+    var latestByDetector = {};
+    runs.forEach(function (run) { latestByDetector[String(run.detector || 'other')] = run; });
+    var selectedRuns = Object.keys(latestByDetector).map(function (key) { return latestByDetector[key]; });
+    var complete = selectedRuns.length && selectedRuns.every(function (run) { return run.coverage_summary && run.coverage_summary.evidence_complete; });
+    el('cat-document-review-status').textContent = !selectedRuns.length
+      ? 'まだ文書全体の確認をしていません。'
+      : (complete ? '下の観点ごとに対象範囲の確認が完了しました。' : '下の観点に、自動で確認できない範囲があります。');
+    renderReviewLenses(selectedRuns);
+    el('cat-document-findings').innerHTML = findings.length ? findings.map(function (finding) {
+      var evidence = finding.evidence_locations || [];
+      var target = evidence.find(function (location) { return String(location.side) === 'target'; }) || evidence[0] || {};
+      var index = segmentIndexById(target.segment_id);
+      var statusName = { open: '未処理', fixed_pending_verify: '修正後の再確認待ち', resolved: '解決済み', false_positive: '指摘は当てはまらない', accepted_risk: 'このまま使用', deferred: '後で確認' }[String(finding.status)] || String(finding.status || '');
+      var actions = String(finding.status) === 'open'
+        ? '<div class="cat-document-finding-actions">' + (index >= 0 ? '<button type="button" class="secondary-button compact" data-cat-doc-finding-jump="' + index + '">該当行を見る</button>' : '') +
+          '<button type="button" class="secondary-button compact" data-cat-doc-finding-decision="false_positive" data-finding-id="' + esc(finding.finding_id) + '" data-finding-revision="' + Number(finding.finding_revision) + '">この指摘は当てはまらない</button>' +
+          '<button type="button" class="secondary-button compact" data-cat-doc-finding-decision="accepted_risk" data-finding-id="' + esc(finding.finding_id) + '" data-finding-revision="' + Number(finding.finding_revision) + '">このまま使用</button></div>' : '';
+      return '<article class="cat-document-finding"><div><strong>' + esc(finding.title || '確認事項') + '</strong><span class="cat-document-finding-status">' + esc(statusName) + '</span></div><p>' + esc(finding.message || '') + '</p>' + actions + '</article>';
+    }).join('') : (selectedRuns.length ? '<p class="muted">文書全体の確認事項は見つかりませんでした。</p>' : '');
+  }
+  function loadDocumentFindings() {
+    if (!project) return Promise.resolve();
+    el('cat-document-review-status').textContent = '文書全体の確認結果を読み込んでいます…';
+    return post('findings', {}, false).then(renderDocumentFindings).catch(function (error) { el('cat-document-review-status').textContent = error.message; });
+  }
+  function downloadQaReport() {
+    if(!project)return Promise.resolve();var button=el('cat-qa-report-download');button.disabled=true;
+    return post('qa-report',{},false).then(function(report){
+      var blob=new Blob([JSON.stringify(report,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),link=document.createElement('a');
+      var base=String(project.file_name||'YakuLingo').replace(/\.[^.]+$/,'').replace(/[\\/:*?"<>|]+/g,'_');
+      link.href=url;link.download=base+'_QA-report.json';document.body.appendChild(link);link.click();link.remove();window.setTimeout(function(){URL.revokeObjectURL(url);},0);
+      status('QAレポートを保存しました。対象revision、確認範囲、指摘、人の判断を含みます。');
+    }).catch(function(error){status(error.message,true);}).finally(function(){button.disabled=false;});
+  }
+  function runDocumentReview() {
+    if (!project || busy) return Promise.resolve();
+    el('cat-document-review-run').disabled = true; el('cat-document-review-status').textContent = '文書全体を比較しています…';
+    return flush().then(function () { return post('review-start', {}, true); }).then(function (data) {
+      project.revision = Number(data.revision); renderDocumentFindings({ findings: data.findings || [], review_runs: [data.review_run] });
+      status((data.findings || []).length ? '文書全体の確認事項を表示しました。内容を見て判断してください。' : '文書全体の機械的な比較が完了しました。');
+    }).catch(function (error) { el('cat-document-review-status').textContent = error.message; status(error.message, true); }).finally(function () { el('cat-document-review-run').disabled = false; });
+  }
+  var copilotReviewJob = '';
+  function pollCopilotDocumentReview(jobId) {
+    return YakuCommon.json('/api/jobs/' + encodeURIComponent(jobId)).then(function (data) {
+      if (String(jobId) !== copilotReviewJob) return;
+      if (data.mode === 'done' || data.mode === 'completed_with_warnings') {
+        if (data.application_status !== 'current') throw new Error('確認中に訳文が変わりました。もう一度Copilot確認を実行してください。');
+        el('cat-document-review-status').textContent = '確認結果を現在の作業へ照合しています…';
+        return post('copilot-review-apply', { job_id: jobId }, true).then(function (applied) {
+          project.revision = Number(applied.revision); renderDocumentFindings({ findings: applied.findings || [], review_runs: [applied.review_run] });
+          var summary = applied.review_run && applied.review_run.coverage_summary || {};
+          status(summary.evidence_complete ? 'Copilotの確認事項を表示しました。採用するかは内容を見て判断してください。' : 'Copilotが確認できなかった範囲があります。確認事項と対象範囲を見てください。');
+          el('cat-copilot-review-run').disabled = false;
+        });
+      }
+      if (['error','failed','interrupted','cancelled'].indexOf(data.mode) >= 0) throw new Error(data.detail || 'Copilotによる文書確認を完了できませんでした。');
+      el('cat-document-review-status').textContent = (data.label || 'Copilotで確認しています') + ' ' + Math.max(0, Number(data.progress || 0)) + '%';
+      window.setTimeout(function () { pollCopilotDocumentReview(jobId).catch(finishCopilotReviewError); }, 900);
+    });
+  }
+  function finishCopilotReviewError(error) { el('cat-copilot-review-run').disabled = false; el('cat-document-review-status').textContent = error.message; status(error.message, true); }
+  function previewCopilotDocumentReview() {
+    if (!project || busy) return Promise.resolve();
+    var button=el('cat-copilot-review-preview');button.disabled=true;el('cat-document-review-status').textContent='保護済みの送信内容を作っています…';
+    return flush().then(function(){return post('copilot-review-preview',{},false);}).then(function(data){
+      el('cat-copilot-review-preview-summary').textContent=String(data.disclosure||'')+' 表示: '+Number(data.shown_segments||0)+' / '+Number(data.total_segments||0)+'行、数値placeholder '+Number(data.masked_value_count||0)+'件。';
+      el('cat-copilot-review-preview-text').textContent=String(data.protected_prompt||'');
+      el('cat-copilot-review-preview-dialog').showModal();el('cat-document-review-status').textContent='送信内容を表示しました。確認後にCopilot校正を開始してください。';
+    }).catch(function(error){el('cat-document-review-status').textContent=error.message;status(error.message,true);}).finally(function(){button.disabled=false;});
+  }
+  function runCopilotDocumentReview() {
+    if (!project || busy) return Promise.resolve();
+    var button = el('cat-copilot-review-run'); button.disabled = true; el('cat-document-review-status').textContent = 'Copilot確認を準備しています…';
+    return flush().then(function () { return post('copilot-review-start', {}, true); }).then(function (data) {
+      copilotReviewJob = String(data.job_id || ''); if (!copilotReviewJob) throw new Error('Copilot確認を開始できませんでした。');
+      return pollCopilotDocumentReview(copilotReviewJob);
+    }).catch(finishCopilotReviewError);
+  }
+  function decideDocumentFinding(button) {
+    var action = button.getAttribute('data-cat-doc-finding-decision');
+    var explanation = window.prompt(action === 'false_positive' ? 'この指摘が当てはまらない理由を入力してください。' : '問題を認識したうえで、このまま使用する理由を入力してください。', '');
+    if (explanation === null) return Promise.resolve();
+    if (!String(explanation).trim()) { status('理由を入力してください。', true); return Promise.resolve(); }
+    button.disabled = true;
+    return post('finding-decision', {
+      finding_id: button.getAttribute('data-finding-id'), finding_revision: Number(button.getAttribute('data-finding-revision')),
+      decision_action: action, reason_code: action === 'false_positive' ? 'not_applicable' : 'user_accepted', note: String(explanation).trim()
+    }, true).then(function (data) { project.revision = Number(data.revision); return loadDocumentFindings(); }).catch(function (error) { status(error.message, true); }).finally(function () { button.disabled = false; });
+  }
+  function acceptDocumentCoverage(key, button) {
+    var pending = pendingDocumentCoverage[String(key || '')];
+    if (!pending) return Promise.resolve();
+    var note = window.prompt('「' + pending.label + '」で自動確認できなかった範囲を、どのように確認したか入力してください。', '原文と訳文を画面で読み比べた');
+    if (!String(note || '').trim()) return Promise.resolve();
+    button.disabled = true;
+    return post('coverage-decision', { review_run_id: pending.runId, coverage_item_ids: pending.ids, note: String(note).trim() }, true).then(function (data) { project.revision = Number(data.revision); return loadDocumentFindings(); }).catch(function (error) { status(error.message, true); }).finally(function () { button.disabled = false; });
   }
   function jumpFromQa(index) {
     var dialog = el('cat-qa-dialog'); if (dialog.open) dialog.close('cancel');
@@ -1919,11 +2442,76 @@
     /* 同じ口へ寄せる。畳んで一覧へ戻すのではなく、その場で選ばせる。
        打ちかけの訳文は先に保存してから開く（開いたあと入れ替わるため）。 */
     el('cat-switch-project').addEventListener('click', function () { if (busy) return; flush().then(openDocDialog).catch(function (error) { status(error.message, true); }); });
+    el('cat-project-save').addEventListener('click', function () {
+      return mutate('project-save', {}, 'この作業を保存しています…').then(function (data) {
+        if (data) status('この作業を保存しました。あとから「最近の作業」から再開できます。');
+        return data;
+      });
+    });
+    el('cat-project-retain').addEventListener('click', function () {
+      return mutate('project-retain', {}, '削除予定を延長しています…').then(function (data) { if (data) status('一時作業の削除予定を7日延ばしました。'); return data; });
+    });
+    el('cat-copy-close').addEventListener('click', function () {
+      if (!project || project.lifecycle !== 'transient' || busy) return;
+      var target=null;setBusy(true);status('訳文をコピーして一時作業を削除しています…');
+      return flush().then(function(){target=currentScope();if(!target)throw new Error('一時作業を確認できません。');return post('export',{},true,target);}).then(function(output){return YakuCommon.copyText(String(output.text||''),null,el('cat-status')).then(function(copied){if(!copied)throw new Error('クリップボードへコピーできなかったため、一時作業は削除していません。');return post('project-close-delete',{memory_policy:'retain_tm',client_id:YakuCommon.clientId()},true,target);});}).then(function(){setBusy(false);showPicker();status('訳文をコピーし、一時作業を削除しました。翻訳メモリへ登録済みの訳は残しています。');}).catch(function(error){setBusy(false);status(error.message,true);});
+    });
     el('cat-translate').addEventListener('click', translate); el('cat-export').addEventListener('click', openExportPreflight);
     el('cat-export-reviewed').addEventListener('click', exportReviewed);
     el('cat-qa-open').addEventListener('click', openQaList);
+    el('cat-document-review-run').addEventListener('click', runDocumentReview);
+    el('cat-copilot-review-preview').addEventListener('click', previewCopilotDocumentReview);
+    el('cat-qa-report-download').addEventListener('click', downloadQaReport);
+    el('cat-document-finding-search').addEventListener('input',function(){var needle=String(this.value||'').trim().toLowerCase();document.querySelectorAll('#cat-document-findings .cat-document-finding').forEach(function(item){item.hidden=!!needle&&item.textContent.toLowerCase().indexOf(needle)<0;});});
+    el('cat-copilot-review-run').addEventListener('click', runCopilotDocumentReview);
+    el('cat-document-review-lenses').addEventListener('click', function (event) { var button = event.target.closest('[data-cat-coverage-key]'); if (button) acceptDocumentCoverage(button.getAttribute('data-cat-coverage-key'), button); });
     el('cat-preview-open').addEventListener('click', openPreview);
+    el('cat-preview-pdf-update').addEventListener('click', updatePdfPreview);
+    el('cat-preview-pdf-check').addEventListener('click', checkPdfPublicationText);
+    el('cat-preview-pdf-accept').addEventListener('click', acceptPdfVisualReview);
+    el('cat-placement-form').addEventListener('submit', savePlacement);
+    el('cat-placement-cancel').addEventListener('click', function () { el('cat-placement-dialog').close(); });
+    el('cat-placement-down').addEventListener('change', function () { renderPlacementSliceEditors(Number(this.value || 0)); });
+    el('cat-publication-open').addEventListener('click', openPublicationCandidates);
+    el('cat-publication-close').addEventListener('click', function () { el('cat-publication-dialog').close(); });
+    el('cat-publication-generate').addEventListener('click', generatePublicationCandidates);
+    el('cat-abbreviation-form').addEventListener('submit', function (event) {
+      event.preventDefault();
+      return post('abbreviation-register', { full_form: el('cat-abbreviation-full').value, abbreviation: el('cat-abbreviation-short').value, meaning: el('cat-abbreviation-meaning').value, scope: 'document', first_use_rule: el('cat-abbreviation-first').value, abbreviation_registry_hash: String(project.abbreviation_registry_hash || '') }, true).then(function (data) {
+        project = data;
+        el('cat-abbreviation-form').reset(); publicationCandidateSet = null; el('cat-publication-candidates').innerHTML = ''; el('cat-publication-status').textContent = '略語を承認しました。候補を作り直すと使用できます。';
+      }).catch(function (error) { el('cat-publication-status').textContent = error.message; });
+    });
+    el('cat-publication-candidates').addEventListener('change', function (event) {
+      var checkbox = event.target.closest('[data-publication-reviewed]'); if (!checkbox) return;
+      var candidateId = checkbox.getAttribute('data-publication-reviewed') || '';
+      var button = Array.prototype.find.call(el('cat-publication-candidates').querySelectorAll('[data-publication-apply]'), function (item) { return item.getAttribute('data-publication-apply') === candidateId; });
+      if (button) button.disabled = !checkbox.checked;
+    });
+    el('cat-publication-candidates').addEventListener('click', function (event) {
+      var button = event.target.closest('[data-publication-apply]'); if (button && !button.disabled) applyPublicationCandidate(button.getAttribute('data-publication-apply'));
+    });
+    el('cat-source-update-open').addEventListener('click', function () { el('cat-source-update-file').value='';el('cat-source-update-file').click(); });
+    el('cat-source-update-file').addEventListener('change', function () { var file=this.files&&this.files[0];if(file)startSourceUpdate(file); });
+    el('cat-source-update-close').addEventListener('click', function () { el('cat-source-update-dialog').close(); });
+    el('cat-source-update-apply').addEventListener('click', applySourceUpdate);
+    el('cat-preview-dialog').addEventListener('close', function () {
+      clearPreviewPdfState();
+    });
     el('cat-export-qa').addEventListener('click', openQaList);
+    el('cat-export-final-review').addEventListener('change', function () {
+      var box = this; el('cat-export-final-reason').disabled = !box.checked; if (!box.checked) return;
+      var scope = currentScope(); if (!scope) { box.checked = false; el('cat-export-final-reason').disabled = true; return; }
+      post('final-review-readiness', { render_id: previewRenderId || '' }, false, scope).then(function (readiness) {
+        if (!readiness.complete) {
+          box.checked = false; el('cat-export-final-reason').disabled = true; el('cat-export-qa').hidden = false;
+          status('確認記録を残す前に、1. 機械比較、2. Copilot確認、表示された範囲の人による確認、ExcelではPDFの目視確認を完了してください。「点検一覧を開く」から続けられます。', true);
+          return;
+        }
+        YakuCommon.focus(el('cat-export-final-reason'));
+      }).catch(function (error) { box.checked = false; el('cat-export-final-reason').disabled = true; status(error.message, true); });
+    });
+    el('cat-export-confirm').addEventListener('click', function (event) { if (el('cat-export-final-review').checked && !String(el('cat-export-final-reason').value || '').trim()) { event.preventDefault(); status('確認記録を残す場合は、確認した内容や判断理由を入力してください。', true); YakuCommon.focus(el('cat-export-final-reason')); } });
     el('cat-danger-zone').addEventListener('toggle', function () { if (this.open) loadPersonalGlossary(); });
     /* 右の参考情報は畳める。閉じると、原文と訳文が右端まで使う。次に開いたときも
        同じ状態にする（市販CATでもペインの開閉は覚える）。 */
@@ -1967,9 +2555,19 @@
     });
     document.addEventListener('click', function (event) {
       var button = event.target.closest('button'); if (!button) return;
-      if (busy && (button.id === 'cat-confirm-bulk' || button.hasAttribute('data-cat-translate-row') || button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-shorten') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
+      if (busy && (button.id === 'cat-confirm-bulk' || button.hasAttribute('data-cat-translate-row') || button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-tm-register') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
+      if (button.hasAttribute('data-cat-preview-mode')) { setPreviewMode(button.getAttribute('data-cat-preview-mode')); return; }
       if (button.hasAttribute('data-cat-preview-side')) { previewSide = button.getAttribute('data-cat-preview-side') || 'target'; renderPreview(); return; }
+      if (button.hasAttribute('data-cat-pdf-side')) {
+        var pdfSide = button.getAttribute('data-cat-pdf-side') || 'target';
+        if (previewRenderId) showRenderedPdf(previewRenderId, pdfSide).catch(function (error) { el('cat-preview-pdf-status').textContent = error.message; });
+        else { previewPdfSide = pdfSide; document.querySelectorAll('[data-cat-pdf-side]').forEach(function (item) { item.setAttribute('aria-pressed', String(item === button)); }); }
+        return;
+      }
+      if (button.hasAttribute('data-cat-placement-edit')) { return openPlacementEditor(button.getAttribute('data-cat-placement-edit')); }
       if (button.hasAttribute('data-cat-qa-jump')) return jumpFromQa(button.getAttribute('data-cat-qa-jump'));
+      if (button.hasAttribute('data-cat-doc-finding-jump')) return jumpFromQa(button.getAttribute('data-cat-doc-finding-jump'));
+      if (button.hasAttribute('data-cat-doc-finding-decision')) return decideDocumentFinding(button);
       if (button.hasAttribute('data-cat-filter')) { currentFilter = button.getAttribute('data-cat-filter') || 'actionable'; return redrawAfterFlush(); }
       if (button.hasAttribute('data-cat-location')) {
         currentLocation = button.getAttribute('data-cat-location') || 'all';
@@ -1988,6 +2586,7 @@
       if (button.hasAttribute('data-cat-resume')) return resume(button.getAttribute('data-cat-resume'));
       if (button.id === 'cat-confirm-bulk') return confirmBulk(button);
       if (button.hasAttribute('data-cat-confirm')) return confirmRow(Number(button.getAttribute('data-cat-confirm')));
+      if (button.hasAttribute('data-cat-tm-register')) return registerTranslationMemory(Number(button.getAttribute('data-cat-tm-register')));
       /* 押し間違えた確認を戻す道。サーバは以前から confirmed:false を受け付けていたが、
          画面に入口が無く、訳文を書き換える以外に戻す方法が無かった。 */
       if (button.hasAttribute('data-cat-unconfirm')) {
@@ -2029,7 +2628,6 @@
       if (button.hasAttribute('data-cat-term-exception')) return openTermException(button);
       if (button.hasAttribute('data-cat-tm-delete')) return deleteMemory(button);
       if (button.hasAttribute('data-cat-insert')) return insertReference(button);
-      if (button.hasAttribute('data-cat-shorten')) return revise(button.closest('[data-cat-revise]'), '原文の意味と数値を変えず、表や資料に収まりやすい簡潔な表現にしてください。');
       if (button.hasAttribute('data-cat-accept-revision')) return acceptRevisionComparison();
       if (button.hasAttribute('data-cat-revert-revision')) return revertRevisionComparison();
     });
@@ -2166,7 +2764,8 @@
          「表示中のものと同じか」を確かめる。 */
       if (!target.fromList && !scopeIsCurrent(target, true)) { status('表示中の作業が変わったため、削除を中止しました。'); return; }
       setBusy(true); status('作業を消しています…');
-      post('delete', { id: target.id }, true, target).then(function () {
+      var selectedMemory=document.querySelector('input[name="cat-delete-memory"]:checked');
+      post('delete', { id: target.id, memory_policy: selectedMemory ? selectedMemory.value : 'retain_tm', client_id: YakuCommon.clientId() }, true, target).then(function () {
         setBusy(false);
         if (target.fromList) { loadRecent(); status(target.name + ' を一覧から消しました。元のファイルは残っています。'); return; }
         if (!project || String(project.id || '') !== target.id) return;
@@ -2202,8 +2801,6 @@
        いた経路。訳文を送り返す promote とは別で、そちらは artifact ID だけ） */
     window.addEventListener('yaku-instant-handoff', function (event) {
       var detail = (event && event.detail) || {};
-      /* Ctrl+Alt+J で読んだ選択の出どころ（Word・Excelのファイル）を丸ごと取り込む。
-         取り出しは既存の経路と同じで、原本ではなく DRAFT_ 付きのコピーを作る。 */
       var filePath = String(detail.filePath || '');
       if (filePath) {
         showPicker();
@@ -2223,9 +2820,8 @@
   }
   function start() {
     YakuCommon.start(); YakuCommon.onReady(function (value) { ready = value; setBusy(busy); }); bind(); bindInstant(); loadRecent();
-    /* Ctrl+Alt+J と開始画面の「その場で訳す」は /quick から来る。画面は一つなので
-       同じ画面を出し、その場で訳す状態から始める。showPicker() がアドレスを
-       /cat へ書き換えるので、判定は先に取っておく。 */
+    /* 旧URLの /quick も同じ画面を返す。showPicker() がアドレスを /cat へ
+       書き換えるので、判定は先に取っておく。 */
     var cameFromInstant = location.pathname === '/quick';
     var params = new URLSearchParams(location.search);
     var wanted = params.get('project');

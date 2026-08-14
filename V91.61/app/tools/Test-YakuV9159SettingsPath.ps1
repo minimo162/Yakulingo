@@ -45,14 +45,16 @@ try {
     Write-Host 'CASE 2: 旧設定からの一度きりの引き継ぎ'
     Remove-Item -LiteralPath $dataDir -Recurse -Force
     $legacy = Get-YakuLegacyUserSettingsPath -Root $testRoot
-    [System.IO.File]::WriteAllText($legacy, '{"request_timeout":123,"max_chars_per_batch":1000}', (New-Object System.Text.UTF8Encoding($true)))
+    [System.IO.File]::WriteAllText($legacy, '{"request_timeout":123,"max_chars_per_batch":1000,"copilot_model":"GPT 5.6 Think deeper,Opus,Think Deeper"}', (New-Object System.Text.UTF8Encoding($true)))
 
     $migrated = Read-YakuSettings -Root $testRoot
     Assert-YakuSettingsPath ([int]$migrated.request_timeout -eq 123) '旧設定の値が引き継がれる'
     Assert-YakuSettingsPath ([int]$migrated.max_chars_per_batch -eq 3000) '既定値移行(1000 -> 3000)も併せて適用される'
+    Assert-YakuSettingsPath ([string]$migrated.copilot_model -eq '自動,Auto') '旧モデル既定値を、毎回切替不要の自動へ移行する'
     Assert-YakuSettingsPath (Test-Path -LiteralPath (Get-YakuUserSettingsPath) -PathType Leaf) '新パスへ複製される'
     $legacyAfter = Get-Content -LiteralPath $legacy -Raw -Encoding UTF8 | ConvertFrom-Json
     Assert-YakuSettingsPath ([int]$legacyAfter.max_chars_per_batch -eq 1000) '旧ファイルを書き換えない'
+    Assert-YakuSettingsPath ([string]$legacyAfter.copilot_model -eq 'GPT 5.6 Think deeper,Opus,Think Deeper') '旧ファイルのモデル設定を書き換えない'
     Assert-YakuSettingsPath (Test-Path -LiteralPath $legacy -PathType Leaf) '旧ファイルを削除しない'
 
     Write-Host 'CASE 3: 引き継ぎ後は旧ファイルを参照しない'

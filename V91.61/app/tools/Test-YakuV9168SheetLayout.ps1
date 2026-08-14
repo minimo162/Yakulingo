@@ -38,11 +38,12 @@ $null = New-Item -ItemType Directory -Path $workDir -Force
 $xlsxPath = Join-Path $workDir 'fixture.xlsx'
 try {
     $parts = @{
-        'xl/workbook.xml' = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook><sheets><sheet name="明細" sheetId="1" r:id="rId1"/></sheets></workbook>'
+        'xl/workbook.xml' = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="明細" sheetId="1" r:id="rId7"/></sheets></workbook>'
+        'xl/_rels/workbook.xml.rels' = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/layout-source.xml"/></Relationships>'
         # font 0 は普通、font 1 は太字、font 2 は <b val="0"/>（太字ではない）。
         # xf 0 は普通、xf 1 は太字＋折り返し＋中央、xf 2 は val="0" を指す。
         'xl/styles.xml' = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet><fonts count="3"><font><sz val="11"/></font><font><b/><sz val="11"/></font><font><b val="0"/><sz val="11"/></font></fonts><cellXfs count="3"><xf numFmtId="0" fontId="0"/><xf numFmtId="0" fontId="1" applyAlignment="1"><alignment horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="2"/></cellXfs></styleSheet>'
-        'xl/worksheets/sheet1.xml' = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet><sheetFormatPr defaultColWidth="9.5" defaultRowHeight="18"/><cols><col min="1" max="1" width="42.5" customWidth="1"/><col min="2" max="3" width="7.25" customWidth="1"/><col min="4" max="4" width="5" hidden="1"/></cols><sheetData><row r="1" ht="48.75" customHeight="1"><c r="A1" s="1" t="s"><v>0</v></c><c r="B1" s="0"><v>1</v></c><c r="C1" s="2"><v>3</v></c></row><row r="2"><c r="A2" s="0"><v>2</v></c></row></sheetData><mergeCells count="2"><mergeCell ref="A1:C1"/><mergeCell ref="A5:A7"/></mergeCells></worksheet>'
+        'xl/worksheets/layout-source.xml' = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet><sheetFormatPr defaultColWidth="9.5" defaultRowHeight="18"/><cols><col min="1" max="1" width="42.5" customWidth="1"/><col min="2" max="3" width="7.25" customWidth="1"/><col min="4" max="4" width="5" hidden="1"/></cols><sheetData><row r="1" ht="48.75" customHeight="1"><c r="A1" s="1" t="s"><v>0</v></c><c r="B1" s="0"><v>1</v></c><c r="C1" s="2"><f>1+2</f><v>3</v></c></row><row r="2"><c r="A2" s="0"><v>2</v></c></row></sheetData><mergeCells count="2"><mergeCell ref="A1:C1"/><mergeCell ref="A5:A7"/></mergeCells></worksheet>'
     }
     $stream = New-Object System.IO.FileStream($xlsxPath, 'Create')
     try {
@@ -82,6 +83,8 @@ try {
     # 結合。実効幅が広いかどうかの判断に要る。
     $merges = @($sheet.merges)
     Check-YakuLayout ($merges.Count -eq 2 -and $merges -contains 'A1:C1') '結合セルを読む'
+    Check-YakuLayout (@($sheet.occupied_cells).Count -eq 4 -and @($sheet.occupied_cells) -contains 'C1') 'relationshipで解決したsheet partから占有セルを読む'
+    Check-YakuLayout (@($sheet.formula_cells).Count -eq 1 -and @($sheet.formula_cells)[0] -eq 'C1') '数式セルを占有と別に記録する'
 
     # 折り返し。ON なら切らずに伸ばす、OFF なら Excel と同じく切る。
     $cells = @($sheet.cells)

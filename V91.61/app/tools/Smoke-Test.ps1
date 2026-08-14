@@ -120,7 +120,9 @@ Assert-Yaku -Condition (-not (Test-YakuCopilotUrl -Url 'http://m365.cloud.micros
 Assert-Yaku -Condition (-not (Test-YakuCopilotUrl -Url 'https://m365.cloud.microsoft.evil.example/chat/')) -Message 'lookalike host must fail'
 Assert-Yaku -Condition (-not (Test-YakuCopilotUrl -Url 'https://m365.cloud.microsoft/chat/?next=https://evil.example')) -Message 'query string must fail'
 Assert-Yaku -Condition (Test-YakuCopilotModelLabelMatch -Label 'GPT 5.6 Think deeper' -ModelPriority @('GPT 5.6 Think deeper','Opus')) -Message 'ready-state model label must match the configured primary model'
+Assert-Yaku -Condition (Test-YakuCopilotModelLabelMatch -Label '自動' -ModelPriority @('自動','Auto')) -Message 'default automatic model must skip the model menu from ready state'
 Assert-Yaku -Condition (-not (Test-YakuCopilotModelLabelMatch -Label '' -ModelPriority @('GPT 5.6 Think deeper'))) -Message 'missing model label must fall back to the full selector path'
+Assert-Yaku -Condition ($null -ne (Get-Command Wait-YakuCopilotComposerStable -ErrorAction SilentlyContinue)) -Message 'fresh chat must wait for a stable composer before inserting the prompt'
 
 $originalGetCopilotState = (Get-Item Function:\Get-YakuCopilotState).ScriptBlock
 try {
@@ -266,17 +268,16 @@ Assert-Yaku -Condition ($server -match "path -eq '/'" -and $server -notmatch "Pa
 # 一つでよくない？」。行き先の /tutorial が、使い方・送るもの・起動とショートカットを
 # 1枚で持ち、案内の再生もその画面から始められる。出口は1つに寄せた。
 Assert-Yaku -Condition ($catIndex.Contains('>使い方と設定</a>') -and (([regex]::Matches($catIndex, '<a href="/tutorial')).Count -eq 1)) -Message 'the way out of the deleted landing screen is a single link on the translation screen'
-# メールなどを少し訳す入口は、この画面だけで完結し、確認作業や翻訳メモリへ残さない。
-# 資料を継続して確認・保存する入口と、初見でも区別できる説明を送信前に置く。
+# メールなどを少し訳す入口も一時CAT作業を作り、確認・QCと同じ経路へ進む。
 $instantBlock = ''
 if ($quickIndex -match '(?s)<section id="cat-instant".*?</section>\s*<!--') { $instantBlock = $Matches[0] }
-Assert-Yaku -Condition ($instantBlock.Contains('この画面に訳を出します') -and $instantBlock.Contains('作業や翻訳メモリには残しません') -and -not $instantBlock.Contains('1行ずつ確認する画面に移ります') -and $instantBlock.Contains('id="quick-form"')) -Message 'the quick paste box must explain that its result stays on this screen and is not saved'
+Assert-Yaku -Condition ($instantBlock.Contains('一時作業を作って確認画面へ移ります') -and $instantBlock.Contains('確認するまで翻訳メモリには登録しません') -and $instantBlock.Contains('id="quick-form"')) -Message 'the paste box must explain its temporary CAT and TM boundary'
 Assert-Yaku -Condition ($quickIndex -notmatch 'id="cat-instant"[^>]*\shidden' -and $quickIndex -match 'id="cat-workspace"[^>]*\shidden') -Message 'the paste box is available on the start view while the review workspace waits for a document'
 # 貼り付け先は1つ。「保存する／しない」で入口を分けない（2026-08-11）。初見の人は
 # 訳案を見る前に1文ずつ直したいかを決められないので、選択は訳案のあとへ置く。
 # 2026-08-12: 「訳したい文章を貼り付けてください」という説明文で貼り付け口を数えていたが、
 # 見出しと同じことを繰り返す一文だったので消した。数えるのは説明文ではなく貼り付け欄そのもの。
-Assert-Yaku -Condition ($catIndex.Contains('1文ずつ確認する作業画面') -and $catIndex.Contains('id="quick-input"') -and $catIndex.Contains('続きの作業を開く')) -Message 'the start screen must connect paste and file inputs to the same review workspace'
+Assert-Yaku -Condition ($catIndex.Contains('Word・Excelを取り込む') -and $catIndex.Contains('id="quick-input"') -and $catIndex.Contains('続きの作業を開く')) -Message 'the start screen must connect paste and file inputs to the same review workspace'
 Assert-Yaku -Condition ((([regex]::Matches($catIndex, 'id="cat-open-file-entry"')).Count -eq 1) -and (([regex]::Matches($catIndex, 'id="quick-input"')).Count -eq 1)) -Message 'the front door must keep exactly one file entry and one text entry'
 # 長さの境目は画面が決めない。確認作業が分割に使っている設定値をそのまま使う。
 Assert-Yaku -Condition ($catIndex.Contains('__YAKU_MAX_BATCH_CHARS__') -and $quickClient.Contains('yaku-max-batch-chars') -and $quickClient -notmatch 'length > 3000|length > 2000') -Message 'the long-text threshold must come from the server batch budget, not a number chosen in the page'
@@ -302,7 +303,7 @@ Assert-Yaku -Condition ($catClient.Contains('data-cat-resume') -and $catClient.C
 Assert-Yaku -Condition ($catClient.Contains('function clearOutputDisplay()') -and $catClient.Contains('data-cat-output-project') -and $catClient.Contains('function outputGuidance()') -and -not $catClient.Contains("'出力条件を満たしていません: '")) -Message 'CAT output display and blockers must be project-scoped and actionable without internal reason codes'
 Assert-Yaku -Condition ($indexSource.Contains('cat-save-status') -and $indexSource.Contains('cat-output-help') -and $indexSource.Contains('role="status"')) -Message 'CAT save and output readiness must be announced accessibly'
 # 独自の「文字を大きく」は 2026-08-11 に廃止した。本文は既に 17px、原文と訳文は
-# 19.04px で市販CAT（MateCat 18px）より大きい。拡大は WebView2 の Ctrl+スクロールが
+# 19.04px で市販CAT（MateCat 18px）より大きい。拡大は Edge の Ctrl+スクロールが
 # 担う。保証すべきは「文字寸法が1か所の基準から比率で決まること」で、そうなって
 # いれば拡大しても主役と脇役の差が崩れない。切替UIの有無ではない。
 Assert-Yaku -Condition ($stylesSource -match 'html\s*\{[^}]*font-size:\s*\d+px' -and $stylesSource.Contains('--font-segment') -and $stylesSource -match '--font-segment:\s*[\d.]+rem' -and -not $indexSource.Contains('id="text-size-toggle"')) -Message 'type scale must derive from one root size in rem, with no bespoke text-size toggle to keep in sync'
@@ -324,7 +325,7 @@ Assert-Yaku -Condition ($catClient.Contains("type: 'translate', scope: jobScope"
 # これまでどおり「表示中のものと同じか」を確かめる。一覧から消すときは開いて
 # いないので比べる相手が無く、代わりに一覧が持っている revision をそのまま送る。
 # 一覧が古ければ revision が合わず、サーバが断る。
-Assert-Yaku -Condition ($catClient.Contains('deleteTarget = currentScope()') -and $catClient.Contains('if (!target.fromList && !scopeIsCurrent(target, true))') -and $catClient.Contains("post('delete', { id: target.id }, true, target)")) -Message 'delete confirmation must remain bound to the project name and ID shown in the dialog'
+Assert-Yaku -Condition ($catClient.Contains('deleteTarget = currentScope()') -and $catClient.Contains('if (!target.fromList && !scopeIsCurrent(target, true))') -and $catClient.Contains("post('delete', { id: target.id, memory_policy:") -and $catClient.Contains('client_id: YakuCommon.clientId()')) -Message 'delete confirmation must remain bound to the project name and ID shown in the dialog'
 Assert-Yaku -Condition ($catClient.Contains('data-cat-resume-drop') -and $catClient -match "revision: Number\(drop\.getAttribute\('data-cat-resume-revision'\)\)") -Message 'deleting from the saved list must carry that entry own revision so a stale list cannot delete changed work'
 Assert-Yaku -Condition ($catClient.Contains('saveChain = saveChain.catch') -and $catClient -match 'function redrawAfterFlush\(\)[\s\S]*?return flush\(\)\.then' -and $catClient -match "button\.hasAttribute\('data-cat-filter'\)[\s\S]{0,180}redrawAfterFlush\(\)") -Message 'CAT saves and local filter redraws must be serialized behind the project save barrier'
 Assert-Yaku -Condition ($catClient.Contains('data.review_blocked') -and $catClient.Contains('検索条件の外に未確認の行があります')) -Message 'failed review and filtered confirmation must retain a logical keyboard focus target'

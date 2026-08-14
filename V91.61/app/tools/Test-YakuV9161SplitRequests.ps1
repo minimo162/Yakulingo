@@ -67,6 +67,8 @@ Chk ($pFull -match 'FULL_TEXT:') '完全訳の雛形は FULL_TEXT を出させ�
 Chk ($pFull -notmatch 'BRIEF_TEXT') '完全訳の雛形は電文体に触れない'
 Chk ($pBrief -match 'BRIEF_TEXT:') '電文体の雛形は BRIEF_TEXT を出させる'
 Chk ($pBrief -notmatch 'FULL_TEXT') '電文体の雛形は完全訳に触れない'
+Chk ((Get-Content -LiteralPath (Join-Path $root 'prompts\text_translate_full_to_en.txt') -Raw -Encoding UTF8).Length -lt 2600) '短文を埋めないよう完全訳の固定指示を2600字未満に保つ'
+Chk ($pFull.Length -lt 4200) ('数値規則を含む短文用プロンプトを4200字未満に保つ: ' + $pFull.Length)
 Chk ($pBrief -notmatch 'telegraphic FULL') '「FULL を電文体にしたもの」という定義が残っていない'
 Chk ($pBrief -match 'not a shortened version') '電文体は独立した成果物として定義されている'
 Chk ($pBrief -match 'attaches to in SOURCE') '係り受けの基準が FULL ではなく原文になっている'

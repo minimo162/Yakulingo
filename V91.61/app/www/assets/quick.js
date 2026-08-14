@@ -1,14 +1,9 @@
 ﻿(function () {
   'use strict';
-  if (new URLSearchParams(window.location.search).get('compact') === '1') document.documentElement.classList.add('yaku-compact');
   var ready = false;
   var busy = false;
   var explicitDirection = '';
   var jobStartedAt = 0;
-  var pollTimer = null;
-  var activeJobId = '';
-  /* Ctrl+Alt+J で読んだ選択の出どころ（保存済みのファイルのときだけ入る）。 */
-  var sourceFilePath = '';
   /* 取り込み方法を見比べるために ?import=1 へ移ると、同じ開始画面なのに
      WebView が読み直される。そこで打ちかけの文章を失わないよう、移動の直前だけ
      sessionStorage へ退避し、次の画面で一度だけ戻す。作業や翻訳メモリには保存せず、
@@ -21,7 +16,6 @@
     try {
       window.sessionStorage.setItem(draftStorageKey, JSON.stringify({
         text: input.value,
-        save: saveAsWork(),
         direction: explicitDirection
       }));
     } catch (_) {}
@@ -38,7 +32,6 @@
       var draft = JSON.parse(raw);
       if (!draft || !draft.text) return false;
       el('quick-input').value = String(draft.text);
-      if (el('quick-save-work')) el('quick-save-work').checked = draft.save === true;
       explicitDirection = draft.direction === 'to_en' || draft.direction === 'to_jp' ? draft.direction : '';
       return true;
     } catch (_) { return false; }
@@ -65,16 +58,6 @@
      訳案カードごと外した（2026-08-13）。書き方は、選ぶところ（上の <select>）が
      両方の例を並べて言っている。訳文は確認画面に出るので、そこでは実際の
      書き方がそのまま読める。説明を2か所に持たない。 */
-  /* Office 以外は外枠が疑似 Ctrl+C で読むため、サーバを通らない。読み込んだ事実
-     （文字数だけ、本文は送らない）を報告して記録に残す。Office 側はサーバが自分で
-     記録するので、ここでは扱わない。 */
-  function reportClipboardCapture(chars) {
-    if (!(chars > 0)) return;
-    YakuCommon.post('/api/quick/selection-capture', { chars: chars }).catch(function () {
-      /* 記録できなくても翻訳は続けられる。ここで止める理由が無い。 */
-    });
-  }
-
   function startNotationControl() {
     var select = el('amount-notation');
     if (!select) return;
@@ -98,7 +81,6 @@
   }
 
   function el(id) { return document.getElementById(id); }
-  function saveAsWork() { return !!(el('quick-save-work') && el('quick-save-work').checked); }
 
   /* どちらへ訳すのかを、押す前に出す。以前は「文章を見て、英語か日本語かを
      決めます」としか出ておらず、結局どちらになるのかが分からなかった
@@ -161,21 +143,14 @@
     /* 押した先が確認画面になったので、ラベルもそう書く（2026-08-13）。
        「訳案を作る」のままだと、その場に訳文が出ると読めてしまう。 */
     submit.textContent = !text.trim() ? '文章を入力してください'
-      : busy ? (saveAsWork() ? '確認作業を準備しています…' : (direction === 'to_en' ? '英語に翻訳しています…' : '日本語に翻訳しています…'))
+      : busy ? '確認作業を準備しています…'
       : direction !== 'to_en' && direction !== 'to_jp' ? (detectedDirection === 'unknown' ? '翻訳先を選んでください' : '翻訳先を確認中…')
       : !ready ? (direction === 'to_en' ? '英語に訳す（準備中・予約できます）' : '日本語に訳す（準備中・予約できます）')
       : direction === 'to_en' ? '英語に訳す'
       : '日本語に訳す';
     var submitNote = el('quick-submit-note');
-    if (submitNote) submitNote.textContent = saveAsWork()
-      ? '1行ずつ確認する画面に移ります。保存されるので、あとから続けられます。'
-      : 'この画面に訳を出します。作業や翻訳メモリには残しません。';
+    if (submitNote) submitNote.textContent = '一時作業を作って確認画面へ移ります。確認するまで翻訳メモリには登録しません。';
     submit.disabled = !text.trim() || busy || (direction !== 'to_en' && direction !== 'to_jp');
-    var saveSubmit = el('quick-save-submit');
-    if (saveSubmit) {
-      saveSubmit.textContent = busy && saveAsWork() ? '確認作業を準備しています…' : 'この文章を保存して確認画面へ';
-      saveSubmit.disabled = !text.trim() || busy;
-    }
     el('quick-input').readOnly = busy;
   }
 
@@ -219,45 +194,8 @@
     YakuCommon.focus(el('quick-job'));
   }
 
-  function pollQuick(jobId, failureCount) {
-    window.clearTimeout(pollTimer);
-    failureCount = Number(failureCount || 0);
-    YakuCommon.json('/api/jobs/' + encodeURIComponent(jobId)).then(function (data) {
-      if (data.mode === 'done' || data.mode === 'completed_with_warnings') {
-        busy = false; activeJobId = ''; jobStartedAt = 0; update();
-        el('quick-job').innerHTML = '<p class="quick-result-note">保存していない訳案です。必要な文をコピーしてお使いください。</p>' + (data.html || '');
-        document.title = '翻訳 - YakuLingo';
-        YakuCommon.focus(el('quick-job'));
-        return;
-      }
-      if (data.mode === 'cancelled') {
-        busy = false; activeJobId = ''; jobStartedAt = 0; update();
-        el('quick-job').innerHTML = '<div class="alert">翻訳をやめました。</div>';
-        return;
-      }
-      if (['error','failed','interrupted'].indexOf(data.mode) >= 0) {
-        busy = false; activeJobId = ''; jobStartedAt = 0; update();
-        showError(data.detail || '翻訳できませんでした。もう一度お試しください。');
-        return;
-      }
-      renderJob(data.label || '訳案を作っています', data.progress || 0, data.detail, jobId);
-      pollTimer = window.setTimeout(function () { pollQuick(jobId, 0); }, 900);
-    }).catch(function () {
-      var next = failureCount + 1;
-      renderJob(next < 3 ? '進み具合を確認しています' : '接続の回復を待っています', 0, '翻訳は続いています。文章は送り直していません。', jobId);
-      pollTimer = window.setTimeout(function () { pollQuick(jobId, next); }, Math.min(5000, 700 * Math.pow(2, Math.min(next, 3))));
-    });
-  }
-
   function submit(event) {
     event.preventDefault();
-    /* チェックボックスで主操作の意味を切り替えない。押したボタンそのものを
-       「この画面ですぐ訳す」か「保存して確認する」かの選択として扱う。方向を
-       聞き直したあとの requestSubmit では submitter が無いので、直前の選択を保つ。 */
-    if (event.submitter && el('quick-save-work')) {
-      el('quick-save-work').checked = event.submitter.id === 'quick-save-submit';
-      update();
-    }
     var text = el('quick-input').value.trim();
     if (!text || busy) return;
     /* 準備が終わる前の Ctrl+Enter を黙って捨てると「壊れている」と受け取られる。
@@ -267,20 +205,8 @@
       el('quick-job').innerHTML = '<div class="alert">Copilotの準備ができ次第、この文章を送ります。そのままお待ちください。</div>';
       return;
     }
-    if (!saveAsWork()) {
-      busy = true; jobStartedAt = Date.now(); update(); renderJob('翻訳を始めています', 0, '', '');
-      YakuCommon.post('/api/quick/jobs', { input_text: text, direction_intent: explicitDirection || 'auto' }).then(function (data) {
-        if (!data.job_id) throw new Error('翻訳を始められませんでした。1分ほど待ってから、もう一度お試しください。');
-        activeJobId = data.job_id;
-        pollQuick(data.job_id, 0);
-      }).catch(function (error) {
-        busy = false; activeJobId = ''; update();
-        if (error.status === 409 && error.data && error.data.code === 'DIRECTION_CONFIRMATION_REQUIRED') { requireDirection(error.data.error); return; }
-        showError(error.message);
-      });
-      return;
-    }
-    /* あとで続けると選んだ文章だけ、資料と同じ確認作業として保存する。 */
+    /* 貼り付けは入力形式であって別翻訳モードではない。必ず一時CAT作業を
+       作り、同じ翻訳・QC・確認経路へ進める。 */
     busy = true; jobStartedAt = Date.now(); update(); renderJob('取り込んでいます', 0, '', '');
     YakuCommon.post('/api/cat/open', { text: text, direction_intent: explicitDirection || 'auto' }).then(function (data) {
       if (!data.id) throw new Error('確認する作業を作れませんでした。1分ほど待ってから、もう一度お試しください。');
@@ -301,88 +227,6 @@
     if (window.__yakuPendingQuickSubmit !== true || !ready || busy || !el('quick-input').value.trim()) return;
     window.__yakuPendingQuickSubmit = false;
     el('quick-form').requestSubmit();
-  }
-
-  /* Ctrl+Alt+J で前面にあったのが Word / Excel のとき、外枠が窓のクラスとハンドルを
-     寄こす。本文はバックエンドが COM で読む。ブラウザーから本文を送る経路は作らない。
-     読んだブック・シート・番地は必ず画面に出す。出さないと、別のブックを読んで
-     いても利用者が気づけない。 */
-  function applyOfficeSelection(windowClass, hwnd) {
-    if (!windowClass) return;
-    /* Ctrl+Alt+J は貼り付け欄へ着地させる。押した文章はここに入るだけで、
-       送信はしない。送るのは利用者がボタンを押したときだけ。 */
-    show();
-    var note = el('quick-selection-note');
-    YakuCommon.post('/api/quick/selection', { window_class: windowClass, foreground_hwnd: hwnd }).then(function (data) {
-      var kind = String(data && data.kind || 'none');
-      if (kind === 'word_text' || kind === 'excel_cells' || kind === 'powerpoint_text') {
-        var input = el('quick-input');
-        input.value = String(data.text || '');
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        if (note) {
-          note.textContent = kind === 'excel_cells'
-            ? ('Excel「' + (data.workbook_name || '') + '」の ' + (data.sheet_name || '') + ' シート ' + (data.address || '') + '（' + (data.cell_count || 0) + 'セル）を読み込みました。'
-               + ((data.formula_skipped || 0) > 0 ? ' 数式のセル ' + data.formula_skipped + ' 件は訳しません。' : ''))
-            : kind === 'powerpoint_text'
-            ? ('PowerPoint「' + (data.presentation_name || '') + '」の ' + (data.slide_index || 0) + ' 枚目'
-               + ((data.shape_count || 0) > 0 ? '（' + data.shape_count + ' 個の枠）' : '') + 'から ' + (data.char_count || 0) + ' 文字を読み込みました。')
-            : ('Word「' + (data.document_name || '') + '」で選んでいた ' + (data.char_count || 0) + ' 文字を読み込みました。');
-          note.hidden = false;
-        }
-        showSourceFileOffer(kind, data);
-        /* 送信はしない。押す前に何を送るかが見えている必要がある。ボタンへ
-           scrollIntoView すると、小さい窓では「どこから読んだか」の1行と本文が
-           上へ流れて見えなくなった（実機で確認）。焦点だけ移し、画面は先頭に置く。 */
-        el('quick-submit').focus({ preventScroll: true });
-        window.scrollTo(0, 0);
-        return;
-      }
-      if (!note) return;
-      var reason = String(data && data.reason || '');
-      note.textContent = reason === 'instance_mismatch' ? '前面のOfficeを読めませんでした。ファイルを取り込んでお使いください。'
-        : reason === 'too_large' ? '選んだ範囲が大きすぎます。下の「Word・Excelを取り込む」からファイルごと取り込んでください。'
-        : reason === 'multi_area' ? '複数の範囲が選ばれています。1つの範囲を選んでください。'
-        /* 実測で分かった2つ（2026-08-12）。どちらも以前は事実と違う理由が出ていた。
-           数式のセルだけ → 「文字がありませんでした」（文字は見えているので通じない）
-           図形・グラフ   → 「複数の範囲が選ばれています」（範囲を選んでいない） */
-        : reason === 'formula_only' ? '数式のセルは訳しません（訳を書き戻すと数式が消えるため）。文字が入ったセルを選んでください。'
-        : reason === 'not_a_range' ? '図形やグラフは読み込めません。セルを選ぶか、文字をコピーして貼り付けてください。'
-        : reason === 'no_selection' ? '文章が選ばれていません。訳したい範囲を選んでから、もう一度押してください。'
-        : reason === 'no_text' ? '選んだ範囲に文字がありませんでした。'
-        : '選んでいた文章を読み取れませんでした。貼り付けてください。';
-      note.hidden = false;
-    }).catch(function () {
-      if (note) { note.textContent = '選んでいた文章を読み取れませんでした。貼り付けてください。'; note.hidden = false; }
-    });
-  }
-
-  /* 選んだ範囲だけを訳しても、Word・Excelの体裁を保った社内確認用ファイルには
-     ならない。元のファイルが分かっているので、丸ごと取り込む道を出す。
-
-     未保存のときは出さない。取り込むのはディスクにある版なので、画面で編集中の
-     内容とは違うものから DRAFT を作ってしまう。黙って古い内容を訳すより、
-     保存してくださいと言うほうがよい。 */
-  function showSourceFileOffer(kind, data) {
-    var host = el('quick-source-file');
-    if (!host) return;
-    var path = String(data && data.source_path || '');
-    var name = String((kind === 'excel_cells' ? data.workbook_name : data.document_name) || '');
-    var label = kind === 'excel_cells' ? 'このブック' : 'この文書';
-    sourceFilePath = '';
-    if (!path || !name) { host.hidden = true; return; }
-    if (data.saved === false) {
-      el('quick-source-file-text').textContent = name + ' は編集中で、まだ保存されていません。' + label + '全体を取り込むときは、先に保存してください。';
-      el('quick-source-file-open').hidden = true;
-      host.hidden = false;
-      return;
-    }
-    sourceFilePath = path;
-    el('quick-source-file-text').textContent = name + ' 全体を取り込むと、1文ずつ確認して社内確認用のファイル（DRAFT_ 付きのコピー）を作れます。原本には書き込みません。';
-    var button = el('quick-source-file-open');
-    button.textContent = label + '全体を取り込む';
-    button.title = path;
-    button.hidden = false;
-    host.hidden = false;
   }
 
   /* 状態は二つになった（選んで訳す／1文ずつ確認する）。貼り付け欄は最初の画面に
@@ -415,19 +259,12 @@
       if (document.activeElement && document.activeElement !== document.body) return;
       input.focus();
     }, 0);
-    if (YakuCommon.onOfficeSelection) YakuCommon.onOfficeSelection(applyOfficeSelection);
     YakuCommon.onReady(function (value) { ready = value; update(); submitPendingWhenReady(); });
     window.addEventListener('yaku-pending-quick-submit', submitPendingWhenReady);
-    /* 文章を書き換えたら、読み込んだ出どころの案内は外す。手で直した文と
-       「このブック全体」は、もう同じものを指していない。 */
     el('quick-input').addEventListener('input', function () {
       explicitDirection = '';
-      if (el('quick-save-work')) el('quick-save-work').checked = false;
       refreshDirection();
-      sourceFilePath = '';
       if (!busy) el('quick-job').innerHTML = '';
-      var host = el('quick-source-file'); if (host) host.hidden = true;
-      var note = el('quick-selection-note'); if (note) note.hidden = true;
       update();
     });
     el('quick-form').addEventListener('submit', submit);
@@ -435,7 +272,7 @@
     el('quick-direction-select').addEventListener('change', function () {
       explicitDirection = this.value === 'to_en' || this.value === 'to_jp' ? this.value : '';
       update();
-      YakuCommon.focus(saveAsWork() ? el('quick-save-submit') : el('quick-submit'));
+      YakuCommon.focus(el('quick-submit'));
     });
     /* 「翻訳をやめる」は、進捗表示のたびに作り直されるので document で受ける。 */
     document.addEventListener('click', function (event) {
@@ -457,18 +294,9 @@
       event.preventDefault();
       form.requestSubmit();
     });
-    el('quick-source-file-open').addEventListener('click', function () {
-      if (busy || !sourceFilePath) return;
-      window.dispatchEvent(new CustomEvent('yaku-instant-handoff', { detail: { filePath: sourceFilePath } }));
-    });
     el('quick-long-handoff').addEventListener('click', function () {
       if (busy) return;
       window.dispatchEvent(new CustomEvent('yaku-instant-handoff', { detail: { text: el('quick-input').value } }));
-    });
-    /* 外枠が流し込んだときだけ拾う。人が手で打った文字では鳴らない。 */
-    window.addEventListener('yaku-clipboard-selection', function (event) {
-      var chars = Number((event.detail && event.detail.chars) || 0);
-      reportClipboardCapture(chars);
     });
     startNotationControl();
     if (restoreDraft()) refreshDirection(); else update();

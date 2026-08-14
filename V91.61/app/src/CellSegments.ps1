@@ -291,6 +291,9 @@ function Group-YakuTextBlocksIntoSegments {
         $a1 = ''
         try { $a1 = [string]$b.Meta.A1 } catch { $a1 = '' }
         $entry | Add-Member -NotePropertyName 'Address' -NotePropertyValue $a1 -Force
+        try { $entry | Add-Member -NotePropertyName 'SheetCodeName' -NotePropertyValue ([string]$b.Meta.SheetCodeName) -Force } catch {}
+        try { $entry | Add-Member -NotePropertyName 'StructureContract' -NotePropertyValue $b.Meta.StructureContract -Force } catch {}
+        try { $entry | Add-Member -NotePropertyName 'StructureFingerprint' -NotePropertyValue ([string]$b.Meta.StructureFingerprint) -Force } catch {}
         [void]$cellsBySheet[$sheet].Add($entry)
     }
 

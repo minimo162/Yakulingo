@@ -63,14 +63,49 @@
         }
 
         $workbookXml = Read-YakuZipText -Archive $zip -Name 'xl/workbook.xml'
-        $names = @()
-        foreach ($sheet in [regex]::Matches($workbookXml, '<sheet\b[^>]*name="([^"]*)"')) { $names += $sheet.Groups[1].Value }
+        $workbookRelsXml = Read-YakuZipText -Archive $zip -Name 'xl/_rels/workbook.xml.rels'
+        $relationshipTargets = @{}
+        if ($workbookRelsXml) {
+            try {
+                $relsDoc = New-Object Xml.XmlDocument
+                $relsDoc.LoadXml($workbookRelsXml)
+                foreach ($relationship in @($relsDoc.SelectNodes("//*[local-name()='Relationship']"))) {
+                    $relationshipTargets[[string]$relationship.Id] = [string]$relationship.Target
+                }
+            } catch {}
+        }
+        $sheetSpecs = New-Object System.Collections.Generic.List[object]
+        try {
+            $workbookDoc = New-Object Xml.XmlDocument
+            $workbookDoc.LoadXml($workbookXml)
+            $sheetOrdinal = 0
+            foreach ($sheetNode in @($workbookDoc.SelectNodes("//*[local-name()='sheets']/*[local-name()='sheet']"))) {
+                $sheetOrdinal++
+                $relationshipId = [string]$sheetNode.GetAttribute('id','http://schemas.openxmlformats.org/officeDocument/2006/relationships')
+                $target = [string]$relationshipTargets[$relationshipId]
+                $partName = ''
+                if (-not [string]::IsNullOrWhiteSpace($target)) {
+                    try {
+                        $base = [Uri]'https://yaku.invalid/xl/workbook.xml'
+                        $resolved = [Uri]::new($base,$target)
+                        $partName = [Uri]::UnescapeDataString($resolved.AbsolutePath.TrimStart('/'))
+                    } catch { $partName = '' }
+                }
+                if ([string]::IsNullOrWhiteSpace($partName)) { $partName = 'xl/worksheets/sheet' + $sheetOrdinal + '.xml' }
+                $sheetSpecs.Add([pscustomobject]@{ Name=[string]$sheetNode.GetAttribute('name'); PartName=$partName; Ordinal=$sheetOrdinal }) | Out-Null
+            }
+        } catch {
+            $sheetOrdinal = 0
+            foreach ($sheet in [regex]::Matches($workbookXml, '<sheet\b[^>]*name="([^"]*)"')) {
+                $sheetOrdinal++
+                $sheetSpecs.Add([pscustomobject]@{ Name=$sheet.Groups[1].Value; PartName=('xl/worksheets/sheet' + $sheetOrdinal + '.xml'); Ordinal=$sheetOrdinal }) | Out-Null
+            }
+        }
 
         $sheets = New-Object System.Collections.Generic.List[object]
-        $ordinal = 0
-        foreach ($name in $names) {
-            $ordinal++
-            $sheetXml = Read-YakuZipText -Archive $zip -Name ('xl/worksheets/sheet' + $ordinal + '.xml')
+        foreach ($sheetSpec in @($sheetSpecs.ToArray())) {
+            $name = [string]$sheetSpec.Name
+            $sheetXml = Read-YakuZipText -Archive $zip -Name ([string]$sheetSpec.PartName)
             if (-not $sheetXml) { continue }
 
             # 既定の列幅は「文字数」、既定の行の高さは「ポイント」。単位が違うので混ぜない。
@@ -99,6 +134,16 @@
 
             $merges = New-Object System.Collections.Generic.List[string]
             foreach ($merge in [regex]::Matches($sheetXml, '<mergeCell\b[^>]*ref="([^"]+)"')) { [void]$merges.Add($merge.Groups[1].Value) }
+
+            # 右への表示スピルや空白セル再利用の候補を安全に評価するには、
+            # 翻訳対象だけでなく値・数式を持つ全セルの占有状態が要る。
+            $occupiedCells = New-Object System.Collections.Generic.List[string]
+            $formulaCells = New-Object System.Collections.Generic.List[string]
+            foreach ($cellNode in [regex]::Matches($sheetXml, '(?s)<c\b[^>]*r="([A-Z]+\d+)"[^>]*(?:/>|>.*?</c>)')) {
+                $address = [string]$cellNode.Groups[1].Value
+                if ($cellNode.Value -match '<(?:v|is|f)\b') { [void]$occupiedCells.Add($address) }
+                if ($cellNode.Value -match '<f\b') { [void]$formulaCells.Add($address) }
+            }
 
             # 行の高さ。既定と違う行だけ持つ（全行ぶん持つと資料しだいで際限なく増える）。
             $rows = New-Object System.Collections.Generic.List[object]
@@ -130,6 +175,8 @@
                 default_height = [double]$defaultHeight
                 columns = $columns.ToArray()
                 merges = $merges.ToArray()
+                occupied_cells = @($occupiedCells.ToArray() | Sort-Object -Unique)
+                formula_cells = @($formulaCells.ToArray() | Sort-Object -Unique)
                 rows = $rows.ToArray()
                 cells = $cells.ToArray()
             })
