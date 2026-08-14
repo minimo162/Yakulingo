@@ -196,6 +196,9 @@ function New-YakuTranslationMemorySnapshotState {
         EventIds     = (New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal))
         CandidateMap = $null
         Candidates   = $null
+        # 完全一致だけを引くための索引（鍵 → 候補）。Find-YakuTranslationMemoryExact
+        # が最初に引かれたときに作る。追記があれば捨てて作り直す。
+        ExactIndex   = $null
         Broken       = 0
         LastUsed     = [DateTime]::UtcNow.Ticks
     }
@@ -290,6 +293,42 @@ function ConvertTo-YakuTranslationMemoryCandidate {
     }
 }
 
+function ConvertTo-YakuTranslationMemoryHit {
+    <#
+      候補を、呼び出し側へ返す姿へ組み立てる。
+
+      完全一致だけの口（Find-YakuTranslationMemoryExact）と、あいまいも含む口
+      （Find-YakuTranslationMemory）で**同じ組み立てを通す**。片方に写経すると、
+      項目を足したときにもう片方が黙って欠ける。CAT側は ReferenceId が無いと
+      出典を書けないので、欠けても訳文だけは入り、出典だけが静かに消える。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Candidate,
+        [bool]$Exact = $false,
+        [double]$Score = 0
+    )
+    $e = $Candidate
+    return [pscustomobject]@{
+        Source = $e.Source
+        Target = $e.Target
+        Exact  = [bool]$Exact
+        Ratio  = [double]$Score
+        Score  = [double]$Score
+        MatchType = $(if ([bool]$Exact) { 'exact' } else { 'fuzzy' })
+        Saved  = $e.Saved
+        UnitId = $e.UnitId
+        ReferenceId = $e.ReferenceId
+        SourceName = $e.SourceName
+        Location = $e.Location
+        Page = $e.Page
+        OriginProjectId = $e.OriginProjectId
+        OriginSegmentId = $e.OriginSegmentId
+        ReviewRevision = $e.ReviewRevision
+        SourceHash = $e.SourceHash
+        TargetHash = $e.TargetHash
+    }
+}
+
 function Get-YakuTranslationMemorySnapshot {
     <#
       同じ世代のJSONLを1回だけ読み、解いた姿をプロセス内に憶える。
@@ -369,6 +408,10 @@ function Get-YakuTranslationMemorySnapshot {
         }
         $state.Candidates = $null
     }
+    # 中身が変わったのに索引を残すと、消えた単位を引き続ける。ここへ来たのは
+    # 追記か作り直しのどちらかなので、必ず捨てる。作り直す費用は候補の件数ぶんの
+    # 辞書挿入だけで、あいまい照合1回よりはるかに安い。
+    $state.ExactIndex = $null
 
     $state.Fingerprint = $fingerprint
     $state.Length = [long]$bytes.Length
@@ -388,6 +431,37 @@ function Get-YakuTranslationMemorySnapshot {
     return $state
 }
 
+function Resolve-YakuTranslationMemoryCandidateList {
+    <#
+      snapshotから候補の一覧を作る（無ければ作って憶える）。
+
+      Path ではなく State を受け取るのは、索引を作る側が同じ世代の State へ
+      索引を結び付けられるようにするため。Path で二度引くと、その間にJSONLが
+      追記された場合、索引を「もう cache に居ない State」へ付けてしまい、
+      次回また作り直す。遅くなるだけで結果は正しいので、**黙って遅くなる**。
+    #>
+    param([Parameter(Mandatory=$true)]$State)
+    if ($null -eq $State.CandidateMap) {
+        $built = [ordered]@{}
+        foreach ($unitKey in $State.Map.Keys) {
+            $candidate = ConvertTo-YakuTranslationMemoryCandidate -Entry $State.Map[$unitKey]
+            if ($null -ne $candidate) { $built[$unitKey] = $candidate }
+        }
+        $State.CandidateMap = $built
+        $State.Candidates = $null
+    }
+    if ($null -eq $State.Candidates) {
+        # 並びはMapの順、つまりJSONLで最初に現れた順にそろえる。差分で
+        # 進めても全件で作り直しても同じ順にするための一手間である。
+        $list = New-Object 'System.Collections.Generic.List[object]'
+        foreach ($unitKey in $State.Map.Keys) {
+            if ($State.CandidateMap.Contains($unitKey)) { [void]$list.Add($State.CandidateMap[$unitKey]) }
+        }
+        $State.Candidates = $list
+    }
+    return ,$State.Candidates
+}
+
 function Get-YakuTranslationMemoryCandidates {
     <#
       照合に使う姿。出典検証を通ったentryだけが入る。
@@ -395,25 +469,79 @@ function Get-YakuTranslationMemoryCandidates {
     #>
     param([Parameter(Mandatory=$true)][string]$Path)
     $state = Get-YakuTranslationMemorySnapshot -Path $Path
-    if ($null -eq $state.CandidateMap) {
-        $built = [ordered]@{}
-        foreach ($unitKey in $state.Map.Keys) {
-            $candidate = ConvertTo-YakuTranslationMemoryCandidate -Entry $state.Map[$unitKey]
-            if ($null -ne $candidate) { $built[$unitKey] = $candidate }
-        }
-        $state.CandidateMap = $built
-        $state.Candidates = $null
+    return ,(Resolve-YakuTranslationMemoryCandidateList -State $state)
+}
+
+function Get-YakuTranslationMemoryExactKey {
+    <# 索引の鍵。方向が違う訳を引かないよう、方向を鍵に含める。 #>
+    param([AllowNull()][string]$Direction, [AllowNull()][string]$Key)
+    return ([string]$Direction + [string][char]31 + [string]$Key)
+}
+
+function Get-YakuTranslationMemoryExactIndex {
+    <#
+      正規化鍵 → 候補の索引。完全一致だけを引くために持つ。
+
+      snapshot と同じ世代に結び付ける。追記や作り直しがあれば
+      Get-YakuTranslationMemorySnapshot が捨てるので、古い索引は残らない。
+    #>
+    param([Parameter(Mandatory=$true)][string]$Path)
+    $state = Get-YakuTranslationMemorySnapshot -Path $Path
+    if ($null -ne $state.ExactIndex) { return $state.ExactIndex }
+    $index = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([System.StringComparer]::Ordinal)
+    foreach ($candidate in (Resolve-YakuTranslationMemoryCandidateList -State $state)) {
+        $key = Get-YakuTranslationMemoryExactKey -Direction ([string]$candidate.Direction) -Key ([string]$candidate.Key)
+        if (-not $index.ContainsKey($key)) { $index[$key] = New-Object 'System.Collections.Generic.List[object]' }
+        [void]$index[$key].Add($candidate)
     }
-    if ($null -eq $state.Candidates) {
-        # 並びはMapの順、つまりJSONLで最初に現れた順にそろえる。差分で
-        # 進めても全件で作り直しても同じ順にするための一手間である。
-        $list = New-Object 'System.Collections.Generic.List[object]'
-        foreach ($unitKey in $state.Map.Keys) {
-            if ($state.CandidateMap.Contains($unitKey)) { [void]$list.Add($state.CandidateMap[$unitKey]) }
-        }
-        $state.Candidates = $list
+    $state.ExactIndex = $index
+    return $index
+}
+
+function Find-YakuTranslationMemoryExact {
+    <#
+      完全一致だけを引く。あいまい照合は回さない。
+
+      **なぜ別の口にするか（2026-08-15 の実測）。** 事前翻訳は行ごとに完全一致を
+      引くが、Find-YakuTranslationMemory は全件を走査して3-gram Dice を計算して
+      から Exact 以外を捨てる。翻訳メモリに件数の上限は無いので、費用は件数に
+      比例して伸びる。400行の資料・1回の押下ぶんで実測:
+
+        TM   123件 → 見積り 1,759ms + 反映 2,111ms
+        TM 1,000件 → 9,005ms + 9,033ms
+        TM 3,000件 → 25,670ms + 24,389ms
+
+      Server.ps1 の待ち受けは GetContext → Invoke-YakuRoute の直列1本なので、
+      これは「ボタンが遅い」ではなく**アプリ全体が数十秒止まる**ことを意味する。
+      完全一致は正規化鍵で引けるので、索引を1つ持てば件数に依存しなくなる。
+
+      返す姿は Find-YakuTranslationMemory と同じ組み立て（ConvertTo-...Hit）を
+      使う。ここで写経すると、片方に項目を足したときにもう片方が黙って欠ける。
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Text,
+        [ValidateSet('to_en', 'to_jp')][string]$Direction = 'to_en',
+        [int]$MinLength = 4,
+        [AllowNull()][string]$Path
+    )
+    $t = ([string]$Text).Trim()
+    if ($t.Length -lt $MinLength) { return @() }
+    $targetPath = if ([string]::IsNullOrWhiteSpace($Path)) { Get-YakuTranslationMemoryPath -Direction $Direction } else { $Path }
+    $tn = ConvertTo-YakuTranslationMemoryKey -Text $t
+    if ([string]::IsNullOrWhiteSpace($tn)) { return @() }
+    $index = Get-YakuTranslationMemoryExactIndex -Path $targetPath
+    $key = Get-YakuTranslationMemoryExactKey -Direction $Direction -Key $tn
+    if (-not $index.ContainsKey($key)) { return @() }
+    # 並びは Find-YakuTranslationMemory と同じ意味にする。完全一致どうしは
+    # Saved の新しい順で、同着はJSONLに先に現れたほうを採る。
+    $best = $null
+    foreach ($candidate in $index[$key]) {
+        if ([int]$candidate.KeyLength -lt $MinLength) { continue }
+        if ($null -eq $best) { $best = $candidate; continue }
+        if ([string]::CompareOrdinal([string]$candidate.Saved, [string]$best.Saved) -gt 0) { $best = $candidate }
     }
-    return ,$state.Candidates
+    if ($null -eq $best) { return @() }
+    return @((ConvertTo-YakuTranslationMemoryHit -Candidate $best -Exact $true -Score ([double]1)))
 }
 
 function Read-YakuTranslationMemory {
@@ -754,26 +882,7 @@ function Find-YakuTranslationMemory {
         @{ Expression = 'Saved'; Descending = $true } | Select-Object -First $Limit)
     $out = New-Object System.Collections.Generic.List[object]
     foreach ($hit in $ranked) {
-        $e = $hit.Candidate
-        [void]$out.Add([pscustomobject]@{
-                Source = $e.Source
-                Target = $e.Target
-                Exact  = [bool]$hit.Exact
-                Ratio  = [double]$hit.Score
-                Score  = [double]$hit.Score
-                MatchType = $(if ([bool]$hit.Exact) { 'exact' } else { 'fuzzy' })
-                Saved  = $e.Saved
-                UnitId = $e.UnitId
-                ReferenceId = $e.ReferenceId
-                SourceName = $e.SourceName
-                Location = $e.Location
-                Page = $e.Page
-                OriginProjectId = $e.OriginProjectId
-                OriginSegmentId = $e.OriginSegmentId
-                ReviewRevision = $e.ReviewRevision
-                SourceHash = $e.SourceHash
-                TargetHash = $e.TargetHash
-            })
+        [void]$out.Add((ConvertTo-YakuTranslationMemoryHit -Candidate $hit.Candidate -Exact ([bool]$hit.Exact) -Score ([double]$hit.Score)))
     }
     return @($out.ToArray())
 }
