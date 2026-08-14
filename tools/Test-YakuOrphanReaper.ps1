@@ -207,6 +207,30 @@ try {
     Assert-True -Condition (-not (Test-YakuDisposableEdgeProfile -UserDataDir 'C:\Users\u\yakulingo-ui-audit-1\edge-profile' -Pattern @('yakulingo-ui-audit-*'))) -Name 'Temp 配下でなければ落とさない'
     Assert-True -Condition (Test-YakuDisposableEdgeProfile -UserDataDir (Join-Path $env:TEMP 'yakulingo-ui-audit-1\edge-profile') -Pattern @('yakulingo-ui-audit-*')) -Name 'Temp 配下の yakulingo-ui-audit-* は使い捨て'
 
+    # ここまでの4件は、保護層を消しても全部緑のまま通る。$realProfile が Temp 配下に
+    # 無いので、Test-YakuDisposableEdgeProfile が封じ込めの判定だけで false を返し、
+    # 保護層に一度も到達しないためである（2026-08-14 に批評が実測して指摘した）。
+    # 「守っている」ことを確かめるには、封じ込めも名前規則も通り抜けたうえで
+    # 保護層だけが救う条件を作らなければならない。
+    #
+    # Get-YakuRealEdgeProfilePath は YAKULINGO_DATA_DIR を見るので、データ置き場を
+    # Temp 配下の「使い捨てに見える名前」へ置くと、その条件が作れる。
+    $savedDataDir = [string]$env:YAKULINGO_DATA_DIR
+    try {
+        $trap = Join-Path $env:TEMP 'yakulingo-ui-audit-realdata'
+        $env:YAKULINGO_DATA_DIR = $trap
+        $trapProfile = Get-YakuRealEdgeProfilePath
+        # 前提: この道は封じ込めも名前規則も通る。通らないなら試験が空振りしている。
+        Assert-True -Condition (Test-YakuPathUnder -Child $trapProfile -Parent ([IO.Path]::GetTempPath())) -Name '罠のプロファイルは Temp 配下にある（前提）' -Detail $trapProfile
+        Assert-True -Condition (Test-YakuProtectedEdgeProfile -UserDataDir $trapProfile) -Name '罠のプロファイルは保護対象と判定される'
+        # 本番: 保護層を消すと、ここだけが赤になる。
+        Assert-True -Condition (-not (Test-YakuDisposableEdgeProfile -UserDataDir $trapProfile -Pattern @('yakulingo-ui-audit-*'))) -Name 'Temp 配下で名前が一致しても、ログイン済みなら落とさない' -Detail $trapProfile
+    }
+    finally {
+        if ([string]::IsNullOrWhiteSpace($savedDataDir)) { Remove-Item Env:\YAKULINGO_DATA_DIR -ErrorAction SilentlyContinue }
+        else { $env:YAKULINGO_DATA_DIR = $savedDataDir }
+    }
+
     Write-Host 'CASE 5: 親が生きているサーバーは落とさない' -ForegroundColor Cyan
     $spawn = Start-YakuStubProcess -Script $stubServer -Port 19998 -LogDir $treeRoot
     Assert-True -Condition ($null -ne $spawn.Process) -Name '親が生きているサーバーを立てられた' -Detail $spawn.Error
