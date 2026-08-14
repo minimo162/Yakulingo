@@ -20,3 +20,6 @@ tmp/
 # デスクトップ shell のビルド成果物。csc が毎回異なる build stamp を埋めるので、
 # 追跡するとビルドのたびに差分が出て pull やブランチ切り替えが止まる。
 # 無ければ tools/Test-YakuV9165DesktopShell.ps1 が作る。
+
+# エージェントの設定ディレクトリ。作業成果ではない。
+.codex/

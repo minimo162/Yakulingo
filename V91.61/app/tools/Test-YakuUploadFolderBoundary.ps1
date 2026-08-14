@@ -22,6 +22,11 @@ try {
     New-Item -ItemType Directory -Path (Join-Path $version 'app\tools') -Force | Out-Null
     [IO.File]::WriteAllText((Join-Path $source 'current.txt'), "TEST`r`n", $utf8Bom)
     [IO.File]::WriteAllText((Join-Path $version 'app\Start-YakuLingo.ps1'), "param()`r`n", $utf8Bom)
+    # V91.61 added the Edge app-mode launcher and New-YakuPackage.ps1 now refuses
+    # to build without it.  This fixture kept only the older launcher, so the test
+    # failed on PACKAGE_APP_LAUNCHER_MISSING.  The fixture was stale, not the
+    # check: the packaging boundary is what this test exists to protect.
+    [IO.File]::WriteAllText((Join-Path $version 'app\Start-YakuLingoApp.ps1'), "param()`r`n", $utf8Bom)
     [IO.File]::WriteAllText((Join-Path $version 'app\config\build.txt'), "TEST`r`n", $utf8Bom)
     [IO.File]::WriteAllText((Join-Path $version 'app\empty-state.txt'), "No bundled language data.`r`n", $utf8Bom)
     Copy-Item -LiteralPath (Join-Path $tools 'New-YakuPackage.ps1') -Destination (Join-Path $version 'app\tools\New-YakuPackage.ps1') -Force
