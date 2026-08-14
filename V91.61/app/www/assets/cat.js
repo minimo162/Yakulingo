@@ -349,7 +349,11 @@
   function stateIcon(state) {
     return icon(state === 'reviewed' ? 'i-reviewed' : state === 'human_edited' ? 'i-edited' : state === 'machine_draft' ? 'i-draft' : state === 'stale' ? 'i-stale' : 'i-untranslated');
   }
-  function stateTitle(state) { return state === 'reviewed' ? '確認済み' : state === 'human_edited' ? '手直し済み・未確認' : state === 'machine_draft' ? 'Copilotの訳案・未確認' : state === 'stale' ? '原文が変わったので再確認が必要' : 'まだ訳がありません'; }
+  /* machine_draft を「Copilotの訳案」と決め打ちしない。用語集・翻訳メモリ・
+     同じ原文からの配りも machine_draft で、Copilot は経路のひとつでしかない
+     （2026-08-15、事前翻訳で埋めた行の吹き出しが「Copilotの訳案」と出ていた）。
+     どこから来たかは出どころの札が別に言うので、ここは「機械が入れた」に留める。 */
+  function stateTitle(state) { return state === 'reviewed' ? '確認済み' : state === 'human_edited' ? '手直し済み・未確認' : state === 'machine_draft' ? '機械が入れた訳案・未確認' : state === 'stale' ? '原文が変わったので再確認が必要' : 'まだ訳がありません'; }
   /* 候補から挿入した訳は「手直し」ではない。訳文を書き込む口が1つしかないため、
      挿入も手打ちも Origin='manual' になり、行の札は「手直し」と出ていた
      （2026-08-13、実機で確認: 完全一致の候補を挿入した直後の札が「手直し」だった）。
@@ -370,6 +374,12 @@
     /* 同じ原文の行へ配った訳。出どころが分からないと、直したはずの訳が
        別の行に残っていると誤解される。 */
     if (origin === 'propagated') return '同じ原文から';
+    /* 事前翻訳で翻訳メモリから流し込んだ行。確認済みではないので、
+       「自分が確認した訳」とは言い切らない。どこから来たかだけを言う。
+       ただし通常はここへ来ない。出どころの札は referenceOriginLabel を先に
+       見る（cat.js の描画側）ので、出典を書けた行の札は「自分が確認した訳から」
+       になる。この枝が出るのは、出典を書けなかったときだけである。 */
+    if (origin === 'translation-memory') return '翻訳メモリから';
     return '';
   }
   function segmentState(segment) { return segment.status || segment.state || (segment.translation ? 'machine_draft' : 'untranslated'); }
@@ -666,6 +676,8 @@
     el('cat-source-heading').textContent = isAlignment ? '日本語' : '原文';
     el('cat-target-heading').textContent = isAlignment ? '英語' : '訳文';
     el('cat-translate').hidden = isAlignment;
+    /* 対応確認では訳さないので、下訳の入口も出さない（訳す入口と同じ扱い）。 */
+    el('cat-tm-pretranslate').hidden = isAlignment;
     var transient = project.lifecycle === 'transient';
     el('cat-transient-actions').hidden = !transient;
     if (transient) {
@@ -1028,6 +1040,73 @@
       }
       return data;
     });
+  }
+
+  /* 事前翻訳（pre-translate）。翻訳メモリに完全一致がある行を、Copilot へ
+     送る前に訳文欄へ入れる。市販CAT（memoQ / Trados / Phrase / XTM）はどれも
+     持っているが、ここで効く理由はそれではない。翻訳の相手は API ではなく
+     Copilot で使用上限があり、上限を超えたら再依頼しない決まりなので、
+     1件当たるたびに、その分だけ訳せる分量が増える。
+
+     押す前に対象行数を告げる（一括確定と同じ作法）。数える経路は何も
+     書き換えない。翻訳メモリが読めなければ0件と出て、翻訳は従来どおり進む。
+
+     置き場所は「そのほか」の一覧にした。上の帯は実機の窓幅 1380px で
+     折り返さない設定（cat-workspace.css の @media 1400px）なので、4つ目の
+     ボタンを足すと既にあるラベルから幅を奪う。 */
+  function tmPretranslate() {
+    var scope = null;
+    return flush().then(function () {
+      scope = currentScope();
+      if (!scope) throw new Error('資料が開かれていません。「ほかの資料に切り替える」から選び直してください。');
+      setBusy(true); status('翻訳メモリで埋められる行を数えています…');
+      return post('tm-pretranslate-estimate', {}, false, scope);
+    }).then(function (data) {
+      setBusy(false);
+      if (!scopeIsCurrent(scope, true)) { status('表示している資料が切り替わったため、下訳をやめました。'); return null; }
+      var rows = Number((data && data.rows) || 0);
+      if (!rows) {
+        if (data && data.memory_unavailable) {
+          status('翻訳メモリを読めませんでした。下訳はできませんが、これまでどおり「訳していない行を訳す」で進められます。', true);
+          return null;
+        }
+        status('翻訳メモリに完全一致する行はありませんでした。訳文はそのままです。');
+        return null;
+      }
+      var kinds = Number((data && data.unique_texts) || 0);
+      /* 途中まで読めた場合。翻訳メモリは最初の失敗でそこまでの分を返すので
+         （CatProject.ps1 の計画側が break する）、rows が 0 でなくても
+         「最後まで読めた」とは限らない。黙って rows 行だけ入れると、残りが
+         未走査だったことが利用者に伝わらない。 */
+      var partial = !!(data && data.memory_unavailable);
+      if (!window.confirm('翻訳メモリに完全一致がある' + rows + '行へ、過去に確認した訳を入れます。\n\n'
+        + (partial ? '・翻訳メモリを最後まで読めませんでした。ここまでで見つかった分だけ入れます\n' : '')
+        + '・Copilotへ送る文が' + kinds + '件減ります\n'
+        + '・入れた行は確認済みにはなりません。目を通してから確定してください\n'
+        + '・すでに訳文がある行と、自分で直した行は変えません\n\n'
+        + '進めますか？')) return null;
+      return mutate('tm-pretranslate', {}, '翻訳メモリで下訳しています…').then(function (result) {
+        if (!result) return null;
+        var filled = Number(result.tm_pretranslate_filled || 0);
+        if (!filled) { status('入れられる行がありませんでした。訳文はそのままです。'); return result; }
+        var saved = Number(result.tm_pretranslate_requests_saved || 0);
+        var before = Number(result.tm_pretranslate_calls_before || 0);
+        var after = Number(result.tm_pretranslate_calls_after || 0);
+        /* 依頼の回数はまとめて送る単位なので、送る文が減っても回数が変わらない
+           ことがある。実機で「1回から1回になりました」と出た（2026-08-15）ので、
+           変わったときだけ言う。減った文の数はいつでも言う。 */
+        var callsPart = (before > after) ? ('依頼の見積りは' + before + '回から' + after + '回になりました。') : '';
+        /* 入れたあとに「最後まで読めなかった」を伝える。サーバは
+           tm_pretranslate_memory_unavailable で返しているのに、画面がどこでも
+           読んでいなかった（2026-08-15 の批評）。返しているが誰も読まない値を
+           残さない。 */
+        var partialPart = result.tm_pretranslate_memory_unavailable
+          ? '翻訳メモリを最後まで読めなかったので、残りは見ていません。もう一度押すと続きから探します。' : '';
+        status(filled + '行に翻訳メモリの訳を入れました。Copilotへ送る文が' + saved + '件減りました。' + callsPart
+          + partialPart + 'まだ確認済みではないので、目を通してから確定してください。');
+        return result;
+      });
+    }).catch(function (error) { setBusy(false); status(error.message, true); return null; });
   }
 
   function registerTranslationMemory(index) {
@@ -2557,7 +2636,7 @@
     });
     document.addEventListener('click', function (event) {
       var button = event.target.closest('button'); if (!button) return;
-      if (busy && (button.id === 'cat-confirm-bulk' || button.hasAttribute('data-cat-translate-row') || button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-tm-register') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
+      if (busy && (button.id === 'cat-confirm-bulk' || button.id === 'cat-tm-pretranslate' || button.hasAttribute('data-cat-translate-row') || button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-tm-register') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
       if (button.hasAttribute('data-cat-preview-mode')) { setPreviewMode(button.getAttribute('data-cat-preview-mode')); return; }
       if (button.hasAttribute('data-cat-preview-side')) { previewSide = button.getAttribute('data-cat-preview-side') || 'target'; renderPreview(); return; }
       if (button.hasAttribute('data-cat-pdf-side')) {
@@ -2587,6 +2666,7 @@
       if (button.hasAttribute('data-cat-personal-remove')) return removePersonalGlossary(button);
       if (button.hasAttribute('data-cat-resume')) return resume(button.getAttribute('data-cat-resume'));
       if (button.id === 'cat-confirm-bulk') return confirmBulk(button);
+      if (button.id === 'cat-tm-pretranslate') return tmPretranslate();
       if (button.hasAttribute('data-cat-confirm')) return confirmRow(Number(button.getAttribute('data-cat-confirm')));
       if (button.hasAttribute('data-cat-tm-register')) return registerTranslationMemory(Number(button.getAttribute('data-cat-tm-register')));
       /* 押し間違えた確認を戻す道。サーバは以前から confirmed:false を受け付けていたが、

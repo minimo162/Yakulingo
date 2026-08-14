@@ -3045,6 +3045,201 @@ function Measure-YakuCatGlossaryCandidates {
     return @($map.Keys).Count
 }
 
+function Get-YakuCatTranslationMemoryExactMatch {
+    <#
+      1行ぶんの完全一致を翻訳メモリから引く。あいまい一致は使わない。
+
+      閾値の話をここへ持ち込まない（あいまい一致を自動で流し込むと、直す手間の
+      ほうが増える）。
+
+      **ここでいう完全一致は、原文そのままの一致ではない。**
+      ConvertTo-YakuTranslationMemoryKey による正規化後の一致であり、
+      空白の有無・英数字の全半角・英字の大小は同じものとして扱う
+      （TranslationMemory.ps1:19）。数字は落とさないので、数値の取り違えは
+      起きない（'100億円' の原文に '200億円' のTMは当たらない。実測済み）。
+      候補ペインは人が選ぶので差が出なかったが、事前翻訳は人が見ないまま
+      流し込むため、この定義は意図として明記しておく。
+
+      引き方は Find-YakuTranslationMemoryExact（鍵の索引）。かつては
+      Find-YakuTranslationMemory を Limit 1 で呼んでいたが、それは全件に
+      3-gram Dice を回してから Exact 以外を捨てる作りで、翻訳メモリの件数に
+      比例して遅くなった（TM 3,000件・400行で見積り25.7秒＋反映24.4秒。
+      サーバの待ち受けは直列1本なので、その間アプリ全体が止まる）。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Text,
+        [Parameter(Mandatory=$true)][string]$Direction,
+        [AllowNull()][string]$Path
+    )
+    $hits = @()
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        $hits = @(Find-YakuTranslationMemoryExact -Text $Text -Direction $Direction)
+    } else {
+        $hits = @(Find-YakuTranslationMemoryExact -Text $Text -Direction $Direction -Path $Path)
+    }
+    foreach ($hit in $hits) {
+        if (-not [bool]$hit.Exact) { continue }
+        if ([string]::IsNullOrWhiteSpace([string]$hit.Target)) { continue }
+        return $hit
+    }
+    return $null
+}
+
+function Get-YakuCatTranslationMemoryPretranslatePlan {
+    <#
+      事前翻訳（pre-translate）の対象を作る。埋めはしない。数えるためにも使う。
+
+      **なぜこのアプリで効くのか。** 翻訳の相手は API ではなく Copilot で、
+      使用上限がある（CLAUDE.md「上限超過での再依頼はしない」）。翻訳メモリが
+      1件当たるたびに Copilot への送信が1件減り、その分だけ訳せる分量が増える。
+      市販CAT（memoQ / Trados / Phrase / XTM）はどれも持っている機能だが、
+      ここでの理由は「他所にあるから」ではなく、この上限である。
+
+      対象にするのは訳文が空の行だけ。人が直した行（Origin=manual /
+      State=human_edited）は、訳文が空でも踏まない。
+
+      同じ原文は1回だけ引いて、結果を行へ配る。Get-YakuCatCopilotUsage が
+      重複を除いた原文の数を数えているので、引く回数もそれに揃う。
+
+      翻訳メモリが読めないときは、そこで打ち切って空の計画を返す。
+      コーパスや翻訳メモリは足しであって前提ではない。読めなければ、
+      対象行は空のまま Copilot への送信対象として残る。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [AllowNull()][string]$Path
+    )
+    $rows = New-Object System.Collections.Generic.List[object]
+    $uniqueTexts = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+    $direction = [string]$Project.Direction
+    if ($direction -ne 'to_en' -and $direction -ne 'to_jp') {
+        return [pscustomobject]@{ Rows = @(); UniqueTexts = 0; MemoryUnavailable = $false }
+    }
+    # 過去訳の対応確認（Source='align'）では1行も埋めない。
+    # あの資料の行は「この日本語に、この英語が対応していた」という**記録**であって、
+    # 訳す対象ではない。対応の無い行も片側が空のまま作られる（CatProject.ps1:1599 は
+    # ja と en の両方が空のときだけ飛ばす）ので、そこへ翻訳メモリの訳を入れると、
+    # 実際には存在しなかった対応を人が確認したことにしてしまう。
+    # 画面はボタンを隠しているが（cat.js:673）、隠すのは目に見える入口だけである。
+    if ([string]$Project.Source -eq 'align') {
+        return [pscustomobject]@{ Rows = @(); UniqueTexts = 0; MemoryUnavailable = $false }
+    }
+    $lookup = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([System.StringComparer]::Ordinal)
+    $unavailable = $false
+    $segs = @($Project.Segments)
+    for ($i = 0; $i -lt $segs.Count; $i++) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$segs[$i].Translation)) { continue }
+        if ([string]$segs[$i].Origin -eq 'manual' -or [string]$segs[$i].State -eq 'human_edited') { continue }
+        $text = [string]$segs[$i].Text
+        if ([string]::IsNullOrWhiteSpace($text)) { continue }
+        if (-not $lookup.ContainsKey($text)) {
+            $found = $null
+            try { $found = Get-YakuCatTranslationMemoryExactMatch -Text $text -Direction $direction -Path $Path }
+            catch {
+                # 1件で落ちるなら残りも落ちる。読めない相手を全行ぶん叩き直さない。
+                $unavailable = $true
+                try { Write-YakuLog ('Translation memory pre-translate unavailable: ' + $_.Exception.Message) 'WARN' } catch {}
+                break
+            }
+            $lookup[$text] = $found
+        }
+        $hit = $lookup[$text]
+        if ($null -eq $hit) { continue }
+        [void]$rows.Add([pscustomobject]@{ Index = $i; Text = $text; Hit = $hit })
+        [void]$uniqueTexts.Add($text)
+    }
+    return [pscustomobject]@{
+        Rows = @($rows.ToArray())
+        UniqueTexts = [int]$uniqueTexts.Count
+        MemoryUnavailable = [bool]$unavailable
+    }
+}
+
+# 2026-08-15: Measure-YakuCatTranslationMemoryCandidates をここから削除した。
+# 「押す前に何行埋まるか」を数えるだけの薄い包みだったが、本番の呼び出し元は
+# 0件で、Server.ps1 の tm-pretranslate-estimate は Get-...PretranslatePlan を
+# 直に呼んでいた。それでも回帰はこの包みへ向けて「押す前に告げる行数が、
+# 実際に埋まる行数と一致する」を表明していたので、**サーバの rows を 0 に
+# 固定して機能を殺しても緑のまま**だった（批評の実測）。製品が通らない道に
+# 門を置くと、門があるという事実そのものが嘘になる。数えるのは計画の
+# Rows.Count で足り、包みは要らない。
+
+function Invoke-YakuCatTranslationMemoryPass {
+    <#
+      翻訳メモリの完全一致を訳文欄へ流し込む。市販CATの Pre-translate。
+
+      入れ方は、同一原文への自動伝播（Copy-YakuCatTranslationToRepetitions）と
+      同じ扱いにそろえる。
+        - 訳文が空の行にだけ入れる。人が直した訳は上書きしない
+        - **確認済みにはしない。** 数字の点検は確定のときにしか走らないので、
+          点検を通っていない訳を確認済みにはできない。State は machine_draft
+        - 出どころは translation-memory。人がその行に書いた訳ではない
+        - マスク後の訳文は引き継がない。この行の原文と対応しない
+
+      返すのは、入れた行数（Applied）と、そのもとになった原文の種類数
+      （UniqueApplied）。Copilot への送信は重複を除いた原文の数で決まるので、
+      減る送信数は UniqueApplied のほうである。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [AllowNull()][string]$Path
+    )
+    $null = Initialize-YakuCatProjectState -Project $Project
+    $plan = $null
+    try { $plan = Get-YakuCatTranslationMemoryPretranslatePlan -Project $Project -Path $Path }
+    catch {
+        # 翻訳メモリを引く所は計画側で受け止めてあるので、通常ここへは来ない。
+        # 引く以外（行の走査そのもの）が落ちたときの受け皿である。翻訳メモリは
+        # 足しであって前提ではないので、ここでも作業は止めない。
+        # 2026-08-14: 計画側の受け止めを外して壊したとき、実際にここが受けた。
+        try { Write-YakuLog ('Translation memory pre-translate skipped: ' + $_.Exception.Message) 'WARN' } catch {}
+        $plan = $null
+    }
+    $segs = @($Project.Segments)
+    $applied = 0
+    $uniqueApplied = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+    if ($null -ne $plan) {
+        foreach ($row in @($plan.Rows)) {
+            $i = [int]$row.Index
+            if ($i -lt 0 -or $i -ge $segs.Count) { continue }
+            if (-not [string]::IsNullOrWhiteSpace([string]$segs[$i].Translation)) { continue }
+            $target = [string]$row.Hit.Target
+            if ([string]::IsNullOrWhiteSpace($target)) { continue }
+            $segs[$i].Translation = $target
+            $null = Update-YakuCatSegmentReferenceEditState -Segment $segs[$i] -Text $target
+            $segs[$i] | Add-Member -NotePropertyName 'MaskedTranslation' -NotePropertyValue '' -Force
+            $segs[$i].Origin = 'translation-memory'
+            $segs[$i] | Add-Member -NotePropertyName State -NotePropertyValue 'machine_draft' -Force
+            $segs[$i].TmRegistered = $false
+            $segs[$i].TmRegistrationEventId = ''
+            Reset-YakuCatSegmentQc -Segment $segs[$i] -KeepState
+            # どのTM単位から来たかを行へ残す。候補を手で挿したときと同じ形にする。
+            # Project ごと初期化し直す口（Set-YakuCatSegmentReferenceUsage）は
+            # 使わない。行ごとに全行を舐め直すので、資料の大きさの2乗になる。
+            try {
+                $null = Set-YakuCatSegmentReferenceUsageRecord -Segment $segs[$i] -ProjectRevision ([int]$Project.Revision) -Candidate ([pscustomobject]@{
+                    Kind = 'memory'; ReferenceId = [string]$row.Hit.ReferenceId
+                    SourceName = [string]$row.Hit.SourceName; Location = [string]$row.Hit.Location
+                    Page = [int]$(try { $row.Hit.Page } catch { 0 })
+                    Source = [string]$row.Hit.Source; Target = $target
+                    Score = [double]$(try { $row.Hit.Score } catch { 1.0 })
+                    Ratio = [double]$(try { $row.Hit.Ratio } catch { 1.0 })
+                })
+            } catch {
+                try { Write-YakuLog ('Translation memory pre-translate provenance skipped: ' + $_.Exception.Message) 'WARN' } catch {}
+            }
+            $applied++
+            [void]$uniqueApplied.Add([string]$row.Text)
+        }
+    }
+    return [pscustomobject]@{
+        Applied = [int]$applied
+        UniqueApplied = [int]$uniqueApplied.Count
+        Remaining = [int]@($segs | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.Translation) }).Count
+        MemoryUnavailable = [bool]$(if ($null -eq $plan) { $true } else { [bool]$plan.MemoryUnavailable })
+    }
+}
+
 function Get-YakuCatSegmentStatus {
     <#
       行の状態。市販ツールに倣って3つにする。
@@ -3574,6 +3769,53 @@ function Set-YakuCatSegmentTranslation {
     return $segs[$Index]
 }
 
+function Set-YakuCatSegmentReferenceUsageRecord {
+    <#
+      「どの候補から挿したか」を1行へ書く。**Project 全体の初期化はしない。**
+
+      Initialize-YakuCatProjectState は全行を舐めて SHA-256 を取り直すので、
+      行の数だけ呼ぶと資料の大きさの2乗になる。事前翻訳は当たった行の数だけ
+      出典を書くため、そこで実際に踏んだ（実測 2026-08-14、200行・TM 123件:
+      引く費用は 961ms なのに全体は 10,991ms。Initialize を100回呼ぶ費用が
+      9,935ms を占めていた）。初期化は呼び出し側で1回だけ行う。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Segment,
+        [Parameter(Mandatory=$true)]$Candidate,
+        [int]$ProjectRevision = 0
+    )
+    if ([string]$Candidate.ReferenceId -notmatch '^[a-f0-9]{16,64}$') { throw 'CAT_REFERENCE_ID_INVALID' }
+    if (-not [string]::Equals([string]$Segment.Translation, [string]$Candidate.Target, [StringComparison]::Ordinal)) {
+        throw 'CAT_REFERENCE_TARGET_MISMATCH'
+    }
+    $targetHash = Get-YakuCatSourceIntegrityHash -Text ([string]$Segment.Translation)
+    $Segment | Add-Member -NotePropertyName ReferenceUsage -NotePropertyValue ([pscustomobject]@{
+        id = [string]$Candidate.ReferenceId
+        kind = [string]$Candidate.Kind
+        action = 'inserted'
+        target_hash = $targetHash
+        edited_after_insert = $false
+        source_name = [string]$Candidate.SourceName
+        location = [string]$Candidate.Location
+        page = [int]$Candidate.Page
+        source = [string]$Candidate.Source
+        translation = [string]$Candidate.Target
+    }) -Force
+    $events = New-Object System.Collections.Generic.List[object]
+    foreach ($existing in @($Segment.ReferenceEvents)) { $events.Add($existing) | Out-Null }
+    $events.Add([pscustomobject]@{
+        event_id=[guid]::NewGuid().ToString('N'); reference_id=[string]$Candidate.ReferenceId
+        kind=[string]$Candidate.Kind; action='inserted'; source_name=[string]$Candidate.SourceName
+        location=[string]$Candidate.Location; page=[int]$Candidate.Page
+        source=[string]$Candidate.Source; translation=[string]$Candidate.Target
+        match_score=$(try { [double]$Candidate.Score } catch { [double]$Candidate.Ratio })
+        target_hash=$targetHash
+        project_revision=[int]$ProjectRevision; created=(Get-Date).ToString('s'); edited_after_insert=$false
+    }) | Out-Null
+    $Segment | Add-Member -NotePropertyName ReferenceEvents -NotePropertyValue @($events.ToArray()) -Force
+    return $Segment
+}
+
 function Set-YakuCatSegmentReferenceUsage {
     param(
         [Parameter(Mandatory=$true)]$Project,
@@ -3583,35 +3825,7 @@ function Set-YakuCatSegmentReferenceUsage {
     $null = Initialize-YakuCatProjectState -Project $Project
     $segs = @($Project.Segments)
     if ($Index -lt 0 -or $Index -ge $segs.Count) { throw 'CAT_REFERENCE_SEGMENT_NOT_FOUND' }
-    if ([string]$Candidate.ReferenceId -notmatch '^[a-f0-9]{16,64}$') { throw 'CAT_REFERENCE_ID_INVALID' }
-    if (-not [string]::Equals([string]$segs[$Index].Translation, [string]$Candidate.Target, [StringComparison]::Ordinal)) {
-        throw 'CAT_REFERENCE_TARGET_MISMATCH'
-    }
-    $segs[$Index].ReferenceUsage = [pscustomobject]@{
-        id = [string]$Candidate.ReferenceId
-        kind = [string]$Candidate.Kind
-        action = 'inserted'
-        target_hash = Get-YakuCatSourceIntegrityHash -Text ([string]$segs[$Index].Translation)
-        edited_after_insert = $false
-        source_name = [string]$Candidate.SourceName
-        location = [string]$Candidate.Location
-        page = [int]$Candidate.Page
-        source = [string]$Candidate.Source
-        translation = [string]$Candidate.Target
-    }
-    $events = New-Object System.Collections.Generic.List[object]
-    foreach ($existing in @($segs[$Index].ReferenceEvents)) { $events.Add($existing) | Out-Null }
-    $events.Add([pscustomobject]@{
-        event_id=[guid]::NewGuid().ToString('N'); reference_id=[string]$Candidate.ReferenceId
-        kind=[string]$Candidate.Kind; action='inserted'; source_name=[string]$Candidate.SourceName
-        location=[string]$Candidate.Location; page=[int]$Candidate.Page
-        source=[string]$Candidate.Source; translation=[string]$Candidate.Target
-        match_score=$(try { [double]$Candidate.Score } catch { [double]$Candidate.Ratio })
-        target_hash=Get-YakuCatSourceIntegrityHash -Text ([string]$segs[$Index].Translation)
-        project_revision=[int]$Project.Revision; created=(Get-Date).ToString('s'); edited_after_insert=$false
-    }) | Out-Null
-    $segs[$Index].ReferenceEvents = @($events.ToArray())
-    return $segs[$Index]
+    return (Set-YakuCatSegmentReferenceUsageRecord -Segment $segs[$Index] -Candidate $Candidate -ProjectRevision ([int]$Project.Revision))
 }
 
 function Set-YakuCatSegmentTerminologyUsage {

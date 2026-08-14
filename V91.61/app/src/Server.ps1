@@ -2617,7 +2617,7 @@ function Invoke-YakuRoute {
             }
             if ($null -eq $project) { throw '取り込んだファイルが見つかりません。もう一度「取り込んで確認を始める」を押してください。' }
 
-            $revisionActions = @('delete','project-close-delete','project-retain','glossary','merge','split','placement','publication-candidates','publication-apply','publication-revert','abbreviation-register','glossary-add','term-add','term-deactivate','term-insert','term-exception','tm-delete','tm-register','confirm','confirm-bulk','project-save','render-start','review-start','copilot-review-start','copilot-review-apply','finding-decision','pdf-review-apply','coverage-decision','final-review-decision','source-update-preview','source-update-decision','source-update-apply','save-corpus','segment','translate','apply','preflight','export','export-reviewed','personal-glossary-list','personal-glossary-remove')
+            $revisionActions = @('delete','project-close-delete','project-retain','glossary','merge','split','placement','publication-candidates','publication-apply','publication-revert','abbreviation-register','glossary-add','term-add','term-deactivate','term-insert','term-exception','tm-delete','tm-register','confirm','confirm-bulk','tm-pretranslate','project-save','render-start','review-start','copilot-review-start','copilot-review-apply','finding-decision','pdf-review-apply','coverage-decision','final-review-decision','source-update-preview','source-update-decision','source-update-apply','save-corpus','segment','translate','apply','preflight','export','export-reviewed','personal-glossary-list','personal-glossary-remove')
             $receiptActions = @('placement','publication-apply','publication-revert','abbreviation-register','source-update-apply')
             if ($receiptActions -contains $action -and [string]::IsNullOrWhiteSpace([string]$payload['idempotency_key'])) {
                 throw 'CAT_IDEMPOTENCY_KEY_REQUIRED: この更新には操作識別子が必要です。'
@@ -3225,6 +3225,55 @@ function Invoke-YakuRoute {
                     $body = (ConvertTo-YakuCatProjectJson -Project $project) | ConvertFrom-Json
                     $body | Add-Member -NotePropertyName bulk_confirmed -NotePropertyValue ([int]$commit.Result.Confirmed) -Force
                     $body | Add-Member -NotePropertyName bulk_blocked -NotePropertyValue @($commit.Result.Blocked) -Force
+                    Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 8 -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                'tm-pretranslate-estimate' {
+                    # 押す前に対象行数を告げる（一括確定と同じ作法）。数えるだけで
+                    # 何も書き換えない。翻訳メモリが読めなければ 0 を返し、
+                    # 翻訳はこれまでどおり Copilot へ送る。
+                    $plan = $null
+                    try { $plan = Get-YakuCatTranslationMemoryPretranslatePlan -Project $project } catch { $plan = $null }
+                    $planRows = 0; $planUnique = 0; $planUnavailable = $true
+                    if ($null -ne $plan) {
+                        $planRows = @($plan.Rows).Count; $planUnique = [int]$plan.UniqueTexts
+                        $planUnavailable = [bool]$plan.MemoryUnavailable
+                    }
+                    $planUsage = Get-YakuCatCopilotUsage -Root $script:YakuRoot -Project $project -Settings $settings
+                    $body = [ordered]@{
+                        rows = [int]$planRows
+                        unique_texts = [int]$planUnique
+                        unique_remaining = [int]$planUsage.UniqueRemaining
+                        estimated_calls = [int]$planUsage.EstimatedCalls
+                        memory_unavailable = [bool]$planUnavailable
+                    }
+                    Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                'tm-pretranslate' {
+                    # 事前翻訳。翻訳メモリに完全一致がある行を、Copilot へ送る前に
+                    # 訳文欄へ流し込む。Copilot には使用上限があり、上限超過での
+                    # 再依頼はしない決まりなので、1件当たるたびに訳せる分量が増える。
+                    #
+                    # 埋めた行は確認済みにしない。点検は確定のときにしか走らないため、
+                    # ここで確認済みにすると点検を通っていない訳が通ってしまう。
+                    # 同一原文への自動伝播と同じ扱いにそろえてある。
+                    $beforeUsage = Get-YakuCatCopilotUsage -Root $script:YakuRoot -Project $project -Settings $settings
+                    $mutation = {
+                        param($candidate,$root,$innerSettings)
+                        $passResult = Invoke-YakuCatTranslationMemoryPass -Project $candidate
+                        try { $candidate | Add-Member -NotePropertyName 'GlossaryCandidates' -NotePropertyValue (Measure-YakuCatGlossaryCandidates -Root $root -Project $candidate -Settings $innerSettings) -Force } catch {}
+                        return $passResult
+                    }
+                    $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($script:YakuRoot,$settings)
+                    $project = $commit.Project
+                    $afterUsage = Get-YakuCatCopilotUsage -Root $script:YakuRoot -Project $project -Settings $settings
+                    $body = (ConvertTo-YakuCatProjectJson -Project $project) | ConvertFrom-Json
+                    $body | Add-Member -NotePropertyName tm_pretranslate_filled -NotePropertyValue ([int]$commit.Result.Applied) -Force
+                    $body | Add-Member -NotePropertyName tm_pretranslate_unique -NotePropertyValue ([int]$commit.Result.UniqueApplied) -Force
+                    $body | Add-Member -NotePropertyName tm_pretranslate_requests_saved -NotePropertyValue ([int][Math]::Max(0, [int]$beforeUsage.UniqueRemaining - [int]$afterUsage.UniqueRemaining)) -Force
+                    $body | Add-Member -NotePropertyName tm_pretranslate_calls_before -NotePropertyValue ([int]$beforeUsage.EstimatedCalls) -Force
+                    $body | Add-Member -NotePropertyName tm_pretranslate_calls_after -NotePropertyValue ([int]$afterUsage.EstimatedCalls) -Force
+                    $body | Add-Member -NotePropertyName tm_pretranslate_calls_saved -NotePropertyValue ([int][Math]::Max(0, [int]$beforeUsage.EstimatedCalls - [int]$afterUsage.EstimatedCalls)) -Force
+                    $body | Add-Member -NotePropertyName tm_pretranslate_memory_unavailable -NotePropertyValue ([bool]$commit.Result.MemoryUnavailable) -Force
                     Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 8 -Compress) -ContentType 'application/json; charset=utf-8'
                 }
                 'tm-register' {
