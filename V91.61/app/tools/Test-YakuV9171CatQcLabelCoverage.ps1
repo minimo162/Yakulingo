@@ -108,8 +108,14 @@ function Get-YakuQcFindingCodesFromSrc {
             $hasSeverity = $false
             foreach ($pair in $hashtable.KeyValuePairs) {
                 $name = Get-YakuQcAstKeyName -KeyAst $pair.Item1
-                if ($name -ceq 'Code') { $codePair = $pair }
-                elseif ($name -ceq 'Severity') { $hasSeverity = $true }
+                # 大小を区別しない。cat.js:330 は finding.code も finding.Code も
+                # 受けるので、小文字 code で書かれた finding も画面に出る。
+                # -ceq にしていたため小文字を黙って見逃していた（2026-08-14 に批評が
+                # 使い捨ての複製へ @{ code='zzz'; Severity='error' } を差し込んで実測）。
+                # ErrorCode / WarningCode / ReasonCode を巻き込まないのは、素の grep で
+                # なく AST の鍵名を完全一致で見ているからであって、大小の区別ではない。
+                if ($name -eq 'Code') { $codePair = $pair }
+                elseif ($name -eq 'Severity') { $hasSeverity = $true }
             }
             if ($null -eq $codePair) { continue }
             $constant = Get-YakuQcAstConstantString -ValueAst $codePair.Item2
