@@ -56,6 +56,7 @@ tools/Create-Desktop-Shortcut.ps1	crlf
 tools/eval/Build-YakuEvalPrompts.ps1	crlf
 tools/eval/Measure-YakuEvalResponses.ps1	crlf
 tools/Extract-YakuCellGlossary.ps1	crlf
+tools/Measure-YakuUiFloor.ps1	crlf
 tools/New-YakuPackage.ps1	crlf
 tools/Open-Copilot-Login.ps1	crlf
 tools/Prepare-Copilot.ps1	lf
@@ -115,6 +116,7 @@ tools/Test-YakuV9170Render.ps1	lf
 tools/Test-YakuV9170Review.ps1	lf
 tools/Test-YakuV9170SourceRebase.ps1	lf
 tools/Test-YakuV9170UnifiedCatEntry.ps1	crlf
+tools/Test-YakuV9171CatQcLabelCoverage.ps1	crlf
 tools/Test-YakuV9171TranslationNumbers.ps1	crlf
 tools/Test-YakuV917RuntimeWarnings.ps1	crlf
 tools/V64-HTTP-Boundary-Test.ps1	crlf
