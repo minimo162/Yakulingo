@@ -264,5 +264,78 @@ if ($SelfTest) {
 }
 
 if (-not [string]::IsNullOrWhiteSpace($PairsPath)) {
-    Write-Host '（採点は実機の結果が出てから行う）'
+    # 採点の駆動部。JSONL を1行1組で読む。組は次のどちらの書き方でもよい。
+    #   {"name":"…","japanese":"…","reference":"…","candidate":"…"}
+    #   {"name":"…","japanese_path":"…","reference_path":"…","candidate_path":"…"}
+    # path 版は、資料まるごとを1組として採点するためにある。相対パスは
+    # JSONL 自身の位置から解決する（[IO.File] は Set-Location を見ないので
+    # 必ず絶対パスへ直してから読む）。
+    #
+    # 何を採点するかは冒頭のとおり。**公表訳は正解ではない。**
+    # reference は所見のための手掛かりで、採点には使わない。言い回しの近さで
+    # 採点すると、正しい別解を減点することになる。
+    if (-not (Test-Path -LiteralPath $PairsPath -PathType Leaf)) {
+        throw "COMPARE_PAIRS_NOT_FOUND: $PairsPath がありません。"
+    }
+    $pairsFull = [IO.Path]::GetFullPath($PairsPath)
+    $pairsDir = Split-Path -Parent $pairsFull
+
+    function Resolve-YakuComparePath {
+        param([string]$Value)
+        if ([string]::IsNullOrWhiteSpace($Value)) { return '' }
+        if ([IO.Path]::IsPathRooted($Value)) { return [IO.Path]::GetFullPath($Value) }
+        return [IO.Path]::GetFullPath((Join-Path $pairsDir $Value))
+    }
+    function Get-YakuCompareText {
+        param($Row, [string]$Inline, [string]$PathField)
+        $direct = [string]$Row.$Inline
+        if (-not [string]::IsNullOrEmpty($direct)) { return $direct }
+        $p = Resolve-YakuComparePath ([string]$Row.$PathField)
+        if ([string]::IsNullOrWhiteSpace($p)) { return '' }
+        if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { throw "COMPARE_PAIR_FILE_NOT_FOUND: $p" }
+        return [IO.File]::ReadAllText($p, [Text.UTF8Encoding]::new($false))
+    }
+
+    $rows = New-Object System.Collections.Generic.List[object]
+    foreach ($line in [IO.File]::ReadAllLines($pairsFull, [Text.UTF8Encoding]::new($false))) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        $rows.Add(($line | ConvertFrom-Json))
+    }
+
+    $reports = New-Object System.Collections.Generic.List[object]
+    $allOk = $true
+    foreach ($row in $rows.ToArray()) {
+        $name = [string]$row.name
+        if ([string]::IsNullOrWhiteSpace($name)) { $name = 'pair-' + ($reports.Count + 1) }
+        $ja = Get-YakuCompareText -Row $row -Inline 'japanese' -PathField 'japanese_path'
+        $rf = Get-YakuCompareText -Row $row -Inline 'reference' -PathField 'reference_path'
+        $cd = Get-YakuCompareText -Row $row -Inline 'candidate' -PathField 'candidate_path'
+        if ([string]::IsNullOrWhiteSpace($ja)) { throw "COMPARE_PAIR_JAPANESE_EMPTY: $name" }
+
+        $r = Compare-YakuTranslationPair -Japanese $ja -Reference $rf -Candidate $cd
+        $ok = ($r.NumbersOk -and $r.PlaceholderOk)
+        if (-not $ok) { $allOk = $false }
+        $reports.Add([ordered]@{
+                name          = $name
+                ok            = $ok
+                numbers_ok    = [bool]$r.NumbersOk
+                placeholder_ok = [bool]$r.PlaceholderOk
+                amounts       = [ordered]@{ expected = [int]$r.Amounts.Expected; matched = [int]$r.Amounts.Matched; missing = @($r.Amounts.Missing); extra = @($r.Amounts.Extra) }
+                units         = [ordered]@{ expected = [int]$r.Units.Expected; matched = [int]$r.Units.Matched; missing = @($r.Units.Missing); extra = @($r.Units.Extra) }
+                percents      = [ordered]@{ expected = [int]$r.Percents.Expected; matched = [int]$r.Percents.Matched; missing = @($r.Percents.Missing); extra = @($r.Percents.Extra) }
+                leftover      = @($r.Leftover)
+                # 所見のみ。採点には使わない。
+                reference_amounts = @($r.RefAmounts).Count
+            }) | Out-Null
+    }
+
+    $summary = [ordered]@{
+        pairs   = $reports.Count
+        all_ok  = $allOk
+        failed  = @($reports.ToArray() | Where-Object { -not $_.ok } | ForEach-Object { [string]$_.name })
+        results = @($reports.ToArray())
+    }
+    Write-Host (($summary | ConvertTo-Json -Depth 8))
+    if (-not $allOk) { exit 1 }
+    exit 0
 }
