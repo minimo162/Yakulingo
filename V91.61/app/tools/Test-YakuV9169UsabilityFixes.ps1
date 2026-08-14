@@ -40,6 +40,7 @@ function Check-YakuUse {
 $quickJs = Get-Content -LiteralPath (Join-Path $root 'www\assets\quick.js') -Raw -Encoding UTF8
 $catJs   = Get-Content -LiteralPath (Join-Path $root 'www\assets\cat.js') -Raw -Encoding UTF8
 $catCss  = Get-Content -LiteralPath (Join-Path $root 'www\assets\cat-workspace.css') -Raw -Encoding UTF8
+$styles  = Get-Content -LiteralPath (Join-Path $root 'www\assets\styles.css') -Raw -Encoding UTF8
 $catHtml = Get-Content -LiteralPath (Join-Path $root 'www\cat.html') -Raw -Encoding UTF8
 
 Write-Host 'Findings from using the app on the real screen stay fixed' -ForegroundColor Cyan
@@ -127,7 +128,7 @@ Check-YakuUse ($catJs -notmatch '名前と文書内に DRAFT が付きます') '
 # なるのか分からない、という指摘を同じ日に受けた。いまは決まった向きを出す。
 # この検査は私の注釈に引っかかって通っていた（字面ではなく出す値を見る）。
 Check-YakuUse ($quickJs -match "hidden = !text\.trim\(\);") '文章を入れたら方向の欄を出す'
-Check-YakuUse ($quickJs -match "detectedDirection === 'to_jp' \? '日本語に訳します'") '自動のときも、決まった向きを出す'
+Check-YakuUse ($quickJs -match "directionSelect\.value = direction === 'to_en' \|\| direction === 'to_jp' \? direction : ''") '自動のときも、決まった向きを選択欄へ出す'
 Check-YakuUse ($quickJs -notmatch "hidden = !text\.trim\(\) \|\| !explicitDirection") '自分で選んだときだけ出す作りに戻さない'
 
 # 2026-08-13、初回利用者として実機を通して見つけたもの。
@@ -161,6 +162,9 @@ $tourJsUse = Get-Content -LiteralPath (Join-Path $root 'www\assets\tour.js') -Ra
 Check-YakuUse ($tourJsUse -notmatch "target: '#quick-input'") '当たり前の操作を説明する段は置かない'
 # 前の段の操作で画面が動くと、次の段のボタンが画面の外へ出て、吹き出しだけが端で切れる。
 Check-YakuUse ($tourJsUse -match 'box\.top < 12 \|\| box\.bottom > window\.innerHeight - 12') '指す先が画面の外なら、先に見える所へ戻す'
+Check-YakuUse ($tourJsUse -match "target: '#cat-open-file-entry'[\s\S]{0,500}?preservePosition: true" -and $tourJsUse.Contains('if (step.preservePosition) { next(); return; }')) '狭い初回画面では入力欄の位置を守る'
+Check-YakuUse ($tourJsUse -match "target: '#cat-open-file-entry'[\s\S]{0,700}?nextAtTop: true" -and $tourJsUse.Contains('target.blur();') -and $tourJsUse.Contains('window.scrollTo(0, 0);')) '資料選択の次は入力欄へ戻す'
+Check-YakuUse ($tourJsUse.Contains("document.getElementById('quick-form')") -and $tourJsUse.Contains('new MutationObserver') -and $tourJsUse.Contains('mutationObserver.disconnect()')) '入力で動いた送信ボタンを案内が追いかける'
 # 中央へ寄せると押しただけで大きく飛ぶ。開いた欄はいちばん少ない移動で見せる。
 Check-YakuUse ($catJs -match "(?s)function showStart\(mode\)[\s\S]{0,1200}?block: 'nearest'") '開いた欄は最小の移動で見せる'
 Check-YakuUse ($catJs -notmatch "(?s)function showStart\(mode\) \{ closeStartPanels\(\); var panel[\s\S]{0,120}?YakuCommon\.focus\(") '中央へ寄せる作りに戻さない'
@@ -169,6 +173,12 @@ Check-YakuUse ($catJs -notmatch "(?s)function showStart\(mode\) \{ closeStartPan
 # した（2026-08-12）のに、押せる状態のまま「あと2行を確認済みにしてください。」と
 # 出しており、命令に読めた。押せるボタンには起きることを書く。
 Check-YakuUse ($catJs -match 'まだ確認していない.{0,20}行も、そのまま入ります。') '押せるときは、起きることを書く'
+
+# 過去訳の対応候補は、作成直後はまだ未確認。数字の点検は確認済みにするときに
+# 動くため、その前から「止まる指摘はありません」と言い切らない。
+Check-YakuUse ($catJs -match '未確認は .{0,30} 行です。数字の点検は、確認済みにするときに行います。') '未確認の段階では数字が未点検だと伝える'
+Check-YakuUse ($catJs -notmatch '止まる指摘はありません。未確認は') '未点検を問題なしと言い切らない'
+Check-YakuUse ($catHtml -match '数字は確認済みにするときに点検します。') '点検一覧にも数字の検査時点を書く'
 # 注釈にも同じ字面を書いていて、自分の説明に引っかかっていた。
 # 見るのは出している文言（title に入る戻り値）のほう。
 Check-YakuUse ($catJs -notmatch "return 'あと' \+ left \+ '行を確認済みにしてください。'") '押せるボタンに命令を書かない'
@@ -212,7 +222,43 @@ Check-YakuUse ($serverForView -match "(?s)/api/direction-preview[\s\S]{0,900}?Re
 Check-YakuUse ($quickJs -match 'function refreshDirection' -and $quickJs -match "'/api/direction-preview'") '打ち終わったら聞きにいく'
 # 注釈にも同じ字面を書いているので、字面ではなく「画面へ出す値」を見る。
 Check-YakuUse ($quickJs -notmatch ": '文章を見て、英語か日本語かを決めます';") '決め方だけを書く一文は残さない'
-Check-YakuUse ($quickJs -match "detectedDirection === 'to_en' \? '英語に訳します'") '決まった向きそのものを出す'
+Check-YakuUse ($quickJs -match "direction === 'to_en' \? '英語に訳す'") '決まった向きを実行ボタンへ出す'
+
+# 他の始め方を見ただけで、打ちかけのメールを消さない。PDF取り込みは WebAssembly
+# を許可するため ?import=1 へ読み直す必要があるので、移動前にこのタブ内だけへ退避する。
+Check-YakuUse ($quickJs -match "draftStorageKey = 'yaku\.quick\.draft\.before-navigation'") '打ちかけはこのタブ内だけへ退避する'
+Check-YakuUse ($quickJs -match 'function preserveDraft' -and $quickJs -match 'function restoreDraft') '移動前の退避と移動後の復元がある'
+Check-YakuUse ($catJs -match 'YakuInstant\.preserveDraft') 'PDF取り込み画面へ移る前に退避する'
+Check-YakuUse ($quickJs -match 'sessionStorage\.removeItem\(draftStorageKey\)') '復元した退避データを残し続けない'
+
+# 英訳の金額表記は英訳するときだけ必要。短い英文メールの和訳で、関係のない設定を
+# 最初から判断させない。
+Check-YakuUse ($catHtml -match 'id="quick-amount-setting"[^>]*hidden') '金額表記は最初は隠れている'
+Check-YakuUse ($quickJs -match "amountSetting\.hidden = direction !== 'to_en'") '英訳するときだけ金額表記を出す'
+
+# 任意の保存を、内部用語の「確認作業」ではなく、選ぶと何が起きるかで説明する。
+# 初見では「あとで続けるため、確認作業として保存する」だけでは、別画面へ移ることも
+# 確認済みの訳だけが今後使われることも分からなかった。
+Check-YakuUse ($catHtml -match '上に貼り付けた文章' -and $catHtml -match 'この文章を保存して確認画面へ') '保存する文章を確認画面への入口として示す'
+Check-YakuUse ($catHtml -match '原文を見ながら訳文を直せます。途中まで自動保存され、あとから再開できます。') '確認画面・自動保存・再開を二つの入口より先に説明する'
+Check-YakuUse ($catHtml -notmatch 'あとで続けるため、確認作業として保存する') '内部的な作業名だけの説明へ戻さない'
+Check-YakuUse ($catHtml -notmatch 'class="quick-save-choice"' -and $catHtml -match 'class="review-entry-grid"') '主操作の意味をチェックボックスで切り替えない'
+Check-YakuUse ($quickJs -match "event\.submitter\.id === 'quick-save-submit'") '押したボタンから保存するかを決める'
+# 言語の選択は送信ではない。選択後に主操作へ戻し、利用者が明示的に押すまで
+# Copilotへの送信を始めない。
+$directionChoiceHandler = [regex]::Match($quickJs, "(?s)el\('quick-direction-select'\)\.addEventListener\('change'.*?^    \}\);", [System.Text.RegularExpressions.RegexOptions]::Multiline).Value
+Check-YakuUse ($directionChoiceHandler -match "YakuCommon\.focus\(saveAsWork\(\) \? el\('quick-save-submit'\) : el\('quick-submit'\)\)" -and $directionChoiceHandler -notmatch 'requestSubmit') '訳す言語の選択だけでは送信しない'
+
+# 開始画面と作業画面を分ける構成を、初見でも予測できるようにする。
+Check-YakuUse ($catHtml -match '<span class="start-kind">短い文章</span>' -and $catHtml -match '<span class="start-kind">確認しながら訳す</span>') '開始方法を用途で区別する'
+Check-YakuUse ($catHtml -match 'ファイルを選んで確認画面へ') 'ファイル選択後の行き先をボタンで示す'
+Check-YakuUse ($catHtml -match '(?s)review-entry-grid[\s\S]{0,900}?id="quick-save-submit"[\s\S]{0,900}?id="cat-open-file-entry"') '文章とWord・Excelを同じ確認画面への入口として並べる'
+Check-YakuUse ($catHtml -match '続きの作業を開く' -and $catHtml -match '保存したところから再開します') '保存済み一覧を再開の入口として示す'
+Check-YakuUse ($styles -match '(?s)\.cat-instant\s*\{[^}]*border-left:\s*5px solid var\(--accent\)[^}]*linear-gradient') '短文の主入口は囲いを増やさず色面と左線で強くする'
+Check-YakuUse ($styles -match '(?s)\.start-kind\s*\{[^}]*background:\s*var\(--accent\)[^}]*color:\s*#fff') '短文の用途ラベルを最初に拾える強さにする'
+Check-YakuUse ($styles -match '(?s)\.review-entry-option button\s*\{[^}]*border:\s*2px solid var\(--accent\)') '確認画面への二つの開始ボタンは輪郭を見失わない'
+Check-YakuUse ($styles -match '(?s)\.review-entry-option button\[disabled\]\s*\{[^}]*background:\s*#e4e4e9') '文章が空の保存ボタンを有効に見せない'
+Check-YakuUse ($styles -match '(?s)\.entry-secondary \.cat-resume\s*\{[^}]*background:\s*var\(--surface-subtle\)') '続きの作業を補助領域としてまとめる'
 
 # 「Word・Excelを取り込む」を押しても、下に欄が開くだけで何も起きないように見えた。
 # その欄の中にもう一度「選ぶ」があり、さらに確認のボタンがあった（押す回数3回）。
@@ -249,6 +295,15 @@ Check-YakuUse ($catJs -match 'OCRでテキスト付きのPDFにしてから') '�
 # 押す前に、往復回数と見込み時間を出す（実測 2026-08-13: 144ページで128回）。
 Check-YakuUse ($catJs -match 'function updateAlignEstimate') '送る前に見込みを出す関数がある'
 Check-YakuUse ($catJs -match 'Copilotへ約') '往復回数を押す前に出す'
+Check-YakuUse ($catHtml -match '過去の訳を登録する') '過去訳の入口が何をする場所か見出しで分かる'
+Check-YakuUse ($catHtml -match '過去の日本語版・英語版PDFを読み込む' -and $catHtml -match 'accept="\.pdf"') '過去訳の入口でPDF形式を示す'
+Check-YakuUse ($catHtml -match '確認済みにした訳だけ') '確認前の対訳を次の資料へ混ぜると誤解させない'
+Check-YakuUse ($catHtml -match '取り出した日本語と英語の文をCopilotへ送って') 'PDF突き合わせで送る内容を押す前に明示する'
+Check-YakuUse ($catHtml -match 'id="cat-align-open" disabled') '日英の片方だけでは対応づけを始められない'
+Check-YakuUse ($catJs -match "var en = String\(el\('cat-align-target'\)" -and $catJs -match 'var ready = ja > 0 && en > 0') '日英双方の読取結果で開始可否を決める'
+Check-YakuUse ($catJs -match "日本語 ' \+ ja\.toLocaleString\('ja-JP'\) \+ '行、英語 '") '選んだ範囲の日英行数を両方表示する'
+Check-YakuUse ($catJs -match "if \(mode === 'align'\) updateAlignEstimate\(\)") '画面を開き直しても片方だけで開始できない'
+Check-YakuUse ($catJs -match "if \(el\('cat-align-open'\)\) updateAlignEstimate\(\)") '待機解除で対訳開始ボタンを誤って有効にしない'
 
 # ページ範囲。資料まるごとは往復が3桁になるので、章だけを選べるようにする。
 # 実測 2026-08-13: 144ページ全部で約128回（21〜43分）、50〜60ページに絞ると
@@ -256,6 +311,17 @@ Check-YakuUse ($catJs -match 'Copilotへ約') '往復回数を押す前に出す
 # 対応するページを調べる手間はこちらで引き受ける（ページの冒頭を並べる）。
 Check-YakuUse ($catHtml -match 'id="cat-align-source-from"' -and $catHtml -match 'id="cat-align-target-to"') '日英それぞれに範囲の欄がある'
 Check-YakuUse ($catJs -match 'function applyAlignRange') '選んだ範囲だけを送る文へ組み直す'
+Check-YakuUse ($catJs -match "\['input', 'change'\]\.forEach") 'ページ範囲の入力中から見込みを更新する'
+
+# memoQ・Tradosの alignment editor と同様に、過去訳の対応確認を通常の翻訳と
+# 区別する。実機では保存一覧まで「英語に訳す作業」と表示され、目的が逆に見えた。
+Check-YakuUse ($serverForView -match 'source = \[string\]\$_.Source') '保存一覧にも作業の種類を返す'
+Check-YakuUse ($catJs -match "source === 'align' \? '過去訳の対応確認'") '対訳作業を新規翻訳と呼ばない'
+Check-YakuUse ($catHtml -match 'id="cat-align-review-guide"' -and $catHtml -match '自動で作った対応は推測です') '自動対応は人が確認すると表の前で伝える'
+Check-YakuUse ($catHtml -match 'id="cat-align-next-document"' -and $catHtml -match '今回のWord・Excelを取り込む' -and $catJs -match "cat-align-next-document'.*showPicker\(\); showStart\('file'\)") '過去訳の確認後に今回の資料へ進む導線がある'
+Check-YakuUse ($catJs -match "el\('cat-source-heading'\)\.textContent = isAlignment \? '日本語'" -and $catJs -match "el\('cat-target-heading'\)\.textContent = isAlignment \? '英語'") '対訳画面の左右を言語名で示す'
+Check-YakuUse ($catJs -match "el\('cat-translate'\)\.hidden = isAlignment") '対訳確認では新規翻訳の操作を隠す'
+Check-YakuUse ($catJs -match "el\('cat-page-title'\)\.textContent = isAlignment \? '過去訳の対応確認' : '翻訳'") 'ページ全体も対訳確認として名乗る'
 Check-YakuUse ($catJs -match 'function renderAlignPages') 'ページの冒頭を並べる'
 Check-YakuUse ($catHtml -match 'ページの冒頭を見る') '別のアプリで開かずに対応を探せる'
 # 解析し直さずに範囲を変えられること（読み込みは1回だけで済ませる）。

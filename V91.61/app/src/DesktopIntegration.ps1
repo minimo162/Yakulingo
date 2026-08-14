@@ -3,16 +3,14 @@
 }
 
 function Get-YakuDesktopShellPath {
-    # Packaged builds place the signed shell here. The environment override is
-    # used only by isolated regression tests and local packaging verification.
+    # Normal builds have no custom executable. Shortcuts target the supported
+    # CMD launcher. Current packages expose no secondary VBScript entry point.
     $override = [string]$env:YAKULINGO_DESKTOP_EXE
     if (-not [string]::IsNullOrWhiteSpace($override)) {
         try { return [IO.Path]::GetFullPath($override) } catch { return '' }
     }
-    foreach ($relative in @('desktop\YakuLingo.exe','desktop\bin\YakuLingo.exe')) {
-        $candidate = Join-Path (Get-YakuRoot) $relative
-        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return [IO.Path]::GetFullPath($candidate) }
-    }
+    $candidate = Join-Path (Split-Path -Parent (Get-YakuRoot)) 'YakuLingo起動.cmd'
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) { return [IO.Path]::GetFullPath($candidate) }
     return ''
 }
 
@@ -78,6 +76,13 @@ function Test-YakuOwnedShortcut {
     try {
         $actual = [IO.Path]::GetFullPath([string]$link.TargetPath)
         if ([string]::Equals($actual, [IO.Path]::GetFullPath($TargetPath), [StringComparison]::OrdinalIgnoreCase)) { return $true }
+        if ([string]::Equals([IO.Path]::GetFileName($actual), 'YakuLingo.exe', [StringComparison]::OrdinalIgnoreCase)) {
+            $desktopDir = Split-Path -Parent $actual
+            $legacyAppRoot = Split-Path -Parent $desktopDir
+            $expectedVersionRoot = Split-Path -Parent ([IO.Path]::GetFullPath($TargetPath))
+            return ([string]::Equals((Split-Path -Parent $legacyAppRoot), $expectedVersionRoot, [StringComparison]::OrdinalIgnoreCase) -and
+                (Test-Path -LiteralPath (Join-Path $legacyAppRoot 'Start-YakuLingo.ps1') -PathType Leaf))
+        }
         if (-not [string]::Equals([IO.Path]::GetFileName($actual), 'YakuLingo起動.cmd', [StringComparison]::OrdinalIgnoreCase)) { return $false }
         $description = [string]$link.Description
         if (-not ([string]::Equals($description, 'YakuLingo', [StringComparison]::Ordinal) -or
@@ -152,7 +157,7 @@ function Get-YakuDesktopPreferences {
         desktop_shortcut_enabled = $desktopEnabled
         start_menu_shortcut = ($available -and (Test-YakuOwnedShortcut -Path ([string]$locations.start_menu) -TargetPath $shellPath))
         tutorial_completed = $tutorialCompleted
-        message = if ($available) { '設定を読み込みました。' } else { 'デスクトップ版を準備できていません。アプリを一式更新してください。' }
+        message = if ($available) { '設定を読み込みました。' } else { '起動ショートカットを準備できません。アプリを一式更新してください。' }
         warnings = @()
     }
 }
@@ -164,15 +169,15 @@ function Set-YakuDesktopPreferences {
     )
     $shellPath = Get-YakuDesktopShellPath
     if ([string]::IsNullOrWhiteSpace($shellPath) -or -not (Test-Path -LiteralPath $shellPath -PathType Leaf)) {
-        throw 'DESKTOP_SHELL_MISSING: デスクトップ版を準備できていません。アプリを一式更新してください。'
+        throw 'APP_LAUNCHER_MISSING: 起動ショートカットを準備できません。アプリを一式更新してください。'
     }
     $locations = Get-YakuDesktopShortcutLocations
     $desired = [ordered]@{
-        startup = [bool]$StartupEnabled
+        startup = $false
         desktop = [bool]$DesktopShortcut
         start_menu = $true
     }
-    $arguments = @{ startup='--background'; desktop=''; start_menu='' }
+    $arguments = @{ startup=''; desktop=''; start_menu='' }
     $snapshots = @{}
     foreach ($name in $locations.Keys) {
         $path = [string]$locations[$name]
@@ -195,7 +200,7 @@ function Set-YakuDesktopPreferences {
         }
         $state = [ordered]@{
             tutorial_completed = $true
-            startup_enabled = [bool]$StartupEnabled
+            startup_enabled = $false
             desktop_shortcut = [bool]$DesktopShortcut
             updated_at = (Get-Date).ToString('o')
         }

@@ -7,7 +7,7 @@ YakuLingo is a local translation tool with two experiences: Quick Translation fo
 ## Architecture
 
 ```text
-Browser UI
+Normal Microsoft Edge tab (no custom EXE or WebView2 runtime)
   -> loopback HTTP server (session/Host/origin boundary)
       -> text translation runspace -> dedicated Edge profile/CDP -> M365 Copilot
       -> file worker process -> dedicated Excel COM instance
@@ -50,7 +50,9 @@ Normal operation never persists source text, translated text, or full prompts. F
 
 - An empty Copilot composer shows the voice-chat control where the text send button appears after filling. Fresh-chat verification therefore requires an empty ready editor, no responses, and no generation, but never requires the text send button. The diagnostic `composerReady` field means that the editor and either the send or voice-chat control are present; it is not a fresh-chat acceptance gate.
 - Send actions accept only a verified `aria-label="送信"` or `aria-label="Send"` control; voice-chat controls remain excluded.
-- YakuLingo does not move, foreground, maximize, minimize, or resize Edge during translation. The sole exception is a one-time normalization immediately after YakuLingo newly starts its dedicated Edge profile. The default is 1280x900, `edge_window_size=none` disables it, and an already-running Edge window is never changed.
+- The main UI opens as a normal tab in the user's existing Edge profile, so YakuLingo does not add another indistinguishable Edge taskbar icon. There is no notification-area resident process and no Windows sign-in auto-start.
+- Each YakuLingo tab reports a tab-scoped presence ID. Closing the last YakuLingo tab stops the PowerShell server and the dedicated Copilot profile after a short navigation grace period. The browser asks for confirmation only while translation is active. The user's Edge process and other tabs are never stopped.
+- Normal translation keeps the dedicated Copilot profile in the background. A detected login requirement is surfaced in the main UI, where the user can explicitly open that dedicated Copilot window.
 
 ## Zero-seed reusable-language contract
 

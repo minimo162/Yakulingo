@@ -523,9 +523,8 @@ if (-not (Get-Command Start-YakuEdgeLaunch -ErrorAction SilentlyContinue)) {
 
 function Show-YakuEdgeWindow {
     param([string]$Mode = 'foreground')
-    # Intentionally no-op during normal use. Startup-only normalization for a
-    # newly launched dedicated profile is isolated in the function above.
-    Write-YakuLog "Edge window manipulation skipped. mode=$Mode" 'DEBUG'
+    $visibility = if ([string]::Equals($Mode, 'foreground', [System.StringComparison]::OrdinalIgnoreCase)) { 'foreground' } else { 'hidden' }
+    return (Set-YakuEdgeWindowVisibility -Mode $visibility)
 }
 
 function Invoke-YakuEdgeWindowNormalizationOnce {
@@ -536,7 +535,8 @@ function Invoke-YakuEdgeWindowNormalizationOnce {
     # attempted only once and must never resize an already-running user window.
     $script:YakuEdgeNeedsWindowNormalization = $null
     $size = $pending.WindowSize
-    if (-not $size -or $size.Enabled -ne $true) { return }
+    $background = [string]::Equals([string]$pending.DisplayMode, 'background', [System.StringComparison]::OrdinalIgnoreCase)
+    if (-not $background -and (-not $size -or $size.Enabled -ne $true)) { return }
     try {
         $version = Get-YakuDevToolsVersion -Port $Port -TimeoutSec 3
         $ws = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $version -Name 'webSocketDebuggerUrl' -Default '')
@@ -546,10 +546,14 @@ function Invoke-YakuEdgeWindowNormalizationOnce {
         $windowResult = Invoke-YakuCdpMethod -WebSocketUrl $ws -Method 'Browser.getWindowForTarget' -Params $windowParams -TimeoutSeconds 10
         if ($windowResult.error) { throw ($windowResult.error | ConvertTo-Json -Compress) }
         $windowId = [int]$windowResult.result.windowId
-        $bounds = @{ windowState='normal'; width=[int]$size.Width; height=[int]$size.Height }
+        $bounds = if ($background) { @{ windowState='minimized' } } else { @{ windowState='normal'; width=[int]$size.Width; height=[int]$size.Height } }
         $setResult = Invoke-YakuCdpMethod -WebSocketUrl $ws -Method 'Browser.setWindowBounds' -Params @{ windowId=$windowId; bounds=$bounds } -TimeoutSeconds 10
         if ($setResult.error) { throw ($setResult.error | ConvertTo-Json -Compress) }
-        Write-YakuLog "New Edge window normalized once. width=$($size.Width) height=$($size.Height)" 'INFO'
+        if ($background) {
+            $null = Set-YakuEdgeWindowVisibility -Mode hidden
+            Write-YakuLog 'New dedicated Edge window hidden after Copilot became ready.' 'INFO'
+        }
+        else { Write-YakuLog "New Edge window normalized once. width=$($size.Width) height=$($size.Height)" 'INFO' }
     } catch {
         Write-YakuLog "New Edge window normalization failed; continuing without resizing. error=$($_.Exception.Message)" 'WARN'
     }
@@ -626,6 +630,7 @@ function New-YakuCopilotWindow {
             return ''
         }
         Add-YakuCopilotOwnedWindow -Port $Port -TargetId $targetId
+        $null = Set-YakuEdgeWindowVisibility -Mode hidden
         try { Write-YakuLog "Copilot window created. targetId=$targetId" 'INFO' } catch {}
         return $targetId
     } catch {
@@ -880,7 +885,8 @@ function Start-YakuCopilotEdge {
     foreach ($candidatePort in @(Get-YakuCdpPortCandidates -ConfiguredPort $configuredPort -UserDataDir $userData)) {
         $launch = $null
         try {
-            $launch = Start-YakuEdgeLaunch -Port ([int]$candidatePort) -DisplayMode $DisplayMode -Url $Url -WindowSize $WindowSize -WaitForReadySeconds 30
+            $effectiveDisplayMode = if ($ForceForeground) { 'foreground' } else { 'background' }
+            $launch = Start-YakuEdgeLaunch -Port ([int]$candidatePort) -DisplayMode $effectiveDisplayMode -Url $Url -WindowSize $WindowSize -WaitForReadySeconds 30
             $userData = [string]$launch.Spec.UserDataDir
             if (-not [bool]$launch.Ready) { throw "Edge DevTools Protocol が起動しませんでした。Port=$candidatePort" }
             if (-not (Test-YakuCdpPortOwnedByProfile -Port ([int]$candidatePort) -UserDataDir $userData)) {
@@ -4943,7 +4949,6 @@ function Invoke-YakuCopilotPromptUnsafe {
     }
     if ((Get-YakuObjectPropertyValue -Object $fillResult -Name 'ok' -Default $false) -ne $true) {
         Invoke-YakuCdpBringToFront -Page $page
-        Show-YakuEdgeWindow -Mode foreground
         $logPath = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $fillResult -Name 'logPath' -Default '')
         $promptPath = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $fillResult -Name 'promptPath' -Default '')
         $actualInputPath = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $fillResult -Name 'actualInputPath' -Default '')

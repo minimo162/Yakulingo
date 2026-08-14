@@ -1,5 +1,7 @@
 ﻿config/settings.template.json	lf
 desktop/Build-DesktopShell.ps1	lf
+experiments/WebView2CopilotProbe/Build-Probe.ps1	crlf
+experiments/WebView2CopilotProbe/Test-Probe.ps1	crlf
 prompts/cat_translate_to_en.txt	lf
 prompts/cat_translate_to_jp.txt	lf
 prompts/corpus_query_to_en.txt	lf

@@ -10,8 +10,10 @@
   var form;
   var confirmButton;
   var responseBox;
-  var startupInput;
   var desktopInput;
+  var replayLink;
+  var homeLink;
+  var firstRun = true;
 
   function setResponse(message, warnings, isError) {
     responseBox.textContent = '';
@@ -30,7 +32,9 @@
   function loadPreferences() {
     YakuCommon.json('/api/desktop/preferences').then(function (data) {
       if (!data || data.available === false) return;
-      if (typeof data.startup_enabled === 'boolean') startupInput.checked = data.startup_enabled;
+      firstRun = data.tutorial_completed === false;
+      if (replayLink) replayLink.hidden = firstRun;
+      if (homeLink) homeLink.hidden = firstRun;
       if (typeof data.desktop_shortcut === 'boolean') desktopInput.checked = data.desktop_shortcut;
     }).catch(function () {
       // 読取失敗だけでは外部設定を変更しない。既定の見た目のままにする。
@@ -45,18 +49,24 @@
     confirmButton.textContent = '設定しています…';
     setResponse('設定を確認しています。', [], false);
     YakuCommon.post('/api/desktop/preferences', {
-      startup_enabled: !!startupInput.checked,
+      startup_enabled: false,
       desktop_shortcut: !!desktopInput.checked
     }).then(function (data) {
       if (!data || data.available === false) throw new Error((data && data.message) || 'この環境では起動設定を変更できません。');
-      startupInput.checked = !!data.startup_enabled;
       desktopInput.checked = !!data.desktop_shortcut;
       YakuCommon.notifyDesktopShell('desktop-preferences-changed');
       setResponse(data.message || '起動とショートカットの設定を保存しました。', data.warnings || [], false);
-      startupInput.disabled = true;
       desktopInput.disabled = true;
       confirmButton.hidden = true;
       responseBox.focus();
+      /* 初回の主ボタンは「始める」と書いてあるので、保存完了後は本物の翻訳画面へ
+         進める。以前は同じ説明ページに残り、下端の「開始画面へ」をもう一度押さないと
+         始められず、実画面上の案内も再生されなかった。再訪時の設定変更では勝手に
+         画面を移動しない。 */
+      if (firstRun) {
+        setResponse('設定を保存しました。翻訳画面を開きます。', data.warnings || [], false);
+        window.setTimeout(function () { window.location.assign('/cat?tour=1'); }, 450);
+      }
     }).catch(function (error) {
       applying = false;
       confirmButton.disabled = false;
@@ -73,8 +83,9 @@
     form = document.getElementById('tutorial-preferences');
     confirmButton = document.getElementById('tutorial-confirm');
     responseBox = document.getElementById('tutorial-setting-response');
-    startupInput = document.getElementById('startup-enabled');
     desktopInput = document.getElementById('desktop-shortcut');
+    replayLink = document.getElementById('tutorial-replay');
+    homeLink = document.getElementById('tutorial-home');
     if (!form) return;
     form.addEventListener('submit', applyPreferences);
     loadPreferences();

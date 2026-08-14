@@ -36,7 +36,7 @@
     <header class="hero">
       <div class="brand-block"><a class="brand home-link" href="/">YakuLingo</a><span class="version-label">翻訳</span></div>
       <div class="header-actions">
-                <div class="status-block"><div id="copilot-status" class="status" aria-live="polite"><span class="status-dot warn"></span><span>準備しています</span></div><p id="copilot-status-detail" class="status-detail" role="status" aria-live="polite" hidden></p></div>
+                <div class="status-block"><div id="copilot-status" class="status" aria-live="polite"><span class="status-dot warn"></span><span>準備しています</span></div><p id="copilot-status-detail" class="status-detail" role="status" aria-live="polite" hidden></p><button id="copilot-window-open" type="button" class="link-button">Copilot画面を開く</button></div>
       </div>
     </header>
 
@@ -59,13 +59,13 @@
       <div id="cat-status" class="cat-status muted" role="status" aria-live="polite" tabindex="-1"></div>
       <div id="cat-job" class="result-target" aria-live="polite"></div>
 
-      <!-- 訳し方は一つになった（2026-08-13、利用者判断「保存しない約束は要らない」）。
-           貼り付けも取り込みも同じ経路で作業を作るので、上の帯で行き来する2つの
-           仕事は無くなった。ここに並ぶのは「何から始めるか」の入口だけである。
-           一時は帯を置いていたが、選ぶ相手が消えたので外した。
-           資料を開いているあいだの入口は、資料名（F7）から開く一覧が持つ。 -->
+      <!-- 貼り付けは、短いメールならその場で訳して終えられる。あとで続けたい文章だけ
+           確認作業として保存する。Word・Excel全体は下の資料入口から始める。 -->
       <section id="cat-instant" class="cat-instant" aria-labelledby="cat-start-title">
-        <h2 id="cat-start-title">訳したい文章を貼り付ける</h2>
+        <div class="start-section-heading">
+          <span class="start-kind">短い文章</span>
+          <div><h2 id="cat-start-title">メールやチャットをすぐ訳す</h2><p>文章を貼り付けると、通常はこの画面に訳文を表示します。保存せず、そのままコピーして使えます。</p></div>
+        </div>
         <form id="quick-form" class="quick-inline">
           <p id="quick-selection-note" class="quick-selection-note" role="status" aria-live="polite" hidden></p>
           <!-- 選んだ範囲だけでは、Word・Excelの体裁を保った社内確認用ファイルは
@@ -85,26 +85,21 @@
             <button type="button" id="quick-long-handoff">1文ずつ確認しながら進める</button>
           </div>
           <div id="quick-direction-summary" class="direction-summary" hidden>
-            <strong id="quick-direction-label"></strong>
-            <button id="quick-direction-change" type="button" class="secondary-button compact">訳す言語を変える</button>
+            <label for="quick-direction-select">翻訳先</label>
+            <select id="quick-direction-select" aria-label="翻訳先">
+              <option id="quick-direction-pending" value="">確認中…</option>
+              <option value="to_jp">日本語</option>
+              <option value="to_en">英語</option>
+            </select>
           </div>
-          <fieldset id="quick-direction-choice" class="direction-choice" hidden>
-            <legend>どちらに訳しますか？</legend>
-            <p id="quick-direction-help" class="muted">日本語と外国語が混ざっているため、自動で決められません。</p>
-            <div class="direction-choice-grid">
-              <button type="button" class="secondary-button direction-choice-button" data-quick-direction="to_en"><strong>英語に訳す</strong><span>日本語の文章を外国人向けにします</span></button>
-              <button type="button" class="secondary-button direction-choice-button" data-quick-direction="to_jp"><strong>日本語に訳す</strong><span>外国語の内容を日本語で確認します</span></button>
-            </div>
-          </fieldset>
-          <div class="command-bar"><button id="quick-submit" type="submit" disabled>文章を入力してください</button><!-- 2026-08-13、利用者判断「保存しない約束は要らない」。貼り付けた文章も資料と
-     同じ扱いになったので、逆のことを書く。登録した訳語も過去訳も効くようになった。 -->
-<span class="command-bar-note">1行ずつ確認する画面に移ります。保存されるので、あとから続けられます。</span></div>
+          <div class="command-bar"><button id="quick-submit" type="submit" disabled>文章を入力してください</button>
+<span id="quick-submit-note" class="command-bar-note">この画面に訳を出します。作業や翻訳メモリには残しません。</span></div>
           <!-- 送る前の約束と、金額の書き方。押す前に読む必要はないが、押したあとの
                結果を説明するものなので、ボタンの下に小さく置く。以前は入力欄と
                ボタンの間に太い枠で挟まっていて、入力とその実行を分断していた。 -->
           <div class="quick-fineprint">
             <p class="quick-fineprint-line">金額などの数値は、Copilotへ送る前に自動で伏せます。社名・人名・文章はそのまま送信されます。資料は訳す文だけを送り、ファイルそのものは送りません。</p>
-            <p class="quick-fineprint-line">
+            <p id="quick-amount-setting" class="quick-fineprint-line" hidden>
               <label for="amount-notation">英訳の金額</label>
               <select id="amount-notation">
                 <option value="oku">oku（1兆3,150億円 → 13,150 oku）</option>
@@ -113,19 +108,30 @@
               <span id="amount-notation-status" role="status" aria-live="polite"></span>
             </p>
           </div>
+          <input id="quick-save-work" type="checkbox" hidden aria-hidden="true" tabindex="-1">
         </form>
 
         <section id="quick-job" class="result-target" aria-live="polite"></section>
-        <!-- 訳案を1枚返すカード（コピー・この訳案を直す・1文ずつ確認して保存する）は
-             2026-08-13 に外した。貼り付けた文章も資料と同じ確認画面へ移るので、
-             出す場面が無くなった。訳文・伏せた数値・直す操作は、すべて確認画面が持つ。 -->
+        <!-- 保存しない訳案はここに出る。確認作業に保存したときだけ作業画面へ移る。 -->
       </section>
 
-      <!-- 見出しは目には出さない。すぐ下の「Word・Excelを取り込む」が同じことを
-           言うので、2回書かない（2026-08-12「見出しが言っていることを、本文で
-           言い直さない」）。読み上げには sr-only の見出しを結び付けてある。 -->
+      <!-- 貼り付けた文章の保存とファイル取り込みは、どちらも同じ確認画面へ進む。
+           二つを離して置くと別機能に見えるため、確認画面への二つの入口としてまとめる。 -->
       <section id="cat-picker" class="translate-form cat-picker" aria-labelledby="cat-docs-entry-title">
-        <h2 id="cat-docs-entry-title" class="sr-only">資料から始める</h2>
+        <div class="review-entry-heading">
+          <span class="start-kind">確認しながら訳す</span>
+          <div><h2 id="cat-docs-entry-title">1文ずつ確認する作業画面</h2><p>文章またはWord・Excelを開き、原文を見ながら訳文を直せます。途中まで自動保存され、あとから再開できます。</p></div>
+        </div>
+        <div class="review-entry-grid">
+          <div class="review-entry-option review-entry-option-text">
+            <span><strong>上に貼り付けた文章</strong><small>短い文章も、保存して確認したいときはこちらです。</small></span>
+            <button id="quick-save-submit" type="submit" form="quick-form" class="secondary-button" disabled>この文章を保存して確認画面へ</button>
+          </div>
+          <div class="review-entry-option review-entry-option-file">
+            <span><strong>Word・Excelファイル</strong><small>ファイル全体を取り込み、1文ずつ確認します。</small></span>
+            <button type="button" id="cat-open-file-entry" class="secondary-button">ファイルを選んで確認画面へ<input id="cat-file-input" type="file" accept=".docx,.xlsx,.xlsm" hidden></button>
+          </div>
+        </div>
 
         <!-- 「保存する／しない」で入口を分けない。初見の人は、訳案を見る前に
              1文ずつ直したいかを決められない。まず訳し、訳案の下の
@@ -140,14 +146,8 @@
              「訳す」は文章を入れるまで押せない灰色だったので、押せるほうの
              取り込みが主役に見えていた（2026-08-12、実機 1380px で確認）。 -->
         <div class="entry-secondary">
-          <div class="entry-actions cat-entry-actions">
-            <!-- 押したらファイル選択がそのまま開く（2026-08-13、利用者の指摘
-                 「押しても下にちょっとスクロールされるだけで何も起こらない。
-                 さらにその下に Word・Excel を選ぶがあるので訳が分からなくなっている」）。
-                 以前は下に欄が開くだけで、そこにもう一度「選ぶ」があり、さらに
-                 「取り込んで確認を始める」を押す必要があった。押す回数は3回。 -->
-            <button type="button" id="cat-open-file-entry" class="secondary-button">Word・Excelを取り込む<input id="cat-file-input" type="file" accept=".docx,.xlsx,.xlsm" hidden></button>
-          </div>
+          <!-- ファイル選択は上の用途説明と同じ行に置く。押したら選択画面をそのまま
+               開き、選んだ時点で作業画面へ進む。 -->
           <!-- 資料の側にも同じことを書く（2026-08-13）。貼り付けの側にだけ書いてあり、
                資料を選んだ人は、外へ送ることも数値を伏せることも読まないまま
                訳すボタンを押せてしまっていた（実測: この面の可視テキストに
@@ -155,13 +155,14 @@
           
           <details class="entry-more"><summary>そのほかの始め方</summary><div class="entry-more-actions">
             <button type="button" class="secondary-button" data-cat-source-show="prior">前回の資料をもとに、今回の分だけ訳す</button>
-            <button type="button" id="cat-open-align-entry" class="secondary-button">過去の日本語と英語の資料を読み込む</button>
+            <button type="button" id="cat-open-align-entry" class="secondary-button">過去の日本語版・英語版PDFを読み込む</button>
             <button type="button" class="secondary-button" data-cat-source-show="file">ファイルの保存場所を入力して取り込む</button>
           </div></details>
           <!-- 保存した作業は溜まる。実機で10件あり、この一覧だけで画面の44%
                （685px / 全体1555px）を占めていた。既定は直近3件だけ出す。 -->
           <div id="cat-resume" class="cat-resume" hidden>
-            <h3>保存した作業</h3>
+            <h3>続きの作業を開く</h3>
+            <p class="cat-resume-help">前回の確認画面を、保存したところから再開します。</p>
             <div id="cat-resume-list"></div>
             <button type="button" id="cat-resume-more" class="link-button" hidden aria-expanded="false"></button>
           </div>
@@ -191,7 +192,9 @@
              市販ツールも memoQ・Trados が PDF での突き合わせを公式に認めている。
              PDF の解析はこの画面の中（WebAssembly）で行い、ファイルは送らない。 -->
         <div id="cat-source-align" class="cat-start-panel" hidden>
-          <p class="muted">同じ資料の日本語版と英語版を読み込みます。取り込んだ訳は、次の資料から候補として出ます。</p>
+          <h3>過去の訳を登録する</h3>
+          <p class="muted">同じ資料の日本語版と英語版を読み込み、対応する文を確認します。確認済みにした訳だけが、次の資料から候補として出ます。</p>
+          <p class="muted">PDFファイル自体は送らず、選んだページから取り出した日本語と英語の文をCopilotへ送って対応を探します。</p>
           <div class="align-file-row">
             <label class="field-label" for="cat-align-source-file">日本語版のPDF<input id="cat-align-source-file" type="file" accept=".pdf"></label>
             <label class="field-label" for="cat-align-target-file">英語版のPDF<input id="cat-align-target-file" type="file" accept=".pdf"></label>
@@ -220,7 +223,7 @@
             <label class="field-label" for="cat-align-target">英語版<textarea id="cat-align-target" rows="5"></textarea></label>
           </details>
           <label class="field-label" for="cat-align-name">資料名<input id="cat-align-name" type="text"></label>
-          <button type="button" id="cat-align-open">読み込んで突き合わせる</button>
+          <button type="button" id="cat-align-open" disabled>日本語版と英語版を選んでください</button>
         </div>
         <fieldset id="cat-direction-choice" class="direction-choice" hidden><legend>どちらに訳しますか？</legend><p class="muted">入力内容だけでは自動で決められません。</p><div class="direction-choice-grid"><button type="button" class="secondary-button" data-cat-direction="to_en">英語に訳す</button><button type="button" class="secondary-button" data-cat-direction="to_jp">日本語に訳す</button></div></fieldset>
 
@@ -247,7 +250,7 @@
                ここは1度に1つの資料しか開かないので、左上の資料名を押すと一覧が出る形に
                した。押しても作業画面は畳まない。 -->
           <div class="cat-toolbar-document">
-            <span class="cat-current-kicker">現在の確認作業</span>
+            <span id="cat-current-kicker" class="cat-current-kicker">現在の確認作業</span>
             <button type="button" id="cat-doc-switch" class="cat-doc-switch" aria-haspopup="dialog" title="ほかの資料に切り替える（F7）" aria-keyshortcuts="F7">
               <strong id="cat-toolbar-title"></strong>
               <span id="cat-toolbar-direction" class="muted"></span>
@@ -328,9 +331,16 @@
           </aside>
 
           <section id="cat-editor-pane" class="cat-editor-pane" aria-label="原文と訳文の確認">
+            <section id="cat-align-review-guide" class="cat-align-review-guide" aria-labelledby="cat-align-review-title" hidden>
+              <div>
+                <strong id="cat-align-review-title">過去訳の対応候補を確認します</strong>
+                <p>自動で作った対応は推測です。日本語と英語を見比べ、違えば英語を直してから「確認済みにする」を押してください。確認済みの行だけが、次の資料の候補になります。</p>
+              </div>
+              <button id="cat-align-next-document" type="button" class="secondary-button">次に、今回のWord・Excelを取り込む</button>
+            </section>
             <div id="cat-complete-state" class="cat-complete-state" hidden><strong>すべての行を確認し終えました</strong></div>
             <details id="cat-promotion-reference" class="cat-promotion-reference" hidden><summary>行に割り当てできなかった訳案</summary><p class="muted">原文の文の数と、訳案の文の数が合わなかったため、行ごとには入れていません。ここから必要な部分を選んで、各行の訳文へ手で写してください。</p><p id="cat-promotion-reference-text" class="cat-promotion-reference-text"></p></details><div id="cat-empty-state" class="cat-empty-state" hidden>この絞り込みに当てはまる行はありません。左の「すべて」を押すと、全部の行が表示されます。</div>
-            <div id="cat-grid-wrap" class="cat-grid-wrap"><table class="cat-grid"><caption class="sr-only">原文と訳案を1行ずつ確認する一覧</caption><thead><tr><th class="cat-col-no">#</th><th class="cat-col-loc">場所</th><th>原文</th><th>訳文</th></tr></thead><tbody id="cat-grid-body"></tbody></table></div>
+            <div id="cat-grid-wrap" class="cat-grid-wrap"><table class="cat-grid"><caption class="sr-only">原文と訳案を1行ずつ確認する一覧</caption><thead><tr><th class="cat-col-no">#</th><th class="cat-col-loc">場所</th><th id="cat-source-heading">原文</th><th id="cat-target-heading">訳文</th></tr></thead><tbody id="cat-grid-body"></tbody></table></div>
           </section>
 
           <aside id="cat-inspector-pane" class="cat-inspector-pane" aria-label="選択中の行の情報">
@@ -403,7 +413,7 @@
     <h2>点検一覧</h2>
     <p id="cat-qa-summary" class="muted" role="status"></p>
     <div id="cat-qa-list" class="cat-qa-list"></div>
-    <p class="cat-human-review-note">自動で見ているのは、空欄と数字だけです。</p>
+    <p class="cat-human-review-note">自動で見ているのは、空欄と数字だけです。数字は確認済みにするときに点検します。</p>
     <div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>閉じる</button></div>
   </form></dialog>
   <dialog id="cat-delete-dialog" class="confirm-dialog"><form method="dialog"><h2>この作業を削除しますか</h2><p><strong id="cat-delete-name">この作業</strong> の途中保存を削除します。この操作は取り消せません。元のファイルは削除しません。</p><div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>削除しない</button><button value="delete" class="danger-button">削除する</button></div></form></dialog>

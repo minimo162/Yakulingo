@@ -64,11 +64,12 @@ function New-YakuSegmentCell {
         [Parameter(Mandatory=$true)][int]$Row,
         [Parameter(Mandatory=$true)][int]$Column,
         [AllowNull()][string]$Text,
-        [bool]$IsText = $true
+        [bool]$IsText = $true,
+        [bool]$IsMerged = $false
     )
     return [pscustomobject]@{
         Row = [int]$Row; Column = [int]$Column
-        Text = [string]$Text; IsText = [bool]$IsText
+        Text = [string]$Text; IsText = [bool]$IsText; IsMerged = [bool]$IsMerged
     }
 }
 
@@ -133,9 +134,12 @@ function Group-YakuCellsIntoSegments {
             $curAlone   = ($rowCount.ContainsKey([int]$c.Row) -and ([int]$rowCount[[int]$c.Row] -eq 1))
             $bothAlone  = ($prevAlone -and $curAlone)
             $bothText   = ([bool]$prev.IsText -and [bool]$c.IsText)
+            # 結合セルは見出しやサブタイトルとして独立して置かれることが多い。
+            # 別々の結合行を自動で繋ぐと、訳文を文字数で再分配してレイアウトも意味も崩れる。
+            $neitherMerged = (-not [bool]$prev.IsMerged -and -not [bool]$c.IsMerged)
             $open       = (-not (Test-YakuCellEndsSentence -Text ([string]$prev.Text)))
             $notNewItem = (-not (Test-YakuCellStartsNewItem -Text ([string]$c.Text)))
-            $join = ($sameColumn -and $nextRow -and $bothAlone -and $bothText -and $open -and $notNewItem)
+            $join = ($sameColumn -and $nextRow -and $bothAlone -and $bothText -and $neitherMerged -and $open -and $notNewItem)
         }
         if (-not $join) { Flush -Buffer $current -Sink $segments; $current = New-Object System.Collections.Generic.List[object] }
         [void]$current.Add($c)
@@ -279,7 +283,9 @@ function Group-YakuTextBlocksIntoSegments {
             continue
         }
         if (-not $cellsBySheet.ContainsKey($sheet)) { $cellsBySheet[$sheet] = New-Object System.Collections.Generic.List[object] }
-        $entry = New-YakuSegmentCell -Row ([int]$b.Meta.Row) -Column ([int]$b.Meta.Col) -Text ([string]$b.Text) -IsText $true
+        $isMerged = $false
+        try { $isMerged = [bool]$b.Meta.Merged } catch { $isMerged = $false }
+        $entry = New-YakuSegmentCell -Row ([int]$b.Meta.Row) -Column ([int]$b.Meta.Col) -Text ([string]$b.Text) -IsText $true -IsMerged $isMerged
         $entry | Add-Member -NotePropertyName 'BlockId' -NotePropertyValue ([string]$b.Id) -Force
         # A1 番地。どのセルを繋いだかを画面で見せるために持つ。
         $a1 = ''

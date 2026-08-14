@@ -95,13 +95,10 @@ Check-YakuDual ($catPage -match 'id="cat-doc-dialog-paste"') 'a new paste can st
 Check-YakuDual ($catPage -match 'id="cat-workspace"[^>]*\shidden') 'the review workspace stays hidden until a document is open'
 Check-YakuDual ($catClient -notmatch 'hideInstant' -and $catClient -notmatch 'yaku-instant-close') 'the swap between the paste box and the picker is gone'
 Check-YakuDual ($catClient -match "setView\('start'\)" -and $catClient -match "setView\('workspace'\)") 'the screen names only the two states it still has'
-# 2026-08-13 に利用者判断で変更（「保存しない約束は要らない」）。
-# 貼り付けた文章と資料を別の経路にしていたのをやめ、貼り付けも資料と同じ
-# /api/cat/open で作業を作る。これで登録した訳語・過去訳・数値の点検が
-# 貼り付けた文章にも効く。以前は「片方がもう片方の劣化版に見える」原因だった。
-# 守るべきものは「2つの経路が混ざらないこと」ではなく「入口が1つであること」に変わった。
-Check-YakuDual ($quickClient -match '/api/cat/open') '貼り付けた文章も資料と同じ経路で作業を作る'
-Check-YakuDual ($quickClient -notmatch "post\('/api/quick/jobs'") '保存しない一時経路はもう使わない'
+# 短いメールは保存しない訳、あとで続ける文章は確認作業へ進む。同じ貼り付け欄で
+# 明示的に選び、既定は保存しない。
+Check-YakuDual ($quickClient -match "post\('/api/quick/jobs'" -and $quickClient -match '/api/cat/open') '貼り付け欄は保存しない訳と確認作業を明示して分ける'
+Check-YakuDual ($catPage -match 'id="quick-save-work"' -and $catPage -match '作業や翻訳メモリには残しません') '保存の有無を送る前に読める'
 Check-YakuDual ($catClient -notmatch '/api/quick/') '確認画面は貼り付け側のAPIを呼ばない'
 
 Write-Host 'Load production helpers for dynamic contracts' -ForegroundColor Cyan
@@ -137,7 +134,7 @@ Check-YakuDual ([bool]$noLanguage.RequiresConfirmation -and [string]::IsNullOrWh
 # 保存も用語集も過去訳も、資料と同じに効く。残す不変条件は「一時の店を持たない」。
 Check-YakuDual (-not (Test-Path -LiteralPath (Join-Path $srcRoot 'QuickArtifact.ps1'))) 'no ephemeral artifact store is left behind'
 Check-YakuDual ($server -notmatch 'QuickArtifact' -and $server -notmatch "path -eq '/api/cat/promote'") 'the server keeps no route that can only feed the removed store'
-Check-YakuDual ($server -match "\[ValidateSet\('text','revise','shorten','cat'\)\]\[string\]\`$Kind") 'no job kind exists that nothing can start'
+Check-YakuDual ($server -match "\[ValidateSet\('text','quick','revise','shorten','cat'\)\]\[string\]\`$Kind" -and $server -match "-Kind 'quick' -CachePolicy 'none' -ReferencePolicy 'none'") 'the quick job kind is reachable and explicitly disables stored reuse'
 
 Write-Host 'Reuse in CAT stays opt-in' -ForegroundColor Cyan
 Check-YakuDual (-not (Test-Path -LiteralPath (Join-Path (Join-Path (Join-Path $root 'www') 'assets') 'app.js')) -and $rendererSource -notmatch 'data-yaku-to-cat|data-yaku-shorten') 'legacy shared UI and DOM/base64 handoff are removed'

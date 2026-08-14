@@ -9,7 +9,6 @@ Microsoft 365 Copilot の画面を Edge DevTools Protocol（CDP）で操作し�
 ```
 .
 ├── YakuLingo起動.cmd      # 利用者が起動するランチャー。bootstrap.ps1 を呼ぶ
-├── YakuLingo起動.vbs      # .cmd へ転送する互換シム（VBScript廃止予定のため将来削除）
 ├── bootstrap.ps1          # 配布物をローカルへ複製・検証してから起動する
 ├── アップロード用フォルダ作成.cmd  # 共有フォルダへ上げる用のフォルダを作る（管理者用）
 ├── New-YakuUploadFolder.ps1        # 同上の本体。作業ツリーは変更しない
@@ -18,7 +17,6 @@ Microsoft 365 Copilot の画面を Edge DevTools Protocol（CDP）で操作し�
 ├── _docs/                 # 修正指示書・実装記録（バージョン横断で集約）
 └── V91.61/                # 現行版（既定のアップロード対象）
     ├── YakuLingo起動.cmd  # 保守用。共有フォルダ上で直接起動する
-    ├── YakuLingo起動.vbs
     └── app/
 ```
 
@@ -52,9 +50,9 @@ Microsoft 365 Copilot の画面を Edge DevTools Protocol（CDP）で操作し�
 ## 起動
 
 1. ルートの `YakuLingo起動.cmd` をダブルクリックします。
-2. Edge で Microsoft 365 Copilot へサインインします。
-3. 画面右上が Ready になったら翻訳できます。
-4. 停止は起動中の PowerShell 画面で `Ctrl+C` を押します。
+2. PowerShellサーバーが起動し、YakuLingoが普段のEdgeの通常タブで開きます。独自EXEとWebView2は使いません。
+3. 画面右上が「Copilot：準備完了」になったら翻訳できます。サインインを求められた場合は「Copilot画面を開く」を押します。
+4. YakuLingoのタブを閉じると、PowerShellサーバーとYakuLingo専用Copilot Edgeを含めて完全に終了します。確認は翻訳中だけ表示され、ほかのEdgeタブは閉じません。
 
 初回起動時、`bootstrap.ps1` が現行版を `%LOCALAPPDATA%\YakuLingo\versions\<版>-<manifestハッシュ>` へ複製し、`manifest.json` で全ファイルの SHA-256 を照合してからローカルで起動します。以降アプリは共有フォルダを参照しないため、**利用者が作業中でも共有フォルダのバージョンを更新できます**（反映は次回起動時）。共有フォルダへ到達できないときは導入済みのローカル版で起動します。
 

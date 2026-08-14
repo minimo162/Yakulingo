@@ -36,6 +36,18 @@ function Assert-YakuBootstrapThrows {
     try { & $Action | Out-Null } catch { $caught = [string]$_.Exception.Message }
     Assert-YakuBootstrap (-not [string]::IsNullOrWhiteSpace($caught) -and $caught -match $Pattern) $Message
 }
+function Copy-YakuPublishedTree {
+    param([Parameter(Mandatory=$true)][string]$Source, [Parameter(Mandatory=$true)][string]$Destination)
+    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    foreach ($file in @(Get-ChildItem -LiteralPath $Source -Recurse -File -Force)) {
+        $relative = $file.FullName.Substring($Source.Length).TrimStart([char[]]@('\','/')).Replace('\','/')
+        if ($relative -match '(?i)^app/experiments(/|$)') { continue }
+        $target = Join-Path $Destination $relative.Replace('/', '\')
+        $parent = Split-Path -Parent $target
+        if (-not (Test-Path -LiteralPath $parent -PathType Container)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+        Copy-Item -LiteralPath $file.FullName -Destination $target -Force
+    }
+}
 
 $versionName = Split-Path -Leaf $VersionRoot
 $sandbox = Join-Path ([IO.Path]::GetTempPath()) ('Yaku-bootstrap-' + [guid]::NewGuid().ToString('N'))
@@ -43,7 +55,7 @@ $shared = Join-Path $sandbox 'shared'
 $local = Join-Path $sandbox 'local'
 try {
     New-Item -ItemType Directory -Path $shared -Force | Out-Null
-    Copy-Item -LiteralPath $VersionRoot -Destination (Join-Path $shared $versionName) -Recurse -Force
+    Copy-YakuPublishedTree -Source $VersionRoot -Destination (Join-Path $shared $versionName)
     [IO.File]::WriteAllText((Join-Path $shared 'current.txt'), ($versionName + "`r`n"), (New-Object Text.UTF8Encoding($true)))
     $sharedVersion = Join-Path $shared $versionName
     & (Join-Path $sharedVersion 'app\tools\New-YakuPackage.ps1') -SourceRoot $sharedVersion -OutputPath (Join-Path $sandbox 'pkg.zip') -BuildId $versionName | Out-Null

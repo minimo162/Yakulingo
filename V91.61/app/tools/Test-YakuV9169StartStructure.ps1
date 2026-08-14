@@ -58,17 +58,12 @@ Check-YakuTab (-not $pickerFragment.Substring(0, $pickerEnd).Contains('id="cat-i
 # 外に居るので、picker の hidden では消えない。view で消す。
 Check-YakuTab ($css -match 'body\[data-cat-view="workspace"\] #cat-instant \{ display: none; \}') '確認作業のあいだは貼り付け欄を出さない'
 
-# 訳案を1枚返すカードは外した（2026-08-13）。Test-YakuV9164QuickArtifact.ps1 が
-# 見ていたもののうち、廃止に依らないものだけをここへ引き取る。
-#   - 押す前に、移る先と保存されることが書いてある
-#   - 「登録した訳語も使いません」のような、もう嘘になった断りを残さない
-#   - /quick と /cat は同じ1つのサーバの後ろにある
+# 保存しない訳案は quick-job に出し、保存するときだけ確認作業へ移る。
 $serverText = Get-Content -LiteralPath (Join-Path $root 'src\Server.ps1') -Raw -Encoding UTF8
 $quickJs = Get-Content -LiteralPath (Join-Path $root 'www\assets\quick.js') -Raw -Encoding UTF8
-Check-YakuTab ($html -match '1行ずつ確認する画面に移ります' -and $html -match '保存される') '移る先と保存されることを押す前に書く'
-Check-YakuTab ($html -notmatch '登録した訳語も使いません') '効かないという古い断りを残さない'
+Check-YakuTab ($html -match '作業や翻訳メモリには残しません' -and $html -match '確認作業として保存する') '保存するかを押す前に書く'
 Check-YakuTab ($serverText -match "path -eq '/quick'" -and $serverText -match "path -eq '/cat'") '/quick と /cat は同じサーバの後ろにある'
-Check-YakuTab ($quickJs -notmatch 'quick-result' -and $html -notmatch 'id="quick-result"') '訳案カードの残骸を置かない'
+Check-YakuTab ($quickJs -match '/api/quick/jobs' -and $html -notmatch 'id="quick-result"') '保存しない訳案は専用カード状態を増やさず quick-job に出す'
 
 # 箱を増やさない（2026-08-12 の決定）
 Check-YakuTab ($html -notmatch 'id="cat-instant" class="cat-instant translate-form"') 'その場で訳すにカードの器を付けない'
@@ -107,9 +102,11 @@ Check-YakuTab ($js -match "el\('cat-switch-project'\)[\s\S]{0,200}?openDocDialog
 # 幅で条件を分ける。実測 2026-08-13:
 #   1380px 既定は閉じる（1列 412.6px）。開いても 323.8px で 321px を下回らない
 #   1920px 既定で開く（1列 501.7px。1380px で閉じているときの 421px より広い）
-# 見出しは目には出さない（すぐ下に「ファイルを選ぶ」ボタンがあり、語が重なる）。
-# ただし読み上げには要る。帯を外したので、帯のラベルの代わりを sr-only で置く。
-Check-YakuTab ($html -match 'id="cat-docs-entry-title" class="sr-only"') '読み上げ用の見出しがある'
+# 短文はこの画面、文書は作業画面へ進む。二つを押す前に区別できる見出しを出す。
+Check-YakuTab ($html -match 'id="cat-start-title">メールやチャットをすぐ訳す') '短文はこの画面で訳す入口だと分かる'
+Check-YakuTab ($html -match 'id="cat-docs-entry-title">1文ずつ確認する作業画面') '保存する文章と文書が同じ確認画面へ進むと分かる'
+Check-YakuTab ($html -match '文章またはWord・Excelを開き') '確認画面へ進める二つの材料を押す前に示す'
+Check-YakuTab ($html -match '文章を貼り付けると、通常はこの画面に訳文を表示します') '短文は通常なら同じ画面で完結すると示す'
 Check-YakuTab ($html -match 'id="cat-picker"[^>]*aria-labelledby="cat-docs-entry-title"') '資料側をその見出しに結び付ける'
 Check-YakuTab ($html -match 'id="cat-instant"[^>]*aria-labelledby="cat-start-title"') '貼り付け側も見出しに結び付ける'
 
@@ -121,7 +118,7 @@ Check-YakuTab ($css -match '\.cat-editor-layout\.is-docs-open\.is-inspector-hidd
 Check-YakuTab ($js -match "event\.key === '\['") 'Crowdin と同じ Ctrl\+\[ で開閉する'
 Check-YakuTab ($js -match "localStorage\.setItem\('yaku-cat-docs-open'") '開閉の選択を覚える'
 Check-YakuTab ($js -match 'DOCS_PANE_MIN_WIDTH') '既定で開くのは広い窓だけ'
-# 窓の大きさは起動後に変わる。外枠が資料翻訳で 1240px -> 1760px へ広げるので、
+# 窓の大きさは起動後に変わる。外枠が資料翻訳で最大 1760px へ広げられるので、
 # 起動時の1回だけで決めると、広い窓なのに閉じたままになる（実機で発生）。
 Check-YakuTab ($js -match "addEventListener\('resize'") '窓の大きさが変わったら決め直す'
 Check-YakuTab ($js -match 'function applyDocsPaneDefault') '既定の決め方を1か所に持つ'

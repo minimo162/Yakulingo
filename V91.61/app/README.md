@@ -53,12 +53,12 @@ V91.2では、M365 Copilotの新しい `loading-message` 思考表示と停止�
 
 ## 起動と停止
 
-1. 共有ルートの `YakuLingo起動.cmd` をダブルクリックします（V91.59以降。`.vbs` も転送シムとして動作します）。
-2. EdgeでMicrosoft 365 Copilotへサインインします。
-3. 画面右上がReadyになったら翻訳できます。
-4. 停止は起動中のPowerShell画面で `Ctrl+C` を押します。
+1. 共有ルートの `YakuLingo起動.cmd` をダブルクリックします。起動口はこの1つだけです。
+2. PowerShellサーバーが起動し、YakuLingoが利用者の通常Edgeに1つのタブとして開きます。通常版は独自EXEとWebView2を配布しません。
+3. 画面右上が「Copilot：準備完了」になったら翻訳できます。サインインが必要な場合は、同じ場所の「Copilot画面を開く」を押します。
+4. YakuLingoのタブを閉じると完全に終了します。翻訳中だけ終了確認を表示し、終了時はPowerShellサーバーとYakuLingo専用Copilot Edgeを閉じます。利用者の通常Edgeとほかのタブは閉じません。
 
-二重起動時は新しいサーバーを作らず、既存プロセスのPID・開始時刻・インスタンスIDを確認して既存画面を開きます。
+二重起動時は新しいサーバーを作らず、既存プロセスのPID・開始時刻・インスタンスIDを確認して通常Edgeにタブを追加します。Windowsサインイン時の自動起動と通知領域常駐は行いません。
 
 ## 対応機能
 
@@ -215,7 +215,7 @@ Japanese numeric units are converted deterministically before batching: 億円/�
 - `tools\New-YakuPackage.ps1` refuses to package a tree containing `user_settings*`, `*.bak`, or `*.tmp`.
 - `tools\Test-YakuPackage.ps1` verifies the manifest against the archive: build ID agreement, per-file size and SHA-256, and that no packaged file is missing from or unlisted in the manifest.
 - Packages are now built directly from the manifest file list instead of `Compress-Archive`, so the archive and the manifest always agree (hidden files included).
-- Added `YakuLingo起動.cmd` next to `YakuLingo起動.vbs`. VBScript is being retired by Microsoft, so `.cmd` is the supported launcher; the `.vbs` remains only as a forwarding shim.
+- Replaced the VBScript launcher with `YakuLingo起動.cmd`. Current packages contain only the CMD launcher.
 - The shared root now carries `bootstrap.ps1`, which copies this package to `%LOCALAPPDATA%\YakuLingo\versions\<version>-<manifest hash>`, verifies every file against the manifest, and runs it locally. The shared folder can then be updated while users are working.
 - `tools\Create-Desktop-Shortcut.ps1` targets the shared `.cmd` (via `YAKULINGO_SHARED_ROOT` when available) and uses a local working directory to avoid the cmd.exe UNC warning.
 - Added `tools\Test-YakuBootstrap.ps1` covering install, reuse, update, tamper detection, offline fallback, legacy packages, and a bad `current.txt`.

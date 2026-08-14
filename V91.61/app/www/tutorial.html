@@ -18,7 +18,7 @@
     <header class="tutorial-header">
       <a class="brand tutorial-brand" href="/">YakuLingo</a>
       <div class="tutorial-header-actions">
-        <a class="button secondary-button" href="/cat?tour=1">使い方をもう一度見る</a>
+        <a id="tutorial-replay" class="button secondary-button" href="/cat?tour=1" hidden>使い方をもう一度見る</a>
       </div>
     </header>
 
@@ -31,11 +31,11 @@
         </div>
         <div>
           <dt>送るもの</dt>
-          <dd>入力欄に入れて「訳して確認する」を押した文章と、取り込んだ資料の文だけ。数値は伏せて送り、社名・人名・文章はそのまま送ります。ファイルそのものは送りません。</dd>
+          <dd>入力欄に入れて「日本語に訳す」「英語に訳す」または「この文章を保存して確認画面へ」を押した文章と、取り込んだ資料の文だけ。数値は伏せて送り、社名・人名・文章はそのまま送ります。ファイルそのものは送りません。</dd>
         </div>
         <div>
-          <dt><kbd>Ctrl</kbd>＋<kbd>Alt</kbd>＋<kbd>J</kbd></dt>
-          <dd>選んだ文章を入力欄へ読み込みます。読み込むのは押した時だけです。</dd>
+          <dt>閉じるとき</dt>
+          <dd>右上の×で完全に終了します。翻訳中だけ、閉じてよいか確認します。</dd>
         </div>
         <div>
           <dt>元のファイル</dt>
@@ -45,16 +45,10 @@
     </section>
 
     <section id="settings" aria-labelledby="tutorial-settings-title">
-      <h2 id="tutorial-settings-title">起動とショートカット</h2>
+      <h2 id="tutorial-settings-title">ショートカット</h2>
       <p class="tutorial-lead">押すまで、パソコンの設定は変わりません。</p>
 
       <form id="tutorial-preferences" class="tutorial-preferences">
-        <label class="tutorial-check-row" for="startup-enabled">
-          <!-- 既定はオフ。実測で、これが節約するのは Copilot の準備 4.3〜15秒。
-               代わりに常駐して 850ms ごとの死活確認を回し続ける。 -->
-          <input id="startup-enabled" name="startup_enabled" type="checkbox">
-          <span><strong>Windowsのサインイン時に準備する</strong><small><kbd>Ctrl</kbd>＋<kbd>Alt</kbd>＋<kbd>J</kbd> をすぐ使えます。オフでも、アプリを開けば同じことができます。</small></span>
-        </label>
         <label class="tutorial-check-row" for="desktop-shortcut">
           <input id="desktop-shortcut" name="desktop_shortcut" type="checkbox" checked>
           <span><strong>デスクトップにショートカットを作る</strong></span>
@@ -62,19 +56,19 @@
         <details class="tutorial-detail">
           <summary>押すと何が起きますか</summary>
           <ul>
-            <li>ショートカットを、ご自身のユーザーフォルダの中に作ります。ほかの設定は変えません。</li>
+            <li>ショートカットを、ご自身のユーザーフォルダの中に作ります。Windowsへのサインイン時には自動起動しません。</li>
             <li>スタートメニューには、チェックに関係なく作ります。</li>
             <li>あとから開始画面の「使い方と設定」で変えられます。</li>
           </ul>
         </details>
-        <p class="tutorial-preferences-hint">両方のチェックを外したまま押しても<strong>かまいません</strong>。</p>
+        <p class="tutorial-preferences-hint">チェックを外したまま押しても<strong>かまいません</strong>。</p>
         <div id="tutorial-setting-response" class="tutorial-response" role="status" aria-live="polite" tabindex="-1" hidden></div>
         <button id="tutorial-confirm" type="submit" class="tutorial-confirm">この設定で始める</button>
       </form>
     </section>
 
     <nav class="tutorial-navigation" aria-label="移動">
-      <a id="tutorial-home" class="button secondary-button" href="/">開始画面へ</a>
+      <a id="tutorial-home" class="button secondary-button" href="/" hidden>開始画面へ</a>
     </nav>
   </main>
 </body>

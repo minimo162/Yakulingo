@@ -26,13 +26,20 @@ try {
     $clean = Join-Path $work 'clean'
     New-Item -ItemType Directory -Path (Join-Path $clean 'app\config') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $clean 'app\tools') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $clean 'app\desktop') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $clean 'app\experiments\WebView2Probe\data\profile') -Force | Out-Null
     Copy-Item -LiteralPath $testPackage -Destination (Join-Path $clean 'app\tools\Test-YakuPackage.ps1') -Force
     [IO.File]::WriteAllText((Join-Path $clean 'app\config\build.txt'), "TEST`r`n", $utf8Bom)
     [IO.File]::WriteAllText((Join-Path $clean 'app\empty-state.txt'), "No bundled language data.`r`n", $utf8Bom)
+    [IO.File]::WriteAllText((Join-Path $clean 'app\Start-YakuLingoApp.ps1'), '# test Edge app launcher', $utf8Bom)
+    [IO.File]::WriteAllText((Join-Path $clean 'app\desktop\YakuLingo.exe'), 'development-only desktop shell')
+    [IO.File]::WriteAllText((Join-Path $clean 'app\experiments\WebView2Probe\data\profile\cache.bin'), 'development-only browser profile')
 
     $cleanZip = Join-Path $work 'clean.zip'
     & $newPackage -SourceRoot $clean -OutputPath $cleanZip -BuildId 'TEST'
     Check-YakuPackageBoundary (Test-Path -LiteralPath $cleanZip -PathType Leaf) 'zero-seed package must build and verify'
+    $cleanManifest = Get-Content -LiteralPath (Join-Path $clean 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    Check-YakuPackageBoundary (@($cleanManifest.files | Where-Object { [string]$_.path -match '(?i)^app/(desktop|experiments)(/|$)' }).Count -eq 0) 'desktop EXE, experiments, and browser profiles must not enter the package manifest'
 
     $cases = @(
         @{ Relative='app\glossary.csv'; Content='内部用語,internal term' },

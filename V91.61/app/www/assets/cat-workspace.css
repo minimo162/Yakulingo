@@ -484,6 +484,25 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
   min-width: 0;
 }
 
+/* memoQ / Trados の alignment editor と同じく、既存訳の対応確認を通常の
+   翻訳作業と区別する。自動対応は推測であり、確定前に人が見ることを表の直前で示す。 */
+.cat-align-review-guide {
+  margin: 0 var(--space-2) var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.cat-align-review-guide p { margin: 3px 0 0; color: var(--muted); }
+.cat-align-review-guide button { flex: 0 0 auto; }
+@media (max-width: 760px) {
+  .cat-align-review-guide { align-items: stretch; flex-direction: column; }
+}
+
 .cat-grid-wrap {
   max-height: calc(100dvh - var(--cat-toolbar-h) - 73px);
   background: var(--surface);

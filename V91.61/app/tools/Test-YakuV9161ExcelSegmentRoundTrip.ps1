@@ -108,6 +108,16 @@ Chk ((@($tableSegs | ForEach-Object { [string]$_.Text }) -contains '経常利益
 $naive = @(Group-YakuTextBlocksIntoSegments -Blocks $blocks -RowOccupancy $null)
 Chk ($naive.Count -lt $segments.Count) ('渡さないと表の行まで繋いでしまう（' + $naive.Count + ' セグメント）')
 
+# 独立した結合行は、見出しとサブタイトルの組み合わせであっても繋がない。
+$mergedBlocks = @(
+    [pscustomobject]@{ Id='m1'; Text='第2四半期 営業進捗（社内向け）'; Location='説明, A1'; Meta=[pscustomobject]@{ Kind='cell'; Sheet='説明'; Row=1; Col=1; A1='A1'; Merged=$true } },
+    [pscustomobject]@{ Id='m2'; Text='対象期間：2026年度 第2四半期'; Location='説明, A2'; Meta=[pscustomobject]@{ Kind='cell'; Sheet='説明'; Row=2; Col=1; A1='A2'; Merged=$true } }
+)
+$mergedOcc = @{ '説明' = @{ 1=1; 2=1 } }
+$mergedSegments = @(Group-YakuTextBlocksIntoSegments -Blocks $mergedBlocks -RowOccupancy $mergedOcc)
+Chk ($mergedSegments.Count -eq 2) '連続する結合行の見出しと対象期間は別セグメントのまま'
+Chk (-not [bool]$mergedSegments[0].Joined -and -not [bool]$mergedSegments[1].Joined) '結合行を自動結合しない'
+
 # ------------------------------------------------------------------ 書き戻し
 Write-Host '元のコピーへ書き戻す'
 Copy-Item -LiteralPath $srcPath -Destination $outPath -Force

@@ -749,7 +749,7 @@ function New-YakuCatSegmentView {
 
 function New-YakuCatProject {
     <#
-      Excel を取り込み、セグメントに分ける。訳はまだ付けない。
+      Excel / CSV を取り込み、セグメントに分ける。訳はまだ付けない。
       まず原文だけを並べて見せる、という段取りに合わせている。
     #>
     param(
@@ -766,24 +766,27 @@ function New-YakuCatProject {
         if ($Register) { $script:YakuCatProjects[$wordProject.Id] = $wordProject }
         return $wordProject
     }
-    $extract = Get-YakuExcelTextBlocks -Path $Path -Direction $Direction -Settings $Settings -Sheets $Sheets -ProgressState $ProgressState
+    $kind = Get-YakuSupportedFileKind -Path $Path
+    $extract = Get-YakuFileTextBlocks -Path $Path -Direction $Direction -Settings $Settings -Sheets $Sheets -ProgressState $ProgressState
     $blocks = @($extract.Blocks)
 
     # 行の埋まり具合は実際のシートから数える。翻訳対象だけを数えると
     # 「営業利益 | 1,234」の行が単独に見え、表の行を文章として繋いでしまう。
     $occ = @{}
-    $ctx = New-YakuExcelApplication
-    try {
-        $wb = Open-YakuWorkbookWithManualCalc -Context $ctx -Path $Path -ReadOnly $true
-        try { $occ = Get-YakuExcelRowOccupancy -Workbook $wb } finally {
-            try { $wb.Close($false) | Out-Null } catch {}
-            Release-YakuComObject $wb
+    if ($kind -eq 'excel') {
+        $ctx = New-YakuExcelApplication
+        try {
+            $wb = Open-YakuWorkbookWithManualCalc -Context $ctx -Path $Path -ReadOnly $true
+            try { $occ = Get-YakuExcelRowOccupancy -Workbook $wb } finally {
+                try { $wb.Close($false) | Out-Null } catch {}
+                Release-YakuComObject $wb
+            }
+        } finally {
+            Close-YakuExcelObjects -Workbook $null -Application $ctx.Application `
+                -OldScreenUpdating $ctx.OldScreenUpdating -OldEnableEvents $ctx.OldEnableEvents `
+                -OldDisplayStatusBar $ctx.OldDisplayStatusBar -OldFormatConditionsCalc $ctx.OldFormatConditionsCalc `
+                -OldBackgroundChecking $ctx.OldBackgroundChecking
         }
-    } finally {
-        Close-YakuExcelObjects -Workbook $null -Application $ctx.Application `
-            -OldScreenUpdating $ctx.OldScreenUpdating -OldEnableEvents $ctx.OldEnableEvents `
-            -OldDisplayStatusBar $ctx.OldDisplayStatusBar -OldFormatConditionsCalc $ctx.OldFormatConditionsCalc `
-            -OldBackgroundChecking $ctx.OldBackgroundChecking
     }
 
     $segments = @(Group-YakuTextBlocksIntoSegments -Blocks $blocks -RowOccupancy $occ)
@@ -806,6 +809,10 @@ function New-YakuCatProject {
         Segments  = $segments
         Warnings  = @($extract.Warnings)
         Source    = 'file'
+        # 画面の出力名と再開後の出力方式を、元ファイルの種類から決められるようにする。
+        # Eligibility 側だけ拡張子へfallbackしても、JSONの document_format が空だと
+        # Excelなのに「すべての訳文をコピー」と表示される。
+        DocumentFormat = [IO.Path]::GetExtension($Path).TrimStart('.').ToLowerInvariant()
         CreatedAt = (Get-Date).ToString('s')
     }
     $null = Initialize-YakuCatProjectState -Project $project
@@ -2685,12 +2692,22 @@ function Add-YakuCatTerminologyException {
 
 function Add-YakuCatTranslationMemoryOutboxEvent {
     param([Parameter(Mandatory=$true)]$Project, [Parameter(Mandatory=$true)]$Segment)
+    # PDFの表は、列を再現するための連続空白を文中に持つ。対訳確認の画面では
+    # HTMLが畳むため気づきにくいが、そのままTMへ入れると候補を挿入したtextareaに
+    # 桁合わせの空白まで戻る。公表対訳の突き合わせだけは、文として再利用できる形へ
+    # 空白を1つにする。通常の翻訳は、利用者が入力した空白を変えない。
+    $memorySource = [string]$Segment.Text
+    $memoryTarget = [string]$Segment.Translation
+    if ([string]$Project.Source -eq 'align') {
+        $memorySource = ($memorySource -replace '\s+', ' ').Trim()
+        $memoryTarget = ($memoryTarget -replace '\s+', ' ').Trim()
+    }
     $eventId = Get-YakuCatSourceIntegrityHash -Text ('tm-outbox-v1|' + [string]$Project.Id + '|' + [string]$Segment.SegmentId + '|' + [string]$Project.Revision + '|' + [string]$Segment.SourceIntegrityHash + '|' + (Get-YakuCatSourceIntegrityHash -Text ([string]$Segment.Translation)))
     if (@($Project.TmOutbox | Where-Object { [string]$_.event_id -eq $eventId }).Count -gt 0) { return $eventId }
     $outbox = New-Object System.Collections.Generic.List[object]
     foreach ($event in @($Project.TmOutbox)) { $outbox.Add($event) | Out-Null }
     $outbox.Add([pscustomobject]@{
-        event_id=$eventId; source=[string]$Segment.Text; target=[string]$Segment.Translation
+        event_id=$eventId; source=$memorySource; target=$memoryTarget
         direction=[string]$Project.Direction; origin_project_id=[string]$Project.Id
         origin_file_name=[string]$Project.FileName; origin_segment_id=[string]$Segment.SegmentId
         origin_location=[string]$Segment.Location; origin_page=Get-YakuCatSegmentOriginPage -Project $Project -Segment $Segment

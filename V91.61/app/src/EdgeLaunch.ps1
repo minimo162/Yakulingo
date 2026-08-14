@@ -29,6 +29,103 @@ function Get-YakuEdgePath {
     throw 'Microsoft Edge が見つかりません。Edge をインストールするか、PATH に msedge.exe を追加してください。'
 }
 
+function Initialize-YakuEdgeWindowApi {
+    if ('YakuLingo.EdgeWindowApi' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+namespace YakuLingo {
+    public static class EdgeWindowApi {
+        public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+        [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+        [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+        [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+        [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int command);
+        [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+        public static IntPtr[] FindTopLevelWindows(int[] processIds) {
+            var wanted = new HashSet<int>(processIds ?? new int[0]);
+            var found = new List<IntPtr>();
+            EnumWindows(delegate(IntPtr hWnd, IntPtr _) {
+                uint pid; GetWindowThreadProcessId(hWnd, out pid);
+                if (wanted.Contains((int)pid)) found.Add(hWnd);
+                return true;
+            }, IntPtr.Zero);
+            return found.ToArray();
+        }
+    }
+}
+'@
+}
+
+function Get-YakuDedicatedEdgeProcessIds {
+    param([string]$UserDataDir = (Join-Path (Get-YakuDataDir) 'edge-profile'))
+    $full = [System.IO.Path]::GetFullPath($UserDataDir)
+    try {
+        return [int[]]@(Get-CimInstance Win32_Process -Filter "Name = 'msedge.exe'" -ErrorAction Stop | Where-Object {
+            $_.CommandLine -and $_.CommandLine.IndexOf($full, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+        } | ForEach-Object { [int]$_.ProcessId })
+    } catch {
+        Write-YakuEdgeLaunchLog "Dedicated Edge process enumeration failed. reason=$($_.Exception.Message)" 'WARN'
+        return [int[]]@()
+    }
+}
+
+function Get-YakuEdgeHiddenWindowsPath {
+    return (Join-Path (Get-YakuSubDir 'runtime') 'edge-hidden-windows.json')
+}
+
+function Set-YakuEdgeWindowVisibility {
+    param(
+        [ValidateSet('hidden','foreground')][string]$Mode = 'hidden',
+        [string]$UserDataDir = (Join-Path (Get-YakuDataDir) 'edge-profile')
+    )
+    try {
+        Initialize-YakuEdgeWindowApi
+        $pids = [int[]]@(Get-YakuDedicatedEdgeProcessIds -UserDataDir $UserDataDir)
+        if ($pids.Count -eq 0) { return 0 }
+        $pidSet = New-Object 'System.Collections.Generic.HashSet[int]'
+        foreach ($pidValue in $pids) { $null = $pidSet.Add([int]$pidValue) }
+        $recordPath = Get-YakuEdgeHiddenWindowsPath
+        $changed = 0
+        if ($Mode -eq 'hidden') {
+            $saved = New-Object 'System.Collections.Generic.List[long]'
+            if (Test-Path -LiteralPath $recordPath -PathType Leaf) {
+                try { foreach ($value in @((Get-Content -LiteralPath $recordPath -Raw -Encoding UTF8 | ConvertFrom-Json).handles)) { $saved.Add([long]$value) } } catch {}
+            }
+            foreach ($window in @([YakuLingo.EdgeWindowApi]::FindTopLevelWindows($pids))) {
+                if ($window -eq [IntPtr]::Zero -or -not [YakuLingo.EdgeWindowApi]::IsWindowVisible($window)) { continue }
+                [void][YakuLingo.EdgeWindowApi]::ShowWindowAsync($window, 0) # SW_HIDE removes the taskbar button too.
+                if (-not $saved.Contains([long]$window)) { $saved.Add([long]$window) }
+                $changed++
+            }
+            $record = [ordered]@{ handles=@($saved.ToArray()); saved_at=(Get-Date).ToUniversalTime().ToString('o') }
+            [IO.File]::WriteAllText($recordPath, ($record | ConvertTo-Json -Depth 3), (New-Object Text.UTF8Encoding($true)))
+        } else {
+            $savedHandles = @()
+            if (Test-Path -LiteralPath $recordPath -PathType Leaf) {
+                try { $savedHandles = @((Get-Content -LiteralPath $recordPath -Raw -Encoding UTF8 | ConvertFrom-Json).handles) } catch { $savedHandles = @() }
+            }
+            foreach ($handleValue in $savedHandles) {
+                $window = [IntPtr]([long]$handleValue)
+                if ($window -eq [IntPtr]::Zero) { continue }
+                [uint32]$ownerPid = 0
+                [void][YakuLingo.EdgeWindowApi]::GetWindowThreadProcessId($window, [ref]$ownerPid)
+                if (-not $pidSet.Contains([int]$ownerPid)) { continue }
+                [void][YakuLingo.EdgeWindowApi]::ShowWindowAsync($window, 9) # SW_RESTORE
+                [void][YakuLingo.EdgeWindowApi]::SetForegroundWindow($window)
+                $changed++
+            }
+            Remove-Item -LiteralPath $recordPath -Force -ErrorAction SilentlyContinue
+        }
+        Write-YakuEdgeLaunchLog "Dedicated Edge window visibility changed. mode=$Mode windows=$changed" 'INFO'
+        return $changed
+    } catch {
+        Write-YakuEdgeLaunchLog "Dedicated Edge window visibility change failed. mode=$Mode reason=$($_.Exception.Message)" 'WARN'
+        return 0
+    }
+}
+
 function Get-YakuDevToolsVersion {
     param([int]$Port = 9433, [int]$TimeoutSec = 2)
     return Invoke-RestMethod -UseBasicParsing -Uri "http://127.0.0.1:$Port/json/version" -TimeoutSec $TimeoutSec
@@ -98,7 +195,8 @@ function Get-YakuEdgeLaunchSpec {
     param(
         [Parameter(Mandatory=$true)][int]$Port,
         [Parameter(Mandatory=$true)][string]$Url,
-        [string]$WindowSize = '1280,900'
+        [string]$WindowSize = '1280,900',
+        [string]$DisplayMode = 'background'
     )
     $edge = Get-YakuEdgePath
     $userData = Join-Path (Get-YakuDataDir) 'edge-profile'
@@ -107,7 +205,8 @@ function Get-YakuEdgeLaunchSpec {
     $quotedUrl = '"' + $Url.Replace('"','\"') + '"'
     $window = ConvertTo-YakuEdgeWindowSize -Value $WindowSize
     $windowArgument = if ($window.Enabled) { " --window-size=$($window.Width),$($window.Height)" } else { '' }
-    $arguments = "--remote-debugging-port=$Port --remote-debugging-address=127.0.0.1 --user-data-dir=$quotedProfile --no-first-run --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-features=CalculateNativeWinOcclusion,msEdgeTranslate$windowArgument $quotedUrl"
+    $displayArgument = if ([string]::Equals($DisplayMode, 'foreground', [System.StringComparison]::OrdinalIgnoreCase)) { '' } else { ' --start-minimized' }
+    $arguments = "--remote-debugging-port=$Port --remote-debugging-address=127.0.0.1 --user-data-dir=$quotedProfile --no-first-run --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-features=CalculateNativeWinOcclusion,msEdgeTranslate$windowArgument$displayArgument $quotedUrl"
     return [pscustomobject]@{ EdgePath=$edge; UserDataDir=$userData; Arguments=$arguments; Port=$Port; Url=$Url; WindowSize=$window }
 }
 
@@ -124,6 +223,7 @@ function Stop-YakuCopilotEdgeProfile {
     try { $script:YakuCdpOwnershipCache = $null } catch {}
     try { $script:YakuCopilotTargetCache = $null } catch {}
     try { Remove-YakuCdpOwnershipFileCache } catch {}
+    try { Remove-Item -LiteralPath (Get-YakuEdgeHiddenWindowsPath) -Force -ErrorAction SilentlyContinue } catch {}
     try {
         $targetCachePath = Join-Path (Get-YakuSubDir 'runtime') 'cdp-copilot-target.json'
         if (Test-Path -LiteralPath $targetCachePath -PathType Leaf) { Remove-Item -LiteralPath $targetCachePath -Force -ErrorAction SilentlyContinue }
@@ -190,7 +290,7 @@ function Start-YakuEdgeLaunch {
         [switch]$NoWait,
         [int]$WaitForReadySeconds = 30
     )
-    $spec = Get-YakuEdgeLaunchSpec -Port $Port -Url $Url -WindowSize $WindowSize
+    $spec = Get-YakuEdgeLaunchSpec -Port $Port -Url $Url -WindowSize $WindowSize -DisplayMode $DisplayMode
     $alreadyReachable = $false
     try { $null = Get-YakuDevToolsVersion -Port $Port -TimeoutSec 1; $alreadyReachable = $true } catch { $alreadyReachable = $false }
     if ($alreadyReachable) {
@@ -214,9 +314,10 @@ function Start-YakuEdgeLaunch {
 
     $null = Set-YakuEdgeProfileCleanExit -UserDataDir $spec.UserDataDir
     Write-YakuEdgeLaunchLog "Starting Edge. port=$Port display=$DisplayMode" 'INFO'
-    $process = Start-Process -FilePath $spec.EdgePath -ArgumentList $spec.Arguments -PassThru
+    $startWindowStyle = if ([string]::Equals($DisplayMode, 'foreground', [System.StringComparison]::OrdinalIgnoreCase)) { 'Normal' } else { 'Minimized' }
+    $process = Start-Process -FilePath $spec.EdgePath -ArgumentList $spec.Arguments -WindowStyle $startWindowStyle -PassThru
     $script:YakuEdgeLaunchInProgress = [pscustomobject]@{ Port=$Port; UserDataDir=$spec.UserDataDir; ProcessId=[int]$process.Id; StartedAt=(Get-Date) }
-    if ($spec.WindowSize.Enabled) { $script:YakuEdgeNeedsWindowNormalization = [pscustomobject]@{ Port=$Port; WindowSize=$spec.WindowSize; ProcessId=[int]$process.Id } }
+    if ($startWindowStyle -eq 'Minimized' -or $spec.WindowSize.Enabled) { $script:YakuEdgeNeedsWindowNormalization = [pscustomobject]@{ Port=$Port; WindowSize=$spec.WindowSize; DisplayMode=$DisplayMode; ProcessId=[int]$process.Id } }
     if ($NoWait) {
         return [pscustomobject]@{ Ready=$false; Started=$true; AlreadyReachable=$false; ProcessId=[int]$process.Id; Spec=$spec }
     }
@@ -228,9 +329,9 @@ function Start-YakuEdgeLaunch {
     $null = Stop-YakuCopilotEdgeProfile -UserDataDir $spec.UserDataDir
     Start-Sleep -Seconds 2
     $null = Set-YakuEdgeProfileCleanExit -UserDataDir $spec.UserDataDir
-    $retry = Start-Process -FilePath $spec.EdgePath -ArgumentList $spec.Arguments -PassThru
+    $retry = Start-Process -FilePath $spec.EdgePath -ArgumentList $spec.Arguments -WindowStyle $startWindowStyle -PassThru
     $script:YakuEdgeLaunchInProgress = [pscustomobject]@{ Port=$Port; UserDataDir=$spec.UserDataDir; ProcessId=[int]$retry.Id; StartedAt=(Get-Date) }
-    if ($spec.WindowSize.Enabled) { $script:YakuEdgeNeedsWindowNormalization = [pscustomobject]@{ Port=$Port; WindowSize=$spec.WindowSize; ProcessId=[int]$retry.Id } }
+    if ($startWindowStyle -eq 'Minimized' -or $spec.WindowSize.Enabled) { $script:YakuEdgeNeedsWindowNormalization = [pscustomobject]@{ Port=$Port; WindowSize=$spec.WindowSize; DisplayMode=$DisplayMode; ProcessId=[int]$retry.Id } }
     $ready = Wait-YakuDevTools -Port $Port -TimeoutSeconds $WaitForReadySeconds
     return [pscustomobject]@{ Ready=[bool]$ready; Started=$true; AlreadyReachable=$false; ProcessId=[int]$retry.Id; Spec=$spec }
 }

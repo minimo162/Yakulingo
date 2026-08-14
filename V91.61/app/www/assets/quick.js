@@ -5,8 +5,44 @@
   var busy = false;
   var explicitDirection = '';
   var jobStartedAt = 0;
+  var pollTimer = null;
+  var activeJobId = '';
   /* Ctrl+Alt+J で読んだ選択の出どころ（保存済みのファイルのときだけ入る）。 */
   var sourceFilePath = '';
+  /* 取り込み方法を見比べるために ?import=1 へ移ると、同じ開始画面なのに
+     WebView が読み直される。そこで打ちかけの文章を失わないよう、移動の直前だけ
+     sessionStorage へ退避し、次の画面で一度だけ戻す。作業や翻訳メモリには保存せず、
+     この画面を閉じれば消える。 */
+  var draftStorageKey = 'yaku.quick.draft.before-navigation';
+
+  function preserveDraft() {
+    var input = el('quick-input');
+    if (!input || !input.value) return;
+    try {
+      window.sessionStorage.setItem(draftStorageKey, JSON.stringify({
+        text: input.value,
+        save: saveAsWork(),
+        direction: explicitDirection
+      }));
+    } catch (_) {}
+  }
+
+  function restoreDraft() {
+    var raw = '';
+    try {
+      raw = window.sessionStorage.getItem(draftStorageKey) || '';
+      window.sessionStorage.removeItem(draftStorageKey);
+    } catch (_) { return false; }
+    if (!raw || !el('quick-input') || el('quick-input').value) return false;
+    try {
+      var draft = JSON.parse(raw);
+      if (!draft || !draft.text) return false;
+      el('quick-input').value = String(draft.text);
+      if (el('quick-save-work')) el('quick-save-work').checked = draft.save === true;
+      explicitDirection = draft.direction === 'to_en' || draft.direction === 'to_jp' ? draft.direction : '';
+      return true;
+    } catch (_) { return false; }
+  }
 
   /* 1回の依頼に入る文字数。サーバの設定（max_chars_per_batch_file）そのもので、
      確認作業が分割の境目に使っているのと同じ値。ここを超える文章は、その場で
@@ -62,6 +98,7 @@
   }
 
   function el(id) { return document.getElementById(id); }
+  function saveAsWork() { return !!(el('quick-save-work') && el('quick-save-work').checked); }
 
   /* どちらへ訳すのかを、押す前に出す。以前は「文章を見て、英語か日本語かを
      決めます」としか出ておらず、結局どちらになるのかが分からなかった
@@ -102,38 +139,51 @@
         el('quick-long-text').textContent = '1回で送れるのは ' + limit.toLocaleString('ja-JP') + '字 までです。この文章は ' + length.toLocaleString('ja-JP') + '字 あるので、分けて送りながら1文ずつ確認するほうが確実です。';
       }
     }
-    /* 押す前に、どちらへ訳すのかを出す。以前は利用者が自分で選んだときにしか出ず、
-       既定（自動判定）では何も出ていなかった。実測 2026-08-13: 日本語だけを貼っても
-       日英を混ぜても、方向を示すものは画面に現れなかった。
-       そこで「文章を見て、英語か日本語かを決めます」と決め方を書いたが、結局
-       どちらになるのかが分からない一文だった（同日、利用者の指摘）。いまは
-       サーバの判定へ聞いて、決まった向きそのものを出す。画面側では当てない。 */
+    /* 翻訳先と実行を二つの操作にまとめる。以前は「日本語に訳します」
+       「訳す言語を変える」「すぐ訳す」が横並びで、どれを押すのか迷わせていた。
+       自動判定した翻訳先を select に反映し、実行ボタンにも同じ言語を書く。 */
     el('quick-direction-summary').hidden = !text.trim();
-    el('quick-direction-choice').hidden = true;
-    el('quick-direction-label').textContent = explicitDirection
-      ? (explicitDirection === 'to_en' ? '英語に訳します' : '日本語に訳します')
-      : detectedDirection === 'to_en' ? '英語に訳します'
-      : detectedDirection === 'to_jp' ? '日本語に訳します'
-      : detectedDirection === 'unknown' ? 'どちらに訳すかを選んでください'
-      : '訳す言語を調べています…';
+    var direction = explicitDirection || detectedDirection;
+    var directionSelect = el('quick-direction-select');
+    var pendingOption = el('quick-direction-pending');
+    if (pendingOption) pendingOption.textContent = detectedDirection === 'unknown' ? '選んでください' : '確認中…';
+    if (directionSelect) {
+      directionSelect.value = direction === 'to_en' || direction === 'to_jp' ? direction : '';
+      directionSelect.disabled = !text.trim() || busy;
+    }
+    /* 金額表記は英訳にしか使わない。英文メールを和訳したい利用者に、専門的な
+       設定を常時見せて最初の判断を増やさない。 */
+    var amountSetting = el('quick-amount-setting');
+    if (amountSetting) amountSetting.hidden = direction !== 'to_en';
     var submit = el('quick-submit');
     /* 押せないときは、押せない理由をボタン自身に書く。ラベルが「訳案を作る」のまま
        灰色になると、利用者は理由が分からず押し続けて諦める。 */
     /* 押した先が確認画面になったので、ラベルもそう書く（2026-08-13）。
        「訳案を作る」のままだと、その場に訳文が出ると読めてしまう。 */
     submit.textContent = !text.trim() ? '文章を入力してください'
-      : busy ? '取り込んでいます…'
-      : !ready ? 'いま準備中です（このまま押せば予約します）'
-      : explicitDirection === 'to_en' ? '英語に訳す（確認画面へ）' : explicitDirection === 'to_jp' ? '日本語に訳す（確認画面へ）' : '訳して確認する';
-    submit.disabled = !text.trim() || busy;
+      : busy ? (saveAsWork() ? '確認作業を準備しています…' : (direction === 'to_en' ? '英語に翻訳しています…' : '日本語に翻訳しています…'))
+      : direction !== 'to_en' && direction !== 'to_jp' ? (detectedDirection === 'unknown' ? '翻訳先を選んでください' : '翻訳先を確認中…')
+      : !ready ? (direction === 'to_en' ? '英語に訳す（準備中・予約できます）' : '日本語に訳す（準備中・予約できます）')
+      : direction === 'to_en' ? '英語に訳す'
+      : '日本語に訳す';
+    var submitNote = el('quick-submit-note');
+    if (submitNote) submitNote.textContent = saveAsWork()
+      ? '1行ずつ確認する画面に移ります。保存されるので、あとから続けられます。'
+      : 'この画面に訳を出します。作業や翻訳メモリには残しません。';
+    submit.disabled = !text.trim() || busy || (direction !== 'to_en' && direction !== 'to_jp');
+    var saveSubmit = el('quick-save-submit');
+    if (saveSubmit) {
+      saveSubmit.textContent = busy && saveAsWork() ? '確認作業を準備しています…' : 'この文章を保存して確認画面へ';
+      saveSubmit.disabled = !text.trim() || busy;
+    }
     el('quick-input').readOnly = busy;
   }
 
-  function showChoice(message) {
-    var choice = el('quick-direction-choice');
-    choice.hidden = false;
-    el('quick-direction-help').textContent = message || '日本語と外国語が混ざっているため、自動で決められません。';
-    YakuCommon.focus(choice.querySelector('[data-quick-direction]'));
+  function requireDirection(message) {
+    detectedDirection = 'unknown';
+    update();
+    if (message) el('quick-job').innerHTML = '<div class="alert">' + YakuCommon.escape(message) + '</div>';
+    YakuCommon.focus(el('quick-direction-select'));
   }
 
   /* 待っているあいだ、残り時間（サーバが detail に入れている）と経過時間、
@@ -169,8 +219,45 @@
     YakuCommon.focus(el('quick-job'));
   }
 
+  function pollQuick(jobId, failureCount) {
+    window.clearTimeout(pollTimer);
+    failureCount = Number(failureCount || 0);
+    YakuCommon.json('/api/jobs/' + encodeURIComponent(jobId)).then(function (data) {
+      if (data.mode === 'done' || data.mode === 'completed_with_warnings') {
+        busy = false; activeJobId = ''; jobStartedAt = 0; update();
+        el('quick-job').innerHTML = '<p class="quick-result-note">保存していない訳案です。必要な文をコピーしてお使いください。</p>' + (data.html || '');
+        document.title = '翻訳 - YakuLingo';
+        YakuCommon.focus(el('quick-job'));
+        return;
+      }
+      if (data.mode === 'cancelled') {
+        busy = false; activeJobId = ''; jobStartedAt = 0; update();
+        el('quick-job').innerHTML = '<div class="alert">翻訳をやめました。</div>';
+        return;
+      }
+      if (['error','failed','interrupted'].indexOf(data.mode) >= 0) {
+        busy = false; activeJobId = ''; jobStartedAt = 0; update();
+        showError(data.detail || '翻訳できませんでした。もう一度お試しください。');
+        return;
+      }
+      renderJob(data.label || '訳案を作っています', data.progress || 0, data.detail, jobId);
+      pollTimer = window.setTimeout(function () { pollQuick(jobId, 0); }, 900);
+    }).catch(function () {
+      var next = failureCount + 1;
+      renderJob(next < 3 ? '進み具合を確認しています' : '接続の回復を待っています', 0, '翻訳は続いています。文章は送り直していません。', jobId);
+      pollTimer = window.setTimeout(function () { pollQuick(jobId, next); }, Math.min(5000, 700 * Math.pow(2, Math.min(next, 3))));
+    });
+  }
+
   function submit(event) {
     event.preventDefault();
+    /* チェックボックスで主操作の意味を切り替えない。押したボタンそのものを
+       「この画面ですぐ訳す」か「保存して確認する」かの選択として扱う。方向を
+       聞き直したあとの requestSubmit では submitter が無いので、直前の選択を保つ。 */
+    if (event.submitter && el('quick-save-work')) {
+      el('quick-save-work').checked = event.submitter.id === 'quick-save-submit';
+      update();
+    }
     var text = el('quick-input').value.trim();
     if (!text || busy) return;
     /* 準備が終わる前の Ctrl+Enter を黙って捨てると「壊れている」と受け取られる。
@@ -180,12 +267,20 @@
       el('quick-job').innerHTML = '<div class="alert">Copilotの準備ができ次第、この文章を送ります。そのままお待ちください。</div>';
       return;
     }
-    /* 貼り付けた文章も、資料と同じ扱いにする（2026-08-13、利用者判断
-       「保存しない約束は要らない」）。以前はここから /api/quick/jobs を叩き、
-       保存しない・用語集を使わない・過去訳を引かない一時的な訳案を作っていた。
-       そのため同じ「訳す」が2つあり、片方が劣化版に見えていた。
-       いまは資料と同じ経路（/api/cat/open）で作業を作り、確認画面へ入る。
-       これで登録した訳語も過去訳も数値の点検も、貼り付けた文章に効く。 */
+    if (!saveAsWork()) {
+      busy = true; jobStartedAt = Date.now(); update(); renderJob('翻訳を始めています', 0, '', '');
+      YakuCommon.post('/api/quick/jobs', { input_text: text, direction_intent: explicitDirection || 'auto' }).then(function (data) {
+        if (!data.job_id) throw new Error('翻訳を始められませんでした。1分ほど待ってから、もう一度お試しください。');
+        activeJobId = data.job_id;
+        pollQuick(data.job_id, 0);
+      }).catch(function (error) {
+        busy = false; activeJobId = ''; update();
+        if (error.status === 409 && error.data && error.data.code === 'DIRECTION_CONFIRMATION_REQUIRED') { requireDirection(error.data.error); return; }
+        showError(error.message);
+      });
+      return;
+    }
+    /* あとで続けると選んだ文章だけ、資料と同じ確認作業として保存する。 */
     busy = true; jobStartedAt = Date.now(); update(); renderJob('取り込んでいます', 0, '', '');
     YakuCommon.post('/api/cat/open', { text: text, direction_intent: explicitDirection || 'auto' }).then(function (data) {
       if (!data.id) throw new Error('確認する作業を作れませんでした。1分ほど待ってから、もう一度お試しください。');
@@ -197,7 +292,7 @@
       window.location.assign('/cat?project=' + encodeURIComponent(data.id) + '&translate=1');
     }).catch(function (error) {
       busy = false; update();
-      if (error.status === 409 && error.data && error.data.code === 'DIRECTION_CONFIRMATION_REQUIRED') { showChoice(error.data.error); return; }
+      if (error.status === 409 && error.data && error.data.code === 'DIRECTION_CONFIRMATION_REQUIRED') { requireDirection(error.data.error); return; }
       showError(error.message);
     });
   }
@@ -327,17 +422,21 @@
        「このブック全体」は、もう同じものを指していない。 */
     el('quick-input').addEventListener('input', function () {
       explicitDirection = '';
+      if (el('quick-save-work')) el('quick-save-work').checked = false;
       refreshDirection();
       sourceFilePath = '';
+      if (!busy) el('quick-job').innerHTML = '';
       var host = el('quick-source-file'); if (host) host.hidden = true;
       var note = el('quick-selection-note'); if (note) note.hidden = true;
       update();
     });
     el('quick-form').addEventListener('submit', submit);
-    el('quick-direction-change').addEventListener('click', function () { showChoice('翻訳先を変更できます。'); });
-    /* 訳す向きを選んだら、そのまま翻訳へ進む。資料翻訳（cat.js）は選んだ時点で
-       再実行しており、同じアプリで挙動が違うと「選んだのに何も起きない」と受け取られる。 */
-    document.querySelectorAll('[data-quick-direction]').forEach(function (button) { button.addEventListener('click', function () { explicitDirection = button.getAttribute('data-quick-direction'); el('quick-direction-choice').hidden = true; update(); if (el('quick-input').value.trim() && ready && !busy) el('quick-form').requestSubmit(); else YakuCommon.focus(el('quick-submit')); }); });
+    /* 翻訳先の変更だけでは送信しない。実行は隣の主ボタンに限定する。 */
+    el('quick-direction-select').addEventListener('change', function () {
+      explicitDirection = this.value === 'to_en' || this.value === 'to_jp' ? this.value : '';
+      update();
+      YakuCommon.focus(saveAsWork() ? el('quick-save-submit') : el('quick-submit'));
+    });
     /* 「翻訳をやめる」は、進捗表示のたびに作り直されるので document で受ける。 */
     document.addEventListener('click', function (event) {
       var button = event.target.closest('[data-yaku-cancel-job]');
@@ -372,8 +471,8 @@
       reportClipboardCapture(chars);
     });
     startNotationControl();
-    update();
+    if (restoreDraft()) refreshDirection(); else update();
   }
-  window.YakuInstant = { show: show, hide: hide, isBusy: isBusy };
+  window.YakuInstant = { show: show, hide: hide, isBusy: isBusy, preserveDraft: preserveDraft };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();

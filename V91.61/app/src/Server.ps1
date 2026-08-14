@@ -24,6 +24,7 @@ $script:YakuWarmRunspace = $null
 $script:YakuWarmRunspaceBuild = $null
 $script:YakuWarmupLastGood = $null
 $script:YakuUploadHandles = [hashtable]::Synchronized(@{})
+$script:YakuUiClients = [hashtable]::Synchronized(@{})
 $script:YakuSessionToken = New-YakuSecureToken -ByteLength 32
 $script:YakuInstanceId = [guid]::NewGuid().ToString('N')
 $script:YakuProcessStartedAt = Get-YakuProcessStartTimeIso -Id $PID
@@ -204,7 +205,7 @@ function Start-YakuCopilotWarmup {
         $psExe = Join-Path $PSHOME 'powershell.exe'
         if (!(Test-Path -LiteralPath $psExe)) { $psExe = 'powershell.exe' }
         $quote = { param([string]$v) '"' + ($v -replace '"','\"') + '"' }
-        $argLine = '-NoProfile -ExecutionPolicy Bypass -File {0} -Root {1} -StatusPath {2} -TimeoutSeconds 900' -f (& $quote $worker), (& $quote $script:YakuRoot), (& $quote $statusPath)
+        $argLine = '-NoProfile -ExecutionPolicy Bypass -File {0} -Root {1} -StatusPath {2} -TimeoutSeconds 900 -ParentProcessId {3} -ParentStartedUtc {4}' -f (& $quote $worker), (& $quote $script:YakuRoot), (& $quote $statusPath), $PID, (& $quote $script:YakuProcessStartedAt)
         Start-Process -FilePath $psExe -ArgumentList $argLine -WindowStyle Hidden | Out-Null
         Write-YakuLog "Copilot warmup worker started. status=$statusPath worker=$worker" 'INFO'
     } catch {
@@ -217,7 +218,7 @@ function Get-YakuCopilotBadgeState {
     $warmup = Read-YakuCopilotWarmupStatus
     $ready = $false
     try { $ready = [bool]$warmup.ready } catch { $ready = $false }
-    $label = if ($ready) { '使えます' } elseif ($warmup.label) { [string]$warmup.label } else { 'Copilotを準備しています' }
+    $label = if ($ready) { 'Copilot：準備完了' } elseif ($warmup.label) { [string]$warmup.label } else { 'Copilotを準備しています' }
     $class = if ($ready) { 'ok' } elseif ($warmup.class) { [string]$warmup.class } else { 'idle' }
     $mode = if ($warmup.mode) { [string]$warmup.mode } else { 'not-started' }
     $detail = if ($warmup.detail) { [string]$warmup.detail } else { '' }
@@ -326,7 +327,7 @@ function Get-YakuUiJobStatusHtml {
         return "<span class='status-dot warn'></span><span>準備中</span>"
     }
     if ($mode -eq 'ready') {
-        return "<span class='status-dot ok'></span><span>使えます</span>"
+        return "<span class='status-dot ok'></span><span>Copilot：準備完了</span>"
     }
     if ($mode -eq 'login') {
         return "<span class='status-dot warn'></span><span>ログインが必要</span>"
@@ -781,6 +782,18 @@ function Test-YakuTranslationJobRunning {
     return ($mode -in @('queued','opening','extracting','translating','writing','validating','publishing','working','cancelling'))
 }
 
+function Get-YakuUiPresenceSummary {
+    $now = Get-Date
+    foreach ($id in @($script:YakuUiClients.Keys)) {
+        $client = $script:YakuUiClients[$id]
+        $lastSeen = try { [datetime]$client.last_seen } catch { [datetime]::MinValue }
+        if (($now - $lastSeen).TotalMinutes -ge 5) { $script:YakuUiClients.Remove([string]$id) }
+    }
+    $clients = @($script:YakuUiClients.Values)
+    $allClosing = ($clients.Count -gt 0 -and @($clients | Where-Object { -not [bool]$_.closing }).Count -eq 0)
+    return [pscustomobject]@{ Count=[int]$clients.Count; AllClosing=[bool]$allClosing }
+}
+
 function Stop-YakuTranslationJob {
     param([string]$JobId = '')
     Update-YakuTranslationJobs
@@ -817,9 +830,9 @@ function Start-YakuTranslationJob {
         [AllowNull()][string]$InputText = '',
         [Parameter(Mandatory=$true)]$Settings,
         [AllowNull()][string]$TextDirectionOverride = '',
-        # 2026-08-13: 'quick' と 'quick_revise' を外した。訳案を1枚返す状態を
-        # 廃止したので、この種類で仕事を始める呼出側が無くなった。
-        [ValidateSet('text','revise','shorten','cat')][string]$Kind = 'text',
+        # 短いメールなどは、確認作業や翻訳メモリを作らず、その場で訳して終える。
+        # quick は内容を保存せず、用語・過去訳も参照しない。
+        [ValidateSet('text','quick','revise','shorten','cat')][string]$Kind = 'text',
         [ValidateSet('default','none')][string]$CachePolicy = 'default',
         [ValidateSet('display','none')][string]$ReferencePolicy = 'display',
         # V91.61（2026-08-06）: 修正の依頼。原文・現訳・指示・文体を JSON で運ぶ。
@@ -1169,7 +1182,7 @@ function Start-YakuTranslationJob {
                     $result = [pscustomobject]@{ Error = $message; Prompt = ''; Direction = 'to_en' }
                 }
             } else {
-                $result = Invoke-YakuTextTranslation -Root $Root -InputText $InputText -Settings $settings -ProgressState $JobState -DirectionOverride $TextDirectionOverride
+                $result = Invoke-YakuTextTranslation -Root $Root -InputText $InputText -Settings $settings -ProgressState $JobState -DirectionOverride $TextDirectionOverride -ReferencePolicy $ReferencePolicy -CachePolicy $CachePolicy
             }
             if ([string]$JobState['mode'] -eq 'cancelled') { return }
             $JobState['result_json'] = ($result | ConvertTo-Json -Depth 80 -Compress)
@@ -1857,12 +1870,45 @@ function Invoke-YakuRoute {
         $activeJob = Get-YakuActiveTranslationJobState
         $activeRunning = Test-YakuTranslationJobRunning -State $activeJob
         $activeKind = if ($activeRunning) { [string]$activeJob['kind'] } else { '' }
-        Send-YakuTextResponse -Context $Context -Text ([ordered]@{ instance_id=$script:YakuInstanceId; pid=$PID; process_started_at=$script:YakuProcessStartedAt; build_id=$script:YakuBuildId; active_job_running=[bool]$activeRunning; active_job_kind=$activeKind } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+        $uiPresence = Get-YakuUiPresenceSummary
+        Send-YakuTextResponse -Context $Context -Text ([ordered]@{ instance_id=$script:YakuInstanceId; pid=$PID; process_started_at=$script:YakuProcessStartedAt; build_id=$script:YakuBuildId; active_job_running=[bool]$activeRunning; active_job_kind=$activeKind; ui_client_count=[int]$uiPresence.Count; ui_all_closing=[bool]$uiPresence.AllClosing } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+        return
+    }
+    if ($method -eq 'POST' -and $path -eq '/api/ui/presence') {
+        try {
+            $payload = Read-YakuRequestJson -Request $req -MaxBytes 4096
+            $clientId = [string]$payload['client_id']
+            $state = [string]$payload['state']
+            if ($clientId -notmatch '^[a-f0-9]{32}$' -or $state -notin @('open','closing')) { throw 'UI_PRESENCE_INVALID: 画面の状態を確認できません。' }
+            $script:YakuUiClients[$clientId] = [pscustomobject]@{ last_seen=(Get-Date); closing=($state -eq 'closing') }
+            Send-YakuTextResponse -Context $Context -Text '{"ok":true}' -ContentType 'application/json; charset=utf-8'
+        } catch {
+            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ error=(Convert-YakuExceptionToUserMessage $_) } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
+        }
         return
     }
     if ($method -eq 'GET' -and $path -eq '/api/ready-state') {
         $state = Get-YakuTranslateReadinessState
         Send-YakuTextResponse -Context $Context -Text (Convert-YakuReadinessStateToJson -State $state) -ContentType 'application/json; charset=utf-8'
+        return
+    }
+    if ($method -eq 'POST' -and $path -eq '/api/copilot/window') {
+        try {
+            $payload = Read-YakuRequestJson -Request $req -MaxBytes 4096
+            if ([string]$payload['action'] -ne 'show') { throw 'COPILOT_WINDOW_ACTION_INVALID: この操作は利用できません。' }
+            $settings = Read-YakuSettings -Root $script:YakuRoot
+            $port = Get-YakuCdpPort -Settings $settings
+            $url = Get-YakuCopilotUrl -Settings $settings
+            $port = Start-YakuCopilotEdge -Port $port -DisplayMode foreground -Url $url -WindowSize ([string]$settings.edge_window_size) -ForceForeground
+            $page = Get-YakuCopilotPage -Port $port -Url $url
+            Invoke-YakuCdpBringToFront -Page $page
+            Start-Sleep -Milliseconds 150
+            $count = Show-YakuEdgeWindow -Mode foreground
+            Write-YakuLog "Dedicated Copilot window requested in app. windows=$count" 'INFO'
+            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$true; windows=[int]$count } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+        } catch {
+            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ error=(Convert-YakuExceptionToUserMessage $_) } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
+        }
         return
     }
     if ($method -eq 'GET' -and $path -eq '/api/desktop/preferences') {
@@ -2141,12 +2187,39 @@ function Invoke-YakuRoute {
     }
 
     # --------------------------------------------------------------- Quick JSON
-    # POST /api/quick/translate、POST /api/quick/jobs、GET /api/quick/jobs/{id}、
-    # GET /api/quick/artifacts/{id}、POST /api/quick/artifacts/{id}/revisions、
-    # POST /api/cat/promote は 2026-08-13 に外した。訳案を1枚返す状態（その場で訳す）
-    # を廃止し、貼り付けた文章も /api/cat/open で作業になったため、呼ぶ側が無くなった。
-    # 残すのは選択の読み取りだけ（/api/quick/selection と selection-capture）。
-    # これは Ctrl+Alt+J の口で、翻訳とは別の仕事をしている。
+    # 短いメールなど、あとで続けず翻訳メモリにも残さない文章の入口。
+    # 結果は既存の GET /api/jobs/{id} で返す。復元用artifactやCATへの昇格は持たない。
+    if ($method -eq 'POST' -and $path -eq '/api/quick/jobs') {
+        try {
+            $payload = Read-YakuRequestJson -Request $req
+            $inputText = [string]$payload['input_text']
+            if ([string]::IsNullOrWhiteSpace($inputText)) { throw '訳したい文章を入力してください。' }
+            $directionIntent = 'auto'
+            try { if (@('auto','to_en','to_jp') -contains [string]$payload['direction_intent']) { $directionIntent = [string]$payload['direction_intent'] } } catch {}
+            $directionBasis = $(if ($directionIntent -eq 'auto') { 'detected' } else { 'explicit' })
+            $decision = Resolve-YakuDirectionDecision -Text $inputText -Intent $directionIntent -Basis $directionBasis
+            if ([bool]$decision.RequiresConfirmation) {
+                $response = [ordered]@{ code='DIRECTION_CONFIRMATION_REQUIRED'; error='翻訳先を選んでください。'; suggested_direction=[string]$decision.SuggestedDirection; confidence=[string]$decision.Confidence }
+                Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Compress) -StatusCode 409 -ContentType 'application/json; charset=utf-8'
+                return
+            }
+            $readyState = Get-YakuTranslateReadinessState
+            if (-not [bool]$readyState.canTranslate) {
+                $message = if ([string]$readyState.mode -eq 'working') { 'いま別の翻訳を実行中です。そちらが終わってからもう一度お試しください。' } else { 'Copilotの準備が終わってから翻訳できます。画面右上が「Copilot：準備完了」になるまでお待ちください。' }
+                Send-YakuTextResponse -Context $Context -Text ([ordered]@{ code='TRANSLATION_NOT_READY'; error=$message; mode=[string]$readyState.mode } | ConvertTo-Json -Compress) -StatusCode 409 -ContentType 'application/json; charset=utf-8'
+                return
+            }
+            $settings = Read-YakuSettings -Root $script:YakuRoot
+            $state = Start-YakuTranslationJob -InputText $inputText -Settings $settings -TextDirectionOverride ([string]$decision.Resolved) -Kind 'quick' -CachePolicy 'none' -ReferencePolicy 'none'
+            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ job_id=[string]$state['id']; direction=[string]$decision.Resolved } | ConvertTo-Json -Compress) -StatusCode 202 -ContentType 'application/json; charset=utf-8'
+        } catch {
+            $response = [ordered]@{ code='QUICK_JOB_START_FAILED'; error=(Convert-YakuExceptionToUserMessage $_) }
+            Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Compress) -StatusCode 400 -ContentType 'application/json; charset=utf-8'
+        }
+        return
+    }
+
+    # 選択範囲の読み取り（/api/quick/selection と selection-capture）。
     if ($method -eq 'POST' -and $path -eq '/api/quick/selection-capture') {
         # Office 以外は、外枠が疑似 Ctrl+C を送ってクリップボードから読む。その経路は
         # サーバを通らないので、読み込んだことだけを画面から報告してもらって記録する。
@@ -2310,6 +2383,7 @@ function Invoke-YakuRoute {
                 # 前回までの作業一覧。取り込む前に「続きから」を選べるようにする。
                 $rows = @(Get-YakuCatSavedProjects -Limit 10 | ForEach-Object {
                         [ordered]@{ id = [string]$_.Id; file_name = [string]$_.FileName; direction = [string]$_.Direction
+                            source = [string]$_.Source
                             revision = [int]$_.Revision
                             total = [int]$_.Total; confirmed = [int]$_.Confirmed; saved = [string]$_.Saved
                             export_blocked = [bool]$_.ExportBlocked }
@@ -2831,7 +2905,7 @@ function Invoke-YakuRoute {
                     # 直接触れない。訳文だけを返させ、完了後に apply で反映する。
                     $readyState = Get-YakuTranslateReadinessState
                     if (-not [bool]$readyState.canTranslate) {
-                        $message = if ([string]$readyState.mode -eq 'working') { 'いま別の翻訳を実行中です。そちらが終わってからもう一度お試しください。' } else { 'Copilotの準備が終わってから翻訳できます。画面右上が「使えます」になるまでお待ちください。' }
+                        $message = if ([string]$readyState.mode -eq 'working') { 'いま別の翻訳を実行中です。そちらが終わってからもう一度お試しください。' } else { 'Copilotの準備が終わってから翻訳できます。画面右上が「Copilot：準備完了」になるまでお待ちください。' }
                         Send-YakuTextResponse -Context $Context -Text ((New-YakuAlertHtml -Kind warning -Message $message)) -StatusCode 409
                         return
                     }
@@ -3031,6 +3105,7 @@ function Invoke-YakuRoute {
         # ジョブごとではなくここで閉じるのは、利用中は使い回したいため
         # （作り直すとウィンドウの生成と読み込みで数秒かかる）。
         try { if (Get-Command Close-YakuCopilotOwnedWindows -ErrorAction SilentlyContinue) { $null = Close-YakuCopilotOwnedWindows } } catch {}
+        try { if (Get-Command Stop-YakuCopilotEdgeProfile -ErrorAction SilentlyContinue) { $null = Stop-YakuCopilotEdgeProfile -UserDataDir (Join-Path (Get-YakuDataDir) 'edge-profile') } } catch {}
         try { Clear-YakuCdpSocketCache } catch {}
         $script:ServerRunning = $false
         Send-YakuTextResponse -Context $Context -Text (New-YakuAlertHtml -Kind info -Message 'YakuLingoを停止しています。このブラウザタブを閉じてください。')
@@ -3146,6 +3221,7 @@ try {
         }
     }
 } finally {
+    try { if (Get-Command Stop-YakuCopilotEdgeProfile -ErrorAction SilentlyContinue) { $null = Stop-YakuCopilotEdgeProfile -UserDataDir (Join-Path (Get-YakuDataDir) 'edge-profile') } } catch {}
     try { $listener.Stop() } catch {}
     try { $listener.Close() } catch {}
     foreach ($id in @($script:YakuTranslateJobHandles.Keys)) { try { Dispose-YakuTranslationJobHandle -JobId ([string]$id) -Stop -SkipEndInvoke } catch {} }
