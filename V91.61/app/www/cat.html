@@ -59,22 +59,17 @@
       <div id="cat-status" class="cat-status muted" role="status" aria-live="polite" tabindex="-1"></div>
       <div id="cat-job" class="result-target" aria-live="polite"></div>
 
-      <!-- 貼り付けは、短いメールならその場で訳して終えられる。あとで続けたい文章だけ
-           確認作業として保存する。Word・Excel全体は下の資料入口から始める。 -->
+      <!-- 貼り付けも最初からCAT作業として扱う。短文専用の別翻訳経路を持たず、
+           ファイルと同じ翻訳・QC・確認の契約へ進める。 -->
       <section id="cat-instant" class="cat-instant" aria-labelledby="cat-start-title">
         <div class="start-section-heading">
           <span class="start-kind">短い文章</span>
-          <div><h2 id="cat-start-title">メールやチャットをすぐ訳す</h2><p>文章を貼り付けると、通常はこの画面に訳文を表示します。保存せず、そのままコピーして使えます。</p></div>
+          <div><h2 id="cat-start-title">メールやチャットを訳す</h2><p>文章を貼り付けると、一時作業を作って翻訳し、原文と訳文を確認する画面へ進みます。</p></div>
         </div>
         <form id="quick-form" class="quick-inline">
-          <p id="quick-selection-note" class="quick-selection-note" role="status" aria-live="polite" hidden></p>
           <!-- 選んだ範囲だけでは、Word・Excelの体裁を保った社内確認用ファイルは
                作れない。元のファイルを丸ごと取り込む道をここに置く。書き込むのは
                いつも DRAFT_ 付きのコピーで、原本には触れない。 -->
-          <div id="quick-source-file" class="quick-long-notice" role="status" hidden>
-            <p id="quick-source-file-text"></p>
-            <button type="button" id="quick-source-file-open"></button>
-          </div>
           <label for="quick-input" class="sr-only">訳したい文章</label>
           <textarea id="quick-input" rows="5" placeholder="訳したい文章を入力" autocomplete="off"></textarea>
           <div class="input-meta"><span id="quick-count">0字</span></div>
@@ -93,7 +88,7 @@
             </select>
           </div>
           <div class="command-bar"><button id="quick-submit" type="submit" disabled>文章を入力してください</button>
-<span id="quick-submit-note" class="command-bar-note">この画面に訳を出します。作業や翻訳メモリには残しません。</span></div>
+<span id="quick-submit-note" class="command-bar-note">一時作業を作って確認画面へ移ります。確認するまで翻訳メモリには登録しません。</span></div>
           <!-- 送る前の約束と、金額の書き方。押す前に読む必要はないが、押したあとの
                結果を説明するものなので、ボタンの下に小さく置く。以前は入力欄と
                ボタンの間に太い枠で挟まっていて、入力とその実行を分断していた。 -->
@@ -108,25 +103,18 @@
               <span id="amount-notation-status" role="status" aria-live="polite"></span>
             </p>
           </div>
-          <input id="quick-save-work" type="checkbox" hidden aria-hidden="true" tabindex="-1">
         </form>
 
         <section id="quick-job" class="result-target" aria-live="polite"></section>
-        <!-- 保存しない訳案はここに出る。確認作業に保存したときだけ作業画面へ移る。 -->
       </section>
 
-      <!-- 貼り付けた文章の保存とファイル取り込みは、どちらも同じ確認画面へ進む。
-           二つを離して置くと別機能に見えるため、確認画面への二つの入口としてまとめる。 -->
+      <!-- Word・Excelも同じ確認画面へ進む。 -->
       <section id="cat-picker" class="translate-form cat-picker" aria-labelledby="cat-docs-entry-title">
         <div class="review-entry-heading">
-          <span class="start-kind">確認しながら訳す</span>
-          <div><h2 id="cat-docs-entry-title">1文ずつ確認する作業画面</h2><p>文章またはWord・Excelを開き、原文を見ながら訳文を直せます。途中まで自動保存され、あとから再開できます。</p></div>
+          <span class="start-kind">ファイルを訳す</span>
+          <div><h2 id="cat-docs-entry-title">Word・Excelを取り込む</h2><p>ファイル全体を開き、原文を見ながら訳文を直せます。途中まで自動保存され、あとから再開できます。</p></div>
         </div>
         <div class="review-entry-grid">
-          <div class="review-entry-option review-entry-option-text">
-            <span><strong>上に貼り付けた文章</strong><small>短い文章も、保存して確認したいときはこちらです。</small></span>
-            <button id="quick-save-submit" type="submit" form="quick-form" class="secondary-button" disabled>この文章を保存して確認画面へ</button>
-          </div>
           <div class="review-entry-option review-entry-option-file">
             <span><strong>Word・Excelファイル</strong><small>ファイル全体を取り込み、1文ずつ確認します。</small></span>
             <button type="button" id="cat-open-file-entry" class="secondary-button">ファイルを選んで確認画面へ<input id="cat-file-input" type="file" accept=".docx,.xlsx,.xlsm" hidden></button>
@@ -262,7 +250,7 @@
             <span id="cat-save-status" class="cat-save-status" role="status" aria-live="polite">保存済み</span>
           </div>
           <label class="cat-toolbar-search" for="cat-search"><span>検索</span><input id="cat-search" type="search" placeholder="原文・訳文を検索"></label>
-         <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">訳していない行を訳す</button><button id="cat-export" type="button" class="secondary-button">訳文を取り出す</button><button id="cat-qa-open" type="button" class="secondary-button" title="出す前に、直すところを一覧で見ます（F8）">点検</button><details class="cat-more-actions"><summary>そのほか</summary><div class="cat-more-actions-list"><button id="cat-preview-open" type="button" class="secondary-button">体裁で見る</button><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みの行だけコピー</button><button id="cat-switch-project" type="button" class="secondary-button">ほかの資料に切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>右の候補を上から順に訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></dt><dd>原文をそのまま訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd></dt><dd>確認を取り消す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>M</kbd> / <kbd>Alt</kbd>+<kbd>K</kbd></dt><dd>次の行とつなげる / つなげた行を戻す</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>F7</kbd></dt><dd>ほかの資料に切り替える</dd></div><div><dt><kbd>F8</kbd></dt><dd>点検の一覧</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や右側から訳文欄へ戻る</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
+         <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">訳していない行を訳す</button><button id="cat-export" type="button" class="secondary-button">訳文を取り出す</button><button id="cat-qa-open" type="button" class="secondary-button" title="出す前に、直すところを一覧で見ます（F8）">点検</button><div id="cat-transient-actions" class="cat-transient-actions" hidden><p id="cat-transient-expiry" class="muted"></p><p class="muted">コピーして終了すると、この一時作業は削除されます。翻訳メモリへ登録済みの訳は残ります。</p><button id="cat-project-save" type="button" class="secondary-button">この作業を残す</button><button id="cat-project-retain" type="button" class="secondary-button">削除予定を7日延ばす</button><button id="cat-copy-close" type="button" class="secondary-button">コピーして終了</button></div><details class="cat-more-actions"><summary>そのほか</summary><div class="cat-more-actions-list"><button id="cat-preview-open" type="button" class="secondary-button">体裁で見る</button><button id="cat-source-update-open" type="button" class="secondary-button">原文ファイルを差し替える</button><input id="cat-source-update-file" type="file" accept=".xlsx,.xlsm,.csv,.docx" hidden><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みの行だけコピー</button><button id="cat-switch-project" type="button" class="secondary-button">ほかの資料に切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>右の候補を上から順に訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></dt><dd>原文をそのまま訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd></dt><dd>確認を取り消す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>M</kbd> / <kbd>Alt</kbd>+<kbd>K</kbd></dt><dd>次の行とつなげる / つなげた行を戻す</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>F7</kbd></dt><dd>ほかの資料に切り替える</dd></div><div><dt><kbd>F8</kbd></dt><dd>点検の一覧</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や右側から訳文欄へ戻る</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
           <section aria-labelledby="cat-personal-glossary-title">
             <h3 id="cat-personal-glossary-title">今後も使う訳</h3>
             <p class="muted">取り消しても、訳した文章は残ります。</p>
@@ -375,7 +363,7 @@
               </section>
     </section>
   </main>
-  <dialog id="cat-export-dialog" class="confirm-dialog cat-export-dialog"><form method="dialog"><h2 id="cat-export-title">取り出す前のご確認</h2><p id="cat-export-mode"></p><p id="cat-export-name" class="muted"></p><div id="cat-export-checks" role="status"></div><p class="cat-human-review-note">自動で点検しているのは、数字と単位の写しちがいだけです。</p><p id="cat-export-notice" class="draft-warning">原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。</p><div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>戻って確認する</button><button id="cat-export-qa" type="button" class="secondary-button" hidden>点検一覧を開く</button><button id="cat-export-confirm" value="export">これで取り出す</button></div></form></dialog>
+  <dialog id="cat-export-dialog" class="confirm-dialog cat-export-dialog"><form method="dialog"><h2 id="cat-export-title">取り出す前のご確認</h2><p id="cat-export-mode"></p><p id="cat-export-name" class="muted"></p><div id="cat-export-checks" role="status"></div><p class="cat-human-review-note">自動で点検しているのは、数字と単位の写しちがいだけです。</p><p id="cat-export-notice" class="draft-warning">原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。</p><fieldset class="cat-final-review-option"><legend>確認記録（任意）</legend><label><input id="cat-export-final-review" type="checkbox"> 残っている指摘と、この出力内容を確認した記録を残す</label><p class="muted">組織上の承認や正式版を意味するものではありません。内容が変わると記録は自動的に失効します。</p><label for="cat-export-final-reason">確認した内容・判断理由</label><textarea id="cat-export-final-reason" rows="2" maxlength="1000" disabled></textarea></fieldset><div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>戻って確認する</button><button id="cat-export-qa" type="button" class="secondary-button" hidden>点検一覧を開く</button><button id="cat-export-confirm" value="export">これで取り出す</button></div></form></dialog>
   <!-- 出す前に、資料ぜんぶの指摘を1枚で見る（市販CATの検証パネルに相当）。
        memoQ・Trados は書き出し前にこの一覧を見て、行へ飛んで直す作りになっている。
        当アプリは行ごとの指摘と「点検の指摘」での絞り込みは持っていたが、
@@ -399,24 +387,71 @@
 
   <dialog id="cat-preview-dialog" class="confirm-dialog cat-preview-dialog"><form method="dialog">
     <h2>体裁で見る</h2>
-    <div class="cat-preview-controls">
+    <div class="cat-preview-tabs" role="tablist" aria-label="確認方法">
+      <button type="button" role="tab" data-cat-preview-mode="layout" aria-selected="true">Excelへの配置</button>
+      <button type="button" role="tab" data-cat-preview-mode="pdf" aria-selected="false">印刷結果PDF</button>
+    </div>
+    <section id="cat-preview-layout-panel" role="tabpanel"><div class="cat-preview-controls">
       <div class="cat-state-filters" role="group" aria-label="見るもの">
         <button type="button" data-cat-preview-side="target" aria-pressed="true">訳文</button>
         <button type="button" data-cat-preview-side="source" aria-pressed="false">原文</button>
       </div>
       <span id="cat-preview-note" class="muted"></span>
     </div>
-    <div id="cat-preview-body" class="cat-preview-body"></div>
+    <div id="cat-preview-body" class="cat-preview-body"></div></section>
+    <section id="cat-preview-pdf-panel" role="tabpanel" hidden>
+      <p>原本の印刷設定を使った原文PDFと訳文PDFを切り替えて確認できます。訳文が収まり、原文との対応に問題がないかを最終的に目で確認してください。</p>
+      <div class="cat-state-filters" role="group" aria-label="PDFで見るもの"><button type="button" data-cat-pdf-side="target" aria-pressed="true">訳文PDF</button><button type="button" data-cat-pdf-side="source" aria-pressed="false">原文PDF</button></div>
+      <div class="cat-preview-pdf-actions"><button type="button" id="cat-preview-pdf-update">PDFを作成・更新</button><button type="button" id="cat-preview-pdf-check" class="secondary-button" hidden>掲載文字を照合</button><button type="button" id="cat-preview-pdf-accept" class="secondary-button" hidden>PDFを目で確認した</button><span id="cat-preview-pdf-status" class="muted" role="status"></span></div>
+      <iframe id="cat-preview-pdf-frame" title="印刷結果PDF" hidden></iframe>
+    </section>
     <div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>閉じる</button></div>
   </form></dialog>
+  <dialog id="cat-placement-dialog" class="confirm-dialog cat-placement-dialog" aria-labelledby="cat-placement-title">
+    <form id="cat-placement-form" method="dialog">
+      <h2 id="cat-placement-title">セルごとの区切りを調整</h2>
+      <p class="muted">文章の内容は変えず、どこから次のセルへ送るかだけ調整します。各欄を上からつないだ内容が現在の訳文と同じになるようにしてください。</p>
+      <input id="cat-placement-index" type="hidden">
+      <div id="cat-placement-slices" class="cat-placement-slices"></div>
+      <label id="cat-placement-spill-row">右の空白を表示領域にする
+        <select id="cat-placement-spill"><option value="0">使わない</option><option value="1">右1セル</option><option value="2">右2セル</option><option value="3">右3セル</option></select>
+      </label>
+      <p class="muted">右セルへ値は書きません。空白・非表示・結合を静的に確認し、実際に収まったかはPDFで目視します。</p>
+      <label id="cat-placement-down-row">下の空白セルへ続きを書く
+        <select id="cat-placement-down"><option value="0">使わない</option><option value="1">下1セル</option><option value="2">下2セル</option><option value="3">下3セル</option></select>
+      </label>
+      <p id="cat-placement-down-note" class="muted">選んだセルは保存時と出力直前に実際のExcelで空白と安全性を確認します。基準訳や翻訳メモリは変わりません。</p>
+      <p id="cat-placement-message" class="muted" role="status"></p>
+      <div class="dialog-actions"><button type="button" class="secondary-button" id="cat-publication-open">情報を保って短くする候補</button><button type="button" class="secondary-button" id="cat-placement-cancel">戻る</button><button type="submit" id="cat-placement-save">この配置で確認する</button></div>
+    </form>
+  </dialog>
+  <dialog id="cat-publication-dialog" class="confirm-dialog cat-publication-dialog" aria-labelledby="cat-publication-title">
+    <h2 id="cat-publication-title">Excelに入れる訳の候補</h2>
+    <p class="muted">基準訳は変更しません。原文・基準訳・候補を見比べ、情報が欠けていないと判断できる場合だけ採用してください。</p>
+    <input id="cat-publication-index" type="hidden">
+    <div class="cat-publication-compare"><section><h3 id="cat-publication-source-heading">原文</h3><p id="cat-publication-source"></p></section><section><h3 id="cat-publication-canonical-heading">内容を確認する訳</h3><p id="cat-publication-canonical"></p></section></div>
+    <p id="cat-publication-status" class="muted" role="status"></p>
+    <div id="cat-publication-candidates"></div>
+    <details><summary>この資料で使ってよい略語を登録</summary><form id="cat-abbreviation-form"><label>正式名称<input id="cat-abbreviation-full" type="text" required></label><label>略語<input id="cat-abbreviation-short" type="text" required></label><label>意味<input id="cat-abbreviation-meaning" type="text" required></label><label>初出の扱い<select id="cat-abbreviation-first"><option value="define_first">初出では正式名称も示す</option><option value="source_defined_only">原文で定義済みの場合だけ使う</option><option value="none">定義不要</option></select></label><button type="submit" class="secondary-button">この資料で承認する</button></form></details>
+    <div class="dialog-actions"><button type="button" class="secondary-button" id="cat-publication-close">閉じる</button><button type="button" id="cat-publication-generate">候補を作る</button></div>
+  </dialog>
+  <dialog id="cat-source-update-dialog" class="confirm-dialog cat-source-update-dialog" aria-labelledby="cat-source-update-title">
+    <h2 id="cat-source-update-title">原文ファイルの差し替え内容</h2>
+    <p id="cat-source-update-summary" class="muted" role="status"></p>
+    <div id="cat-source-update-list" class="cat-source-update-list"></div>
+    <div class="dialog-actions"><button type="button" class="secondary-button" id="cat-source-update-close">閉じる</button><button type="button" id="cat-source-update-apply">この新版を採用する</button></div>
+  </dialog>
   <dialog id="cat-qa-dialog" class="confirm-dialog cat-qa-dialog"><form method="dialog">
     <h2>点検一覧</h2>
     <p id="cat-qa-summary" class="muted" role="status"></p>
     <div id="cat-qa-list" class="cat-qa-list"></div>
-    <p class="cat-human-review-note">自動で見ているのは、空欄と数字だけです。数字は確認済みにするときに点検します。</p>
-    <div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>閉じる</button></div>
+    <section class="cat-document-review" aria-labelledby="cat-document-review-title"><h3 id="cat-document-review-title">文書全体の確認</h3><p class="muted">同じ原文の訳し分けなど、複数行を見ないと分からない点を確認します。候補を示すだけで、自動では直しません。</p><div id="cat-document-review-status" class="muted" role="status"></div><div id="cat-document-review-lenses" class="cat-review-lenses"></div><div id="cat-document-findings"></div></section>
+    <label>確認事項を検索<input id="cat-document-finding-search" type="search" placeholder="用語・行・内容"></label>
+    <p class="cat-human-review-note">数字の写し違いと、機械的に比較できる一貫性を点検します。最終確認記録を残すには両方の確認が必要です。訳し分けの妥当性と最終判断は人が確認してください。</p>
+    <div class="dialog-actions"><button type="button" id="cat-document-review-run">1. 機械的な一貫性を確認</button><button type="button" id="cat-copilot-review-preview" class="secondary-button">Copilotへ送る内容を確認</button><button type="button" id="cat-copilot-review-run" class="secondary-button">2. Copilotで意味と一貫性を確認</button><button type="button" id="cat-qa-report-download" class="secondary-button">QAレポートを保存</button><button value="cancel" class="secondary-button" autofocus>閉じる</button></div>
   </form></dialog>
-  <dialog id="cat-delete-dialog" class="confirm-dialog"><form method="dialog"><h2>この作業を削除しますか</h2><p><strong id="cat-delete-name">この作業</strong> の途中保存を削除します。この操作は取り消せません。元のファイルは削除しません。</p><div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>削除しない</button><button value="delete" class="danger-button">削除する</button></div></form></dialog>
+  <dialog id="cat-copilot-review-preview-dialog" class="confirm-dialog"><form method="dialog"><h2>Copilotへ送る内容</h2><p id="cat-copilot-review-preview-summary"></p><pre id="cat-copilot-review-preview-text" class="cat-protected-prompt-preview"></pre><div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>閉じる</button></div></form></dialog>
+  <dialog id="cat-delete-dialog" class="confirm-dialog"><form method="dialog"><h2>この作業を削除しますか</h2><p><strong id="cat-delete-name">この作業</strong> の原文・訳文・確認用PDF・途中保存を削除します。この操作は取り消せません。元のファイルは削除しません。</p><fieldset><legend>確認済み訳を翻訳メモリへ登録している場合</legend><label><input type="radio" name="cat-delete-memory" value="retain_tm" checked> 翻訳メモリの訳は残す</label><label><input type="radio" name="cat-delete-memory" value="revoke_tm"> 翻訳メモリ登録も取り消す</label></fieldset><p class="muted">翻訳メモリを残す場合、確認済みの原文と訳文は翻訳メモリ内に残ります。作業の削除だけでは消えません。</p><div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>削除しない</button><button value="delete" class="danger-button">削除する</button></div></form></dialog>
   <dialog id="cat-term-dialog" class="confirm-dialog cat-term-dialog"><form id="cat-term-form" method="dialog">
     <h2>用語を登録</h2><p class="muted">原文と訳文の中から、登録したい部分をマウスで選んでからこの画面を開くと、自動で入ります。</p>
     <input id="cat-term-index" type="hidden"><input id="cat-term-id" type="hidden"><input id="cat-term-version" type="hidden">

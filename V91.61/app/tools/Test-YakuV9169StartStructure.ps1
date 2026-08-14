@@ -58,12 +58,12 @@ Check-YakuTab (-not $pickerFragment.Substring(0, $pickerEnd).Contains('id="cat-i
 # 外に居るので、picker の hidden では消えない。view で消す。
 Check-YakuTab ($css -match 'body\[data-cat-view="workspace"\] #cat-instant \{ display: none; \}') '確認作業のあいだは貼り付け欄を出さない'
 
-# 保存しない訳案は quick-job に出し、保存するときだけ確認作業へ移る。
+# 貼り付けは一時CAT作業を作り、必ず確認画面へ移る。
 $serverText = Get-Content -LiteralPath (Join-Path $root 'src\Server.ps1') -Raw -Encoding UTF8
 $quickJs = Get-Content -LiteralPath (Join-Path $root 'www\assets\quick.js') -Raw -Encoding UTF8
-Check-YakuTab ($html -match '作業や翻訳メモリには残しません' -and $html -match '確認作業として保存する') '保存するかを押す前に書く'
+Check-YakuTab ($html -match '一時作業を作って確認画面へ移ります' -and $html -match '確認するまで翻訳メモリには登録しません') '一時保存とTM登録の境界を押す前に書く'
 Check-YakuTab ($serverText -match "path -eq '/quick'" -and $serverText -match "path -eq '/cat'") '/quick と /cat は同じサーバの後ろにある'
-Check-YakuTab ($quickJs -match '/api/quick/jobs' -and $html -notmatch 'id="quick-result"') '保存しない訳案は専用カード状態を増やさず quick-job に出す'
+Check-YakuTab ($quickJs -notmatch '/api/quick/jobs' -and $quickJs -match '/api/cat/open' -and $html -notmatch 'id="quick-result"') '貼り付けは別結果カードを増やさずCATへ進む'
 
 # 箱を増やさない（2026-08-12 の決定）
 Check-YakuTab ($html -notmatch 'id="cat-instant" class="cat-instant translate-form"') 'その場で訳すにカードの器を付けない'
@@ -103,10 +103,10 @@ Check-YakuTab ($js -match "el\('cat-switch-project'\)[\s\S]{0,200}?openDocDialog
 #   1380px 既定は閉じる（1列 412.6px）。開いても 323.8px で 321px を下回らない
 #   1920px 既定で開く（1列 501.7px。1380px で閉じているときの 421px より広い）
 # 短文はこの画面、文書は作業画面へ進む。二つを押す前に区別できる見出しを出す。
-Check-YakuTab ($html -match 'id="cat-start-title">メールやチャットをすぐ訳す') '短文はこの画面で訳す入口だと分かる'
-Check-YakuTab ($html -match 'id="cat-docs-entry-title">1文ずつ確認する作業画面') '保存する文章と文書が同じ確認画面へ進むと分かる'
-Check-YakuTab ($html -match '文章またはWord・Excelを開き') '確認画面へ進める二つの材料を押す前に示す'
-Check-YakuTab ($html -match '文章を貼り付けると、通常はこの画面に訳文を表示します') '短文は通常なら同じ画面で完結すると示す'
+Check-YakuTab ($html -match 'id="cat-start-title">メールやチャットを訳す') '短文もCATで訳す入口だと分かる'
+Check-YakuTab ($html -match 'id="cat-docs-entry-title">Word・Excelを取り込む') 'ファイルも同じ確認画面へ進むと分かる'
+Check-YakuTab ($html -match 'ファイル全体を開き') 'ファイルの作業内容を押す前に示す'
+Check-YakuTab ($html -match '一時作業を作って翻訳し') '短文も確認画面へ進むと示す'
 Check-YakuTab ($html -match 'id="cat-picker"[^>]*aria-labelledby="cat-docs-entry-title"') '資料側をその見出しに結び付ける'
 Check-YakuTab ($html -match 'id="cat-instant"[^>]*aria-labelledby="cat-start-title"') '貼り付け側も見出しに結び付ける'
 

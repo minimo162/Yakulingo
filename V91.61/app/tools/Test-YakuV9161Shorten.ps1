@@ -97,7 +97,7 @@ $srvSrc = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'Server.ps
 # 守りたいのは入口の有無ではなく「短縮は資料翻訳にだけあり、ちょっと翻訳には無い」。
 $catJs = Get-Content -LiteralPath (Join-Path (Join-Path $root 'www/assets') 'cat.js') -Raw -Encoding UTF8
 Chk ($srvSrc -notmatch "'/api/shorten-text'") '誰も呼ばない旧入口を残さない'
-Chk ($catJs -match 'data-cat-shorten' -and $srvSrc -match "'/api/cat/translate'|mode.*revise|Kind '?revise") '短縮は資料翻訳の経路にある'
+Chk ($catJs -notmatch 'data-cat-shorten' -and $catJs -match 'publication-candidates' -and $catJs -match 'publication-apply') '単一指示の短縮UIを廃止し、非変更の掲載候補と人の採用へ分離する'
 Chk ($srvSrc -match "SHORTEN_REJECTED") '門で弾いた理由を利用者へ伝える'
 
 Write-Host 'プロンプト' -ForegroundColor Cyan

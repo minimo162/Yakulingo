@@ -178,7 +178,7 @@ Check-YakuUse ($catJs -match 'まだ確認していない.{0,20}行も、その�
 # 動くため、その前から「止まる指摘はありません」と言い切らない。
 Check-YakuUse ($catJs -match '未確認は .{0,30} 行です。数字の点検は、確認済みにするときに行います。') '未確認の段階では数字が未点検だと伝える'
 Check-YakuUse ($catJs -notmatch '止まる指摘はありません。未確認は') '未点検を問題なしと言い切らない'
-Check-YakuUse ($catHtml -match '数字は確認済みにするときに点検します。') '点検一覧にも数字の検査時点を書く'
+Check-YakuUse ($catJs -match '数字の点検は、確認済みにするときに行います。') '点検一覧にも数字の検査時点を書く'
 # 注釈にも同じ字面を書いていて、自分の説明に引っかかっていた。
 # 見るのは出している文言（title に入る戻り値）のほう。
 Check-YakuUse ($catJs -notmatch "return 'あと' \+ left \+ '行を確認済みにしてください。'") '押せるボタンに命令を書かない'
@@ -236,23 +236,21 @@ Check-YakuUse ($quickJs -match 'sessionStorage\.removeItem\(draftStorageKey\)') 
 Check-YakuUse ($catHtml -match 'id="quick-amount-setting"[^>]*hidden') '金額表記は最初は隠れている'
 Check-YakuUse ($quickJs -match "amountSetting\.hidden = direction !== 'to_en'") '英訳するときだけ金額表記を出す'
 
-# 任意の保存を、内部用語の「確認作業」ではなく、選ぶと何が起きるかで説明する。
-# 初見では「あとで続けるため、確認作業として保存する」だけでは、別画面へ移ることも
-# 確認済みの訳だけが今後使われることも分からなかった。
-Check-YakuUse ($catHtml -match '上に貼り付けた文章' -and $catHtml -match 'この文章を保存して確認画面へ') '保存する文章を確認画面への入口として示す'
-Check-YakuUse ($catHtml -match '原文を見ながら訳文を直せます。途中まで自動保存され、あとから再開できます。') '確認画面・自動保存・再開を二つの入口より先に説明する'
+# 貼り付けはCATへ一本化し、保存有無を開始前に選ばせない。
+Check-YakuUse ($catHtml -match '一時作業を作って翻訳し' -and $catHtml -match '確認するまで翻訳メモリには登録しません') '一時CATとTM境界を入口で示す'
+Check-YakuUse ($catHtml -match 'ファイル全体を開き、原文を見ながら訳文を直せます。途中まで自動保存され、あとから再開できます。') 'ファイル確認画面・自動保存・再開を説明する'
 Check-YakuUse ($catHtml -notmatch 'あとで続けるため、確認作業として保存する') '内部的な作業名だけの説明へ戻さない'
 Check-YakuUse ($catHtml -notmatch 'class="quick-save-choice"' -and $catHtml -match 'class="review-entry-grid"') '主操作の意味をチェックボックスで切り替えない'
-Check-YakuUse ($quickJs -match "event\.submitter\.id === 'quick-save-submit'") '押したボタンから保存するかを決める'
+Check-YakuUse ($quickJs -notmatch 'quick-save-submit|saveAsWork' -and $quickJs -match "/api/cat/open") '貼り付けは単一のCAT操作へ進む'
 # 言語の選択は送信ではない。選択後に主操作へ戻し、利用者が明示的に押すまで
 # Copilotへの送信を始めない。
 $directionChoiceHandler = [regex]::Match($quickJs, "(?s)el\('quick-direction-select'\)\.addEventListener\('change'.*?^    \}\);", [System.Text.RegularExpressions.RegexOptions]::Multiline).Value
-Check-YakuUse ($directionChoiceHandler -match "YakuCommon\.focus\(saveAsWork\(\) \? el\('quick-save-submit'\) : el\('quick-submit'\)\)" -and $directionChoiceHandler -notmatch 'requestSubmit') '訳す言語の選択だけでは送信しない'
+Check-YakuUse ($directionChoiceHandler -match "YakuCommon\.focus\(el\('quick-submit'\)\)" -and $directionChoiceHandler -notmatch 'requestSubmit') '訳す言語の選択だけでは送信しない'
 
 # 開始画面と作業画面を分ける構成を、初見でも予測できるようにする。
-Check-YakuUse ($catHtml -match '<span class="start-kind">短い文章</span>' -and $catHtml -match '<span class="start-kind">確認しながら訳す</span>') '開始方法を用途で区別する'
+Check-YakuUse ($catHtml -match '<span class="start-kind">短い文章</span>' -and $catHtml -match '<span class="start-kind">ファイルを訳す</span>') '開始方法を入力形式で区別する'
 Check-YakuUse ($catHtml -match 'ファイルを選んで確認画面へ') 'ファイル選択後の行き先をボタンで示す'
-Check-YakuUse ($catHtml -match '(?s)review-entry-grid[\s\S]{0,900}?id="quick-save-submit"[\s\S]{0,900}?id="cat-open-file-entry"') '文章とWord・Excelを同じ確認画面への入口として並べる'
+Check-YakuUse ($catHtml -notmatch 'id="quick-save-submit"' -and $catHtml -match 'id="cat-open-file-entry"') '保存有無の二重入口を残さない'
 Check-YakuUse ($catHtml -match '続きの作業を開く' -and $catHtml -match '保存したところから再開します') '保存済み一覧を再開の入口として示す'
 Check-YakuUse ($styles -match '(?s)\.cat-instant\s*\{[^}]*border-left:\s*5px solid var\(--accent\)[^}]*linear-gradient') '短文の主入口は囲いを増やさず色面と左線で強くする'
 Check-YakuUse ($styles -match '(?s)\.start-kind\s*\{[^}]*background:\s*var\(--accent\)[^}]*color:\s*#fff') '短文の用途ラベルを最初に拾える強さにする'

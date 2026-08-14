@@ -477,8 +477,11 @@ try {
     $ownedSource = [string]$fileProject.Path
     $ownedManifest = Get-Content -LiteralPath (Join-Path (Join-Path $tempRoot ([string]$fileProject.Id)) 'project.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     Check-YakuH1 ($ownedSource -ne $incomingWorkbook -and (Test-Path -LiteralPath $ownedSource -PathType Leaf) -and
-        [string]$ownedManifest.source_artifact_relative_path -match '^source/original\.xlsx$' -and
-        -not [string]::IsNullOrWhiteSpace([string]$ownedManifest.source_artifact_sha256)) 'manifest binds the owned source path, hash, and size'
+        [string]$ownedManifest.source_artifact_relative_path -match '^source/revisions/[a-f0-9]{32}/original\.xlsx$' -and
+        [string]$ownedManifest.active_source_id -match '^[a-f0-9]{32}$' -and @($ownedManifest.source_snapshots).Count -eq 1 -and
+        [string]$ownedManifest.active_generation_id -eq [string]$ownedManifest.generation_id -and
+        [int]$ownedManifest.project_revision -eq [int]$ownedManifest.revision -and
+        -not [string]::IsNullOrWhiteSpace([string]$ownedManifest.source_artifact_sha256)) 'atomic manifest binds source snapshot, generation, revision, hash, and size'
     Remove-Item -LiteralPath $incomingWorkbook -Force
     Remove-YakuCatProject -Id ([string]$fileProject.Id)
     $restoredFileProject = Restore-YakuCatProject -Id ([string]$fileProject.Id)

@@ -112,7 +112,9 @@ function Get-YakuSettingsSchema {
         edge_window_size                  = @{ Type='string'; Default='1280,900'; MaxLength=24 }
         edge_debug_port                   = @{ Type='int';  Default=9433; Min=1024; Max=65535 }
         copilot_url                       = @{ Type='enum'; Default='https://m365.cloud.microsoft/chat/'; Values=(Get-YakuApprovedCopilotUrls) }
-        copilot_model                     = @{ Type='string'; Default='GPT 5.6 Think deeper,Opus,Think Deeper'; MaxLength=300 }
+        # 新しいチャットは「自動」で始まる。既定で別モデルを選ぶと毎回メニューを
+        # 開くため、短文でも約0.9秒増える。明示指定は引き続き文字列で保存できる。
+        copilot_model                     = @{ Type='string'; Default='自動,Auto'; MaxLength=300 }
         copilot_cdp_socket_cache_enabled  = @{ Type='bool'; Default=$true }
         copilotFirstActivityTimeoutMs     = @{ Type='int';  Default=10000; Min=5000; Max=120000 }
         copilotAnswerRatioText            = @{ Type='double'; Default=4.0; Min=0.1; Max=20.0 }
@@ -250,6 +252,7 @@ function Read-YakuSettings {
             $legacyBatchMigrated = $false
             $legacyCdpPortMigrated = $false
             $legacyDiagnosticsMigrated = $false
+            $legacyCopilotModelMigrated = $false
             # Backward compatibility: an existing user file with only the old boolean
             # must retain full diagnostics even though the template now has standard.
             if (-not $user.Contains('diagnostics_level') -and $user.Contains('full_text_diagnostics_enabled') -and
@@ -265,7 +268,14 @@ function Read-YakuSettings {
                 $merged['max_chars_per_batch'] = 3000
                 $legacyBatchMigrated = $true
             }
-            if ($invalidKeys.Count -gt 0 -or $legacyBatchMigrated -or $legacyCdpPortMigrated -or $legacyDiagnosticsMigrated) {
+            # 旧版の既定値だけを高速な「自動」へ移す。利用者が別の候補や順序を
+            # 明示した設定は、そのまま尊重する。
+            if ($user.Contains('copilot_model') -and
+                [string]::Equals(([string]$merged['copilot_model']).Trim(), 'GPT 5.6 Think deeper,Opus,Think Deeper', [System.StringComparison]::Ordinal)) {
+                $merged['copilot_model'] = '自動,Auto'
+                $legacyCopilotModelMigrated = $true
+            }
+            if ($invalidKeys.Count -gt 0 -or $legacyBatchMigrated -or $legacyCdpPortMigrated -or $legacyDiagnosticsMigrated -or $legacyCopilotModelMigrated) {
                 if ($invalidKeys.Count -gt 0) {
                     $backup = $userPath + '.invalid-' + (Get-Date).ToString('yyyyMMdd-HHmmss') + '.bak'
                     Copy-Item -LiteralPath $userPath -Destination $backup -Force
@@ -282,6 +292,9 @@ function Read-YakuSettings {
                 }
                 if ($legacyDiagnosticsMigrated) {
                     try { if (Get-Command Write-YakuLog -ErrorAction SilentlyContinue) { Write-YakuLog 'Legacy full-text diagnostics setting migrated. diagnosticsLevel=full' 'INFO' } } catch {}
+                }
+                if ($legacyCopilotModelMigrated) {
+                    try { if (Get-Command Write-YakuLog -ErrorAction SilentlyContinue) { Write-YakuLog 'Legacy Copilot model default migrated. model=automatic' 'INFO' } } catch {}
                 }
             }
         } catch {

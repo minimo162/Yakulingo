@@ -59,6 +59,25 @@ foreach ($c in $keepCases) {
     Assert-YakuMask ((Restore-YakuNumericMask -Text ([string]$r.Masked.Text) -Map $r.Masked.Map) -eq [string]$r.Pre) ("全数値を復元: " + [string]$c.Text)
 }
 
+Write-Host 'CASE 1b: 分を省いた日本語時刻と英語の :00 を同じ値として点検する'
+function Invoke-YakuTimeQcTest {
+    param([string]$Id, [string]$Source, [string]$Target)
+    $project = [pscustomobject]@{
+        Direction='to_en'; Id=('numeric-time-qc-' + $Id); AmountNotation='oku'
+        Segments=@([pscustomobject]@{ SegmentId=('numeric-time-qc-' + $Id); Text=$Source; Translation=$Target; Origin='machine'; Confirmed=$false })
+    }
+    $project = Initialize-YakuCatProjectState -Project $project
+    return @(Invoke-YakuCatSegmentValidation -Project $project -Segment $project.Segments[0])
+}
+$timeFindings = @(Invoke-YakuTimeQcTest -Id '1' -Source '本日の会議は午後3時に開始します。' -Target 'Today''s meeting will begin at 3:00 p.m.')
+Assert-YakuMask (@($timeFindings | Where-Object { [string]$_.Code -like 'numeric-*' }).Count -eq 0) '午後3時 → 3:00 p.m. を余分な00として拒否しない'
+
+$explicitMinuteText = ConvertTo-YakuCatQcEquivalentTimeText -Source '本日の会議は午後3時30分に開始します。' -Target 'Today''s meeting will begin at 3:00 p.m.' -Direction to_en
+Assert-YakuMask ($explicitMinuteText -eq 'Today''s meeting will begin at 3:00 p.m.') '原文が3時30分なら:00を省かない'
+
+$plainNumberText = ConvertTo-YakuCatQcEquivalentTimeText -Source '数量は3です。' -Target 'The quantity is 3:00.' -Direction to_en
+Assert-YakuMask ($plainNumberText -eq 'The quantity is 3:00.') '時刻でない3:00は書き換えない'
+
 Write-Host 'CASE 2: マスクする形'
 $maskCases = @(
     @{ Text = '売上高は11,577億円。';        Gone = @('11,577') },

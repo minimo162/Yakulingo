@@ -869,6 +869,38 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 /* 体裁で見る。Excel はセルの位置、Word と貼り付けた文章は段落の並びで出す。
    書体や罫線は持っていないので再現しない。位置と流れだけを見るための画面。 */
 .cat-preview-dialog { width: min(72rem, 94vw); }
+.cat-preview-tabs { display: flex; gap: var(--space-1); margin-bottom: var(--space-2); border-bottom: 1px solid var(--line); }
+.cat-preview-tabs button { border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: transparent; color: var(--muted); }
+.cat-preview-tabs button[aria-selected="true"] { border-bottom-color: var(--accent); color: var(--text); font-weight: 700; }
+.cat-preview-pdf-actions { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
+#cat-preview-pdf-frame { width: 100%; height: 62vh; border: 1px solid var(--line); background: var(--surface); }
+.cat-placement-dialog { width: min(42rem, 92vw); }
+.cat-placement-slices { display: grid; gap: var(--space-2); max-height: 54vh; overflow: auto; }
+.cat-placement-slices label { display: grid; gap: var(--space-0); font-weight: 700; }
+.cat-placement-slices textarea { min-height: 5rem; resize: vertical; font: inherit; }
+.cat-source-update-dialog { width: min(70rem, 94vw); }
+.cat-source-update-list { display: grid; gap: var(--space-2); max-height: 58vh; overflow: auto; }
+.cat-source-update-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) minmax(0,1fr); gap: var(--space-1); border: 1px solid var(--line); padding: var(--space-1); }
+.cat-source-update-row.is-blocking { border-color: var(--error); }
+.cat-source-update-row h3 { grid-column: 1 / -1; margin: 0; font-size: var(--font-meta); }
+.cat-source-update-row p { margin: 0; white-space: pre-wrap; }
+.cat-source-update-label { display: block; color: var(--muted); font-size: var(--font-meta); font-weight: 700; }
+.cat-source-update-decision { grid-column: 1 / -1; padding-top: var(--space-1); border-top: 1px solid var(--line); }
+.cat-source-update-decision label { display: flex; align-items: center; gap: var(--space-1); font-weight: 700; }
+.cat-document-review { margin-top: var(--space-2); padding-top: var(--space-2); border-top: 1px solid var(--line); }
+.cat-document-review > h3 { margin: 0 0 var(--space-1); }
+.cat-review-lenses { display: grid; grid-template-columns: repeat(auto-fit,minmax(15rem,1fr)); gap: var(--space-1); margin: var(--space-2) 0; }
+.cat-review-lens { padding: var(--space-1); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-subtle); }
+.cat-review-lens > div { display: flex; justify-content: space-between; gap: var(--space-1); }
+.cat-review-lens > div span { color: var(--muted); text-align: right; }
+.cat-review-lens p { margin: .25rem 0; }
+.cat-transient-actions { flex-basis: 100%; padding: var(--space-1); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-subtle); }
+.cat-transient-actions p { margin: 0 0 .35rem; }
+.cat-document-finding { margin-top: var(--space-1); padding: var(--space-1); border: 1px solid var(--line); border-left: 4px solid var(--warning); border-radius: var(--radius-control); background: var(--surface-subtle, #fafafa); }
+.cat-document-finding > div:first-child { display: flex; justify-content: space-between; gap: var(--space-1); }
+.cat-document-finding p { margin: var(--space-1) 0; }
+.cat-document-finding-status { color: var(--muted); font-size: var(--font-meta); white-space: nowrap; }
+.cat-document-finding-actions { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .cat-preview-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); margin-bottom: var(--space-1); }
 .cat-preview-body { max-height: 62vh; overflow: auto; border: 1px solid var(--line); background: var(--surface); padding: var(--space-1); }
 .cat-preview-sheet + .cat-preview-sheet, .cat-preview-flow { margin-top: var(--space-3); }
@@ -898,6 +930,8 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 .app-cat .cat-preview-cell.is-wrap { white-space: pre-wrap; }
 /* 見出しかどうかは、原本では太字で分かる。体裁で見るのだから、そこも写す。 */
 .app-cat .cat-preview-cell.is-bold { font-weight: 700; }
+.app-cat .cat-preview-cell.is-overflow-risk { box-shadow: inset 0 -3px 0 #c97900; background-image: linear-gradient(135deg, transparent 0 88%, rgba(201,121,0,.28) 88%); }
+.app-cat .cat-protected-prompt-preview { max-height: 55vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: .8rem; border: 1px solid var(--line); background: var(--surface-muted); font-size: .8rem; }
 /* 原本の行の高さが分かっているときは、押しやすさのための下限を外す。行の高さは
    tr 側が持つ。詳細度は (0,3,0) で、上の (0,2,0) にだけ勝つ。基本ルールは上げない。 */
 .cat-preview-grid.is-measured .cat-preview-cell { min-height: 0; }
@@ -1215,3 +1249,5 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
   color: var(--muted);
   font-size: var(--font-meta);
 }
+.cat-final-review-option{margin:1rem 0;padding:.8rem;border:1px solid var(--border,#cbd5e1);border-radius:.5rem}.cat-final-review-option label{display:block}.cat-final-review-option textarea{box-sizing:border-box;width:100%;margin-top:.35rem;resize:vertical}
+.cat-publication-dialog{width:min(68rem,calc(100vw - 2rem))}.cat-publication-compare{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.cat-publication-compare section,.cat-publication-candidate{border:1px solid var(--border,#d8dde6);border-radius:.65rem;padding:1rem;margin:.75rem 0}.cat-publication-compare h3,.cat-publication-candidate h3{margin-top:0}.cat-publication-text{font-size:1.05rem;white-space:pre-wrap}.cat-publication-candidate button{margin-top:.75rem}@media(max-width:760px){.cat-publication-compare{grid-template-columns:1fr}}

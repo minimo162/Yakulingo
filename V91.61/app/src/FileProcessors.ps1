@@ -476,9 +476,10 @@ function New-YakuExcelMergeCellInfo {
         [int]$TopRow = 0,
         [int]$LeftCol = 0,
         [int]$Rows = 1,
-        [int]$Cols = 1
+        [int]$Cols = 1,
+        [ValidateSet('verified','unknown')][string]$ReadStatus = 'verified'
     )
-    return [pscustomobject]@{ IsWritable=$IsWritable; IsMerged=$IsMerged; IsTopLeft=$IsTopLeft; TopRow=$TopRow; LeftCol=$LeftCol; Rows=$Rows; Cols=$Cols }
+    return [pscustomobject]@{ IsWritable=$IsWritable; IsMerged=$IsMerged; IsTopLeft=$IsTopLeft; TopRow=$TopRow; LeftCol=$LeftCol; Rows=$Rows; Cols=$Cols; ReadStatus=$ReadStatus }
 }
 
 function Get-YakuExcelMergeCellInfo {
@@ -494,14 +495,18 @@ function Get-YakuExcelMergeCellInfo {
         try {
             if ($cached -and $cached.PSObject -and ($cached.PSObject.Properties.Name -contains 'IsWritable')) { return $cached }
         } catch {}
-        return (New-YakuExcelMergeCellInfo -IsWritable ([bool]$cached) -IsMerged $false -IsTopLeft ([bool]$cached) -TopRow $Row -LeftCol $Col)
+        return (New-YakuExcelMergeCellInfo -IsWritable $false -IsMerged $false -IsTopLeft $false -TopRow $Row -LeftCol $Col -ReadStatus 'unknown')
     }
     $cell = $null
     $mergeArea = $null
     try {
         $cell = $Worksheet.Cells.Item($Row, $Col)
         $isMerged = $false
-        try { $isMerged = [bool]$cell.MergeCells } catch { $isMerged = $false }
+        try { $isMerged = [bool]$cell.MergeCells }
+        catch {
+            $info=New-YakuExcelMergeCellInfo -IsWritable $false -IsMerged $false -IsTopLeft $false -TopRow $Row -LeftCol $Col -ReadStatus 'unknown'
+            if($null -ne $MergeCache){$MergeCache[$key]=$info};return $info
+        }
         if (-not $isMerged) {
             $info = New-YakuExcelMergeCellInfo -IsWritable $true -IsMerged $false -IsTopLeft $true -TopRow $Row -LeftCol $Col -Rows 1 -Cols 1
             if ($null -ne $MergeCache) { $MergeCache[$key] = $info }
@@ -524,12 +529,73 @@ function Get-YakuExcelMergeCellInfo {
         }
         return (New-YakuExcelMergeCellInfo -IsWritable $isTopLeft -IsMerged $true -IsTopLeft $isTopLeft -TopRow $topRow -LeftCol $leftCol -Rows $rows -Cols $cols)
     } catch {
-        $fallback = New-YakuExcelMergeCellInfo -IsWritable $true -IsMerged $false -IsTopLeft $true -TopRow $Row -LeftCol $Col -Rows 1 -Cols 1
+        # 結合状態を読めないセルを「非結合」と推測すると、結合セルの非anchorへ
+        # 誤書込みし得る。抽出は継続しても、PlacementPlan/exportは必ずfail-closedにする。
+        $fallback = New-YakuExcelMergeCellInfo -IsWritable $false -IsMerged $false -IsTopLeft $false -TopRow $Row -LeftCol $Col -Rows 1 -Cols 1 -ReadStatus 'unknown'
         if ($null -ne $MergeCache) { $MergeCache[$key] = $fallback }
         return $fallback
     } finally {
         Release-YakuComObject $mergeArea
         Release-YakuComObject $cell
+    }
+}
+
+function Get-YakuExcelCellStructureContract {
+    <# PlacementPlanを原文文字列だけでなく、実Workbookの書込安全条件へ束縛する。 #>
+    param(
+        [Parameter(Mandatory=$true)]$Worksheet,
+        [int]$Row,
+        [int]$Col,
+        [AllowNull()]$MergeInfo = $null
+    )
+    $cell=$null;$mergeArea=$null;$validation=$null;$rowRange=$null;$columnRange=$null
+    try {
+        $cell=$Worksheet.Cells.Item($Row,$Col)
+        if($null -eq $MergeInfo){$MergeInfo=Get-YakuExcelMergeCellInfo -Worksheet $Worksheet -Row $Row -Col $Col}
+        $mergeReadStatus=$(try{[string]$MergeInfo.ReadStatus}catch{'unknown'})
+        $mergeKind=$(if($mergeReadStatus -ne 'verified'){'unknown'}elseif([bool]$MergeInfo.IsMerged){if([bool]$MergeInfo.IsTopLeft){'anchor'}else{'non_anchor'}}else{'none'})
+        $mergeAddress=''
+        if([bool]$MergeInfo.IsMerged){try{$mergeArea=$cell.MergeArea;$mergeAddress=[string]$mergeArea.Address($false,$false,1,$false)}catch{$mergeAddress='unknown'}}
+        $hasFormula='unknown';try{$hasFormula=(-not (Test-YakuExcelComFalse -Value $cell.HasFormula))}catch{}
+        $hasArray='unknown';try{$hasArray=[bool]$cell.HasArray}catch{}
+        $hasSpill='unknown';try{$hasSpill=[bool]$cell.HasSpill}catch{}
+        $locked='unknown';try{$locked=[bool]$cell.Locked}catch{}
+        $protectContents='unknown';try{$protectContents=[bool]$Worksheet.ProtectContents}catch{}
+        # Validation.Type は検証規則がない通常セルでは Excel の既知の 1004
+        # (0x800A03EC) を返す。それ以外の読取失敗を「規則なし」に畳み込まない。
+        $validationType='unknown'
+        try {
+            $validation=$cell.Validation
+            try {
+                $rawValidationType=[int]$validation.Type
+                # xlValidateInputOnly(0) は入力値を制限せず、通常セルでも返る環境がある。
+                # 自動書込を妨げる検証規則ではないため none へ正規化する。
+                $validationType=$(if($rawValidationType -eq 0){'none'}else{[string]$rawValidationType})
+            }
+            catch {
+                if ([int]$_.Exception.HResult -eq -2146827284) { $validationType='none' }
+                else { $validationType='unknown' }
+            }
+        } catch { $validationType='unknown' }
+        $wrap='unknown';try{$wrap=[string]$cell.WrapText}catch{}
+        $style='unknown';try{$style=[string]$cell.Style}catch{}
+        $numberFormat='unknown';try{$numberFormat=[string]$cell.NumberFormatLocal}catch{}
+        $rowRange=$cell.EntireRow;$columnRange=$cell.EntireColumn
+        $rowHeight='unknown';try{$rowHeight=[string]$rowRange.RowHeight}catch{}
+        $columnWidth='unknown';try{$columnWidth=[string]$columnRange.ColumnWidth}catch{}
+        $rowHidden='unknown';try{$rowHidden=[string]$rowRange.Hidden}catch{}
+        $columnHidden='unknown';try{$columnHidden=[string]$columnRange.Hidden}catch{}
+        $contract=[ordered]@{
+            contract_version='excel-cell-structure-v2'; merge_kind=$mergeKind; merge_area=$mergeAddress
+            has_formula=$hasFormula; has_array=$hasArray; has_spill=$hasSpill
+            worksheet_protect_contents=$protectContents; cell_locked=$locked; validation_type=$validationType
+            wrap_text=$wrap; style=$style; number_format=$numberFormat
+            row_height=$rowHeight; column_width=$columnWidth; row_hidden=$rowHidden; column_hidden=$columnHidden
+        }
+        $json=$contract|ConvertTo-Json -Depth 5 -Compress
+        return [pscustomobject]@{Contract=[pscustomobject]$contract;Fingerprint=(Get-YakuCatSourceIntegrityHash -Text $json)}
+    } finally {
+        Release-YakuComObject $columnRange;Release-YakuComObject $rowRange;Release-YakuComObject $validation;Release-YakuComObject $mergeArea;Release-YakuComObject $cell
     }
 }
 
@@ -863,7 +929,8 @@ function Get-YakuExcelSheetTextBlocksFallback {
                     if ([string]::IsNullOrWhiteSpace($colLetter)) { $colLetter = ConvertTo-YakuColumnLetter -Column $actualCol }
                     $a1 = $colLetter + [string]$actualRow
                     $id = "cell|$sheetName|$a1"
-                    $Blocks.Add((New-YakuTextBlock -Id $id -Text $text.Trim() -Location "$sheetName, $a1" -Meta ([pscustomobject]@{ Kind='cell'; Sheet=$sheetName; Row=$actualRow; Col=$actualCol; A1=$a1; Merged=$isMergedAnchor }))) | Out-Null
+                    $structure=Get-YakuExcelCellStructureContract -Worksheet $Worksheet -Row $actualRow -Col $actualCol -MergeInfo $mergeInfo
+                    $Blocks.Add((New-YakuTextBlock -Id $id -Text $text.Trim() -Location "$sheetName, $a1" -Meta ([pscustomobject]@{ Kind='cell'; Sheet=$sheetName; Row=$actualRow; Col=$actualCol; A1=$a1; Merged=$isMergedAnchor; StructureContract=$structure.Contract; StructureFingerprint=$structure.Fingerprint }))) | Out-Null
                     $localCells++
                 } catch {
                     $location = ("{0}!R{1}C{2}" -f $sheetName, $actualRow, $actualCol)
@@ -975,7 +1042,8 @@ function Get-YakuExcelSheetTextBlocks {
                             if ([string]::IsNullOrWhiteSpace($colLetter)) { $colLetter = ConvertTo-YakuColumnLetter -Column $actualCol }
                             $a1 = $colLetter + [string]$actualRow
                             $id = "cell|$sheetName|$a1"
-                            $Blocks.Add((New-YakuTextBlock -Id $id -Text $text.Trim() -Location "$sheetName, $a1" -Meta ([pscustomobject]@{ Kind='cell'; Sheet=$sheetName; Row=$actualRow; Col=$actualCol; A1=$a1; Merged=$isMergedAnchor }))) | Out-Null
+                            $structure=Get-YakuExcelCellStructureContract -Worksheet $Worksheet -Row $actualRow -Col $actualCol -MergeInfo $mergeInfo
+                            $Blocks.Add((New-YakuTextBlock -Id $id -Text $text.Trim() -Location "$sheetName, $a1" -Meta ([pscustomobject]@{ Kind='cell'; Sheet=$sheetName; Row=$actualRow; Col=$actualCol; A1=$a1; Merged=$isMergedAnchor; StructureContract=$structure.Contract; StructureFingerprint=$structure.Fingerprint }))) | Out-Null
                             $localCells++
                         } catch {
                             $location = ("{0}!R{1}C{2}" -f $sheetName, $actualRow, $actualCol)
@@ -3241,7 +3309,6 @@ function New-YakuExcelCellWritePlan {
             $id = [string]$block.Id
             if (-not $TranslationByBlockId.ContainsKey($id)) { continue }
             $translation = [string]$TranslationByBlockId[$id]
-            if ([string]::IsNullOrWhiteSpace($translation)) { continue }
             $row = [int]$block.Meta.Row
             $col = [int]$block.Meta.Col
             $isMerged = $false
@@ -3362,7 +3429,6 @@ function Write-YakuExcelCellTranslationsForSheet {
             $id = [string]$block.Id
             if (-not $TranslationByBlockId.ContainsKey($id)) { continue }
             $translation = [string]$TranslationByBlockId[$id]
-            if ([string]::IsNullOrWhiteSpace($translation)) { continue }
             $row = [int]$block.Meta.Row
             $col = [int]$block.Meta.Col
             $rect = New-YakuExcelSingleCellRectangle -Row $row -Col $col -Value $translation
@@ -3629,11 +3695,13 @@ function Write-YakuExcelTranslations {
             $id = [string]$block.Id
             if (-not $TranslationByBlockId.ContainsKey($id)) { continue }
             $translation = [string]$TranslationByBlockId[$id]
-            if ([string]::IsNullOrWhiteSpace($translation)) { continue }
+            $kind = [string]$block.Meta.Kind
+            # PlacementPlanに明示されたcellの空sliceは「未翻訳」ではなく、
+            # 原文を消して空にする書込指示である。図形等の空訳は従来どおりskipする。
+            if ([string]::IsNullOrWhiteSpace($translation) -and $kind -ne 'cell') { continue }
             # 原文保持（未翻訳・不足補完失敗など）は値/フォントとも変更しない。
             if ($translation -eq [string]$block.Text) { continue }
             $writeTargetCount++
-            $kind = [string]$block.Meta.Kind
             if ($kind -eq 'cell') {
                 $sheet = [string]$block.Meta.Sheet
                 if (-not $cellBlocksBySheet.ContainsKey($sheet)) { $cellBlocksBySheet[$sheet] = New-Object System.Collections.Generic.List[object] }

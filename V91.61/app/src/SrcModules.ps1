@@ -49,7 +49,10 @@ $script:YakuSrcModuleFiles = @(
     'CorpusPairs.ps1',
     'WordAdapter.ps1',
     'CatProject.ps1',
-    'Selection.ps1',
+    'Publication.ps1',
+    'Render.ps1',
     'VersionUpdate.ps1',
+    'SourceRebase.ps1',
+    'Review.ps1',
     'DesktopIntegration.ps1'
 )

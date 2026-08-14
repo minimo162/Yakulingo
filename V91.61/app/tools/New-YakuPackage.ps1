@@ -56,9 +56,9 @@ if (Test-Path -LiteralPath $manifestPath) { Remove-Item -LiteralPath $manifestPa
 $map = @{}
 foreach ($file in @(Get-ChildItem -LiteralPath $source -Recurse -File -Force)) {
     $relative = $file.FullName.Substring($source.Length).TrimStart([char[]]@('\','/')).Replace('\','/')
-    # app/desktop and app/experiments are retained only as development history
-    # and WebView2 probes. The product uses PowerShell + Edge app mode and ships
-    # no custom executable or WebView2 runtime.
+    # Legacy desktop shells and browser experiments must never enter a release.
+    # The product uses PowerShell + a normal Edge tab and ships no custom
+    # executable or WebView2 runtime.
     if ($relative -match '(?i)^app/(desktop|experiments)(/|$)') { continue }
     $map[$relative] = $file.FullName
 }

@@ -543,8 +543,7 @@ summary { cursor: pointer; color: var(--text); font-size: var(--font-meta); min-
 .review-entry-option button { width: 100%; border: 2px solid var(--accent); background: var(--surface); color: var(--accent-text); font-weight: 700; }
 .review-entry-option button:hover { background: #e8eef4; }
 .review-entry-option button[disabled] { border-color: #c2c3cc; background: #e4e4e9; color: #3c3d45; }
-/* Ctrl+Alt+J で出る小さな窓では、画面全体の見出しに押し下げられて、読み込んだ
-   文章が見えなくなる（実機で確認）。始める画面では見出しを1つにする。 */
+/* 始める画面では見出しを1つにする。 */
 /* 画面からは消すが、文書からは消さない。display:none にしていたため h1 が
    読み上げの見出し一覧から丸ごと落ち、その場で訳す側は H2、資料側は H3 から
    始まる文書になっていた（実測 2026-08-13: 可視の h1 は0個）。
@@ -562,12 +561,6 @@ body[data-cat-view="start"] .workspace-heading {
 /* 1回で送れる量を超えたときだけ出る案内。押せる出口を同じ枠の中に置く。 */
 .quick-long-notice { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); justify-content: space-between; margin: var(--space-2) 0 0; padding: 12px 14px; border-left: 4px solid var(--warning); border-radius: var(--radius-control); background: var(--surface-subtle); }
 .quick-long-notice p { margin: 0; font-size: var(--font-meta); }
-html.yaku-compact .hero { padding: 10px 0; }
-html.yaku-compact .tab-panel { margin-top: 12px; }
-html.yaku-compact .translate-form { padding: 16px; }
-html.yaku-compact .section-title-row { margin-bottom: 12px; }
-html.yaku-compact #quick-input { min-height: 220px; height: min(36vh, 280px); }
-html.yaku-compact .privacy-note { margin-top: 12px; padding: 10px 12px; }
 .direction-summary { display: flex; align-items: center; justify-content: flex-start; gap: 10px; margin-top: var(--space-2); border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--surface-subtle); padding: 10px 12px; }
 .direction-summary label { color: var(--muted); font-size: var(--font-meta); font-weight: 700; }
 .direction-summary select { min-width: 132px; width: auto; background: var(--surface); color: var(--text); font-weight: 700; }
@@ -617,7 +610,4 @@ html.yaku-compact .privacy-note { margin-top: 12px; padding: 10px 12px; }
 .link-button { margin-top: 8px; border: 0; background: none; padding: 0; color: var(--accent-text); font-size: var(--font-meta); text-decoration: underline; cursor: pointer; min-height: 0; }
 .link-button[hidden] { display: none; }
 
-/* Ctrl+Alt+J で読み込んだ内容の出どころ。別のブックを読んでいても気づけるよう、
-   ブック名・シート名・番地をここに必ず出す。 */
-.quick-selection-note { margin-bottom: var(--space-1); padding: 8px 12px; border-left: 4px solid var(--accent); background: var(--accent-soft); color: var(--accent-text); font-size: var(--font-meta); }
 .quick-result-note { margin: var(--space-2) 0 var(--space-1); color: var(--muted); font-size: var(--font-meta); }
