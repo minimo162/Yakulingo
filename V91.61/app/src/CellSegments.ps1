@@ -356,6 +356,68 @@ function Get-YakuCatSegmentSplitGroupId {
     return $value
 }
 
+function Test-YakuCatSplitPositionInsideToken {
+    <#
+      原文のこの位置は、単語・数字・記号列の「内側」か。
+
+      なぜ要るか（2026-08-15 の欠陥）:
+        原文 `型式はAB-1234を採用します。` を位置6（`-` と `1` の間）で割ると、
+        書き戻しで訳文が `The model is AB- 1234 will be adopted.` になり、
+        トークンの内側へ空白が1つ入る。数字 1234 は1桁も欠けないので
+        数値QCに掛からず、割った後は片側ずつしか点検しないので原理的に
+        見えない。Get-YakuCatOutputEligibility も止めない。つまり利用者に
+        見えないまま資料が壊れる。
+
+      判定は「原文の境目に空白があったか」ではやってはいけない。日本語の
+      原文にはどこにも空白が無いので、それだと to_en が常に詰めになり、
+      節で割った普通の文（`…見直しました。` ＋ `調達費も…`）まで
+      `system.We also…` と繋がってしまう。見るのは境目の両隣の字種である。
+
+      規則（この1か所だけが持つ。写経しないこと）:
+        1. 位置が範囲の外、または原文が1文字以下 → 内側ではない（別の門が弾く）
+        2. サロゲートペアの真ん中 → 内側。1文字を半分に割るので無条件に守る
+        3. どちらかが空白 → 内側ではない（原文がそこで切れている）
+        4. どちらかが CJK（漢字・かな・全角の句読点・半角カナ） → 内側ではない。
+           日本語の文の切れ目なので、訳文どうしは空白1つで繋ぐのが正しい
+        5. 少なくとも一方が英数字 → 内側。`AB-|1234` `3.|14` `1,|234` `100|km`
+           `2026-08|-15` `example.com/|a` が全部これに入る。全角英数
+           （`ＡＢ－|１２３４`）も IsLetterOrDigit が真なので同じ扱いになる
+        6. それ以外（記号どうし、例 `..|.`） → 内側ではない。空白を1つ入れる側へ
+           倒す。ここを「内側」に倒すと、記号で終わる文の切れ目まで詰まる
+
+      5 は `system.|We`（空白の無い文末）も「内側」と見なす。これは承知の
+      うえで受ける。`example.com` `3.14` を守るほうを採ると、`.` の左右だけ
+      では両者を区別できないからである。しかも原文が Latin で訳文も Latin に
+      なる場面は、この道具（to_en / to_jp）ではまず起きない。to_jp では
+      繋ぎ文字がそもそも '' である。
+    #>
+    param(
+        [AllowNull()][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory=$true)][int]$Position
+    )
+    $s = [string]$Text
+    if ($s.Length -lt 2) { return $false }
+    if ($Position -le 0 -or $Position -ge $s.Length) { return $false }
+    $left = $s[$Position - 1]
+    $right = $s[$Position]
+    if ([char]::IsHighSurrogate($left) -and [char]::IsLowSurrogate($right)) { return $true }
+    if ([char]::IsWhiteSpace($left) -or [char]::IsWhiteSpace($right)) { return $false }
+    # CJK の範囲。全角英数（U+FF01..U+FF60）は入れない。`ＡＢ－１２３４` を
+    # トークンとして守るためである。半角カナ（U+FF61..U+FF9F）は日本語なので入れる。
+    $isCjk = {
+        param([char]$c)
+        $code = [int]$c
+        return (($code -ge 0x3000 -and $code -le 0x30FF) -or `
+                ($code -ge 0x3400 -and $code -le 0x4DBF) -or `
+                ($code -ge 0x4E00 -and $code -le 0x9FFF) -or `
+                ($code -ge 0xF900 -and $code -le 0xFAFF) -or `
+                ($code -ge 0xFF61 -and $code -le 0xFF9F))
+    }
+    if ((& $isCjk $left) -or (& $isCjk $right)) { return $false }
+    if (-not ([char]::IsLetterOrDigit($left) -or [char]::IsLetterOrDigit($right))) { return $false }
+    return $true
+}
+
 function Join-YakuCatSplitTranslations {
     <#
       任意位置で割った行の訳文を、元の1つのセル（段落）へ戻すときの繋ぎ方。
@@ -365,16 +427,38 @@ function Join-YakuCatSplitTranslations {
       無いので、ここで決めるほかない。決め方は New-YakuCellSegment と同じ
       規則にそろえる（日本語が混じれば詰める・そうでなければ空白1つ）。
       すでに端が空白の側には足さない。二重空白は Excel のセルで目に見える。
+
+      Sources（各行の原文）を渡すと、もう1段守る。原文の境目がトークンの
+      内側だった箇所には繋ぎ文字を入れない。既に割ってある資料を後から
+      弾いたりはしないので（利用者判断 2026-08-15）、繋ぎ方のほうで直す。
+      渡さなければ今までどおり。Sources の本数が Parts と合わないときも
+      今までどおりにする（対応づけを推測しない）。
     #>
-    param([AllowNull()][object[]]$Parts)
+    param([AllowNull()][object[]]$Parts, [AllowNull()][object[]]$Sources)
     $list = @(@($Parts) | ForEach-Object { [string]$_ })
+    $sourceList = @(@($Sources) | ForEach-Object { [string]$_ })
+    $useSources = ($list.Count -gt 1 -and $sourceList.Count -eq $list.Count)
+    $sourceWhole = ''
+    $sourceOffsets = @()
+    if ($useSources) {
+        $sb = New-Object System.Text.StringBuilder
+        $offsets = New-Object System.Collections.Generic.List[int]
+        foreach ($src in $sourceList) { [void]$offsets.Add([int]$sb.Length); [void]$sb.Append([string]$src) }
+        $sourceWhole = $sb.ToString()
+        $sourceOffsets = $offsets.ToArray()
+    }
     $joiner = if ((@($list) -join '') -match '[぀-ヿ一-鿿]') { '' } else { ' ' }
     $builder = New-Object System.Text.StringBuilder
-    foreach ($part in $list) {
+    for ($i = 0; $i -lt $list.Count; $i++) {
+        $part = [string]$list[$i]
         if ([string]::IsNullOrEmpty($part)) { continue }
         if ($builder.Length -gt 0 -and $joiner -ne '') {
             $left = [char]$builder.Chars($builder.Length - 1)
-            if (-not [char]::IsWhiteSpace($left) -and -not [char]::IsWhiteSpace($part[0])) { [void]$builder.Append($joiner) }
+            $glued = $false
+            # 見るのは「この行の原文が、繋いだ原文のどこから始まるか」。
+            # 途中の行の訳文が空でも、境目そのものは原文の側で決まる。
+            if ($useSources) { $glued = [bool](Test-YakuCatSplitPositionInsideToken -Text $sourceWhole -Position ([int]$sourceOffsets[$i])) }
+            if (-not $glued -and -not [char]::IsWhiteSpace($left) -and -not [char]::IsWhiteSpace($part[0])) { [void]$builder.Append($joiner) }
         }
         [void]$builder.Append($part)
     }
@@ -425,7 +509,9 @@ function Group-YakuCatSplitSegments {
         $pseudo = [pscustomobject]@{
             SegmentId   = $groupId
             Text        = (@($memberArray | ForEach-Object { [string]$_.Text }) -join '')
-            Translation = (Join-YakuCatSplitTranslations -Parts @($memberArray | ForEach-Object { [string]$_.Translation }))
+            # 原文も渡す。境目がトークンの内側（`AB-` ＋ `1234`）だった箇所へ
+            # 空白を入れると、数値QCに掛からないまま資料が壊れる。
+            Translation = (Join-YakuCatSplitTranslations -Parts @($memberArray | ForEach-Object { [string]$_.Translation }) -Sources @($memberArray | ForEach-Object { [string]$_.Text }))
             SourceRevision = $maxRevision
             Kind        = [string]$first.Kind
             Sheet       = [string]$first.Sheet
@@ -469,7 +555,7 @@ function Get-YakuSegmentTranslationByBlockId {
         $indices = @($unit.Indices)
         if (@($indices | Where-Object { $TranslationBySegmentIndex.ContainsKey($_) }).Count -eq 0) { continue }
         $translation = if ([bool]$unit.IsSplitGroup) {
-            Join-YakuCatSplitTranslations -Parts @($indices | ForEach-Object { if ($TranslationBySegmentIndex.ContainsKey($_)) { [string]$TranslationBySegmentIndex[$_] } else { '' } })
+            Join-YakuCatSplitTranslations -Parts @($indices | ForEach-Object { if ($TranslationBySegmentIndex.ContainsKey($_)) { [string]$TranslationBySegmentIndex[$_] } else { '' } }) -Sources @($indices | ForEach-Object { [string]$segs[$_].Text })
         } else { [string]$TranslationBySegmentIndex[$indices[0]] }
         $segment = $unit.Segment
         $ids = @($segment.BlockIds)

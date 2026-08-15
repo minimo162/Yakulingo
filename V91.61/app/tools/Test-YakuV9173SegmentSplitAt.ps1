@@ -10,7 +10,7 @@
   任意位置の分割を持っているのは、日本語の自動分割が「。」や箇条書きで外れる
   のが日常だからである。
 
-  見るのは8つ。
+  見るのは9つ。
    (a) 指定位置で原文が2分され、両方の SegmentId が新規に振られる
    (b) 書き戻しで、割った2行が元の1セルへ結合されて入る
    (c) 訳文は両方とも消える（決めたとおりに動く）
@@ -19,9 +19,16 @@
    (f) 位置の境界（0・末尾・範囲外・空白だけ）を弾く
    (g) 画面（cat.js / cat.html）と口（Server.ps1）が実物どうしでつながっている
    (h) 保存して読み直しても、割った印が残る
+   (i) トークン（単語・数字）の内側では割らせない・繋ぐときに空白を入れない
 
   (b) は Excel がある環境では実ファイルの往復まで見る。無い環境では
   配置計画（PlacementPlan）の段まで見る。
+
+  (i) は 2026-08-15 の欠陥。原文 `型式はAB-1234を採用します。` を位置6で割ると
+  書き戻しが `The model is AB- 1234 will be adopted.` になり、トークンの内側へ
+  空白が入る。数字は1桁も欠けないので数値QCに掛からず、割った後は片側ずつしか
+  点検しないので原理的に見えない。2層で塞ぐ（割らせない／繋ぎ方を直す）ので、
+  両方をここで見る。
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\tools\Test-YakuV9173SegmentSplitAt.ps1
@@ -451,6 +458,148 @@ try {
     Chk ($listedAltKeys.Count -ge 3) ('キー一覧に Alt の割り当てが ' + $listedAltKeys.Count + ' 件ある')
     $missingAltKeys = @($listedAltKeys | Where-Object { $clientText -notmatch ("event\.key\.toLowerCase\(\) === '" + $_ + "'") })
     Chk ($missingAltKeys.Count -eq 0) ('キー一覧の Alt キーはすべて cat.js が受ける（受けていない: ' + (@($missingAltKeys) -join ',') + '）')
+
+    # ================================================================ (i)
+    # 2026-08-15 の欠陥。原文をトークンの内側で割ると、to_en の書き戻しで
+    # 訳文へ空白が1つ混じる。数字は1桁も欠けないので数値QCに掛からない。
+    Write-Host '(i) トークンの内側では割らせない・繋ぐときに空白を入れない' -ForegroundColor Cyan
+
+    # --- (i-1) 判定そのもの。境目の両隣の字種だけで決まる。
+    # 「原文の境目に空白があったか」で判定してはいけない。日本語の原文には
+    # どこにも空白が無いので、それだと節で割った普通の文まで詰まる。
+    $tokenText = '型式はAB-1234を採用します。'
+    $emoji = [char]::ConvertFromUtf32(0x1F600)
+    $latinPair = 'We reviewed our production system. We also reduced procurement costs.'
+    $cjkPair = $head + $tail
+    $tokenCases = @(
+        @{ T=$tokenText; P=6;  E=$true;  M='ハイフンと数字の間（この欠陥の再現位置 AB-|1234）' },
+        @{ T=$tokenText; P=4;  E=$true;  M='英字どうしの間（A|B）' },
+        @{ T=$tokenText; P=5;  E=$true;  M='英字とハイフンの間（B|-）' },
+        @{ T=$tokenText; P=3;  E=$false; M='CJKと英数の境目（は|A）' },
+        @{ T=$tokenText; P=10; E=$false; M='英数とCJKの境目（4|を）' },
+        @{ T=$tokenText; P=1;  E=$false; M='CJKどうしの間（型|式）' },
+        @{ T='ＡＢ－１２３４を採用'; P=2; E=$true;  M='全角英数のハイフン手前（Ｂ|－）' },
+        @{ T='ＡＢ－１２３４を採用'; P=3; E=$true;  M='全角英数のハイフン直後（－|１）' },
+        @{ T='ＡＢ－１２３４を採用'; P=7; E=$false; M='全角英数とCJKの境目（４|を）' },
+        @{ T='https://example.com/spec'; P=12; E=$true; M='URLの語の内側（m|p）' },
+        @{ T='https://example.com/spec'; P=16; E=$true; M='URLのドット直後（.|c）' },
+        @{ T='https://example.com/spec'; P=19; E=$true; M='URLのスラッシュ手前（m|/）' },
+        @{ T='https://example.com/spec'; P=20; E=$true; M='URLのスラッシュ直後（/|s）' },
+        @{ T='円周率は3.14です。'; P=5; E=$true;  M='小数点の手前（3|.）' },
+        @{ T='円周率は3.14です。'; P=6; E=$true;  M='小数点の直後（.|1）' },
+        @{ T='円周率は3.14です。'; P=4; E=$false; M='CJKと数字の境目（は|3）' },
+        @{ T='2026-08-15'; P=4; E=$true; M='日付の数字とハイフン（6|-）' },
+        @{ T='2026-08-15'; P=5; E=$true; M='日付のハイフンと数字（-|0）' },
+        @{ T='2026-08-15'; P=7; E=$true; M='日付の2つ目のハイフン手前（8|-）' },
+        @{ T='売上は1,234でした'; P=4; E=$true;  M='桁区切りの手前（1|,）' },
+        @{ T='売上は1,234でした'; P=5; E=$true;  M='桁区切りの直後（,|2）' },
+        @{ T='距離は100kmです'; P=6; E=$true;  M='数値と単位の境目（0|k）' },
+        @{ T='AB--1234'; P=3; E=$false; M='記号どうしの境目は内側と見なさない（-|-。空白1つ側へ倒す）' },
+        @{ T=$latinPair; P=($latinPair.IndexOf('. ') + 1); E=$false; M='空白の手前は内側でない（.| ）' },
+        @{ T=$latinPair; P=($latinPair.IndexOf('. ') + 2); E=$false; M='空白の直後は内側でない（ |W）' },
+        @{ T=$latinPair; P=$latinPair.IndexOf('. '); E=$true; M='語と句点の間は内側（m|.）' },
+        @{ T=$cjkPair; P=$head.Length; E=$false; M='日本語の文の切れ目は内側でない（。|調）' },
+        @{ T=('AB' + $emoji + 'CD'); P=3; E=$true; M='サロゲートペアの真ん中は必ず内側（絵文字を半分に割らない）' },
+        @{ T=''; P=0; E=$false; M='空文字は内側でない' },
+        @{ T=''; P=1; E=$false; M='空文字に位置1を聞かれても内側でない' },
+        @{ T='A'; P=1; E=$false; M='1文字の原文は内側でない' },
+        @{ T='あ'; P=0; E=$false; M='1文字のCJKも内側でない' },
+        @{ T=$tokenText; P=0; E=$false; M='位置0は内側でない（別の門が弾く）' },
+        @{ T=$tokenText; P=$tokenText.Length; E=$false; M='末尾は内側でない（別の門が弾く）' },
+        @{ T=$tokenText; P=9999; E=$false; M='範囲外は内側でない（別の門が弾く）' },
+        @{ T=$tokenText; P=-1; E=$false; M='負の位置は内側でない（別の門が弾く）' }
+    )
+    foreach ($case in $tokenCases) {
+        $got = [bool](Test-YakuCatSplitPositionInsideToken -Text ([string]$case.T) -Position ([int]$case.P))
+        $want = [bool]$case.E
+        Chk ($got -eq $want) ('判定: ' + [string]$case.M + ' → ' + $(if ($want) { '内側' } else { '内側でない' }) + '（実際 ' + $(if ($got) { '内側' } else { '内側でない' }) + '）')
+    }
+    Chk ([bool](Test-YakuCatSplitPositionInsideToken -Text $null -Position 1) -eq $false) '原文が $null でも落ちずに「内側でない」を返す'
+
+    # 判定は1か所だけが持つ。CatProject 側へ写すと、片方だけ直り忘れる。
+    $cellSegmentsSource = [IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CellSegments.ps1'), [Text.UTF8Encoding]::new($false))
+    $cellAst = [System.Management.Automation.Language.Parser]::ParseInput($cellSegmentsSource, [ref]$null, [ref]$null)
+    $predInCell = @($cellAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Test-YakuCatSplitPositionInsideToken' }, $true))
+    $predInCat = @($splitAtAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Test-YakuCatSplitPositionInsideToken' }, $true))
+    Chk ($predInCell.Count -eq 1) '判定は CellSegments.ps1 に1つだけ定義されている'
+    Chk ($predInCat.Count -eq 0) 'CatProject.ps1 には写しが無い'
+    Chk ($splitAtText -match 'Test-YakuCatSplitPositionInsideToken') 'Split-YakuCatSegmentAt は共有の判定を呼ぶ'
+    # 前方呼び出しにしない（後ろのモジュールの関数を呼ぶと CommandNotFoundException が
+    # セル単位の catch で警告へ落ちる。2026-08-14 の実績）。
+    $moduleOrder = @($script:YakuSrcModuleFiles)
+    $idxCell = [array]::IndexOf($moduleOrder, 'CellSegments.ps1')
+    $idxCat = [array]::IndexOf($moduleOrder, 'CatProject.ps1')
+    Chk ($idxCell -ge 0 -and $idxCat -gt $idxCell) ('CellSegments.ps1 が CatProject.ps1 より先に読まれる（' + $idxCell + ' < ' + $idxCat + '）')
+
+    # --- (i-2) 門。新しい破損はここで止める。
+    $pi = New-TestCellProject -Texts @($tokenText)
+    $threwToken = $false; $tokenMessage = ''
+    try { $null = Split-YakuCatSegmentAt -Project $pi -Index 0 -Position 6 } catch { $threwToken = $true; $tokenMessage = [string]$_.Exception.Message }
+    Chk $threwToken 'トークンの内側（AB-|1234）で割ろうとすると止まる'
+    Chk (@($pi.Segments).Count -eq 1) '止まったので行は増えない'
+    Chk ($tokenMessage -match '単語' -and $tokenMessage -match '数字') '止めた理由が「単語や数字の途中」と書いてある'
+    Chk ($tokenMessage -match 'AB-1234') '何がトークンかの例が文面にある'
+    Chk ($tokenMessage -match 'もう一度お試しください') '次に何をすればよいかまで書いてある（既存4つと同じ語り口）'
+    # 門は「割れるはずの位置」まで塞いでいないこと。ここが空振りだと意味が無い。
+    $pi2 = New-TestCellProject -Texts @($tokenText)
+    $null = Split-YakuCatSegmentAt -Project $pi2 -Index 0 -Position 3
+    Chk (@($pi2.Segments).Count -eq 2) 'CJKと英数の境目（は|AB）では今までどおり割れる'
+    Chk ([string]@($pi2.Segments)[0].Text -eq '型式は' -and [string]@($pi2.Segments)[1].Text -eq 'AB-1234を採用します。') '割れた位置は指定どおり'
+    $pi3 = New-TestCellProject -Texts @($tokenText)
+    $null = Split-YakuCatSegmentAt -Project $pi3 -Index 0 -Position 10
+    Chk (@($pi3.Segments).Count -eq 2) '英数とCJKの境目（1234|を）でも今までどおり割れる'
+    # 絵文字を半分に割らせない。
+    $piE = New-TestCellProject -Texts @('注記' + $emoji + '追記')
+    $threwEmoji = $false
+    try { $null = Split-YakuCatSegmentAt -Project $piE -Index 0 -Position 3 } catch { $threwEmoji = $true }
+    Chk $threwEmoji 'サロゲートペアの真ん中では割れない'
+    Chk (@($piE.Segments).Count -eq 1) '絵文字の半分割りでも行は増えない'
+
+    # --- (i-3) 繋ぎ方。既に割ってある資料は、繋ぎ方だけで直す。
+    $brokenParts = @('The model is AB-', '1234 will be adopted.')
+    $brokenSources = @('型式はAB-', '1234を採用します。')
+    Chk ((Join-YakuCatSplitTranslations -Parts $brokenParts) -eq 'The model is AB- 1234 will be adopted.') '原文を渡さない既存の呼び出しは今までどおり（空白が入る）'
+    Chk ((Join-YakuCatSplitTranslations -Parts $brokenParts -Sources $brokenSources) -eq 'The model is AB-1234 will be adopted.') '原文を渡すと、トークンの内側には空白を入れない'
+    Chk ((Join-YakuCatSplitTranslations -Parts @('We reviewed our production system.', 'We also reduced procurement costs.') -Sources @($head, $tail)) -eq $expectedJoined) '日本語の文の切れ目では、今までどおり空白1つで繋ぐ'
+    Chk ((Join-YakuCatSplitTranslations -Parts $brokenParts -Sources @('型式はAB-')) -eq 'The model is AB- 1234 will be adopted.') '原文の本数が合わないときは今までどおり（対応づけを推測しない）'
+    # 原文が「多すぎる」側も要る。少なすぎる側だけでは、本数一致ガードを緩めても
+    # 出力が1文字も変わらない（位置が範囲外→0になり、述語がどのみち $false を返す）。
+    # つまり上の1行だけでは、ガードを外したことを検知できない。多すぎる側は
+    # ずれた原文で判定が走るので、緩めた瞬間に詰めて繋いでしまう。
+    Chk ((Join-YakuCatSplitTranslations -Parts $brokenParts -Sources @('型式はAB-', '1234', '余分')) -eq 'The model is AB- 1234 will be adopted.') '原文が多すぎるときも今までどおり（本数が一致したときだけ信じる）'
+    Chk ((Join-YakuCatSplitTranslations -Parts @('型式はAB-', '1234を採用します。') -Sources @('The model is AB-', '1234 will be adopted.')) -eq '型式はAB-1234を採用します。') 'to_jp は繋ぎ文字がそもそも無いので、どちらでも詰めて繋ぐ'
+
+    # --- (i-4) 既に割ってある資料の書き戻し。門を通さずに割った状態を組み立てる。
+    #     利用者の作業を巻き戻さない（既存の分割行は弾かない）ので、ここが本番になる。
+    $pl = New-TestCellProject -Texts @($tokenText)
+    $legacyTarget = @($pl.Segments)[0]
+    $legacyGroup = [guid]::NewGuid().ToString('N')
+    $legacyOut = New-Object System.Collections.Generic.List[object]
+    foreach ($piece in @($tokenText.Substring(0, 6), $tokenText.Substring(6))) {
+        [void]$legacyOut.Add((New-YakuCatSplitPart -Source $legacyTarget -Text $piece -GroupId $legacyGroup -OriginSegmentId ([string]$legacyTarget.SegmentId)))
+    }
+    $null = Set-YakuCatSegments -Project $pl -Segments @($legacyOut.ToArray())
+    $null = Update-YakuCatSplitOrdinals -Project $pl
+    Chk (@($pl.Segments).Count -eq 2 -and [string]@($pl.Segments)[0].Text -eq '型式はAB-') '門を通さずに割った資料を用意できた（この検査が空振りでないこと）'
+    $null = Set-YakuCatSegmentTranslation -Project $pl -Index 0 -Text 'The model is AB-'
+    $null = Set-YakuCatSegmentTranslation -Project $pl -Index 1 -Text '1234 will be adopted.'
+    $expectedTight = 'The model is AB-1234 will be adopted.'
+    $legacyUnits = @(Group-YakuCatSplitSegments -Segments @($pl.Segments))
+    Chk ($legacyUnits.Count -eq 1 -and [bool]$legacyUnits[0].IsSplitGroup) '畳むと1単位になる'
+    Chk ([string]$legacyUnits[0].Segment.Translation -eq $expectedTight) ('畳んだ訳文に空白が混じらない: ' + [string]$legacyUnits[0].Segment.Translation)
+    Chk ([string]$legacyUnits[0].Segment.Text -eq $tokenText) '原文は連結すると元へ戻る（割り方は可逆）'
+    $legacyBySegment = @{0='The model is AB-';1='1234 will be adopted.'}
+    $legacyByBlock = Get-YakuCatPlacementTranslationByBlockId -Project $pl -TranslationBySegmentIndex $legacyBySegment
+    Chk ([string]$legacyByBlock['b1'] -eq $expectedTight) ('配置計画の経路でも空白が混じらない: ' + [string]$legacyByBlock['b1'])
+    $legacyByBlockCell = Get-YakuSegmentTranslationByBlockId -Segments @($pl.Segments) -TranslationBySegmentIndex $legacyBySegment
+    Chk ([string]$legacyByBlockCell['b1'] -eq $expectedTight) ('セル層の経路でも空白が混じらない: ' + [string]$legacyByBlockCell['b1'])
+    Chk ([string]$legacyByBlock['b1'] -notmatch 'AB- 1234') '欠陥そのもの（AB- 1234）が出ない'
+    # 数値QCは、この欠陥を見つけられない。数字は1桁も欠けず、割った後は
+    # 片側ずつしか点検が走らないからである。だから止める側ではなく繋ぎ方で直した。
+    $pq = New-TestCellProject -Texts @('1234を採用します。')
+    $null = Set-YakuCatSegmentTranslation -Project $pq -Index 0 -Text '1234 will be adopted.'
+    $qcBroken = Invoke-YakuCatSegmentValidation -Project $pq -Segment @($pq.Segments)[0]
+    Chk ([bool]$qcBroken.Passed) '割った片側だけでは点検が何も言わない（この欠陥が見えない理由）'
 
     # ================================================================ (b) 実Excel
     if (Test-YakuExcelAvailable) {

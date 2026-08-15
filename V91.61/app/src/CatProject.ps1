@@ -1127,7 +1127,9 @@ function Get-YakuCatPlacementUnits {
             if (Get-Command Resolve-YakuCatPublicationText -ErrorAction SilentlyContinue) { [string](Resolve-YakuCatPublicationText -Project $Project -Segment $part).Text }
             else { [string]$part.Translation }
         })
-        $unit.Segment.Translation = (Join-YakuCatSplitTranslations -Parts $texts)
+        # 原文も渡す。境目がトークンの内側（`AB-` ＋ `1234`）だった箇所へ
+        # 空白を入れると、数値QCに掛からないまま配置計画・書き出しへ流れる。
+        $unit.Segment.Translation = (Join-YakuCatSplitTranslations -Parts $texts -Sources @(@($unit.Indices) | ForEach-Object { [string]$segments[$_].Text }))
         [void]$units.Add($unit)
     }
     # Group-YakuCatSplitSegments と同じ理由で `,` を付けない。呼ぶ側が @() で受ける。
@@ -3666,6 +3668,12 @@ function Split-YakuCatSegmentAt {
 
       位置は原文の文字位置（先頭からの文字数）。0・末尾・範囲外は弾く。
       片方が空白だけになる位置も弾く。空の行は書き出しを永久に止めるためである。
+      単語や数字の内側（`AB-` と `1234` の間）も弾く。そこで割ると書き戻しの
+      ときに訳文へ空白が1つ入るが、数字は1桁も欠けないので数値QCに掛からず、
+      割った後は片側ずつしか点検しないので原理的に見えない（2026-08-15）。
+      判定は Test-YakuCatSplitPositionInsideToken が唯一持つ。ここへ写さない。
+      既に割ってある資料は弾かない。そちらは繋ぎ方（Join-YakuCatSplitTranslations）
+      で直す。利用者の作業を巻き戻さないためである。
     #>
     param(
         [Parameter(Mandatory=$true)]$Project,
@@ -3684,6 +3692,9 @@ function Split-YakuCatSegmentAt {
     $right = $text.Substring($Position)
     if ([string]::IsNullOrWhiteSpace($left) -or [string]::IsNullOrWhiteSpace($right)) {
         throw 'その位置で分けると、片方が空になります。別の位置を選んでください。'
+    }
+    if (Test-YakuCatSplitPositionInsideToken -Text $text -Position $Position) {
+        throw 'その位置は単語や数字の途中です（例: 型式や品番の「AB-1234」）。そこで分けると、書き戻すときに訳文へ空白が入り、点検では見つかりません。語の切れ目まで位置をずらしてから、もう一度お試しください。'
     }
     $groupId = Get-YakuCatSegmentSplitGroupId -Segment $target
     if ($groupId -eq '') { $groupId = [guid]::NewGuid().ToString('N') }
