@@ -19,6 +19,21 @@
   ReasonCode / WarningCode を巻き込み、対応表に無い偽のコードを数える。
   ハッシュテーブルのキー名を AST で見れば Code と ErrorCode は別物として分かれる。
 
+  ただし 'Code=' の鍵だけでは足りない（2026-08-15 に実測で分かった穴）。
+  種別は finding からだけ来るのではなく、**その場で合成される**ものがある。
+  src/CatProject.ps1 の Get-YakuCatOutputEligibility は、点検そのものが例外で
+  落ちた行に対して $seenCodes.Add('validation-unavailable') と積む。これは
+  ハッシュテーブルの Code= を1つも通らないので、上の走査の網には掛からない。
+  掛からないまま画面へ届くと、cat.js に文言が無いので汎用文へ落ち、しかも
+  qcGroup が赤（利用者の訳の欠陥）で塗る。**道具の不調が欠陥の顔で出る。**
+
+  そこで走査を2本立てにする。
+    1. finding の形（Code と Severity の対）を持つハッシュテーブル … 従来どおり
+    2. 名前に code を含む入れ物へ、文字列定数を Add しているところ … 合成の種別
+  2 を「名前に code を含む変数への .Add(定数)」に限るのは、素の .Add() を全部
+  数えると別の一覧（行、理由、問題点）まで巻き込むからである。実測では
+  src 全体でこの形は1か所しか無く、それが上の validation-unavailable だった。
+
 .PARAMETER Root
   検査対象の app フォルダ。既定はこのスクリプトの親（配布物の app）。
   門そのものが発火するかを確かめるとき、複製へ向けて使う。
@@ -94,6 +109,9 @@ function Get-YakuQcFindingCodesFromSrc {
     $codes = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     $producers = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     $records = New-Object 'System.Collections.Generic.List[psobject]'
+    # 合成された種別（finding を通らずに積まれるもの）。どこで積まれたかまで残す。
+    # 数だけ持つと、網が空になったときに気づけない。
+    $synthesized = New-Object 'System.Collections.Generic.List[psobject]'
 
     foreach ($file in @(Get-ChildItem -LiteralPath $SrcDir -Filter '*.ps1' -File | Sort-Object Name)) {
         $tokens = $null; $errors = $null
@@ -129,6 +147,32 @@ function Get-YakuQcFindingCodesFromSrc {
             }) | Out-Null
             if ($hasSeverity) { $null = $producers.Add((Get-YakuQcEnclosingFunctionName -Ast $hashtable)) }
         }
+
+        # 2本目の走査。$seenCodes.Add('validation-unavailable') のように、
+        # finding を通らずに種別だけを積むところを拾う。
+        # 受け手の名前に code が入っているものに限る（$rows / $reasons / $problems
+        # のような別の一覧を巻き込まないため）。引数が定数でなければ
+        # （$seenCodes.Add($code) のような素通し）合成ではないので数えない。
+        foreach ($call in @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.InvokeMemberExpressionAst] }, $true))) {
+            $member = ''
+            if ($call.Member -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $member = [string]$call.Member.Value }
+            if ($member -ne 'Add') { continue }
+            if ($call.Expression -isnot [System.Management.Automation.Language.VariableExpressionAst]) { continue }
+            $holder = [string]$call.Expression.VariablePath.UserPath
+            if ($holder -notmatch '(?i)code') { continue }
+            foreach ($argument in @($call.Arguments)) {
+                if ($argument -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) { continue }
+                $value = ([string]$argument.Value).Trim()
+                if ([string]::IsNullOrWhiteSpace($value)) { continue }
+                $synthesized.Add([pscustomobject]@{
+                    File     = [string]$file.Name
+                    Line     = [int]$call.Extent.StartLineNumber
+                    Function = (Get-YakuQcEnclosingFunctionName -Ast $call)
+                    Holder   = $holder
+                    Code     = $value
+                }) | Out-Null
+            }
+        }
     }
 
     foreach ($record in $records.ToArray()) {
@@ -146,8 +190,11 @@ function Get-YakuQcFindingCodesFromSrc {
         }
         $null = $codes.Add(([string]$record.Code).ToLowerInvariant().Replace('_', '-'))
     }
+    foreach ($record in $synthesized.ToArray()) {
+        $null = $codes.Add(([string]$record.Code).ToLowerInvariant().Replace('_', '-'))
+    }
 
-    return [pscustomobject]@{ Codes = $codes; Producers = $producers; Records = $records }
+    return [pscustomobject]@{ Codes = $codes; Producers = $producers; Records = $records; Synthesized = $synthesized }
 }
 
 # --- cat.js のラベル -------------------------------------------------------
@@ -253,6 +300,7 @@ $catScan = Get-YakuQcCatJsLabelKeys -Path $catJsPath -Problems $problems
 
 $srcCodes = $srcScan.Codes
 $producers = $srcScan.Producers
+$synthesized = @($srcScan.Synthesized.ToArray())
 $labelKeys = $catScan.Keys
 
 foreach ($problem in $problems.ToArray()) { Write-Host ('  FAIL ' + $problem) -ForegroundColor Red; $script:Failures++ }
@@ -264,6 +312,11 @@ foreach ($expected in @('Invoke-YakuCatSegmentValidation', 'Test-YakuTerminology
 }
 Assert-YakuQcLabel ($srcCodes.Count -gt 0) ('src が生成する finding コードを数えた: ' + $srcCodes.Count + ' 件')
 Assert-YakuQcLabel ($labelKeys.Count -gt 0) ('cat.js のラベルを数えた: ' + $labelKeys.Count + ' 件')
+# 2本目の走査が空だと、(a) は合成された種別を1つも見ないまま通ってしまう。
+# 空で通る門は門ではないので、実際に拾えていることをここで数える。
+# （2026-08-15 の実測では src 全体で1件。validation-unavailable である）
+Assert-YakuQcLabel ($synthesized.Count -gt 0) ('finding を通らずに合成される種別を拾えた: ' +
+    (($synthesized | ForEach-Object { [string]$_.Code + '（' + [string]$_.File + ':' + [string]$_.Line + '）' }) -join ', '))
 
 Write-Host 'CASE 2: src が出すコードは、すべて cat.js が名前で説明できる'
 $uncovered = New-Object 'System.Collections.Generic.List[string]'

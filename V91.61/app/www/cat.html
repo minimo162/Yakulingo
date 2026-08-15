@@ -272,7 +272,7 @@
                    未翻訳か未確認かは行の記号で分かる。ここは「残り」で足りる。
                    点検の指摘は例外なので、指摘が1件も無いときは出さない。 -->
               <button type="button" data-cat-filter="actionable" aria-pressed="true">残り <span data-cat-count="actionable">0</span></button>
-              <button type="button" data-cat-filter="qc" aria-pressed="false" title="数字の自動点検で気になる点が見つかった行だけを表示します" hidden>点検の指摘 <span data-cat-count="qc">0</span></button>
+              <button type="button" data-cat-filter="qc" aria-pressed="false" title="自動点検で気になる点が見つかった行だけを表示します（数字・通貨・見出しの形・用語）" hidden>点検の指摘 <span data-cat-count="qc">0</span></button>
               <!-- 同じ原文の行だけを見る。まとめて片づけると、確定1回で残りへ配れる。 -->
               <button type="button" data-cat-filter="repetition" aria-pressed="false" title="資料の中で同じ原文が2行以上ある行だけを表示します" hidden>同じ原文 <span data-cat-count="repetition">0</span></button>
               <button type="button" data-cat-filter="reviewed" aria-pressed="false">確認済み <span data-cat-count="reviewed">0</span></button>
@@ -388,7 +388,7 @@
               </section>
     </section>
   </main>
-  <dialog id="cat-export-dialog" class="confirm-dialog cat-export-dialog"><form method="dialog"><h2 id="cat-export-title">取り出す前のご確認</h2><p id="cat-export-mode"></p><p id="cat-export-name" class="muted"></p><div id="cat-export-checks" role="status"></div><p class="cat-human-review-note">自動で点検しているのは、数字と単位の写しちがいだけです。</p><p id="cat-export-notice" class="draft-warning">原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。</p><fieldset class="cat-final-review-option"><legend>確認記録（任意）</legend><label><input id="cat-export-final-review" type="checkbox"> 残っている指摘と、この出力内容を確認した記録を残す</label><p class="muted">組織上の承認や正式版を意味するものではありません。内容が変わると記録は自動的に失効します。</p><label for="cat-export-final-reason">確認した内容・判断理由</label><textarea id="cat-export-final-reason" rows="2" maxlength="1000" disabled></textarea></fieldset><div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>戻って確認する</button><button id="cat-export-qa" type="button" class="secondary-button" hidden>点検一覧を開く</button><button id="cat-export-confirm" value="export">これで取り出す</button></div></form></dialog>
+  <dialog id="cat-export-dialog" class="confirm-dialog cat-export-dialog"><form method="dialog"><h2 id="cat-export-title">取り出す前のご確認</h2><p id="cat-export-mode"></p><p id="cat-export-name" class="muted"></p><div id="cat-export-checks" role="status"></div><p class="cat-human-review-note">自動で点検しているのは、数字・単位・通貨・見出しの形・登録した用語の写しちがいだけです。訳の中身は見ていません。</p><p id="cat-export-notice" class="draft-warning">原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。</p><fieldset class="cat-final-review-option"><legend>確認記録（任意）</legend><label><input id="cat-export-final-review" type="checkbox"> 残っている指摘と、この出力内容を確認した記録を残す</label><p class="muted">組織上の承認や正式版を意味するものではありません。内容が変わると記録は自動的に失効します。</p><label for="cat-export-final-reason">確認した内容・判断理由</label><textarea id="cat-export-final-reason" rows="2" maxlength="1000" disabled></textarea></fieldset><div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>戻って確認する</button><button id="cat-export-qa" type="button" class="secondary-button" hidden>点検一覧を開く</button><button id="cat-export-confirm" value="export">これで取り出す</button></div></form></dialog>
   <!-- 出す前に、資料ぜんぶの指摘を1枚で見る（市販CATの検証パネルに相当）。
        memoQ・Trados は書き出し前にこの一覧を見て、行へ飛んで直す作りになっている。
        当アプリは行ごとの指摘と「点検の指摘」での絞り込みは持っていたが、

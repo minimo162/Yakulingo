@@ -19,7 +19,7 @@
   飛んだ要求の中身を見る。判定はこのファイルが行い、ブラウザ側
   （tools/cat-screen/cat-screen-gate.js）は観測した事実を JSON で返すだけである。
 
-  見るのは9つ。
+  見るのは12。
    (a) can_split_at の行にだけ分割ボタンが**実際に出る**
    (b) Alt+S がその分割ボタンを押す。割れない行では断る
    (c) 用語の印が入った原文でも、押した位置で割れる（位置が一致する）
@@ -30,6 +30,56 @@
    (h) 「体裁で見る」が、配置先の無い行でも**後半の訳文まで**出し、しかも
        **繋ぎ方の規則どおり**に出す（`AB-1234` であって `AB- 1234` ではない）
    (i) 「体裁で見る」が、配置先のある cell 行では destination.text をそのまま置く
+   (j) 訳を入れただけ・未確定で用語の点検に落ちた行で、書き出しを止めた理由が
+       案内する「点検の指摘」が**実際に描かれ、押すと絞り込め、一覧が空でない**
+   (k) 止める指摘が1件も無く未確認だけがある作業で、点検の要約が
+       「調べたが直すところは無かった」と言い、古い言い方をしないこと
+   (l) 点検そのものが走らなかった行（validation-unavailable）が、
+       利用者の訳の欠陥（赤）ではなく**道具の不調**として塗られること
+
+  (j) の表明そのものも 2026-08-15 に作り直した。**「一覧が空でないこと」は
+  この題材では測れない。** 2行とも訳文ありで未確定なので、cat.js の qaFindings が
+  未確認を必ず2件積み、写しの点検（qc_preview）の合流を丸ごと落としても
+  一覧は2件残る。無傷の走行が自ら「実際 3 件」と書いていたのがその証拠で、
+  内訳は用語1件＋未確認2件だった。いまは群（`自動点検の指摘`）を名指しし、
+  その見出しの数字で見る。cat.js の openQaList が items 0件の群を捨てるので、
+  合流が消えれば群ごと消えて赤になる。
+  併せて「直すところは見つかりませんでした」を見る表明を、一覧の中身から
+  **要約**（#cat-qa-summary）へ移した。cat.html:471-472 のとおり要約は
+  #cat-qa-list の兄弟なので、一覧の textContent には絶対に入らない。
+  要約なら、合流を落とした瞬間に blocking が 0 になって
+  「未確認は 2 行です。自動点検では、直すところは見つかりませんでした。」へ落ち、
+  同じ画面が用語で止まったままであることと食い違う。**それが矛盾そのものである。**
+
+  なお、一覧の**中身**に落とし文が出るのは3群すべてが空のときだけで、
+  写しの点検が1件でもあれば未確認が必ず1行以上ある（点検の写しは未確定の行にしか
+  掛からない。src/CatProject.ps1 の Get-YakuCatOutputEligibility は
+  State='reviewed' の行を continue で飛ばす）。つまり
+  「写しの指摘があり、かつ未確認が0行」は作れない。落とし文を一覧の中身で
+  見る表明は、この直しの範囲では原理的に成立しない。
+
+  (k) は 2026-08-15 に見つけた「原理的に落ちない表明」の始末である。
+  要約の枝は4本（まだ訳していない／止める指摘がある／未確認だけ／全部終わった）で、
+  (j) の題材は blocking>=1 なので必ず2本目へ入る。3本目の文言を禁じていた表明は、
+  到達できない枝を見ていたので**取り除いても緑のまま**だった。表明は消さず、
+  到達する題材をこちらへ足して生かす。
+
+  (l) も同じ日の欠陥。未確認の行の点検を画面へ渡すようにした結果、
+  Get-YakuCatOutputEligibility が合成する validation-unavailable が
+  cat.js のラベル引きへ届くようになった。cat.js に説明文が無いと汎用文へ落ち、
+  qcGroup が 'error'（赤）で塗る。**道具の不調が、利用者の訳の欠陥の顔で出る。**
+  題材は Invoke-YakuCatSegmentValidation を試験の中で一時的に落として作る。
+  写しの JSON を手で書かないのは、合成そのものが実装の枝だからである。
+
+  (j) は 2026-08-15 の欠陥（5-3 の宿題の残り半分）。止めた理由の文言19本のうち
+  15本が「左の『点検の指摘』を押すと、その行だけ表示できます」と案内するのに、
+  その絞り込みは segment.qc_findings の件数で出し入れしており、findings を行へ
+  書くのは Set-YakuCatSegmentConfirmed だけだった。書き出し前の点検は写しに
+  走らせるので、未確定で止まった行では案内先が1件も無く、ボタンは hidden の
+  ままだった。同じ書き出しの窓の「点検一覧を開く」も同じ出どころなので、
+  「用語で N 行止まっています」と言った直後に「直すところは見つかりませんでした」
+  と出ていた。字面照合では、この矛盾は1件も落ちない（文言も器も実在するため）。
+  実際に開いて押すことでしか測れない。
 
   (h) は 2026-08-15 の欠陥（引き継ぎ 5-2）。原文の途中で割った行を1つへまとめる
   ときに、原文だけを繋いで訳文は part 1 のままにしていた。配置先のある cell 行は
@@ -72,6 +122,40 @@ $script:checks = 0
 $YAKU_SCREEN_UNMEASURED = 3
 
 function Chk { param([bool]$c,[string]$m) $script:checks++; if($c){Write-Host ('  ok   ' + $m) -ForegroundColor Green}else{Write-Host ('  FAIL ' + $m) -ForegroundColor Red;$script:fail++} }
+function Get-YakuFirstString {
+    <# 空集合を [0] で引くと $null になり、その先の .Contains() が
+       $ErrorActionPreference='Stop' の下で試験そのものを落とす。落ちると
+       残りの節が走らないまま終了コード1だけが返り、赤の内訳が消える。 #>
+    param([AllowNull()][object[]]$Items)
+    $list = @($Items)
+    if ($list.Count -lt 1) { return '' }
+    return [string]$list[0]
+}
+function Test-YakuAnyContains {
+    <# 一覧のどこかにその文字が出ているか。表示の文言を機械で数えるときは、
+       塊の切り出し方に依存しない形で見る。 #>
+    param([AllowNull()][object[]]$Items, [Parameter(Mandatory=$true)][string]$Needle)
+    foreach ($item in @($Items)) { if ([string]$item -and ([string]$item).Contains($Needle)) { return $true } }
+    return $false
+}
+function Get-YakuQaGroup {
+    <#
+      点検一覧の群を、見出しの名前で1つ引く。無ければ $null を返す。
+
+      なぜ群で引くか（2026-08-15）。「一覧が空でないこと」を見る表明は、
+      未確認の群だけで満たされる。(j) の題材は2行とも訳文ありで未確定なので、
+      cat.js の qaFindings が未確認を必ず2件積み、**写しの点検（qc_preview）を
+      1件も描かなくても一覧は空にならない**。合流を落とす改変で落ちる形にするには、
+      その群そのものと見出しの数字を見るほかない。cat.js の openQaList は
+      items が0件の群を捨てるので、合流が消えれば群ごと消える。
+    #>
+    param([AllowNull()][object[]]$Groups, [Parameter(Mandatory=$true)][string]$Title)
+    foreach ($group in @($Groups)) {
+        if ($null -eq $group) { continue }
+        if ([string]$group.title -eq $Title) { return $group }
+    }
+    return $null
+}
 
 $driver = Join-Path (Join-Path $toolsRoot 'cat-screen') 'cat-screen-gate.js'
 if (-not (Test-Path -LiteralPath $driver -PathType Leaf)) { Write-Host ('UNMEASURED: 運転席がありません: ' + $driver) -ForegroundColor Red; exit $YAKU_SCREEN_UNMEASURED }
@@ -290,12 +374,120 @@ try {
     Chk (($cellDestA + $cellDestB) -eq $cellTranslation) '2つを繋ぐと行の訳文へ戻る（切り分けであって書き換えではない）'
     Chk ([string]$cellRowsPs[0].location -eq ('Sheet1, A1+A2')) ('行そのものは番地を1つに絞れない: ' + [string]$cellRowsPs[0].location)
 
+    # 止まった行の案内先を見る題材。**訳文は入っているが未確定**で、1行目だけが
+    # 用語の点検に落ちる。確定処理を1度も通していないので、行の qc_findings は
+    # 空のままである。それでも書き出しは止まる（サーバが写しに点検を掛けるため）。
+    # 2026-08-15 まで、この場面で案内文が指す「点検の指摘」は
+    # counts.qc < 1 で隠れており、押す先が存在しなかった。
+    Write-Host '(0d) 未確定のまま用語の点検に落ちる行の題材を用意する' -ForegroundColor Cyan
+    $qcBadSource = '固定費を圧縮しました。'
+    $qcGoodSource = '売上高は100億円でした。'
+    $qcProject = New-YakuCatTextProject -Root $root -Text ($qcBadSource + "`n" + $qcGoodSource) -Settings $settings -Direction 'to_en'
+    $qcSegs = @($qcProject.Segments)
+    Chk ($qcSegs.Count -eq 2) ('題材は2行（実際 ' + $qcSegs.Count + '）')
+    $null = Add-YakuTerminologyEntry -Scope project -ProjectId ([string]$qcProject.Id) -Kind occurrence -Enforcement required `
+        -JapanesePreferred '固定費' -EnglishPreferred 'fixed costs' -Origin 'cat-screen-gate' `
+        -OriginProjectId ([string]$qcProject.Id) -OriginFileName ([string]$qcProject.FileName) -OriginSegmentId ([string]$qcSegs[0].SegmentId) `
+        -OriginLocation ([string]$qcSegs[0].Location) -OriginRevision ([int]$qcProject.Revision)
+    $null = Set-YakuCatSegmentTranslation -Project $qcProject -Index 0 -Text 'We cut overhead.'
+    $null = Set-YakuCatSegmentTranslation -Project $qcProject -Index 1 -Text 'Revenue was 100 oku yen.'
+    $qcEligibility = Get-YakuCatOutputEligibility -Project $qcProject
+    Chk (-not [bool]$qcEligibility.TranslationListEligible) '題材は書き出しが止まっている'
+    $qcCodes = @(@($qcEligibility.QcFailures) | ForEach-Object { [string]$_.Code })
+    Chk ($qcCodes.Count -eq 1 -and $qcCodes[0] -eq 'terminology-missing') ('止まった種別は用語だけ（実際: ' + ($qcCodes -join ',') + '）')
+    # ここが要点。**実セグメントには点検結果が1件も無い**。この題材が
+    # 「確定して落ちた行」になっていたら、直した欠陥を測れない。
+    Chk (@(@($qcProject.Segments) | Where-Object { @($_.QcFindings).Count -gt 0 }).Count -eq 0) '行そのものには点検結果が1件も無い（確定を通していないから）'
+    $qcProjectJson = ConvertTo-YakuCatProjectJson -Project $qcProject
+    $qcView = $qcProjectJson | ConvertFrom-Json
+    $qcViewRows = @($qcView.segments)
+    Chk ($qcViewRows.Count -eq 2) ('画面へ渡す行は2行（実際 ' + $qcViewRows.Count + '）')
+    Chk (@($qcViewRows[0].qc_findings).Count -eq 0 -and @($qcViewRows[1].qc_findings).Count -eq 0) 'JSON の qc_findings は両方とも空（旧実装ならここで案内先が消える）'
+    Chk (@($qcViewRows[0].qc_preview).Count -eq 1 -and [string]@($qcViewRows[0].qc_preview)[0].code -eq 'terminology-missing') '1行目には写しの点検結果（用語）が載っている'
+    Chk (@($qcViewRows[1].qc_preview).Count -eq 0) '通った行には1件も載っていない'
+    Chk ([bool]$qcView.export_blocked) '画面へ渡す値でも、書き出しは止まっている'
+    # 画面が読む出力前確認は、実装が作ったものをそのまま使う（文言を写経しない）。
+    $qcPreflight = Get-YakuCatOutputPreflight -Project $qcProject
+    $qcPreflightPayload = [ordered]@{
+        project_id = [string]$qcPreflight.ProjectId
+        revision = [int]$qcPreflight.Revision
+        eligible = [bool]$qcPreflight.Eligible
+        mode = [string]$qcPreflight.Mode
+        output_name = [string]$qcPreflight.OutputName
+        unconfirmed_count = [int]$qcPreflight.UnconfirmedCount
+        blockers = @($qcPreflight.Blockers)
+        warnings = @($qcPreflight.Warnings)
+        draft_notice = [string]$qcPreflight.DraftNotice
+    }
+    $qcBlockerMessages = @(@($qcPreflight.Blockers) | ForEach-Object { [string]$_.message })
+    Chk ($qcBlockerMessages.Count -eq 1) ('止めた理由は1本（実際 ' + $qcBlockerMessages.Count + ' 本）')
+    Chk ($qcBlockerMessages.Count -eq 1 -and $qcBlockerMessages[0].Contains('点検の指摘')) ('その文言は「点検の指摘」を案内している: ' + (Get-YakuFirstString -Items $qcBlockerMessages))
+
+    # ------------------------------------------------------------------ (k)
+    # 点検の要約は枝が4本ある。上の題材は blocking>=1 なので必ず2本目へ入り、
+    # 3本目（止める指摘は無いが未確認はある）の文言は**決して出ない**。
+    # 3本目を見る表明を生かすため、そこへ到達する題材をここで作る。
+    Write-Host '(0e) 止める指摘が1件も無く、未確認だけが残る題材を用意する' -ForegroundColor Cyan
+    $cleanSourceA = '売上高は100億円でした。'
+    $cleanSourceB = '営業利益は20億円でした。'
+    $qcCleanProject = New-YakuCatTextProject -Root $root -Text ($cleanSourceA + "`n" + $cleanSourceB) -Settings $settings -Direction 'to_en'
+    Chk (@($qcCleanProject.Segments).Count -eq 2) ('題材は2行（実際 ' + @($qcCleanProject.Segments).Count + '）')
+    $null = Set-YakuCatSegmentTranslation -Project $qcCleanProject -Index 0 -Text 'Net sales were 100 oku yen.'
+    $null = Set-YakuCatSegmentTranslation -Project $qcCleanProject -Index 1 -Text 'Operating profit was 20 oku yen.'
+    $qcCleanEligibility = Get-YakuCatOutputEligibility -Project $qcCleanProject
+    Chk (@($qcCleanEligibility.QcFailures).Count -eq 0) ('この題材では止める指摘が1件も無い（実際 ' + @($qcCleanEligibility.QcFailures).Count + ' 種）')
+    Chk ([int]$qcCleanEligibility.UnconfirmedCount -eq 2) ('未確認は2行（実際 ' + [int]$qcCleanEligibility.UnconfirmedCount + '）')
+    $qcCleanProjectJson = ConvertTo-YakuCatProjectJson -Project $qcCleanProject
+    $qcCleanView = $qcCleanProjectJson | ConvertFrom-Json
+    Chk (@(@($qcCleanView.segments) | Where-Object { @($_.qc_preview).Count -gt 0 }).Count -eq 0) '写しの点検結果も1行も付いていない（3本目の枝へ入る条件）'
+
+    # ------------------------------------------------------------------ (l)
+    # 点検そのものが最後まで走らなかったときの題材。
+    # Get-YakuCatOutputEligibility は try/catch の中で点検を呼び、落ちたら
+    # 種別が取れないので validation-unavailable を**合成する**。その枝を
+    # 実際に通すために、点検の関数をこの試験の中だけ差し替える。
+    # 写しの JSON を手で書くと、合成の枝を通らないまま「出た形」だけを見ることになる。
+    Write-Host '(0f) 点検そのものが走らなかった行の題材を用意する' -ForegroundColor Cyan
+    $toolSourceA = '調達費は横ばいでした。'
+    $toolSourceB = '人件費は増加しました。'
+    $qcToolProject = New-YakuCatTextProject -Root $root -Text ($toolSourceA + "`n" + $toolSourceB) -Settings $settings -Direction 'to_en'
+    $null = Set-YakuCatSegmentTranslation -Project $qcToolProject -Index 0 -Text 'Procurement costs were flat.'
+    $null = Set-YakuCatSegmentTranslation -Project $qcToolProject -Index 1 -Text 'Personnel costs increased.'
+    $originalValidation = ${function:Invoke-YakuCatSegmentValidation}
+    Chk ($null -ne $originalValidation) '差し替える前の点検の関数を掴めた（掴めなければ戻せない）'
+    $qcToolProjectJson = ''
+    $qcToolEligibility = $null
+    try {
+        ${function:Invoke-YakuCatSegmentValidation} = { param($Project, $Segment) throw 'yaku-probe: validation unavailable' }
+        $qcToolEligibility = Get-YakuCatOutputEligibility -Project $qcToolProject
+        $qcToolProjectJson = ConvertTo-YakuCatProjectJson -Project $qcToolProject
+    } finally {
+        ${function:Invoke-YakuCatSegmentValidation} = $originalValidation
+    }
+    # 戻したことを、次の題材へ進む前に確かめる。戻し損ねると以降の判定が全部嘘になる。
+    $qcRestoreCheck = Get-YakuCatOutputEligibility -Project $qcCleanProject
+    Chk (@($qcRestoreCheck.QcFailures).Count -eq 0) '点検の関数を元に戻せている（差し替えが後の題材へ漏れていない）'
+    $qcToolCodes = @(@($qcToolEligibility.QcFailures) | ForEach-Object { [string]$_.Code })
+    Chk ($qcToolCodes.Count -eq 1 -and $qcToolCodes[0] -eq 'validation-unavailable') ('サーバが合成した種別は validation-unavailable（実際: ' + ($qcToolCodes -join ',') + '）')
+    $qcToolView = $qcToolProjectJson | ConvertFrom-Json
+    $qcToolViewRows = @($qcToolView.segments)
+    Chk ($qcToolViewRows.Count -eq 2 -and @($qcToolViewRows[0].qc_preview).Count -eq 1 -and [string]@($qcToolViewRows[0].qc_preview)[0].code -eq 'validation-unavailable') '画面へ渡す行にも、合成された種別が載っている'
+    Chk (@(@($qcToolProject.Segments) | Where-Object { @($_.QcFindings).Count -gt 0 }).Count -eq 0) '合成した種別を、行そのものへは書いていない（監査を汚さない）'
+
     $projectPath = Join-Path $tmp 'project.json'
     $candidatePath = Join-Path $tmp 'candidates.json'
     $observedPath = Join-Path $tmp 'observed.json'
     $previewPath = Join-Path $tmp 'preview-project.json'
     $cellPath = Join-Path $tmp 'cell-project.json'
+    $qcPath = Join-Path $tmp 'qc-project.json'
+    $qcPreflightPath = Join-Path $tmp 'qc-preflight.json'
+    $qcCleanPath = Join-Path $tmp 'qc-clean-project.json'
+    $qcToolPath = Join-Path $tmp 'qc-tool-project.json'
     $utf8 = New-Object Text.UTF8Encoding($false)
+    [IO.File]::WriteAllText($qcCleanPath, $qcCleanProjectJson, $utf8)
+    [IO.File]::WriteAllText($qcToolPath, $qcToolProjectJson, $utf8)
+    [IO.File]::WriteAllText($qcPath, $qcProjectJson, $utf8)
+    [IO.File]::WriteAllText($qcPreflightPath, ($qcPreflightPayload | ConvertTo-Json -Depth 8), $utf8)
     [IO.File]::WriteAllText($projectPath, $projectJson, $utf8)
     [IO.File]::WriteAllText($previewPath, $previewProjectJson, $utf8)
     [IO.File]::WriteAllText($cellPath, $cellProjectJson, $utf8)
@@ -303,7 +495,7 @@ try {
 
     Write-Host '(1) 本物の画面を Chromium で開いて、実際に押す' -ForegroundColor Cyan
     $stderrPath = Join-Path $tmp 'node-stderr.txt'
-    $arguments = @($driver, (Join-Path $root 'www'), $projectPath, $candidatePath, $observedPath, $previewPath, $cellPath) | ForEach-Object { '"' + $_ + '"' }
+    $arguments = @($driver, (Join-Path $root 'www'), $projectPath, $candidatePath, $observedPath, $previewPath, $cellPath, $qcPath, $qcPreflightPath, $qcCleanPath, $qcToolPath) | ForEach-Object { '"' + $_ + '"' }
     $proc = Start-Process -FilePath $nodeExe -ArgumentList $arguments -NoNewWindow -Wait -PassThru -RedirectStandardError $stderrPath
     $nodeErr = ''
     if (Test-Path -LiteralPath $stderrPath) { $nodeErr = [string][IO.File]::ReadAllText($stderrPath) }
@@ -439,6 +631,123 @@ try {
     $cellSourceCells = @($o.cellPreviewSource.cellTexts)
     Chk ($cellSourceCells.Count -eq 2) ('原文側もセルは2つ（実際 ' + $cellSourceCells.Count + '）')
     Chk ($cellSourceCells.Count -eq 2 -and [string]$cellSourceCells[0].text -eq ($cellHeadSource + $cellTailSource)) ('原文側は繋いだ原文が出る: ' + [string]$cellSourceCells[0].text)
+
+    # ------------------------------------------------------------------ (j)
+    Write-Host '(j) 未確定のまま止まった行で、案内文が指す「点検の指摘」が実際に開く' -ForegroundColor Cyan
+    $qcScreen = $o.qcScreen
+    Chk (@($qcScreen.rows).Count -eq 2) ('題材の作業が開けている。表は2行（実際 ' + @($qcScreen.rows).Count + '）')
+    Chk (@($qcScreen.rows).Count -eq 2 -and [string]@($qcScreen.rows)[0].source -eq $qcBadSource) '表の1行目は用語で落ちる行（別の作業を見ていない）'
+    # ここが宿題そのもの。旧実装ではこのボタンが hidden のままだった。
+    Chk (-not [bool]$qcScreen.filterHidden) '「点検の指摘」の絞り込みが隠れていない'
+    Chk ([bool]$qcScreen.filterVisible) '「点検の指摘」の絞り込みが画面上で面積を持っている（CSSで消しても緑にならない）'
+    Chk ([string]$qcScreen.filterCount -eq '1') ('件数は 1（実際 ' + [string]$qcScreen.filterCount + '）')
+    Chk ([string]$qcScreen.qaButtonLabel -match '点検\s*1') ('道具の帯の「点検」も件数を出す（実際: ' + [string]$qcScreen.qaButtonLabel + '）')
+    Chk ([bool]$qcScreen.qaButtonHasBlockers) '「点検」が、止めている指摘があると分かる見た目になる'
+    # 止める条件は変えていない。押せないままであること。
+    Chk ([bool]$qcScreen.exportDisabled) '取り出しボタンは従来どおり押せない（止める条件を緩めていない）'
+    Chk ([string]$qcScreen.exportTitle -ne '') ('押せない理由がボタンに書いてある: ' + [string]$qcScreen.exportTitle)
+    Chk ([string]$qcScreen.outputReason -ne '') '読み上げ用の理由も空でない'
+    # 押すと本当に絞り込めるか。出るだけの飾りになっていないこと。
+    $qcFiltered = $o.qcFiltered
+    Chk ([string]$qcFiltered.pressed -eq 'true') '押すと、その絞り込みが選ばれた状態になる'
+    Chk (@($qcFiltered.rows).Count -eq 1) ('絞り込むと1行だけになる（実際 ' + @($qcFiltered.rows).Count + ' 行）')
+    Chk (@($qcFiltered.rows).Count -eq 1 -and [string]@($qcFiltered.rows)[0].source -eq $qcBadSource) '残るのは用語で落ちた行'
+    Chk ([bool]$qcFiltered.emptyHidden) '「該当なし」の表示は出ない（案内先が空振りでない）'
+    # 開いた行の点検欄。種別を名指しし、かつ免除ボタンは出さない。
+    $qcInspector = $o.qcInspector
+    Chk ([string]$qcInspector.count -eq '1') ('点検欄の件数は 1（実際 ' + [string]$qcInspector.count + '）')
+    $qcCards = @($qcInspector.cards)
+    Chk ($qcCards.Count -eq 1) ('点検欄に指摘が1件出る（実際 ' + $qcCards.Count + ' 件）')
+    Chk (Test-YakuAnyContains -Items @($qcCards | ForEach-Object { [string]$_.text }) -Needle '登録した訳語が使われていません') ('用語であることを名指しする: ' + (Get-YakuFirstString -Items @($qcCards | ForEach-Object { [string]$_.text })))
+    Chk (-not (Test-YakuAnyContains -Items @($qcCards | ForEach-Object { [string]$_.text }) -Needle '見つかりませんでした')) '「気になる点は見つかりませんでした」にはならない'
+    Chk ($qcCards.Count -eq 1 -and [bool]$qcCards[0].preview) '写しの点検から来た指摘であると印が付いている'
+    # 用語の免除（訳文を書き換える操作）は、確定を1度も通していない行には出さない。
+    Chk ((@($qcCards | ForEach-Object { [int]$_.exceptionButtons }) | Measure-Object -Sum).Sum -eq 0) '「この行では別の表現を使う」は出さない（見ることと決めることを混ぜない）'
+    Chk ([string]$qcInspector.inputInvalid -eq 'true') '訳文欄が aria-invalid になる（読み上げにも伝わる）'
+    Chk ([string]$qcInspector.rowFindingText -ne '') '行の中にも指摘の文が出る'
+    # 道具の帯の「点検」から開く一覧（F8 と同じ入口）。ここが実際の案内先である。
+    $qaList = $o.qaList
+    Chk ([bool]$qaList.open) '「点検」を押すと一覧が開く'
+    # **「一覧が空でない」では測れない。** この題材は2行とも訳文ありで未確定なので、
+    # cat.js の qaFindings が未確認を必ず2件積む。写しの点検（qc_preview）の合流を
+    # 丸ごと落としても一覧は2件残り、「空でない」も `-ge 1` も成立し続ける
+    # （2026-08-15 に、無傷の走行が「実際 3 件」と自ら書いていた）。
+    # 群を名指しし、その群の見出しの数字で見る。合流を落とすと、cat.js の
+    # openQaList が items 0件の群を捨てるので、この群ごと消えて赤になる。
+    $qaQcGroup = Get-YakuQaGroup -Groups @($qaList.groupDetails) -Title '自動点検の指摘'
+    Chk ($null -ne $qaQcGroup) ('「自動点検の指摘」の群が描かれる（実際の見出し: ' + (@($qaList.groups) -join ' / ') + '）')
+    Chk ($null -ne $qaQcGroup -and [int]$qaQcGroup.count -eq 1) ('その群の見出しの件数は 1（実際 ' + $(if ($null -ne $qaQcGroup) { [string]$qaQcGroup.count } else { 'その群が無い' }) + '）')
+    Chk ($null -ne $qaQcGroup -and @($qaQcGroup.items).Count -eq 1) ('その群の行も1つ（見出しの数字と実物が一致する。実際 ' + $(if ($null -ne $qaQcGroup) { [string]@($qaQcGroup.items).Count } else { '0' }) + '）')
+    Chk ($null -ne $qaQcGroup -and [bool]$qaQcGroup.blocking) 'その群は「止める」側として描かれる'
+    Chk ($null -ne $qaQcGroup -and (Test-YakuAnyContains -Items @($qaQcGroup.items) -Needle '登録した訳語が使われていません')) ('その群の行が種別を名指しする: ' + (Get-YakuFirstString -Items @($(if ($null -ne $qaQcGroup) { @($qaQcGroup.items) } else { @() }))))
+    Chk ($null -ne $qaQcGroup -and (Test-YakuAnyContains -Items @($qaQcGroup.items) -Needle '1行目')) '何行目かを言う（行へ飛べる）'
+    # 対で見る。上の件数が「未確認の群」で満たされたのではないことを、こちらで示す。
+    $qaUnconfirmedGroup = Get-YakuQaGroup -Groups @($qaList.groupDetails) -Title '未確認'
+    Chk ($null -ne $qaUnconfirmedGroup -and [int]$qaUnconfirmedGroup.count -eq 2) ('未確認の群は別に2件ある（実際 ' + $(if ($null -ne $qaUnconfirmedGroup) { [string]$qaUnconfirmedGroup.count } else { 'その群が無い' }) + '）')
+    Chk (-not (Test-YakuAnyContains -Items @($qaList.groups) -Needle '数字の点検')) ('群の見出しが「数字の点検」になっていない（実際: ' + (@($qaList.groups) -join ' / ') + '）')
+    Chk (Test-YakuAnyContains -Items @($qaList.groups) -Needle '自動点検の指摘') '群の見出しが、数字以外も入る名前になっている'
+    # 「直すところは見つかりませんでした」は**要約**（#cat-qa-summary）の枝であって、
+    # 一覧の中身（#cat-qa-list）ではない。cat.html:471-472 のとおり兄弟なので、
+    # 一覧の textContent を見ていた旧表明は原理的に落ちなかった。要約を見る。
+    # 合流を落とすと blocking が 0 になり、要約は「未確認は 2 行です。自動点検では、
+    # 直すところは見つかりませんでした。」へ落ちる。**それが 2026-08-15 の矛盾そのもの**で、
+    # 同じ画面の取り出しボタンは用語で止まったままである。
+    Chk (-not ([string]$qaList.summary).Contains('直すところは見つかりませんでした')) ('要約が「直すところは見つかりませんでした」と言わない（窓は用語で止まったと言っている）: ' + [string]$qaList.summary)
+    Chk (([string]$qaList.summary).Contains('ファイルを作れない指摘が 1 件あります')) ('要約が、止めた指摘の件数を出す: ' + [string]$qaList.summary)
+    # 書き出しの窓の中でも、言っていることと開く先が食い違わない。
+    $qcExport = $o.qcExportDialog
+    Chk ([bool]$qcExport.open) '出力前の確認の窓が開く'
+    Chk ([bool]$qcExport.confirmDisabled) 'その窓の「これで取り出す」は押せないまま（止める条件を緩めていない）'
+    Chk (Test-YakuAnyContains -Items @($qcExport.checks) -Needle '登録した訳語が使われていない') ('窓は用語で止まったと言う: ' + (Get-YakuFirstString -Items @($qcExport.checks)))
+    Chk (-not [bool]$qcExport.qaHidden) 'その窓に「点検一覧を開く」が出る'
+    $qaFromExport = $o.qaFromExport
+    Chk ([bool]$qaFromExport.open) 'その場のボタンで一覧が開く'
+    # ここも「空でない」では測れない（同じ題材・同じ理由）。群で見る。
+    $qaExportQcGroup = Get-YakuQaGroup -Groups @($qaFromExport.groupDetails) -Title '自動点検の指摘'
+    Chk ($null -ne $qaExportQcGroup) ('その一覧にも「自動点検の指摘」の群が描かれる（実際の見出し: ' + (@($qaFromExport.groups) -join ' / ') + '）')
+    Chk ($null -ne $qaExportQcGroup -and [int]$qaExportQcGroup.count -eq 1) ('その群の件数は 1（実際 ' + $(if ($null -ne $qaExportQcGroup) { [string]$qaExportQcGroup.count } else { 'その群が無い' }) + '）')
+    Chk ($null -ne $qaExportQcGroup -and (Test-YakuAnyContains -Items @($qaExportQcGroup.items) -Needle '登録した訳語が使われていません')) '一覧の行も、窓と同じ種別を名指しする'
+    # 矛盾そのもの。窓は「登録した訳語が使われていない」で止めたと言っている。
+    # 同じ操作で開いた一覧の要約が「直すところは見つかりませんでした」と言ったら赤。
+    Chk (-not ([string]$qaFromExport.summary).Contains('直すところは見つかりませんでした')) ('同じ窓の中で「用語で止まっています」と「直すところは見つかりませんでした」が同時に出ない: ' + [string]$qaFromExport.summary)
+    Chk (([string]$qaFromExport.summary).Contains('ファイルを作れない指摘が 1 件あります')) ('その要約も、止めた指摘の件数を出す: ' + [string]$qaFromExport.summary)
+
+    # ------------------------------------------------------------------ (k)
+    Write-Host '(k) 止める指摘が無く未確認だけの作業で、点検の要約が実装どおりに言う' -ForegroundColor Cyan
+    $qcClean = $o.qcCleanScreen
+    Chk (@($qcClean.rows).Count -eq 2) ('題材の作業が開けている。表は2行（実際 ' + @($qcClean.rows).Count + '）')
+    Chk (@($qcClean.rows).Count -eq 2 -and [string]@($qcClean.rows)[0].source -eq $cleanSourceA) '別の作業を見ていない'
+    # (j) で「出る」ことを見た絞り込みが、指摘が無いときは隠れていること。
+    # 常時出す実装にしても (j) は緑になるので、こちらが対になる。
+    Chk ([bool]$qcClean.filterHidden) '指摘が1件も無いときは「点検の指摘」の絞り込みは隠れている'
+    Chk ([string]$qcClean.qaButtonLabel -eq '点検') ('道具の帯の「点検」は件数を出さない（実際: ' + [string]$qcClean.qaButtonLabel + '）')
+    Chk (-not [bool]$qcClean.qaButtonHasBlockers) '止めている指摘がある見た目にはならない'
+    Chk (-not [bool]$qcClean.exportDisabled) '未確認だけでは取り出しを止めない（未確認は止める条件ではない）'
+    $qaClean = $o.qaCleanList
+    Chk ([bool]$qaClean.open) '「点検」を押すと一覧が開く'
+    # ここが要点。上の題材では決して通らない枝を、実機で通している。
+    Chk (-not ([string]$qaClean.summary).Contains('ファイルを作れない指摘')) ('止める指摘がある枝には入っていない: ' + [string]$qaClean.summary)
+    Chk (([string]$qaClean.summary).Contains('未確認は 2 行です。')) ('要約が未確認の行数を出す: ' + [string]$qaClean.summary)
+    Chk (([string]$qaClean.summary).Contains('自動点検では、直すところは見つかりませんでした。')) ('要約が「調べて通った」と言う: ' + [string]$qaClean.summary)
+    Chk (-not ([string]$qaClean.summary).Contains('数字の点検は、確認済みにするときに行います')) '「点検は確認済みにするときに行います」と言わない（未確認の行でも点検は走っている）'
+    Chk (-not (Test-YakuAnyContains -Items @($qaClean.groups) -Needle '自動点検の指摘')) ('止める群は出ない（実際: ' + (@($qaClean.groups) -join ' / ') + '）')
+    Chk (Test-YakuAnyContains -Items @($qaClean.groups) -Needle '未確認') '未確認の群は出る'
+
+    # ------------------------------------------------------------------ (l)
+    Write-Host '(l) 点検そのものが走らなかった行は、道具の不調として出る' -ForegroundColor Cyan
+    $qcTool = $o.qcToolInspector
+    $qcToolCards = @($qcTool.cards)
+    Chk ($qcToolCards.Count -eq 1) ('点検欄に指摘が1件出る（実際 ' + $qcToolCards.Count + ' 件）')
+    Chk (Test-YakuAnyContains -Items @($qcToolCards | ForEach-Object { [string]$_.text }) -Needle '自動点検が最後まで終わりませんでした') ('何が起きたかを名指しする: ' + (Get-YakuFirstString -Items @($qcToolCards | ForEach-Object { [string]$_.text })))
+    Chk (-not (Test-YakuAnyContains -Items @($qcToolCards | ForEach-Object { [string]$_.text }) -Needle '自動点検で気になる点が見つかりました')) '汎用文へ落ちていない（種別に説明文がある）'
+    Chk (-not (Test-YakuAnyContains -Items @($qcToolCards | ForEach-Object { [string]$_.text }) -Needle '原文と見比べて')) '「原文と見比べて直せ」と言わない（訳を直しても消えない）'
+    # ここが直した表示の欠陥そのもの。色は class にしか出ない。
+    Chk (Test-YakuAnyContains -Items @($qcToolCards | ForEach-Object { [string]$_.classes }) -Needle 'is-tool') ('道具の不調として塗られる（実際の class: ' + (Get-YakuFirstString -Items @($qcToolCards | ForEach-Object { [string]$_.classes })) + '）')
+    Chk (-not (Test-YakuAnyContains -Items @($qcToolCards | ForEach-Object { [string]$_.classes }) -Needle 'is-error')) '利用者の訳の欠陥（赤）としては塗らない'
+    Chk ((@($qcToolCards | ForEach-Object { [int]$_.exceptionButtons }) | Measure-Object -Sum).Sum -eq 0) '用語の免除ボタンは出さない'
+    $qaTool = $o.qaToolList
+    Chk ([bool]$qaTool.open) 'その作業でも点検の一覧は開く'
+    Chk (Test-YakuAnyContains -Items @($qaTool.items) -Needle '自動点検が最後まで終わりませんでした') ('一覧の行も同じことを言う: ' + (Get-YakuFirstString -Items @($qaTool.items)))
 
     if ($script:fail -eq 0) { Write-Host ('V91.76 画面の描画と配線の回帰テストに合格しました。検査 ' + $script:checks + ' 件。') -ForegroundColor Green }
     else { Write-Host ('FAILED: ' + $script:fail + ' / ' + $script:checks) -ForegroundColor Red }

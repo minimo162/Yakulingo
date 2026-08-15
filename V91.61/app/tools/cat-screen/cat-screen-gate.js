@@ -17,7 +17,7 @@
   判定はしない。判定は呼び出し側の PowerShell が行う。
 
   使い方:
-    node cat-screen-gate.js <wwwDir> <projectJson> <candidatesJson> <outJson> <previewProjectJson> <cellProjectJson>
+    node cat-screen-gate.js <wwwDir> <projectJson> <candidatesJson> <outJson> <previewProjectJson> <cellProjectJson> <qcProjectJson> <qcPreflightJson> <qcCleanProjectJson> <qcToolProjectJson>
 
   5番目は「体裁で見る」を見るための別の作業（貼り付け本文を原文の途中で
   割ったもの）。配置先が無い行なので、画面はサーバが繋いだ訳文を使うほかない。
@@ -27,6 +27,27 @@
   ない。行そのものの訳文（whole.translation）を置くと、A1 に全文が出て A2 が
   空になる。この枝には今まで振る舞いの門が1つも無く、text を空にしても
   全部緑のまま通った（2026-08-15 の実測）。
+
+  7・8番目は「訳を入れただけ・未確定で、用語の点検に落ちる行」がある作業と、
+  その作業に対して実装が作った出力前確認（preflight）の応答である。
+  書き出しが止まった理由の文言は「左の『点検の指摘』を押すと、その行だけ
+  表示できます」と案内するが、その絞り込みは segment.qc_findings の件数で
+  出し入れしており、findings を行へ書くのは確定処理だけだった。つまり
+  **未確定で止まった行では、案内先のボタンがそもそも描かれない**。
+  ここでは実際に開いて、ボタンが出るか・押すと絞り込めるか・点検一覧が
+  空でないかを見る。字面ではなく、描かれた DOM と押した結果で測る。
+
+  9番目は「止める指摘は1つも無いが、未確認の行はある」作業。点検一覧の要約は
+  枝が4本あり（まだ訳していない／止める指摘がある／未確認だけ／全部終わった）、
+  7番目の題材は必ず2本目へ入る。3本目の文言を表明していた行は、到達できない
+  枝を見ていたので**取り除いても緑のまま**だった（2026-08-15 の実測）。
+  到達する題材をここで足して、その表明を生かす。
+
+  10番目は「点検そのものが最後まで走らなかった」作業。サーバは種別を持たない
+  ので validation-unavailable を合成する（src/CatProject.ps1 の
+  Get-YakuCatOutputEligibility）。これは利用者の訳の欠陥ではなく道具の不調で、
+  訳を直しても消えない。画面が赤（欠陥）で塗ると、直せないものを探させる。
+  ここでは、その行の点検欄が道具の不調の見た目になっているかを見る。
 */
 const fs = require('fs');
 const http = require('http');
@@ -39,9 +60,16 @@ const candidatesJson = fs.readFileSync(process.argv[4], 'utf8');
 const outputPath = process.argv[5];
 const previewProjectJson = fs.readFileSync(process.argv[6], 'utf8');
 const cellProjectJson = fs.readFileSync(process.argv[7], 'utf8');
+const qcProjectJson = fs.readFileSync(process.argv[8], 'utf8');
+const qcPreflightJson = fs.readFileSync(process.argv[9], 'utf8');
+const qcCleanProjectJson = fs.readFileSync(process.argv[10], 'utf8');
+const qcToolProjectJson = fs.readFileSync(process.argv[11], 'utf8');
 const project = JSON.parse(projectJson);
 const previewProject = JSON.parse(previewProjectJson);
 const cellProject = JSON.parse(cellProjectJson);
+const qcProject = JSON.parse(qcProjectJson);
+const qcCleanProject = JSON.parse(qcCleanProjectJson);
+const qcToolProject = JSON.parse(qcToolProjectJson);
 
 /* 押した位置の題材。原文の <mark> より後ろに落ちる位置を選ぶ。
    1文字目（印より前）で一度押してから2回目を押すので、位置を拾えない実装だと
@@ -103,9 +131,15 @@ const server = http.createServer(async function (req, res) {
     const wanted = parsed ? String(parsed.project_id || '') : '';
     if (wanted && wanted === String(previewProject.id || '')) { res.end(previewProjectJson); return; }
     if (wanted && wanted === String(cellProject.id || '')) { res.end(cellProjectJson); return; }
+    if (wanted && wanted === String(qcProject.id || '')) { res.end(qcProjectJson); return; }
+    if (wanted && wanted === String(qcCleanProject.id || '')) { res.end(qcCleanProjectJson); return; }
+    if (wanted && wanted === String(qcToolProject.id || '')) { res.end(qcToolProjectJson); return; }
     res.end(projectJson);
     return;
   }
+  /* 出力前の確認。中身は実装（Get-YakuCatOutputPreflight）が作ったものを
+     そのまま返す。手で書くと、止まった理由の文言を写経することになる。 */
+  if (p === '/api/cat/preflight') { res.end(qcPreflightJson); return; }
   if (p === '/api/cat/candidates') { res.end(candidatesJson); return; }
   if (p === '/api/cat/split-at') { res.end(projectJson); return; }
   if (p === '/api/cat/replace-estimate') { res.end(JSON.stringify({ rows: 2, occurrences: 2, confirmed_rows: 0, scanned_rows: 2 })); return; }
@@ -379,6 +413,214 @@ function lastBody(name) { const c = calls(name); return c.length ? c[c.length - 
     await page.click('[data-cat-preview-side="source"]');
     await page.waitForTimeout(250);
     out.cellPreviewSource = await previewBody();
+
+    // ------------------------------- 止まった行の案内先が、実際に開くか
+    /* 題材: 2行とも訳文は入っていて未確定。1行目だけが用語の点検に落ちる。
+       確定処理を1度も通していないので、行の qc_findings は両方とも空である。
+       それでも書き出しは止まる（サーバが写しに点検を掛けているため）。
+       このとき案内文が指す「点検の指摘」が本当に出るかを見る。 */
+    await page.goto('http://127.0.0.1:' + port + '/cat?project=' + qcProject.id, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#cat-grid-body tr[data-cat-row]', { timeout: 20000 });
+    out.qcScreen = await page.evaluate(function () {
+      var filter = document.querySelector('[data-cat-filter="qc"]');
+      var count = document.querySelector('[data-cat-count="qc"]');
+      var exportButton = document.getElementById('cat-export');
+      return {
+        rows: Array.from(document.querySelectorAll('#cat-grid-body tr[data-cat-row]')).map(function (tr) {
+          return { index: Number(tr.getAttribute('data-cat-row')), source: tr.querySelector('.cat-source-text').textContent };
+        }),
+        /* hidden 属性だけでなく、実際に画面上で面積を持っているかも見る。
+           CSS で消しても緑になる門にしない。 */
+        filterHidden: !filter || filter.hidden,
+        filterVisible: !!(filter && filter.getClientRects().length > 0),
+        filterLabel: filter ? filter.textContent : '',
+        filterCount: count ? count.textContent : '',
+        qaButtonLabel: document.getElementById('cat-qa-open').textContent,
+        qaButtonHasBlockers: document.getElementById('cat-qa-open').classList.contains('cat-qa-has-blockers'),
+        exportDisabled: !!(exportButton && exportButton.disabled),
+        exportTitle: exportButton ? exportButton.title : '',
+        outputReason: document.getElementById('cat-output-reason').textContent
+      };
+    });
+
+    /* 押して絞り込む。出るだけで押せない／押しても絞れない実装を落とす。
+       ボタンが隠れていると click は 30 秒待って時間切れになり、その先の
+       観測が全部 undefined になる。何が壊れているかが時間切れの山に埋もれるので、
+       隠れているかどうかは上の1行が持たせたうえで、手で見えるようにしてから
+       押す（既存の Ctrl+H と同じ手当て）。件数も絞り込み結果も、これで
+       誤魔化されはしない。 */
+    await page.evaluate(function () {
+      var filter = document.querySelector('[data-cat-filter="qc"]');
+      if (filter && filter.hidden) filter.hidden = false;
+    });
+    await page.click('[data-cat-filter="qc"]');
+    await page.waitForTimeout(300);
+    out.qcFiltered = await page.evaluate(function () {
+      return {
+        rows: Array.from(document.querySelectorAll('#cat-grid-body tr[data-cat-row]')).map(function (tr) {
+          return { index: Number(tr.getAttribute('data-cat-row')), source: tr.querySelector('.cat-source-text').textContent };
+        }),
+        pressed: document.querySelector('[data-cat-filter="qc"]').getAttribute('aria-pressed'),
+        emptyHidden: document.getElementById('cat-empty-state').hidden
+      };
+    });
+
+    /* 絞り込んだ行を開いて、右の点検欄に何が出るか。絞り込みが空振りしたときは
+       ここに行が1つも無い。時間切れで先を潰さず、観測を続ける。 */
+    const qcHasRow = await page.evaluate(function () { return !!document.querySelector('#cat-grid-body tr[data-cat-row] textarea[data-cat-input]'); });
+    if (qcHasRow) { await page.focus('#cat-grid-body tr[data-cat-row] textarea[data-cat-input]'); }
+    else { out.qcNoRowAfterFilter = true; await page.click('[data-cat-filter="all"]'); await page.waitForTimeout(250); await page.focus('#cat-grid-body tr[data-cat-row] textarea[data-cat-input]'); }
+    await page.waitForTimeout(200);
+    await page.click('[data-cat-inspector="qc"]');
+    await page.waitForTimeout(250);
+    function qcInspectorBody() {
+      return page.evaluate(function () {
+      var host = document.getElementById('cat-qc-list');
+      return {
+        count: document.getElementById('cat-qc-count').textContent,
+        cards: Array.from(host.querySelectorAll('.cat-qc-card')).map(function (card) {
+          return {
+            text: card.textContent,
+            preview: card.getAttribute('data-cat-qc-preview') === '1',
+            /* 何色で塗られたか。cat.js の qcGroup が 'error'（訳の欠陥）と
+               'tool'（道具の不調）を分けており、そのどちらになったかは
+               class にしか出ない。文言だけ見ても色は分からない。 */
+            classes: card.className,
+            /* 用語の免除は訳文を書き換える操作である。見るだけの場面で出て
+               いないことを、ボタンの実在で測る。 */
+            exceptionButtons: card.querySelectorAll('[data-cat-term-exception]').length
+          };
+        }),
+        activeRow: (function () {
+          var active = document.querySelector('#cat-grid-body tr.is-active');
+          return active ? Number(active.getAttribute('data-cat-row')) : -1;
+        })(),
+        /* 読み上げ環境にも同じことが伝わっているか。訳文欄の aria-invalid と
+           aria-describedby は行の指摘から作られるので、指摘が0件のままだと
+           「問題なし」と読み上げられていた。 */
+        inputInvalid: (function () {
+          var input = document.querySelector('#cat-grid-body tr.is-active textarea[data-cat-input]');
+          return input ? input.getAttribute('aria-invalid') : '';
+        })(),
+        rowFindingText: (function () {
+          var row = document.querySelector('#cat-grid-body tr.is-active');
+          var host = row ? row.querySelector('.cat-qc-findings') : null;
+          return host ? host.textContent : '';
+        })()
+      };
+      });
+    }
+    out.qcInspector = await qcInspectorBody();
+
+    // 道具の帯の「点検」（F8 と同じ入口）。ここが実際に開く一覧である。
+    await page.click('#cat-qa-open');
+    await page.waitForSelector('#cat-qa-dialog[open]', { timeout: 10000 });
+    await page.waitForTimeout(300);
+    function qaBody() {
+      return page.evaluate(function () {
+        var host = document.getElementById('cat-qa-list');
+        return {
+          open: !!document.getElementById('cat-qa-dialog').open,
+          /* 要約は #cat-qa-list の**兄弟**（cat.html の #cat-qa-summary）なので、
+             下の text には絶対に入らない。要約の文言を測るときは必ずこちらを見る。
+             2026-08-15 に、要約の枝を見るつもりの表明が text を見ており、
+             原理的に落ちない状態になっていた。 */
+          summary: document.getElementById('cat-qa-summary').textContent,
+          groups: Array.from(host.querySelectorAll('.cat-qa-group h3')).map(function (h) { return h.textContent; }),
+          /* 群ごとの内訳。「一覧が空でない」だけを見ると、未確認の群だけで
+             満たされてしまい、写しの点検（qc_preview）を1文字も見ない表明になる。
+             見出しの数字（cat.js が group.items.length をそのまま書く）と、
+             その群に属する行だけを別々に採る。合流を落とす改変では、
+             `自動点検の指摘` の群そのものが描かれなくなる（cat.js の
+             openQaList が items.length===0 の群を捨てるため）。 */
+          groupDetails: Array.from(host.querySelectorAll('.cat-qa-group')).map(function (section) {
+            var head = section.querySelector('h3');
+            var badge = head ? head.querySelector('span') : null;
+            var title = '';
+            if (head) { title = String((head.firstChild && head.firstChild.textContent) || head.textContent || '').trim(); }
+            return {
+              title: title,
+              count: badge ? Number(badge.textContent) : -1,
+              blocking: section.classList.contains('is-blocking'),
+              items: Array.from(section.querySelectorAll('.cat-qa-item')).map(function (b) { return b.textContent; })
+            };
+          }),
+          items: Array.from(host.querySelectorAll('.cat-qa-item')).map(function (b) { return b.textContent; }),
+          text: host.textContent
+        };
+      });
+    }
+    out.qaList = await qaBody();
+    await page.evaluate(function () { document.getElementById('cat-qa-dialog').close('cancel'); });
+    await page.waitForTimeout(200);
+
+    /* 書き出しの窓そのもの。止まっているとボタンは無効なので、配線だけを試す
+       （既存の「無理やり押す」と同じ手）。同じ窓の中で「用語で N 行止まって
+       います」と「直すところは見つかりませんでした」が同時に出ていた、
+       という矛盾がここで消えたかを見る。 */
+    await page.evaluate(function () {
+      document.getElementById('cat-export').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await page.waitForSelector('#cat-export-dialog[open]', { timeout: 10000 });
+    await page.waitForTimeout(250);
+    out.qcExportDialog = await page.evaluate(function () {
+      return {
+        open: !!document.getElementById('cat-export-dialog').open,
+        checks: Array.from(document.querySelectorAll('#cat-export-checks .cat-preflight-item')).map(function (d) { return d.textContent; }),
+        qaHidden: document.getElementById('cat-export-qa').hidden,
+        confirmDisabled: !!document.getElementById('cat-export-confirm').disabled
+      };
+    });
+    // その窓のボタンで一覧を開く。ここが「必ず開く明細表」に当たる。
+    await page.click('#cat-export-qa');
+    await page.waitForSelector('#cat-qa-dialog[open]', { timeout: 10000 });
+    await page.waitForTimeout(300);
+    out.qaFromExport = await qaBody();
+
+    // --------------- 止める指摘は無いが、未確認の行はある（要約の3本目の枝）
+    /* 題材: 2行とも訳文が入っていて、点検に落ちる行が1つも無い。未確認は2行。
+       上の題材（blocking>=1）では決して入らない枝なので、別の作業で開く。 */
+    await page.goto('http://127.0.0.1:' + port + '/cat?project=' + qcCleanProject.id, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#cat-grid-body tr[data-cat-row]', { timeout: 20000 });
+    out.qcCleanScreen = await page.evaluate(function () {
+      var filter = document.querySelector('[data-cat-filter="qc"]');
+      var count = document.querySelector('[data-cat-count="qc"]');
+      return {
+        rows: Array.from(document.querySelectorAll('#cat-grid-body tr[data-cat-row]')).map(function (tr) {
+          return { index: Number(tr.getAttribute('data-cat-row')), source: tr.querySelector('.cat-source-text').textContent };
+        }),
+        /* 指摘が1件も無いときは、この絞り込みは隠れているのが正しい。
+           上の題材で「出る」ことだけを見ていると、常時出す実装でも緑になる。 */
+        filterHidden: !filter || filter.hidden,
+        filterCount: count ? count.textContent : '',
+        qaButtonLabel: document.getElementById('cat-qa-open').textContent,
+        qaButtonHasBlockers: document.getElementById('cat-qa-open').classList.contains('cat-qa-has-blockers'),
+        exportDisabled: !!document.getElementById('cat-export').disabled
+      };
+    });
+    await page.click('#cat-qa-open');
+    await page.waitForSelector('#cat-qa-dialog[open]', { timeout: 10000 });
+    await page.waitForTimeout(300);
+    out.qaCleanList = await qaBody();
+    await page.evaluate(function () { document.getElementById('cat-qa-dialog').close('cancel'); });
+    await page.waitForTimeout(200);
+
+    // ------------------- 点検そのものが走らなかった行（道具の不調）の見た目
+    /* 題材: サーバ側で点検が例外になり、種別が取れなかった作業。
+       サーバは validation-unavailable を合成して qc_preview へ載せる。
+       この種別は「訳を直しても消えない」ので、訳の欠陥（赤）と同じ顔で
+       出してはいけない。ここでは点検欄の card の class を見る。 */
+    await page.goto('http://127.0.0.1:' + port + '/cat?project=' + qcToolProject.id, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#cat-grid-body tr[data-cat-row]', { timeout: 20000 });
+    await page.focus('#cat-grid-body tr[data-cat-row] textarea[data-cat-input]');
+    await page.waitForTimeout(200);
+    await page.click('[data-cat-inspector="qc"]');
+    await page.waitForTimeout(250);
+    out.qcToolInspector = await qcInspectorBody();
+    await page.click('#cat-qa-open');
+    await page.waitForSelector('#cat-qa-dialog[open]', { timeout: 10000 });
+    await page.waitForTimeout(300);
+    out.qaToolList = await qaBody();
   } catch (e) {
     out.fatal = String((e && e.stack) || e);
   } finally {

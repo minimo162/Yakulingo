@@ -774,10 +774,29 @@ function Get-YakuCatOutputEligibility {
     #
     # 未確認は止めない。代わりに何行あるかを数え、押す前の画面と文書内の帯に出す。
     #
-    # 点検は「確定したとき」にしか走らないので、未確認の行はここで写しに対して
-    # 走らせて調べる。写しに対して行うので、作業の状態は変えない。
+    # 未確認の行はここで写しに対して点検を走らせて調べる。写しに対して行うので、
+    # 作業の状態は変えない。
+    #
+    # 註の訂正（2026-08-15）: ここには長らく「点検は確定したときにしか走らない」と
+    # 書いてあったが、**それは既に事実でなかった**。この関数は
+    # Get-YakuCatProjectSummary（画面へ返す JSON を作るたびに通る）からも呼ばれる
+    # ので、未確認の行の点検は毎回走っている。走っていないのは
+    # 「実セグメントへ結果を書くこと」だけである（それは確定時に限る。写しの結果を
+    # Segment.QcFindings へ書くと Test-YakuCatSegmentQcCurrent と監査の意味が壊れる）。
+    #
+    # そのうえで、写しが出した種別を **行ごとに** も持ち帰る（QcRows）。
+    # 2026-08-15 の欠陥: Get-YakuCatOutputPreflight の文言 15 本が
+    # 「左の『点検の指摘』を押すと、その行だけ表示できます」と案内するのに、
+    # その絞り込みは www/assets/cat.js が segment.qc_findings の件数で出し入れして
+    # いた。未確認の行では実セグメントに findings が1件も無いので、**案内先の
+    # ボタンがそもそも描かれない**。同じ書き出しの窓にある「点検一覧を開く」も
+    # 同じ出どころなので、「用語で N 行止まっています」と言った直後に
+    # 「直すところは見つかりませんでした」と出ていた。
+    # ここで捨てていた内訳を渡せば、案内先が実際に開く。**点検を走らせる時機は
+    # 1ミリも変えない。既に走っている結果を捨てるのをやめるだけ**である。
     $unconfirmed = 0
     $qcFailureRows = [ordered]@{}
+    $qcRows = New-Object System.Collections.Generic.List[object]
     foreach ($segment in @($Project.Segments)) {
         if ([string]::IsNullOrWhiteSpace([string]$segment.Translation)) { $reasons.Add('segment-untranslated') | Out-Null; continue }
         if ([string]$segment.State -eq 'reviewed') {
@@ -811,6 +830,12 @@ function Get-YakuCatOutputEligibility {
                 if ($qcFailureRows.Contains($code)) { $qcFailureRows[$code] = [int]$qcFailureRows[$code] + 1 }
                 else { $qcFailureRows[$code] = 1 }
             }
+            # 行ごとの内訳。**種別だけを持つ**。用語の finding が持つ TermId や
+            # SourceTerm はここへ載せない。載せると画面の点検欄が
+            # 「この行では別の表現を使う」（用語の免除。訳文を書き換える操作）を
+            # 未確認の行にも出せてしまい、免除の場面が黙って広がる。
+            # 見ることと決めることを混ぜない。
+            $qcRows.Add([pscustomobject]@{ SegmentId=[string]$segment.SegmentId; Codes=@($seenCodes.ToArray()) }) | Out-Null
         }
     }
     $qcFailures = New-Object System.Collections.Generic.List[object]
@@ -837,6 +862,9 @@ function Get-YakuCatOutputEligibility {
         Reasons = @($reasons.ToArray() | Select-Object -Unique)
         # segment-qc-failed の内訳。止める条件ではなく、止まった理由の説明のための材料。
         QcFailures = @($qcFailures.ToArray())
+        # 同じ内訳を行ごとに。案内文が指す「点検の指摘」を実際に開けるようにするため
+        # だけのもので、これも止める条件ではない。**実セグメントへは書かない。**
+        QcRows = @($qcRows.ToArray())
     }
 }
 
@@ -2972,6 +3000,15 @@ function ConvertTo-YakuCatProjectJson {
     $documentFormat = $(try { [string]$Project.DocumentFormat } catch { '' })
     $exportBlocked = if ([string]$Project.Source -ne 'file') { -not [bool]$eligibility.TranslationListEligible } elseif ($documentFormat -eq 'docx') { -not [bool]$eligibility.TranslationListEligible } else { -not [bool]$eligibility.ExcelDraftEligible }
     $rows = New-Object System.Collections.Generic.List[object]
+    # 未確認の行を写しに掛けた点検の結果（種別だけ）。書き出しを止めた理由の案内が
+    # 「左の『点検の指摘』を押してください」と言う、その案内先を実際に開けるようにする。
+    # **Segment.QcFindings とは別の鍵にする。** 混ぜると「この行の点検はいつ・どの
+    # 用語一覧で行われたか」（Test-YakuCatSegmentQcCurrent と監査）が壊れる。
+    $qcPreviewBySegment = @{}
+    foreach ($qcRow in @($eligibility.QcRows)) {
+        if ($null -eq $qcRow) { continue }
+        $qcPreviewBySegment[[string]$qcRow.SegmentId] = @(@($qcRow.Codes) | ForEach-Object { [ordered]@{ code = [string]$_ } })
+    }
     $placementBySegment = @{}
     foreach ($placement in @($Project.PlacementPlans)) { $placementBySegment[[string]$placement.segment_id] = $placement }
     # 途中で分けた行が、その組の何番目のいくつ中かを画面へ出すために先に数える。
@@ -3084,6 +3121,10 @@ function ConvertTo-YakuCatProjectJson {
             state       = [string]$segs[$i].State
             qc_status   = [string]$segs[$i].QcStatus
             qc_findings = @($segs[$i].QcFindings)
+            # まだ確定していない行を写しに掛けたときの種別。実セグメントには残らない
+            # （残すと点検の履歴が嘘になる）ので、画面へはこちらで渡す。
+            # 種別だけを持ち、用語の免除に使う TermId は載せない。
+            qc_preview = @($(if ($qcPreviewBySegment.ContainsKey([string]$segs[$i].SegmentId)) { $qcPreviewBySegment[[string]$segs[$i].SegmentId] } else { @() }))
             qc_terminology_hash = [string]$segs[$i].QcTerminologyHash
             change_kind = $(try { [string]$segs[$i].ChangeKind } catch { '' })
             prior_source = $(try { [string]$segs[$i].PriorSourceText } catch { '' })

@@ -306,6 +306,16 @@ try {
 
     $jsBlocks = [ordered]@{
         stateFilters = '  var stateFilters = {'
+        # 絞り込みの述語そのもの。ここを写経すると、cat.js が変わっても写しは
+        # 変わらないので、ずれが静かに残る。2026-08-15 に実際そうなった:
+        # 写しへ (segment.qc_preview || []).length を足したものの、題材のどの行も
+        # その鍵を持たず、項は恒久的に 0 で評価された。取り除いても試験は緑のまま
+        # 完走した（実測 exit=0）。写しを置くのをやめ、本物を切り出して走らせる。
+        qcCodeOf = '  function qcCodeOf('
+        qcFindingViews = '  function qcFindingViews('
+        qcMessages = '  function qcMessages('
+        segmentHasQc = '  function segmentHasQc('
+        segmentActionable = '  function segmentActionable('
         escapeRegExp = '  function escapeRegExp('
         searchMatcher = '  function searchMatcher('
         searchFields = '  function searchFields('
@@ -335,6 +345,14 @@ try {
         [ordered]@{ index=3; source='実績の行です。'; translation='Results for FY2025 and FY2024.'; location='本文'; confirmed=$false; qc_findings=@(); repetition_count=1; change_kind='' }
         [ordered]@{ index=4; source='訳文が空の行です。'; translation=''; location='本文'; confirmed=$false; qc_findings=@(); repetition_count=1; change_kind='' }
         [ordered]@{ index=5; source='費用の行です。'; translation='Cost is a.b and axb.'; location='本文'; confirmed=$false; qc_findings=@(); repetition_count=1; change_kind='' }
+        # 点検の指摘は出どころが2つある。片方だけの題材にすると、もう片方を
+        # 読む式を取り除いても試験が緑のまま通る。両方を1行ずつ置く。
+        #   6 … 確定済みで、行そのものに点検結果が残っている（qc_findings）
+        #   7 … 未確定で、サーバが写しに掛けた結果だけがある（qc_preview）
+        # 訳文は探す語（The Company / net sales / FY####/ a.b / Cost）に
+        # 1つも当たらないようにしてある。当てると置換の突き合わせが動く。
+        [ordered]@{ index=6; source='確定済みで点検に落ちた行です。'; translation='This row is reviewed but flagged.'; location='本文'; confirmed=$true; qc_findings=@(@{ code='numeric-value-mismatch' }); qc_preview=@(); repetition_count=1; change_kind='' }
+        [ordered]@{ index=7; source='未確定で写しの点検に落ちた行です。'; translation='This row is flagged by the probe only.'; location='本文'; confirmed=$false; qc_findings=@(); qc_preview=@(@{ code='terminology-missing' }); repetition_count=1; change_kind='' }
     )
     $matchCases = @(
         [ordered]@{ name='字面';                 find='The Company'; replace='The Group'; use_regex=$false; match_case=$false; scope='target' }
@@ -348,10 +366,14 @@ try {
         [ordered]@{ name='読めない式';           find='(';           replace='X';         use_regex=$true;  match_case=$false; scope='target' }
         [ordered]@{ name='空に一致する式';       find='a*';          replace='X';         use_regex=$true;  match_case=$false; scope='target' }
     )
+    # 「点検の指摘」の絞り込みは、2つの出どころを両方見て初めて 6 と 7 の
+    # 両方を選ぶ。片方を読む式を取り除くと、ここが1行になって赤になる。
+    # actionable も同じ理由で 6 を含む（確定済みだが指摘があるので残る）。
     $filterCases = @(
-        [ordered]@{ key='actionable'; rows=@(0,2,3,4,5) }
-        [ordered]@{ key='reviewed';   rows=@(1) }
-        [ordered]@{ key='all';        rows=@(0,1,2,3,4,5) }
+        [ordered]@{ key='actionable'; rows=@(0,2,3,4,5,6,7) }
+        [ordered]@{ key='qc';         rows=@(6,7) }
+        [ordered]@{ key='reviewed';   rows=@(1,6) }
+        [ordered]@{ key='all';        rows=@(0,1,2,3,4,5,6,7) }
     )
     $harnessPath = Join-Path $tmp 'cat-matcher.js'
     $inputPath = Join-Path $tmp 'cat-matcher-input.json'
@@ -393,10 +415,9 @@ var document = {
 var searchScope = 'both', searchCase = false, searchRegex = false;
 var currentFilter = 'all', currentLocation = 'all', currentChange = 'all';
 var project = null, busy = false, ready = true, dirty = new Map();
-/* 絞り込みの述語が読む3つ。cat.js の本物と同じ式を置く（qc_findings の有無、
-   確認済みかどうか、場所と変更の別）。 */
-function segmentHasQc(segment) { return (segment.qc_findings || []).length > 0; }
-function segmentActionable(segment) { return !segment.confirmed || segmentHasQc(segment); }
+/* segmentHasQc / segmentActionable / qcMessages / qcFindingViews / qcCodeOf は
+   写さない。cat.js から切り出したものが下に入る（$jsBlocks を参照）。
+   ここに置くのは、それらが読む外側の名前だけである。 */
 function locationGroup(segment) { return String(segment.location || '本文'); }
 function changeGroup(segment) { return String(segment.change_kind || ''); }
 /* setBusy が呼ぶだけで、置換のボタンには触らないもの。 */

@@ -339,16 +339,71 @@
       , 'terminology-forbidden': '「使わない」と登録した表現が訳文に入っています。右の「用語・参考訳」に出ている訳語に置き換えてください。'
       , 'terminology-check-unavailable': '登録した用語を読み込めませんでした。いったんアプリを閉じて開き直してください。それでも直らない場合は、この画面のまま管理者へご連絡ください。'
       , 'terminology-conflict': '同じ語に、必ず使う訳が2つ以上登録されています。どちらか一方を「作業の管理」から取り消してください。'
+      /* この1件だけは、点検が出した種別ではなくサーバが合成したものである
+         （src/CatProject.ps1 の Get-YakuCatOutputEligibility が、点検そのものが
+         例外で落ちた行に積む）。合成なので qc_findings には現れず、
+         qc_preview 経由でだけここへ届く。文言が無いと汎用文へ落ち、しかも
+         qcGroup が 'error'（赤）で塗るので、**直しようのない道具の不調が
+         利用者の訳の欠陥の顔で出る**。書き出しを止めた理由の側
+         （Get-YakuCatQcBlockerMessages）は既にこの種別へ専用の文を持っている
+         ので、行の表示だけ黙ると画面と窓が食い違う（2026-08-15）。 */
+      , 'validation-unavailable': '自動点検が最後まで終わりませんでした。この行は出力できません。もう一度「確認済みにする」を押してください。それでも直らない場合は、この画面のまま管理者へご連絡ください。'
     };
-    return (segment.qc_findings || []).map(function (finding) { var code = String(finding.code || finding.Code || '').toLowerCase().replace(/_/g, '-'); return labels[code] || '自動点検で気になる点が見つかりました。左の原文と見比べてください。'; });
+    return qcFindingViews(segment).map(function (view) { return labels[view.code] || '自動点検で気になる点が見つかりました。左の原文と見比べてください。'; });
   }
-  /* 点検の指摘は「何が起きたか」で分かれる。18種を全部おなじ赤で出すと、
+  function qcCodeOf(finding) { return String((finding && (finding.code || finding.Code)) || '').toLowerCase().replace(/_/g, '-'); }
+  /* この行の指摘は2つの出どころから来る。
+
+     qc_findings … その行を「確認済みにする」ときに実際に走った点検の結果。
+                   いつ・どの用語一覧で行われたかまで行に残っている。
+     qc_preview  … まだ確定していない行を、サーバが写しに掛けた結果の種別だけ。
+
+     2つ目が要る理由（2026-08-15）: 書き出しが止まった理由の案内は
+     「左の『点検の指摘』を押すと、その行だけ表示できます」と言う。ところが
+     qc_findings は確定処理でしか書かれないので、「訳を入れただけ・未確定」で
+     止まった行では1件も無く、その絞り込みボタンは counts.qc < 1 で隠れていた。
+     同じ書き出しの窓の「点検一覧を開く」も同じ出どころで、「用語で N 行
+     止まっています」と言った直後に「直すところは見つかりませんでした」と出た。
+     案内先が無いまま名指しだけしている状態だったので、写しの結果も合流させる。
+
+     合流の規則は3つ。
+      1. qc_findings は1件も落とさない（同じ種別が2件あっても両方出す。用語は
+         語ごとに免除できるので、まとめると免除の口が減る）
+      2. qc_preview は、qc_findings に無い種別だけを、種別ごとに1件だけ足す
+         （文言は種別から作るので、同じ種別を2度出しても同じ字が並ぶだけ）
+      3. qc_preview 由来には preview 印を付ける。用語の免除ボタン（訳文を
+         書き換える操作）はこの印が付いた指摘には出さない。**見ることと
+         決めることを混ぜない。**
+
+     数える式（counts.qc）も、絞り込みも、行の指摘も、点検一覧も、みなここを
+     通るので、1か所直せば同時に埋まる。分けて書くと片方だけ腐る。 */
+  function qcFindingViews(segment) {
+    var views = [], seen = {};
+    (segment.qc_findings || []).forEach(function (finding) {
+      var code = qcCodeOf(finding);
+      seen[code] = true;
+      views.push({ code: code, finding: finding, preview: false });
+    });
+    (segment.qc_preview || []).forEach(function (finding) {
+      var code = qcCodeOf(finding);
+      if (seen[code]) return;
+      seen[code] = true;
+      views.push({ code: code, finding: finding, preview: true });
+    });
+    return views;
+  }
+  /* 点検の指摘は「何が起きたか」で分かれる。19種を全部おなじ赤で出すと、
      数字の食い違い（出力を止める欠陥）と、用語集を読めなかった道具の不調とが
      同じ重さに見える。後者は利用者の訳の欠陥ではなく、直しようがない。
      赤は1種類のままにする。--error を複数作ると、どれが出力を止めるのか
      分からなくなる。 */
   function qcGroup(code) {
-    if (code === 'terminology-check-unavailable') return 'tool';
+    /* 道具の不調は2つ。用語一覧を読み込めなかったとき
+       （terminology-check-unavailable）と、点検そのものが最後まで走らなかったとき
+       （validation-unavailable。サーバが合成する種別で、qc_preview から届く）。
+       どちらも「原文と見比べて直す」ことができない。赤で出すと、直せないものを
+       探させることになる。 */
+    if (code === 'terminology-check-unavailable' || code === 'validation-unavailable') return 'tool';
     return 'error';
   }
   /* 一覧の印は短く。長い名前は狭い列から溢れて隣の列に重なる。
@@ -582,13 +637,17 @@
     if (!segment) {
       el('cat-qc-count').textContent = '0'; el('cat-qc-list').innerHTML = '<p class="muted">行を選ぶと、その行の点検結果が出ます。</p>'; el('cat-context').innerHTML = '<p class="muted">行を選ぶと、資料のどこにある文かが分かります。</p>'; return;
     }
-    var rawFindings = segment.qc_findings || [], findings = qcMessages(segment);
+    var views = qcFindingViews(segment), findings = qcMessages(segment);
     el('cat-qc-count').textContent = String(findings.length);
     el('cat-qc-list').innerHTML = findings.length ? findings.map(function (message, findingIndex) {
-      var finding = rawFindings[findingIndex] || {}, code = String(finding.code || finding.Code || '').toLowerCase().replace(/_/g, '-');
-      var termAction = (code === 'terminology-missing' || code === 'terminology-forbidden') ? '<button type="button" class="secondary-button" data-cat-term-exception="' + Number(segment.index) + '" data-cat-term-id="' + esc(finding.termId || finding.TermId || '') + '" data-cat-term-version="' + Number(finding.termVersion || finding.TermVersion || 0) + '" data-cat-term-source="' + esc(finding.sourceTerm || finding.SourceTerm || '') + '">この行では別の表現を使う</button>' : '';
-      return '<div class="cat-qc-card is-' + qcGroup(code) + '"><p>' + esc(message) + '</p>' + termAction + '</div>';
-    }).join('') : '<div class="cat-qc-card">数字と単位の自動点検では、気になる点は見つかりませんでした。</div>';
+      var view = views[findingIndex] || { code: '', finding: {}, preview: false }, finding = view.finding || {}, code = view.code;
+      /* 用語の免除は、その語を「この行では使わない」と決める操作である。
+         決めるには、どの語の・どの版の登録を外すのかが要る。写しの点検
+         （qc_preview）は種別しか持たないので、そもそも作れないし、作らない。
+         確定を1回通してから決める、という順序をここで守る。 */
+      var termAction = (!view.preview && (code === 'terminology-missing' || code === 'terminology-forbidden')) ? '<button type="button" class="secondary-button" data-cat-term-exception="' + Number(segment.index) + '" data-cat-term-id="' + esc(finding.termId || finding.TermId || '') + '" data-cat-term-version="' + Number(finding.termVersion || finding.TermVersion || 0) + '" data-cat-term-source="' + esc(finding.sourceTerm || finding.SourceTerm || '') + '">この行では別の表現を使う</button>' : '';
+      return '<div class="cat-qc-card is-' + qcGroup(code) + '"' + (view.preview ? ' data-cat-qc-preview="1"' : '') + '><p>' + esc(message) + '</p>' + termAction + '</div>';
+    }).join('') : '<div class="cat-qc-card">自動点検では、気になる点は見つかりませんでした。</div>';
     el('cat-next-qc').disabled = !all.some(segmentHasQc);
     var index = Number(segment.index), previous = all.find(function (item) { return Number(item.index) === index - 1; }), next = all.find(function (item) { return Number(item.index) === index + 1; });
     el('cat-context').innerHTML = '<div class="cat-context-card"><span class="cat-context-label">現在の場所</span><p class="cat-context-text">' + esc(segment.location || '本文') + '</p></div>' +
@@ -1780,7 +1839,10 @@
   function qaFindings() {
     var all = (project && project.segments) || [], groups = [
       { key: 'empty', title: '訳文が空', blocking: true, items: [] },
-      { key: 'qc', title: '数字の点検', blocking: true, items: [] },
+      /* 「数字の点検」ではない。ここへ来る指摘は18種あり、通貨・見出しの形・
+         用語もその中に居る（2026-08-15）。名前が「数字」だと、用語で止まった
+         人が数字を見に行く。書き出しの窓が言う理由と同じ顔ぶれにする。 */
+      { key: 'qc', title: '自動点検の指摘', blocking: true, items: [] },
       { key: 'unconfirmed', title: '未確認', blocking: false, items: [] }
     ];
     if (nothingTranslatedYet()) return groups;
@@ -2465,7 +2527,12 @@
       ? 'まだ訳していません。「訳していない行を訳す」を押すと、Copilotへ送ります。'
       : blocking
       ? ('ファイルを作れない指摘が ' + blocking + ' 件あります。' + (unconfirmed ? '未確認は ' + unconfirmed + ' 行です。' : ''))
-      : (unconfirmed ? ('未確認は ' + unconfirmed + ' 行です。数字の点検は、確認済みにするときに行います。') : '指摘はありません。すべての行を確認し終えています。');
+      /* かつてここは「点検は確認済みにするときに行う」と書いていたが、それは
+         事実でなくなった。未確認の行にも点検は走っており（サーバが写しに掛けて
+         いる）、その結果はこの一覧に出ている。出ていないのは、まだ調べていない
+         からではなく、調べて通ったからである（2026-08-15 に文言を実装へ
+         合わせた。CLAUDE.md「食い違ったら実装を採る」）。 */
+      : (unconfirmed ? ('未確認は ' + unconfirmed + ' 行です。自動点検では、直すところは見つかりませんでした。') : '指摘はありません。すべての行を確認し終えています。');
     el('cat-qa-list').innerHTML = groups.filter(function (group) { return group.items.length; }).map(function (group) {
       return '<section class="cat-qa-group' + (group.blocking ? ' is-blocking' : '') + '"><h3>' + esc(group.title) + ' <span>' + group.items.length + '</span></h3>' +
         group.items.map(function (item) {

@@ -11,7 +11,7 @@
   **止める条件は1つも減らしていない。** ここで測るのは説明だけである。
   (f) がそれを表明する（理由の顔ぶれと、止まるかどうかが従来のままであること）。
 
-  見るのは7つ。
+  見るのは9つ。
    (a) 数える。Reasons が何種類あり、行単位で止めるのがどれで、
        segment-qc-failed へ丸められる QC の error コードが何種類あるかを、
        構文木で src から取り出して数える。文書の引き写しはしない
@@ -34,6 +34,13 @@
        **測っていないものを測ったように読まないこと。**
    (g) 実装の註が「3つ」になっていること（2026-08-14 に CLAUDE.md だけが
        訂正され、註は「2つだけ」のまま残っていた）
+   (h) 止めた理由が名指しした種別と行数が、画面へ渡す JSON の qc_preview にも
+       そのまま載っていること（案内先が実在すること）
+   (i) その qc_preview が、**保存したファイルへは1文字も漏れていない**こと。
+       2026-08-15 の実測では、Save-YakuCatProject が qc_preview を
+       generations/<id>/segments.jsonl へ書いても tools/ の55本が全部緑だった。
+       ディスク側の門はここが最初の1本である。qc_findings（確定処理が書いた
+       本物）は残ってよいので、同じ保存物で対にして見る
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\tools\Test-YakuV9176ExportBlockerReasons.ps1
@@ -456,6 +463,149 @@ try {
     $untranslatedPreflight = Get-YakuCatOutputPreflight -Project $untranslated
     Chk (@(@($untranslatedPreflight.Blockers) | Where-Object { [string]$_.code -eq 'segment-untranslated' }).Count -eq 1) '訳文が空の行は従来どおり止まり、その文言が出る'
     Remove-YakuCatProject -Id ([string]$untranslated.Id)
+
+    # ------------------------------------------------------------------ (h)
+    # 宿題の残り半分（2026-08-15）。上の (b)(c)(e) は「文言が種別を名指しするか」
+    # までしか見ていなかった。文言15本が案内する「点検の指摘」は
+    # www/assets/cat.js が segment.qc_findings の件数で出し入れしており、
+    # その findings を実セグメントへ書くのは Set-YakuCatSegmentConfirmed だけである。
+    # 書き出し前の点検は写しに走らせるので、**未確定の行では案内先が1件も無い**。
+    # ここでは「preflight が数えた行と種別が、画面へ渡す JSON にも載っているか」を
+    # 見る。画面で実際に開けるかは Test-YakuV9176CatScreenWiring.ps1 (j) が
+    # Chromium で押して測る。
+    Write-Host '(h) 止めた理由が名指しした指摘が、画面へ渡す JSON にも載っている' -ForegroundColor Cyan
+    $previewProject = New-BlockedProject -Sources @($srcFixed, $srcAmount, $srcDollar) `
+                                         -Targets @('We cut overhead.', 'Revenue was 100 oku yen.', 'Sales were recorded.') `
+                                         -Setup $addFixedTerm
+    $previewEligibility = Get-YakuCatOutputEligibility -Project $previewProject
+    $previewBlockers = @((Get-YakuCatOutputPreflight -Project $previewProject).Blockers)
+    $previewView = (ConvertTo-YakuCatProjectJson -Project $previewProject) | ConvertFrom-Json
+    $previewRows = @($previewView.segments)
+    Chk ($previewRows.Count -eq 3) ('画面へ渡す行は3行（実際 ' + $previewRows.Count + '）')
+    # まず、この題材が空振りでないこと。実セグメントには findings が1件も無い。
+    Chk (@(@($previewProject.Segments) | Where-Object { @($_.QcFindings).Count -gt 0 }).Count -eq 0) '実セグメントには点検結果が1件も無い（未確定だから。この題材が空振りでない）'
+    Chk (@(@($previewRows) | Where-Object { @($_.qc_findings).Count -gt 0 }).Count -eq 0) 'JSON の qc_findings も空のまま（写しの結果を実セグメントへ書いていない）'
+    Chk (@(@($previewProject.Segments) | Where-Object { [string]$_.QcStatus -ne 'not_run' }).Count -eq 0) '点検の状態も not_run のまま（写しに走らせても行は書き換えない）'
+    # ここが本体。preflight が名指しした種別と行数が、そのまま行にも載る。
+    $previewByCode = @{}
+    foreach ($row in $previewRows) {
+        foreach ($item in @($row.qc_preview)) {
+            $c = [string]$item.code
+            if ($previewByCode.ContainsKey($c)) { $previewByCode[$c] = [int]$previewByCode[$c] + 1 } else { $previewByCode[$c] = 1 }
+        }
+    }
+    $failureCodes = @(@($previewEligibility.QcFailures) | ForEach-Object { [string]$_.Code })
+    Chk ($failureCodes.Count -ge 2) ('題材は2種以上で止まっている（実際: ' + ($failureCodes -join ',') + '）')
+    $previewMismatch = New-Object System.Collections.Generic.List[string]
+    foreach ($failure in @($previewEligibility.QcFailures)) {
+        $c = [string]$failure.Code
+        $have = if ($previewByCode.ContainsKey($c)) { [int]$previewByCode[$c] } else { 0 }
+        if ($have -ne [int]$failure.Rows) { $previewMismatch.Add($c + ' 数えた=' + [string][int]$failure.Rows + ' 載った=' + [string]$have) | Out-Null }
+    }
+    Chk ($previewMismatch.Count -eq 0) ('数えた行数と、行に載った件数が種別ごとに一致する（ずれ: ' + (@($previewMismatch.ToArray()) -join ' / ') + '）')
+    Chk (@($previewByCode.Keys).Count -eq $failureCodes.Count) ('載っている種別は数えたものと同じ顔ぶれ（実際: ' + ((@($previewByCode.Keys)) -join ',') + '）')
+    # 文言が名指しした種別も、行から引ける（案内先が実在する）
+    foreach ($blocker in @($previewBlockers | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.qc_code) })) {
+        Chk ($previewByCode.ContainsKey([string]$blocker.qc_code)) ('文言が名指しした ' + [string]$blocker.qc_code + ' を、行からも引ける')
+    }
+    # 通った行には何も載らない（全部の行に付けて誤魔化していない）
+    $cleanRows = @($previewRows | Where-Object { @($_.qc_preview).Count -eq 0 })
+    Chk ($cleanRows.Count -eq 1 -and [string]$cleanRows[0].source -eq $srcAmount) ('点検に通った行には1件も載らない（実際 ' + $cleanRows.Count + ' 行）')
+    # 用語の免除に要る鍵は載せない。載せると未確定の行にも免除ボタンが出せてしまう。
+    $leaked = New-Object System.Collections.Generic.List[string]
+    foreach ($row in $previewRows) {
+        foreach ($item in @($row.qc_preview)) {
+            foreach ($name in @($item.PSObject.Properties.Name)) { if ($name -ne 'code') { $leaked.Add($name) | Out-Null } }
+        }
+    }
+    Chk ($leaked.Count -eq 0) ('写しの指摘は種別だけを持つ（余分な鍵: ' + (@($leaked.ToArray() | Sort-Object -Unique) -join ',') + '）')
+    Remove-YakuCatProject -Id ([string]$previewProject.Id)
+    # 確定して落ちた行は、従来どおり qc_findings を持つ（そちらを壊していない）
+    $confirmedProject = New-BlockedProject -Sources @($srcFixed) -Targets @('We cut overhead.') -Setup $addFixedTerm
+    $confirmBlocked = $false
+    try { $null = Set-YakuCatSegmentConfirmed -Project $confirmedProject -Index 0 } catch { $confirmBlocked = $true }
+    Chk $confirmBlocked '用語で落ちる行は、従来どおり確定を断られる（止める条件は変えていない）'
+    $confirmedRows = @(((ConvertTo-YakuCatProjectJson -Project $confirmedProject) | ConvertFrom-Json).segments)
+    Chk (@($confirmedRows[0].qc_findings).Count -ge 1) ('断られた行には従来どおり qc_findings が残る（実際 ' + @($confirmedRows[0].qc_findings).Count + ' 件）')
+    Remove-YakuCatProject -Id ([string]$confirmedProject.Id)
+
+    # ------------------------------------------------------------------ (i)
+    # ディスクの一線。src/CatProject.ps1 の註（Get-YakuCatOutputEligibility と
+    # ConvertTo-YakuCatProjectJson の2か所）が「写しの点検結果は実セグメントへは
+    # 書かない」と言っている。メモリ上の Segment.QcFindings を守る門は3本あるが、
+    # **2026-08-15 の実測では、ディスク側の門は0本だった**。
+    # Save-YakuCatProject が qc_preview を generations/<id>/segments.jsonl へ
+    # 書き足しても（実際に書いて DISK-HAS-QC-PREVIEW=True を確認したうえで）
+    # tools/ の55本が全部緑のまま通った。segments.jsonl に触れる試験は
+    # Test-YakuV9162Horizon1.ps1 と Test-YakuV9170SourceRebase.ps1 の2本しか無く、
+    # どちらも qc_findings も qc_preview も見ていない。註だけが一線を守っていた。
+    #
+    # ここでは実際に保存して、書かれたファイルを読む。
+    # **qc_findings（確定処理が走ったときの本物）は残ってよい。** 取り違えないよう、
+    # 同じ保存物の中で「本物の findings は残っている／写しの qc_preview は無い」を
+    # 対で見る。findings 側を見ないと、この門は「何も読めていない」でも緑になる。
+    Write-Host '(i) 写しの点検結果が、保存したファイルへ漏れていない' -ForegroundColor Cyan
+    $diskProject = New-BlockedProject -Sources @($srcFixed, $srcAmount) `
+                                      -Targets @('We cut overhead.', 'Revenue was 100 oku yen.') `
+                                      -Setup $addFixedTerm
+    # 1行目は確定を断られる。断られても点検そのものは走っているので、実セグメントへ
+    # 本物の qc_findings が残る。これが「残ってよい側」の題材になる。
+    $diskConfirmBlocked = $false
+    try { $null = Set-YakuCatSegmentConfirmed -Project $diskProject -Index 0 } catch { $diskConfirmBlocked = $true }
+    Chk $diskConfirmBlocked '題材の1行目は従来どおり確定を断られる（止める条件は変えていない）'
+    $diskRows = @(((ConvertTo-YakuCatProjectJson -Project $diskProject) | ConvertFrom-Json).segments)
+    Chk ($diskRows.Count -eq 2) ('画面へ渡す行は2行（実際 ' + $diskRows.Count + '）')
+    if ($diskRows.Count -eq 2) {
+        Chk (@($diskRows[0].qc_findings).Count -ge 1) ('その行は本物の qc_findings を持っている（実際 ' + @($diskRows[0].qc_findings).Count + ' 件）')
+        # ここが空だと、この節は「そもそも漏れようがない」題材を見ていることになる。
+        Chk (@($diskRows[0].qc_preview).Count -ge 1) ('同じ行は写しの qc_preview も持っている（この題材が空振りでない。実際 ' + @($diskRows[0].qc_preview).Count + ' 件）')
+    }
+    $diskSaved = Save-YakuCatProject -Project $diskProject
+    Chk ([bool]$diskSaved) '保存できた（保存が落ちていたら、以下は「読めなかった」であって「漏れていない」ではない）'
+    $diskDir = Join-Path $script:YakuCatTestStore ([string]$diskProject.Id)
+    Chk (Test-Path -LiteralPath $diskDir -PathType Container) ('保存先のディレクトリができている: ' + $diskDir)
+    $diskFiles = @(Get-ChildItem -LiteralPath $diskDir -Recurse -File -ErrorAction SilentlyContinue)
+    Chk ($diskFiles.Count -ge 1) ('保存されたファイルがある（実際 ' + $diskFiles.Count + ' 個）')
+    $segmentFiles = @($diskFiles | Where-Object { [string]$_.Name -eq 'segments.jsonl' })
+    Chk ($segmentFiles.Count -ge 1) ('segments.jsonl がある（実際 ' + $segmentFiles.Count + ' 個）')
+    # 1) 字面。保存物のどのファイルにも `qc_preview` という語が無いこと。
+    #    Write-YakuTextAtomic は UTF-8 BOM 付きで書く。ReadAllText は BOM を落とす。
+    $diskUtf8 = New-Object Text.UTF8Encoding($false)
+    $diskLeaks = New-Object System.Collections.Generic.List[string]
+    foreach ($file in $diskFiles) {
+        $text = ''
+        try { $text = [string][IO.File]::ReadAllText($file.FullName, $diskUtf8) } catch { $diskLeaks.Add('読めなかった: ' + $file.FullName) | Out-Null; continue }
+        if ($text.Contains('qc_preview')) { $diskLeaks.Add('字面 qc_preview: ' + $file.FullName) | Out-Null }
+    }
+    Chk ($diskLeaks.Count -eq 0) ('保存物のどのファイルにも qc_preview の語が無い（漏れ: ' + (@($diskLeaks.ToArray()) -join ' / ') + '）')
+    # 2) 鍵。segments.jsonl の各行を JSON として解いて、鍵の名前で見る。
+    #    字面照合だけだと、鍵名を変えて書く改変（qcPreview など）を素通しする。
+    $diskLines = 0
+    $diskFindingsOnDisk = 0
+    $diskPreviewKeys = New-Object System.Collections.Generic.List[string]
+    $diskFindingsKeyRows = 0
+    foreach ($file in $segmentFiles) {
+        $text = [string][IO.File]::ReadAllText($file.FullName, $diskUtf8)
+        foreach ($line in @($text -split "`n")) {
+            $trimmed = ([string]$line).Trim()
+            if ([string]::IsNullOrWhiteSpace($trimmed)) { continue }
+            $diskLines++
+            $record = $trimmed | ConvertFrom-Json
+            foreach ($name in @($record.PSObject.Properties.Name)) {
+                $flat = ([string]$name).ToLowerInvariant().Replace('_', '')
+                if ($flat -eq 'qcpreview') { $diskPreviewKeys.Add([string]$name + ' @ ' + $file.Name) | Out-Null }
+                if ([string]$name -eq 'qc_findings') { $diskFindingsKeyRows++ }
+            }
+            $diskFindingsOnDisk += @($record.qc_findings).Count
+        }
+    }
+    Chk ($diskLines -eq 2) ('保存された行は2行（実際 ' + $diskLines + '）')
+    Chk ($diskPreviewKeys.Count -eq 0) ('保存された行に写しの点検の鍵が1つも無い（漏れ: ' + (@($diskPreviewKeys.ToArray()) -join ' / ') + '）')
+    # 3) 取り違え防止。本物の qc_findings は消していない。ここが 0 になったら、
+    #    この節は「ディスクに何も無い」を見ているだけで、一線を守っていない。
+    Chk ($diskFindingsKeyRows -eq $diskLines) ('保存されたどの行にも qc_findings の鍵がある（実際 ' + $diskFindingsKeyRows + ' / ' + $diskLines + '）')
+    Chk ($diskFindingsOnDisk -ge 1) ('本物の点検結果はディスクにも残っている（実際 ' + $diskFindingsOnDisk + ' 件。0 ならこの節は何も読めていない）')
+    Remove-YakuCatProject -Id ([string]$diskProject.Id)
 
     # ------------------------------------------------------------------ (g)
     Write-Host '(g) 実装の註が3つになっている' -ForegroundColor Cyan
