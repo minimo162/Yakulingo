@@ -2834,11 +2834,38 @@ function ConvertTo-YakuCatProjectJson {
     $placementBySegment = @{}
     foreach ($placement in @($Project.PlacementPlans)) { $placementBySegment[[string]$placement.segment_id] = $placement }
     # 途中で分けた行が、その組の何番目のいくつ中かを画面へ出すために先に数える。
+    # 併せて、その組の訳文を繋いだものもここで作る（split_translation）。
+    #
+    # なぜサーバで作るか（2026-08-15 の欠陥）: 「体裁で見る」は割った行を先頭1つへ
+    # まとめて描くが、配置先の無い行（貼り付け本文・Word）は part 1 の訳文のまま
+    # 描いていた。後半の訳が画面から消え、画面で確認して出したのにファイルの中身が
+    # 違う、という裏切りになる。かといって繋ぎ方を cat.js へ写すのは駄目である。
+    # 繋ぎ方の規則（トークンの内側には空白を入れない・CJK なら詰める）は
+    # Join-YakuCatSplitTranslations だけが持ち、2026-08-15 に変わったばかりで、
+    # 写せば必ず片方が腐る（src/TranslationMemory.ps1:519 と同じ戒め）。
+    # 配置先のある行が placement.destinations[].text をそのまま使っているのと
+    # 同じ形にして、画面は計算済みの文字列を受け取るだけにする。
     $splitPartCounts = @{}
+    $splitPartTranslations = @{}
+    $splitPartSources = @{}
     foreach ($segment in $segs) {
         $splitGroup = Get-YakuCatSegmentSplitGroupId -Segment $segment
         if ($splitGroup -eq '') { continue }
         $splitPartCounts[$splitGroup] = [int]$(if ($splitPartCounts.ContainsKey($splitGroup)) { $splitPartCounts[$splitGroup] } else { 0 }) + 1
+        if (-not $splitPartTranslations.ContainsKey($splitGroup)) {
+            $splitPartTranslations[$splitGroup] = New-Object System.Collections.Generic.List[string]
+            $splitPartSources[$splitGroup] = New-Object System.Collections.Generic.List[string]
+        }
+        [void]$splitPartTranslations[$splitGroup].Add([string]$segment.Translation)
+        [void]$splitPartSources[$splitGroup].Add([string]$segment.Text)
+    }
+    $splitJoinedTranslations = @{}
+    foreach ($splitGroup in @($splitPartCounts.Keys)) {
+        # -Sources を必ず付ける。付けないとトークン境界の規則が効かず、
+        # 画面だけが `AB- 1234` に戻る（書き戻しは正しいまま）。
+        $splitJoinedTranslations[$splitGroup] = [string](Join-YakuCatSplitTranslations `
+            -Parts $splitPartTranslations[$splitGroup].ToArray() `
+            -Sources $splitPartSources[$splitGroup].ToArray())
     }
     # 反復（同じ原文の行）を先に数える。行ごとに数え直すと O(n^2) になる。
     $repetitionKeys = @{}
@@ -2939,6 +2966,10 @@ function ConvertTo-YakuCatProjectJson {
             split_group = [string]$(if ($splitPartCounts.ContainsKey([string]$segs[$i].SplitGroupId)) { [string]$segs[$i].SplitGroupId } else { '' })
             split_part  = [int]$(if ($splitPartCounts.ContainsKey([string]$segs[$i].SplitGroupId)) { [int]$segs[$i].SplitOrdinal + 1 } else { 0 })
             split_parts = [int]$(if ($splitPartCounts.ContainsKey([string]$segs[$i].SplitGroupId)) { $splitPartCounts[[string]$segs[$i].SplitGroupId] } else { 0 })
+            # その組の訳文を繋いだもの。「体裁で見る」が、配置先の無い行（貼り付け
+            # 本文・Word）でも後半の訳を出せるようにするため。繋ぎ方の規則は
+            # Join-YakuCatSplitTranslations だけが持つ（上の計算を参照）。
+            split_translation = [string]$(if ($splitJoinedTranslations.ContainsKey([string]$segs[$i].SplitGroupId)) { $splitJoinedTranslations[[string]$segs[$i].SplitGroupId] } else { '' })
             # 同じ原文が何行あるか。1 なら反復ではない。
             repetition_count = [int]$(if ($repetitionCounts.ContainsKey([string]$repetitionKeys[$i])) { $repetitionCounts[[string]$repetitionKeys[$i]] } else { 1 })
             repetition_first = [bool]($repetitionFirst.ContainsKey([string]$repetitionKeys[$i]) -and [int]$repetitionFirst[[string]$repetitionKeys[$i]] -eq $i)

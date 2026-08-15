@@ -2073,7 +2073,21 @@
     });
     all.forEach(function (segment) {
       if (segment.split_group && Number(segment.split_part) !== 1) return;
-      var whole = segment.split_group ? Object.assign({}, segment, { source: String(splitSources[segment.split_group] || '') }) : segment;
+      var whole = segment;
+      if (segment.split_group) {
+        var merged = { source: String(splitSources[segment.split_group] || '') };
+        /* 訳文はサーバが繋いだもの（split_translation）を使う。ここで自分で
+           繋いではいけない。繋ぎ方の規則（トークンの内側には空白を入れない・
+           日本語なら詰める）は Join-YakuCatSplitTranslations だけが持ち、
+           写せば必ず片方が腐る。配置先のある行が placement.destinations[].text を
+           そのまま使っているのと同じ形である。
+           古い応答には項目が無いので、そのときは今までどおり part 1 の訳文に
+           落とす（後半が欠けるより、画面が空白になるほうが悪い）。 */
+        if (typeof segment.split_translation === 'string' && segment.split_translation !== '') {
+          merged.translation = segment.split_translation;
+        }
+        whole = Object.assign({}, segment, merged);
+      }
       var placed = whole.kind === 'cell' && whole.placement && (whole.placement.destinations || []).length
         ? whole.placement.destinations.map(function (destination) {
           return Object.assign({}, whole, {

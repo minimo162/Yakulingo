@@ -17,7 +17,16 @@
   判定はしない。判定は呼び出し側の PowerShell が行う。
 
   使い方:
-    node cat-screen-gate.js <wwwDir> <projectJson> <candidatesJson> <outJson>
+    node cat-screen-gate.js <wwwDir> <projectJson> <candidatesJson> <outJson> <previewProjectJson> <cellProjectJson>
+
+  5番目は「体裁で見る」を見るための別の作業（貼り付け本文を原文の途中で
+  割ったもの）。配置先が無い行なので、画面はサーバが繋いだ訳文を使うほかない。
+
+  6番目は配置先のある cell 行の作業。1つの意味単位が2つのセル（A1・A2）へ
+  分かれて載るので、画面は placement.destinations[].text をそのまま置くほか
+  ない。行そのものの訳文（whole.translation）を置くと、A1 に全文が出て A2 が
+  空になる。この枝には今まで振る舞いの門が1つも無く、text を空にしても
+  全部緑のまま通った（2026-08-15 の実測）。
 */
 const fs = require('fs');
 const http = require('http');
@@ -28,7 +37,11 @@ const wwwDir = process.argv[2];
 const projectJson = fs.readFileSync(process.argv[3], 'utf8');
 const candidatesJson = fs.readFileSync(process.argv[4], 'utf8');
 const outputPath = process.argv[5];
+const previewProjectJson = fs.readFileSync(process.argv[6], 'utf8');
+const cellProjectJson = fs.readFileSync(process.argv[7], 'utf8');
 const project = JSON.parse(projectJson);
+const previewProject = JSON.parse(previewProjectJson);
+const cellProject = JSON.parse(cellProjectJson);
 
 /* 押した位置の題材。原文の <mark> より後ろに落ちる位置を選ぶ。
    1文字目（印より前）で一度押してから2回目を押すので、位置を拾えない実装だと
@@ -84,7 +97,15 @@ const server = http.createServer(async function (req, res) {
   res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
   if (p === '/api/ready-state') { res.end(JSON.stringify({ canTranslate: true, label: 'Copilot：準備完了', class: 'ok' })); return; }
   if (p === '/api/cat/recent') { res.end(JSON.stringify({ projects: [] })); return; }
-  if (p === '/api/cat/resume') { res.end(projectJson); return; }
+  /* 開く作業は要求に書いてある id で選ぶ。決め打ちで1つだけ返すと、
+     「体裁で見る」の題材を開いたつもりで別の作業を見ることになる。 */
+  if (p === '/api/cat/resume') {
+    const wanted = parsed ? String(parsed.project_id || '') : '';
+    if (wanted && wanted === String(previewProject.id || '')) { res.end(previewProjectJson); return; }
+    if (wanted && wanted === String(cellProject.id || '')) { res.end(cellProjectJson); return; }
+    res.end(projectJson);
+    return;
+  }
   if (p === '/api/cat/candidates') { res.end(candidatesJson); return; }
   if (p === '/api/cat/split-at') { res.end(projectJson); return; }
   if (p === '/api/cat/replace-estimate') { res.end(JSON.stringify({ rows: 2, occurrences: 2, confirmed_rows: 0, scanned_rows: 2 })); return; }
@@ -284,6 +305,80 @@ function lastBody(name) { const c = calls(name); return c.length ? c[c.length - 
       replaceCalls: calls('replace').length - beforeReplace,
       status: await page.textContent('#cat-status')
     };
+
+    // -------------------------------------------------- 「体裁で見る」（配置先の無い行）
+    /* 別の作業を開き直す。貼り付け本文を原文の途中で割ったもので、配置先
+       （placement.destinations）が無い。配置先のある cell 行はサーバが計算した
+       destination.text を使うので前から正しかった。壊れていたのはこちらで、
+       画面だけが part 1 の訳文を描き、後半の訳が消えていた。 */
+    await page.goto('http://127.0.0.1:' + port + '/cat?project=' + previewProject.id, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#cat-grid-body tr[data-cat-row]', { timeout: 20000 });
+    out.previewRows = await page.evaluate(function () {
+      return Array.from(document.querySelectorAll('#cat-grid-body tr[data-cat-row]')).map(function (tr) {
+        return {
+          index: Number(tr.getAttribute('data-cat-row')),
+          source: tr.querySelector('.cat-source-text').textContent
+        };
+      });
+    });
+    /* 「体裁で見る」は「そのほか」の折りたたみの中にある。実際に開いて押す。 */
+    await page.click('details.cat-more-actions > summary');
+    await page.click('#cat-preview-open');
+    await page.waitForSelector('#cat-preview-dialog[open]', { timeout: 10000 });
+    await page.waitForTimeout(250);
+    function previewBody() {
+      return page.evaluate(function () {
+        var host = document.getElementById('cat-preview-body');
+        return {
+          open: !!document.getElementById('cat-preview-dialog').open,
+          blocks: Array.from(host.querySelectorAll('button')).map(function (b) { return b.textContent; }),
+          missing: Array.from(host.querySelectorAll('button.is-missing')).length,
+          cells: host.querySelectorAll('.cat-preview-cell').length,
+          /* 窓に出ている文字そのもの。繋ぎ方の規則（`AB-1234` か `AB- 1234` か）は
+             1つの塊の中で起きるので、塊ごとの一致だけでなく地の文でも見る。 */
+          text: host.textContent,
+          /* 配置先のあるセルは、番地ごとに1つの押しボタンになる。どこに何が
+             出たかを見るため、番地と文字と「訳文が無い扱い」を組で採る。 */
+          cellTexts: Array.from(host.querySelectorAll('.cat-preview-cell')).map(function (b) {
+            var td = b.closest ? b.closest('td') : null;
+            var tr = td && td.closest ? td.closest('tr') : null;
+            var column = td && tr ? Array.prototype.indexOf.call(tr.children, td) : -1;
+            var head = tr && tr.querySelector('th') ? tr.querySelector('th').textContent : '';
+            return { text: b.textContent, missing: b.classList.contains('is-missing'), row: head, column: column };
+          }),
+          paragraphs: Array.from(host.querySelectorAll('.cat-preview-paragraph')).map(function (b) { return b.textContent; }),
+          sheets: Array.from(host.querySelectorAll('.cat-preview-sheet h3')).map(function (h) { return h.textContent; })
+        };
+      });
+    }
+    out.previewTarget = await previewBody();
+    await page.click('[data-cat-preview-side="source"]');
+    await page.waitForTimeout(250);
+    out.previewSource = await previewBody();
+
+    // -------------------------------------------------- 「体裁で見る」（配置先のある cell 行）
+    /* もう1つ別の作業を開く。1つの意味単位が A1・A2 の2セルへ分かれて載るので、
+       画面が置ける文字列は placement.destinations[].text しかない。行そのものの
+       訳文には「どこで切るか」が入っていないからである。ここは今まで振る舞いの
+       門が無く、text を空にしても全部緑のまま通った枝である。 */
+    await page.goto('http://127.0.0.1:' + port + '/cat?project=' + cellProject.id, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#cat-grid-body tr[data-cat-row]', { timeout: 20000 });
+    out.cellRows = await page.evaluate(function () {
+      return Array.from(document.querySelectorAll('#cat-grid-body tr[data-cat-row]')).map(function (tr) {
+        return {
+          index: Number(tr.getAttribute('data-cat-row')),
+          source: tr.querySelector('.cat-source-text').textContent
+        };
+      });
+    });
+    await page.click('details.cat-more-actions > summary');
+    await page.click('#cat-preview-open');
+    await page.waitForSelector('#cat-preview-dialog[open]', { timeout: 10000 });
+    await page.waitForTimeout(250);
+    out.cellPreviewTarget = await previewBody();
+    await page.click('[data-cat-preview-side="source"]');
+    await page.waitForTimeout(250);
+    out.cellPreviewSource = await previewBody();
   } catch (e) {
     out.fatal = String((e && e.stack) || e);
   } finally {

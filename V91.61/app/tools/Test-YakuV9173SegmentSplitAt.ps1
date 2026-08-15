@@ -274,9 +274,25 @@ try {
     Chk ([string]$rowsB[0].split_group -ne '' -and [string]$rowsB[0].split_group -eq [string]$rowsB[1].split_group) '画面が同じ組と分かる名前を応答が持つ'
     Chk ([int]$rowsB[0].split_part -eq 1 -and [int]$rowsB[1].split_part -eq 2) '何番目かが 1,2 で出る'
     Chk ([string]$rowsB[2].split_group -eq '' -and [int]$rowsB[2].split_parts -eq 0) '割っていない行には組の名前を出さない'
+    # 訳文側（2026-08-15 の欠陥 5-2）。原文だけを繋いで訳文を part 1 のままにすると、
+    # 配置先の無い行で後半の訳が画面から消える。繋ぐのはサーバ側であって画面ではない。
+    Chk ([string]$rowsB[0].split_translation -eq $expectedJoined) ('割った組の繋いだ訳文が応答に入る: ' + [string]$rowsB[0].split_translation)
+    Chk ([string]$rowsB[1].split_translation -eq $expectedJoined) '組のどの行から見ても同じ繋いだ訳文が取れる'
+    Chk ([string]$rowsB[2].split_translation -eq '') '割っていない行には繋いだ訳文を出さない'
+    Chk ([string]$rowsB[0].translation -ne $expectedJoined) '行そのものの訳文は part 1 のまま（別の項目として足している）'
     $previewJs = [IO.File]::ReadAllText((Join-Path (Join-Path $root 'www\assets') 'cat.js'), [Text.UTF8Encoding]::new($false))
     Chk ($previewJs -match 'segment\.split_group && Number\(segment\.split_part\) !== 1') '体裁で見るは、割った行を先頭1つにまとめて置く'
     Chk ($previewJs -match 'splitSources\[segment\.split_group\]') '体裁で見るの原文側は、割った行の原文を繋いで出す'
+    Chk ($previewJs -match 'segment\.split_translation') '体裁で見るの訳文側は、サーバが繋いだ値を使う'
+    Chk ($previewJs -notmatch '\[segment\.split_group\][^\r\n]*\+[^\r\n]*segment\.translation') '体裁で見るは、訳文を画面側で継ぎ足していない'
+    # 繋ぎ方の規則は CellSegments.ps1 の1か所だけが持つ。応答を組み立てる側は
+    # それを **原文つきで** 呼ぶ。原文を渡さないとトークン境界の規則が効かず、
+    # 画面だけが `AB- 1234` に戻る（書き戻しは正しいまま、という最悪の食い違い）。
+    $serializerFunc = @($splitAtAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'ConvertTo-YakuCatProjectJson' }, $true))
+    Chk ($serializerFunc.Count -eq 1) '応答を組み立てる関数は CatProject.ps1 に1つ'
+    $serializerText = if ($serializerFunc.Count -eq 1) { [string]$serializerFunc[0].Extent.Text } else { '' }
+    Chk ($serializerText -match 'Join-YakuCatSplitTranslations') '応答を組み立てる側は共有の繋ぎ関数を呼ぶ'
+    Chk ($serializerText -match '(?s)Join-YakuCatSplitTranslations.{0,300}-Sources') '繋ぐときに原文も渡している'
     # 割った行からでもセルの区切りを確定できる（行き止まりを作らない）。
     $sliceResult = $null; $sliceNote = ''
     try { $sliceResult = Set-YakuCatPlacementSlices -Project $pb -Index 1 -Slices @($expectedJoined) } catch { $sliceNote = ' / ' + [string]$_.Exception.Message }
@@ -308,6 +324,17 @@ try {
         $textOut = Get-YakuCatTextOutput -Project $pt
         Chk ($textOut -match 'We reviewed our production system\. We also reduced procurement costs\.') ('割った行が1行として繋がって出る: ' + ($textOut -replace "`n", '\n'))
         Chk (($textOut -split "`n").Count -eq 2) ('行数は割る前と同じ2行（実際 ' + ($textOut -split "`n").Count + ' 行）')
+        # ここが 5-2 の欠陥そのものの場面である。貼り付け本文の行には配置先が無い。
+        # 配置先のある cell 行は placement.destinations[].text で正しく出ていたので、
+        # 壊れているのはこちらだけだった。ファイルは正しく、画面だけが違う。
+        $viewT = (ConvertTo-YakuCatProjectJson -Project $pt) | ConvertFrom-Json
+        $rowsT = @($viewT.segments)
+        $rowT0 = $rowsT[$ptIndex]
+        Chk ([string]$rowT0.split_group -ne '' -and [int]$rowT0.split_part -eq 1) '貼り付け本文でも組の名前と番号が出る'
+        Chk ($null -eq $rowT0.placement -or @($rowT0.placement.destinations).Count -eq 0) '貼り付け本文の行には配置先が無い（この検査が空振りでないこと）'
+        Chk ([string]$rowT0.translation -eq 'We reviewed our production system.') '行そのものの訳文は前半だけ（これを画面がそのまま描くと後半が消える）'
+        Chk ([string]$rowT0.split_translation -eq $expectedJoined) ('配置先の無い行でも、繋いだ訳文が応答に入る: ' + [string]$rowT0.split_translation)
+        Chk ([string]$rowT0.split_translation -match 'procurement') '後半の訳が入っている（前半だけになっていない）'
     }
     Remove-YakuCatProject -Id ([string]$pt.Id)
 
@@ -594,6 +621,13 @@ try {
     $legacyByBlockCell = Get-YakuSegmentTranslationByBlockId -Segments @($pl.Segments) -TranslationBySegmentIndex $legacyBySegment
     Chk ([string]$legacyByBlockCell['b1'] -eq $expectedTight) ('セル層の経路でも空白が混じらない: ' + [string]$legacyByBlockCell['b1'])
     Chk ([string]$legacyByBlock['b1'] -notmatch 'AB- 1234') '欠陥そのもの（AB- 1234）が出ない'
+    # 画面へ渡す値も同じ規則で繋がっていること。ここが `AB- 1234` に戻るのは、
+    # 応答を組み立てるときに -Sources を渡し忘れた場合である。
+    $viewLegacy = (ConvertTo-YakuCatProjectJson -Project $pl) | ConvertFrom-Json
+    $rowsLegacy = @($viewLegacy.segments)
+    Chk ($rowsLegacy.Count -eq 2) ('割ってある資料の応答は2行（実際 ' + $rowsLegacy.Count + '）')
+    Chk ([string]$rowsLegacy[0].split_translation -eq $expectedTight) ('画面へ渡す繋いだ訳文にも空白が混じらない: ' + [string]$rowsLegacy[0].split_translation)
+    Chk ([string]$rowsLegacy[0].split_translation -notmatch 'AB- 1234') '画面側にも欠陥そのもの（AB- 1234）が出ない'
     # 数値QCは、この欠陥を見つけられない。数字は1桁も欠けず、割った後は
     # 片側ずつしか点検が走らないからである。だから止める側ではなく繋ぎ方で直した。
     $pq = New-TestCellProject -Texts @('1234を採用します。')

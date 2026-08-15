@@ -19,7 +19,7 @@
   飛んだ要求の中身を見る。判定はこのファイルが行い、ブラウザ側
   （tools/cat-screen/cat-screen-gate.js）は観測した事実を JSON で返すだけである。
 
-  見るのは7つ。
+  見るのは9つ。
    (a) can_split_at の行にだけ分割ボタンが**実際に出る**
    (b) Alt+S がその分割ボタンを押す。割れない行では断る
    (c) 用語の印が入った原文でも、押した位置で割れる（位置が一致する）
@@ -27,6 +27,29 @@
    (e) 「訳文を置き換える」ボタンが置換の口へつながっている
    (f) 探す場所が原文だけのとき、押しても要求が飛ばない
    (g) 画面が JavaScript の例外を出していない
+   (h) 「体裁で見る」が、配置先の無い行でも**後半の訳文まで**出し、しかも
+       **繋ぎ方の規則どおり**に出す（`AB-1234` であって `AB- 1234` ではない）
+   (i) 「体裁で見る」が、配置先のある cell 行では destination.text をそのまま置く
+
+  (h) は 2026-08-15 の欠陥（引き継ぎ 5-2）。原文の途中で割った行を1つへまとめる
+  ときに、原文だけを繋いで訳文は part 1 のままにしていた。配置先のある cell 行は
+  サーバが計算した destination.text を使うので正しく出るが、貼り付け本文や Word の
+  ように**配置先が無い行**は後半の訳が画面から消えた。書き出しは
+  Group-YakuCatSplitSegments を通るので正しい。つまり「画面で見た通りに出る」
+  という前提だけが破れる、いちばん見つけにくい壊れ方である。
+
+  (h) の題材は**2組**入れる。1組目（`当社は…、|調達費も…`）は日本語の文の
+  切れ目なので空白1つで繋ぐ。**この組だけでは、素朴な `.join(' ')` でも
+  Join-YakuCatSplitTranslations でも同じ文字列になり、「サーバの値を使ったか」
+  しか測れなかった**（2026-08-15 に見つけた門そのものの欠陥）。2組目
+  （`型式はAB-|1234を採用します。`）はトークンの内側なので詰めて繋ぐ。
+  これで繋ぎ方を写経した実装が実機で赤になる。
+
+  (i) は 2026-08-15 時点で振る舞いの門が1つも無かった枝。placement.destinations
+  の text を空文字にしても、当時の54本は全部緑のまま通った。(h) を直したときに
+  whole.translation が「組を繋いだ値」を運ぶようになったので、この2つを
+  入れ替える1行の書き換えで壊れる距離にある。1つの意味単位を A1・A2 の2セルへ
+  分けて載せる題材にして、行そのものの訳文とは違う文字が各セルに出ることを見る。
 
   (c) は「押した位置」をアプリとは別に測る。ブラウザが決めたキャレット位置を
   capture 段の覗き窓で採り、アプリが送った位置と突き合わせる。どちらか一方の
@@ -85,6 +108,35 @@ function Get-YakuCatProjectStoreDir { return $script:YakuCatTestStore }
 $settings = Read-YakuSettings -Root $root
 $script:YakuRoot = $root
 
+# セル1つぶんの最小 project。Excel が無くても配置計画（PlacementPlan）まで
+# 通せる形にする。中身は Test-YakuV9173SegmentSplitAt.ps1 の同名の作りと同じ。
+$screenSafeStructure = [pscustomobject]@{contract_version='excel-cell-structure-v2';read_status='verified';merge_kind='none';merge_area='';has_formula=$false;has_array_formula=$false;has_spill=$false;worksheet_protect_contents=$false;cell_locked=$false;validation_type='none';wrap_text='False'}
+$screenSafeStructureHash = Get-YakuCatSourceIntegrityHash -Text ($screenSafeStructure | ConvertTo-Json -Depth 6 -Compress)
+function New-YakuCatScreenCellProject {
+    param([Parameter(Mandatory=$true)][string[]]$Texts)
+    $segments = New-Object System.Collections.Generic.List[object]
+    $blocks = New-Object System.Collections.Generic.List[object]
+    for ($i = 0; $i -lt $Texts.Count; $i++) {
+        $address = 'A' + [string]($i + 1)
+        $blockId = 'b' + [string]($i + 1)
+        $cell = [pscustomobject]@{Text=[string]$Texts[$i];Address=$address;Row=($i+1);Column=1;IsText=$true;IsMerged=$false;BlockId=$blockId;SheetCodeName='Sheet1';StructureContract=$screenSafeStructure;StructureFingerprint=$screenSafeStructureHash}
+        [void]$segments.Add([pscustomobject]@{
+            SegmentId=''; Text=[string]$Texts[$i]; Translation=''; Origin=''; Kind='cell'
+            BlockIds=@($blockId); Cells=@($cell); Sheet='Sheet1'; Location=('Sheet1, ' + $address); Joined=$false
+        })
+        [void]$blocks.Add([pscustomobject]@{Id=$blockId;Text=[string]$Texts[$i];Location=('Sheet1, ' + $address);Meta=[pscustomobject]@{Kind='cell';Sheet='Sheet1';Row=($i+1);Col=1;A1=$address;Merged=$false;SheetCodeName='Sheet1';StructureContract=$screenSafeStructure;StructureFingerprint=$screenSafeStructureHash}})
+    }
+    $project = [pscustomobject]@{
+        Id=([guid]::NewGuid().ToString('N')); Path=(Join-Path $tmp 'nonexistent.xlsx'); FileName='in.xlsx'
+        ActiveSourceId=('1'*32); SourceArtifactSha256=('5'*64); Revision=1; Source='file'; DocumentFormat='xlsx'
+        Direction='to_en'; TerminologySnapshotHash=''; Segments=@($segments.ToArray()); Blocks=@($blocks.ToArray())
+        PlacementPlans=@(); PlacementSetHash=''; DocumentFindings=@(); ReviewRuns=@(); ReviewEvents=@(); FinalReviewDecisions=@()
+        CreatedAt=(Get-Date).ToString('s')
+    }
+    $null = Initialize-YakuCatProjectState -Project $project
+    return $project
+}
+
 # 題材。1行目は割れる行で、登録用語が**先頭ではなく途中**に入る。
 # 押す位置（12文字目）は、その印より後ろに落ちる。ここが要点で、印より前だけを
 # 見ていた実装は、この位置を拾えないまま「前に拾えた位置」で割っていた。
@@ -118,16 +170,140 @@ try {
         )
         segment_matches = @()
     }
+    # 「体裁で見る」の題材は別に作る。上の作業は分割ボタンの描き分けを見るために
+    # わざと割っていないので、割った状態を混ぜると (a) の題材が崩れる。
+    # こちらは**貼り付け本文を実際に割った**もの。配置先（placement）が無い行で、
+    # 画面はサーバが繋いだ訳文を使うほかない。
+    #
+    # 組は2つ入れる。1つ目（`当社は…、|調達費も…`）は日本語の文の切れ目なので
+    # 空白1つで繋ぐ。2つ目（`型式はAB-|1234を採用します。`）はトークンの内側なので
+    # 詰めて繋ぐ。**1つ目だけでは、素朴な `.join(' ')` と
+    # Join-YakuCatSplitTranslations が同じ答えを返す**ので、繋ぎ方の規則が
+    # 測れていなかった（2026-08-15 の門の欠陥）。2つ目が入って初めて、写経した
+    # 実装が実機で赤になる。
+    Write-Host '(0b) 「体裁で見る」の題材を、原文の途中で実際に割って用意する' -ForegroundColor Cyan
+    $previewHeadText = 'We reviewed our production system.'
+    $previewTailText = 'We also reduced procurement costs.'
+    $previewJoinedText = $previewHeadText + ' ' + $previewTailText
+    $previewOtherText = 'Operating profit rose.'
+    $previewSplitAt = $source.IndexOf([char]'、') + 1
+    Chk ($previewSplitAt -gt 0 -and $previewSplitAt -lt $source.Length) ('割る位置は原文の途中（' + $previewSplitAt + ' / ' + $source.Length + '）')
+    # トークンの内側で割った組。位置6は `-` と `1` の間である。
+    $tokenText = '型式はAB-1234を採用します。'
+    $tokenSplitAt = 6
+    $tokenHeadText = 'The model is AB-'
+    $tokenTailText = '1234 will be adopted.'
+    $tokenJoinedText = 'The model is AB-1234 will be adopted.'
+    $tokenLooseText = 'The model is AB- 1234 will be adopted.'
+    Chk ($tokenText.Substring(0, $tokenSplitAt) -eq '型式はAB-' -and $tokenText.Substring($tokenSplitAt) -eq '1234を採用します。') ('位置' + $tokenSplitAt + 'で割ると `型式はAB-` と `1234を採用します。` になる')
+    Chk (Test-YakuCatSplitPositionInsideToken -Text $tokenText -Position $tokenSplitAt) 'その位置はトークンの内側である（だから Split-YakuCatSegmentAt では作れず、手で組む）'
+    # ここが要点。**2つの繋ぎ方が違う答えを返す題材であること**を先に確かめる。
+    # これが同じなら、この先の (h) は「サーバの値を使ったか」しか測れない。
+    Chk ((Join-YakuCatSplitTranslations -Parts @($tokenHeadText, $tokenTailText)) -eq $tokenLooseText) ('素朴に繋ぐと空白が入る（写経した実装が出す文字列）: ' + $tokenLooseText)
+    Chk ((Join-YakuCatSplitTranslations -Parts @($tokenHeadText, $tokenTailText) -Sources @($tokenText.Substring(0, $tokenSplitAt), $tokenText.Substring($tokenSplitAt))) -eq $tokenJoinedText) ('規則どおり繋ぐと詰まる: ' + $tokenJoinedText)
+    Chk ($tokenJoinedText -ne $tokenLooseText) '2つの繋ぎ方は違う答えを返す（この題材は繋ぎ方そのものを測れる）'
+    Chk ((Join-YakuCatSplitTranslations -Parts @($previewHeadText, $previewTailText)) -eq (Join-YakuCatSplitTranslations -Parts @($previewHeadText, $previewTailText) -Sources @($source.Substring(0, $previewSplitAt), $source.Substring($previewSplitAt)))) '1つ目の組はどちらの繋ぎ方でも同じ（この組だけでは繋ぎ方を測れない、という事実そのもの）'
+    $previewProject = New-YakuCatTextProject -Root $root -Text ($source + "`n" + $tokenText + "`n" + '営業利益は増えました。') -Settings $settings -Direction 'to_en'
+    $previewIndex = -1
+    $previewSegs = @($previewProject.Segments)
+    for ($i = 0; $i -lt $previewSegs.Count; $i++) { if ([string]$previewSegs[$i].Text -eq $source) { $previewIndex = $i } }
+    Chk ($previewIndex -ge 0) '割る対象の行が取れる'
+    $null = Split-YakuCatSegmentAt -Project $previewProject -Index $previewIndex -Position $previewSplitAt
+    Chk (@($previewProject.Segments).Count -eq 4) ('割ると4行になる（実際 ' + @($previewProject.Segments).Count + '）')
+    # トークンの内側は Split-YakuCatSegmentAt が正しく止めるので、**既に割ってある
+    # 資料**と同じ形（New-YakuCatSplitPart）で組み立てる。利用者の作業を巻き戻さない
+    # と決めた以上、この形は実際に画面へ来る（決定 2026-08-15）。
+    $tokenIndex = -1
+    $tokenSegs = @($previewProject.Segments)
+    for ($i = 0; $i -lt $tokenSegs.Count; $i++) { if ([string]$tokenSegs[$i].Text -eq $tokenText) { $tokenIndex = $i } }
+    Chk ($tokenIndex -ge 0) 'トークンを含む行が取れる'
+    $tokenRefused = $false
+    try { $null = Split-YakuCatSegmentAt -Project $previewProject -Index $tokenIndex -Position $tokenSplitAt } catch { $tokenRefused = $true }
+    Chk $tokenRefused '今の実装は、この位置での分割を断る（だから手で組む。門を緩めるためではない）'
+    Chk (@($previewProject.Segments).Count -eq 4) '断られたので行は増えていない'
+    $tokenGroup = [guid]::NewGuid().ToString('N')
+    $tokenOrigin = $tokenSegs[$tokenIndex]
+    $tokenOut = New-Object System.Collections.Generic.List[object]
+    for ($i = 0; $i -lt $tokenSegs.Count; $i++) {
+        if ($i -ne $tokenIndex) { [void]$tokenOut.Add($tokenSegs[$i]); continue }
+        foreach ($piece in @($tokenText.Substring(0, $tokenSplitAt), $tokenText.Substring($tokenSplitAt))) {
+            [void]$tokenOut.Add((New-YakuCatSplitPart -Source $tokenOrigin -Text $piece -GroupId $tokenGroup -OriginSegmentId ([string]$tokenOrigin.SegmentId)))
+        }
+    }
+    $null = Set-YakuCatSegments -Project $previewProject -Segments $tokenOut.ToArray()
+    $null = Update-YakuCatSplitOrdinals -Project $previewProject
+    Chk (@($previewProject.Segments).Count -eq 5) ('手で割った組を足して5行になる（実際 ' + @($previewProject.Segments).Count + '）')
+    Chk ([string]@($previewProject.Segments)[$tokenIndex].Text -eq $tokenText.Substring(0, $tokenSplitAt)) '手で割った1行目の原文は `型式はAB-`'
+    $null = Set-YakuCatSegmentTranslation -Project $previewProject -Index $previewIndex -Text $previewHeadText
+    $null = Set-YakuCatSegmentTranslation -Project $previewProject -Index ($previewIndex + 1) -Text $previewTailText
+    $null = Set-YakuCatSegmentTranslation -Project $previewProject -Index $tokenIndex -Text $tokenHeadText
+    $null = Set-YakuCatSegmentTranslation -Project $previewProject -Index ($tokenIndex + 1) -Text $tokenTailText
+    for ($i = 0; $i -lt @($previewProject.Segments).Count; $i++) {
+        if ([string]::IsNullOrWhiteSpace([string]@($previewProject.Segments)[$i].Translation)) { $null = Set-YakuCatSegmentTranslation -Project $previewProject -Index $i -Text $previewOtherText }
+    }
+    $previewProjectJson = ConvertTo-YakuCatProjectJson -Project $previewProject
+    $previewView = $previewProjectJson | ConvertFrom-Json
+    $previewRowsPs = @($previewView.segments)
+    Chk ($previewRowsPs.Count -eq 5) ('画面へ渡す行は5行（実際 ' + $previewRowsPs.Count + '）')
+    Chk ([string]$previewRowsPs[$previewIndex].split_group -ne '' -and [int]$previewRowsPs[$previewIndex].split_part -eq 1) '割った組の1行目である'
+    Chk ($null -eq $previewRowsPs[$previewIndex].placement) '配置先が無い行である（この題材が空振りでないこと）'
+    Chk ([string]$previewRowsPs[$previewIndex].translation -eq $previewHeadText) '行そのものの訳文は前半だけ（画面がこれを描くと後半が消える）'
+    Chk ([string]$previewRowsPs[$previewIndex].split_translation -eq $previewJoinedText) ('応答は繋いだ訳文を持っている: ' + [string]$previewRowsPs[$previewIndex].split_translation)
+    Chk ([string]$previewRowsPs[$tokenIndex].split_group -ne '' -and [int]$previewRowsPs[$tokenIndex].split_part -eq 1) 'トークンの組も、割った組の1行目として渡る'
+    Chk ($null -eq $previewRowsPs[$tokenIndex].placement) 'トークンの組にも配置先が無い（画面は繋いだ訳文を使うほかない）'
+    Chk ([string]$previewRowsPs[$tokenIndex].translation -eq $tokenHeadText) 'トークンの組も、行そのものの訳文は前半だけ'
+    Chk ([string]$previewRowsPs[$tokenIndex].split_translation -eq $tokenJoinedText) ('トークンの組の繋いだ訳文は詰まっている: ' + [string]$previewRowsPs[$tokenIndex].split_translation)
+    Chk ([string]$previewRowsPs[$tokenIndex].split_translation -notmatch 'AB- 1234') '画面へ渡す値の時点で `AB- 1234` になっていない'
+
+    # 配置先のある cell 行の題材。1つの意味単位が A1・A2 の2セルへ分かれて載るので、
+    # 画面が置ける文字列は placement.destinations[].text しか無い。行そのものの
+    # 訳文には「どこで切るか」が入っていないからである。この枝には振る舞いの門が
+    # 1つも無く、text を空にしても全部緑のまま通っていた（2026-08-15 の門の欠陥）。
+    Write-Host '(0c) 配置先のある cell 行の題材を、実装が作る配置計画から用意する' -ForegroundColor Cyan
+    $cellHeadSource = '当社は生産体制を見直し、'
+    $cellTailSource = '調達費も削減しました。'
+    $cellTranslation = 'The Company reviewed its production system and cut procurement costs.'
+    $cellProject = New-YakuCatScreenCellProject -Texts @($cellHeadSource, $cellTailSource)
+    Chk (@($cellProject.Segments).Count -eq 2) ('セル2つぶんの作業を作れた（実際 ' + @($cellProject.Segments).Count + '）')
+    # 2セルを1つの意味単位へ繋ぐ。can_merge と同じ判定を通る実装で繋ぐ（手で
+    # Joined を立てない）。
+    $null = Merge-YakuCatSegments -Project $cellProject -Index 0
+    Chk (@($cellProject.Segments).Count -eq 1) '繋ぐと1行になる'
+    Chk (@(@($cellProject.Segments)[0].Cells).Count -eq 2) '1行が2つのセルを指している（この題材が空振りでないこと）'
+    $null = Set-YakuCatSegmentTranslation -Project $cellProject -Index 0 -Text $cellTranslation
+    $null = Sync-YakuCatPlacementPlans -Project $cellProject
+    Chk (@($cellProject.PlacementPlans).Count -eq 1) ('配置計画が1つできる（実際 ' + @($cellProject.PlacementPlans).Count + '）')
+    $cellProjectJson = ConvertTo-YakuCatProjectJson -Project $cellProject
+    $cellView = $cellProjectJson | ConvertFrom-Json
+    $cellRowsPs = @($cellView.segments)
+    Chk ($cellRowsPs.Count -eq 1) ('画面へ渡す行は1行（実際 ' + $cellRowsPs.Count + '）')
+    Chk ([string]$cellRowsPs[0].kind -eq 'cell') '行の種類は cell'
+    $cellDests = @($cellRowsPs[0].placement.destinations)
+    Chk ($cellDests.Count -eq 2) ('配置先は2つ（実際 ' + $cellDests.Count + '）')
+    $cellDestA = [string]$cellDests[0].text
+    $cellDestB = [string]$cellDests[1].text
+    Chk ([string]$cellDests[0].address -eq 'A1' -and [string]$cellDests[1].address -eq 'A2') ('配置先の番地は A1 と A2（実際 ' + [string]$cellDests[0].address + ' / ' + [string]$cellDests[1].address + '）')
+    Chk ($cellDestA -ne '' -and $cellDestB -ne '') '配置先の文字が両方とも空でない'
+    # ここが要点。**配置先の文字は、行そのものの訳文とは違う**。同じなら
+    # 「destination.text を使ったか」と「translation を使ったか」が区別できない。
+    Chk ($cellDestA -ne $cellTranslation -and $cellDestB -ne $cellTranslation) ('配置先の文字は行の訳文とは別物（A1: ' + $cellDestA + ' / A2: ' + $cellDestB + '）')
+    Chk (($cellDestA + $cellDestB) -eq $cellTranslation) '2つを繋ぐと行の訳文へ戻る（切り分けであって書き換えではない）'
+    Chk ([string]$cellRowsPs[0].location -eq ('Sheet1, A1+A2')) ('行そのものは番地を1つに絞れない: ' + [string]$cellRowsPs[0].location)
+
     $projectPath = Join-Path $tmp 'project.json'
     $candidatePath = Join-Path $tmp 'candidates.json'
     $observedPath = Join-Path $tmp 'observed.json'
+    $previewPath = Join-Path $tmp 'preview-project.json'
+    $cellPath = Join-Path $tmp 'cell-project.json'
     $utf8 = New-Object Text.UTF8Encoding($false)
     [IO.File]::WriteAllText($projectPath, $projectJson, $utf8)
+    [IO.File]::WriteAllText($previewPath, $previewProjectJson, $utf8)
+    [IO.File]::WriteAllText($cellPath, $cellProjectJson, $utf8)
     [IO.File]::WriteAllText($candidatePath, ($candidates | ConvertTo-Json -Depth 8), $utf8)
 
     Write-Host '(1) 本物の画面を Chromium で開いて、実際に押す' -ForegroundColor Cyan
     $stderrPath = Join-Path $tmp 'node-stderr.txt'
-    $arguments = @($driver, (Join-Path $root 'www'), $projectPath, $candidatePath, $observedPath) | ForEach-Object { '"' + $_ + '"' }
+    $arguments = @($driver, (Join-Path $root 'www'), $projectPath, $candidatePath, $observedPath, $previewPath, $cellPath) | ForEach-Object { '"' + $_ + '"' }
     $proc = Start-Process -FilePath $nodeExe -ArgumentList $arguments -NoNewWindow -Wait -PassThru -RedirectStandardError $stderrPath
     $nodeErr = ''
     if (Test-Path -LiteralPath $stderrPath) { $nodeErr = [string][IO.File]::ReadAllText($stderrPath) }
@@ -207,6 +383,62 @@ try {
     Chk ([int]$o.scopeSourceForcedClick.estimateCalls -eq 0) '無理やり押しても、数える口を叩かない'
     Chk ([int]$o.scopeSourceForcedClick.replaceCalls -eq 0) '無理やり押しても、置換の口を叩かない'
     Chk ([string]$o.scopeSourceForcedClick.status -match '原文は書き換えません') '押した人に理由を返す'
+
+    # ------------------------------------------------------------------ (h)
+    Write-Host '(h) 「体裁で見る」が、配置先の無い行でも後半の訳文まで出す' -ForegroundColor Cyan
+    $previewGridRows = @($o.previewRows)
+    Chk ($previewGridRows.Count -eq 5) ('題材の作業が開けている。表は5行（実際 ' + $previewGridRows.Count + '）')
+    Chk ($previewGridRows.Count -eq 5 -and [string]$previewGridRows[0].source -eq $source.Substring(0, $previewSplitAt)) '表の1行目は割った前半（別の作業を見ていない）'
+    Chk ($previewGridRows.Count -eq 5 -and [string]$previewGridRows[$tokenIndex].source -eq $tokenText.Substring(0, $tokenSplitAt)) 'トークンの組も表に来ている（この題材が空振りでないこと）'
+    Chk ([bool]$o.previewTarget.open) '「体裁で見る」を押すと窓が開く'
+    $previewBlocks = @($o.previewTarget.blocks)
+    # 割った2行が1つへまとまること。まとまらないと同じ内容が2度出る。
+    Chk ($previewBlocks.Count -eq 3) ('割った2組はそれぞれ1つにまとまり、表示は3つ（実際 ' + $previewBlocks.Count + '）')
+    Chk ($previewBlocks.Count -ge 1 -and [string]$previewBlocks[0] -eq $previewJoinedText) ('まとめた行に、前半と後半の訳文が両方出る: ' + [string]$previewBlocks[0])
+    # ここが欠陥そのもの。前半だけが出ていたら赤にする。
+    Chk ($previewBlocks.Count -ge 1 -and [string]$previewBlocks[0] -ne $previewHeadText) '前半の訳文だけになっていない'
+    Chk ($previewBlocks.Count -ge 1 -and [string]$previewBlocks[0] -match 'procurement') '後半の訳文が画面に出ている'
+    Chk ($previewBlocks.Count -eq 3 -and [string]$previewBlocks[2] -eq $previewOtherText) '割っていない行はそのまま出る'
+    Chk ([int]$o.previewTarget.missing -eq 0) ('訳文が無い扱いの行は0（実際 ' + [int]$o.previewTarget.missing + '）')
+    # ------ 繋ぎ方の規則そのもの。ここが素朴な `.join(' ')` 写経を実機で落とす。
+    # 上の1つ目の組は、どちらの繋ぎ方でも同じ文字列になるので、これが要る。
+    Chk ($previewBlocks.Count -ge 2 -and [string]$previewBlocks[1] -eq $tokenJoinedText) ('トークンの内側で割った組は、詰めて繋いだ形で画面に出る: ' + [string]$previewBlocks[1])
+    Chk ($previewBlocks.Count -ge 2 -and [string]$previewBlocks[1] -ne $tokenLooseText) '素朴に空白で繋いだ形になっていない'
+    Chk ($previewBlocks.Count -ge 2 -and [string]$previewBlocks[1] -ne $tokenHeadText) 'トークンの組も、前半の訳文だけになっていない'
+    # 窓の地の文でも見る。塊の切り出し方を変えられても、`AB- 1234` が画面の
+    # どこかに出ていれば赤になる。
+    Chk ([string]$o.previewTarget.text -match [regex]::Escape('AB-1234')) ('画面の文字に `AB-1234` が出ている')
+    Chk ([string]$o.previewTarget.text -notmatch [regex]::Escape('AB- 1234')) ('画面の文字に `AB- 1234` が出ていない')
+    # 原文側は前からできていた。直したときに壊していないことを見る。
+    $previewSourceBlocks = @($o.previewSource.blocks)
+    Chk ($previewSourceBlocks.Count -eq 3) ('原文側も3つ（実際 ' + $previewSourceBlocks.Count + '）')
+    Chk ($previewSourceBlocks.Count -ge 1 -and [string]$previewSourceBlocks[0] -eq $source) ('原文側は割る前の原文へ戻って出る: ' + [string]$previewSourceBlocks[0])
+    Chk ($previewSourceBlocks.Count -ge 2 -and [string]$previewSourceBlocks[1] -eq $tokenText) ('トークンの組も、原文側は割る前へ戻って出る: ' + [string]$previewSourceBlocks[1])
+
+    # ------------------------------------------------------------------ (i)
+    Write-Host '(i) 「体裁で見る」が、配置先のある cell 行では destination.text をそのまま置く' -ForegroundColor Cyan
+    Chk (@($o.cellRows).Count -eq 1) ('配置先のある題材の作業が開けている。表は1行（実際 ' + @($o.cellRows).Count + '）')
+    Chk (@($o.cellRows).Count -eq 1 -and [string]@($o.cellRows)[0].source -eq ($cellHeadSource + $cellTailSource)) '表の原文は2セルを繋いだもの（別の作業を見ていない）'
+    Chk ([bool]$o.cellPreviewTarget.open) '「体裁で見る」を押すと窓が開く'
+    Chk (@($o.cellPreviewTarget.sheets).Count -eq 1 -and [string]@($o.cellPreviewTarget.sheets)[0] -eq 'Sheet1') ('シートの格子として描かれる（実際: ' + (@($o.cellPreviewTarget.sheets) -join ' / ') + '）')
+    # 番地へ置けなかった行は「そのほかの流し込み」へ落ちる。落ちていたら、
+    # destination の番地を使わずに行そのものの場所（A1+A2）を見たということ。
+    Chk (@($o.cellPreviewTarget.paragraphs).Count -eq 0) ('番地の無い流し込みへ落ちていない（実際 ' + @($o.cellPreviewTarget.paragraphs).Count + ' 個）')
+    $cellCells = @($o.cellPreviewTarget.cellTexts)
+    Chk ($cellCells.Count -eq 2) ('セルは2つ描かれる（実際 ' + $cellCells.Count + '）')
+    # ここが本体。行そのものの訳文ではなく、配置先ごとの文字が出ていること。
+    Chk ($cellCells.Count -eq 2 -and [string]$cellCells[0].text -eq $cellDestA) ('A1 には1つ目の配置先の文字が出る: ' + [string]$cellCells[0].text)
+    Chk ($cellCells.Count -eq 2 -and [string]$cellCells[1].text -eq $cellDestB) ('A2 には2つ目の配置先の文字が出る: ' + [string]$cellCells[1].text)
+    Chk ($cellCells.Count -eq 2 -and [string]$cellCells[0].text -ne $cellTranslation) 'A1 に行そのものの訳文が丸ごと出ていない'
+    Chk ($cellCells.Count -eq 2 -and [string]$cellCells[0].row -eq '1' -and [string]$cellCells[1].row -eq '2') ('セルの行番号は 1 と 2（実際 ' + [string]$cellCells[0].row + ' / ' + [string]$cellCells[1].row + '）')
+    # 配置先の文字が空なら、画面は原文へ落ちて薄い字になる。0 件であることが、
+    # 「text をそのまま置いた」ことの裏返しになる。
+    Chk ([int]$o.cellPreviewTarget.missing -eq 0) ('訳文が無い扱いのセルは0（実際 ' + [int]$o.cellPreviewTarget.missing + '）')
+    Chk ((@($cellCells | ForEach-Object { [string]$_.text }) -join '') -eq $cellTranslation) '2つのセルを繋ぐと行の訳文へ戻る（片方だけを描いていない）'
+    # 原文側は配置先を使わない。切り替えても格子のまま、原文がそのまま出ること。
+    $cellSourceCells = @($o.cellPreviewSource.cellTexts)
+    Chk ($cellSourceCells.Count -eq 2) ('原文側もセルは2つ（実際 ' + $cellSourceCells.Count + '）')
+    Chk ($cellSourceCells.Count -eq 2 -and [string]$cellSourceCells[0].text -eq ($cellHeadSource + $cellTailSource)) ('原文側は繋いだ原文が出る: ' + [string]$cellSourceCells[0].text)
 
     if ($script:fail -eq 0) { Write-Host ('V91.76 画面の描画と配線の回帰テストに合格しました。検査 ' + $script:checks + ' 件。') -ForegroundColor Green }
     else { Write-Host ('FAILED: ' + $script:fail + ' / ' + $script:checks) -ForegroundColor Red }
