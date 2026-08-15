@@ -393,6 +393,33 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 }
 .cat-location-list button { justify-content: space-between; width: 100%; text-align: left; }
 
+/* 検索と置換の中身。畳んだ帯の中に縦へ積む（幅は .cat-toolbar-menu > div の
+   min-width 15rem に従う）。詳細度は class 1つ分に留める。ここを競わせると、
+   2026-08-11 に踏んだ「基本ルールが部品を踏み潰す」をもう一度やることになる。 */
+/* この帯だけ上へ開く。実機の窓（1380x860）では帯が y=574 にあり、下へ開くと
+   「訳文を置き換える」が y=965 に出て、画面の外で押せなかった（実測 2026-08-15）。
+   詳細度は class 2つ分 (0,2,0)。基本ルール (0,2,0) より後ろに置いて勝たせる。 */
+.cat-toolbar-menu.is-drop-up > div {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: var(--space-1);
+}
+
+.cat-search-tools { display: grid; gap: var(--space-1); }
+.cat-search-tools p { margin: 0; font-size: var(--font-meta); }
+.cat-search-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-meta);
+}
+.cat-search-option input { width: auto; margin: 0; }
+.cat-search-replace { font-size: var(--font-meta); }
+.cat-search-tools input[type="text"] { width: 100%; min-width: 0; }
+/* .muted は (0,1,0)。ここは (0,2,0) で足りる。ID は使わない。 */
+.cat-search-tools .is-error { color: var(--error); }
+
 /* 参考情報を畳む。閉じている間は主役（原文・訳文）が右端まで使う。 */
 .cat-inspector-toggle { margin-left: auto; font-size: var(--font-meta); }
 .cat-editor-layout.is-inspector-hidden { grid-template-columns: minmax(0, 1fr); }

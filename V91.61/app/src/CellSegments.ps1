@@ -341,6 +341,114 @@ function New-YakuCellSegment {
     }
 }
 
+function Get-YakuCatSegmentSplitGroupId {
+    <#
+      任意位置で割った行が持つ「組」の目印を返す。持っていなければ空。
+
+      古い作業には項目そのものが無いので、必ず try で受ける。
+      ここを1か所にしておかないと、Excel・Word・貼り付け本文の各出口で
+      別々の判定が生えて、片方だけ直り忘れる。
+    #>
+    param([Parameter(Mandatory=$true)]$Segment)
+    $value = ''
+    try { $value = [string]$Segment.SplitGroupId } catch { $value = '' }
+    if ([string]::IsNullOrWhiteSpace($value)) { return '' }
+    return $value
+}
+
+function Join-YakuCatSplitTranslations {
+    <#
+      任意位置で割った行の訳文を、元の1つのセル（段落）へ戻すときの繋ぎ方。
+
+      原文の割り方は「そのままの部分文字列」なので、繋げば1文字も足さずに
+      元へ戻る。訳文はそうはいかない。訳文どうしの間には原文由来の文字が
+      無いので、ここで決めるほかない。決め方は New-YakuCellSegment と同じ
+      規則にそろえる（日本語が混じれば詰める・そうでなければ空白1つ）。
+      すでに端が空白の側には足さない。二重空白は Excel のセルで目に見える。
+    #>
+    param([AllowNull()][object[]]$Parts)
+    $list = @(@($Parts) | ForEach-Object { [string]$_ })
+    $joiner = if ((@($list) -join '') -match '[぀-ヿ一-鿿]') { '' } else { ' ' }
+    $builder = New-Object System.Text.StringBuilder
+    foreach ($part in $list) {
+        if ([string]::IsNullOrEmpty($part)) { continue }
+        if ($builder.Length -gt 0 -and $joiner -ne '') {
+            $left = [char]$builder.Chars($builder.Length - 1)
+            if (-not [char]::IsWhiteSpace($left) -and -not [char]::IsWhiteSpace($part[0])) { [void]$builder.Append($joiner) }
+        }
+        [void]$builder.Append($part)
+    }
+    return $builder.ToString()
+}
+
+function Group-YakuCatSplitSegments {
+    <#
+      任意位置で割った行を、元の1行へ畳んで返す。
+
+      なぜ要るか: 割った2行は同じセル（段落）を指す。書き戻しは「塊1つに
+      訳文1つ」で対応づけるので、畳まずに渡すと後の行が前の行を上書きし、
+      前半の訳が黙って消える。畳む場所を1か所にして、Excel・Word・貼り付け
+      本文のどの出口も同じ規則で通す。
+
+      返すのは単位（unit）の並び。割っていない行は元の行そのものを返す
+      （呼ぶ側が同一性のまま扱えるようにするため）。
+
+      同じ組が離れて現れたら、畳むと順序が崩れる。黙って続けず止める。
+    #>
+    param([AllowNull()][object[]]$Segments)
+    $list = @($Segments)
+    $units = New-Object System.Collections.Generic.List[object]
+    $closed = @{}
+    $i = 0
+    while ($i -lt $list.Count) {
+        $groupId = Get-YakuCatSegmentSplitGroupId -Segment $list[$i]
+        if ([string]::IsNullOrWhiteSpace($groupId)) {
+            [void]$units.Add([pscustomobject]@{
+                Segment = $list[$i]; Indices = @($i)
+                MemberSegmentIds = @([string]$list[$i].SegmentId); IsSplitGroup = $false
+            })
+            $i++
+            continue
+        }
+        if ($closed.ContainsKey($groupId)) { throw 'CAT_SPLIT_GROUP_NOT_CONTIGUOUS: 途中で分けた行が離れています。安全のため処理を止めました。' }
+        $members = New-Object System.Collections.Generic.List[object]
+        $indices = New-Object System.Collections.Generic.List[int]
+        $j = $i
+        while ($j -lt $list.Count -and (Get-YakuCatSegmentSplitGroupId -Segment $list[$j]) -eq $groupId) {
+            [void]$members.Add($list[$j]); [void]$indices.Add($j); $j++
+        }
+        $closed[$groupId] = $true
+        $memberArray = $members.ToArray()
+        $first = $memberArray[0]
+        $maxRevision = 1
+        foreach ($m in $memberArray) { $r = 1; try { $r = [int]$m.SourceRevision } catch { $r = 1 }; if ($r -gt $maxRevision) { $maxRevision = $r } }
+        $pseudo = [pscustomobject]@{
+            SegmentId   = $groupId
+            Text        = (@($memberArray | ForEach-Object { [string]$_.Text }) -join '')
+            Translation = (Join-YakuCatSplitTranslations -Parts @($memberArray | ForEach-Object { [string]$_.Translation }))
+            SourceRevision = $maxRevision
+            Kind        = [string]$first.Kind
+            Sheet       = [string]$first.Sheet
+            Location    = [string]$first.Location
+            BlockIds    = @($first.BlockIds)
+            Cells       = @($first.Cells)
+            Joined      = [bool]$first.Joined
+            Origin      = [string]$first.Origin
+            SplitGroupId = ''
+            SplitOrdinal = 0
+            SplitOriginSegmentId = [string]$(try { $first.SplitOriginSegmentId } catch { '' })
+        }
+        [void]$units.Add([pscustomobject]@{
+            Segment = $pseudo; Indices = @($indices.ToArray())
+            MemberSegmentIds = @($memberArray | ForEach-Object { [string]$_.SegmentId }); IsSplitGroup = $true
+        })
+        $i = $j
+    }
+    # 呼ぶ側は必ず @() で受ける。ここで `,` を付けると二重に包まれ、
+    # PS5.1 の member enumeration で $unit.Segment が配列になる（実測 2026-08-15）。
+    return @($units.ToArray())
+}
+
 function Get-YakuSegmentTranslationByBlockId {
     <#
       セグメントの訳文を、元の塊ごとの訳文へ割り戻す。
@@ -348,6 +456,8 @@ function Get-YakuSegmentTranslationByBlockId {
 
       繋いだセグメントは、元のセルの長さを重みにして割り振る。
       繋いでいないものは1対1。
+      任意位置で割った行は、先に元の1行へ畳んでから割り振る（同じセルを
+      指す2行をそのまま渡すと、後の行が前の行を上書きする）。
     #>
     param(
         [AllowNull()][object[]]$Segments,
@@ -355,13 +465,17 @@ function Get-YakuSegmentTranslationByBlockId {
     )
     $map = @{}
     $segs = @($Segments)
-    for ($i = 0; $i -lt $segs.Count; $i++) {
-        if (-not $TranslationBySegmentIndex.ContainsKey($i)) { continue }
-        $translation = [string]$TranslationBySegmentIndex[$i]
-        $ids = @($segs[$i].BlockIds)
+    foreach ($unit in @(Group-YakuCatSplitSegments -Segments $segs)) {
+        $indices = @($unit.Indices)
+        if (@($indices | Where-Object { $TranslationBySegmentIndex.ContainsKey($_) }).Count -eq 0) { continue }
+        $translation = if ([bool]$unit.IsSplitGroup) {
+            Join-YakuCatSplitTranslations -Parts @($indices | ForEach-Object { if ($TranslationBySegmentIndex.ContainsKey($_)) { [string]$TranslationBySegmentIndex[$_] } else { '' } })
+        } else { [string]$TranslationBySegmentIndex[$indices[0]] }
+        $segment = $unit.Segment
+        $ids = @($segment.BlockIds)
         if ($ids.Count -eq 0) { continue }
         if ($ids.Count -eq 1) { $map[[string]$ids[0]] = $translation; continue }
-        $cells = @($segs[$i].Cells)
+        $cells = @($segment.Cells)
         $weights = @($cells | ForEach-Object { [Math]::Max(1, ([string]$_.Text).Trim().Length) })
         $parts = @(Split-YakuTextAcrossCells -Text $translation -Weights $weights)
         for ($k = 0; $k -lt $ids.Count; $k++) {

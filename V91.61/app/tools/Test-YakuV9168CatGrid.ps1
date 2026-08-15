@@ -61,16 +61,18 @@ Check-YakuGrid ($catHtml -match 'id="cat-inspector-toggle"') '右の参考情報
 Check-YakuGrid ($catJs -match "localStorage.setItem\('yaku-cat-inspector-hidden'") '畳んだかどうかを次回も引き継ぐ'
 Check-YakuGrid ($catCss -match '\.cat-editor-layout\.is-inspector-hidden \{ grid-template-columns: minmax\(0, 1fr\); \}') '畳んだ分の幅は一覧が使う'
 
-# 一致率と差分。市販CATは率だけでなく「どこが違うか」を必ず出す。
+# 一致の度合いと差分。市販CATは率だけでなく「どこが違うか」を必ず出す。
+# 率そのものは当アプリでは出さない（中身が Dice 係数で、翻訳者が「%」から読み取る
+# 帯とは別の尺度だった。2026-08-15。表記の中身は Test-YakuV9175FuzzyMatchLabel.ps1）。
 Check-YakuGrid ($catJs -match 'function diffMarkup\(') '過去訳の原文といまの原文の差分を作る'
 Check-YakuGrid ($catJs -match 'cat-diff-ins') '違うところに印を付ける'
-Check-YakuGrid ($catJs -match 'cat-cand-score') '一致率をカードの先頭に出す'
-Check-YakuGrid ($catJs -notmatch "'原文が ' \+ Math\.round") '一致率を文章側で繰り返さない'
+Check-YakuGrid ($catJs -match 'cat-cand-score') '一致の度合いをカードの先頭に出す'
+Check-YakuGrid ($catJs -notmatch "'原文が ' \+ Math\.round") '一致の度合いを文章側で繰り返さない'
 Check-YakuGrid ($catJs -match 'a\.length \* b\.length > 160000') '長すぎる文では差分をあきらめる（重くしない）'
 Check-YakuGrid ($catJs -match 'diffHintShown') '差分の説明は最初の1枚だけに出す'
 $styles = Get-Content -LiteralPath (Join-Path $root 'www\assets\styles.css') -Raw -Encoding UTF8
 Check-YakuGrid ($styles -match '\.cat-diff-ins \{[^}]*font-weight: 700[^}]*text-decoration: underline') '差分の印は色だけに頼らない'
-Check-YakuGrid ($styles -match '\.cat-cand-score\.is-exact') '100%一致は他と見分けが付く'
+Check-YakuGrid ($styles -match '\.cat-cand-score\.is-exact') '完全一致は他と見分けが付く'
 
 # 出す前の点検一覧。市販CAT（memoQ・Trados）は書き出し前にこの一覧から行へ飛ぶ。
 Check-YakuGrid ($catHtml -match 'id="cat-qa-dialog"' -and $catHtml -match 'id="cat-qa-list"') '点検一覧の器がある'

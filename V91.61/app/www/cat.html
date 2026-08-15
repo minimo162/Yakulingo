@@ -250,7 +250,7 @@
             <span id="cat-save-status" class="cat-save-status" role="status" aria-live="polite">保存済み</span>
           </div>
           <label class="cat-toolbar-search" for="cat-search"><span>検索</span><input id="cat-search" type="search" placeholder="原文・訳文を検索"></label>
-         <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">訳していない行を訳す</button><button id="cat-export" type="button" class="secondary-button">訳文を取り出す</button><button id="cat-qa-open" type="button" class="secondary-button" title="出す前に、直すところを一覧で見ます（F8）">点検</button><div id="cat-transient-actions" class="cat-transient-actions" hidden><p id="cat-transient-expiry" class="muted"></p><p class="muted">コピーして終了すると、この一時作業は削除されます。翻訳メモリへ登録済みの訳は残ります。</p><button id="cat-project-save" type="button" class="secondary-button">この作業を残す</button><button id="cat-project-retain" type="button" class="secondary-button">削除予定を7日延ばす</button><button id="cat-copy-close" type="button" class="secondary-button">コピーして終了</button></div><details class="cat-more-actions"><summary>そのほか</summary><div class="cat-more-actions-list"><button id="cat-tm-pretranslate" type="button" class="secondary-button" title="翻訳メモリに完全一致がある行を、Copilotへ送る前に訳文欄へ入れます">翻訳メモリで下訳する</button><button id="cat-preview-open" type="button" class="secondary-button">体裁で見る</button><button id="cat-source-update-open" type="button" class="secondary-button">原文ファイルを差し替える</button><input id="cat-source-update-file" type="file" accept=".xlsx,.xlsm,.csv,.docx" hidden><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みの行だけコピー</button><button id="cat-switch-project" type="button" class="secondary-button">ほかの資料に切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>右の候補を上から順に訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></dt><dd>原文をそのまま訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd></dt><dd>確認を取り消す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>M</kbd> / <kbd>Alt</kbd>+<kbd>K</kbd></dt><dd>次の行とつなげる / つなげた行を戻す</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>F7</kbd></dt><dd>ほかの資料に切り替える</dd></div><div><dt><kbd>F8</kbd></dt><dd>点検の一覧</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や右側から訳文欄へ戻る</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
+         <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">訳していない行を訳す</button><button id="cat-export" type="button" class="secondary-button">訳文を取り出す</button><button id="cat-qa-open" type="button" class="secondary-button" title="出す前に、直すところを一覧で見ます（F8）">点検</button><div id="cat-transient-actions" class="cat-transient-actions" hidden><p id="cat-transient-expiry" class="muted"></p><p class="muted">コピーして終了すると、この一時作業は削除されます。翻訳メモリへ登録済みの訳は残ります。</p><button id="cat-project-save" type="button" class="secondary-button">この作業を残す</button><button id="cat-project-retain" type="button" class="secondary-button">削除予定を7日延ばす</button><button id="cat-copy-close" type="button" class="secondary-button">コピーして終了</button></div><details class="cat-more-actions"><summary>そのほか</summary><div class="cat-more-actions-list"><button id="cat-tm-pretranslate" type="button" class="secondary-button" title="翻訳メモリに完全一致がある行を、Copilotへ送る前に訳文欄へ入れます">翻訳メモリで下訳する</button><button id="cat-preview-open" type="button" class="secondary-button">体裁で見る</button><button id="cat-source-update-open" type="button" class="secondary-button">原文ファイルを差し替える</button><input id="cat-source-update-file" type="file" accept=".xlsx,.xlsm,.csv,.docx" hidden><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みの行だけコピー</button><button id="cat-switch-project" type="button" class="secondary-button">ほかの資料に切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>右の候補を上から順に訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></dt><dd>原文をそのまま訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd></dt><dd>確認を取り消す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>M</kbd> / <kbd>Alt</kbd>+<kbd>K</kbd></dt><dd>次の行とつなげる / つなげた行を戻す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>S</kbd></dt><dd>原文の選んだ位置で行を2つに分ける（先に原文の中をクリック）</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>H</kbd></dt><dd>検索と置換</dd></div><div><dt><kbd>F7</kbd></dt><dd>ほかの資料に切り替える</dd></div><div><dt><kbd>F8</kbd></dt><dd>点検の一覧</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や右側から訳文欄へ戻る</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
           <section aria-labelledby="cat-personal-glossary-title">
             <h3 id="cat-personal-glossary-title">今後も使う訳</h3>
             <p class="muted">取り消しても、訳した文章は残ります。</p>
@@ -285,6 +285,31 @@
                 <button type="button" data-cat-change="unchanged" aria-pressed="false">前回と同じ <span data-cat-change-count="unchanged">0</span></button>
                 <button type="button" data-cat-change="changed" aria-pressed="false">変更あり <span data-cat-change-count="changed">0</span></button>
                 <button type="button" data-cat-change="new" aria-pressed="false">今回追加 <span data-cat-change-count="new">0</span></button>
+              </div>
+            </details>
+            <!-- 検索の掛け方と、一括置換。市販CAT（memoQ / Phrase / Trados / XTM）は
+                 全社が Ctrl+H の検索・置換を持つ。ここまでは原文＋訳文＋場所を
+                 連結した小文字化部分一致1本だけで、置換も、探す場所の指定も、
+                 大文字小文字の切替も無かった。畳んで置くのは「資料内の場所」
+                 「前回からの変更」と同じ理由（上の帯は実機の窓幅 1380px で
+                 折り返さない設定なので、常時出すと既存のラベルから幅を奪う）。 -->
+            <!-- 上へ開く。実機の窓（1380x860）では、この帯自体が y=574 にあり、
+                 下へ開くと押すボタンが y=965 に出て画面の外だった（実測 2026-08-15）。
+                 縦に長い中身を持つのはこの帯だけなので、ここにだけ付ける。 -->
+            <details id="cat-search-menu" class="cat-toolbar-menu is-drop-up"><summary aria-keyshortcuts="Control+H" title="検索の掛け方を変える・訳文をまとめて置き換える（Ctrl+H）">検索と置換</summary>
+              <div class="cat-search-tools">
+                <p class="muted">上の検索欄の文字列を、表示中の行の訳文の中で置き換えます。原文は変えません。</p>
+                <div class="cat-state-filters" role="group" aria-label="探す場所">
+                  <button type="button" data-cat-search-scope="both" aria-pressed="true">原文と訳文</button>
+                  <button type="button" data-cat-search-scope="source" aria-pressed="false">原文だけ</button>
+                  <button type="button" data-cat-search-scope="target" aria-pressed="false">訳文だけ</button>
+                </div>
+                <label class="cat-search-option"><input id="cat-search-case" type="checkbox"> 大文字と小文字を区別する</label>
+                <label class="cat-search-option"><input id="cat-search-regex" type="checkbox"> 正規表現として読む</label>
+                <label class="cat-search-replace" for="cat-replace-input">置き換えたあとの文字列</label>
+                <input id="cat-replace-input" type="text" placeholder="空のままにすると、その文字列を消します">
+                <p id="cat-replace-summary" class="muted" role="status"></p>
+                <button id="cat-replace-run" type="button" class="secondary-button" disabled>訳文を置き換える</button>
               </div>
             </details>
             <span id="cat-filter-count" class="muted"></span>

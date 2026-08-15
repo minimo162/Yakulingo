@@ -4,6 +4,10 @@ param()
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $script:fail = 0
+# CellSegments.ps1 は CatProject.ps1 より先に読む。SrcModules.ps1 の並びと同じ。
+# 抜けていると、配置計画が Group-YakuCatSplitSegments を呼んだところで
+# CommandNotFoundException になる（2026-08-15 に実際に踏んだ）。
+. (Join-Path (Join-Path $root 'src') 'CellSegments.ps1')
 . (Join-Path (Join-Path $root 'src') 'CatProject.ps1')
 . (Join-Path (Join-Path $root 'src') 'FileProcessors.ps1')
 . (Join-Path (Join-Path $root 'src') 'Render.ps1')

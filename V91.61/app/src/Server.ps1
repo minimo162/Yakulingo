@@ -2617,7 +2617,7 @@ function Invoke-YakuRoute {
             }
             if ($null -eq $project) { throw '取り込んだファイルが見つかりません。もう一度「取り込んで確認を始める」を押してください。' }
 
-            $revisionActions = @('delete','project-close-delete','project-retain','glossary','merge','split','placement','publication-candidates','publication-apply','publication-revert','abbreviation-register','glossary-add','term-add','term-deactivate','term-insert','term-exception','tm-delete','tm-register','confirm','confirm-bulk','tm-pretranslate','project-save','render-start','review-start','copilot-review-start','copilot-review-apply','finding-decision','pdf-review-apply','coverage-decision','final-review-decision','source-update-preview','source-update-decision','source-update-apply','save-corpus','segment','translate','apply','preflight','export','export-reviewed','personal-glossary-list','personal-glossary-remove')
+            $revisionActions = @('delete','project-close-delete','project-retain','glossary','merge','split','split-at','placement','publication-candidates','publication-apply','publication-revert','abbreviation-register','glossary-add','term-add','term-deactivate','term-insert','term-exception','tm-delete','tm-register','confirm','confirm-bulk','replace','tm-pretranslate','project-save','render-start','review-start','copilot-review-start','copilot-review-apply','finding-decision','pdf-review-apply','coverage-decision','final-review-decision','source-update-preview','source-update-decision','source-update-apply','save-corpus','segment','translate','apply','preflight','export','export-reviewed','personal-glossary-list','personal-glossary-remove')
             $receiptActions = @('placement','publication-apply','publication-revert','abbreviation-register','source-update-apply')
             if ($receiptActions -contains $action -and [string]::IsNullOrWhiteSpace([string]$payload['idempotency_key'])) {
                 throw 'CAT_IDEMPOTENCY_KEY_REQUIRED: この更新には操作識別子が必要です。'
@@ -2923,6 +2923,22 @@ function Invoke-YakuRoute {
                     $project = $commit.Project
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 }
+                'split-at' {
+                    # 原文の途中で2つに割る。位置は原文の文字位置で受ける。
+                    # 範囲外・0・末尾は Split-YakuCatSegmentAt が弾く。
+                    $index = -1
+                    try { $index = [int]$payload['index'] } catch { $index = -1 }
+                    $position = -1
+                    try { $position = [int]$payload['position'] } catch { $position = -1 }
+                    $mutation = {
+                        param($candidate,$innerIndex,$innerPosition,$root,$innerSettings)
+                        $null = Split-YakuCatSegmentAt -Project $candidate -Index $innerIndex -Position $innerPosition
+                        try { $candidate | Add-Member -NotePropertyName 'GlossaryCandidates' -NotePropertyValue (Measure-YakuCatGlossaryCandidates -Root $root -Project $candidate -Settings $innerSettings) -Force } catch {}
+                    }
+                    $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($index,$position,$script:YakuRoot,$settings)
+                    $project = $commit.Project
+                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
+                }
                 'candidates' {
                     # 現在行の候補。利用者が登録した用語、確認済みTM、当該
                     # projectへ明示的に取り込んだ前回版だけを手元から引く。
@@ -3225,6 +3241,60 @@ function Invoke-YakuRoute {
                     $body = (ConvertTo-YakuCatProjectJson -Project $project) | ConvertFrom-Json
                     $body | Add-Member -NotePropertyName bulk_confirmed -NotePropertyValue ([int]$commit.Result.Confirmed) -Force
                     $body | Add-Member -NotePropertyName bulk_blocked -NotePropertyValue @($commit.Result.Blocked) -Force
+                    Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 8 -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                'replace-estimate' {
+                    # 押す前に対象行数を告げる（一括確定・事前翻訳と同じ作法）。
+                    # 数えるだけで何も書き換えない。数える経路は、実際に置換する
+                    # 経路と同じ Get-YakuCatSearchReplacePlan である。別々に書くと
+                    # 「N行に掛かります」と告げた数と実際が必ずずれる。
+                    #
+                    # 「探す場所」が原文だけなら断る。画面も同じ判定を持つが、
+                    # 画面の3か所（replaceTargets / renderSearchTools / runReplace）を
+                    # 全部外しても回帰が緑だった（2026-08-15 の指摘）。原文は資料
+                    # そのものなので、置換で触らないことは画面の親切ではなく決まりである。
+                    Assert-YakuCatSearchReplaceScope -Scope ([string]$payload['scope'])
+                    $indexes = @()
+                    try { $indexes = @($payload['indexes'] | ForEach-Object { [int]$_ }) } catch { $indexes = @() }
+                    $plan = Get-YakuCatSearchReplacePlan -Project $project -Indexes $indexes `
+                        -Find ([string]$payload['find']) -Replace ([string]$payload['replace']) `
+                        -UseRegex ([bool]$payload['use_regex']) -MatchCase ([bool]$payload['match_case'])
+                    $body = [ordered]@{
+                        rows = [int]$plan.RowCount
+                        occurrences = [int]$plan.Occurrences
+                        confirmed_rows = [int]$plan.ConfirmedRows
+                        scanned_rows = [int]$plan.ScannedRows
+                    }
+                    Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                'replace' {
+                    # 一括置換。市販CATの Ctrl+H に当たる。変えるのは訳文だけで、
+                    # 原文は触らない。掛かるのは画面の絞り込み結果（indexes）の中だけ。
+                    #
+                    # 訳文が変わった行は Confirmed が落ち、QcStatus が not_run へ戻る
+                    # （Set-YakuCatSegmentTranslationRecord の中の Reset-YakuCatSegmentQc）。
+                    # 手で直したときと同じ1本を通しているので、次に確認済みにするとき
+                    # 必ず数字の点検を通る。落ちれば確定できず、書き出しも止まる。
+                    #
+                    # 「探す場所」が原文だけなら、ここでも断る（replace-estimate と同じ）。
+                    Assert-YakuCatSearchReplaceScope -Scope ([string]$payload['scope'])
+                    $indexes = @()
+                    try { $indexes = @($payload['indexes'] | ForEach-Object { [int]$_ }) } catch { $indexes = @() }
+                    if ($indexes.Count -eq 0) { throw 'CAT_REPLACE_NO_TARGET: 対象の行がありません。絞り込みを見直してください。' }
+                    $mutation = {
+                        param($candidate,$innerIndexes,$innerFind,$innerReplace,$innerRegex,$innerCase,$root,$innerSettings)
+                        $result = Invoke-YakuCatSearchReplace -Project $candidate -Indexes $innerIndexes `
+                            -Find $innerFind -Replace $innerReplace -UseRegex $innerRegex -MatchCase $innerCase
+                        try { $candidate | Add-Member -NotePropertyName 'GlossaryCandidates' -NotePropertyValue (Measure-YakuCatGlossaryCandidates -Root $root -Project $candidate -Settings $innerSettings) -Force } catch {}
+                        return $result
+                    }
+                    $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation `
+                        -Arguments @($indexes,[string]$payload['find'],[string]$payload['replace'],[bool]$payload['use_regex'],[bool]$payload['match_case'],$script:YakuRoot,$settings)
+                    $project = $commit.Project
+                    $body = (ConvertTo-YakuCatProjectJson -Project $project) | ConvertFrom-Json
+                    $body | Add-Member -NotePropertyName replace_rows -NotePropertyValue ([int]$commit.Result.Replaced) -Force
+                    $body | Add-Member -NotePropertyName replace_occurrences -NotePropertyValue ([int]$commit.Result.Occurrences) -Force
+                    $body | Add-Member -NotePropertyName replace_unconfirmed -NotePropertyValue ([int]$commit.Result.Unconfirmed) -Force
                     Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 8 -Compress) -ContentType 'application/json; charset=utf-8'
                 }
                 'tm-pretranslate-estimate' {
