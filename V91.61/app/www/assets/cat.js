@@ -397,13 +397,23 @@
      同じ重さに見える。後者は利用者の訳の欠陥ではなく、直しようがない。
      赤は1種類のままにする。--error を複数作ると、どれが出力を止めるのか
      分からなくなる。 */
+  /* 道具の不調と分類された種別。**正本は src/CatProject.ps1 の
+     Get-YakuCatQcToolTroubleCodes** で、ここはその写しである。両者が集合として
+     一致することを tools/Test-YakuV9171CatQcLabelCoverage.ps1 の CASE 4 が見る
+     ので、片方へ足してもう片方へ足し忘れたら赤になる。
+
+     どれも「原文と見比べて直す」ことができない。訳を直しても消えないものを
+     赤（訳の欠陥）で出すと、利用者は際限なく探す。2026-08-15 に
+     validation-unavailable だけを直したが、同じ形の
+     numeric-validation-error / structure-validation-error が
+     赤のまま残っていた（2026-08-16 に src の分類へ揃えた）。
+
+     **色は表示だけの話である。** 書き出しを止める条件（サーバの
+     Get-YakuCatOutputEligibility）はここを読まない。塗り分けても、その行は
+     止まったままである。 */
+  var QC_TOOL_TROUBLE_CODES = ['numeric-validation-error', 'structure-validation-error', 'terminology-check-unavailable', 'validation-unavailable'];
   function qcGroup(code) {
-    /* 道具の不調は2つ。用語一覧を読み込めなかったとき
-       （terminology-check-unavailable）と、点検そのものが最後まで走らなかったとき
-       （validation-unavailable。サーバが合成する種別で、qc_preview から届く）。
-       どちらも「原文と見比べて直す」ことができない。赤で出すと、直せないものを
-       探させることになる。 */
-    if (code === 'terminology-check-unavailable' || code === 'validation-unavailable') return 'tool';
+    if (QC_TOOL_TROUBLE_CODES.indexOf(code) >= 0) return 'tool';
     return 'error';
   }
   /* 一覧の印は短く。長い名前は狭い列から溢れて隣の列に重なる。

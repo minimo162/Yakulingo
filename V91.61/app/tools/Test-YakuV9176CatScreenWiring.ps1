@@ -19,7 +19,7 @@
   飛んだ要求の中身を見る。判定はこのファイルが行い、ブラウザ側
   （tools/cat-screen/cat-screen-gate.js）は観測した事実を JSON で返すだけである。
 
-  見るのは12。
+  見るのは13。
    (a) can_split_at の行にだけ分割ボタンが**実際に出る**
    (b) Alt+S がその分割ボタンを押す。割れない行では断る
    (c) 用語の印が入った原文でも、押した位置で割れる（位置が一致する）
@@ -36,6 +36,8 @@
        「調べたが直すところは無かった」と言い、古い言い方をしないこと
    (l) 点検そのものが走らなかった行（validation-unavailable）が、
        利用者の訳の欠陥（赤）ではなく**道具の不調**として塗られること
+   (m) 数字の点検が最後まで走らなかった行（numeric-validation-error）も同じこと。
+       止める条件は変えない（その行は塗り分けても止まったまま）
 
   (j) の表明そのものも 2026-08-15 に作り直した。**「一覧が空でないこと」は
   この題材では測れない。** 2行とも訳文ありで未確定なので、cat.js の qaFindings が
@@ -70,6 +72,17 @@
   qcGroup が 'error'（赤）で塗る。**道具の不調が、利用者の訳の欠陥の顔で出る。**
   題材は Invoke-YakuCatSegmentValidation を試験の中で一時的に落として作る。
   写しの JSON を手で書かないのは、合成そのものが実装の枝だからである。
+
+  (m) は 2026-08-16 の欠陥。src/CatProject.ps1 は4種を道具の不調と分類して
+  いたのに、cat.js の qcGroup はそのうち2種しか道具の色にしておらず、
+  numeric-validation-error と structure-validation-error は赤のままだった。
+  (l) と同じ形の欠陥が、同じ註の内側に残っていた。
+  題材は Test-YakuNumericIntegrity を落として作る。**合成される
+  validation-unavailable ではなく、点検の中の枝で積まれる種別**なので、
+  (l) の題材ではこの枝へ一度も入らない。
+  顔ぶれの一致そのもの（src の Get-YakuCatQcToolTroubleCodes と cat.js の
+  QC_TOOL_TROUBLE_CODES）は tools/Test-YakuV9171CatQcLabelCoverage.ps1 が見る。
+  ここでは、その分類が**実機の画面の class に本当に出る**ことだけを見る。
 
   (j) は 2026-08-15 の欠陥（5-3 の宿題の残り半分）。止めた理由の文言19本のうち
   15本が「左の『点検の指摘』を押すと、その行だけ表示できます」と案内するのに、
@@ -474,6 +487,45 @@ try {
     Chk ($qcToolViewRows.Count -eq 2 -and @($qcToolViewRows[0].qc_preview).Count -eq 1 -and [string]@($qcToolViewRows[0].qc_preview)[0].code -eq 'validation-unavailable') '画面へ渡す行にも、合成された種別が載っている'
     Chk (@(@($qcToolProject.Segments) | Where-Object { @($_.QcFindings).Count -gt 0 }).Count -eq 0) '合成した種別を、行そのものへは書いていない（監査を汚さない）'
 
+    # 数字の点検そのものが落ちた行の題材（(m) 用）。
+    # Invoke-YakuCatSegmentValidation は Test-YakuNumericIntegrity を try で囲み、
+    # 落ちたら numeric-validation-error を積む。合成ではなく**点検の中の枝**なので、
+    # 落とす相手は点検そのものではなく、その中で呼ぶ数字の照合にする。
+    # ここも写しの JSON を手で書かない。枝を通らないまま「出た形」だけを見ることになる。
+    Write-Host '(0g) 数字の点検が最後まで走らなかった行の題材を用意する' -ForegroundColor Cyan
+    # 題材が正しい枝を指していることを、src の宣言そのもので確かめる。
+    # 名前をここで手書きしても、道具の不調かどうかは src が決める。
+    Chk (@(Get-YakuCatQcToolTroubleCodes) -contains 'numeric-validation-error') 'src は numeric-validation-error を道具の不調と分類している（画面の色はこの宣言に従う）'
+    Chk (@(Get-YakuCatQcToolTroubleCodes) -contains 'structure-validation-error') 'src は structure-validation-error も道具の不調と分類している'
+    $numSourceA = '販売費は横ばいでした。'
+    $numSourceB = '研究費も横ばいでした。'
+    $qcNumProject = New-YakuCatTextProject -Root $root -Text ($numSourceA + "`n" + $numSourceB) -Settings $settings -Direction 'to_en'
+    $null = Set-YakuCatSegmentTranslation -Project $qcNumProject -Index 0 -Text 'Selling expenses were flat.'
+    $null = Set-YakuCatSegmentTranslation -Project $qcNumProject -Index 1 -Text 'Research expenses were also flat.'
+    $originalNumeric = ${function:Test-YakuNumericIntegrity}
+    Chk ($null -ne $originalNumeric) '差し替える前の数字の点検を掴めた（掴めなければ戻せない）'
+    $qcNumProjectJson = ''
+    $qcNumEligibility = $null
+    try {
+        ${function:Test-YakuNumericIntegrity} = { param($SourceText, $TranslatedText, $Location) throw 'yaku-probe: numeric integrity unavailable' }
+        $qcNumEligibility = Get-YakuCatOutputEligibility -Project $qcNumProject
+        $qcNumProjectJson = ConvertTo-YakuCatProjectJson -Project $qcNumProject
+    } finally {
+        ${function:Test-YakuNumericIntegrity} = $originalNumeric
+    }
+    # 戻したことを、次へ進む前に確かめる。戻し損ねると以降の判定が全部嘘になる。
+    $qcNumRestoreCheck = Get-YakuCatOutputEligibility -Project $qcCleanProject
+    Chk (@($qcNumRestoreCheck.QcFailures).Count -eq 0) '数字の点検を元に戻せている（差し替えが後の題材へ漏れていない）'
+    $qcNumCodes = @(@($qcNumEligibility.QcFailures) | ForEach-Object { [string]$_.Code })
+    # ここが要点。**合成された validation-unavailable ではなく**、点検の中で積まれた
+    # numeric-validation-error であること。(l) と同じ枝を見ていたら、この題材は空振りする。
+    Chk ($qcNumCodes.Count -eq 1 -and $qcNumCodes[0] -eq 'numeric-validation-error') ('止まった種別は numeric-validation-error だけ（実際: ' + ($qcNumCodes -join ',') + '）')
+    Chk (-not [bool]$qcNumEligibility.TranslationListEligible) '題材は書き出しが止まっている'
+    $qcNumView = $qcNumProjectJson | ConvertFrom-Json
+    $qcNumViewRows = @($qcNumView.segments)
+    Chk ($qcNumViewRows.Count -eq 2) ('画面へ渡す行は2行（実際 ' + $qcNumViewRows.Count + '）')
+    Chk (@($qcNumViewRows[0].qc_preview).Count -eq 1 -and [string]@($qcNumViewRows[0].qc_preview)[0].code -eq 'numeric-validation-error') '画面へ渡す1行目に、その種別が載っている（この題材が空振りでないこと）'
+
     $projectPath = Join-Path $tmp 'project.json'
     $candidatePath = Join-Path $tmp 'candidates.json'
     $observedPath = Join-Path $tmp 'observed.json'
@@ -483,9 +535,11 @@ try {
     $qcPreflightPath = Join-Path $tmp 'qc-preflight.json'
     $qcCleanPath = Join-Path $tmp 'qc-clean-project.json'
     $qcToolPath = Join-Path $tmp 'qc-tool-project.json'
+    $qcNumPath = Join-Path $tmp 'qc-numeric-project.json'
     $utf8 = New-Object Text.UTF8Encoding($false)
     [IO.File]::WriteAllText($qcCleanPath, $qcCleanProjectJson, $utf8)
     [IO.File]::WriteAllText($qcToolPath, $qcToolProjectJson, $utf8)
+    [IO.File]::WriteAllText($qcNumPath, $qcNumProjectJson, $utf8)
     [IO.File]::WriteAllText($qcPath, $qcProjectJson, $utf8)
     [IO.File]::WriteAllText($qcPreflightPath, ($qcPreflightPayload | ConvertTo-Json -Depth 8), $utf8)
     [IO.File]::WriteAllText($projectPath, $projectJson, $utf8)
@@ -495,7 +549,7 @@ try {
 
     Write-Host '(1) 本物の画面を Chromium で開いて、実際に押す' -ForegroundColor Cyan
     $stderrPath = Join-Path $tmp 'node-stderr.txt'
-    $arguments = @($driver, (Join-Path $root 'www'), $projectPath, $candidatePath, $observedPath, $previewPath, $cellPath, $qcPath, $qcPreflightPath, $qcCleanPath, $qcToolPath) | ForEach-Object { '"' + $_ + '"' }
+    $arguments = @($driver, (Join-Path $root 'www'), $projectPath, $candidatePath, $observedPath, $previewPath, $cellPath, $qcPath, $qcPreflightPath, $qcCleanPath, $qcToolPath, $qcNumPath) | ForEach-Object { '"' + $_ + '"' }
     $proc = Start-Process -FilePath $nodeExe -ArgumentList $arguments -NoNewWindow -Wait -PassThru -RedirectStandardError $stderrPath
     $nodeErr = ''
     if (Test-Path -LiteralPath $stderrPath) { $nodeErr = [string][IO.File]::ReadAllText($stderrPath) }
@@ -748,6 +802,23 @@ try {
     $qaTool = $o.qaToolList
     Chk ([bool]$qaTool.open) 'その作業でも点検の一覧は開く'
     Chk (Test-YakuAnyContains -Items @($qaTool.items) -Needle '自動点検が最後まで終わりませんでした') ('一覧の行も同じことを言う: ' + (Get-YakuFirstString -Items @($qaTool.items)))
+
+    # ------------------------------------------------------------------ (m)
+    Write-Host '(m) 数字の点検が走らなかった行も、道具の不調として出る' -ForegroundColor Cyan
+    $qcNum = $o.qcNumInspector
+    $qcNumCards = @($qcNum.cards)
+    # 観測点そのものが空でないことを先に見る。空のまま下の -not を並べると、
+    # 「1件も出ていない」が緑になる（測れなかったものを緑へ畳まない）。
+    Chk ($qcNumCards.Count -eq 1) ('点検欄に指摘が1件出る（実際 ' + $qcNumCards.Count + ' 件）')
+    Chk (Test-YakuAnyContains -Items @($qcNumCards | ForEach-Object { [string]$_.text }) -Needle '数字の点検が最後まで終わりませんでした') ('何が起きたかを名指しする: ' + (Get-YakuFirstString -Items @($qcNumCards | ForEach-Object { [string]$_.text })))
+    Chk (-not (Test-YakuAnyContains -Items @($qcNumCards | ForEach-Object { [string]$_.text }) -Needle '自動点検で気になる点が見つかりました')) '汎用文へ落ちていない（種別に説明文がある）'
+    Chk (-not (Test-YakuAnyContains -Items @($qcNumCards | ForEach-Object { [string]$_.text }) -Needle '原文と見比べて')) '「原文と見比べて直せ」と言わない（訳を直しても消えない）'
+    # ここが直した欠陥そのもの。色は class にしか出ない。
+    Chk (Test-YakuAnyContains -Items @($qcNumCards | ForEach-Object { [string]$_.classes }) -Needle 'is-tool') ('道具の不調として塗られる（実際の class: ' + (Get-YakuFirstString -Items @($qcNumCards | ForEach-Object { [string]$_.classes })) + '）')
+    Chk (-not (Test-YakuAnyContains -Items @($qcNumCards | ForEach-Object { [string]$_.classes }) -Needle 'is-error')) '利用者の訳の欠陥（赤）としては塗らない'
+    # 色は表示だけの話である。止める条件は1つも減らしていない。
+    Chk ([bool]$o.qcNumScreen.exportDisabled) '取り出しボタンは従来どおり押せない（赤をやめても、その行は止まったまま）'
+    Chk ([string]$o.qcNumScreen.exportTitle -ne '') ('押せない理由がボタンに書いてある: ' + [string]$o.qcNumScreen.exportTitle)
 
     if ($script:fail -eq 0) { Write-Host ('V91.76 画面の描画と配線の回帰テストに合格しました。検査 ' + $script:checks + ' 件。') -ForegroundColor Green }
     else { Write-Host ('FAILED: ' + $script:fail + ' / ' + $script:checks) -ForegroundColor Red }

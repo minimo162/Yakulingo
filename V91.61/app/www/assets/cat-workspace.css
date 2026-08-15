@@ -828,8 +828,10 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
   background: #fff0ee;
 }
 
-/* 「用語集を読み込めませんでした」は、訳の欠陥ではなくアプリ側の不調。
-   赤で出すと、直しようのないものを直そうとして時間を失う。 */
+/* 「点検が最後まで走りませんでした」「用語集を読み込めませんでした」の類は、
+   訳の欠陥ではなくアプリ側の不調。赤で出すと、直しようのないものを直そうとして
+   時間を失う。顔ぶれは src/CatProject.ps1 の Get-YakuCatQcToolTroubleCodes が
+   決め、cat.js の qcGroup がこの class を付ける。 */
 .cat-qc-card.is-tool {
   border-left: 4px solid var(--warning);
   background: #f6efe6;

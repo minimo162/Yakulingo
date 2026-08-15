@@ -878,6 +878,35 @@ function Copy-YakuCatProjectSegmentForProbe {
     return $copy
 }
 
+function Get-YakuCatQcToolTroubleCodes {
+    <#
+      「利用者の訳の欠陥ではなく、道具の不調である」種別の正本。
+
+      なぜ関数にするか（2026-08-16）。この分類はもともと下の $qcText の中に
+      コメントで書いてあるだけだった。コメントは機械が読めないので、画面
+      （www/assets/cat.js の qcGroup）は同じ4種のうち2種しか道具の不調として
+      扱っておらず、numeric-validation-error と structure-validation-error は
+      赤（訳の欠陥）で塗られていた。**直しても消えないものを赤で見せると、
+      利用者は際限なく探す。**
+
+      名前を2か所へ書き写すと、同じずれが必ず再発する。そこで顔ぶれをここ1つに
+      置き、下の文言の並びも、画面との一致を見る門
+      （tools/Test-YakuV9171CatQcLabelCoverage.ps1 の CASE 4）も、ここを読む。
+      画面側は www/assets/cat.js の QC_TOOL_TROUBLE_CODES がこの写しにあたり、
+      門は両者が**集合として一致すること**を見る。片方へ足してもう片方へ
+      足し忘れたら赤になる。
+
+      ここは**表示の分類だけ**を決める。止める条件（Get-YakuCatOutputEligibility）
+      には一切効かない。道具の不調で止まった行は、色が変わっても止まったままである。
+    #>
+    return @(
+        'numeric-validation-error',
+        'structure-validation-error',
+        'terminology-check-unavailable',
+        'validation-unavailable'
+    )
+}
+
 function Get-YakuCatQcBlockerMessages {
     <#
       止まった行の点検結果を、種別ごとの文言へ直す。
@@ -919,12 +948,27 @@ function Get-YakuCatQcBlockerMessages {
         'terminology-missing' = '登録した訳語が使われていない行が #ROWS# 行あります。左の「点検の指摘」を押して、右の「用語・参考訳」に出ている訳語へ直してください。その行だけ別の言い方にしたい場合は、行の設定から外せます。'
         'terminology-forbidden' = '「使わない」と登録した表現が訳文に入っている行が #ROWS# 行あります。左の「点検の指摘」を押して、右の「用語・参考訳」に出ている訳語へ置き換えてください。'
         'terminology-conflict' = '同じ語に、必ず使う訳が2つ以上登録されています。当てはまる行が #ROWS# 行あります。「作業の管理」を開いて、どちらか一方を取り消してください。'
-        # 以下は利用者の訳の欠陥ではなく、道具の不調である。訳を直しても消えない。
-        # 直しようのないものを「訳を見比べてください」と言うと、際限なく探させることになる。
+    }
+    # 以下は利用者の訳の欠陥ではなく、道具の不調である。訳を直しても消えない。
+    # 直しようのないものを「訳を見比べてください」と言うと、際限なく探させることになる。
+    #
+    # **顔ぶれをここへ並べない。** Get-YakuCatQcToolTroubleCodes が正本で、
+    # 並び（訳文 → 数字 → 通貨 → 体裁 → 用語 → 道具の不調）はそこを読んで作る。
+    # ここに置くのは種別ごとの文言だけである。ここへ文言を足しただけで正本へ
+    # 登録し忘れた種別は、下の「知らない種別」の枝へ落ちて汎用文になり、
+    # tools/Test-YakuV9176ExportBlockerReasons.ps1 の文言の網が赤になる。
+    $toolTroubleText = @{
         'numeric-validation-error' = '数字の点検が最後まで終わらなかった行が #ROWS# 行あります。その行を開いて「確認済みにする」をもう一度押してください。それでも直らない場合は、この画面のまま管理者へご連絡ください。'
         'structure-validation-error' = '見出しや箇条書きの形の点検が最後まで終わらなかった行が #ROWS# 行あります。その行を開いて「確認済みにする」をもう一度押してください。それでも直らない場合は、この画面のまま管理者へご連絡ください。'
         'terminology-check-unavailable' = '登録した用語を読み込めなかった行が #ROWS# 行あります。いったんアプリを閉じて開き直してください。それでも直らない場合は、この画面のまま管理者へご連絡ください。'
         'validation-unavailable' = '自動点検が最後まで終わらなかった行が #ROWS# 行あります。その行を開いて「確認済みにする」をもう一度押してください。それでも直らない場合は、この画面のまま管理者へご連絡ください。'
+    }
+    foreach ($toolCode in @(Get-YakuCatQcToolTroubleCodes)) {
+        $toolKey = ([string]$toolCode).Trim()
+        if ([string]::IsNullOrWhiteSpace($toolKey)) { continue }
+        if ($qcText.Contains($toolKey)) { continue }
+        if (-not $toolTroubleText.ContainsKey($toolKey)) { continue }
+        $qcText[$toolKey] = [string]$toolTroubleText[$toolKey]
     }
 
     $rowsByCode = @{}

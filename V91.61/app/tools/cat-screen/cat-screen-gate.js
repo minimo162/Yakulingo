@@ -17,7 +17,7 @@
   判定はしない。判定は呼び出し側の PowerShell が行う。
 
   使い方:
-    node cat-screen-gate.js <wwwDir> <projectJson> <candidatesJson> <outJson> <previewProjectJson> <cellProjectJson> <qcProjectJson> <qcPreflightJson> <qcCleanProjectJson> <qcToolProjectJson>
+    node cat-screen-gate.js <wwwDir> <projectJson> <candidatesJson> <outJson> <previewProjectJson> <cellProjectJson> <qcProjectJson> <qcPreflightJson> <qcCleanProjectJson> <qcToolProjectJson> <qcNumericProjectJson>
 
   5番目は「体裁で見る」を見るための別の作業（貼り付け本文を原文の途中で
   割ったもの）。配置先が無い行なので、画面はサーバが繋いだ訳文を使うほかない。
@@ -48,6 +48,13 @@
   Get-YakuCatOutputEligibility）。これは利用者の訳の欠陥ではなく道具の不調で、
   訳を直しても消えない。画面が赤（欠陥）で塗ると、直せないものを探させる。
   ここでは、その行の点検欄が道具の不調の見た目になっているかを見る。
+
+  11番目は「数字の点検が最後まで走らなかった」作業。こちらは合成ではなく、
+  点検の中の枝（Test-YakuNumericIntegrity が落ちたときの
+  numeric-validation-error）である。src はこれも道具の不調と分類しているのに、
+  画面は赤（訳の欠陥）で塗っていた（2026-08-16）。10番目の題材ではこの枝へ
+  一度も入らないので、別の作業として開く。同じ画面で、取り出しボタンが
+  従来どおり押せないことも採る。**色を変えても止める条件は変えていない。**
 */
 const fs = require('fs');
 const http = require('http');
@@ -64,12 +71,14 @@ const qcProjectJson = fs.readFileSync(process.argv[8], 'utf8');
 const qcPreflightJson = fs.readFileSync(process.argv[9], 'utf8');
 const qcCleanProjectJson = fs.readFileSync(process.argv[10], 'utf8');
 const qcToolProjectJson = fs.readFileSync(process.argv[11], 'utf8');
+const qcNumProjectJson = fs.readFileSync(process.argv[12], 'utf8');
 const project = JSON.parse(projectJson);
 const previewProject = JSON.parse(previewProjectJson);
 const cellProject = JSON.parse(cellProjectJson);
 const qcProject = JSON.parse(qcProjectJson);
 const qcCleanProject = JSON.parse(qcCleanProjectJson);
 const qcToolProject = JSON.parse(qcToolProjectJson);
+const qcNumProject = JSON.parse(qcNumProjectJson);
 
 /* 押した位置の題材。原文の <mark> より後ろに落ちる位置を選ぶ。
    1文字目（印より前）で一度押してから2回目を押すので、位置を拾えない実装だと
@@ -134,6 +143,7 @@ const server = http.createServer(async function (req, res) {
     if (wanted && wanted === String(qcProject.id || '')) { res.end(qcProjectJson); return; }
     if (wanted && wanted === String(qcCleanProject.id || '')) { res.end(qcCleanProjectJson); return; }
     if (wanted && wanted === String(qcToolProject.id || '')) { res.end(qcToolProjectJson); return; }
+    if (wanted && wanted === String(qcNumProject.id || '')) { res.end(qcNumProjectJson); return; }
     res.end(projectJson);
     return;
   }
@@ -621,6 +631,34 @@ function lastBody(name) { const c = calls(name); return c.length ? c[c.length - 
     await page.waitForSelector('#cat-qa-dialog[open]', { timeout: 10000 });
     await page.waitForTimeout(300);
     out.qaToolList = await qaBody();
+    await page.evaluate(function () { document.getElementById('cat-qa-dialog').close('cancel'); });
+    await page.waitForTimeout(200);
+
+    // --------- 数字の点検そのものが落ちた行（道具の不調。合成ではなく点検の枝）
+    /* 題材: Test-YakuNumericIntegrity が落ちた作業。点検は
+       numeric-validation-error を積む（src/CatProject.ps1 の
+       Invoke-YakuCatSegmentValidation）。これも訳を直しても消えないので、
+       赤（訳の欠陥）で塗ってはいけない。上の validation-unavailable とは
+       別の枝なので、同じ観測点（点検欄の card の class）で別に見る。
+       あわせて、取り出しボタンが従来どおり押せないことも採る。
+       **色を変えても止める条件は変えていない**ことを、同じ画面で示すため。 */
+    await page.goto('http://127.0.0.1:' + port + '/cat?project=' + qcNumProject.id, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#cat-grid-body tr[data-cat-row]', { timeout: 20000 });
+    out.qcNumScreen = await page.evaluate(function () {
+      var exportButton = document.getElementById('cat-export');
+      return {
+        rows: Array.from(document.querySelectorAll('#cat-grid-body tr[data-cat-row]')).map(function (tr) {
+          return { index: Number(tr.getAttribute('data-cat-row')), source: tr.querySelector('.cat-source-text').textContent };
+        }),
+        exportDisabled: !!(exportButton && exportButton.disabled),
+        exportTitle: exportButton ? exportButton.title : ''
+      };
+    });
+    await page.focus('#cat-grid-body tr[data-cat-row] textarea[data-cat-input]');
+    await page.waitForTimeout(200);
+    await page.click('[data-cat-inspector="qc"]');
+    await page.waitForTimeout(250);
+    out.qcNumInspector = await qcInspectorBody();
   } catch (e) {
     out.fatal = String((e && e.stack) || e);
   } finally {
