@@ -755,14 +755,29 @@ function Get-YakuCatOutputEligibility {
     #   Trados : Draft のままでも目的ファイルを生成できる。Finalize は別のバッチ
     # このアプリは書き出しに全行確認を要求しており、3つのどれよりも厳しかった。
     #
-    # 残す歯止めは2つだけにする。どちらも「直さないと欠陥になる」ものである。
-    #   1. 訳文が空の行がある     → 出せない
-    #   2. 数字の点検に落ちる行がある → 出せない（数値が抜けた訳は警告ではなく欠陥）
+    # 残す歯止めは3つ。どれも「直さないと欠陥になる」ものである。
+    # （2026-08-14 に CLAUDE.md が「2つだけ」を3つへ訂正した。この註だけが
+    #  2つのまま残っていて、次に実装を読んだ者がまた「2つ」と書いた。実装は
+    #  最初から3つ積んでいる。註のほうを実装へ合わせる。）
+    #   1. 訳文が空の行がある                     → 出せない（segment-untranslated）
+    #   2. 自動点検に落ちる行がある               → 出せない（segment-qc-failed）
+    #   3. 確定済みだが点検が古い行がある         → 出せない（segment-qc-not-current）
+    #
+    # 2 は「数字」だけではない。Invoke-YakuCatSegmentValidation が error として
+    # 積むコードは 18 種あり、通貨・体裁・用語もその中に居る。理由コードを
+    # segment-qc-failed の1本に丸めたままにすると、用語で止まった利用者が
+    # 「数字の点検に通らない行があります」と言われ、数字を見に行かされる。
+    # そこで、どの種別で落ちたかを QcFailures に行数つきで積み、
+    # Get-YakuCatOutputPreflight が種別ごとの文言へ直す。
+    # **止める条件は増やしも減らしもしない。** Reasons の顔ぶれは従来どおりで、
+    # 分けるのは説明だけである。
+    #
     # 未確認は止めない。代わりに何行あるかを数え、押す前の画面と文書内の帯に出す。
     #
     # 点検は「確定したとき」にしか走らないので、未確認の行はここで写しに対して
     # 走らせて調べる。写しに対して行うので、作業の状態は変えない。
     $unconfirmed = 0
+    $qcFailureRows = [ordered]@{}
     foreach ($segment in @($Project.Segments)) {
         if ([string]::IsNullOrWhiteSpace([string]$segment.Translation)) { $reasons.Add('segment-untranslated') | Out-Null; continue }
         if ([string]$segment.State -eq 'reviewed') {
@@ -775,7 +790,32 @@ function Get-YakuCatOutputEligibility {
         $probe = Copy-YakuCatProjectSegmentForProbe -Segment $segment
         $verdict = $null
         try { $verdict = Invoke-YakuCatSegmentValidation -Project $Project -Segment $probe } catch { $verdict = $null }
-        if ($null -eq $verdict -or -not [bool]$verdict.Passed) { $reasons.Add('segment-qc-failed') | Out-Null }
+        if ($null -eq $verdict -or -not [bool]$verdict.Passed) {
+            $reasons.Add('segment-qc-failed') | Out-Null
+            # 同じ行が同じ種別で2件落ちても、行数は1と数える。利用者が開く行の数だから。
+            $seenCodes = New-Object System.Collections.Generic.List[string]
+            if ($null -ne $verdict) {
+                foreach ($finding in @($verdict.Findings)) {
+                    if ([string]$finding.Severity -ne 'error') { continue }
+                    $code = ([string]$finding.Code).Trim()
+                    if ([string]::IsNullOrWhiteSpace($code)) { continue }
+                    if ($seenCodes.Contains($code)) { continue }
+                    $seenCodes.Add($code) | Out-Null
+                }
+            }
+            # 点検そのものが落ちた（例外）ときは種別が無い。ここで空のままにすると
+            # segment-qc-failed が Reasons に居るのに説明が1件も出ず、
+            # 「押せないのに理由が無い」画面になる。必ず1件は積む。
+            if ($seenCodes.Count -eq 0) { $seenCodes.Add('validation-unavailable') | Out-Null }
+            foreach ($code in $seenCodes.ToArray()) {
+                if ($qcFailureRows.Contains($code)) { $qcFailureRows[$code] = [int]$qcFailureRows[$code] + 1 }
+                else { $qcFailureRows[$code] = 1 }
+            }
+        }
+    }
+    $qcFailures = New-Object System.Collections.Generic.List[object]
+    foreach ($code in @($qcFailureRows.Keys)) {
+        $qcFailures.Add([pscustomobject]@{ Code=[string]$code; Rows=[int]$qcFailureRows[$code] }) | Out-Null
     }
     $translationList = ($reasons.Count -eq 0)
     $sourceReady = [string]$Project.Source -eq 'file' -and (Test-Path -LiteralPath ([string]$Project.Path) -PathType Leaf)
@@ -795,6 +835,8 @@ function Get-YakuCatOutputEligibility {
         WordDraftEligible = $wordDraft
         UnconfirmedCount = $unconfirmed
         Reasons = @($reasons.ToArray() | Select-Object -Unique)
+        # segment-qc-failed の内訳。止める条件ではなく、止まった理由の説明のための材料。
+        QcFailures = @($qcFailures.ToArray())
     }
 }
 
@@ -806,6 +848,87 @@ function Copy-YakuCatProjectSegmentForProbe {
         $copy | Add-Member -NotePropertyName $property.Name -NotePropertyValue $property.Value -Force
     }
     return $copy
+}
+
+function Get-YakuCatQcBlockerMessages {
+    <#
+      止まった行の点検結果を、種別ごとの文言へ直す。
+
+      なぜ分けるか（2026-08-15）: Get-YakuCatOutputEligibility が返す理由は
+      segment-qc-failed の1本だが、その裏では 18 種の error コードが動いている。
+      1本に丸めたまま「数字の点検に通らない行があります」とだけ言うと、
+      用語集で止まった利用者が数字を見に行く。何を直せば押せるようになるのかが、
+      画面から永久に分からない。
+
+      **止める条件は増やしていない。** ここは説明だけを作る。
+
+      並びは固定にする（訳文そのもの → 数字 → 通貨 → 体裁 → 用語 → 道具の不調）。
+      複数種別が同時に立つときは、立った種別を全部この順で並べる。1件に丸めると
+      「数字も用語も直したのにまだ押せない」が起きる。件数を隠さないほうが、
+      利用者は先に何行あるかを知って段取りできる。
+
+      行数は #ROWS# を置き換えて入れる。`-f` を使わないのは、文言に
+      「[[N1]]」のような角括弧や、将来 { } を含む例示が入っても壊れないようにするため。
+    #>
+    param([AllowNull()][object[]]$Failures)
+
+    # 語り口は www/assets/cat.js の qcMessages（行ごとの指摘）と揃える。
+    # 向こうは「その行を開いている人」へ、こちらは「押す前の人」へ言うので、
+    # 何行あるか と どこを押せばその行に行けるか を必ず添える。
+    $qcText = [ordered]@{
+        'empty' = '訳文が空の行が #ROWS# 行あります。訳文を入れてから、もう一度お試しください。'
+        'invalid-or-source-fallback' = '訳文が原文のままか、訳文として成立していない行が #ROWS# 行あります。左の「点検の指摘」を押すと、その行だけ表示できます。'
+        'placeholder-residue' = '「[[N1]]」のような差し込み記号が残っている行が #ROWS# 行あります。左の「点検の指摘」を押して、原文の同じ位置にある数字へ手で置き換えてください。'
+        'numeric-integrity' = '原文と数字または単位が合っていない行が #ROWS# 行あります。左の「点検の指摘」を押すと、その行だけ表示できます。'
+        'numeric-value-mismatch' = '原文にある数字が、訳文で違う値になっているか抜けている行が #ROWS# 行あります。左の「点検の指摘」を押すと、その行だけ表示できます。'
+        'numeric-value-extra' = '原文に無い数字が訳文に入っている行が #ROWS# 行あります。左の「点検の指摘」を押して、余分な数字を消してください。'
+        'numeric-value-order-mismatch' = '数字の並ぶ順番が原文と違う行が #ROWS# 行あります。左の「点検の指摘」を押して、原文と同じ順番に直してください。'
+        'numeric-scale-mismatch' = '数字の桁（億・百万など）が原文と合っていない行が #ROWS# 行あります。左の「点検の指摘」を押して、原文の単位をご確認ください。'
+        'numeric-sign-missing' = '損失や減少を示すマイナスが訳文に入っていない行が #ROWS# 行あります。左の「点検の指摘」を押すと、その行だけ表示できます。'
+        'accounting-polarity-mismatch' = '利益と損失、または増加と減少が原文と逆になっている行が #ROWS# 行あります。左の「点検の指摘」を押して、原文と見比べてください。'
+        'currency-mismatch' = '通貨（円・ドルなど）が原文と合っていない行が #ROWS# 行あります。左の「点検の指摘」を押して、原文の通貨をご確認ください。'
+        'structure-integrity' = '見出しや箇条書きの形が原文と違う行が #ROWS# 行あります。左の「点検の指摘」を押して、原文と見比べてください。'
+        'terminology-missing' = '登録した訳語が使われていない行が #ROWS# 行あります。左の「点検の指摘」を押して、右の「用語・参考訳」に出ている訳語へ直してください。その行だけ別の言い方にしたい場合は、行の設定から外せます。'
+        'terminology-forbidden' = '「使わない」と登録した表現が訳文に入っている行が #ROWS# 行あります。左の「点検の指摘」を押して、右の「用語・参考訳」に出ている訳語へ置き換えてください。'
+        'terminology-conflict' = '同じ語に、必ず使う訳が2つ以上登録されています。当てはまる行が #ROWS# 行あります。「作業の管理」を開いて、どちらか一方を取り消してください。'
+        # 以下は利用者の訳の欠陥ではなく、道具の不調である。訳を直しても消えない。
+        # 直しようのないものを「訳を見比べてください」と言うと、際限なく探させることになる。
+        'numeric-validation-error' = '数字の点検が最後まで終わらなかった行が #ROWS# 行あります。その行を開いて「確認済みにする」をもう一度押してください。それでも直らない場合は、この画面のまま管理者へご連絡ください。'
+        'structure-validation-error' = '見出しや箇条書きの形の点検が最後まで終わらなかった行が #ROWS# 行あります。その行を開いて「確認済みにする」をもう一度押してください。それでも直らない場合は、この画面のまま管理者へご連絡ください。'
+        'terminology-check-unavailable' = '登録した用語を読み込めなかった行が #ROWS# 行あります。いったんアプリを閉じて開き直してください。それでも直らない場合は、この画面のまま管理者へご連絡ください。'
+        'validation-unavailable' = '自動点検が最後まで終わらなかった行が #ROWS# 行あります。その行を開いて「確認済みにする」をもう一度押してください。それでも直らない場合は、この画面のまま管理者へご連絡ください。'
+    }
+
+    $rowsByCode = @{}
+    $order = New-Object System.Collections.Generic.List[string]
+    foreach ($failure in @($Failures)) {
+        if ($null -eq $failure) { continue }
+        $code = ([string]$failure.Code).Trim()
+        if ([string]::IsNullOrWhiteSpace($code)) { $code = 'validation-unavailable' }
+        $rows = 0
+        try { $rows = [int]$failure.Rows } catch { $rows = 0 }
+        if ($rows -lt 1) { $rows = 1 }
+        if ($rowsByCode.ContainsKey($code)) { $rowsByCode[$code] = [int]$rowsByCode[$code] + $rows }
+        else { $rowsByCode[$code] = $rows; $order.Add($code) | Out-Null }
+    }
+
+    $result = New-Object System.Collections.Generic.List[object]
+    # まず既知の種別を決めた順で。知らない種別（点検が増えたのに、ここへ書き足す
+    # のを忘れたとき）は落とさずに最後へ回す。落とすと、押せない理由が消える。
+    $emitted = New-Object System.Collections.Generic.List[string]
+    foreach ($code in @($qcText.Keys)) {
+        $key = [string]$code
+        if (-not $rowsByCode.ContainsKey($key)) { continue }
+        $message = ([string]$qcText[$key]).Replace('#ROWS#', [string][int]$rowsByCode[$key])
+        $result.Add([pscustomobject]@{ Code=$key; Rows=[int]$rowsByCode[$key]; Message=$message }) | Out-Null
+        $emitted.Add($key) | Out-Null
+    }
+    foreach ($code in $order.ToArray()) {
+        if ($emitted.Contains([string]$code)) { continue }
+        $message = '自動点検に通らない行が ' + [string][int]$rowsByCode[[string]$code] + ' 行あります。左の「点検の指摘」を押すと、その行だけ表示できます。'
+        $result.Add([pscustomobject]@{ Code=[string]$code; Rows=[int]$rowsByCode[[string]$code]; Message=$message }) | Out-Null
+    }
+    return $result.ToArray()
 }
 
 function Get-YakuCatOutputPreflight {
@@ -846,21 +969,39 @@ function Get-YakuCatOutputPreflight {
     $reasonText = [ordered]@{
         'project-empty' = '翻訳する行がありません。'
         'segment-not-reviewed' = 'まだ確認していない行があります。左の「残り」を押すと、その行だけ表示できます。'
-        'segment-qc-failed' = '数字の点検に通らない行があります。左の「点検の指摘」を押すと、その行だけ表示できます。'
+        # segment-qc-failed はここでは作らない。18種を1文に丸めると
+        # 「用語で止まったのに数字を見に行かされる」ため、
+        # Get-YakuCatQcBlockerMessages が種別ごとの文へ分ける。
         'segment-qc-not-current' = '訳文を直したあと、まだ自動点検をしていない行があります。その行を「確認済みにする」と点検します。'
         'segment-untranslated' = '訳文が空の行があります。'
         'source-file-missing' = '元のファイルが見つかりません。'
         'word-unsupported-structure' = '体裁を安全に保てないWord要素があります。'
     }
+    # 種別ごとの文言。理由が segment-qc-failed のときだけ、ここへ差し替える。
+    $qcMessages = @(Get-YakuCatQcBlockerMessages -Failures @($eligibility.QcFailures))
     $blockers = @(
         foreach ($reason in @($eligibility.Reasons)) {
-            $message = if ($reasonText.Contains([string]$reason)) { [string]$reasonText[[string]$reason] } else { '出力条件を満たしていません。' }
-            if ($mode -eq 'blocked') {
-                [ordered]@{ code = [string]$reason; message = $message }
-            } else {
-                # Word体裁出力から訳文コピーへ安全に縮退できた理由は、
-                # 実行を妨げるblockerではなく利用者へ伝えるwarningである。
-                $warnings.Add($message) | Out-Null
+            # 1つの理由から複数の項目が出る（点検の種別ぶん）。
+            # 種別が1件も取れなかったときでも、押せない理由を黙らせない。
+            $items = @(
+                if ([string]$reason -eq 'segment-qc-failed') {
+                    if ($qcMessages.Count -gt 0) { $qcMessages }
+                    else { [pscustomobject]@{ Code='validation-unavailable'; Rows=0; Message='自動点検に通らない行があります。左の「点検の指摘」を押すと、その行だけ表示できます。' } }
+                } else {
+                    $text = if ($reasonText.Contains([string]$reason)) { [string]$reasonText[[string]$reason] } else { '出力条件を満たしていません。' }
+                    [pscustomobject]@{ Code=''; Rows=0; Message=$text }
+                }
+            )
+            foreach ($item in $items) {
+                if ($mode -eq 'blocked') {
+                    # code は従来どおり理由コードのまま。何で止まったかを機械が読む鍵は
+                    # 変えない。種別は qc_code に足す（増やすだけ、置き換えない）。
+                    [ordered]@{ code = [string]$reason; qc_code = [string]$item.Code; rows = [int]$item.Rows; message = [string]$item.Message }
+                } else {
+                    # Word体裁出力から訳文コピーへ安全に縮退できた理由は、
+                    # 実行を妨げるblockerではなく利用者へ伝えるwarningである。
+                    $warnings.Add([string]$item.Message) | Out-Null
+                }
             }
         }
     )

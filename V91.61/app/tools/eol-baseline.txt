@@ -123,6 +123,7 @@ tools/Test-YakuV9173SegmentSplitAt.ps1	crlf
 tools/Test-YakuV9174SearchReplace.ps1	crlf
 tools/Test-YakuV9175FuzzyMatchLabel.ps1	crlf
 tools/Test-YakuV9176CatScreenWiring.ps1	crlf
+tools/Test-YakuV9176ExportBlockerReasons.ps1	crlf
 tools/Test-YakuV917RuntimeWarnings.ps1	crlf
 tools/V64-HTTP-Boundary-Test.ps1	crlf
 tools/V65-Saving-Validation-Test.ps1	crlf
