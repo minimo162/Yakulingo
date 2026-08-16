@@ -336,11 +336,20 @@ function Find-YakuCorpusPairsForSegment {
       利用者が語を選んで検索するのではなく、行を移るたびに自動で引くので、
       問い合わせは「原文そのもの」になる。市販ツールの翻訳メモリと同じ形。
 
-      3段階で見る。
-        完全一致  過去に同じ文を訳している。そのまま差し込める
-        包含      過去の文がこの原文を含む／含まれる。参考になる
-      一致率は文字数の比で出す。編集距離のほうが精確だが、行を移るたびに
-      全件へ掛けると重い。まず動く形を置き、必要になったら精度を上げる。
+      ~~一致率は文字数の比で出す。編集距離のほうが精確だが、行を移るたびに
+      全件へ掛けると重い。まず動く形を置き、必要になったら精度を上げる。~~
+      **2026-08-17 に編集距離へ替えた。重いという前提が測定で消えたため。**
+
+      C# へ落とした編集距離は 5,000 件を 19ms で照合する（PowerShell のループで
+      書くと 4,558ms かかるので、遅さの原因は算法ではなくループだった。
+      出典 `_docs/測定_一致率_2026-08-16.md`）。翻訳メモリと同じ尺度・同じ閾値に
+      揃えたので、片方だけ当たり方が違うということも無くなる。
+
+      **これは引ける件数を大きく変える。** 文字数の比は「一方が他方を**含む**」
+      ときにしか出しておらず、似ているが含んではいない文を1件も拾えなかった。
+      実測（2027年3月期Q1の短信 441 行に、手元の 3,001 対を当てる）では、
+      編集距離 0.70 以上で **198 行**に過去訳が届く。うち 103 行は完全一致である。
+      確定した翻訳メモリ 123 件だけでは 4 行（0.9%）しか届かない。
     #>
     param(
         [Parameter(Mandatory = $true)][string]$Dir,
@@ -348,7 +357,11 @@ function Find-YakuCorpusPairsForSegment {
         [ValidateSet('ja', 'en')][string]$SourceLanguage = 'ja',
         [AllowNull()][string[]]$Databases,
         [int]$Limit = 5,
-        [int]$MinLength = 6
+        [int]$MinLength = 6,
+        # 翻訳メモリと同じ閾値。片方だけ違うと、同じ資料で当たり方が食い違う。
+        [double]$MinScore = 0.70,
+        # 包含の床。似ている度合いとは別に数える（下の註を見ること）。
+        [double]$MinContainment = 0.30
     )
     $t = ([string]$Text).Trim()
     if ($t.Length -lt $MinLength) { return @() }
@@ -364,6 +377,13 @@ function Find-YakuCorpusPairsForSegment {
     if ($dbs.Count -eq 0) {
         $dbs = @(Get-ChildItem -LiteralPath $Dir -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
     }
+    # 翻訳メモリと同じ正規化・同じ尺度を使う。型は輪の外で1回だけ引く
+    # （輪の中で関数を挟むと、件数ぶんの呼び出し費用が計算より大きくなる）。
+    $scorer = Get-YakuTranslationMemoryScorer
+    $queryKey = ConvertTo-YakuTranslationMemoryKey -Text $t
+    # 長さの差だけで足切りできる。編集距離は必ず長さの差以上なので、
+    # 1 - |差|/長いほう が MinScore に届かない対は計算する前に落とせる。
+    $lengthSlack = [double](1.0 - $MinScore)
     $hits = New-Object System.Collections.Generic.List[object]
     foreach ($db in $dbs) {
         foreach ($p in @(Read-YakuCorpusPairs -Dir $Dir -Database $db)) {
@@ -372,12 +392,34 @@ function Find-YakuCorpusPairsForSegment {
             if ([string]::IsNullOrWhiteSpace($src) -or [string]::IsNullOrWhiteSpace($tgt)) { continue }
             $sn = & $norm $src
             if ($sn.Length -lt $MinLength) { continue }
-            $exact = [string]::Equals($sn, $tn, [StringComparison]::Ordinal)
+            $candidateKey = ConvertTo-YakuTranslationMemoryKey -Text $src
+            if ([string]::IsNullOrWhiteSpace($candidateKey) -or [string]::IsNullOrWhiteSpace($queryKey)) { continue }
+            $exact = [string]::Equals($candidateKey, $queryKey, [StringComparison]::Ordinal)
             if ($exact) { $ratio = 1.0 }
-            elseif ($sn.IndexOf($tn, [StringComparison]::Ordinal) -ge 0) { $ratio = [double]$tn.Length / $sn.Length }
-            elseif ($tn.IndexOf($sn, [StringComparison]::Ordinal) -ge 0) { $ratio = [double]$sn.Length / $tn.Length }
-            else { continue }
-            if ($ratio -lt 0.3) { continue }
+            else {
+                # **2つの当たり方を別々に見る。混ぜて1つの閾値にしない。**
+                #
+                #   似ている  … 編集距離。閾値は翻訳メモリと同じ 0.70。
+                #                下では3〜6割を書き直すことになる（実測）
+                #   含む      … 過去の文がまるごと新しい原文に入っている。
+                #                一致率は 0.52 でも「前半はもう訳してある」であって、
+                #                半分書き直すのとは意味が違う。だから低い床でよい
+                #
+                # 片方だけにすると、どちらかの当たり方が丸ごと消える。実際、
+                # 似ている側だけにしたら「過去の文を含む原文」の題材が落ちた。
+                $ratio = 0.0
+                $longer = if ($candidateKey.Length -gt $queryKey.Length) { $candidateKey.Length } else { $queryKey.Length }
+                if ($longer -gt 0 -and ([Math]::Abs($candidateKey.Length - $queryKey.Length) / [double]$longer) -le $lengthSlack) {
+                    $similar = if ($null -ne $scorer) { [double]$scorer::Score($queryKey, $candidateKey) }
+                               else { Get-YakuTranslationMemoryEditRatioManaged -Left $queryKey -Right $candidateKey }
+                    if ($similar -ge $MinScore) { $ratio = $similar }
+                }
+                if ($ratio -le 0) {
+                    if ($sn.IndexOf($tn, [StringComparison]::Ordinal) -ge 0) { $ratio = [double]$tn.Length / $sn.Length }
+                    elseif ($tn.IndexOf($sn, [StringComparison]::Ordinal) -ge 0) { $ratio = [double]$sn.Length / $tn.Length }
+                    if ($ratio -lt $MinContainment) { continue }
+                }
+            }
             $matchedTerms = @($queryTerms | Where-Object { $src.IndexOf([string]$_, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
             [void]$hits.Add([pscustomobject]@{
                     Database = [string]$p.database
