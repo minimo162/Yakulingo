@@ -296,7 +296,10 @@
             <!-- 上へ開く。実機の窓（1380x860）では、この帯自体が y=574 にあり、
                  下へ開くと押すボタンが y=965 に出て画面の外だった（実測 2026-08-15）。
                  縦に長い中身を持つのはこの帯だけなので、ここにだけ付ける。 -->
-            <details id="cat-search-menu" class="cat-toolbar-menu is-drop-up"><summary aria-keyshortcuts="Control+H" title="検索の掛け方を変える・訳文をまとめて置き換える（Ctrl+H）">検索と置換</summary>
+            <!-- 開く向きは cat.js が上下の空きを測って決める（2026-08-17）。
+                 is-drop-up を固定で付けていたが、その根拠だった「実機1380」は
+                 実機ではなく、利用者の 1912 ではパネルが窓の上端の外へ出ていた。 -->
+            <details id="cat-search-menu" class="cat-toolbar-menu"><summary aria-keyshortcuts="Control+H" title="検索の掛け方を変える・訳文をまとめて置き換える（Ctrl+H）">検索と置換</summary>
               <div class="cat-search-tools">
                 <p class="muted">上の検索欄の文字列を、表示中の行の訳文の中で置き換えます。原文は変えません。</p>
                 <div class="cat-state-filters" role="group" aria-label="探す場所">

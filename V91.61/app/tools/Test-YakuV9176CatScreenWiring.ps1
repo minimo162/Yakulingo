@@ -643,7 +643,10 @@ try {
 
     Write-Host '(1) 本物の画面を Chromium で開いて、実際に押す' -ForegroundColor Cyan
     $stderrPath = Join-Path $tmp 'node-stderr.txt'
-    $arguments = @($driver, (Join-Path $root 'www'), $projectPath, $candidatePath, $observedPath, $previewPath, $cellPath, $qcPath, $qcPreflightPath, $qcCleanPath, $qcToolPath, $qcNumPath, $qcLabelPath, $placeablePath, $placeableResponsePath) | ForEach-Object { '"' + $_ + '"' }
+    # 既定は利用者の機械の実測（inner 1912x987）。1380 は「狭い版を踏ませたくて
+    # 選んだ値」であって実機ではない（2026-08-16 に CLAUDE.md を訂正した）。
+    $primaryViewport = '1912x987'
+    $arguments = @($driver, (Join-Path $root 'www'), $projectPath, $candidatePath, $observedPath, $previewPath, $cellPath, $qcPath, $qcPreflightPath, $qcCleanPath, $qcToolPath, $qcNumPath, $qcLabelPath, $placeablePath, $placeableResponsePath, $primaryViewport) | ForEach-Object { '"' + $_ + '"' }
     $proc = Start-Process -FilePath $nodeExe -ArgumentList $arguments -NoNewWindow -Wait -PassThru -RedirectStandardError $stderrPath
     $nodeErr = ''
     if (Test-Path -LiteralPath $stderrPath) { $nodeErr = [string][IO.File]::ReadAllText($stderrPath) }
@@ -653,6 +656,65 @@ try {
     Chk ($null -ne $o) '画面で観測した事実を受け取れた'
     if ($null -eq $o) { throw 'CAT_SCREEN_GATE_NO_OBSERVATION' }
     Chk ([string]::IsNullOrEmpty([string]$o.fatal)) ('画面の操作が途中で止まっていない' + $(if($o.fatal){' / ' + ([string]$o.fatal).Substring(0,[Math]::Min(400,([string]$o.fatal).Length))}else{''}))
+
+    # ---------------------------------------------------------------- (幅)
+    # **畳んだ帯が、窓の中に収まって開くか。ここだけ2つの幅で測る。**
+    #
+    # 2026-08-15 に「検索と置換」へ上へ開く指定を固定で付けた。根拠は「実機の窓
+    # 1380x860 では帯が y=574 にあり、下へ開くと画面の外」だったが、**その 1380 が
+    # 実機ではなかった**（CLAUDE.md を 2026-08-16 に訂正）。利用者の機械
+    # （inner 1912x987）では操作ブロックが折り返さないので帯は y=309 にあり、
+    # 高さ 427 のパネルを上へ開くと top=-127。中のボタンは y=-37〜-5 で
+    # 完全に画面の外にあり、押せなかった（2026-08-17 に実測）。
+    #
+    # **利用者が見ない幅のために入れた対策が、利用者が見る幅で同じ不具合を作っていた。**
+    # だから両方で測る。狭い版を守る意味はあるので消さないが、それを「実機」と呼ばない。
+    Write-Host '(幅) 畳んだ帯が、狭い窓でも実機の窓でも中に収まって開く' -ForegroundColor Cyan
+    $narrowObservedPath = Join-Path $tmp 'observed-narrow.json'
+    $narrowStderrPath = Join-Path $tmp 'node-stderr-narrow.txt'
+    $narrowArgs = @($driver, (Join-Path $root 'www'), $projectPath, $candidatePath, $narrowObservedPath, $previewPath, $cellPath, $qcPath, $qcPreflightPath, $qcCleanPath, $qcToolPath, $qcNumPath, $qcLabelPath, $placeablePath, $placeableResponsePath, '1380x900') | ForEach-Object { '"' + $_ + '"' }
+    $narrowProc = Start-Process -FilePath $nodeExe -ArgumentList $narrowArgs -NoNewWindow -Wait -PassThru -RedirectStandardError $narrowStderrPath
+    Chk ([int]$narrowProc.ExitCode -eq 0) '狭い窓でも運転席が走り切る'
+    $narrow = $null
+    if (Test-Path -LiteralPath $narrowObservedPath) { $narrow = [IO.File]::ReadAllText($narrowObservedPath, $utf8) | ConvertFrom-Json }
+    Chk ($null -ne $narrow) '狭い窓の観測も受け取れた'
+
+    foreach ($pair in @(
+        @{ Label = '実機 1912x987'; Data = $o },
+        @{ Label = '狭い版 1380x900'; Data = $narrow }
+    )) {
+        $data = $pair.Data
+        if ($null -eq $data) { continue }
+        $menus = @($data.menus)
+        Chk ($menus.Count -ge 1) ($pair.Label + ': 畳んだ帯を1つ以上見つけた')
+        # この題材で中身を持つ帯だけを見る。場所の一覧と変更の絞り込みは、
+        # 貼り付け本文の作業では空になる（そこへ「押せるものがある」を要求すると、
+        # 題材の性質を欠陥として数えることになる）。
+        $withContent = @($menus | Where-Object { [int]$_.buttons -ge 1 })
+        Chk ($withContent.Count -ge 1) ($pair.Label + ': 中身を持つ帯が1つ以上ある（この表明が空振りでないこと）')
+        foreach ($menu in $withContent) {
+            $name = if ([string]$menu.id) { [string]$menu.id } else { '(名前なし)' }
+            Chk ([bool]$menu.fits) ($pair.Label + ': ' + $name + ' のパネルが窓の中に収まる（top=' + [int]$menu.panelTop + ' bottom=' + [int]$menu.panelBottom + '）')
+            Chk ([int]$menu.offscreenButtons -eq 0) ($pair.Label + ': ' + $name + ' のボタンが1つも画面の外に出ない（外 ' + [int]$menu.offscreenButtons + ' 個）')
+        }
+    }
+    # **どちらの窓でも下へ開く。** これは「上へ開く指定が復活していない」ことの表明である。
+    #
+    # 測ってみると、この帯の起点は両方の窓で y≈309 にあり、パネルの高さ 427 より
+    # 小さい。つまり**上には物理的に入らない**ので、上へ開けば必ず窓の外へ出る。
+    # 2026-08-15 に固定で付けた is-drop-up は、この帯についてはどの窓でも誤りだった。
+    #
+    # 向きを決める仕組みそのもの（下に入らず上に入るときだけ上へ開く）は、
+    # **この題材では発火しない。** 起点がもっと下にある帯が要る。そういう帯は
+    # いま画面に無いので、ここでは測れないと正直に書いておく。
+    $narrowSearch = @(@($narrow.menus) | Where-Object { [string]$_.id -eq 'cat-search-menu' })
+    $wideSearch = @(@($o.menus) | Where-Object { [string]$_.id -eq 'cat-search-menu' })
+    Chk ($narrowSearch.Count -eq 1 -and $wideSearch.Count -eq 1) '検索と置換の帯を両方の窓で観測できた'
+    if ($narrowSearch.Count -eq 1 -and $wideSearch.Count -eq 1) {
+        Chk (-not [bool]$wideSearch[0].dropUp) '実機の窓では下へ開く（上には入らないため）'
+        Chk (-not [bool]$narrowSearch[0].dropUp) '狭い窓でも下へ開く（同じ理由）'
+        Chk ([int]$wideSearch[0].panelTop -gt 0 -and [int]$narrowSearch[0].panelTop -gt 0) ('どちらの窓でもパネルの上端が窓の中にある（実機 ' + [int]$wideSearch[0].panelTop + ' / 狭い版 ' + [int]$narrowSearch[0].panelTop + '）')
+    }
 
     # ------------------------------------------------------------------ (g)
     Write-Host '(g) 画面が JavaScript の例外を出していない' -ForegroundColor Cyan

@@ -85,6 +85,12 @@ const qcLabelProjectJson = fs.readFileSync(process.argv[13], 'utf8');
    返す。手で書くと、数字の取り出しを写経することになる。 */
 const placeableProjectJson = fs.readFileSync(process.argv[14], 'utf8');
 const placeableResponseJson = fs.readFileSync(process.argv[15], 'utf8');
+/* 窓の大きさ。既定は利用者の機械の実測（inner 1912x987）。
+   狭い版のレイアウトを踏ませたいときだけ 1380x900 を渡す。**両方を測る。**
+   1380 を「実機」と呼ばない（2026-08-16 に CLAUDE.md を訂正した）。 */
+const viewportArg = String(process.argv[16] || '1912x987');
+const viewportParts = viewportArg.split('x');
+const viewport = { width: Number(viewportParts[0]) || 1912, height: Number(viewportParts[1]) || 987 };
 const project = JSON.parse(projectJson);
 const previewProject = JSON.parse(previewProjectJson);
 const cellProject = JSON.parse(cellProjectJson);
@@ -193,8 +199,16 @@ function lastBody(name) { const c = calls(name); return c.length ? c[c.length - 
   await new Promise(function (r) { server.listen(0, '127.0.0.1', r); });
   const port = server.address().port;
   const browser = await chromium.launch();
-  /* 実機の窓幅は約 1380px（cat-workspace.css の @media 1400px に当たる）。 */
-  const page = await browser.newPage({ viewport: { width: 1380, height: 900 } });
+  /* ~~実機の窓幅は約 1380px~~ **誤りだった（2026-08-16 に訂正）。**
+     利用者の機械の実測は inner 1912x987 で、`@media (max-width: 1400px)` は
+     一度も当たらない。1380 は「狭い版を踏ませたくて選んだ値」であって実機ではない。
+
+     幅で結果が変わらないと思っていたが、**変わった**。1380 では上部の操作ブロックが
+     折り返して帯が下がるため、上へ開くメニューがたまたま画面に収まっていた。
+     1912 では帯が y=309 にあり、高さ 427 のパネルが top=-127 で窓の外へ出て、
+     中のボタンが押せなかった（2026-08-17 に実測して直した）。
+     **だから両方の幅で回す。** 幅は呼び出し側が渡す。 */
+  const page = await browser.newPage({ viewport: viewport });
   page.on('pageerror', function (e) { out.errors.push(String((e && e.message) || e)); });
   page.on('console', function (m) { if (m.type() === 'error') out.console.push(m.text()); });
   const dialogs = [];
@@ -823,6 +837,41 @@ function lastBody(name) { const c = calls(name); return c.length ? c[c.length - 
     await page.keyboard.press('7');
     await page.waitForTimeout(200);
     out.placeableAfterPlainDigit = await page.inputValue(placeableInput);
+
+    /* **畳んだ帯が、窓の中に収まって開くか。** これは窓の幅で答えが変わる。
+       2026-08-15 に「検索と置換」へ上へ開く指定を固定で付けたが、その根拠だった
+       1380 は実機ではなく、利用者の 1912 ではパネルが窓の上端の外へ出て
+       中のボタンが押せなかった。**両方の幅で測る。** */
+    out.viewport = { width: viewport.width, height: viewport.height };
+    out.menus = await page.evaluate(function () {
+      var result = [];
+      document.querySelectorAll('.cat-toolbar-menu').forEach(function (details) {
+        var summary = details.querySelector(':scope > summary');
+        var panel = details.querySelector(':scope > div');
+        if (!summary || !panel) return;
+        var wasOpen = details.open;
+        if (!wasOpen) { summary.click(); }
+        var rect = panel.getBoundingClientRect();
+        var buttons = [];
+        panel.querySelectorAll('button').forEach(function (b) {
+          var br = b.getBoundingClientRect();
+          if (br.width === 0 && br.height === 0) return;
+          buttons.push({ top: Math.round(br.top), bottom: Math.round(br.bottom) });
+        });
+        var offscreen = buttons.filter(function (b) { return b.top < 0 || b.bottom > window.innerHeight; }).length;
+        result.push({
+          id: details.id || '',
+          dropUp: details.classList.contains('is-drop-up'),
+          panelTop: Math.round(rect.top),
+          panelBottom: Math.round(rect.bottom),
+          fits: rect.top >= 0 && rect.bottom <= window.innerHeight,
+          buttons: buttons.length,
+          offscreenButtons: offscreen
+        });
+        if (!wasOpen) { summary.click(); }
+      });
+      return result;
+    });
   } catch (e) {
     out.fatal = String((e && e.stack) || e);
   } finally {

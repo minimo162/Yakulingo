@@ -3152,6 +3152,37 @@
     el('cat-document-finding-search').addEventListener('input',function(){var needle=String(this.value||'').trim().toLowerCase();document.querySelectorAll('#cat-document-findings .cat-document-finding').forEach(function(item){item.hidden=!!needle&&item.textContent.toLowerCase().indexOf(needle)<0;});});
     el('cat-copilot-review-run').addEventListener('click', runCopilotDocumentReview);
     el('cat-document-review-lenses').addEventListener('click', function (event) { var button = event.target.closest('[data-cat-coverage-key]'); if (button) acceptDocumentCoverage(button.getAttribute('data-cat-coverage-key'), button); });
+    /* 畳んだ帯（.cat-toolbar-menu）の開く向きを、開くたびに空きで決める。
+
+       2026-08-15 に「検索と置換」へ is-drop-up を**固定で**付けていた。根拠は
+       「実機の窓 1380x860 では帯が y=574 にあり、下へ開くと画面の外」だったが、
+       **その 1380 が実機ではなかった。** 利用者の機械（inner 1912x987）では
+       操作ブロックが折り返さないので帯は y=309 にあり、高さ 427 のパネルを
+       上へ開くと top=-127。窓の上端の外へ出て、中のボタンが押せなかった（実測）。
+
+       どちらの幅でも収まるように、**下に入るなら下、入らなければ上**にする。
+       上下どちらにも入らないときは下にして、パネル側の overflow:auto に任せる
+       （上へ出すと窓の外は掴めないが、下なら少なくとも中身を送れる）。 */
+    function syncToolbarMenuDirection(details) {
+        if (!details || !details.open) return;
+        var panel = details.querySelector(':scope > div');
+        if (!panel) return;
+        var summary = details.querySelector(':scope > summary');
+        if (!summary) return;
+        details.classList.remove('is-drop-up');
+        var rect = summary.getBoundingClientRect();
+        var height = panel.getBoundingClientRect().height;
+        var below = window.innerHeight - rect.bottom;
+        var above = rect.top;
+        if (below < height && above >= height) details.classList.add('is-drop-up');
+    }
+    document.querySelectorAll('.cat-toolbar-menu').forEach(function (details) {
+        details.addEventListener('toggle', function () { syncToolbarMenuDirection(details); });
+    });
+    window.addEventListener('resize', function () {
+        document.querySelectorAll('.cat-toolbar-menu[open]').forEach(syncToolbarMenuDirection);
+    });
+
     el('cat-preview-open').addEventListener('click', openPreview);
     el('cat-preview-dock-toggle').addEventListener('click', function () { setDockOpen(!dockOpen, true); });
     el('cat-preview-dock-close').addEventListener('click', function () { setDockOpen(false, true); });

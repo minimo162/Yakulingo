@@ -879,11 +879,30 @@ fs.writeFileSync(process.argv[3], JSON.stringify({
     Chk ($runReplaceBlock -match 'window\.confirm\(') '押したあと、進めるかどうかを一度たずねる'
     Chk ($runReplaceBlock -match 'replace-estimate') '押したときにサーバへ数え直させる'
     Chk ($runReplaceBlock -match '原文は変わりません') 'たずねる文に「原文は変わらない」と書く'
-    # 実機（1380x860）で開いて分かったこと2件。どちらも「名前があるか」では
-    # 見つからず、開いて測って初めて出た。消えないように表明で留める。
-    Chk ($catHtml -match 'id="cat-search-menu" class="cat-toolbar-menu is-drop-up"') '検索と置換の帯は上へ開く（下へ開くと押すボタンが画面の外に出た）'
+    # ~~実機（1380x860）で開いて分かったこと~~ **その 1380 が実機ではなかった。**
+    #
+    # 2026-08-15 に「下へ開くと押すボタンが画面の外に出た」として、この帯へ
+    # is-drop-up を**固定で**付け、ここでその字面を固定していた。
+    # 2026-08-17 に利用者の機械の幅（inner 1912x987）で測ったところ、**逆だった**。
+    #
+    #   帯の起点 y=309 / パネルの高さ 427
+    #   上へ開く → top=-127。「原文だけ」は y=-37〜-5 で完全に画面の外
+    #   下へ開く → 456〜883。窓（987）の中に収まる
+    #
+    # 起点が 309 しかないのにパネルが 427 あるので、**上には物理的に入らない。**
+    # あの固定指定は、この帯についてはどの幅でも誤りだった。狭い版（1380x900）でも
+    # 下へ開いて 353〜780 に収まる。
+    #
+    # いまは cat.js が開くたびに上下の空きを測って向きを決める。字面ではなく
+    # **実際に開いて窓に収まるか**を、Test-YakuV9176CatScreenWiring.ps1 が
+    # 両方の幅で測っている。ここでは仕組みが在ることだけを見る。
+    Chk ($catHtml -notmatch 'id="cat-search-menu"[^>]*is-drop-up') '検索と置換の帯に、上へ開く指定を固定で付けていない'
     $catCss = [IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'assets\cat-workspace.css'))
-    Chk ($catCss -match '\.cat-toolbar-menu\.is-drop-up > div') '上へ開く指定が cat-workspace.css にある'
+    Chk ($catCss -match '\.cat-toolbar-menu\.is-drop-up > div') '上へ開く指定そのものは残っている（空きが無いときに使う）'
+    $menuDirection = Get-YakuCatJsBlock -Text $catJs -Header '    function syncToolbarMenuDirection('
+    Chk (-not [string]::IsNullOrWhiteSpace($menuDirection)) '開く向きを決める処理が cat.js にある'
+    Chk ($menuDirection -match 'innerHeight') '窓の高さを見て決めている'
+    Chk ($menuDirection -match "classList\.remove\('is-drop-up'\)") '毎回いったん外してから決め直す（前の向きが残らない）'
     Chk ($catCss -notmatch '#cat-replace-summary' -and $catCss -notmatch '#cat-replace-run') '置換の見た目に ID セレクタを使っていない（詳細度を上げない）'
 
     Write-Host ''
