@@ -7,6 +7,11 @@
   <meta name="yaku-file-max-bytes" content="__YAKU_MAX_UPLOAD_BYTES__">
   <meta name="yaku-max-batch-chars" content="__YAKU_MAX_BATCH_CHARS__">
   <meta name="yaku-amount-notation" content="__YAKU_AMOUNT_NOTATION__">
+  <!-- 書き戻しで実際にセルへ設定される書体。体裁プレビューの幅は、これで測る。
+       2026-08-17 まで測定側は 14.7px Calibri 固定で、書く側は Arial / MS Pゴシック
+       だった。Arial のほうが広いので、判定は「収まる」と言い過ぎる側へ外れていた。 -->
+  <meta name="yaku-output-font" content="__YAKU_OUTPUT_FONT__">
+  <meta name="yaku-output-font-jp" content="__YAKU_OUTPUT_FONT_JP__">
   <meta name="yaku-tour" content="__YAKU_TOUR__">
   <!-- 過去の対訳の取り込みで来たかどうか。1 のときだけ WebAssembly が使える。 -->
   <meta name="yaku-import" content="__YAKU_IMPORT__">

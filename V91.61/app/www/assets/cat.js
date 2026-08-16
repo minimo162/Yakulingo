@@ -2188,11 +2188,29 @@
     return Math.max(1, Math.round(Number(points) * 4 / 3));
   }
   var previewMeasureCanvas = null;
+  /* 幅は「書き戻しが実際にセルへ設定する書体」で測る。
+     2026-08-17 まで 14.7px Calibri 固定だった。書く側は Arial（和→英）/
+     MS Pゴシック（英→和）で、Arial のほうが同じ字上げで広い。
+     つまり測定は「収まる」と言い過ぎる側へ外れていた。甘い側の誤りは
+     「収まると判定して実際は切れる」という形で出るので、判定に使うなら直す。
+     設定が空（書体を変更しない）のときは、原本の書体が分からないので
+     Calibri へは戻さず、Excel の既定である Calibri/MS Pゴシックを名乗る
+     フォールバックだけを残す。 */
+  function previewOutputFont() {
+    var name = 'meta[name="yaku-output-font"]';
+    if (project && project.direction === 'to_jp') name = 'meta[name="yaku-output-font-jp"]';
+    var node = document.querySelector(name);
+    var value = node ? String(node.getAttribute('content') || '').trim() : '';
+    if (!value) return 'Calibri, Arial, sans-serif';
+    /* 書体名に空白が入る（MS Pゴシック / Times New Roman）。CSS の font 短縮形へ
+       そのまま置くと壊れるので引用する。 */
+    return '"' + value.replace(/"/g, '') + '", Calibri, Arial, sans-serif';
+  }
   function previewTextWidthPx(text, bold) {
     if (!previewMeasureCanvas) previewMeasureCanvas = document.createElement('canvas');
     var context = previewMeasureCanvas.getContext && previewMeasureCanvas.getContext('2d');
     if (!context) return Array.from(String(text || '')).length * 7;
-    context.font = (bold ? '700 ' : '') + '14.7px Calibri, Arial, sans-serif';
+    context.font = (bold ? '700 ' : '') + '14.7px ' + previewOutputFont();
     return context.measureText(String(text || '')).width;
   }
   function previewCellHtml(segment, layout, row, column, span) {

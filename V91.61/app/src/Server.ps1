@@ -2005,6 +2005,14 @@ function Serve-YakuAppPage {
     # 画面が「1文ずつ確認して始める」を勧める境目に使う。勝手な数字は置かない。
     $html = $html.Replace('__YAKU_MAX_BATCH_CHARS__', [string](Get-YakuMaxCharsPerFileBatch -Settings $settings))
     $html = $html.Replace('__YAKU_AMOUNT_NOTATION__', (ConvertTo-YakuHtml (Get-YakuAmountNotation -Settings $settings)))
+    # 体裁プレビューが幅を測る書体。書き戻しがセルへ設定するものと同じでなければ、
+    # 画面の「収まる/はみ出す」は別の書体の話になる（2026-08-17）。
+    $outputFont = ''
+    try { $outputFont = [string]$settings.output_font_name } catch { $outputFont = '' }
+    $outputFontJp = ''
+    try { $outputFontJp = [string]$settings.output_font_name_jp } catch { $outputFontJp = '' }
+    $html = $html.Replace('__YAKU_OUTPUT_FONT__', (ConvertTo-YakuHtml $outputFont))
+    $html = $html.Replace('__YAKU_OUTPUT_FONT_JP__', (ConvertTo-YakuHtml $outputFontJp))
     $html = $html.Replace('__YAKU_TOUR__', $(if ($StartTour) { '1' } else { '' }))
     $html = $html.Replace('__YAKU_VIEW__', $(if ($InitialView -eq 'workspace') { ' data-cat-view="workspace"' } else { '' }))
     $html = $html.Replace('__YAKU_IMPORT__', $(if ($AllowWasm) { '1' } else { '' }))

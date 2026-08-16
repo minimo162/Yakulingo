@@ -59,6 +59,7 @@ function Get-YakuSheetLayoutFromXlsx {
 
         # スタイル番号 -> 折り返し・寄せ・太字。cellXfs の並び順がそのまま番号になる。
         $wrapByStyle = @{}
+        $shrinkByStyle = @{}
         $alignByStyle = @{}
         $boldByStyle = @{}
         $stylesXml = Read-YakuZipText -Archive $zip -Name 'xl/styles.xml'
@@ -80,6 +81,11 @@ function Get-YakuSheetLayoutFromXlsx {
                 $index = 0
                 foreach ($xf in [regex]::Matches($cellXfs.Groups[1].Value, '(?s)<xf\b.*?(?:/>|</xf>)')) {
                     $wrapByStyle[$index] = ($xf.Value -match 'wrapText="1"')
+                    # 縮小して全体を表示（shrinkToFit）。付いているセルは Excel が
+                    # 字を縮めて収めるので、幅からのはみ出し判定の対象ではない。
+                    # 2026-08-17 まで読んでいなかったため、原本で既に収まっている
+                    # セルが「はみ出し」と判定され、短縮の対象になっていた。
+                    $shrinkByStyle[$index] = ($xf.Value -match 'shrinkToFit="1"')
                     $horizontal = [regex]::Match($xf.Value, 'horizontal="([a-z]+)"')
                     $alignByStyle[$index] = if ($horizontal.Success) { $horizontal.Groups[1].Value } else { '' }
                     $fontId = [regex]::Match($xf.Value, 'fontId="(\d+)"')
@@ -111,9 +117,20 @@ function Get-YakuSheetLayoutFromXlsx {
             }
 
             $columns = New-Object System.Collections.Generic.List[object]
+            # width 属性の無い <col> は幅が分からない。既定幅として数えると、
+            # 隠し列などに 8.43 ぶんの余地があることになり、判定が甘い側へ外れる
+            # （2026-08-17）。列の範囲だけ別に残し、そこは「測れない」として扱う。
+            $unknownWidthColumns = New-Object System.Collections.Generic.List[object]
             foreach ($col in [regex]::Matches($sheetXml, '<col\b[^>]*/?>')) {
                 $min = [regex]::Match($col.Value, 'min="(\d+)"'); $max = [regex]::Match($col.Value, 'max="(\d+)"')
                 $width = [regex]::Match($col.Value, 'width="([0-9.]+)"')
+                if ($min.Success -and $max.Success -and -not $width.Success) {
+                    [void]$unknownWidthColumns.Add([ordered]@{
+                        min = [int]$min.Groups[1].Value
+                        max = [int]$max.Groups[1].Value
+                        hidden = ($col.Value -match 'hidden=\"1\"')
+                    })
+                }
                 if (-not ($min.Success -and $max.Success -and $width.Success)) { continue }
                 [void]$columns.Add([ordered]@{
                     min = [int]$min.Groups[1].Value
@@ -159,10 +176,11 @@ function Get-YakuSheetLayoutFromXlsx {
             foreach ($cell in [regex]::Matches($sheetXml, '<c\b[^>]*r="([A-Z]+\d+)"[^>]*s="(\d+)"[^>]*>')) {
                 $style = [int]$cell.Groups[2].Value
                 $wrap = [bool]$wrapByStyle[$style]
+                $shrink = [bool]$shrinkByStyle[$style]
                 $align = [string]$alignByStyle[$style]
                 $bold = [bool]$boldByStyle[$style]
-                if (-not $wrap -and -not $bold -and [string]::IsNullOrEmpty($align)) { continue }
-                [void]$cells.Add([ordered]@{ address = [string]$cell.Groups[1].Value; wrap = $wrap; align = $align; bold = $bold })
+                if (-not $wrap -and -not $shrink -and -not $bold -and [string]::IsNullOrEmpty($align)) { continue }
+                [void]$cells.Add([ordered]@{ address = [string]$cell.Groups[1].Value; wrap = $wrap; shrink = $shrink; align = $align; bold = $bold })
             }
 
             # ここは @($columns) と書いてはいけない。PowerShell 5.1 の
@@ -174,6 +192,7 @@ function Get-YakuSheetLayoutFromXlsx {
                 default_width = [double]$defaultWidth
                 default_height = [double]$defaultHeight
                 columns = $columns.ToArray()
+                unknown_width_columns = $unknownWidthColumns.ToArray()
                 merges = $merges.ToArray()
                 occupied_cells = @($occupiedCells.ToArray() | Sort-Object -Unique)
                 formula_cells = @($formulaCells.ToArray() | Sort-Object -Unique)
