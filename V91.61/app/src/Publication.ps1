@@ -89,7 +89,15 @@ function New-YakuCatProtectedPublicationCandidateRequest {
     $payload=[ordered]@{segment_id=[string]$segment.SegmentId;source=[string]$segment.Text;canonical_translation=[string]$segment.Translation;allowed_abbreviations=$allowed;required_terms=@($context.Value.required_terms);protected_facts=@($context.Value.protected_facts);placement_budget=$safeBudget;surrounding_context=$context.Value.surrounding_context}
     $original=$payload|ConvertTo-Json -Depth 8 -Compress;$mask=New-YakuNumericMaskMap -Text $original -Root $Root -Direction ([string]$Project.Direction) -Location 'publication-candidate'
     $field=[pscustomobject]@{Name='publication_sidecar';OriginalText=$original;ProtectedText=[string]$mask.Text;NumericMaskMaps=@($mask.Map)}
-    $package=New-YakuProtectedPromptPackage -Kind compaction -Root $Root -Direction ([string]$Project.Direction) -Fields @($field) -Arguments ([pscustomobject]@{ContractVersion='compaction-candidate-v1'})
+    # max_chars はクライアントが現訳の長さから作る概算目標であり、実際のセル幅ではない。
+    # 数字を含むsidecarは必ずマスクしたままにし、固定プロンプト用には安全な2桁だけを
+    # 別引数で渡す。無効値は従来どおり目標を指示しない。
+    [int]$promptTarget=0
+    try{
+        [int]$parsedTarget=0
+        if([int]::TryParse([string]$PlacementBudget.max_chars,[ref]$parsedTarget) -and $parsedTarget -ge 8 -and $parsedTarget -le 99){$promptTarget=$parsedTarget}
+    }catch{}
+    $package=New-YakuProtectedPromptPackage -Kind compaction -Root $Root -Direction ([string]$Project.Direction) -Fields @($field) -Arguments ([pscustomobject]@{ContractVersion='compaction-candidate-v1';MaxChars=$promptTarget})
     $null=Assert-YakuNumericPromptProtected -Prompt ([string]$package.Prompt) -MaskMap $mask.Map
     $budgetHash=Get-YakuCatSourceIntegrityHash -Text ($PlacementBudget|ConvertTo-Json -Depth 6 -Compress)
     return [pscustomobject]@{Envelope=$package.Envelope;RequestId=[string]$package.RequestId;ContractVersion='compaction-candidate-v1';ProjectId=[string]$Project.Id;ProjectRevision=[int]$Project.Revision;SegmentId=[string]$segment.SegmentId;SegmentIndex=$Index;SourceHash=[string]$segment.SourceIntegrityHash;CanonicalHash=(Get-YakuCatSourceIntegrityHash -Text ([string]$segment.Translation));SourceFactsHash=[string]$context.FactsHash;TerminologyHash=[string]$Project.TerminologySnapshotHash;AbbreviationRegistryHash=(Get-YakuCatAbbreviationRegistryHash -Project $Project);PlacementBudget=$PlacementBudget;PlacementBudgetHash=$budgetHash;DependencyFingerprint=(Get-YakuCatPublicationCandidateDependencyFingerprint -Project $Project -Segment $segment -PlacementBudgetHash $budgetHash);NumericMaskMap=$mask.Map;ProtectedSidecar=[string]$mask.Text;AllowedAbbreviations=$allowed}
