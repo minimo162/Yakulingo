@@ -2,6 +2,7 @@
     "note":  "COMPRESSED source rows - table headings, section labels and cell captions from Mazda published documents, taken from the app own alignment. The first fixture (prose sentences) is the easy half: clean published prose that any MT handles. This one is the half where the source is short and the translation has to fit the space it is given. The English side is the published rendering.",
     "space_rule":  "source_width = 2 x source characters ignoring whitespace, because a CJK glyph is about two Latin character widths. reference_fits says whether the PUBLISHED English stayed inside that budget - it is the yardstick, not a pass mark.",
     "origin":  "corpus-build/*/pairs.jsonl, short rows, page markers and space-glued rows rejected",
+    "measured":  "2026-08-17. llm_width_en: plain LLM told the width budget. llm_nowidth_en: the SAME model with the width instruction removed - the control. nani_en: nani.now free tier, which has nowhere to state a width. Empty fields are not yet run.",
     "rows":  [
                  {
                      "id":  "C01",
@@ -10,11 +11,13 @@
                      "reference_en":  "The 159th Fiscal Year (From April 1, 2024 to March 31, 2025)",
                      "source_width":  36,
                      "reference_fits":  false,
+                     "llm_width_en":  "159th Term (Ended March 31, 2025)",
+                     "llm_nowidth_en":  "The 159th Fiscal Year (Ended March 31, 2025)",
+                     "nani_en":  "159th Term (Ended March 31, 2025)",
                      "yakulingo_en":  "",
+                     "yakulingo_brief_en":  "",
                      "smartcat_en":  "",
-                     "deepl_en":  "",
-                     "nani_en":  "",
-                     "llm_en":  ""
+                     "deepl_en":  ""
                  },
                  {
                      "id":  "C02",
@@ -23,11 +26,13 @@
                      "reference_en":  "Introduced Mazda Cosmo Sports (110S), Mazda\u0027s first rotary engine vehicle",
                      "source_width":  52,
                      "reference_fits":  false,
+                     "llm_width_en":  "May Launched Cosmo Sport, first rotary-engine car",
+                     "llm_nowidth_en":  "May Launched the Cosmo Sport, the first rotary engine-powered vehicle",
+                     "nani_en":  "May Released the Cosmo Sport, the first rotary engine-equipped vehicle",
                      "yakulingo_en":  "",
+                     "yakulingo_brief_en":  "",
                      "smartcat_en":  "",
-                     "deepl_en":  "",
-                     "nani_en":  "",
-                     "llm_en":  ""
+                     "deepl_en":  ""
                  },
                  {
                      "id":  "C03",
@@ -36,11 +41,13 @@
                      "reference_en":  "As of March 31, 2026",
                      "source_width":  24,
                      "reference_fits":  true,
+                     "llm_width_en":  "As of March 31, 2026",
+                     "llm_nowidth_en":  "As of March 31, 2026",
+                     "nani_en":  "As of March 31, 2026",
                      "yakulingo_en":  "",
+                     "yakulingo_brief_en":  "",
                      "smartcat_en":  "",
-                     "deepl_en":  "",
-                     "nani_en":  "",
-                     "llm_en":  ""
+                     "deepl_en":  ""
                  },
                  {
                      "id":  "C04",
@@ -49,11 +56,13 @@
                      "reference_en":  "Notes:",
                      "source_width":  10,
                      "reference_fits":  true,
+                     "llm_width_en":  "※ Notes",
+                     "llm_nowidth_en":  "* Notes",
+                     "nani_en":  "* Notes",
                      "yakulingo_en":  "",
+                     "yakulingo_brief_en":  "",
                      "smartcat_en":  "",
-                     "deepl_en":  "",
-                     "nani_en":  "",
-                     "llm_en":  ""
+                     "deepl_en":  ""
                  },
                  {
                      "id":  "C05",
@@ -62,11 +71,13 @@
                      "reference_en":  "(Consolidated Financial Results)",
                      "source_width":  12,
                      "reference_fits":  false,
+                     "llm_width_en":  "[Operating Results]",
+                     "llm_nowidth_en":  "[Operating Results]",
+                     "nani_en":  "[Operating Results]",
                      "yakulingo_en":  "",
+                     "yakulingo_brief_en":  "",
                      "smartcat_en":  "",
-                     "deepl_en":  "",
-                     "nani_en":  "",
-                     "llm_en":  ""
+                     "deepl_en":  ""
                  },
                  {
                      "id":  "C06",
@@ -75,11 +86,13 @@
                      "reference_en":  "2. Quarterly Consolidated Financial Statements and Major Footnotes",
                      "source_width":  34,
                      "reference_fits":  false,
+                     "llm_width_en":  "2. Quarterly Consol. FS \u0026 Key Notes",
+                     "llm_nowidth_en":  "2. Quarterly Consolidated Financial Statements and Major Notes",
+                     "nani_en":  "2. Quarterly Consolidated Financial Statements and Principal Notes",
                      "yakulingo_en":  "",
+                     "yakulingo_brief_en":  "",
                      "smartcat_en":  "",
-                     "deepl_en":  "",
-                     "nani_en":  "",
-                     "llm_en":  ""
+                     "deepl_en":  ""
                  },
                  {
                      "id":  "C07",
@@ -88,11 +101,13 @@
                      "reference_en":  "Quarterly Consolidated Statements of Operations",
                      "source_width":  20,
                      "reference_fits":  false,
+                     "llm_width_en":  "Quarterly Consol. P/L",
+                     "llm_nowidth_en":  "Quarterly Consolidated Statement of Income",
+                     "nani_en":  "Quarterly Consolidated Statements of Income",
                      "yakulingo_en":  "",
+                     "yakulingo_brief_en":  "",
                      "smartcat_en":  "",
-                     "deepl_en":  "",
-                     "nani_en":  "",
-                     "llm_en":  ""
+                     "deepl_en":  ""
                  },
                  {
                      "id":  "C08",
@@ -101,11 +116,13 @@
                      "reference_en":  "(Significant Changes in the Amount of Equity)",
                      "source_width":  48,
                      "reference_fits":  true,
+                     "llm_width_en":  "(Notes on Major Changes in Shareholders\u0027 Equity)",
+                     "llm_nowidth_en":  "(Note on Significant Changes in the Amount of Shareholders\u0027 Equity)",
+                     "nani_en":  "(Note on Significant Changes in the Amount of Shareholders\u0027 Equity)",
                      "yakulingo_en":  "",
+                     "yakulingo_brief_en":  "",
                      "smartcat_en":  "",
-                     "deepl_en":  "",
-                     "nani_en":  "",
-                     "llm_en":  ""
+                     "deepl_en":  ""
                  },
                  {
                      "id":  "C09",
@@ -114,11 +131,13 @@
                      "reference_en":  "Dividends Per Share",
                      "source_width":  10,
                      "reference_fits":  false,
+                     "llm_width_en":  "Annual dividends",
+                     "llm_nowidth_en":  "Annual Dividends",
+                     "nani_en":  "Annual Dividends",
                      "yakulingo_en":  "",
+                     "yakulingo_brief_en":  "",
                      "smartcat_en":  "",
-                     "deepl_en":  "",
-                     "nani_en":  "",
-                     "llm_en":  ""
+                     "deepl_en":  ""
                  },
                  {
                      "id":  "C10",
@@ -127,11 +146,13 @@
                      "reference_en":  "Interim Consolidated Statements of Operations",
                      "source_width":  18,
                      "reference_fits":  false,
+                     "llm_width_en":  "Interim Consol. P/L",
+                     "llm_nowidth_en":  "Interim Consolidated Statement of Income",
+                     "nani_en":  "Interim Consolidated Statements of Income",
                      "yakulingo_en":  "",
+                     "yakulingo_brief_en":  "",
                      "smartcat_en":  "",
-                     "deepl_en":  "",
-                     "nani_en":  "",
-                     "llm_en":  ""
+                     "deepl_en":  ""
                  },
                  {
                      "id":  "C11",
@@ -140,11 +161,13 @@
                      "reference_en":  "(Significant Subsequent Events)",
                      "source_width":  18,
                      "reference_fits":  false,
+                     "llm_width_en":  "(Material Subsequent Events)",
+                     "llm_nowidth_en":  "(Significant Subsequent Events)",
+                     "nani_en":  "(Significant Subsequent Events)",
                      "yakulingo_en":  "",
+                     "yakulingo_brief_en":  "",
                      "smartcat_en":  "",
-                     "deepl_en":  "",
-                     "nani_en":  "",
-                     "llm_en":  ""
+                     "deepl_en":  ""
                  },
                  {
                      "id":  "C12",
@@ -153,11 +176,13 @@
                      "reference_en":  "\u003cOther markets\u003e",
                      "source_width":  16,
                      "reference_fits":  true,
+                     "llm_width_en":  "\u003cOther Markets\u003e",
+                     "llm_nowidth_en":  "\u003cOther Markets\u003e",
+                     "nani_en":  "\u003cOther Markets\u003e",
                      "yakulingo_en":  "",
+                     "yakulingo_brief_en":  "",
                      "smartcat_en":  "",
-                     "deepl_en":  "",
-                     "nani_en":  "",
-                     "llm_en":  ""
+                     "deepl_en":  ""
                  },
                  {
                      "id":  "C13",
@@ -166,11 +191,13 @@
                      "reference_en":  "(1) Consolidated Balance Sheets",
                      "source_width":  20,
                      "reference_fits":  false,
+                     "llm_width_en":  "(1) Consolidated B/S",
+                     "llm_nowidth_en":  "(1) Consolidated Balance Sheet",
+                     "nani_en":  "(1) Consolidated Balance Sheets",
                      "yakulingo_en":  "",
+                     "yakulingo_brief_en":  "",
                      "smartcat_en":  "",
-                     "deepl_en":  "",
-                     "nani_en":  "",
-                     "llm_en":  ""
+                     "deepl_en":  ""
                  },
                  {
                      "id":  "C14",
@@ -179,11 +206,13 @@
                      "reference_en":  "(5) Footnotes to the Consolidated Financial Statements",
                      "source_width":  34,
                      "reference_fits":  false,
+                     "llm_width_en":  "(5) Notes to Consolidated FS",
+                     "llm_nowidth_en":  "(5) Notes to Consolidated Financial Statements",
+                     "nani_en":  "(5) Notes to Consolidated Financial Statements",
                      "yakulingo_en":  "",
+                     "yakulingo_brief_en":  "",
                      "smartcat_en":  "",
-                     "deepl_en":  "",
-                     "nani_en":  "",
-                     "llm_en":  ""
+                     "deepl_en":  ""
                  },
                  {
                      "id":  "C15",
@@ -192,11 +221,13 @@
                      "reference_en":  "Diluted net income per share of common stock",
                      "source_width":  34,
                      "reference_fits":  false,
+                     "llm_width_en":  "Diluted net income per share",
+                     "llm_nowidth_en":  "Diluted Net Income per Share",
+                     "nani_en":  "Diluted Earnings Per Share",
                      "yakulingo_en":  "",
+                     "yakulingo_brief_en":  "",
                      "smartcat_en":  "",
-                     "deepl_en":  "",
-                     "nani_en":  "",
-                     "llm_en":  ""
+                     "deepl_en":  ""
                  },
                  {
                      "id":  "C16",
@@ -205,11 +236,13 @@
                      "reference_en":  "(3) Unconsolidated Statements of Changes in Net Asset",
                      "source_width":  26,
                      "reference_fits":  false,
+                     "llm_width_en":  "(3) Statement of Changes in Equity",
+                     "llm_nowidth_en":  "(3) Statement of Changes in Net Assets",
+                     "nani_en":  "(3) Consolidated Statements of Changes in Net Equity",
                      "yakulingo_en":  "",
+                     "yakulingo_brief_en":  "",
                      "smartcat_en":  "",
-                     "deepl_en":  "",
-                     "nani_en":  "",
-                     "llm_en":  ""
+                     "deepl_en":  ""
                  },
                  {
                      "id":  "C17",
@@ -218,11 +251,13 @@
                      "reference_en":  "Notes on Changes in Accounting Estimate",
                      "source_width":  24,
                      "reference_fits":  false,
+                     "llm_width_en":  "(Changes in Accounting Estimates)",
+                     "llm_nowidth_en":  "(Changes in Accounting Estimates)",
+                     "nani_en":  "(Changes in Accounting Estimates)",
                      "yakulingo_en":  "",
+                     "yakulingo_brief_en":  "",
                      "smartcat_en":  "",
-                     "deepl_en":  "",
-                     "nani_en":  "",
-                     "llm_en":  ""
+                     "deepl_en":  ""
                  },
                  {
                      "id":  "C18",
@@ -231,11 +266,13 @@
                      "reference_en":  "67 Corporate Governance 78 External Recognition",
                      "source_width":  54,
                      "reference_fits":  true,
+                     "llm_width_en":  "67 Corporate Governance 78 Major External Recognition",
+                     "llm_nowidth_en":  "67 Corporate Governance 78 Major External Selections and Evaluations",
+                     "nani_en":  "67 Corporate Governance 78 Major External Selections and Evaluations",
                      "yakulingo_en":  "",
+                     "yakulingo_brief_en":  "",
                      "smartcat_en":  "",
-                     "deepl_en":  "",
-                     "nani_en":  "",
-                     "llm_en":  ""
+                     "deepl_en":  ""
                  },
                  {
                      "id":  "C19",
@@ -244,11 +281,13 @@
                      "reference_en":  "MAZDA\u0027S MISSION AND VISION",
                      "source_width":  22,
                      "reference_fits":  false,
+                     "llm_width_en":  "Mazda\u0027s Mission \u0026 Vision",
+                     "llm_nowidth_en":  "Mazda\u0027s Mission and Vision",
+                     "nani_en":  "Mazda\u0027s Mission and Vision",
                      "yakulingo_en":  "",
+                     "yakulingo_brief_en":  "",
                      "smartcat_en":  "",
-                     "deepl_en":  "",
-                     "nani_en":  "",
-                     "llm_en":  ""
+                     "deepl_en":  ""
                  },
                  {
                      "id":  "C20",
@@ -257,11 +296,13 @@
                      "reference_en":  "41 Digital Transformation and AI Transformation Initiatives",
                      "source_width":  24,
                      "reference_fits":  false,
+                     "llm_width_en":  "41 DX/AX Initiatives",
+                     "llm_nowidth_en":  "41 DX/AX Initiatives",
+                     "nani_en":  "41 DX / AX Initiatives",
                      "yakulingo_en":  "",
+                     "yakulingo_brief_en":  "",
                      "smartcat_en":  "",
-                     "deepl_en":  "",
-                     "nani_en":  "",
-                     "llm_en":  ""
+                     "deepl_en":  ""
                  }
              ]
 }
