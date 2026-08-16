@@ -133,6 +133,7 @@ tools/Test-YakuV9179OutputFont.ps1	crlf
 tools/Test-YakuV917RuntimeWarnings.ps1	crlf
 tools/Test-YakuV9180SharedStringProof.ps1	crlf
 tools/Test-YakuV9181PlainProof.ps1	crlf
+tools/Test-YakuV9182PreviewDock.ps1	crlf
 tools/V64-HTTP-Boundary-Test.ps1	crlf
 tools/V65-Saving-Validation-Test.ps1	crlf
 tools/Wait-YakuCopilotResponse-Watcher-Test.ps1	crlf

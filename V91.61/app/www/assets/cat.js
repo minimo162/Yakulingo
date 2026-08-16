@@ -673,6 +673,9 @@
     }).join('');
   }
   function renderInspector() {
+    /* 選択が動いたら、常設の体裁の印も動かす。ここは行を移るたびに通る唯一の
+       場所なので、追随の入口をここに置く。組み直しはしない（印の付け替えだけ）。 */
+    syncDockActive(false);
     var segment = activeSegment(), all = project.segments || [];
     document.querySelectorAll('[data-cat-inspector]').forEach(function (button) { var selected = button.getAttribute('data-cat-inspector') === inspectorTab; button.setAttribute('aria-selected', String(selected)); });
     ['candidates','qc','context'].forEach(function (name) { el('cat-panel-' + name).hidden = name !== inspectorTab; });
@@ -911,6 +914,8 @@
        いた。この帯は「異常を知らせる」ときだけ使う。読み上げは sr-only の
        #cat-current-summary が担う。 */
     status('');
+    /* 常設の体裁は、中身が変わったここでだけ組み直す。行を移るたびではない。 */
+    renderDockPreview();
     if (focusFirst) window.setTimeout(function () { var first = document.querySelector('.is-active [data-cat-input]') || document.querySelector('[data-cat-input]'); YakuCommon.focus(first); }, 0);
   }
 
@@ -2215,7 +2220,10 @@
       (wrap ? ' is-wrap' : '') + (layout && layout.bold[key] ? ' is-bold' : '') +
       (overflowRisk ? ' is-overflow-risk' : '') +
       (Number(segment.index) === Number(activeIndex) ? ' is-active' : '') +
-      '"' + style + placementAction + (overflowRisk ? ' aria-label="収まり要確認: PDFで切れを確認してください"' : '') + '>' +
+      /* 常設の体裁が選択に追随するとき、印を付け替える相手をここで名指しできる
+         ようにする。data-cat-qa-jump は配置つきのセルには付かないので当てにできない。 */
+      '" data-cat-preview-index="' + Number(segment.index) + '"' + style + placementAction +
+      (overflowRisk ? ' aria-label="収まり要確認: PDFで切れを確認してください"' : '') + '>' +
       esc(value.text) + '</button>';
   }
   /* Word の並び。見出しは段の深さで、表は格子で出す。Excel と同じ考えで、
@@ -2226,7 +2234,8 @@
     return '<button type="button" class="cat-preview-paragraph' + (extraClass || '') +
       (value.missing ? ' is-missing' : '') +
       (Number(segment.index) === Number(activeIndex) ? ' is-active' : '') +
-      '" data-cat-qa-jump="' + Number(segment.index) + '">' + esc(value.text) + '</button>';
+      '" data-cat-preview-index="' + Number(segment.index) + '"' +
+      ' data-cat-qa-jump="' + Number(segment.index) + '">' + esc(value.text) + '</button>';
   }
   function buildFlow(flow) {
     var html = '', index = 0;
@@ -2366,6 +2375,125 @@
     el('cat-preview-body').innerHTML = buildPreview();
     var active = el('cat-preview-body').querySelector('.is-active');
     if (active && active.scrollIntoView) active.scrollIntoView({ block: 'center' });
+  }
+
+  /* ---------------------------------------------------------------- 体裁の常設
+     格子の下に体裁を出したまま訳す（2026-08-16）。これまでは「体裁で見る」
+     ダイアログの中だけにあり、開くと格子が見えないので、訳しながらの
+     手がかりにならなかった。Smartcat はプレビューを下部に常設し、細い仕切りで
+     広げられ、選択に追随する（実測。出典 _docs/対比_Smartcat_2026-08-16.md）。
+
+     ここに出すのは「Excelへの配置」だけである。元のファイルを開かず、画面が
+     既に持っている行だけで組むので軽い。印刷結果PDFは重いのでダイアログに残す。
+
+     **選択が動くたびに組み直さない。** buildPreview() は全行ぶんのHTMLを作るので、
+     行を1つ移るたびに走らせると、行数に比例した費用を毎回払うことになる。
+     中身が変わったとき（render）だけ組み直し、選択の追随は印の付け替えだけにする。 */
+  var dockSide = 'target', dockOpen = false, dockHeight = 180;
+
+  function buildPreviewFor(side) {
+    /* buildPreview() とその下請けは previewSide を見る。引数で引き回すと
+       触る場所が増えるので、ここだけで入れ替えて必ず戻す。 */
+    var keep = previewSide;
+    previewSide = side;
+    try { return buildPreview(); } finally { previewSide = keep; }
+  }
+
+  function setDockHeight(px, fromUser) {
+    dockHeight = Math.max(80, Math.min(600, Math.round(Number(px) || 180)));
+    var dock = el('cat-preview-dock');
+    if (dock) dock.style.setProperty('--cat-dock-height', dockHeight + 'px');
+    var splitter = el('cat-preview-dock-splitter');
+    if (splitter) splitter.setAttribute('aria-valuenow', String(dockHeight));
+    if (fromUser) { try { window.localStorage.setItem('yaku-cat-dock-height', String(dockHeight)); } catch (_) {} }
+  }
+
+  function renderDockPreview() {
+    if (!dockOpen || !project) return;
+    document.querySelectorAll('[data-cat-dock-side]').forEach(function (button) {
+      button.setAttribute('aria-pressed', String(button.getAttribute('data-cat-dock-side') === dockSide));
+    });
+    var missing = ((project && project.segments) || []).filter(function (segment) {
+      return !String(segment.translation || '').trim();
+    }).length;
+    el('cat-preview-dock-note').textContent = dockSide === 'target' && missing
+      ? '薄い字は、訳文がまだ無いところです。'
+      : '';
+    el('cat-preview-dock-body').innerHTML = buildPreviewFor(dockSide);
+    syncDockActive(true);
+  }
+
+  function syncDockActive(center) {
+    if (!dockOpen) return;
+    var host = el('cat-preview-dock-body');
+    if (!host) return;
+    var next = host.querySelector('[data-cat-preview-index="' + Number(activeIndex) + '"]');
+    var current = host.querySelector('.is-active');
+    if (current === next) return;
+    if (current) current.classList.remove('is-active');
+    if (!next) return;
+    next.classList.add('is-active');
+    /* 既に見えている行までスクロールし直すと、体裁の絵が行を移るたびに跳ねる。
+       nearest は見えていれば動かさない。開いた直後だけ真ん中へ寄せる。 */
+    if (next.scrollIntoView) next.scrollIntoView({ block: center ? 'center' : 'nearest' });
+  }
+
+  function setDockOpen(open, fromUser) {
+    dockOpen = !!open;
+    var dock = el('cat-preview-dock');
+    var toggle = el('cat-preview-dock-toggle');
+    if (dock) dock.hidden = !dockOpen;
+    if (toggle) {
+      toggle.setAttribute('aria-pressed', String(dockOpen));
+      toggle.textContent = dockOpen ? '体裁を畳む' : '体裁を下に出す';
+    }
+    if (fromUser) { try { window.localStorage.setItem('yaku-cat-dock-open', dockOpen ? '1' : '0'); } catch (_) {} }
+    if (dockOpen) renderDockPreview();
+  }
+
+  function restoreDockState() {
+    var storedHeight = '', storedOpen = '';
+    try { storedHeight = window.localStorage.getItem('yaku-cat-dock-height') || ''; } catch (_) {}
+    try { storedOpen = window.localStorage.getItem('yaku-cat-dock-open') || '0'; } catch (_) {}
+    setDockHeight(storedHeight ? Number(storedHeight) : 180, false);
+    setDockOpen(storedOpen === '1', false);
+  }
+
+  function bindDockSplitter() {
+    var splitter = el('cat-preview-dock-splitter');
+    var dock = el('cat-preview-dock');
+    if (!splitter || !dock) return;
+    var dragging = false, startY = 0, startHeight = 0;
+    splitter.addEventListener('pointerdown', function (event) {
+      dragging = true; startY = event.clientY; startHeight = dockHeight;
+      dock.classList.add('is-resizing');
+      try { splitter.setPointerCapture(event.pointerId); } catch (_) {}
+      event.preventDefault();
+    });
+    splitter.addEventListener('pointermove', function (event) {
+      if (!dragging) return;
+      /* 上へ動かすほど高くする。仕切りは体裁の上端にあるので、
+         そうしないと掴んだ向きと逆に動く。 */
+      setDockHeight(startHeight + (startY - event.clientY), false);
+    });
+    function stop(event) {
+      if (!dragging) return;
+      dragging = false;
+      dock.classList.remove('is-resizing');
+      try { splitter.releasePointerCapture(event.pointerId); } catch (_) {}
+      setDockHeight(dockHeight, true);
+    }
+    splitter.addEventListener('pointerup', stop);
+    splitter.addEventListener('pointercancel', stop);
+    /* **掴めない人のための道（WCAG 2.2 SC 2.5.7）。**
+       ドラッグでしか動かせない仕切りは、それだけで使えない人が出る。 */
+    splitter.addEventListener('keydown', function (event) {
+      var step = event.shiftKey ? 48 : 16;
+      if (event.key === 'ArrowUp') { setDockHeight(dockHeight + step, true); event.preventDefault(); return; }
+      if (event.key === 'ArrowDown') { setDockHeight(dockHeight - step, true); event.preventDefault(); return; }
+      if (event.key === 'Home') { setDockHeight(80, true); event.preventDefault(); return; }
+      if (event.key === 'End') { setDockHeight(600, true); event.preventDefault(); }
+    });
   }
   var placementEditorDestinations = [];
   function renderPlacementSliceEditors(downCount) {
@@ -3025,6 +3153,10 @@
     el('cat-copilot-review-run').addEventListener('click', runCopilotDocumentReview);
     el('cat-document-review-lenses').addEventListener('click', function (event) { var button = event.target.closest('[data-cat-coverage-key]'); if (button) acceptDocumentCoverage(button.getAttribute('data-cat-coverage-key'), button); });
     el('cat-preview-open').addEventListener('click', openPreview);
+    el('cat-preview-dock-toggle').addEventListener('click', function () { setDockOpen(!dockOpen, true); });
+    el('cat-preview-dock-close').addEventListener('click', function () { setDockOpen(false, true); });
+    bindDockSplitter();
+    restoreDockState();
     el('cat-preview-pdf-update').addEventListener('click', updatePdfPreview);
     el('cat-preview-pdf-check').addEventListener('click', checkPdfPublicationText);
     el('cat-preview-pdf-accept').addEventListener('click', acceptPdfVisualReview);
@@ -3132,6 +3264,7 @@
       if (busy && (button.id === 'cat-confirm-bulk' || button.id === 'cat-replace-run' || button.id === 'cat-tm-pretranslate' || button.hasAttribute('data-cat-translate-row') || button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-tm-register') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-split-at') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
       if (button.hasAttribute('data-cat-preview-mode')) { setPreviewMode(button.getAttribute('data-cat-preview-mode')); return; }
       if (button.hasAttribute('data-cat-preview-side')) { previewSide = button.getAttribute('data-cat-preview-side') || 'target'; renderPreview(); return; }
+      if (button.hasAttribute('data-cat-dock-side')) { dockSide = button.getAttribute('data-cat-dock-side') || 'target'; renderDockPreview(); return; }
       if (button.hasAttribute('data-cat-pdf-side')) {
         var pdfSide = button.getAttribute('data-cat-pdf-side') || 'target';
         if (previewRenderId) showRenderedPdf(previewRenderId, pdfSide).catch(function (error) { el('cat-preview-pdf-status').textContent = error.message; });
