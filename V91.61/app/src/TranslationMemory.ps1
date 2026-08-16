@@ -273,7 +273,6 @@ function ConvertTo-YakuTranslationMemoryCandidate {
     return [pscustomobject]@{
         Key         = $storedKey
         KeyLength   = $storedKey.Length
-        Grams       = $null
         Direction   = [string]$Entry.direction
         Source      = $source
         Target      = $target
@@ -743,46 +742,119 @@ function Add-YakuTranslationMemoryTombstone {
     }
 }
 
-function Get-YakuTranslationMemoryNgrams {
+function Get-YakuTranslationMemoryScorer {
     <#
-      文字n-gramの集合を返す。
+      一致率を出す型を返す。作れなければ $null を返し、呼び出し側が
+      Get-YakuTranslationMemoryEditRatio の PowerShell 版へ落ちる。
 
-      `return $set` と書くとPowerShellがHashSetを列挙して展開する。要素1個なら
-      ただの文字列、2個以上ならObject[]になり、いずれもHashSetではなくなる。
-      すると呼び出し側の `.Contains()` が集合の所属ではなくなる。文字列なら
-      String.Contains（部分一致）、Object[]ならIList.Contains（線形探索）である。
-      前者は Dice を非対称にし（発行/発行元 が片方向だけ1.0になる）、後者は
-      照合を O(nA*nB) にする。`return ,$set` で展開を止める。
+      Add-Type はプロセスにつき1回で 91ms（実測）。2度目以降は既に読み込まれた
+      型を拾う。試験は同じプロセスで何度も読み直すので、先に型の有無を見ないと
+      「その型は既にある」で落ちる。
     #>
-    param([Parameter(Mandatory=$true)][string]$Text, [int]$Size = 3)
-    $set = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-    if ($Text.Length -le $Size) { [void]$set.Add($Text); return ,$set }
-    for ($i = 0; $i -le ($Text.Length - $Size); $i++) { [void]$set.Add($Text.Substring($i, $Size)) }
-    return ,$set
+    if ($script:YakuTmScorerChecked) { return $script:YakuTmScorerType }
+    $script:YakuTmScorerChecked = $true
+    $existing = 'YakuLingoTmScorer' -as [type]
+    if ($null -ne $existing) { $script:YakuTmScorerType = $existing; return $existing }
+    try {
+        Add-Type -ErrorAction Stop -TypeDefinition @'
+public static class YakuLingoTmScorer {
+    // 正規化した編集距離。1 - distance / max(length) を返す。
+    // 行と行の比較しかしないので、直前の1行だけを持つ実装で足りる。
+    public static double Score(string a, string b) {
+        if (a == null || b == null) return 0.0;
+        if (a == b) return 1.0;
+        if (a.Length == 0 || b.Length == 0) return 0.0;
+        int[] prev = new int[b.Length + 1];
+        int[] cur = new int[b.Length + 1];
+        for (int j = 0; j <= b.Length; j++) { prev[j] = j; }
+        for (int i = 1; i <= a.Length; i++) {
+            cur[0] = i;
+            char ca = a[i - 1];
+            for (int j = 1; j <= b.Length; j++) {
+                int cost = (ca == b[j - 1]) ? 0 : 1;
+                int d = prev[j] + 1;
+                int ins = cur[j - 1] + 1;
+                if (ins < d) { d = ins; }
+                int sub = prev[j - 1] + cost;
+                if (sub < d) { d = sub; }
+                cur[j] = d;
+            }
+            int[] t = prev; prev = cur; cur = t;
+        }
+        int max = a.Length > b.Length ? a.Length : b.Length;
+        return 1.0 - ((double)prev[b.Length] / max);
+    }
+}
+'@ | Out-Null
+        $script:YakuTmScorerType = 'YakuLingoTmScorer' -as [type]
+    } catch {
+        $script:YakuTmScorerType = $null
+    }
+    return $script:YakuTmScorerType
 }
 
-function Get-YakuTranslationMemoryDice {
-    <# 用意済みのn-gram集合どうしのDice係数。集合の構築を呼び出し側へ預ける。 #>
-    param([Parameter(Mandatory=$true)]$Left, [Parameter(Mandatory=$true)]$Right)
-    $total = $Left.Count + $Right.Count
-    if ($total -eq 0) { return [double]0 }
-    # 小さい方を回すと、HashSet.Containsの呼び出し回数が最小になる。
-    if ($Left.Count -le $Right.Count) { $small = $Left; $large = $Right } else { $small = $Right; $large = $Left }
-    $intersection = 0
-    foreach ($gram in $small) { if ($large.Contains($gram)) { $intersection++ } }
-    return [double](2.0 * $intersection / $total)
+function Get-YakuTranslationMemoryEditRatioManaged {
+    <#
+      Add-Type が使えない環境のための控え。**本体と同じ値を返さなければならない。**
+      別の関数に分けてあるのは、突き合わせの試験が本体を2回呼ぶ形にならないため
+      （同じ経路を2回測って「一致した」と言うのは、何も確かめていない）。
+    #>
+    param([AllowNull()][string]$Left, [AllowNull()][string]$Right)
+    $a = [string]$Left; $b = [string]$Right
+    if ([string]::Equals($a, $b, [StringComparison]::Ordinal)) { return [double]1 }
+    if ($a.Length -eq 0 -or $b.Length -eq 0) { return [double]0 }
+    $prev = New-Object 'int[]' ($b.Length + 1)
+    $cur = New-Object 'int[]' ($b.Length + 1)
+    for ($j = 0; $j -le $b.Length; $j++) { $prev[$j] = $j }
+    for ($i = 1; $i -le $a.Length; $i++) {
+        $cur[0] = $i
+        for ($j = 1; $j -le $b.Length; $j++) {
+            $cost = if ($a[$i - 1] -ceq $b[$j - 1]) { 0 } else { 1 }
+            $d = $prev[$j] + 1
+            if (($cur[$j - 1] + 1) -lt $d) { $d = $cur[$j - 1] + 1 }
+            if (($prev[$j - 1] + $cost) -lt $d) { $d = $prev[$j - 1] + $cost }
+            $cur[$j] = $d
+        }
+        $swap = $prev; $prev = $cur; $cur = $swap
+    }
+    $max = [Math]::Max($a.Length, $b.Length)
+    return [double](1.0 - ($prev[$b.Length] / $max))
+}
+
+function Get-YakuTranslationMemoryEditRatio {
+    <# 正規化済みの2つの鍵の一致率。型が作れなければ控えへ落ちる。 #>
+    param([AllowNull()][string]$Left, [AllowNull()][string]$Right)
+    $scorer = Get-YakuTranslationMemoryScorer
+    if ($null -eq $scorer) { return (Get-YakuTranslationMemoryEditRatioManaged -Left $Left -Right $Right) }
+    return [double]$scorer::Score([string]$Left, [string]$Right)
 }
 
 function Get-YakuTranslationMemorySimilarity {
-    <# 正規化文字trigramのDice係数。日本語でも形態素辞書なしで差分を拾える。 #>
+    <#
+      正規化した文字列どうしの編集距離。1 - distance / max(length)。
+
+      2026-08-16 まで文字trigramのDice係数だった。**文の長さで結果が変わる**ため
+      取り替えた。n文字の文で隣り合う2字を書き換えると、trigramは n-2 個のうち
+      4個が壊れるので Dice は 1 - 4/(n-2) になる。式のとおりに実測した。
+
+          n=12 → 0.600（式 0.600）  n=25 → 0.826  n=45 → 0.905
+
+      つまり **16字未満の文は、1語違うだけで必ず 0.70 を割って隠れる**。
+      勘定科目名・表の見出し・短い注記はほぼ全部この長さである。一方で
+      「1文まるごと余計にくっついた候補」は 0.793、「前後の節を入れ替えただけ」は
+      0.750 で表に出ていた。**役に立たない候補が、役に立つ候補より上に来ていた。**
+
+      編集距離は同じ9組で、使い回せる6組が全部 0.733 以上、部分的な2組が
+      0.641 と 0.444、無関係が 0.200 と、順序が入れ替わらない。
+      費用も 5,000件 19ms（Diceはn-gramを作り置きしても92ms、作る初回が645ms）。
+
+      出典 `_docs/測定_一致率_2026-08-16.md`
+    #>
     param([AllowNull()][string]$Left, [AllowNull()][string]$Right)
     $a = ConvertTo-YakuTranslationMemoryKey -Text $Left
     $b = ConvertTo-YakuTranslationMemoryKey -Text $Right
     if ([string]::IsNullOrWhiteSpace($a) -or [string]::IsNullOrWhiteSpace($b)) { return [double]0 }
-    if ([string]::Equals($a, $b, [StringComparison]::Ordinal)) { return [double]1 }
-    $gramsA = Get-YakuTranslationMemoryNgrams -Text $a -Size 3
-    $gramsB = Get-YakuTranslationMemoryNgrams -Text $b -Size 3
-    return (Get-YakuTranslationMemoryDice -Left $gramsA -Right $gramsB)
+    return (Get-YakuTranslationMemoryEditRatio -Left $a -Right $b)
 }
 
 function Search-YakuTranslationMemoryConcordance {
@@ -842,9 +914,15 @@ function Find-YakuTranslationMemory {
     if ($entries.Count -eq 0) { return @() }
     $tn = ConvertTo-YakuTranslationMemoryKey -Text $t
     # 出典検証で key = ConvertTo-Key(source) を確かめてあるので、entry側の
-    # 正規化はやり直さない。問い合わせ側のn-gramも1回だけ作る。
+    # 正規化はやり直さない。
     $blank = [string]::IsNullOrWhiteSpace($tn)
-    $queryGrams = $null
+    # 型は輪の外で1回だけ引く。輪の中で関数を挟むと、5,000件でその呼び出し費用が
+    # 計算そのものより大きくなる。
+    $scorer = Get-YakuTranslationMemoryScorer
+    $queryLength = $tn.Length
+    # 長さの差だけで足切りできる。編集距離は必ず長さの差以上なので、
+    # 1 - |差|/長いほう が MinScore に届かない候補は計算する前に落とせる。
+    $lengthSlack = [double](1.0 - $MinScore)
     $hits = New-Object System.Collections.Generic.List[object]
     foreach ($e in $entries) {
         if ($e.Direction -ne $Direction) { continue }
@@ -855,13 +933,18 @@ function Find-YakuTranslationMemory {
         } else {
             # Get-YakuTranslationMemorySimilarity は正規化後が空なら0を返す。
             # MinLength=0 で呼ばれた場合にだけ効く枝で、そこも同じにしておく。
+            # MinScore=0 で呼ばれると、一致率0のものも拾う枝だった。数え方を
+            # 変えるとそこが黙って変わるので、条件はそのまま残す。
             if ($blank -or $e.KeyLength -eq 0) {
+                if ([double]0 -lt $MinScore) { continue }
                 $ratio = [double]0
-            } else {
-                if ($null -eq $queryGrams) { $queryGrams = Get-YakuTranslationMemoryNgrams -Text $tn -Size 3 }
-                if ($null -eq $e.Grams) { $e.Grams = Get-YakuTranslationMemoryNgrams -Text $e.Key -Size 3 }
-                $ratio = Get-YakuTranslationMemoryDice -Left $queryGrams -Right $e.Grams
+                [void]$hits.Add([pscustomobject]@{ Candidate = $e; Exact = $false; Score = $ratio; Saved = $e.Saved })
+                continue
             }
+            $longer = if ($e.KeyLength -gt $queryLength) { $e.KeyLength } else { $queryLength }
+            if ($longer -gt 0 -and ([Math]::Abs($e.KeyLength - $queryLength) / [double]$longer) -gt $lengthSlack) { continue }
+            $ratio = if ($null -ne $scorer) { [double]$scorer::Score($tn, [string]$e.Key) }
+                     else { Get-YakuTranslationMemoryEditRatio -Left $tn -Right ([string]$e.Key) }
             if ($ratio -lt $MinScore) { continue }
         }
         # 並べ替えるまでは軽い姿で持つ。最悪ケース（5,000件が全部閾値を超える）

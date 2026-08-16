@@ -435,22 +435,42 @@ try {
     Chk ((Get-TranslationMemoryShape -Hits $reviveWarm) -eq (Get-TranslationMemoryShape -Hits $reviveCold) -and
          $reviveWarm.Count -eq 1 -and [string]$reviveWarm[0].Target -eq 'Revived translation.') '差分で進めた姿と作り直した姿が一致する'
 
-    Write-Host '一致率の対称性' -ForegroundColor Cyan
-    # n-gram集合をそのまま返さないと、PowerShellが展開して要素1個なら文字列、
-    # 2個以上ならObject[]になる。前者では .Contains() が部分一致にすり替わり、
-    # 一致率が左右で食い違う。
-    $ngShort = Get-YakuTranslationMemoryNgrams -Text 'ab' -Size 3
-    $ngLong = Get-YakuTranslationMemoryNgrams -Text 'abcdef' -Size 3
-    Chk ($ngShort -is [System.Collections.Generic.HashSet[string]]) '3文字以下でも集合のまま返す'
-    Chk ($ngLong -is [System.Collections.Generic.HashSet[string]]) '4文字以上でも集合のまま返す'
-    Chk ($ngLong.Count -eq 4) 'n-gramを文字数どおりに刻む'
+    Write-Host '一致率の対称性と、文の長さから独立していること' -ForegroundColor Cyan
+    # 2026-08-16 に文字trigramのDice係数から編集距離へ替えた。Diceは文の長さで
+    # 答えが変わる。n文字の文で隣り合う2字を書き換えると trigram は n-2 個のうち
+    # 4個が壊れるので 1 - 4/(n-2) になり、**16字未満の文は1語違うだけで必ず
+    # 0.70 を割って隠れていた**（実測 n=12 で 0.600、n=45 で 0.905）。
+    # 勘定科目名・表の見出し・短い注記はほぼ全部この長さである。
+    # 出典 `_docs/測定_一致率_2026-08-16.md`
+    $makeDistinct = {
+        param([int]$Length)
+        $sb = New-Object System.Text.StringBuilder
+        for ($i = 0; $i -lt $Length; $i++) { [void]$sb.Append([char](0x4E00 + ($i * 7))) }
+        return $sb.ToString()
+    }
+    foreach ($len in @(6, 12, 25, 45)) {
+        $base = & $makeDistinct $len
+        $edited = $base.Substring(0, [int][Math]::Floor($len / 2)) + [char]0x9F98 + $base.Substring([int][Math]::Floor($len / 2) + 1)
+        $ratio = [double](Get-YakuTranslationMemorySimilarity -Left $base -Right $edited)
+        Chk ($base.Length -eq $edited.Length -and $base -ne $edited) ('治具が1字だけ違う: ' + $len + '字')
+        Chk ([Math]::Abs($ratio - (1.0 - (1.0 / $len))) -lt 0.000000001) ('1字違いが 1-1/n になる: ' + $len + '字 → ' + $ratio.ToString('N3'))
+        Chk ($ratio -ge 0.70) ('1字違いは長さによらず表に出る: ' + $len + '字')
+    }
     foreach ($pair in @(@('発行', '発行元'), @('AB', 'ABC'), @('abc', 'abcdef'), @('ABCD', 'ABCDE'))) {
         $fwd = [double](Get-YakuTranslationMemorySimilarity -Left $pair[0] -Right $pair[1])
         $rev = [double](Get-YakuTranslationMemorySimilarity -Left $pair[1] -Right $pair[0])
         Chk ([Math]::Abs($fwd - $rev) -lt 0.000000001) ('一致率が左右で同じ: ' + $pair[0] + ' / ' + $pair[1])
     }
     Chk ([double](Get-YakuTranslationMemorySimilarity -Left '発行' -Right '発行元') -lt 1.0) '短い語の包含を完全一致として扱わない'
-    Chk ([Math]::Abs([double](Get-YakuTranslationMemorySimilarity -Left 'ABCD' -Right 'ABCDE') - 0.8) -lt 0.000000001) 'Dice係数どおりの一致率を返す'
+    Chk ([Math]::Abs([double](Get-YakuTranslationMemorySimilarity -Left 'ABCD' -Right 'ABCDE') - 0.8) -lt 0.000000001) '1字足しただけなら 1-1/5 を返す'
+    # 控え（Add-Type が使えない環境）が同じ値を返すこと。片方だけ直す事故を止める。
+    $scorerType = Get-YakuTranslationMemoryScorer
+    Chk ($null -ne $scorerType) 'Add-Type で一致率の型を用意できる'
+    foreach ($pair in @(@('ABCD', 'ABCDE'), @('発行', '発行元'), @((& $makeDistinct 25), (& $makeDistinct 20)))) {
+        $viaNet = [double]$scorerType::Score($pair[0], $pair[1])
+        $viaPs = [double](Get-YakuTranslationMemoryEditRatioManaged -Left $pair[0] -Right $pair[1])
+        Chk ([Math]::Abs($viaNet - $viaPs) -lt 0.000000001) ('控えと本体が同じ値: ' + $pair[0].Length + '字/' + $pair[1].Length + '字')
+    }
 
     Write-Host '確定と結びついているか' -ForegroundColor Cyan
     $cat = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'CatProject.ps1') -Raw -Encoding UTF8
