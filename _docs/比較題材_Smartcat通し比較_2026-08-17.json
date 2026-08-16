@@ -1,166 +1,227 @@
 ﻿{
     "note":  "Sentence pairs from Mazda published documents, taken from the app own alignment output (verified rows only). The English side IS the published translation, so scoring is distance to it and needs no human judgement. Fill yakulingo_en and smartcat_en, then score.",
     "origin":  "corpus-build/*/pairs.jsonl (verified=true)",
+    "measured":  "2026-08-17. yakulingo_en: the app, amount_notation=oku, no glossary. smartcat_en: Smartcat BUNDLED FREE AI translation over a .docx import - not a bought engine. deepl_en: DeepL free web translator, no account. nani_en: nani.now free tier, no account. llm_en: a plain language model given the sentences and a register instruction, no CAT tool, and explicitly told not to look for a published translation. YakuLingo and Smartcat split the 20 sentences into 28 segments each; their text here is one sentence\u0027s segments joined in document order. Scores: _docs measurement note 2026-08-17.",
     "rows":  [
                  {
                      "id":  "S01",
                      "document":  "有報",
                      "ja":  "当連結会計年度の研究開発費の総額は1,609億円であり、セグメントごとの研究開発費は、日本は1 ,542億円、北米は26億円、欧州は33億円、その他の地域は8億円であります。",
                      "reference_en":  "R\u0026D costs in the fiscal year ended March 31, 2026 totaled ¥160.9 billion, a segment-wise breakdown of which was ¥154.2 billion for Japan, ¥2.6 billion for North America, ¥3.3 billion for Europe, and ¥0.8 billion for Other areas.",
-                     "yakulingo_en":  "",
-                     "smartcat_en":  ""
+                     "yakulingo_en":  "Total research and development expenses for the current consolidated fiscal year were 1,609 oku, and R\u0026D expenses by segment were 1 ,542 oku in Japan, 26 oku in North America, 33 oku in Europe, and 8 oku in other regions.",
+                     "smartcat_en":  "Total R\u0026D expenses for the fiscal year under review were 160.9 billion yen, and R\u0026D expenses for each segment were 154.2 billion yen for Japan, 2.6 billion yen for North America, 3.3 billion yen for Europe, and 8 billion yen for other regions.",
+                     "deepl_en":  "Total research and development expenses for the current consolidated fiscal year amounted to 160.9 billion yen. By segment, R\u0026D expenses were 154.2 billion yen in Japan, 2.6 billion yen in North America, 3.3 billion yen in Europe, and 0.8 billion yen in other regions.",
+                     "nani_en":  "Total research and development expenses for the current consolidated fiscal year amounted to 160.9 billion yen, with expenses by segment consisting of 154.2 billion yen in Japan, 2.6 billion yen in North America, 3.3 billion yen in Europe, and 0.8 billion yen in other regions.",
+                     "llm_en":  "Total research and development expenses for the fiscal year under review amounted to ¥160.9 billion. By segment, R\u0026D expenses were ¥154.2 billion in Japan, ¥2.6 billion in North America, ¥3.3 billion in Europe and ¥0.8 billion in Other Regions."
                  },
                  {
                      "id":  "S02",
                      "document":  "有報",
                      "ja":  "当連結会計年度の設備投資(無形固定資産に係るものを含む)は、電動化 、新世代商品、IT、グローバル生産及び販売体制強化など、将来の成長に向けた投資を効率的に実施したことにより、全体で1,200億円となりました。",
                      "reference_en":  "Capital expenditures (including intangible assets) for the fiscal year ended March 31, 2026 totaled ¥120.0 billion, as the Company made efficient investments for future growth in areas such as electrification, new-generation products, IT, and strengthening of its global production and sales systems.",
-                     "yakulingo_en":  "",
-                     "smartcat_en":  ""
+                     "yakulingo_en":  "Capital expenditures (including investments in intangible fixed assets) for the current consolidated fiscal year totaled 1,200 oku, as investments for future growth were carried out efficiently in areas such as electrification, next-generation products, IT, and the strengthening of global production and sales systems.",
+                     "smartcat_en":  "CAPITAL INVESTMENT (INCLUDING INTANGIBLE FIXED ASSETS) FOR THE FISCAL YEAR UNDER REVIEW TOTALED ¥120.0 BILLION DUE TO EFFICIENT INVESTMENTS FOR FUTURE GROWTH, INCLUDING ELECTRIFICATION, NEW-GENERATION PRODUCTS, IT, AND STRENGTHENING OF GLOBAL PRODUCTION AND SALES SYSTEMS.",
+                     "deepl_en":  "Capital expenditures (including those related to intangible fixed assets) for the current fiscal year totaled 120.0 billion yen, driven by the efficient implementation of investments aimed at future growth, such as electrification, next-generation products, IT, and the strengthening of global production and sales structures.",
+                     "nani_en":  "Capital expenditures for the current consolidated fiscal year (including those related to intangible fixed assets) totaled 120 billion yen, resulting from the efficient implementation of investments for future growth such as electrification, new-generation products, IT, and the strengthening of global production and sales structures.",
+                     "llm_en":  "Capital expenditures for the fiscal year under review (including those relating to intangible assets) totaled ¥120.0 billion, reflecting the efficient execution of investments for future growth, including electrification, new-generation products, IT, and the strengthening of the global production and sales structure."
                  },
                  {
                      "id":  "S03",
                      "document":  "有報",
                      "ja":  "セグメント別においては、日本では、主に本社工場、防府工場における新世代商品、環境・安全技術 、IT、能力増強等により 、1,041億円を投資しました。",
                      "reference_en":  "By segment, capital expenditures in Japan totaled ¥104.1 billion, mainly for new-generation products, environmental and safety technologies, IT, capacity expansion, and other initiatives at the Hiroshima and Hofu Plants.",
-                     "yakulingo_en":  "",
-                     "smartcat_en":  ""
+                     "yakulingo_en":  "By segment, in Japan, investments of 1,041 oku were made primarily for next-generation products, environmental and safety technologies, IT, and capacity expansion at the Hiroshima Plant and Hofu Plant.",
+                     "smartcat_en":  "BY SEGMENT, IN JAPAN, 104.1 BILLION YEN WAS INVESTED MAINLY IN NEW・GENERATION PRODUCTS, ENVIRONMENTAL AND SAFETY TECHNOLOGIES, IT, AND CAPACITY ENHANCEMENT AT THE HEAD OFFICE AND HOFU PLANTS.",
+                     "deepl_en":  "By segment, in Japan, we invested 104.1 billion yen, primarily in next-generation products, environmental and safety technologies, IT, and capacity expansion at the Head Office Plant and the Hofu Plant.",
+                     "nani_en":  "By segment, in Japan, 104.1 billion yen was invested primarily for new-generation products, environmental and safety technologies, IT, and capacity expansion at the Hofu Plant and the headquarters plant.",
+                     "llm_en":  "By segment, Japan accounted for ¥104.1 billion, invested mainly in new-generation products, environmental and safety technologies, IT and capacity expansion at the Head Office Plant and the Hofu Plant."
                  },
                  {
                      "id":  "S04",
                      "document":  "決算短信",
                      "ja":  "当第１四半期連結累計期間のグローバル販売台数は、主要市場で競争環境の悪化が見られたものの、販売促進策    の強化などの機動的な対応により、北米市場での販売が引き続き好調に推移したことなどから、前年同期と同水準    の309千台となりました。",
                      "reference_en":  "Global sales volume for the first three months of the fiscal year ending March 31, 2025 was 309 thousand units,     mostly unchanged year on year. Despite increasing competition in the major markets, sales in North America     continued to perform well, due to flexible responses such as enhanced sales promotion programs.",
-                     "yakulingo_en":  "",
-                     "smartcat_en":  ""
+                     "yakulingo_en":  "Global sales volume for the cumulative consolidated first １ quarters remained at 309 k units, the same level as the corresponding period of the previous year, as sales in the North American market continued to perform strongly due to agile measures such as strengthening sales promotion initiatives, despite a deterioration in the competitive environment in major markets.",
+                     "smartcat_en":  "Global sales for the 1st quarter consolidated cumulative period under review were 309 thousand units, the same level as the previous year, due to continued strong sales in the North American market due to flexible measures such as strengthening sales promotion measures, despite a deterioration in the competitive environment in key markets.",
+                     "deepl_en":  "Global unit sales for the first quarter of the current fiscal year totaled 309,000 units, remaining at the same level as the same period of the previous fiscal year. Although the competitive environment deteriorated in major markets, sales in the North American market continued to perform well due to agile responses such as strengthened sales promotion measures.",
+                     "nani_en":  "Global sales volume for the current cumulative first quarter of the consolidated fiscal year remained at the same level as the same period of the previous year, at 309 thousand units. Although a worsening competitive environment was observed in major markets, sales in the North American market continued to perform strongly due to agile responses such as the enhancement of sales promotion measures.",
+                     "llm_en":  "Global sales volume for the three months ended in the first quarter of the fiscal year under review came to 309 thousand units, on par with the same period of the previous fiscal year. Although the competitive environment deteriorated in major markets, sales in the North American market remained strong on the back of flexible responses such as stepped-up sales promotion measures."
                  },
                  {
                      "id":  "S05",
                      "document":  "決算短信",
                      "ja":  "益498億円等により、前連結会計年度末より496億円増加の1兆8,070億円となりました。自己資本比率は、前連結会    計年度末より0.2ポイント増加の46.0％(劣後特約付ローンの資本性考慮後46.9％)となりました。",
                      "reference_en":  "mainly reflecting net income attributable to owners of the parent of ¥49.8 billion. Equity ratio increased 0.2 percentage points from the end of the previous fiscal year to 46.0% (Percentage after consideration of the equity credit attributes of the subordinated loan was 46.9%).",
-                     "yakulingo_en":  "",
-                     "smartcat_en":  ""
+                     "yakulingo_en":  "Due to profit of 498 oku and other factors, the balance increased by 496 oku from the end of the previous consolidated fiscal year to 18,070 oku. The equity ratio increased by 0.2 points from the end of the previous consolidated fiscal year to 46.0% (46.9% after considering the equity characteristics of subordinated loans with special covenants).",
+                     "smartcat_en":  "Net income was ¥49.8 billion, an increase of ¥49.6 billion from the end of the previous fiscal year to ¥1,807.0 billion. The equity ratio increased by 0.2 points from the previous fiscal year-end to 46.0% (46.9% after consideration of the equity of subordinated loans).",
+                     "deepl_en":  "Net assets totaled 1,807.0 billion yen, an increase of 49.6 billion yen from the end of the previous fiscal year, driven by net income of 49.8 billion yen and other factors. The equity ratio increased by 0.2 percentage points from the end of the previous fiscal year to 46.0% (46.9% after taking into account the equity nature of subordinated loans).",
+                     "nani_en":  "Net income of 49.8 billion yen and other factors resulted in a 49.6 billion yen increase from the end of the previous consolidated fiscal year, bringing the total to 1,807.0 billion yen. The equity ratio increased by 0.2 percentage points from the end of the previous consolidated fiscal year to 46.0% (46.9% after taking into consideration the equity characteristics of subordinated loans).",
+                     "llm_en":  "profit of ¥49.8 billion and other factors, increasing ¥49.6 billion from the end of the previous fiscal year to ¥1,807.0 billion. The equity ratio rose 0.2 percentage points from the end of the previous fiscal year to 46.0% (46.9% after taking into account the equity credit attributed to subordinated loans)."
                  },
                  {
                      "id":  "S06",
                      "document":  "決算短信",
                      "ja":  "当第１四半期連結会計期間末において、現金及び現金同等物は、前連結会計年度末より257億円増加の9,449億    円、有利子負債は、111億円増加の5,789億円となり、この結果、3,660億円のネット・キャッシュ・ポジションと    なっております。",
                      "reference_en":  "Cash and cash equivalent as of June 30, 2024 increased ¥25.7 billion from the end of the previous fiscal year to ¥944.9 billion. Interest-bearing debt as of June 30, 2024 increased ¥11.1 billion from the end of previous fiscal year to ¥578.9 billion. As a result, we are in a net cash position of ¥366.0 billion.",
-                     "yakulingo_en":  "",
-                     "smartcat_en":  ""
+                     "yakulingo_en":  "As of the end of the consolidated first １ quarter, cash and cash equivalents increased by 257 oku from the end of the previous consolidated fiscal year to 9,449 hundred million yen, while interest-bearing debt increased by 111 oku to 5,789 oku, resulting in a net cash position of 3,660 oku.",
+                     "smartcat_en":  "At the end of the 1st quarter consolidated fiscal year under review, cash and cash equivalents increased by ¥25.7 billion from the end of the previous fiscal year to ¥944.9 billion, and interest・bearing debt increased by ¥11.1 billion to ¥578.9 billion, resulting in a net cash position of ¥366.0 billion.",
+                     "deepl_en":  "As of the end of the first quarter of the current consolidated fiscal year, cash and cash equivalents stood at 944.9 billion yen, an increase of 25.7 billion yen from the end of the previous consolidated fiscal year, while interest-bearing debt increased by 11.1 billion yen to 578.9 billion yen. As a result, the company maintained a net cash position of 366.0 billion yen.",
+                     "nani_en":  "At the end of the current first quarter of the consolidated fiscal year, cash and cash equivalents increased by 25.7 billion yen from the end of the previous consolidated fiscal year to 944.9 billion yen, and interest-bearing debt increased by 11.1 billion yen to 578.9 billion yen, resulting in a net cash position of 366.0 billion yen.",
+                     "llm_en":  "As of the end of the first quarter of the fiscal year under review, cash and cash equivalents stood at ¥944.9 billion, up ¥25.7 billion from the end of the previous fiscal year, while interest-bearing debt rose ¥11.1 billion to ¥578.9 billion, resulting in a net cash position of ¥366.0 billion."
                  },
                  {
                      "id":  "S07",
                      "document":  "決算短信",
                      "ja":  "当中間連結会計期間のグローバル販売台数は、前年同期比2.2％増の630千台となりました。",
                      "reference_en":  "Global sales volume for the first six months of the fiscal year ending March 31, 2025 was 630 thousand units, up     2.2% year on year.",
-                     "yakulingo_en":  "",
-                     "smartcat_en":  ""
+                     "yakulingo_en":  "Global sales volume for the interim consolidated accounting period increased by 2.2% year on year to 630 k units.",
+                     "smartcat_en":  "During the interim period, global sales increased 2.2% to 630 thousand units.",
+                     "deepl_en":  "Global unit sales for the current interim period increased 2.2% year-on-year to 630,000 units.",
+                     "nani_en":  "Global unit sales for the current interim consolidated accounting period increased by 2.2% year-on-year to 630 thousand units.",
+                     "llm_en":  "Global sales volume for the six months ended in the interim period of the fiscal year under review rose 2.2% year on year to 630 thousand units."
                  },
                  {
                      "id":  "S08",
                      "document":  "決算短信",
                      "ja":  "当中間連結会計期間末の総資産は、前連結会計年度末より657億円増加の3兆8,574億円となり、負債合計は、前連    結会計年度末より897億円増加の2兆1,241億円となりました。",
                      "reference_en":  "As of September 30, 2024, total assets increased ¥65.7 billion from the end of the previous fiscal year, to ¥3,857.4 billion. Total liabilities increased ¥89.7 billion from the end of the previous fiscal year to ¥2,124.1 billion.",
-                     "yakulingo_en":  "",
-                     "smartcat_en":  ""
+                     "yakulingo_en":  "Total assets at the end of the interim consolidated accounting period increased by 657 oku from the end of the previous consolidated fiscal year to 38,574 oku, while total liabilities increased by 897 oku from the end of the previous consolidated fiscal year to 21,241 oku.",
+                     "smartcat_en":  "Total assets increased by ¥65.7 billion from the end of the previous fiscal year to ¥3,857.4 billion, and total liabilities increased by ¥89.7 billion from the end of the previous fiscal year to ¥2,124.1 billion.",
+                     "deepl_en":  "Total assets at the end of the current interim period increased by 65.7 billion yen from the end of the previous fiscal year to 3,857.4 billion yen, while total liabilities increased by 89.7 billion yen from the end of the previous fiscal year to 2,124.1 billion yen.",
+                     "nani_en":  "Total assets at the end of the current interim consolidated accounting period increased by 65.7 billion yen from the end of the previous consolidated fiscal year to 3,857.4 billion yen, and total liabilities increased by 89.7 billion yen from the end of the previous consolidated fiscal year to 2,124.1 billion yen.",
+                     "llm_en":  "Total assets at the end of the interim period stood at ¥3,857.4 billion, up ¥65.7 billion from the end of the previous fiscal year, while total liabilities increased ¥89.7 billion from the end of the previous fiscal year to ¥2,124.1 billion."
                  },
                  {
                      "id":  "S09",
                      "document":  "決算短信",
                      "ja":  "純資産は、親会社株主に帰属する中間純利益353億円に対し、その他の包括利益累計額の減少等により、前連結会    計年度末より241億円減少の1兆7,333億円となりました。自己資本比率は、前連結会計年度末より1.4ポイント減少の    44.4％(劣後特約付ローンの資本性考慮後45.3％)となりました。",
                      "reference_en":  "Net Assets as of September 30, 2024 decreased ¥24.1 billion from the end of the previous fiscal year to ¥1,733.3 billion, due to a decrease in accumulated other comprehensive income, despite ¥35.3 billion net income attributable to owners of the parent. Equity ratio decreased 1.4 percentage points from the end of the previous fiscal year to 44.4% (Percentage after consideration of the equity credit attributes of the subordinated loan was 45.3%).",
-                     "yakulingo_en":  "",
-                     "smartcat_en":  ""
+                     "yakulingo_en":  "Net assets decreased by 241 oku from the end of the previous consolidated fiscal year to 17,333 oku, despite interim net income attributable to owners of the parent of 353 oku, due to factors including a decrease in accumulated other comprehensive income. The equity ratio decreased by 1.4 points from the end of the previous consolidated fiscal year to 44.4% (45.3% after considering the equity characteristics of subordinated loans with special covenants).",
+                     "smartcat_en":  "Net assets decreased ¥35.3 billion from the end of the previous fiscal year to ¥1,733.3 billion due to a decrease in accumulated other comprehensive income and other factors, while interim net income attributable to owners of parent decreased ¥24.1 billion from the end of the previous fiscal year to ¥1,733.3 billion. The equity ratio decreased by 1.4 points from the end of the previous fiscal year to 44.4% (45.3% after consideration of the equity of subordinated loans).",
+                     "deepl_en":  "Net assets decreased by 24.1 billion yen from the end of the previous fiscal year to 1,733.3 billion yen, primarily due to a decrease in accumulated other comprehensive income, despite interim net income attributable to owners of the parent of 35.3 billion yen. The equity ratio decreased by 1.4 percentage points from the end of the previous fiscal year to 44.4% (45.3% after considering the equity nature of subordinated loans).",
+                     "nani_en":  "Net assets decreased by 24.1 billion yen from the end of the previous consolidated fiscal year to 1,733.3 billion yen, due to an interim profit attributable to owners of the parent of 35.3 billion yen offset by a decrease in accumulated other comprehensive income and other factors. The equity ratio decreased by 1.4 percentage points from the end of the previous consolidated fiscal year to 44.4% (45.3% after taking into consideration the equity attribute of the subordinated loan).",
+                     "llm_en":  "Net assets decreased ¥24.1 billion from the end of the previous fiscal year to ¥1,733.3 billion, as a decline in accumulated other comprehensive income and other factors more than offset interim profit attributable to owners of the parent of ¥35.3 billion. The equity ratio fell 1.4 percentage points from the end of the previous fiscal year to 44.4% (45.3% after taking into account the equity credit attributed to subordinated loans)."
                  },
                  {
                      "id":  "S10",
                      "document":  "決算短信",
                      "ja":  "当中間連結会計期間末において、現金及び現金同等物は、前連結会計年度末より845億円増加の1兆38億円となり、    有利子負債は1,213億円増加の6,891億円となりました。この結果、3,147億円のネット・キャッシュ・ポジションと    なりました。",
                      "reference_en":  "Cash and cash equivalent as of September 30, 2024 increased ¥84.5 billion from the end of the previous fiscal year to ¥1,003.8 billion. Interest-bearing debt as of September 30, 2024 increased ¥121.3 billion from the end of previous fiscal year to ¥689.1 billion. As a result, we are in a net cash position of ¥314.7 billion.",
-                     "yakulingo_en":  "",
-                     "smartcat_en":  ""
+                     "yakulingo_en":  "As of the end of the interim consolidated accounting period, cash and cash equivalents increased by 845 oku from the end of the previous consolidated fiscal year to 10,038 oku, while interest-bearing debt increased by 1,213 oku to 6,891 oku. As a result, the Company achieved a net cash position of 3,147 oku.",
+                     "smartcat_en":  "At the end of the current interim period, cash and cash equivalents increased by ¥84.5 billion from the end of the previous fiscal year to ¥13.8 billion, and interest-bearing debt increased by ¥121.3 billion to ¥689.1 billion. As a result, net cash position was 314.7 billion yen.",
+                     "deepl_en":  "As of the end of the current interim consolidated accounting period, cash and cash equivalents increased by 84.5 billion yen from the end of the previous consolidated fiscal year to 1.0038 trillion yen, while interest-bearing debt increased by 121.3 billion yen to 689.1 billion yen. As a result, the net cash position stood at 314.7 billion yen.",
+                     "nani_en":  "At the end of the current interim consolidated accounting period, cash and cash equivalents increased by 84.5 billion yen from the end of the previous consolidated fiscal year to 1,003.8 billion yen, and interest-bearing debt increased by 121.3 billion yen to 6,891.0 billion yen. As a result, the net cash position was 314.7 billion yen.",
+                     "llm_en":  "As of the end of the interim period, cash and cash equivalents stood at ¥1,003.8 billion, up ¥84.5 billion from the end of the previous fiscal year, while interest-bearing debt rose ¥121.3 billion to ¥689.1 billion. As a result, the Company recorded a net cash position of ¥314.7 billion."
                  },
                  {
                      "id":  "S11",
                      "document":  "決算短信",
                      "ja":  "当第３四半期連結累計期間のグローバル販売台数は、米国・メキシコ市場の年間販売台数が過去最高を更新するな    ど、北米市場での販売が好調に推移したことなどから、前年同期比4.0％増の966千台となりました。",
                      "reference_en":  "Global sales volume for the first nine months of the fiscal year ending March 31, 2025 was 966 thousand units, up     4.0% year on year, driven by strong performance in North America, where record-high annual sales were achieved     in the United States and Mexico for the 2024 calendar year.",
-                     "yakulingo_en":  "",
-                     "smartcat_en":  ""
+                     "yakulingo_en":  "Global sales volume for the cumulative consolidated first ３ quarters increased by 4.0% year on year to 966 k units, as sales in the North American market performed strongly, including record-high annual sales volumes in the U.S. and Mexican markets.",
+                     "smartcat_en":  "Global sales for the 3rd quarter increased 4.0% year on year to 966 thousand units, reflecting strong sales in the North American market, including record・high annual sales in the U.S. and Mexico markets.",
+                     "deepl_en":  "Global unit sales for the first three quarters of the current fiscal year increased 4.0% year-on-year to 966,000 units, driven by strong sales in the North American market, where annual sales in the U.S. and Mexican markets reached record highs.",
+                     "nani_en":  "Global unit sales for the cumulative third quarter of the consolidated fiscal year increased by 4.0% year-on-year to 966 thousand units, driven by strong sales performance in the North American market, including record-high annual unit sales in the US and Mexican markets.",
+                     "llm_en":  "Global sales volume for the nine months of the fiscal year under review increased 4.0% year on year to 966 thousand units, as sales in the North American market were strong, with annual sales volumes in the U.S. and Mexican markets setting new records."
                  },
                  {
                      "id":  "S12",
                      "document":  "決算短信",
                      "ja":  "当第３四半期連結会計期間末の総資産は、前連結会計年度末より1,753億円増加の3兆9,671億円となり、負債合計    は、前連結会計年度末より1,207億円増加の2兆1,551億円となりました。",
                      "reference_en":  "As of December 31, 2024, total assets increased ¥175.3 billion from the end of the previous fiscal year, to ¥3,967.1 billion. Total liabilities increased ¥120.7 billion from the end of the previous fiscal year to ¥2,155.1 billion.",
-                     "yakulingo_en":  "",
-                     "smartcat_en":  ""
+                     "yakulingo_en":  "Total assets at the end of the consolidated first ３ quarter increased by 1,753 oku from the end of the previous consolidated fiscal year to 39,671 oku, while total liabilities increased by 1,207 oku from the end of the previous consolidated fiscal year to 21,551 oku.",
+                     "smartcat_en":  "Total assets at the end of the 3rd quarter increased by ¥175.3 billion from the end of the previous fiscal year to ¥3,967.1 billion, and total liabilities increased by ¥120.7 billion from the end of the previous fiscal year to ¥2,155.1 billion.",
+                     "deepl_en":  "Total assets at the end of the third quarter of the current fiscal year were 3,967.1 billion yen, an increase of 175.3 billion yen from the end of the previous fiscal year, while total liabilities were 2,155.1 billion yen, an increase of 120.7 billion yen from the end of the previous fiscal year.",
+                     "nani_en":  "Total assets at the end of the third quarter of the consolidated fiscal year increased by 175.3 billion yen from the end of the previous consolidated fiscal year to 3,967.1 billion yen, and total liabilities increased by 120.7 billion yen from the end of the previous consolidated fiscal year to 2,155.1 billion yen.",
+                     "llm_en":  "Total assets at the end of the third quarter stood at ¥3,967.1 billion, up ¥175.3 billion from the end of the previous fiscal year, while total liabilities increased ¥120.7 billion from the end of the previous fiscal year to ¥2,155.1 billion."
                  },
                  {
                      "id":  "S13",
                      "document":  "決算短信",
                      "ja":  "純資産は、親会社株主に帰属する四半期純利益906億円等により、前連結会計年度末より546億円増加の1兆8,120億    円となりました。自己資本比率は、前連結会計年度末より0.6ポイント減少の45.2％(劣後特約付ローンの資本性考慮    後46.1％)となりました。",
                      "reference_en":  "Net Assets as of December 31, 2024 increased ¥54.6 billion from the end of the previous fiscal year to ¥1,812.0 billion, mainly reflecting net income attributable to owners of the parent of ¥90.6 billion. Equity ratio decreased 0.6 percentage points from the end of the previous fiscal year to 45.2% (Percentage after consideration of the equity credit attributes of the subordinated loan was 46.1%).",
-                     "yakulingo_en":  "",
-                     "smartcat_en":  ""
+                     "yakulingo_en":  "Net assets increased by 546 oku from the end of the previous consolidated fiscal year to 1 trillion 8,120 hundred million yen, due in part to quarterly net income attributable to owners of the parent of 906 oku. The equity ratio decreased by 0.6 points from the end of the previous consolidated fiscal year to 45.2% (46.1% after considering the equity characteristics of subordinated loans with special covenants).",
+                     "smartcat_en":  "Net assets increased by ¥90.6 billion, including net income attributable to owners of parent, to ¥54.6 billion from the end of the previous fiscal year to ¥1,812.0 billion. The equity ratio decreased by 0.6 percentage points from the end of the previous fiscal year to 45.2% (46.1% after consideration of the equity of subordinated loans).",
+                     "deepl_en":  "Net assets increased by 54.6 billion yen from the end of the previous fiscal year to 1,812.0 billion yen, driven by factors such as quarterly net income attributable to owners of the parent of 90.6 billion yen. The equity ratio decreased by 0.6 percentage points from the end of the previous fiscal year to 45.2% (46.1% after taking into account the equity nature of subordinated loans).",
+                     "nani_en":  "Net assets increased by 54.6 billion yen from the end of the previous consolidated fiscal year to 1,812.0 billion yen, due to factors such as 90.6 billion yen in quarterly net income attributable to owners of the parent. The equity ratio decreased by 0.6 percentage points from the end of the previous consolidated fiscal year to 45.2% (or 46.1% after considering the equity characteristics of subordinated loans).",
+                     "llm_en":  "Net assets increased ¥54.6 billion from the end of the previous fiscal year to ¥1,812.0 billion, mainly reflecting quarterly profit attributable to owners of the parent of ¥90.6 billion. The equity ratio fell 0.6 percentage points from the end of the previous fiscal year to 45.2% (46.1% after taking into account the equity credit attributed to subordinated loans)."
                  },
                  {
                      "id":  "S14",
                      "document":  "決算短信",
                      "ja":  "当第３四半期連結会計期間末において、現金及び現金同等物は、前連結会計年度末より1,460億円増加の1兆653億    円となり、有利子負債は1,120億円増加の6,798億円となりました。この結果、3,855億円のネット・キャッシュ・ポ    ジションとなりました。",
                      "reference_en":  "Cash and cash equivalent as of December 31, 2024 increased ¥146.0 billion from the end of the previous fiscal year to ¥1,065.3 billion. Interest-bearing debt as of December 31, 2024 increased ¥112.0 billion from the end of previous fiscal year to ¥679.8 billion. As a result, we are in a net cash position of ¥385.5 billion.",
-                     "yakulingo_en":  "",
-                     "smartcat_en":  ""
+                     "yakulingo_en":  "As of the end of the consolidated first ３ quarter, cash and cash equivalents increased by 1,460 oku from the end of the previous consolidated fiscal year to 1 trillion 653 hundred million yen, while interest-bearing debt increased by 1,120 oku to 6,798 oku. As a result, the Company achieved a net cash position of 3,855 oku.",
+                     "smartcat_en":  "At the end of the 3rd quarter under review, cash and cash equivalents increased by ¥146.0 billion from the end of the previous fiscal year to ¥165.3 billion, and interest-bearing debt increased by ¥112.0 billion to ¥679.8 billion. As a result, net cash position was 385.5 billion yen.",
+                     "deepl_en":  "As of the end of the third quarter of the current fiscal year, cash and cash equivalents increased by 146.0 billion yen from the end of the previous fiscal year to 1,065.3 billion yen, while interest-bearing debt increased by 112.0 billion yen to 679.8 billion yen. As a result, the net cash position stood at 385.5 billion yen.",
+                     "nani_en":  "At the end of the third quarter of the consolidated fiscal year, cash and cash equivalents increased by 146.0 billion yen from the end of the previous consolidated fiscal year to 1,065.3 billion yen, and interest-bearing debt increased by 112.0 billion yen to 679.8 billion yen. As a result, the company recorded a net cash position of 385.5 billion yen.",
+                     "llm_en":  "As of the end of the third quarter, cash and cash equivalents stood at ¥1,065.3 billion, up ¥146.0 billion from the end of the previous fiscal year, while interest-bearing debt rose ¥112.0 billion to ¥679.8 billion. As a result, the Company recorded a net cash position of ¥385.5 billion."
                  },
                  {
                      "id":  "S15",
                      "document":  "決算短信",
                      "ja":  "当社は、2024年１月に国土交通省から要請があった「型式指定申請における不正行為の有無等に係る実態調査」に 基づき、調査対象期間(*1)におけるすべての型式指定申請2,403試験を対象に調査を行いました。調査の結果、２つ の試験項目について、計５試験で不正があったことを確認し、2024年５月30日に同省に報告いたしました。",
                      "reference_en":  "Under the request issued in January 2024 by the Ministry of Land, Infrastructure, Transport and Tourism to conduct an \"Investigation of facts regarding the existence of irregularities in Applications for Type Designation,\" the Company investigated all of its 2,403 tests for applications for Type Designation, implemented in the period covered by this investigation*1. The investigation results confirmed irregularities in a total of five tests in two test categories, which was reported to the Ministry on May 30, 2024.",
-                     "yakulingo_en":  "",
-                     "smartcat_en":  ""
+                     "yakulingo_en":  "Based on the \"Investigation into the Existence of Misconduct, etc. in Type Designation Applications\" requested by the Ministry of Land, Infrastructure, Transport and Tourism in 2024/１, the Company conducted an investigation covering all 2,403 tests related to type designation applications during the investigation period (*1). As a result of the investigation, it was confirmed that misconduct had occurred in a total of ５ tests involving ２ test items, and the Company reported this to the Ministry on 2024/５/30.",
+                     "smartcat_en":  "In 2024/1, the Ministry of Land, Infrastructure, Transport and Tourism requested the Ministry of Land, Infrastructure, Transport and Tourism (MLIT) to conduct a survey on all type designation application tests in the survey period (*1) (2,403). As a result of the investigation, we confirmed that there was fraud in a total of 2 test items in 5 tests, and reported it to the Ministry in 2024/5.30.",
+                     "deepl_en":  "In response to a request from the Ministry of Land, Infrastructure, Transport and Tourism in January 2024 to conduct a “fact-finding investigation into the presence of misconduct in type approval applications,” the Company conducted an investigation covering all 2,403 tests related to type approval applications during the investigation period (*1). As a result of the investigation, the Company confirmed that misconduct had occurred in a total of five tests across two test items and reported this to the Ministry on May 30, 2024.",
+                     "nani_en":  "Based on the fact-finding survey regarding the presence or absence of irregularities in model designation applications requested by the Ministry of Land, Infrastructure, Transport and Tourism in January 2024, the company investigated all 2,403 model designation application tests during the survey target period (*1). As a result of the investigation, the company confirmed irregularities in a total of 5 tests across 2 test items and reported them to the Ministry on May 30, 2024.",
+                     "llm_en":  "In line with the \"Fact-Finding Investigation on the Presence of Misconduct in Applications for Type Designation\" requested by the Ministry of Land, Infrastructure, Transport and Tourism in January 2024, the Company investigated all 2,403 tests conducted for applications for type designation during the period subject to the investigation (*1). As a result of the investigation, the Company confirmed misconduct in a total of five tests relating to two test items, and reported this to the Ministry on May 30, 2024."
                  },
                  {
                      "id":  "S16",
                      "document":  "決算短信",
                      "ja":  "当連結会計年度のグローバル販売台数は、米国・メキシコ市場の年間販売台数が過去最高を更新するなど、北米市場での販売が好調に推移したことから、前期比5.0％増の1,303千台となりました。",
                      "reference_en":  "Global sales volume for the fiscal year was 1,303 thousand units, up 5.0% year on year. This was driven by  strong performance in the North American market, with the United States and Mexico recording their highest ever  annual sales volumes.",
-                     "yakulingo_en":  "",
-                     "smartcat_en":  ""
+                     "yakulingo_en":  "Global sales volume for the current consolidated fiscal year increased by 5.0% from the previous fiscal year to 1,303 k units, as sales in the North American market performed strongly, including record-high annual sales volumes in the U.S. and Mexican markets.",
+                     "smartcat_en":  "In the consolidated fiscal year under review, global sales increased 5.0% year on year to 1,303 thousand units, reflecting strong sales in the North American market, including record-breaking annual sales in the U.S. and Mexico markets.",
+                     "deepl_en":  "Global sales volume for the current consolidated fiscal year increased by 5.0% year-over-year to 1,303,000 units, driven by strong sales in the North American market, where annual sales in the U.S. and Mexican markets reached record highs.",
+                     "nani_en":  "Global sales volume for the current consolidated fiscal year increased by 5.0% year-on-year to 1,303 thousand units, driven by strong sales in the North American market, including record-breaking annual sales in the US and Mexico markets.",
+                     "llm_en":  "Global sales volume for the fiscal year under review increased 5.0% year on year to 1,303 thousand units, as sales in the North American market were strong, with annual sales volumes in the U.S. and Mexican markets setting new records."
                  },
                  {
                      "id":  "S17",
                      "document":  "決算短信",
                      "ja":  "去最高の販売台数となりました。北米全体でも、カナダやメキシコの好調な販売により、前期比20.0％増の617千台となりました。",
                      "reference_en":  "America as a whole was also strong, with a 20.0% year-on-year growth in sales to 617 thousand units, thanks to robust sales in both Canada and Mexico.",
-                     "yakulingo_en":  "",
-                     "smartcat_en":  ""
+                     "yakulingo_en":  "This represented the highest sales volume on record. Across North America as a whole, sales increased by 20.0% from the previous fiscal year to 617 k units, driven by strong sales in Canada and Mexico.",
+                     "smartcat_en":  "This was the highest sales volume since the end of the fiscal year. In North America as a whole, sales in Canada and Mexico increased 20.0% year on year to 617 thousand units.",
+                     "deepl_en":  "This marked the highest sales volume on record. In North America as a whole, sales rose 20.0% year-over-year to 617,000 units, driven by strong sales in Canada and Mexico.",
+                     "nani_en":  "It became the highest sales volume ever. Overall North America also saw a 20.0% increase year-on-year to 617 thousand units, driven by strong sales in Canada and Mexico.",
+                     "llm_en":  "a record sales volume. In North America as a whole, sales rose 20.0% year on year to 617 thousand units, supported by strong sales in Canada and Mexico."
                  },
                  {
                      "id":  "S18",
                      "document":  "決算短信",
                      "ja":  "「MAZDA CX-30」や「MAZDA2 Hybrid」の販売は増加したものの、「CX-60」や「CX-5」及び「MAZDA6」等の販売減少により、前期比3.4％減の174千台となりました。",
                      "reference_en":  "While sales of the CX-30 and Mazda2 Hybrid model increased, overall sales in Europe declined 3.4% from the previous year to 174 thousand units mainly due to the decrease in sales of the CX-60, CX-5 and Mazda6.",
-                     "yakulingo_en":  "",
-                     "smartcat_en":  ""
+                     "yakulingo_en":  "Although sales of the \"MAZDA CX-30\" and \"MAZDA2 Hybrid\" increased, sales volume decreased by 3.4% from the previous fiscal year to 174 k units due to lower sales of the \"CX-60\", \"CX-5\", and \"MAZDA6\", among others.",
+                     "smartcat_en":  "Although sales of the MAZDA CX-30 and MAZDA2 Hybrid increased, sales of the CX-60, CX-5 and MAZDA6 decreased by 3.4% year on year to 174 thousand units.",
+                     "deepl_en":  "Although sales of the “MAZDA CX-30” and “MAZDA2 Hybrid” increased, sales of the “CX-60,” “CX-5,” and “MAZDA6,” among others, declined, resulting in a 3.4% year-over-year decrease to 174,000 units.",
+                     "nani_en":  "Although sales of the \"MAZDA CX-30\" and \"MAZDA2 Hybrid\" increased, sales of the \"CX-60\", \"CX-5\", and \"MAZDA6\" decreased, resulting in a 3.4% year-on-year decrease to 174 thousand units.",
+                     "llm_en":  "Although sales of the MAZDA CX-30 and MAZDA2 Hybrid increased, lower sales of models such as the CX-60, CX-5 and MAZDA6 brought volume down 3.4% year on year to 174 thousand units."
                  },
                  {
                      "id":  "S19",
                      "document":  "決算短信",
                      "ja":  "当連結会計年度末の総資産は、前連結会計年度末より2,983億円増加し、4兆901億円となり、負債合計は、前連    結会計年度末より2,457億円増加し、2兆2,801億円となりました。",
                      "reference_en":  "As of March 31, 2025, total assets increased ¥298.3 billion from the end of the previous fiscal year, to ¥4,090.1 billion.     Total liabilities increased ¥245.7 billion from the end of the previous fiscal year to ¥2,280.1 billion.",
-                     "yakulingo_en":  "",
-                     "smartcat_en":  ""
+                     "yakulingo_en":  "Total assets at the end of the current consolidated fiscal year increased by 2,983 oku from the end of the previous consolidated fiscal year to 40,901 oku, while total liabilities increased by 2,457 oku from the end of the previous consolidated fiscal year to 22,801 oku.",
+                     "smartcat_en":  "Total assets increased by ¥298.3 billion from the end of the previous fiscal year to ¥4,901 billion, and total liabilities increased by ¥245.7 billion from the end of the previous fiscal year to ¥2,280.1 billion.",
+                     "deepl_en":  "Total assets at the end of the current fiscal year increased by 298.3 billion yen from the end of the previous fiscal year to 4.0901 trillion yen, while total liabilities increased by 245.7 billion yen from the end of the previous fiscal year to 2.2801 trillion yen.",
+                     "nani_en":  "Total assets at the end of the current consolidated fiscal year increased by 298.3 billion yen from the end of the previous consolidated fiscal year to 4,090.1 billion yen, and total liabilities increased by 245.7 billion yen from the end of the previous consolidated fiscal year to 2,280.1 billion yen.",
+                     "llm_en":  "Total assets at the end of the fiscal year under review increased ¥298.3 billion from the end of the previous fiscal year to ¥4,090.1 billion, while total liabilities increased ¥245.7 billion from the end of the previous fiscal year to ¥2,280.1 billion."
                  },
                  {
                      "id":  "S20",
                      "document":  "決算短信",
                      "ja":  "純資産は、親会社株主に帰属する当期純利益1,141億円等により、前連結会計年度末より527億円増加し、    1兆8,100億円となりました。自己資本比率は、前連結会計年度末より2.0ポイント減少し、43.8％(劣後特約付ローンの資本性考慮後44.7％)となりました。",
                      "reference_en":  "Net assets as of March 31, 2025 increased ¥52.7 billion from the end of the previous fiscal year to ¥1,810.0 billion,     reflecting net income attributable to owners of the parent of ¥114.1 billion and others. Equity ratio decreased 2.0     percentage points from the end of the previous fiscal year to 43.8% (Percentage after consideration of the equity credit     attributes of the subordinated loan was 44.7%).",
-                     "yakulingo_en":  "",
-                     "smartcat_en":  ""
+                     "yakulingo_en":  "Net assets increased by 527 oku from the end of the previous consolidated fiscal year, due to factors including profit attributable to owners of the parent of 1,141 oku, and amounted to 18,100 oku. The equity ratio decreased by 2.0 percentage points from the end of the previous consolidated fiscal year to 43.8% (or 44.7% after considering the equity characteristics of subordinated loans with special subordinated clauses).",
+                     "smartcat_en":  "Net assets increased by ¥114.1 billion, including net income attributable to owners of parent, to ¥52.7 billion from the end of the previous fiscal year to ¥1,810.0 billion. The equity ratio decreased by 2.0 percentage points from the end of the previous fiscal year to 43.8% (44.7% after consideration of the equity of subordinated loans).",
+                     "deepl_en":  "Net assets increased by 52.7 billion yen from the end of the previous fiscal year to 1.81 trillion yen, driven by factors including net income attributable to owners of the parent of 114.1 billion yen. The equity ratio decreased by 2.0 percentage points from the end of the previous fiscal year to 43.8% (44.7% after taking into account the equity nature of subordinated loans).",
+                     "nani_en":  "Net assets increased by 52.7 billion yen from the end of the previous consolidated fiscal year to 1,810.0 billion yen, due to factors such as 114.1 billion yen in net income attributable to owners of the parent. The equity ratio decreased by 2.0 percentage points from the end of the previous consolidated fiscal year to 43.8% (44.7% after taking into consideration the equity characteristics of subordinated loans).",
+                     "llm_en":  "Net assets increased ¥52.7 billion from the end of the previous fiscal year to ¥1,810.0 billion, mainly reflecting profit attributable to owners of the parent of ¥114.1 billion. The equity ratio fell 2.0 percentage points from the end of the previous fiscal year to 43.8% (44.7% after taking into account the equity credit attributed to subordinated loans)."
                  }
              ]
 }
