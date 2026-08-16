@@ -55,6 +55,13 @@
   画面は赤（訳の欠陥）で塗っていた（2026-08-16）。10番目の題材ではこの枝へ
   一度も入らないので、別の作業として開く。同じ画面で、取り出しボタンが
   従来どおり押せないことも採る。**色を変えても止める条件は変えていない。**
+
+  12番目は「用語集に無い短いラベル」の作業。これは止めない警告
+  （src/CatProject.ps1 の Get-YakuCatQcWarningCodes）で、道具の不調とも
+  訳の欠陥とも違う第3の群である。赤で出せば押せるはずの書き出しが押せなく
+  見え、道具の不調の色で出せば自分で対処できることが伝わらない。点検一覧の
+  群と件数、点検欄の card の色、取り出しボタンが押せたままであることを、
+  同じ画面で採る。
 */
 const fs = require('fs');
 const http = require('http');
@@ -72,6 +79,7 @@ const qcPreflightJson = fs.readFileSync(process.argv[9], 'utf8');
 const qcCleanProjectJson = fs.readFileSync(process.argv[10], 'utf8');
 const qcToolProjectJson = fs.readFileSync(process.argv[11], 'utf8');
 const qcNumProjectJson = fs.readFileSync(process.argv[12], 'utf8');
+const qcLabelProjectJson = fs.readFileSync(process.argv[13], 'utf8');
 const project = JSON.parse(projectJson);
 const previewProject = JSON.parse(previewProjectJson);
 const cellProject = JSON.parse(cellProjectJson);
@@ -79,6 +87,7 @@ const qcProject = JSON.parse(qcProjectJson);
 const qcCleanProject = JSON.parse(qcCleanProjectJson);
 const qcToolProject = JSON.parse(qcToolProjectJson);
 const qcNumProject = JSON.parse(qcNumProjectJson);
+const qcLabelProject = JSON.parse(qcLabelProjectJson);
 
 /* 押した位置の題材。原文の <mark> より後ろに落ちる位置を選ぶ。
    1文字目（印より前）で一度押してから2回目を押すので、位置を拾えない実装だと
@@ -144,6 +153,7 @@ const server = http.createServer(async function (req, res) {
     if (wanted && wanted === String(qcCleanProject.id || '')) { res.end(qcCleanProjectJson); return; }
     if (wanted && wanted === String(qcToolProject.id || '')) { res.end(qcToolProjectJson); return; }
     if (wanted && wanted === String(qcNumProject.id || '')) { res.end(qcNumProjectJson); return; }
+    if (wanted && wanted === String(qcLabelProject.id || '')) { res.end(qcLabelProjectJson); return; }
     res.end(projectJson);
     return;
   }
@@ -659,6 +669,52 @@ function lastBody(name) { const c = calls(name); return c.length ? c[c.length - 
     await page.click('[data-cat-inspector="qc"]');
     await page.waitForTimeout(250);
     out.qcNumInspector = await qcInspectorBody();
+
+    // ------------------ 用語集に無い短いラベル（止めない警告）の見た目と件数
+    /* 題材: セルの行が2つとも、用語集に無い短いラベル。**2行とも確定済み**で、
+       行の qc_findings に警告が載っている。点検には通るので書き出しは
+       止まらない。ここで見るのは4つ。
+         1. 点検欄の card が、赤（訳の欠陥）でも道具の不調でもない群で塗られる
+         2. 点検一覧に、止めない群として名前と件数が出る
+         3. 取り出しボタンが押せたままである（警告は止めない）
+         4. 「全部終わりました」の帯が出る（止めない警告で要対応を立てない）
+       2 は「その行数が画面に出る」という受容条件そのもので、群の見出しの
+       数字（cat.js の openQaList が group.items.length をそのまま書く）を採る。
+       4 は 2行とも確定済みでないと測れない。未確定が1行でも残ると、帯は
+       警告と関係なく隠れる（そこが空回りの入口である）。 */
+    await page.goto('http://127.0.0.1:' + port + '/cat?project=' + qcLabelProject.id, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#cat-grid-body tr[data-cat-row]', { timeout: 20000 });
+    out.qcLabelScreen = await page.evaluate(function () {
+      var exportButton = document.getElementById('cat-export');
+      var filter = document.querySelector('[data-cat-filter="qc"]');
+      var count = document.querySelector('[data-cat-count="qc"]');
+      return {
+        rows: Array.from(document.querySelectorAll('#cat-grid-body tr[data-cat-row]')).map(function (tr) {
+          return { index: Number(tr.getAttribute('data-cat-row')), source: tr.querySelector('.cat-source-text').textContent };
+        }),
+        exportDisabled: !!(exportButton && exportButton.disabled),
+        filterHidden: !filter || filter.hidden,
+        filterCount: count ? count.textContent : '',
+        qaButtonLabel: document.getElementById('cat-qa-open').textContent,
+        qaButtonHasBlockers: document.getElementById('cat-qa-open').classList.contains('cat-qa-has-blockers'),
+        /* 全部終わったことを告げる帯。止めない警告で「要対応」を立てる実装だと、
+           確認し終えた資料が永久に「まだ残っている」と言い続ける。2行とも
+           確定済みの題材なので、出ているのが正しい。 */
+        completeHidden: document.getElementById('cat-complete-state').hidden,
+        actionableCount: (document.querySelector('[data-cat-count="actionable"]') || {}).textContent || ''
+      };
+    });
+    await page.focus('#cat-grid-body tr[data-cat-row] textarea[data-cat-input]');
+    await page.waitForTimeout(200);
+    await page.click('[data-cat-inspector="qc"]');
+    await page.waitForTimeout(250);
+    out.qcLabelInspector = await qcInspectorBody();
+    await page.click('#cat-qa-open');
+    await page.waitForSelector('#cat-qa-dialog[open]', { timeout: 10000 });
+    await page.waitForTimeout(300);
+    out.qaLabelList = await qaBody();
+    await page.evaluate(function () { document.getElementById('cat-qa-dialog').close('cancel'); });
+    await page.waitForTimeout(200);
   } catch (e) {
     out.fatal = String((e && e.stack) || e);
   } finally {

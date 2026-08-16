@@ -19,7 +19,7 @@
   飛んだ要求の中身を見る。判定はこのファイルが行い、ブラウザ側
   （tools/cat-screen/cat-screen-gate.js）は観測した事実を JSON で返すだけである。
 
-  見るのは13。
+  見るのは14。
    (a) can_split_at の行にだけ分割ボタンが**実際に出る**
    (b) Alt+S がその分割ボタンを押す。割れない行では断る
    (c) 用語の印が入った原文でも、押した位置で割れる（位置が一致する）
@@ -38,6 +38,11 @@
        利用者の訳の欠陥（赤）ではなく**道具の不調**として塗られること
    (m) 数字の点検が最後まで走らなかった行（numeric-validation-error）も同じこと。
        止める条件は変えない（その行は塗り分けても止まったまま）
+   (n) 用語集に無い短いラベル（label-not-in-glossary）が、**止めない警告**として
+       出ること。点検一覧にその行数が件数として出て、群は「ファイルを作れない
+       指摘」ではなく、点検欄の色は赤でも道具の不調でもない。同じ画面で
+       取り出しボタンが押せたままで、「要対応」には数えず、確認し終えた資料は
+       「全部終わりました」と言う
 
   (j) の表明そのものも 2026-08-15 に作り直した。**「一覧が空でないこと」は
   この題材では測れない。** 2行とも訳文ありで未確定なので、cat.js の qaFindings が
@@ -526,6 +531,38 @@ try {
     Chk ($qcNumViewRows.Count -eq 2) ('画面へ渡す行は2行（実際 ' + $qcNumViewRows.Count + '）')
     Chk (@($qcNumViewRows[0].qc_preview).Count -eq 1 -and [string]@($qcNumViewRows[0].qc_preview)[0].code -eq 'numeric-validation-error') '画面へ渡す1行目に、その種別が載っている（この題材が空振りでないこと）'
 
+    Write-Host '(0h) 用語集に無い短いラベルの題材を用意する（止めない警告）' -ForegroundColor Cyan
+    # 題材が正しい群を指していることを、src の宣言そのもので確かめる。
+    # 名前をここで手書きしても、止めない警告かどうかは src が決める。
+    Chk (@(Get-YakuCatQcWarningCodes) -contains 'label-not-in-glossary') 'src は label-not-in-glossary を止めない警告と分類している（画面の色はこの宣言に従う）'
+    Chk (@(Get-YakuCatQcToolTroubleCodes) -notcontains 'label-not-in-glossary') 'それは道具の不調ではない（第3の群である）'
+    $labelSourceA = '営業利益'
+    $labelSourceB = '研究開発費'
+    $qcLabelProject = New-YakuCatTextProject -Root $root -Text ($labelSourceA + "`n" + $labelSourceB) -Settings $settings -Direction 'to_en'
+    $null = Set-YakuCatSegmentTranslation -Project $qcLabelProject -Index 0 -Text 'Operating profit'
+    $null = Set-YakuCatSegmentTranslation -Project $qcLabelProject -Index 1 -Text 'R&D expenses'
+    # 列に収める場所であることが検出の条件。Kind は実装が読む唯一の鍵なので、
+    # ここを実際に切り替えて枝へ入れる（Excel が無くても同じ入力になる）。
+    foreach ($labelSegment in @($qcLabelProject.Segments)) { $labelSegment.Kind = 'cell' }
+    Chk ((@(@($qcLabelProject.Segments) | Where-Object { [string]$_.Kind -eq 'cell' })).Count -eq 2) '2行とも Kind=cell（この枝へ入る題材である）'
+    # **2行とも確定済みにする。** 未確定が1行でも残ると「全部終わりました」の帯は
+    # 警告と関係なく隠れ、その表明は空回りする。確定できること自体も、
+    # 警告が blocker でない証拠である。
+    $null = Set-YakuCatSegmentConfirmed -Project $qcLabelProject -Index 0 -Confirmed $true
+    $null = Set-YakuCatSegmentConfirmed -Project $qcLabelProject -Index 1 -Confirmed $true
+    $qcLabelEligibility = Get-YakuCatOutputEligibility -Project $qcLabelProject
+    Chk (@($qcLabelEligibility.Reasons).Count -eq 0) ('この題材では止める理由が1つも無い（実際: ' + (@($qcLabelEligibility.Reasons) -join ',') + '）')
+    Chk ([bool]$qcLabelEligibility.TranslationListEligible) '題材は書き出しが止まっていない（警告は止めない）'
+    Chk ([int]$qcLabelEligibility.UnconfirmedCount -eq 0) ('未確認は0行（実際 ' + [int]$qcLabelEligibility.UnconfirmedCount + '）')
+    $qcLabelProjectJson = ConvertTo-YakuCatProjectJson -Project $qcLabelProject
+    $qcLabelView = $qcLabelProjectJson | ConvertFrom-Json
+    $qcLabelViewRows = @($qcLabelView.segments)
+    $qcLabelRowCodes = @(@($qcLabelViewRows) | ForEach-Object { @($_.qc_findings) } | ForEach-Object { [string]$_.Code })
+    Chk ($qcLabelViewRows.Count -eq 2) ('画面へ渡す行は2行（実際 ' + $qcLabelViewRows.Count + '）')
+    Chk (@($qcLabelRowCodes | Where-Object { $_ -eq 'label-not-in-glossary' }).Count -eq 2) `
+        ('2行とも警告を持って画面へ渡る（この題材が空振りでないこと。実際: ' + ($qcLabelRowCodes -join ',') + '）')
+    Chk (-not [bool]$qcLabelView.export_blocked) '画面の取り出しボタンは押せる状態で渡る'
+
     $projectPath = Join-Path $tmp 'project.json'
     $candidatePath = Join-Path $tmp 'candidates.json'
     $observedPath = Join-Path $tmp 'observed.json'
@@ -536,10 +573,12 @@ try {
     $qcCleanPath = Join-Path $tmp 'qc-clean-project.json'
     $qcToolPath = Join-Path $tmp 'qc-tool-project.json'
     $qcNumPath = Join-Path $tmp 'qc-numeric-project.json'
+    $qcLabelPath = Join-Path $tmp 'qc-label-project.json'
     $utf8 = New-Object Text.UTF8Encoding($false)
     [IO.File]::WriteAllText($qcCleanPath, $qcCleanProjectJson, $utf8)
     [IO.File]::WriteAllText($qcToolPath, $qcToolProjectJson, $utf8)
     [IO.File]::WriteAllText($qcNumPath, $qcNumProjectJson, $utf8)
+    [IO.File]::WriteAllText($qcLabelPath, $qcLabelProjectJson, $utf8)
     [IO.File]::WriteAllText($qcPath, $qcProjectJson, $utf8)
     [IO.File]::WriteAllText($qcPreflightPath, ($qcPreflightPayload | ConvertTo-Json -Depth 8), $utf8)
     [IO.File]::WriteAllText($projectPath, $projectJson, $utf8)
@@ -549,7 +588,7 @@ try {
 
     Write-Host '(1) 本物の画面を Chromium で開いて、実際に押す' -ForegroundColor Cyan
     $stderrPath = Join-Path $tmp 'node-stderr.txt'
-    $arguments = @($driver, (Join-Path $root 'www'), $projectPath, $candidatePath, $observedPath, $previewPath, $cellPath, $qcPath, $qcPreflightPath, $qcCleanPath, $qcToolPath, $qcNumPath) | ForEach-Object { '"' + $_ + '"' }
+    $arguments = @($driver, (Join-Path $root 'www'), $projectPath, $candidatePath, $observedPath, $previewPath, $cellPath, $qcPath, $qcPreflightPath, $qcCleanPath, $qcToolPath, $qcNumPath, $qcLabelPath) | ForEach-Object { '"' + $_ + '"' }
     $proc = Start-Process -FilePath $nodeExe -ArgumentList $arguments -NoNewWindow -Wait -PassThru -RedirectStandardError $stderrPath
     $nodeErr = ''
     if (Test-Path -LiteralPath $stderrPath) { $nodeErr = [string][IO.File]::ReadAllText($stderrPath) }
@@ -819,6 +858,43 @@ try {
     # 色は表示だけの話である。止める条件は1つも減らしていない。
     Chk ([bool]$o.qcNumScreen.exportDisabled) '取り出しボタンは従来どおり押せない（赤をやめても、その行は止まったまま）'
     Chk ([string]$o.qcNumScreen.exportTitle -ne '') ('押せない理由がボタンに書いてある: ' + [string]$o.qcNumScreen.exportTitle)
+
+    # ------------------------------------------------------------------ (n)
+    Write-Host '(n) 用語集に無い短いラベルは、止めない警告として件数まで出る' -ForegroundColor Cyan
+    $qcLabel = $o.qcLabelScreen
+    Chk (@($qcLabel.rows).Count -eq 2) ('題材の作業が開けている。表は2行（実際 ' + @($qcLabel.rows).Count + '）')
+    Chk (@($qcLabel.rows).Count -eq 2 -and [string]@($qcLabel.rows)[0].source -eq $labelSourceA) '別の作業を見ていない'
+    $qcLabelCards = @($o.qcLabelInspector.cards)
+    # 観測点そのものが空でないことを先に見る。空のまま下の -not を並べると
+    # 「1件も出ていない」が緑になる。
+    Chk ($qcLabelCards.Count -eq 1) ('点検欄に指摘が1件出る（実際 ' + $qcLabelCards.Count + ' 件）')
+    Chk (Test-YakuAnyContains -Items @($qcLabelCards | ForEach-Object { [string]$_.text }) -Needle '用語集に無い短いラベルです') ('何が起きたかを名指しする: ' + (Get-YakuFirstString -Items @($qcLabelCards | ForEach-Object { [string]$_.text })))
+    Chk (-not (Test-YakuAnyContains -Items @($qcLabelCards | ForEach-Object { [string]$_.text }) -Needle '自動点検で気になる点が見つかりました')) '汎用文へ落ちていない（種別に説明文がある）'
+    # 色は class にしか出ない。赤（訳の欠陥）でも道具の不調でもない第3の群である。
+    Chk (Test-YakuAnyContains -Items @($qcLabelCards | ForEach-Object { [string]$_.classes }) -Needle 'is-warn') ('止めない警告として塗られる（実際の class: ' + (Get-YakuFirstString -Items @($qcLabelCards | ForEach-Object { [string]$_.classes })) + '）')
+    Chk (-not (Test-YakuAnyContains -Items @($qcLabelCards | ForEach-Object { [string]$_.classes }) -Needle 'is-error')) '利用者の訳の欠陥（赤）としては塗らない'
+    Chk (-not (Test-YakuAnyContains -Items @($qcLabelCards | ForEach-Object { [string]$_.classes }) -Needle 'is-tool')) '道具の不調としても塗らない（直せる警告である）'
+    # 受容条件の本体。**その行数が点検一覧に件数として出る。**
+    $qaLabel = $o.qaLabelList
+    Chk ([bool]$qaLabel.open) 'その作業でも点検の一覧は開く'
+    $qaLabelGroup = Get-YakuQaGroup -Groups @($qaLabel.groupDetails) -Title '用語集に無い短いラベル'
+    Chk ($null -ne $qaLabelGroup) ('一覧に「用語集に無い短いラベル」の群が描かれる（実際の見出し: ' + (@($qaLabel.groups) -join ' / ') + '）')
+    Chk ($null -ne $qaLabelGroup -and [int]$qaLabelGroup.count -eq 2) ('その群の件数は 2（実際 ' + $(if ($null -ne $qaLabelGroup) { [string]$qaLabelGroup.count } else { 'その群が無い' }) + '）')
+    Chk ($null -ne $qaLabelGroup -and -not [bool]$qaLabelGroup.blocking) 'その群は「ファイルを作れない指摘」として描かれない'
+    Chk (-not (Test-YakuAnyContains -Items @($qaLabel.groups) -Needle '自動点検の指摘')) ('止める群は出ない（実際: ' + (@($qaLabel.groups) -join ' / ') + '）')
+    Chk (-not ([string]$qaLabel.summary).Contains('ファイルを作れない指摘が')) ('要約が止めた件数を言わない: ' + [string]$qaLabel.summary)
+    Chk (([string]$qaLabel.summary).Contains('書き出しは止まりません')) ('要約が、止まらないことを言う: ' + [string]$qaLabel.summary)
+    Chk (-not ([string]$qaLabel.summary).Contains('直すところは見つかりませんでした')) ('警告を出しながら「直すところは見つかりませんでした」と言わない: ' + [string]$qaLabel.summary)
+    # 止める条件は1つも増やしていない。同じ画面で、押せることを見る。
+    Chk (-not [bool]$qcLabel.exportDisabled) '取り出しボタンは押せたまま（警告は止めない）'
+    Chk ([string]$qcLabel.qaButtonLabel -eq '点検') ('道具の帯の「点検」は件数を出さない（止めた指摘は0件。実際: ' + [string]$qcLabel.qaButtonLabel + '）')
+    Chk (-not [bool]$qcLabel.qaButtonHasBlockers) '止めている指摘がある見た目にはならない'
+    # 「要対応」に数えない。数えると、確認し終えた資料が永久に終わらない。
+    Chk ([string]$qcLabel.actionableCount -eq '0') ('要対応は 0 行（実際: ' + [string]$qcLabel.actionableCount + '）')
+    Chk (-not [bool]$qcLabel.completeHidden) '「全部終わりました」の帯が出る'
+    # 一方で、指摘そのものは数える。件数が消えたら、画面から見えなくなる。
+    Chk (-not [bool]$qcLabel.filterHidden) '「点検の指摘」の絞り込みは出る（件数が画面に出ている）'
+    Chk ([string]$qcLabel.filterCount -eq '2') ('その件数は 2（実際: ' + [string]$qcLabel.filterCount + '）')
 
     if ($script:fail -eq 0) { Write-Host ('V91.76 画面の描画と配線の回帰テストに合格しました。検査 ' + $script:checks + ' 件。') -ForegroundColor Green }
     else { Write-Host ('FAILED: ' + $script:fail + ' / ' + $script:checks) -ForegroundColor Red }

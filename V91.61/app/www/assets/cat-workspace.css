@@ -837,6 +837,16 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
   background: #f6efe6;
 }
 
+/* 「用語集に無い短いラベル」の類は、直せるが直さなくても書き出せる。
+   赤（--error）にすると押せるはずの書き出しが押せないように見え、
+   道具の不調（--warning）にすると自分で対処できることが伝わらない。
+   顔ぶれは src/CatProject.ps1 の Get-YakuCatQcWarningCodes が決め、
+   cat.js の qcGroup がこの class を付ける。 */
+.cat-qc-card.is-warn {
+  border-left: 4px solid var(--accent);
+  background: var(--accent-soft);
+}
+
 .cat-context-label {
   color: var(--muted);
   font-size: var(--font-meta);

@@ -705,8 +705,13 @@ function Invoke-YakuCatSegmentValidation {
         if (-not [bool]$structure.Ok) { $findings.Add([pscustomobject]@{ Code='structure-integrity'; Severity='error'; Detail=[string]$structure.Detail }) | Out-Null }
     } catch { $findings.Add([pscustomobject]@{ Code='structure-validation-error'; Severity='error' }) | Out-Null }
     $terminologyHash = ''
+    # 用語一覧は下のラベル検査でも使う。読み直すと1行あたりの読み込みが1回増える
+    # ので、取れたものを持ち回す。取れなかった（例外）ときは $null のままにして、
+    # 下で「引けなかった」として扱う。**空配列と取り違えない。**
+    $terminologyEntries = $null
     try {
         $entries = @(Get-YakuCatTerminologyEntries -Project $Project)
+        $terminologyEntries = $entries
         $terminology = Test-YakuTerminologyCompliance -SourceText $source -TargetText $target -Direction ([string]$Project.Direction) `
             -Entries $entries -Exceptions @($Segment.TerminologyExceptions) -ProjectId ([string]$Project.Id)
         $terminologyHash = [string]$terminology.SnapshotHash
@@ -717,6 +722,47 @@ function Invoke-YakuCatSegmentValidation {
         }
     } catch {
         $findings.Add([pscustomobject]@{ Code='terminology-check-unavailable'; Severity='error'; Detail=[string]$_.Exception.Message }) | Out-Null
+    }
+    # 用語集に無い短いラベル。**警告であって、止める理由ではない。**
+    #
+    # なぜ要るか（決定 _docs/決定_用語集は用語の一貫性ではなくレイアウトの保証.md §1）:
+    # cell_exact の完全一致置換は、用語の一貫性ではなく「列からはみ出さないこと」の
+    # 保証として使われている。過去のラベルはその列に収まっていたから採用された訳語で、
+    # 同じ訳語を使うかぎり必ず収まる。したがって穴は**新しいラベル**であり、
+    # 「しかもそれが見えない」ことがこの決定の言う欠陥そのものである。
+    #
+    # 判定は Test-YakuFileLabelLike（src/CatBatch.ps1）ただ1つを使う。ここへ
+    # 条件を写すと、片方だけ直したときに黙ってずれる。**Get-Command で守らない。**
+    # 守ると、読み込み順序が崩れたときに検出が丸ごと消えたまま緑になる
+    # （SrcModules.ps1 の註にある GlossaryVariants と同じ壊れ方）。
+    # SrcModules.ps1 は CatBatch.ps1 を CatProject.ps1 より先に読む。
+    #
+    # 対象を Kind='cell' に限るのは、はみ出しが問題になるのが列に収める場所だから
+    # である。貼り付け本文や Word の段落は行の高さで吸収できる（決定 §2）。
+    # EN→JA で立たないことは Test-YakuFileLabelLike の「日本語を含む」条件が担う。
+    #
+    # 止めない理由: 用語集は網羅を求めない（決定 §1）。登録するかどうかは利用者が
+    # 決めることで、登録していないこと自体は欠陥ではない。だから Severity は
+    # 'warning' であり、下の $blocking にも Get-YakuCatOutputEligibility の
+    # Reasons にも入らない。**止める理由は3つのままである。**
+    if ([string]$Segment.Kind -eq 'cell' -and (Test-YakuFileLabelLike -Text $source)) {
+        $labelLookupFailed = $false
+        $labelRegistered = $false
+        try {
+            $labelEntries = $terminologyEntries
+            if ($null -eq $labelEntries) { $labelEntries = @(Get-YakuCatTerminologyEntries -Project $Project) }
+            $labelMatch = Find-YakuCellExactTerminologyMatch -Text $source -Direction ([string]$Project.Direction) `
+                -Entries @($labelEntries) -ProjectId ([string]$Project.Id)
+            $labelRegistered = ($null -ne $labelMatch)
+        } catch {
+            # 引けなかったときは黙る。用語集が読めない事実は
+            # terminology-check-unavailable が既に error として言っており、
+            # ここで重ねて「登録が無い」と言うと、無い理由を取り違えさせる。
+            $labelLookupFailed = $true
+        }
+        if (-not $labelLookupFailed -and -not $labelRegistered) {
+            $findings.Add([pscustomobject]@{ Code='label-not-in-glossary'; Severity='warning'; Detail=('label=' + $source) }) | Out-Null
+        }
     }
     $blocking = @($findings.ToArray() | Where-Object { [string]$_.Severity -eq 'error' })
     $status = if ($blocking.Count -eq 0) { 'passed' } else { 'failed' }
@@ -809,19 +855,27 @@ function Get-YakuCatOutputEligibility {
         $probe = Copy-YakuCatProjectSegmentForProbe -Segment $segment
         $verdict = $null
         try { $verdict = Invoke-YakuCatSegmentValidation -Project $Project -Segment $probe } catch { $verdict = $null }
-        if ($null -eq $verdict -or -not [bool]$verdict.Passed) {
-            $reasons.Add('segment-qc-failed') | Out-Null
-            # 同じ行が同じ種別で2件落ちても、行数は1と数える。利用者が開く行の数だから。
-            $seenCodes = New-Object System.Collections.Generic.List[string]
-            if ($null -ne $verdict) {
-                foreach ($finding in @($verdict.Findings)) {
-                    if ([string]$finding.Severity -ne 'error') { continue }
-                    $code = ([string]$finding.Code).Trim()
-                    if ([string]::IsNullOrWhiteSpace($code)) { continue }
+        # 同じ行が同じ種別で2件落ちても、行数は1と数える。利用者が開く行の数だから。
+        $seenCodes = New-Object System.Collections.Generic.List[string]
+        # 止めない種別（Severity='warning'）。**別の入れ物に分ける。**
+        # 混ぜると、下の $qcFailureRows へ流れて「押せない理由」に化ける。
+        $warnCodes = New-Object System.Collections.Generic.List[string]
+        if ($null -ne $verdict) {
+            foreach ($finding in @($verdict.Findings)) {
+                $code = ([string]$finding.Code).Trim()
+                if ([string]::IsNullOrWhiteSpace($code)) { continue }
+                $severity = [string]$finding.Severity
+                if ($severity -eq 'error') {
                     if ($seenCodes.Contains($code)) { continue }
                     $seenCodes.Add($code) | Out-Null
+                } elseif ($severity -eq 'warning') {
+                    if ($warnCodes.Contains($code)) { continue }
+                    $warnCodes.Add($code) | Out-Null
                 }
             }
+        }
+        if ($null -eq $verdict -or -not [bool]$verdict.Passed) {
+            $reasons.Add('segment-qc-failed') | Out-Null
             # 点検そのものが落ちた（例外）ときは種別が無い。ここで空のままにすると
             # segment-qc-failed が Reasons に居るのに説明が1件も出ず、
             # 「押せないのに理由が無い」画面になる。必ず1件は積む。
@@ -830,12 +884,22 @@ function Get-YakuCatOutputEligibility {
                 if ($qcFailureRows.Contains($code)) { $qcFailureRows[$code] = [int]$qcFailureRows[$code] + 1 }
                 else { $qcFailureRows[$code] = 1 }
             }
-            # 行ごとの内訳。**種別だけを持つ**。用語の finding が持つ TermId や
-            # SourceTerm はここへ載せない。載せると画面の点検欄が
-            # 「この行では別の表現を使う」（用語の免除。訳文を書き換える操作）を
-            # 未確認の行にも出せてしまい、免除の場面が黙って広がる。
-            # 見ることと決めることを混ぜない。
-            $qcRows.Add([pscustomobject]@{ SegmentId=[string]$segment.SegmentId; Codes=@($seenCodes.ToArray()) }) | Out-Null
+        }
+        # 行ごとの内訳。**種別だけを持つ**。用語の finding が持つ TermId や
+        # SourceTerm はここへ載せない。載せると画面の点検欄が
+        # 「この行では別の表現を使う」（用語の免除。訳文を書き換える操作）を
+        # 未確認の行にも出せてしまい、免除の場面が黙って広がる。
+        # 見ることと決めることを混ぜない。
+        #
+        # 警告もここへ載せる（2026-08-16）。載せないと、確定を1度も通していない
+        # 行では画面に1件も出ない。行へ結果を書くのは確定時だけ（QcFindings）で、
+        # 未確定の行が画面へ持つ道はこの写しだけだからである。**止める条件は
+        # 1ミリも変えない。** 上の $reasons と $qcFailureRows は error だけを見る。
+        $rowCodes = New-Object System.Collections.Generic.List[string]
+        foreach ($code in $seenCodes.ToArray()) { $rowCodes.Add([string]$code) | Out-Null }
+        foreach ($code in $warnCodes.ToArray()) { if (-not $rowCodes.Contains([string]$code)) { $rowCodes.Add([string]$code) | Out-Null } }
+        if ($rowCodes.Count -gt 0) {
+            $qcRows.Add([pscustomobject]@{ SegmentId=[string]$segment.SegmentId; Codes=@($rowCodes.ToArray()) }) | Out-Null
         }
     }
     $qcFailures = New-Object System.Collections.Generic.List[object]
@@ -904,6 +968,27 @@ function Get-YakuCatQcToolTroubleCodes {
         'structure-validation-error',
         'terminology-check-unavailable',
         'validation-unavailable'
+    )
+}
+
+function Get-YakuCatQcWarningCodes {
+    <#
+      「書き出しを止めないが、利用者が対処できる」種別の正本。
+
+      道具の不調（Get-YakuCatQcToolTroubleCodes）とは別である。あちらは
+      直しようが無いもの、こちらは**直せるが直さなくても出せる**ものである。
+      色を error と同じにすると、押せるのに押せないように見える。逆に
+      道具の不調と同じにすると、自分で対処できることが伝わらない。
+
+      顔ぶれをここ1つに置く理由は Get-YakuCatQcToolTroubleCodes と同じ。
+      画面側の写しは www/assets/cat.js の QC_WARNING_CODES で、両者が集合として
+      一致することを tools/Test-YakuV9171CatQcLabelCoverage.ps1 の CASE 5 が見る。
+
+      ここは**表示の分類だけ**を決める。Get-YakuCatOutputEligibility は
+      この一覧を読まない。止める条件は Severity='error' だけで決まる。
+    #>
+    return @(
+        'label-not-in-glossary'
     )
 }
 

@@ -11,11 +11,22 @@
   利用者には汎用文（自動点検で気になる点が見つかりました）としてしか見えない。
   何が起きたのか分からないまま、出力が止まる。
 
-  そこで両向きを機械で固定する。判定は3つ。
+  そこで両向きを機械で固定する。判定は4つ。
     (a) src/ が生成しうる finding コードは、すべて cat.js のラベルにある
     (b) cat.js のラベルにあって src/ が一度も生成しないコードは 0 件
     (c) src/ が「道具の不調」と分類した種別の集合と、cat.js が赤ではなく
         道具の色で塗る種別の集合が、**一致する**
+    (d) src/ が「止めない警告」と分類した種別の集合と、cat.js が警告の色で
+        塗る種別の集合が、**一致する**（2026-08-16 に足した。群が2つに
+        増えたので、同じ形の穴が2か所に開くようになった）
+
+  (d) を足した理由。用語集に無い短いラベルの警告（label-not-in-glossary）は、
+  道具の不調とも訳の欠陥とも違う。直せるが、直さなくても書き出せる。赤で出せば
+  押せるはずの書き出しが押せないように見え、道具の不調の色で出せば自分で
+  対処できることが伝わらない。正本は src/CatProject.ps1 の
+  Get-YakuCatQcWarningCodes、画面側の写しは cat.js の QC_WARNING_CODES である。
+  あわせて qcGroup の本体に出てよい文字列を群の名前だけに縛る（種別名を
+  直書きした枝は、一覧を通らないので赤になる）。
 
   (c) を足した理由（2026-08-16）。src/CatProject.ps1 は4種
   （numeric-validation-error / structure-validation-error /
@@ -216,22 +227,29 @@ function Get-YakuQcFindingCodesFromSrc {
     return [pscustomobject]@{ Codes = $codes; Producers = $producers; Records = $records; Synthesized = $synthesized }
 }
 
-function Get-YakuQcToolTroubleCodesFromSrc {
-    <# src 側の正本（Get-YakuCatQcToolTroubleCodes）が並べている種別を、
-       構文木から読む。関数を dot-source して呼ばないのは、この試験が
-       src を1行も実行せずに成り立っている（読むだけ）性質を崩さないため。
+function Get-YakuQcCanonCodesFromSrc {
+    <# src 側の正本（Get-YakuCatQcToolTroubleCodes / Get-YakuCatQcWarningCodes）が
+       並べている種別を、構文木から読む。関数を dot-source して呼ばないのは、
+       この試験が src を1行も実行せずに成り立っている（読むだけ）性質を崩さないため。
 
-       読み方は「その関数の中の配列リテラル」に固定する。註のコメントを
+       読み方は「その関数の中の `@( … )` ただ1つ」に固定する。註のコメントを
        数える読み方は採らない（コメントを動かすと壊れる門は門ではない）。
        形が読めなければ黙って空を返さず、Problems へ積んで赤にする。
-       空で通る門は門ではないからである。 #>
+       空で通る門は門ではないからである。
+
+       **ArrayLiteralAst を数えてはいけない**（2026-08-16 に実測して分かった）。
+       要素が2つ以上の `@('a','b')` は ArrayExpressionAst の中に ArrayLiteralAst を
+       持つが、要素が1つの `@('a')` は ArrayLiteralAst を**作らない**。
+       配列リテラルの個数を1に決め打ちすると、正しい1件だけの正本が
+       「配列リテラルが 0 個」で落ちる。数えるのは `@( … )` そのものにする。 #>
     param(
         [Parameter(Mandatory=$true)][string]$Path,
+        [Parameter(Mandatory=$true)][string]$FunctionName,
         [Parameter(Mandatory=$true)][AllowEmptyCollection()][System.Collections.Generic.List[string]]$Problems
     )
     $codes = New-Object 'System.Collections.Generic.List[string]'
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        $Problems.Add(('道具の不調の正本を置いたファイルが無い: ' + $Path)) | Out-Null
+        $Problems.Add(('種別の正本を置いたファイルが無い: ' + $Path)) | Out-Null
         return [pscustomobject]@{ Codes = $codes }
     }
     $tokens = $null; $errors = $null
@@ -242,19 +260,44 @@ function Get-YakuQcToolTroubleCodesFromSrc {
     }
     $function = @($ast.FindAll({ param($n)
         $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
-        [string]$n.Name -eq 'Get-YakuCatQcToolTroubleCodes' }, $true))
+        [string]$n.Name -eq $FunctionName }, $true))
     if ($function.Count -ne 1) {
-        $Problems.Add(('src の正本 Get-YakuCatQcToolTroubleCodes が ' + $function.Count + ' 個ある（1個であること）')) | Out-Null
+        $Problems.Add(('src の正本 ' + $FunctionName + ' が ' + $function.Count + ' 個ある（1個であること）')) | Out-Null
         return [pscustomobject]@{ Codes = $codes }
     }
-    $arrays = @($function[0].FindAll({ param($n) $n -is [System.Management.Automation.Language.ArrayLiteralAst] }, $true))
+    $arrays = @($function[0].FindAll({ param($n) $n -is [System.Management.Automation.Language.ArrayExpressionAst] }, $true))
     if ($arrays.Count -ne 1) {
-        $Problems.Add(('Get-YakuCatQcToolTroubleCodes の中の配列リテラルが ' + $arrays.Count + ' 個（1個であること。読み方を変えたなら、この門も直す）')) | Out-Null
+        $Problems.Add(($FunctionName + ' の中の @( ) が ' + $arrays.Count + ' 個（1個であること。読み方を変えたなら、この門も直す）')) | Out-Null
         return [pscustomobject]@{ Codes = $codes }
     }
-    foreach ($element in @($arrays[0].Elements)) {
+    # `@( … )` の中身を、文 → パイプライン → 式 の順に開く。素の FindAll で
+    # 文字列定数を掻き集めると、要素以外の場所に書いた文字列まで種別に化ける。
+    $items = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($statement in @($arrays[0].SubExpression.Statements)) {
+        if ($statement -isnot [System.Management.Automation.Language.PipelineAst]) {
+            $Problems.Add(($FunctionName + ' の @( ) に、式でない文がある: ' + [string]$statement.Extent.Text)) | Out-Null
+            continue
+        }
+        foreach ($element in @($statement.PipelineElements)) {
+            if ($element -isnot [System.Management.Automation.Language.CommandExpressionAst]) {
+                $Problems.Add(($FunctionName + ' の @( ) に、式でない要素がある: ' + [string]$element.Extent.Text)) | Out-Null
+                continue
+            }
+            $expression = $element.Expression
+            if ($expression -is [System.Management.Automation.Language.ArrayLiteralAst]) {
+                foreach ($member in @($expression.Elements)) { $items.Add($member) | Out-Null }
+            } else {
+                $items.Add($expression) | Out-Null
+            }
+        }
+    }
+    if ($items.Count -eq 0) {
+        $Problems.Add(($FunctionName + ' の @( ) から要素を1つも読めなかった')) | Out-Null
+        return [pscustomobject]@{ Codes = $codes }
+    }
+    foreach ($element in $items.ToArray()) {
         if ($element -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) {
-            $Problems.Add(('Get-YakuCatQcToolTroubleCodes に文字列定数でない要素がある: ' + [string]$element.Extent.Text)) | Out-Null
+            $Problems.Add(($FunctionName + ' に文字列定数でない要素がある: ' + [string]$element.Extent.Text)) | Out-Null
             continue
         }
         $codes.Add(([string]$element.Value).ToLowerInvariant().Replace('_', '-')) | Out-Null
@@ -426,15 +469,11 @@ function Get-YakuQcJsBalanced {
     return [pscustomobject]@{ Found = $false; Inner = ''; EndIndex = -1 }
 }
 
-function Get-YakuQcCatJsToolCodes {
-    <# cat.js が「道具の不調」として塗る種別。写しの一覧
-       （QC_TOOL_TROUBLE_CODES）を読み、あわせて qcGroup が**その一覧だけ**を
-       見ていることまで確かめる。一覧を残したまま
-       `if (code === 'x') return 'tool';` を手で足せる形だと、一致の表明を
-       素通りできてしまう。qcGroup の本体に出てよい文字列は 'tool' と 'error'
-       だけである。 #>
+function Get-YakuQcCatJsCodeList {
+    <# cat.js の写しの一覧（QC_TOOL_TROUBLE_CODES / QC_WARNING_CODES）を読む。 #>
     param(
         [Parameter(Mandatory=$true)][string]$Path,
+        [Parameter(Mandatory=$true)][string]$ListName,
         [Parameter(Mandatory=$true)][AllowEmptyCollection()][System.Collections.Generic.List[string]]$Problems
     )
     $codes = New-Object 'System.Collections.Generic.List[string]'
@@ -443,15 +482,15 @@ function Get-YakuQcCatJsToolCodes {
         return [pscustomobject]@{ Codes = $codes }
     }
     $text = [System.IO.File]::ReadAllText($Path, (New-Object System.Text.UTF8Encoding($false)))
-    $declaration = [regex]::Match($text, 'var\s+QC_TOOL_TROUBLE_CODES\s*=\s*\[')
+    $declaration = [regex]::Match($text, ('var\s+' + [regex]::Escape($ListName) + '\s*=\s*\['))
     if (-not $declaration.Success) {
-        $Problems.Add('cat.js に QC_TOOL_TROUBLE_CODES の一覧が無い（画面側の分類の出所が消えている）') | Out-Null
+        $Problems.Add(('cat.js に ' + $ListName + ' の一覧が無い（画面側の分類の出所が消えている）')) | Out-Null
         return [pscustomobject]@{ Codes = $codes }
     }
     $arrayOpen = $text.IndexOf('[', $declaration.Index)
     $array = Get-YakuQcJsBalanced -Text $text -OpenIndex $arrayOpen
     if (-not $array.Found) {
-        $Problems.Add('cat.js の QC_TOOL_TROUBLE_CODES が閉じていない') | Out-Null
+        $Problems.Add(('cat.js の ' + $ListName + ' が閉じていない')) | Out-Null
         return [pscustomobject]@{ Codes = $codes }
     }
     $arraySpans = Get-YakuQcJsSpans -Text $array.Inner
@@ -460,28 +499,56 @@ function Get-YakuQcCatJsToolCodes {
         if ([string]::IsNullOrWhiteSpace($code)) { continue }
         $codes.Add($code) | Out-Null
     }
+    return [pscustomobject]@{ Codes = $codes }
+}
 
+function Test-YakuQcCatJsGroupBody {
+    <# qcGroup が**一覧だけ**を見て群を決めていることを確かめる。
+
+       一覧を残したまま `if (code === 'x') return 'tool';` を手で足せる形だと、
+       集合の一致の表明を素通りできてしまう。そこで2つを見る。
+         1. 本体が、渡した一覧の名前を**全部**参照していること
+         2. 本体に出る文字列は、群の名前（'tool' / 'warn' / 'error'）だけであること
+       2 により、種別名を直書きした枝は必ず赤になる。群を1つ増やすときは
+       AllowedGroups と RequiredLists の両方を足すことになり、その群にも正本が
+       要る形が保たれる。 #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [Parameter(Mandatory=$true)][string[]]$RequiredLists,
+        [Parameter(Mandatory=$true)][string[]]$AllowedGroups,
+        [Parameter(Mandatory=$true)][AllowEmptyCollection()][System.Collections.Generic.List[string]]$Problems
+    )
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        $Problems.Add(('cat.js が見つからない: ' + $Path)) | Out-Null
+        return $false
+    }
+    $text = [System.IO.File]::ReadAllText($Path, (New-Object System.Text.UTF8Encoding($false)))
     $fnIndex = $text.IndexOf('function qcGroup(')
     if ($fnIndex -lt 0) {
         $Problems.Add('cat.js に qcGroup 関数が無い（塗り分けの出所が消えている）') | Out-Null
-        return [pscustomobject]@{ Codes = $codes }
+        return $false
     }
     $bodyOpen = $text.IndexOf('{', $fnIndex)
     $body = Get-YakuQcJsBalanced -Text $text -OpenIndex $bodyOpen
     if (-not $body.Found) {
         $Problems.Add('cat.js の qcGroup の本体が閉じていない') | Out-Null
-        return [pscustomobject]@{ Codes = $codes }
+        return $false
     }
     $bodySpans = Get-YakuQcJsSpans -Text $body.Inner
-    if (-not ([string]$bodySpans.Bare).Contains('QC_TOOL_TROUBLE_CODES')) {
-        $Problems.Add('qcGroup が QC_TOOL_TROUBLE_CODES を見ていない（一覧と実際の塗り分けが別物になっている）') | Out-Null
+    $ok = $true
+    foreach ($listName in @($RequiredLists)) {
+        if (-not ([string]$bodySpans.Bare).Contains([string]$listName)) {
+            $Problems.Add(('qcGroup が ' + [string]$listName + ' を見ていない（一覧と実際の塗り分けが別物になっている）')) | Out-Null
+            $ok = $false
+        }
     }
     foreach ($value in $bodySpans.Strings.ToArray()) {
         $literal = [string]$value
-        if ($literal -eq 'tool' -or $literal -eq 'error') { continue }
+        if (@($AllowedGroups) -contains $literal) { continue }
         $Problems.Add(('qcGroup の本体に、一覧を通らない文字列がある: ' + $literal)) | Out-Null
+        $ok = $false
     }
-    return [pscustomobject]@{ Codes = $codes }
+    return $ok
 }
 
 # --- 実行 ------------------------------------------------------------------
@@ -541,8 +608,15 @@ Assert-YakuQcLabel ($dead.Count -eq 0) ('src が生成しないラベルは無�
 Write-Host 'CASE 4: 「道具の不調」の顔ぶれが、src と cat.js で一致する'
 # 色は表示だけの話である。ここで見ているのは塗り分けであって、書き出しを
 # 止める条件ではない。道具の不調で止まった行は、色が変わっても止まったままである。
-$srcToolCodes = @((Get-YakuQcToolTroubleCodesFromSrc -Path (Join-Path $srcDir 'CatProject.ps1') -Problems $problems).Codes.ToArray())
-$catToolCodes = @((Get-YakuQcCatJsToolCodes -Path $catJsPath -Problems $problems).Codes.ToArray())
+$catProjectPath = Join-Path $srcDir 'CatProject.ps1'
+$srcToolCodes = @((Get-YakuQcCanonCodesFromSrc -Path $catProjectPath -FunctionName 'Get-YakuCatQcToolTroubleCodes' -Problems $problems).Codes.ToArray())
+$catToolCodes = @((Get-YakuQcCatJsCodeList -Path $catJsPath -ListName 'QC_TOOL_TROUBLE_CODES' -Problems $problems).Codes.ToArray())
+$srcWarnCodes = @((Get-YakuQcCanonCodesFromSrc -Path $catProjectPath -FunctionName 'Get-YakuCatQcWarningCodes' -Problems $problems).Codes.ToArray())
+$catWarnCodes = @((Get-YakuQcCatJsCodeList -Path $catJsPath -ListName 'QC_WARNING_CODES' -Problems $problems).Codes.ToArray())
+# 群を決める枝が一覧だけを見ていること。ここが素通りできると、下の集合の一致は
+# 「一覧に何が書いてあるか」だけの話になり、実際の塗り分けと無関係になる。
+$groupBodyOk = Test-YakuQcCatJsGroupBody -Path $catJsPath -RequiredLists @('QC_TOOL_TROUBLE_CODES','QC_WARNING_CODES') `
+    -AllowedGroups @('tool','warn','error') -Problems $problems
 foreach ($problem in $problems.ToArray()) {
     if ($reportedProblems.Contains([string]$problem)) { continue }
     Write-Host ('  FAIL ' + $problem) -ForegroundColor Red; $script:Failures++
@@ -559,11 +633,30 @@ $toolOnlyInSrc = @($srcToolCodes | Where-Object { $catToolCodes -notcontains [st
 $toolOnlyInCat = @($catToolCodes | Where-Object { $srcToolCodes -notcontains [string]$_ })
 Assert-YakuQcLabel ($toolOnlyInSrc.Count -eq 0) ('src が道具の不調と言った種別を、画面も道具の色で塗る' + $(if ($toolOnlyInSrc.Count -gt 0) { '（画面が赤で塗っている: ' + ($toolOnlyInSrc -join ', ') + '）' } else { '' }))
 Assert-YakuQcLabel ($toolOnlyInCat.Count -eq 0) ('画面が道具の色で塗る種別は、src もそう分類している' + $(if ($toolOnlyInCat.Count -gt 0) { '（src に無い: ' + ($toolOnlyInCat -join ', ') + '）' } else { '' }))
+Assert-YakuQcLabel $groupBodyOk 'qcGroup は一覧だけを見て群を決めている（種別名の直書きが無い）'
+
+Write-Host 'CASE 5: 「止めない警告」の顔ぶれが、src と cat.js で一致する'
+# 道具の不調と同じ形の穴が、別の群でも開く。あちらは直しようが無いもの、
+# こちらは直せるが直さなくても書き出せるもので、どちらも赤（訳の欠陥）ではない。
+# ここも表示の分類だけを見る。止める条件は Severity='error' だけで決まる。
+Assert-YakuQcLabel ($srcWarnCodes.Count -gt 0) ('src が止めない警告と分類した種別を読めた: ' + ($srcWarnCodes -join ', '))
+Assert-YakuQcLabel ($catWarnCodes.Count -gt 0) ('cat.js が警告の色で塗る種別を読めた: ' + ($catWarnCodes -join ', '))
+$deadWarn = @($srcWarnCodes | Where-Object { -not $srcCodes.Contains([string]$_) })
+Assert-YakuQcLabel ($deadWarn.Count -eq 0) ('止めない警告の正本に、src が生成しない名前は無い' + $(if ($deadWarn.Count -gt 0) { '（死語: ' + ($deadWarn -join ', ') + '）' } else { '' }))
+$warnOnlyInSrc = @($srcWarnCodes | Where-Object { $catWarnCodes -notcontains [string]$_ })
+$warnOnlyInCat = @($catWarnCodes | Where-Object { $srcWarnCodes -notcontains [string]$_ })
+Assert-YakuQcLabel ($warnOnlyInSrc.Count -eq 0) ('src が止めない警告と言った種別を、画面も警告の色で塗る' + $(if ($warnOnlyInSrc.Count -gt 0) { '（画面が赤で塗っている: ' + ($warnOnlyInSrc -join ', ') + '）' } else { '' }))
+Assert-YakuQcLabel ($warnOnlyInCat.Count -eq 0) ('画面が警告の色で塗る種別は、src もそう分類している' + $(if ($warnOnlyInCat.Count -gt 0) { '（src に無い: ' + ($warnOnlyInCat -join ', ') + '）' } else { '' }))
+# 2つの正本が重なると、qcGroup の返す群が並び順で決まってしまう。
+$overlap = @($srcWarnCodes | Where-Object { $srcToolCodes -contains [string]$_ })
+Assert-YakuQcLabel ($overlap.Count -eq 0) ('道具の不調と止めない警告は重ならない' + $(if ($overlap.Count -gt 0) { '（両方に居る: ' + ($overlap -join ', ') + '）' } else { '' }))
 
 if ($script:Failures -gt 0) {
     Write-Host ''
     Write-Host ('src tool codes    : ' + ($srcToolCodes -join ', ')) -ForegroundColor Yellow
     Write-Host ('cat.js tool codes : ' + ($catToolCodes -join ', ')) -ForegroundColor Yellow
+    Write-Host ('src warn codes    : ' + ($srcWarnCodes -join ', ')) -ForegroundColor Yellow
+    Write-Host ('cat.js warn codes : ' + ($catWarnCodes -join ', ')) -ForegroundColor Yellow
     Write-Host ('src codes   : ' + ((@($srcCodes | Sort-Object)) -join ', ')) -ForegroundColor Yellow
     Write-Host ('cat.js keys : ' + ((@($labelKeys.ToArray() | Sort-Object)) -join ', ')) -ForegroundColor Yellow
     Write-Host "V91.61 CAT QC label coverage test failed. failures=$script:Failures" -ForegroundColor Red

@@ -348,6 +348,13 @@
          （Get-YakuCatQcBlockerMessages）は既にこの種別へ専用の文を持っている
          ので、行の表示だけ黙ると画面と窓が食い違う（2026-08-15）。 */
       , 'validation-unavailable': '自動点検が最後まで終わりませんでした。この行は出力できません。もう一度「確認済みにする」を押してください。それでも直らない場合は、この画面のまま管理者へご連絡ください。'
+      /* これだけは、出力を止めない警告である（サーバの Severity が 'warning'）。
+         用語集の完全一致は「はみ出さないこと」の保証として使われており、
+         保証が切れるのは新しいラベルのときだけである。止めはしないが、
+         見えないままだと列からはみ出したことに出してから気づく。
+         文中で「このセルの訳を今後も自動で使う」を名指しするのは、それが
+         この行に実際に描かれるボタンだからである（下の renderRows を参照）。 */
+      , 'label-not-in-glossary': '用語集に無い短いラベルです。訳が長いと列からはみ出すことがあります。この訳でよければ「そのほかの操作」の「このセルの訳を今後も自動で使う」で登録しておくと、次からも同じ訳になります。書き出しは止まりません。'
     };
     return qcFindingViews(segment).map(function (view) { return labels[view.code] || '自動点検で気になる点が見つかりました。左の原文と見比べてください。'; });
   }
@@ -412,8 +419,18 @@
      Get-YakuCatOutputEligibility）はここを読まない。塗り分けても、その行は
      止まったままである。 */
   var QC_TOOL_TROUBLE_CODES = ['numeric-validation-error', 'structure-validation-error', 'terminology-check-unavailable', 'validation-unavailable'];
+  /* 出力を止めない警告。**正本は src/CatProject.ps1 の Get-YakuCatQcWarningCodes**
+     で、ここはその写しである。両者が集合として一致することを
+     tools/Test-YakuV9171CatQcLabelCoverage.ps1 の CASE 5 が見る。
+
+     道具の不調とは別の群にする。あちらは直しようが無いもの、こちらは
+     **直せるが、直さなくても書き出せる**ものである。error と同じ赤で出すと
+     「押せるのに押せない」と読め、tool と同じにすると自分で対処できることが
+     伝わらない。色は表示だけの話で、止める条件はサーバの Severity が決める。 */
+  var QC_WARNING_CODES = ['label-not-in-glossary'];
   function qcGroup(code) {
     if (QC_TOOL_TROUBLE_CODES.indexOf(code) >= 0) return 'tool';
+    if (QC_WARNING_CODES.indexOf(code) >= 0) return 'warn';
     return 'error';
   }
   /* 一覧の印は短く。長い名前は狭い列から溢れて隣の列に重なる。
@@ -462,7 +479,15 @@
   }
   function segmentState(segment) { return segment.status || segment.state || (segment.translation ? 'machine_draft' : 'untranslated'); }
   function segmentHasQc(segment) { return qcMessages(segment).length > 0; }
-  function segmentActionable(segment) { return !segment.confirmed || segmentHasQc(segment); }
+  /* 「要対応」に数えるのは、出力を止める指摘だけである。止めない警告
+     （用語集に無いラベル）でここを立てると、確認し終えた資料が永久に
+     「まだ残っている」と言い続ける。用語集へ足すかどうかは利用者が決めることで、
+     足していないこと自体は欠陥ではない（決定 §1「用語集を網羅する必要はない」）。
+     警告が1件も無い資料では、この関数は segmentHasQc と同じ値を返す。 */
+  function segmentBlockingQc(segment) {
+    return qcFindingViews(segment).some(function (view) { return qcGroup(view.code) !== 'warn'; });
+  }
+  function segmentActionable(segment) { return !segment.confirmed || segmentBlockingQc(segment); }
   function changeGroup(segment) {
     var kind = String(segment.change_kind || '');
     if (['unchanged', 'moved_unchanged', 'unchanged_reference_only'].indexOf(kind) >= 0) return 'unchanged';
@@ -1846,6 +1871,11 @@
     if (!all.length) return false;
     return all.every(function (segment) { return !String(segment.translation || '').trim(); });
   }
+  /* 出力を止めない警告は、止める指摘と同じ群へ入れない。同じ群に入れると
+     見出しの数字が「ファイルを作れない指摘」の件数として読まれ、押せるはずの
+     書き出しが押せないように見える。群は**末尾へ足す**。updateQaButton は
+     blocking の印から数えるが、openQaList は groups[2] を添字で引いているので、
+     間に割り込ませると未確認の件数がすり替わる。 */
   function qaFindings() {
     var all = (project && project.segments) || [], groups = [
       { key: 'empty', title: '訳文が空', blocking: true, items: [] },
@@ -1853,16 +1883,24 @@
          用語もその中に居る（2026-08-15）。名前が「数字」だと、用語で止まった
          人が数字を見に行く。書き出しの窓が言う理由と同じ顔ぶれにする。 */
       { key: 'qc', title: '自動点検の指摘', blocking: true, items: [] },
-      { key: 'unconfirmed', title: '未確認', blocking: false, items: [] }
+      { key: 'unconfirmed', title: '未確認', blocking: false, items: [] },
+      { key: 'warn', title: '用語集に無い短いラベル', blocking: false, items: [] }
     ];
     if (nothingTranslatedYet()) return groups;
     all.forEach(function (segment) {
-      var messages = qcMessages(segment);
+      /* 群を種別で分けるので、文言だけでなく種別も要る。qcMessages は
+         qcFindingViews と同じ並びを返すので、添字で対にできる。 */
+      var views = qcFindingViews(segment), messages = qcMessages(segment);
       var empty = !String(segment.translation || '').trim();
       if (empty) groups[0].items.push({ index: Number(segment.index), source: segment.source, message: '' });
-      messages.filter(function (message) { return !empty || message.indexOf('訳文が空') < 0; }).forEach(function (message) {
-        if (empty && /空/.test(message)) return;
-        groups[1].items.push({ index: Number(segment.index), source: segment.source, message: message });
+      views.forEach(function (view, viewIndex) {
+        var message = String(messages[viewIndex] || '');
+        var target = qcGroup(view.code) === 'warn' ? groups[3] : groups[1];
+        if (target === groups[1]) {
+          if (empty && message.indexOf('訳文が空') >= 0) return;
+          if (empty && /空/.test(message)) return;
+        }
+        target.items.push({ index: Number(segment.index), source: segment.source, message: message });
       });
       if (!segment.confirmed && !empty) groups[2].items.push({ index: Number(segment.index), source: segment.source, message: '' });
     });
@@ -2524,7 +2562,10 @@
     button.disabled = !project;
     if (!project) { button.textContent = '点検'; return; }
     var groups = qaFindings();
-    var blocking = groups[0].items.length + groups[1].items.length;
+    /* 群を添字で足さない。止めない群を足したときに、道具の帯の数字だけが
+       「ファイルを作れない指摘」を水増しする（2026-08-16）。blocking の印は
+       群そのものが持っているので、そこから数える。いまの3群では同じ数になる。 */
+    var blocking = groups.filter(function (group) { return group.blocking; }).reduce(function (sum, group) { return sum + group.items.length; }, 0);
     button.textContent = blocking ? ('点検 ' + blocking) : '点検';
     button.classList.toggle('cat-qa-has-blockers', blocking > 0);
   }
@@ -2533,10 +2574,17 @@
     var groups = qaFindings();
     var blocking = groups.filter(function (group) { return group.blocking; }).reduce(function (sum, group) { return sum + group.items.length; }, 0);
     var unconfirmed = groups[2].items.length;
+    /* 止めない警告は、要約でも「止める指摘」と混ぜない。かといって黙らせない。
+       警告が0件のときの文言は1文字も変えないので、「調べたが直すところは無かった」
+       を見る表明（Test-YakuV9176CatScreenWiring の (k)）はそのまま生きる。 */
+    var warned = groups[3].items.length;
+    var warnNote = warned ? ('用語集に無い短いラベルが ' + warned + ' 行あります。書き出しは止まりません。') : '';
     el('cat-qa-summary').textContent = nothingTranslatedYet()
       ? 'まだ訳していません。「訳していない行を訳す」を押すと、Copilotへ送ります。'
       : blocking
-      ? ('ファイルを作れない指摘が ' + blocking + ' 件あります。' + (unconfirmed ? '未確認は ' + unconfirmed + ' 行です。' : ''))
+      ? ('ファイルを作れない指摘が ' + blocking + ' 件あります。' + (unconfirmed ? '未確認は ' + unconfirmed + ' 行です。' : '') + warnNote)
+      : warned
+      ? ((unconfirmed ? ('未確認は ' + unconfirmed + ' 行です。') : '') + 'ファイルを作れない指摘はありません。' + warnNote)
       /* かつてここは「点検は確認済みにするときに行う」と書いていたが、それは
          事実でなくなった。未確認の行にも点検は走っており（サーバが写しに掛けて
          いる）、その結果はこの一覧に出ている。出ていないのは、まだ調べていない

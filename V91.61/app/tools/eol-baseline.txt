@@ -89,6 +89,7 @@ tools/Test-YakuV9161CorpusReference.ps1	lf
 tools/Test-YakuV9161CorpusSearch.ps1	lf
 tools/Test-YakuV9161ExcelSegmentRoundTrip.ps1	crlf
 tools/Test-YakuV9161GlossaryVariants.ps1	crlf
+tools/Test-YakuV9161LabelCoverage.ps1	crlf
 tools/Test-YakuV9161Revise.ps1	crlf
 tools/Test-YakuV9161Shorten.ps1	crlf
 tools/Test-YakuV9161SplitRequests.ps1	crlf

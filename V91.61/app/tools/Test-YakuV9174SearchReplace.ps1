@@ -114,6 +114,30 @@ function Get-YakuCatJsBlock {
     return ''
 }
 
+function Get-YakuCatJsArrayBlock {
+    <#
+      cat.js から `var NAME = [ … ];` を1本、角括弧の対応で切り出す。
+
+      なぜ別に要るか（2026-08-16）: Get-YakuCatJsBlock は波括弧の対応で切るので、
+      波括弧を1つも持たない配列の宣言は掴めない（掴もうとすると次の関数の
+      波括弧まで飲み込む）。切り出せなければ '' を返し、呼び出し側で赤にする。
+      **中身をここへ写さない。** 写した瞬間、画面が変わっても写しは変わらない。
+    #>
+    param([Parameter(Mandatory=$true)][string]$Text,[Parameter(Mandatory=$true)][string]$Header)
+    $start = $Text.IndexOf($Header, [StringComparison]::Ordinal)
+    if ($start -lt 0) { return '' }
+    $depth = 0; $seen = $false
+    for ($i = $start; $i -lt $Text.Length; $i++) {
+        $ch = $Text[$i]
+        if ($ch -eq '[') { $depth++; $seen = $true }
+        elseif ($ch -eq ']') {
+            $depth--
+            if ($seen -and $depth -eq 0) { return ($Text.Substring($start, $i - $start + 1) + ';') }
+        }
+    }
+    return ''
+}
+
 $settings = Read-YakuSettings -Root $root
 $script:YakuRoot = $root
 $catJsPath = Join-Path (Join-Path $root 'www') 'assets\cat.js'
@@ -314,7 +338,11 @@ try {
         qcCodeOf = '  function qcCodeOf('
         qcFindingViews = '  function qcFindingViews('
         qcMessages = '  function qcMessages('
+        qcGroup = '  function qcGroup('
         segmentHasQc = '  function segmentHasQc('
+        # 「要対応」は止める指摘だけで数える。segmentActionable がこれを読むので、
+        # 切り出さないと harness が ReferenceError で落ちる（写経で埋めない）。
+        segmentBlockingQc = '  function segmentBlockingQc('
         segmentActionable = '  function segmentActionable('
         escapeRegExp = '  function escapeRegExp('
         searchMatcher = '  function searchMatcher('
@@ -326,8 +354,18 @@ try {
         isAlwaysEnabled = '  function isAlwaysEnabled('
         setBusy = '  function setBusy('
     }
+    # 波括弧を持たない宣言（qcGroup が読む種別の一覧）。こちらは角括弧で切る。
+    $jsArrayBlocks = [ordered]@{
+        QC_TOOL_TROUBLE_CODES = '  var QC_TOOL_TROUBLE_CODES = ['
+        QC_WARNING_CODES = '  var QC_WARNING_CODES = ['
+    }
     $harnessParts = New-Object System.Collections.Generic.List[string]
     $missingBlocks = New-Object System.Collections.Generic.List[string]
+    foreach ($arrayName in $jsArrayBlocks.Keys) {
+        $arrayBlock = Get-YakuCatJsArrayBlock -Text $catJs -Header ([string]$jsArrayBlocks[$arrayName])
+        if ([string]::IsNullOrWhiteSpace($arrayBlock)) { [void]$missingBlocks.Add($arrayName); continue }
+        [void]$harnessParts.Add($arrayBlock)
+    }
     foreach ($blockName in $jsBlocks.Keys) {
         $block = Get-YakuCatJsBlock -Text $catJs -Header ([string]$jsBlocks[$blockName])
         if ([string]::IsNullOrWhiteSpace($block)) { [void]$missingBlocks.Add($blockName); continue }
