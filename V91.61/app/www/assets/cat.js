@@ -1527,26 +1527,52 @@
         /* 一致の度合いは、市販CATと同じくカードの先頭に出す。どこが違うかは
            原文側の印で示すので、下の説明文は日付だけでよくなった。
 
-           **あいまい一致に「%」は出さない（2026-08-15）。**
-           ここへ来る ratio は 3-gram の Dice 係数である（算出は
-           src/TranslationMemory.ps1 の Get-YakuTranslationMemoryDice、
-           拾うのは MinScore=0.70 以上）。ところが翻訳者が CAT の「%」を
-           読むときに思い浮かべるのは 100 / 95-99 / 85-94 / 75-84 / 50-74 の帯で、
-           「85%以上ならほぼそのまま使える」という体感で判断する。この帯は
-           編集距離ベースの一致率を前提にした事実上の共通語であって、
-           Dice 係数とは別の尺度である（一致率の算出式に業界の統一は無く、
-           ツール間でスコアは比較できない）。**別の尺度の数字をその帯へ
-           当てはめて読ませるのは、誤読させているのと同じ**なので、
-           数字ごとやめて「完全一致」か「近い訳」かだけを言う。
-           `Math.round(ratio * 100) + '%'` をここへ戻さないこと。
-           指標そのものを編集距離ベースへ作り直すなら、まず
-           Find-YakuTranslationMemory の側を替える。表記はその後でよい。
+           **「%」を出す（2026-08-16 に戻した）。**
+
+           2026-08-15 に一度やめた。理由は「中身が 3-gram の Dice 係数で、
+           翻訳者が読む 100 / 95-99 / 85-94 / 75-84 の帯は編集距離を前提に
+           しているから、別の尺度の数字をその帯へ当てはめさせるのは誤読させるのと
+           同じ」だった。**その前提が両側で消えた。**
+
+           - 実装が編集距離になった（src/TranslationMemory.ps1 の
+             Get-YakuTranslationMemoryEditRatio。拾うのは MinScore=0.70 以上）
+           - **Smartcat を実機で見たら「%」を出していた。** 閾値の選択肢も
+             75 / 85 / 95 / 99 / 100 / 101 で、その帯そのものだった
+
+           帯の色は実測に合わせた（出典 `_docs/測定_一致率_2026-08-16.md`）。
+           Smartcat は 100%=緑、86〜92%=黄、75〜77%=赤で、境目は 78〜85 の間。
+           設定が刻む 85 をその境目として採る。
+
+               100%      is-exact  塗りつぶし
+               85〜99%   is-high   輪郭（実線）
+               70〜84%   is-low    輪郭（破線）
+
+           **色だけに頼らない。** 塗りの形を3種類に分けてあるので、
+           色が見えなくても3段が見分けられる（塗りつぶし／実線／破線）。
+           言葉は title に置く。
+
+           **99%より上は完全一致だけにする。** 0.999 以上を丸めると、1文字だけ
+           違う長文が「100%」と出る。数字の 100 は「同じ」の意味で読まれるので、
+           完全一致でないものは 99% で止める。
+
            並び順と件数はサーバの Weight（ratio の降順）のままで、
            今回それには触っていない。 */
-        var exact = (item.kind === 'prior' ? !!item.exact : (ratio >= .999 || !!item.exact));
-        var scoreClass = exact ? 'is-exact' : 'is-near';
-        var scoreLabel = exact ? '完全一致' : '近い訳';
-        var scoreTitle = exact ? 'いまの原文と同じ' : 'いまの原文に近いが、同じではない';
+        /* **前回版の候補（kind='prior'）に数字を出さない。** そこへ来る ratio は
+           一致率ではなく 0 が入る。かつては 1% に丸めて描いていたが、
+           1% という数字は「ほぼ別物」と読まれてしまう。実際には
+           「前回の同じ場所の訳」であって、原文が変わったかどうかだけが問題である。 */
+        var isPrior = (item.kind === 'prior');
+        var exact = isPrior ? !!item.exact : (ratio >= .999 || !!item.exact);
+        var percent = exact ? 100 : Math.min(99, Math.max(0, Math.round(ratio * 100)));
+        var scoreClass = exact ? 'is-exact' : (!isPrior && percent >= 85 ? 'is-high' : 'is-low');
+        var scoreLabel = isPrior ? (exact ? '原文が同じ' : '原文に変更あり') : (percent + '%');
+        var scoreTitle = isPrior
+            ? (exact ? '前回と同じ場所で、原文も同じ' : '前回と同じ場所だが、原文が変わっている')
+            : (exact
+                ? '完全一致。いまの原文と同じ'
+                : (percent >= 85
+                    ? ('一致率 ' + percent + '%。ほぼそのまま使える')
+                    : ('一致率 ' + percent + '%。手直しが要る')));
         var scoreBadge = '<span class="cat-cand-score ' + scoreClass + '" title="' + esc(scoreTitle) + '">' + esc(scoreLabel) + '</span>';
         /* 一致の度合いは先頭の札が持っているので、ここで繰り返さない。 */
         var match = item.kind === 'prior' ? (item.exact ? '前回と原文が同じ' : '前回から原文に変更あり') : '';

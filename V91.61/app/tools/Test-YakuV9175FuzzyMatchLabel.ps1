@@ -1,31 +1,36 @@
 ﻿<#
 .SYNOPSIS
-  あいまい一致を「%」で見せないことの回帰テスト。
+  あいまい一致を「%」と3段の帯で見せることの回帰テスト。
 
 .DESCRIPTION
-  画面は翻訳メモリの候補に一致の度合いを出す。かつてそれは「%」だった。
+  画面は翻訳メモリの候補に一致の度合いを出す。
 
-  **中身は 3-gram の Dice 係数である**（src/TranslationMemory.ps1 の
-  Get-YakuTranslationMemoryDice。拾うのは MinScore=0.70 以上）。ところが
-  翻訳者が CAT の「%」を読むときに思い浮かべるのは
-  100 / 95-99 / 85-94 / 75-84 / 50-74 という帯で、「85%以上ならほぼ
-  そのまま使える」という体感で判断する。この帯は編集距離ベースの
-  一致率を前提にした事実上の共通語であり、Dice 係数とは別の尺度である。
+  2026-08-15 に「%」を消し、**2026-08-16 に戻した。** 消した理由は
+  「中身が 3-gram の Dice 係数で、翻訳者が読む 100 / 95-99 / 85-94 / 75-84 の
+  帯は編集距離を前提にしているから、別の尺度の数字をその帯へ当てはめさせるのは
+  誤読させるのと同じ」だった。**その前提が両側で消えた。**
 
-  どれくらい別物か。ここで使う「増加→減少」だけが違う20字の文は、
-  編集距離では 0.90（85-94 の帯＝ほぼそのまま使える）だが、Dice では 0.78
-  （75-84 の帯＝手直しが要る）になる。**85 の境目をまたぐ。**
-  この差を「%」として見せていたのだから、誤読させていたのと同じである。
+  - 実装が編集距離になった（src/TranslationMemory.ps1 の
+    Get-YakuTranslationMemoryEditRatio。拾うのは MinScore=0.70 以上）
+  - **Smartcat を実機で測ったら「%」を出していた。** 閾値の選択肢も
+    75 / 85 / 95 / 99 / 100 / 101 で、その帯そのものだった
+    （出典 `_docs/測定_一致率_2026-08-16.md`）
 
-  指標そのものを作り直すのは別の作業。ここで固定するのは表記だけである。
+  帯は3段。境目の 85 は実測に合わせてある（Smartcat: 100=緑 / 86-92=黄 /
+  75-77=赤。境目は 78〜85 の間で、設定が刻む 85 を採った）。
+
+      100%      is-exact  塗りつぶし
+      85〜99%   is-high   実線の枠
+      70〜84%   is-low    破線の枠
 
   見るのは4つ。
-   (a) サーバは従来どおり候補を返す（件数・並び順・ratio の値）。表記だけを
-       変えたことを、ここで示す
-   (b) 画面が「%」を出さない。cat.js の該当部分を node で**実際に走らせて**、
-       描かれた札の中身を読む（字面の -match ではない）
-   (c) 完全一致と近い訳が、文字でも塗りでも見分けられる
-   (d) Ratio を100倍して % にする式が、該当箇所に無い（否定形の検査）
+   (a) サーバは従来どおり候補を返す（件数・並び順・ratio の値）
+   (b) 画面が「%」を出す。cat.js の該当部分を node で**実際に走らせて**、
+       描かれた札の中身を読む（字面の -match ではない）。数字はサーバの
+       一致率そのものであること、**100% は完全一致だけ**であること
+   (c) 3段が、文字でも塗りでも見分けられる。**色を消しても形が違う**こと
+   (d) 前回版の候補（kind='prior'）には数字を出さない。そこの ratio は
+       一致率ではなく 0 が入るため（かつては 1% と描いていた）
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\tools\Test-YakuV9175FuzzyMatchLabel.ps1
@@ -134,8 +139,12 @@ function Remove-YakuJsBlockComment {
 function Get-YakuEditDistanceRatio {
     <#
       編集距離ベースの一致率（1 - Levenshtein/長い方）。市販CATの「%」が
-      前提にしている尺度のほうである。ここでは Dice との差を示すためだけに使う。
-      アプリ本体はこれを使わない。
+      前提にしている尺度のほうである。~~アプリ本体はこれを使わない。~~
+
+      **2026-08-16 に本体がこの尺度になった。** この関数は消さずに残す。
+      本体（src/TranslationMemory.ps1、C# へ落として計算する）とは別に書かれた
+      実装なので、両方が同じ値を出すことが独立した裏づけになる。
+      片方を直したときに、もう片方が黙って付いてくることは無い。
     #>
     param([Parameter(Mandatory=$true)][string]$Left,[Parameter(Mandatory=$true)][string]$Right)
     $a = [string]$Left; $b = [string]$Right
@@ -146,7 +155,9 @@ function Get-YakuEditDistanceRatio {
     for ($i = 1; $i -le $a.Length; $i++) {
         $cur[0] = $i
         for ($j = 1; $j -le $b.Length; $j++) {
-            $cost = if ($a[$i-1] -eq $b[$j-1]) { 0 } else { 1 }
+            # -eq は大文字小文字を畳む。本体（C#の ==）は畳まないので -ceq で揃える。
+            # 畳んだままだと 'ABCD' と 'abcd' で本体と食い違い、突き合わせが崩れる。
+            $cost = if ($a[$i-1] -ceq $b[$j-1]) { 0 } else { 1 }
             $del = $prev[$j] + 1
             $ins = $cur[$j-1] + 1
             $sub = $prev[$j-1] + $cost
@@ -217,34 +228,54 @@ try {
 
     # 並び順。Exact を先頭に、あとは ratio の降順。ここが変わっていないことが
     # 「表記だけの変更」の中身である。
+    # 2026-08-16 に順が変わった。Dice では「10%増加」（3字足す）が「減少」（2字違う）
+    # より上だったが、編集距離では手の入る量の順に並ぶので入れ替わる。
+    # どちらも使い回せる候補だが、上に来るべきなのは直す手数が少ないほうである。
     $expectedOrder = @(
         '当社の売上高は前年同期比で増加しました。'
-        '当社の売上高は前年同期比で10%増加しました。'
         '当社の売上高は前年同期比で減少しました。'
+        '当社の売上高は前年同期比で10%増加しました。'
         '当社の経常利益は前年同期比で増加しました。'
     )
     $actualOrder = @($serverHits | ForEach-Object { [string]$_.source })
-    Chk ((($actualOrder) -join '|') -eq (($expectedOrder) -join '|')) ('並び順が従来どおり: ' + ($actualOrder -join ' / '))
+    Chk ((($actualOrder) -join '|') -eq (($expectedOrder) -join '|')) ('並び順は手数の少ない順: ' + ($actualOrder -join ' / '))
     Chk (@($actualOrder | Where-Object { $_ -eq '本日は晴天なり。' }).Count -eq 0) '閾値未満の過去訳は候補に出ない（絞り込みが効いている）'
 
-    # サーバが返す数値が Dice 係数そのものであること。ここが崩れたら、
-    # 「%をやめた理由」の前提が崩れる。
-    $diceMismatch = 0
+    # サーバが返す数値が、画面と同じ一致率であること。
+    $selfMismatch = 0
     foreach ($m in $serverHits) {
         $expectedRatio = [double](Get-YakuTranslationMemorySimilarity -Left $activeSource -Right ([string]$m.source))
-        if ([Math]::Abs([double]$m.source_match_ratio - $expectedRatio) -ge 0.000001) { $diceMismatch++ }
+        if ([Math]::Abs([double]$m.source_match_ratio - $expectedRatio) -ge 0.000001) { $selfMismatch++ }
     }
-    Chk ($diceMismatch -eq 0) 'サーバの source_match_ratio は 3-gram Dice 係数そのもの'
+    Chk ($selfMismatch -eq 0) 'サーバの source_match_ratio は画面と同じ一致率'
     Chk (@($serverHits | Where-Object { [bool]$_.exact }).Count -eq 1) '完全一致はちょうど1件'
 
-    # なぜ「%」として読ませてはいけないか。「増加→減少」だけが違う過去訳で、
-    # 編集距離ベースの一致率と Dice が 85 の境目をまたいで食い違う。
+    # 本体とは別に書かれた実装（この試験の中の Get-YakuEditDistanceRatio）と
+    # 突き合わせる。本体は C# へ落として計算するので、両方が同じ値を出すことが
+    # 独立した裏づけになる。突き合わせるのは正規化したあとの鍵どうしである。
+    $independentMismatch = 0
+    foreach ($m in $serverHits) {
+        $keyLeft = ConvertTo-YakuTranslationMemoryKey -Text $activeSource
+        $keyRight = ConvertTo-YakuTranslationMemoryKey -Text ([string]$m.source)
+        $independent = [double](Get-YakuEditDistanceRatio -Left $keyLeft -Right $keyRight)
+        if ([Math]::Abs([double]$m.source_match_ratio - $independent) -ge 0.000001) { $independentMismatch++ }
+    }
+    Chk ($independentMismatch -eq 0) '別に書いた編集距離の実装と、1件残らず同じ値になる'
+
+    # 「増加→減少」だけが違う20字の文。かつて Dice では 0.78（75-84 の帯＝
+    # 手直しが要る）で、翻訳者が「%」から受け取る印象と食い違っていた。
+    # これが「%」をやめた理由だったが、いまは帯のとおりの値を返す。
     $near = @($serverHits | Where-Object { [string]$_.source -eq '当社の売上高は前年同期比で減少しました。' })[0]
-    $nearDice = [double]$near.source_match_ratio
-    $nearEdit = [double](Get-YakuEditDistanceRatio -Left $activeSource -Right ([string]$near.source))
-    Chk ($nearEdit -ge 0.85) ('20字中2字違いは編集距離では ' + ('{0:N2}' -f $nearEdit) + '（85-94 の帯＝ほぼそのまま使える）')
-    Chk ($nearDice -lt 0.85) ('同じ組が Dice では ' + ('{0:N2}' -f $nearDice) + '（75-84 の帯＝手直しが要る）')
-    Chk (($nearEdit - $nearDice) -ge 0.10) '2つの尺度は帯をまたいで食い違う（「%」で読ませてはいけない理由）'
+    $nearRatio = [double]$near.source_match_ratio
+    Chk ($nearRatio -ge 0.85 -and $nearRatio -lt 0.95) ('20字中2字違いは ' + ('{0:N2}' -f $nearRatio) + '（85-94 の帯＝ほぼそのまま使える）')
+
+    # 長さで答えが変わらないこと。同じ「2字違い」を短い文でも出す。Dice なら
+    # ここが 0.60 まで落ちて閾値を割り、候補ごと消えていた。
+    $shortLeft = '営業利益は増加しました。'
+    $shortRight = '営業利益は減少しました。'
+    $shortRatio = [double](Get-YakuTranslationMemorySimilarity -Left $shortLeft -Right $shortRight)
+    Chk ($shortRatio -ge 0.70) ('12字でも同じ2字違いが閾値を越える: ' + ('{0:N2}' -f $shortRatio))
+    Chk ([Math]::Abs($shortRatio - $nearRatio) -lt 0.10) ('長い文と短い文で一致率がほぼ同じ: ' + ('{0:N2}' -f $shortRatio) + ' / ' + ('{0:N2}' -f $nearRatio))
 
     # ------------------------------------------------------------------ (b)
     Write-Host '(b) 画面は「%」を出さない（cat.js を node で実際に走らせる）' -ForegroundColor Cyan
@@ -282,8 +313,18 @@ try {
         target='Net sales increased from a year earlier.'; exact=$false; ratio=0.0; source_match_ratio=0.0
         score=0.0; match_type='fuzzy'; saved=''; database='前回版'; verified=$false
     }
+    # 100 の直前で止まることを、**画面に実際に描かせて**確かめるための1件。
+    # 0.997 は四捨五入すると 100 になる。ここを PowerShell 側で計算して比べると、
+    # cat.js に一度も当たらない検査になる（自己同語反復）。
+    $cappedItem = [ordered]@{
+        kind='tm'; reference_id=('b' * 32); source_name='丸め確認用'; location=''; page=0
+        source='丸め確認用の原文'; translation='rounding probe'; target='rounding probe'
+        exact=$false; ratio=0.997; source_match_ratio=0.997; score=0.997
+        match_type='fuzzy'; saved='2026-08-16T00:00:00Z'; database='probe'; verified=$true
+    }
     $itemsForJs = New-Object System.Collections.Generic.List[object]
     foreach ($m in $serverHits) { [void]$itemsForJs.Add($m) }
+    [void]$itemsForJs.Add([pscustomobject]$cappedItem)
     [void]$itemsForJs.Add([pscustomobject]$priorItem)
 
     $harnessPath = Join-Path $tmp 'cat-candidate-card.js'
@@ -336,7 +377,8 @@ fs.writeFileSync(process.argv[3], JSON.stringify({ cards: cards }), 'utf8');
 
     if ($null -ne $nodeOut) {
         $cards = @($nodeOut.cards)
-        Chk ($cards.Count -eq ($serverHits.Count + 1)) ('サーバの候補と同じ数だけカードが出る（' + $cards.Count + ' 枚）')
+        # サーバの候補4件＋丸め確認用1件＋前回版1件。
+        Chk ($cards.Count -eq $itemsForJs.Count) ('渡した候補と同じ数だけカードが出る（' + $cards.Count + ' 枚 / 渡したのは ' + $itemsForJs.Count + ' 件）')
 
         $badgeRe = [regex]'<span class="cat-cand-score ([^"]*)" title="([^"]*)">([^<]*)</span>'
         $badges = New-Object System.Collections.Generic.List[object]
@@ -354,58 +396,69 @@ fs.writeFileSync(process.argv[3], JSON.stringify({ cards: cards }), 'utf8');
         Chk ($noBadge -eq 0) 'どのカードにも一致の度合いの札がある'
 
         $badgeList = @($badges.ToArray())
-        $exactBadges = @($badgeList | Where-Object { [string]$_.Text -eq '完全一致' })
-        $nearBadges  = @($badgeList | Where-Object { [string]$_.Text -ne '完全一致' })
-        Chk ($exactBadges.Count -eq 1) '完全一致の札は1枚だけ'
-        Chk ($nearBadges.Count -eq 4) 'あいまい一致の札は4枚（翻訳メモリ3件＋前回版1件）'
-        Chk (@($nearBadges | Where-Object { [string]$_.Text -eq '近い訳' }).Count -eq $nearBadges.Count) 'あいまい側の札はすべて「近い訳」'
+        # 前回版の候補（kind='prior'）には数字を出さない。そこの ratio は
+        # 一致率ではなく 0 が入るため（かつては 1% と描いていた）。
+        $priorBadges  = @($badgeList | Where-Object { [string]$_.Card -match '前回のFY2024資料' })
+        $cappedBadges = @($badgeList | Where-Object { [string]$_.Card -match '丸め確認用' })
+        $tmBadges     = @($badgeList | Where-Object { [string]$_.Card -notmatch '前回のFY2024資料' -and [string]$_.Card -notmatch '丸め確認用' })
+        Chk ($priorBadges.Count -eq 1) '前回版の札は1枚'
+        Chk ($cappedBadges.Count -eq 1) '丸め確認用の札は1枚'
+        Chk ($tmBadges.Count -eq 4) '翻訳メモリの札は4枚'
 
-        # 受入条件そのもの。あいまい側の札に「%」も数字も出ない。
-        $percentInBadge = @($nearBadges | Where-Object { [string]$_.Text -match '[%％]' }).Count
-        $digitInBadge   = @($nearBadges | Where-Object { [string]$_.Text -match '\d' }).Count
-        Chk ($percentInBadge -eq 0) 'あいまい側の札に「%」が出ない'
-        Chk ($digitInBadge -eq 0) 'あいまい側の札に数字が出ない（帯として読まれる余地を残さない）'
-        # 以降は「完全一致の札が1枚ある」ことを前提にする。無いまま比較すると
-        # $null 同士の比較が静かに通り、壊れているのに緑になる（実際に踏んだ）。
-        $haveExact = ($exactBadges.Count -eq 1)
-        $haveNear = ($nearBadges.Count -gt 0)
-        $exactText = if ($haveExact) { [string]@($exactBadges)[0].Text } else { '' }
-        Chk ($haveExact -and ($exactText -notmatch '[%％\d]')) '完全一致の札も数字で言わない（「100%」ではない）'
+        # 受入条件そのもの。翻訳メモリ側の札は全部「n%」である。
+        $percentRe = [regex]'^\d{1,3}%$'
+        $nonPercent = @($tmBadges | Where-Object { -not $percentRe.IsMatch([string]$_.Text) })
+        Chk ($nonPercent.Count -eq 0) ('翻訳メモリの札はすべて「n%」: ' + (($tmBadges | ForEach-Object { [string]$_.Text }) -join ' / '))
+        Chk (@($priorBadges | Where-Object { [string]$_.Text -match '[%％\d]' }).Count -eq 0) ('前回版の札には数字を出さない: ' + [string]@($priorBadges)[0].Text)
 
-        # 空振り防止。かつての式なら、この題材でいくつの「%」が出ていたかを
-        # ここで作って、それがカードに無いことを見る。
-        $oldPercents = New-Object System.Collections.Generic.List[string]
+        # 画面の数字が、サーバの一致率そのものであること。**完全一致だけが 100%。**
+        $expectedPercents = New-Object System.Collections.Generic.List[string]
         foreach ($m in $serverHits) {
             $r = [double]$m.source_match_ratio
-            $p = if ([bool]$m.exact -or $r -ge 0.999) { 100 } else { [Math]::Max(1, [Math]::Min(99, [int][Math]::Round($r * 100, [MidpointRounding]::AwayFromZero))) }
-            [void]$oldPercents.Add(([string]$p + '%'))
+            $p = if ([bool]$m.exact -or $r -ge 0.999) { 100 } else { [Math]::Min(99, [Math]::Max(0, [int][Math]::Round($r * 100, [MidpointRounding]::AwayFromZero))) }
+            [void]$expectedPercents.Add(([string]$p + '%'))
         }
-        [void]$oldPercents.Add('1%')  # kind='prior' の ratio=0 は 1% に丸められていた
-        $oldList = @($oldPercents.ToArray())
-        Chk ($oldList.Count -eq 5 -and (@($oldList | Where-Object { $_ -match '^\d+%$' }).Count -eq 5)) ('かつての表記は ' + ($oldList -join ' / ') + '（この検査が空振りでないこと）')
-        $joinedCards = ($cards -join "`n")
-        $leaked = @($oldList | Where-Object { $joinedCards.Contains($_) })
-        Chk ($leaked.Count -eq 0) ('かつての「%」表記はどのカードにも出ない（漏れ: ' + ($leaked -join ',') + '）')
+        $expectedList = @($expectedPercents.ToArray())
+        $shownList = @($tmBadges | ForEach-Object { [string]$_.Text })
+        Chk ((($shownList | Sort-Object) -join ',') -eq (($expectedList | Sort-Object) -join ',')) ('札の数字はサーバの一致率そのもの: 画面 ' + ($shownList -join '/') + ' / 期待 ' + ($expectedList -join '/'))
 
-        # 「%」が出ないのは、そもそも題材に % が無いからではない。
-        # 原文に % を含む候補では、% は本文としてそのまま出る。
+        # 空振り防止。題材が3段とも通っていなければ、帯の検査は何も見ていない。
+        $hundred = @($shownList | Where-Object { $_ -eq '100%' })
+        $high    = @($tmBadges | Where-Object { [string]$_.Class -eq 'is-high' })
+        $low     = @($tmBadges | Where-Object { [string]$_.Class -eq 'is-low' })
+        Chk ($hundred.Count -eq 1) '題材に 100% がちょうど1枚ある'
+        Chk ($high.Count -ge 1) ('題材に 85%以上の札がある（' + $high.Count + '枚）')
+        Chk ($low.Count -ge 1) ('題材に 85%未満の札がある（' + $low.Count + '枚）')
+
+        # **100% は完全一致だけ。** 0.999 以上を丸めて 100% と描くと、
+        # 1文字だけ違う長文が「同じ」と読まれる。
+        $falseHundred = @($badgeList | Where-Object { [string]$_.Text -eq '100%' -and [string]$_.Class -ne 'is-exact' })
+        Chk ($falseHundred.Count -eq 0) '完全一致でないものに 100% は出ない'
+        # 画面に実際に描かせて確かめる。ratio=0.997 は四捨五入すれば 100 になる。
+        $cappedText = if ($cappedBadges.Count -eq 1) { [string]@($cappedBadges)[0].Text } else { '' }
+        $cappedClass = if ($cappedBadges.Count -eq 1) { [string]@($cappedBadges)[0].Class } else { '' }
+        Chk ($cappedText -eq '99%') ('一致率 0.997 の候補は 99% と描かれる（100 へ丸めない）。実際 ' + $cappedText)
+        Chk ($cappedClass -eq 'is-high') ('その札は完全一致の見た目にならない。実際 ' + $cappedClass)
+
+        # 帯の境目は 85。実測（Smartcat: 100=緑 / 86-92=黄 / 75-77=赤）に合わせてある。
+        $bandWrong = @($tmBadges | Where-Object {
+            $p = [int]([string]$_.Text -replace '%', '')
+            $c = [string]$_.Class
+            (($p -eq 100) -and ($c -ne 'is-exact')) -or
+            (($p -lt 100 -and $p -ge 85) -and ($c -ne 'is-high')) -or
+            (($p -lt 85) -and ($c -ne 'is-low'))
+        })
+        Chk ($bandWrong.Count -eq 0) ('帯の境目は 85: ' + (($tmBadges | ForEach-Object { [string]$_.Text + '=' + [string]$_.Class }) -join ' '))
+
+        # 原文に % を含む候補では、% は本文としてもそのまま出る（札と本文の取り違え防止）。
         $percentCard = @($cards | Where-Object { [string]$_ -match '10%' })
-        Chk ($percentCard.Count -eq 1) '原文に % を含む候補では、% は本文としてカードに出る（検査の当て先が札に絞れている）'
-        $percentBadge = @($badgeList | Where-Object { [string]$_.Card -match '10%' })
-        Chk ($percentBadge.Count -eq 1 -and ([string]@($percentBadge)[0].Text -eq '近い訳')) 'その候補の札も「近い訳」であって % ではない'
-
-        # 本文に % を持たないカードには、カード全体を通しても % が1つも無い。
-        $cleanCards = @($cards | Where-Object { [string]$_ -notmatch '10%' })
-        Chk ($cleanCards.Count -eq 4) '本文に % を持たないカードが4枚ある'
-        Chk (@($cleanCards | Where-Object { [string]$_ -match '[%％]' }).Count -eq 0) '本文に % が無いカードには、カード全体でも % が出ない'
+        Chk ($percentCard.Count -eq 1) '原文に % を含む候補では、% は本文としてカードに出る'
 
         # --------------------------------------------------------------- (c)
-        Write-Host '(c) 完全一致と近い訳が、文字でも塗りでも見分けられる' -ForegroundColor Cyan
-        $exactClass = if ($haveExact) { [string]@($exactBadges)[0].Class } else { '' }
-        $nearClasses = @($nearBadges | ForEach-Object { [string]$_.Class } | Sort-Object -Unique)
-        Chk ($haveExact -and $haveNear -and ($exactClass -ne ($nearClasses -join ','))) ('札の class が分かれる: 完全一致=' + $exactClass + ' / あいまい=' + ($nearClasses -join ','))
-        Chk ($nearClasses.Count -eq 1) 'あいまい側の class は1種類（かつての is-high / is-low の分岐は残っていない）'
-        Chk ($haveExact -and $haveNear -and (([string]@($exactBadges)[0].Title) -ne ([string]@($nearBadges)[0].Title))) '説明（title）も分かれる'
+        Write-Host '(c) 3段が、文字でも塗りでも見分けられる' -ForegroundColor Cyan
+        $haveExact = (@($badgeList | Where-Object { [string]$_.Class -eq 'is-exact' }).Count -ge 1)
+        $titles = @(@($badgeList | ForEach-Object { [string]$_.Title }) | Sort-Object -Unique)
+        Chk ($titles.Count -ge 3) ('説明（title）が段ごとに分かれる: ' + $titles.Count + '種類')
 
         # 画面が出す class に、実際に見た目の規則があること。
         # かつての is-low は styles.css に規則が無く、札は既定のまま出ていた。
@@ -413,15 +466,29 @@ fs.writeFileSync(process.argv[3], JSON.stringify({ cards: cards }), 'utf8');
         $classesUsed = @(@($badgeList | ForEach-Object { [string]$_.Class }) | Sort-Object -Unique)
         $classesWithoutRule = @($classesUsed | Where-Object { $styles -notmatch ('\.cat-cand-score\.' + [regex]::Escape($_) + '\s*\{') })
         Chk ($classesWithoutRule.Count -eq 0) ('画面が出す class には styles.css の規則がある（規則なし: ' + ($classesWithoutRule -join ',') + '）')
-        Chk ($classesUsed.Count -eq 2) ('札の class は2種類だけ: ' + ($classesUsed -join ','))
+        Chk ($classesUsed.Count -eq 3) ('札の class は3種類: ' + ($classesUsed -join ','))
 
         $ruleRe = [regex]'\.cat-cand-score\.(is-[a-z-]+)\s*\{([^}]*)\}'
         $rules = @{}
         foreach ($rm in $ruleRe.Matches($styles)) { $rules[[string]$rm.Groups[1].Value] = ([string]$rm.Groups[2].Value).Trim() }
-        $exactRule = if ($haveExact -and $rules.ContainsKey($exactClass)) { [string]$rules[$exactClass] } else { '' }
-        $nearRule = if ($haveNear -and $rules.ContainsKey([string]$nearClasses[0])) { [string]$rules[[string]$nearClasses[0]] } else { '' }
-        Chk ((-not [string]::IsNullOrWhiteSpace($exactRule)) -and (-not [string]::IsNullOrWhiteSpace($nearRule)) -and ($exactRule -ne $nearRule)) '完全一致と近い訳で、塗りの規則そのものが違う'
-        Chk ($exactRule -match 'background') '完全一致は塗りつぶし（色だけに頼らない見分けが残っている）'
+        $missingRule = @($classesUsed | Where-Object { -not $rules.ContainsKey($_) -or [string]::IsNullOrWhiteSpace([string]$rules[$_]) })
+        Chk ($missingRule.Count -eq 0) ('3段とも規則の中身がある（空: ' + ($missingRule -join ',') + '）')
+        $ruleTexts = @(@($classesUsed | ForEach-Object { [string]$rules[$_] }) | Sort-Object -Unique)
+        Chk ($ruleTexts.Count -eq 3) '3段の塗りの規則が、それぞれ違う'
+
+        # **色だけに頼らない。** 3段の見分けが色以外にも付いていること。
+        # 色の指定（color / border-color / background の値）を落としてから比べる。
+        $stripColour = {
+            param([string]$Rule)
+            $t = [regex]::Replace([string]$Rule, '(?i)(background|color|border-color)\s*:[^;]*;?', '')
+            return ($t -replace '\s+', ' ').Trim()
+        }
+        $exactShape = & $stripColour ([string]$rules['is-exact'])
+        $highShape  = & $stripColour ([string]$rules['is-high'])
+        $lowShape   = & $stripColour ([string]$rules['is-low'])
+        Chk ($haveExact -and ([string]$rules['is-exact'] -match 'background')) '完全一致は塗りつぶし'
+        Chk ($highShape -ne $lowShape) ('85%以上と85%未満は、色を消しても形が違う: [' + $highShape + '] / [' + $lowShape + ']')
+        Chk ($lowShape -match 'dashed') '85%未満は破線の枠（色が見えなくても分かる）'
 
         # 並び順は、サーバの順のままカードになる。表記だけを変えたことの裏づけ。
         $cardSourceOrder = New-Object System.Collections.Generic.List[string]
@@ -433,25 +500,29 @@ fs.writeFileSync(process.argv[3], JSON.stringify({ cards: cards }), 'utf8');
         $renderedOrder = @(@($cardSourceOrder.ToArray()) | Select-Object -First $serverHits.Count)
         Chk ((($renderedOrder) -join '|') -eq (($expectedOrder) -join '|')) 'カードの並びはサーバの並びのまま'
         $numbers = @($cards | ForEach-Object { [int][regex]::Match([string]$_, '<span class="cat-candidate-number">(\d+)</span>').Groups[1].Value })
-        Chk ((($numbers) -join ',') -eq '1,2,3,4,5') ('Ctrl+数字の割り当ても従来どおり: ' + ($numbers -join ','))
+        $expectedNumbers = @(1..$itemsForJs.Count) -join ','
+        Chk ((($numbers) -join ',') -eq $expectedNumbers) ('Ctrl+数字の割り当ても従来どおり: ' + ($numbers -join ','))
     }
 
     # ------------------------------------------------------------------ (d)
-    Write-Host '(d) Ratio を100倍して % にする式が、該当箇所に無い（否定形）' -ForegroundColor Cyan
+    Write-Host '(d) 前回版の候補には数字を出さない／札を作る場所は1つ' -ForegroundColor Cyan
     $codeOnly = Remove-YakuJsBlockComment -Text $cardBlock
     Chk ($codeOnly.Length -gt 500 -and $codeOnly -match 'cat-cand-score') 'コメントを落としても、札を作るコードは残っている（検査の当て先があること）'
-    Chk ($cardBlock.Length -gt $codeOnly.Length) 'コメントは実際に落ちている（この否定形が空振りでないこと）'
-    Chk ($codeOnly -notmatch '\*\s*100') '該当箇所に「* 100」が無い'
-    Chk ($codeOnly -notmatch 'Math\.round') '該当箇所に Math.round が無い'
-    Chk ($codeOnly -notmatch "[%％]") '該当箇所のコードに「%」の文字が無い'
-    Chk ($codeOnly -notmatch 'is-high' -and $codeOnly -notmatch 'is-low') 'かつての帯（is-high / is-low）の分岐が残っていない'
-    # 札を作る場所は1つだけ。別の場所で % を足し直していないこと。
+    Chk ($cardBlock.Length -gt $codeOnly.Length) 'コメントは実際に落ちている（コードだけへ当てられていること）'
+    # 数字を出すのはコード側であって、コメントの中の例ではない。
+    Chk ($codeOnly -match 'is-high' -and $codeOnly -match 'is-low') 'コードに3段の分岐がある'
+    Chk ($codeOnly -match "'%'" -or $codeOnly -match '"%"') 'コードが「%」を組み立てている'
+    Chk ($codeOnly -match 'isPrior') 'コードが前回版の候補を分けている'
+    # 前回版の分岐が本当に数字を止めていること。ここを外すと 0% と描かれる。
+    Chk ($codeOnly -match "isPrior\s*\?") '前回版のときは数字ではなく言葉を選ぶ枝がある'
+    # 札を作る場所は1つだけ。別の場所で表記を足し直していないこと。
     Chk (([regex]::Matches($catJs, 'cat-cand-score')).Count -eq 1) 'cat.js が一致の度合いの札を作る場所は1か所だけ'
 
-    # なぜやめたかがコメントに残っていること。
-    Chk ($cardBlock -match 'Dice') 'コメントに Dice 係数であることが書いてある'
-    Chk ($cardBlock -match '85') 'コメントに帯（85 以上ならほぼそのまま使える）との食い違いが書いてある'
+    # なぜ戻したかがコメントに残っていること。
+    Chk ($cardBlock -match 'Smartcat') 'コメントに、市販ツールを実機で測ったことが書いてある'
+    Chk ($cardBlock -match '85') 'コメントに帯の境目（85）が書いてある'
     Chk ($cardBlock -match 'TranslationMemory\.ps1') 'コメントに算出元の出典が書いてある'
+    Chk ($cardBlock -match '測定_一致率') 'コメントに測定記録の出典が書いてある'
 
     # サーバは ratio を返し続ける（画面が使わないだけで、口は変えていない）。
     Chk ($null -ne $response -and (@($response.segment_matches)[0].PSObject.Properties.Name -contains 'source_match_ratio')) 'サーバの口は従来どおり source_match_ratio を返す'
