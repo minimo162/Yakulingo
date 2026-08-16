@@ -1,0 +1,82 @@
+# PURE ASCII. Builds the fixture for the tool comparison.
+#
+# **Do not rebuild the pairs from the PDFs.** Tried that first: reading the PDF
+# line by line gives fragments, not sentences, and after requiring a real anchor
+# plus a complete sentence on both sides, zero rows survived.
+#
+# The app's own alignment already did this work. The corpus left behind in
+# _backup-20260813-firstrun holds 3,001 ja/en pairs taken from Mazda's published
+# documents, 1,550 of them with their figures cross-checked. Those are sentence
+# level and their English side is the published translation, so it IS the
+# reference: scoring needs no human judgement.
+#
+# Still missing: the two machine translations themselves, which spend the user's
+# Copilot / Smartcat quota. Everything else is ready.
+$ErrorActionPreference = 'Stop'
+$here = $PSScriptRoot
+$backup = Join-Path (Join-Path $env:USERPROFILE '.yakulingo-ps') '_backup-20260813-firstrun\corpus-build'
+
+$rows = New-Object 'System.Collections.Generic.List[object]'
+$seen = @{}
+foreach ($file in @(Get-ChildItem -LiteralPath $backup -Recurse -Filter 'pairs.jsonl' -ErrorAction SilentlyContinue)) {
+    foreach ($line in [IO.File]::ReadAllLines($file.FullName, [Text.Encoding]::UTF8)) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        $p = $null
+        try { $p = $line | ConvertFrom-Json } catch { continue }
+        if (-not [bool]$p.verified) { continue }               # figures cross-checked only
+        $ja = ([string]$p.ja).Trim(); $en = ([string]$p.en).Trim()
+        if ($ja.Length -lt 25 -or $en.Length -lt 40) { continue }
+        # Whole sentences on both sides.
+        if (-not $ja.EndsWith([string][char]0x3002)) { continue }
+        if (-not $en.EndsWith('.')) { continue }
+        # Prose, not a table row: needs a run of kana.
+        if ($ja -notmatch ('[' + [char]0x3040 + '-' + [char]0x309F + ']{4,}')) { continue }
+        # Must not start mid-word.
+        if ($ja -match ('^[' + [char]0x3040 + '-' + [char]0x309F + ']')) { continue }
+        # A real pair keeps a sane length ratio.
+        $ratio = [double]$en.Length / [double]$ja.Length
+        if ($ratio -lt 1.2 -or $ratio -gt 3.5) { continue }
+        if ($seen.ContainsKey($ja)) { continue }
+        $seen[$ja] = $true
+        $rows.Add([pscustomobject]@{ Ja = $ja; En = $en; Db = [string]$p.database; Src = [string]$p.source }) | Out-Null
+    }
+}
+
+Write-Host ('usable prose pairs with a published reference: ' + $rows.Count)
+if ($rows.Count -lt 10) { Write-Host 'TOO FEW - the comparison would not be worth running'; exit 3 }
+
+# Keep a manageable, varied set. Take every Nth so one document does not dominate.
+$all = @($rows.ToArray())
+$want = 20
+$step = [Math]::Max(1, [int][Math]::Floor($all.Count / $want))
+$picked = New-Object 'System.Collections.Generic.List[object]'
+for ($i = 0; $i -lt $all.Count -and $picked.Count -lt $want; $i += $step) { $picked.Add($all[$i]) | Out-Null }
+
+$out = New-Object 'System.Collections.Generic.List[object]'
+$n = 0
+foreach ($r in @($picked.ToArray())) {
+    $n++
+    $out.Add([ordered]@{
+        id = ('S' + $n.ToString('00'))
+        document = [string]$r.Db
+        ja = [string]$r.Ja
+        reference_en = [string]$r.En
+        yakulingo_en = ''
+        smartcat_en = ''
+    }) | Out-Null
+}
+$outPath = Join-Path $here 'compare-fixture.json'
+$payload = [ordered]@{
+    note = 'Sentence pairs from Mazda published documents, taken from the app own alignment output (verified rows only). The English side IS the published translation, so scoring is distance to it and needs no human judgement. Fill yakulingo_en and smartcat_en, then score.'
+    origin = 'corpus-build/*/pairs.jsonl (verified=true)'
+    rows = @($out.ToArray())
+}
+[IO.File]::WriteAllText($outPath, ($payload | ConvertTo-Json -Depth 6), (New-Object Text.UTF8Encoding($true)))
+Write-Host ('wrote ' + $outPath + '  rows=' + $out.Count)
+Write-Host ''
+Write-Host 'sample (check by eye that the two sides really correspond):'
+foreach ($r in @($out.ToArray() | Select-Object -First 3)) {
+    Write-Host ('  ' + [string]$r.id + ' [' + [string]$r.document + ']')
+    Write-Host ('    ja  : ' + [string]$r.ja)
+    Write-Host ('    ref : ' + [string]$r.reference_en)
+}

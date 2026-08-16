@@ -1,0 +1,166 @@
+﻿{
+    "note":  "Sentence pairs from Mazda published documents, taken from the app own alignment output (verified rows only). The English side IS the published translation, so scoring is distance to it and needs no human judgement. Fill yakulingo_en and smartcat_en, then score.",
+    "origin":  "corpus-build/*/pairs.jsonl (verified=true)",
+    "rows":  [
+                 {
+                     "id":  "S01",
+                     "document":  "有報",
+                     "ja":  "当連結会計年度の研究開発費の総額は1,609億円であり、セグメントごとの研究開発費は、日本は1 ,542億円、北米は26億円、欧州は33億円、その他の地域は8億円であります。",
+                     "reference_en":  "R\u0026D costs in the fiscal year ended March 31, 2026 totaled ¥160.9 billion, a segment-wise breakdown of which was ¥154.2 billion for Japan, ¥2.6 billion for North America, ¥3.3 billion for Europe, and ¥0.8 billion for Other areas.",
+                     "yakulingo_en":  "",
+                     "smartcat_en":  ""
+                 },
+                 {
+                     "id":  "S02",
+                     "document":  "有報",
+                     "ja":  "当連結会計年度の設備投資(無形固定資産に係るものを含む)は、電動化 、新世代商品、IT、グローバル生産及び販売体制強化など、将来の成長に向けた投資を効率的に実施したことにより、全体で1,200億円となりました。",
+                     "reference_en":  "Capital expenditures (including intangible assets) for the fiscal year ended March 31, 2026 totaled ¥120.0 billion, as the Company made efficient investments for future growth in areas such as electrification, new-generation products, IT, and strengthening of its global production and sales systems.",
+                     "yakulingo_en":  "",
+                     "smartcat_en":  ""
+                 },
+                 {
+                     "id":  "S03",
+                     "document":  "有報",
+                     "ja":  "セグメント別においては、日本では、主に本社工場、防府工場における新世代商品、環境・安全技術 、IT、能力増強等により 、1,041億円を投資しました。",
+                     "reference_en":  "By segment, capital expenditures in Japan totaled ¥104.1 billion, mainly for new-generation products, environmental and safety technologies, IT, capacity expansion, and other initiatives at the Hiroshima and Hofu Plants.",
+                     "yakulingo_en":  "",
+                     "smartcat_en":  ""
+                 },
+                 {
+                     "id":  "S04",
+                     "document":  "決算短信",
+                     "ja":  "当第１四半期連結累計期間のグローバル販売台数は、主要市場で競争環境の悪化が見られたものの、販売促進策    の強化などの機動的な対応により、北米市場での販売が引き続き好調に推移したことなどから、前年同期と同水準    の309千台となりました。",
+                     "reference_en":  "Global sales volume for the first three months of the fiscal year ending March 31, 2025 was 309 thousand units,     mostly unchanged year on year. Despite increasing competition in the major markets, sales in North America     continued to perform well, due to flexible responses such as enhanced sales promotion programs.",
+                     "yakulingo_en":  "",
+                     "smartcat_en":  ""
+                 },
+                 {
+                     "id":  "S05",
+                     "document":  "決算短信",
+                     "ja":  "益498億円等により、前連結会計年度末より496億円増加の1兆8,070億円となりました。自己資本比率は、前連結会    計年度末より0.2ポイント増加の46.0％(劣後特約付ローンの資本性考慮後46.9％)となりました。",
+                     "reference_en":  "mainly reflecting net income attributable to owners of the parent of ¥49.8 billion. Equity ratio increased 0.2 percentage points from the end of the previous fiscal year to 46.0% (Percentage after consideration of the equity credit attributes of the subordinated loan was 46.9%).",
+                     "yakulingo_en":  "",
+                     "smartcat_en":  ""
+                 },
+                 {
+                     "id":  "S06",
+                     "document":  "決算短信",
+                     "ja":  "当第１四半期連結会計期間末において、現金及び現金同等物は、前連結会計年度末より257億円増加の9,449億    円、有利子負債は、111億円増加の5,789億円となり、この結果、3,660億円のネット・キャッシュ・ポジションと    なっております。",
+                     "reference_en":  "Cash and cash equivalent as of June 30, 2024 increased ¥25.7 billion from the end of the previous fiscal year to ¥944.9 billion. Interest-bearing debt as of June 30, 2024 increased ¥11.1 billion from the end of previous fiscal year to ¥578.9 billion. As a result, we are in a net cash position of ¥366.0 billion.",
+                     "yakulingo_en":  "",
+                     "smartcat_en":  ""
+                 },
+                 {
+                     "id":  "S07",
+                     "document":  "決算短信",
+                     "ja":  "当中間連結会計期間のグローバル販売台数は、前年同期比2.2％増の630千台となりました。",
+                     "reference_en":  "Global sales volume for the first six months of the fiscal year ending March 31, 2025 was 630 thousand units, up     2.2% year on year.",
+                     "yakulingo_en":  "",
+                     "smartcat_en":  ""
+                 },
+                 {
+                     "id":  "S08",
+                     "document":  "決算短信",
+                     "ja":  "当中間連結会計期間末の総資産は、前連結会計年度末より657億円増加の3兆8,574億円となり、負債合計は、前連    結会計年度末より897億円増加の2兆1,241億円となりました。",
+                     "reference_en":  "As of September 30, 2024, total assets increased ¥65.7 billion from the end of the previous fiscal year, to ¥3,857.4 billion. Total liabilities increased ¥89.7 billion from the end of the previous fiscal year to ¥2,124.1 billion.",
+                     "yakulingo_en":  "",
+                     "smartcat_en":  ""
+                 },
+                 {
+                     "id":  "S09",
+                     "document":  "決算短信",
+                     "ja":  "純資産は、親会社株主に帰属する中間純利益353億円に対し、その他の包括利益累計額の減少等により、前連結会    計年度末より241億円減少の1兆7,333億円となりました。自己資本比率は、前連結会計年度末より1.4ポイント減少の    44.4％(劣後特約付ローンの資本性考慮後45.3％)となりました。",
+                     "reference_en":  "Net Assets as of September 30, 2024 decreased ¥24.1 billion from the end of the previous fiscal year to ¥1,733.3 billion, due to a decrease in accumulated other comprehensive income, despite ¥35.3 billion net income attributable to owners of the parent. Equity ratio decreased 1.4 percentage points from the end of the previous fiscal year to 44.4% (Percentage after consideration of the equity credit attributes of the subordinated loan was 45.3%).",
+                     "yakulingo_en":  "",
+                     "smartcat_en":  ""
+                 },
+                 {
+                     "id":  "S10",
+                     "document":  "決算短信",
+                     "ja":  "当中間連結会計期間末において、現金及び現金同等物は、前連結会計年度末より845億円増加の1兆38億円となり、    有利子負債は1,213億円増加の6,891億円となりました。この結果、3,147億円のネット・キャッシュ・ポジションと    なりました。",
+                     "reference_en":  "Cash and cash equivalent as of September 30, 2024 increased ¥84.5 billion from the end of the previous fiscal year to ¥1,003.8 billion. Interest-bearing debt as of September 30, 2024 increased ¥121.3 billion from the end of previous fiscal year to ¥689.1 billion. As a result, we are in a net cash position of ¥314.7 billion.",
+                     "yakulingo_en":  "",
+                     "smartcat_en":  ""
+                 },
+                 {
+                     "id":  "S11",
+                     "document":  "決算短信",
+                     "ja":  "当第３四半期連結累計期間のグローバル販売台数は、米国・メキシコ市場の年間販売台数が過去最高を更新するな    ど、北米市場での販売が好調に推移したことなどから、前年同期比4.0％増の966千台となりました。",
+                     "reference_en":  "Global sales volume for the first nine months of the fiscal year ending March 31, 2025 was 966 thousand units, up     4.0% year on year, driven by strong performance in North America, where record-high annual sales were achieved     in the United States and Mexico for the 2024 calendar year.",
+                     "yakulingo_en":  "",
+                     "smartcat_en":  ""
+                 },
+                 {
+                     "id":  "S12",
+                     "document":  "決算短信",
+                     "ja":  "当第３四半期連結会計期間末の総資産は、前連結会計年度末より1,753億円増加の3兆9,671億円となり、負債合計    は、前連結会計年度末より1,207億円増加の2兆1,551億円となりました。",
+                     "reference_en":  "As of December 31, 2024, total assets increased ¥175.3 billion from the end of the previous fiscal year, to ¥3,967.1 billion. Total liabilities increased ¥120.7 billion from the end of the previous fiscal year to ¥2,155.1 billion.",
+                     "yakulingo_en":  "",
+                     "smartcat_en":  ""
+                 },
+                 {
+                     "id":  "S13",
+                     "document":  "決算短信",
+                     "ja":  "純資産は、親会社株主に帰属する四半期純利益906億円等により、前連結会計年度末より546億円増加の1兆8,120億    円となりました。自己資本比率は、前連結会計年度末より0.6ポイント減少の45.2％(劣後特約付ローンの資本性考慮    後46.1％)となりました。",
+                     "reference_en":  "Net Assets as of December 31, 2024 increased ¥54.6 billion from the end of the previous fiscal year to ¥1,812.0 billion, mainly reflecting net income attributable to owners of the parent of ¥90.6 billion. Equity ratio decreased 0.6 percentage points from the end of the previous fiscal year to 45.2% (Percentage after consideration of the equity credit attributes of the subordinated loan was 46.1%).",
+                     "yakulingo_en":  "",
+                     "smartcat_en":  ""
+                 },
+                 {
+                     "id":  "S14",
+                     "document":  "決算短信",
+                     "ja":  "当第３四半期連結会計期間末において、現金及び現金同等物は、前連結会計年度末より1,460億円増加の1兆653億    円となり、有利子負債は1,120億円増加の6,798億円となりました。この結果、3,855億円のネット・キャッシュ・ポ    ジションとなりました。",
+                     "reference_en":  "Cash and cash equivalent as of December 31, 2024 increased ¥146.0 billion from the end of the previous fiscal year to ¥1,065.3 billion. Interest-bearing debt as of December 31, 2024 increased ¥112.0 billion from the end of previous fiscal year to ¥679.8 billion. As a result, we are in a net cash position of ¥385.5 billion.",
+                     "yakulingo_en":  "",
+                     "smartcat_en":  ""
+                 },
+                 {
+                     "id":  "S15",
+                     "document":  "決算短信",
+                     "ja":  "当社は、2024年１月に国土交通省から要請があった「型式指定申請における不正行為の有無等に係る実態調査」に 基づき、調査対象期間(*1)におけるすべての型式指定申請2,403試験を対象に調査を行いました。調査の結果、２つ の試験項目について、計５試験で不正があったことを確認し、2024年５月30日に同省に報告いたしました。",
+                     "reference_en":  "Under the request issued in January 2024 by the Ministry of Land, Infrastructure, Transport and Tourism to conduct an \"Investigation of facts regarding the existence of irregularities in Applications for Type Designation,\" the Company investigated all of its 2,403 tests for applications for Type Designation, implemented in the period covered by this investigation*1. The investigation results confirmed irregularities in a total of five tests in two test categories, which was reported to the Ministry on May 30, 2024.",
+                     "yakulingo_en":  "",
+                     "smartcat_en":  ""
+                 },
+                 {
+                     "id":  "S16",
+                     "document":  "決算短信",
+                     "ja":  "当連結会計年度のグローバル販売台数は、米国・メキシコ市場の年間販売台数が過去最高を更新するなど、北米市場での販売が好調に推移したことから、前期比5.0％増の1,303千台となりました。",
+                     "reference_en":  "Global sales volume for the fiscal year was 1,303 thousand units, up 5.0% year on year. This was driven by  strong performance in the North American market, with the United States and Mexico recording their highest ever  annual sales volumes.",
+                     "yakulingo_en":  "",
+                     "smartcat_en":  ""
+                 },
+                 {
+                     "id":  "S17",
+                     "document":  "決算短信",
+                     "ja":  "去最高の販売台数となりました。北米全体でも、カナダやメキシコの好調な販売により、前期比20.0％増の617千台となりました。",
+                     "reference_en":  "America as a whole was also strong, with a 20.0% year-on-year growth in sales to 617 thousand units, thanks to robust sales in both Canada and Mexico.",
+                     "yakulingo_en":  "",
+                     "smartcat_en":  ""
+                 },
+                 {
+                     "id":  "S18",
+                     "document":  "決算短信",
+                     "ja":  "「MAZDA CX-30」や「MAZDA2 Hybrid」の販売は増加したものの、「CX-60」や「CX-5」及び「MAZDA6」等の販売減少により、前期比3.4％減の174千台となりました。",
+                     "reference_en":  "While sales of the CX-30 and Mazda2 Hybrid model increased, overall sales in Europe declined 3.4% from the previous year to 174 thousand units mainly due to the decrease in sales of the CX-60, CX-5 and Mazda6.",
+                     "yakulingo_en":  "",
+                     "smartcat_en":  ""
+                 },
+                 {
+                     "id":  "S19",
+                     "document":  "決算短信",
+                     "ja":  "当連結会計年度末の総資産は、前連結会計年度末より2,983億円増加し、4兆901億円となり、負債合計は、前連    結会計年度末より2,457億円増加し、2兆2,801億円となりました。",
+                     "reference_en":  "As of March 31, 2025, total assets increased ¥298.3 billion from the end of the previous fiscal year, to ¥4,090.1 billion.     Total liabilities increased ¥245.7 billion from the end of the previous fiscal year to ¥2,280.1 billion.",
+                     "yakulingo_en":  "",
+                     "smartcat_en":  ""
+                 },
+                 {
+                     "id":  "S20",
+                     "document":  "決算短信",
+                     "ja":  "純資産は、親会社株主に帰属する当期純利益1,141億円等により、前連結会計年度末より527億円増加し、    1兆8,100億円となりました。自己資本比率は、前連結会計年度末より2.0ポイント減少し、43.8％(劣後特約付ローンの資本性考慮後44.7％)となりました。",
+                     "reference_en":  "Net assets as of March 31, 2025 increased ¥52.7 billion from the end of the previous fiscal year to ¥1,810.0 billion,     reflecting net income attributable to owners of the parent of ¥114.1 billion and others. Equity ratio decreased 2.0     percentage points from the end of the previous fiscal year to 43.8% (Percentage after consideration of the equity credit     attributes of the subordinated loan was 44.7%).",
+                     "yakulingo_en":  "",
+                     "smartcat_en":  ""
+                 }
+             ]
+}
