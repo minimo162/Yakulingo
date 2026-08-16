@@ -102,7 +102,38 @@ function ConvertFrom-YakuPublicationCandidateResponse {
     if($start -ge 0){$json=$normalized.Substring($start+$prefix.Length,$normalized.Length-($start+$prefix.Length)-$(if($hasEnd){$end.Length}else{0})).Trim()}elseif($normalized.StartsWith('{')){$json=$(if($hasEnd){$normalized.Substring(0,$normalized.Length-$end.Length).Trim()}else{$normalized})}else{throw 'CAT_PUBLICATION_RESPONSE_CONTRACT_MISSING'}
     try{$payload=$json|ConvertFrom-Json}catch{throw 'CAT_PUBLICATION_RESPONSE_JSON_INVALID'}
     if([string]$payload.contract -ne [string]$Request.ContractVersion -or [string]$payload.request_id -ne [string]$Request.RequestId){throw 'CAT_PUBLICATION_RESPONSE_BINDING_MISMATCH'}
+    # 申告の照合表は、素の entry_id だけでなく**送った形**でも引けるようにする。
+    #
+    # 2026-08-17 に実行して再現した。sidecar は丸ごと数値マスクを通るので、
+    # entry_id（32桁の16進）は数字の並びごとに置き換わって出ていく。
+    #
+    #   登録 b5ed71b05d4646aab96ae1e447b1f7ce
+    #   送信 b[[N10]]ed[[N11]]b[[N12]]d[[N13]]aab[[N14]]ae[[N15]]e[[N16]]b[[N17]]f[[N18]]ce
+    #   version は [[N19]]
+    #
+    # モデルは見せられた形しか返せない。素の id で作った表と突き合わせると
+    # 必ず外れ、CAT_PUBLICATION_RESPONSE_ABBREVIATION_NOT_ALLOWED が
+    # **応答全体**に対して投げられる。つまり利用者が略語を登録し、モデルが
+    # それを使ったと申告した瞬間に、候補生成が丸ごと落ちていた。
+    #
+    # 試験（Test-YakuV9170Publication）は素の entry_id で応答を組むので緑のまま
+    # だった。試験が本番と違う入力を作っていた。
+    #
+    # 直し方は、照合表に「送った形」の鍵を足すだけにする。素の鍵は残すので、
+    # 既存の呼び出しも試験もそのまま通る。対応づけは位置で取る。sidecar は
+    # 同じ JSON の値だけを置換したものなので、allowed_abbreviations[i] は
+    # 1対1で対応する。
     $allowed=@{};foreach($entry in @($Request.AllowedAbbreviations)){$allowed[[string]$entry.entry_id+':'+[string]$entry.version]=$entry}
+    try{
+        $sentAbbreviations=@((([string]$Request.ProtectedSidecar)|ConvertFrom-Json).allowed_abbreviations)
+        $rawAbbreviations=@($Request.AllowedAbbreviations)
+        if($sentAbbreviations.Count -eq $rawAbbreviations.Count){
+            for($abbrIndex=0;$abbrIndex -lt $sentAbbreviations.Count;$abbrIndex++){
+                $sentKey=[string]$sentAbbreviations[$abbrIndex].entry_id+':'+[string]$sentAbbreviations[$abbrIndex].version
+                if(-not $allowed.ContainsKey($sentKey)){$allowed[$sentKey]=$rawAbbreviations[$abbrIndex]}
+            }
+        }
+    }catch{}
     $candidates=New-Object System.Collections.Generic.List[object];$ordinal=0
     foreach($row in @($payload.candidates|Select-Object -First 5)){
         $protectedText=([string]$row.text).Trim();if([string]::IsNullOrWhiteSpace($protectedText)-or $protectedText.Length -gt 20000){throw 'CAT_PUBLICATION_RESPONSE_CANDIDATE_INVALID'}
@@ -111,7 +142,10 @@ function ConvertFrom-YakuPublicationCandidateResponse {
         foreach($use in @($row.used_abbreviations)){
             $key=[string]$use.entry_id+':'+[string]$use.version
             if(-not $allowed.ContainsKey($key)){throw 'CAT_PUBLICATION_RESPONSE_ABBREVIATION_NOT_ALLOWED'}
-            $used.Add([pscustomobject]@{entry_id=[string]$use.entry_id;version=[int]$use.version;abbreviation=[string]$allowed[$key].abbreviation;full_form=[string]$allowed[$key].full_form;meaning=[string]$allowed[$key].meaning})|Out-Null
+            # 記録するのは登録簿の値であって、モデルの復唱ではない。
+            # 復唱はマスク済みの形なので、[int] へ落とすと "[[N19]]" で壊れる。
+            # 素の値は照合で引き当てた $allowed[$key] が持っている。
+            $used.Add([pscustomobject]@{entry_id=[string]$allowed[$key].entry_id;version=[int]$allowed[$key].version;abbreviation=[string]$allowed[$key].abbreviation;full_form=[string]$allowed[$key].full_form;meaning=[string]$allowed[$key].meaning})|Out-Null
         }
         $text=Restore-YakuNumericMask -Text $protectedText -Map $Request.NumericMaskMap -Direction auto -SourceText ([string]$Request.ProtectedSidecar)
         foreach($use in @($used.ToArray())){
