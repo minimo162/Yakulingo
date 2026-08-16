@@ -19,7 +19,7 @@
   飛んだ要求の中身を見る。判定はこのファイルが行い、ブラウザ側
   （tools/cat-screen/cat-screen-gate.js）は観測した事実を JSON で返すだけである。
 
-  見るのは14。
+  見るのは15。
    (a) can_split_at の行にだけ分割ボタンが**実際に出る**
    (b) Alt+S がその分割ボタンを押す。割れない行では断る
    (c) 用語の印が入った原文でも、押した位置で割れる（位置が一致する）
@@ -43,6 +43,13 @@
        指摘」ではなく、点検欄の色は赤でも道具の不調でもない。同じ画面で
        取り出しボタンが押せたままで、「要対応」には数えず、確認し終えた資料は
        「全部終わりました」と言う
+   (o) 原文の数字が、キー操作（Ctrl+D → 番号キー）で**カーソル位置へ**入る。
+       一覧は出現順で、表記は原文のまま（桁区切り・小数点を均さない）。
+       IME 変換中は効かず、**変換中でなければ効く**（対で採る。キーを丸ごと
+       殺すと前者だけが無条件に真になる）。入れる前と入れた後の訳文そのものを
+       本物の点検へ掛け、numeric-value-mismatch が立つ／立たないを対で見る。
+       数字を1つも含まない題材では後者が無条件に真になるので、原文が
+       `1,234` と `5.6` を持ち、訳文はその2つだけが欠けた形にしてある。
 
   (j) の表明そのものも 2026-08-15 に作り直した。**「一覧が空でないこと」は
   この題材では測れない。** 2行とも訳文ありで未確定なので、cat.js の qaFindings が
@@ -563,6 +570,50 @@ try {
         ('2行とも警告を持って画面へ渡る（この題材が空振りでないこと。実際: ' + ($qcLabelRowCodes -join ',') + '）')
     Chk (-not [bool]$qcLabelView.export_blocked) '画面の取り出しボタンは押せる状態で渡る'
 
+    # ------------------------------------------------------------------ (o)
+    # 原文の数字を訳文へ入れるキー操作の題材。原文は `1,234`（桁区切り）と
+    # `5.6`（小数）を持つ。訳文はその2つ**だけ**が欠けた形にして、入れる前と
+    # 入れた後の同じ画面の値を、本物の点検（Invoke-YakuCatSegmentValidation）へ
+    # 掛ける。数字を1つも含まない題材だと「入れたら立たない」は無条件に真になる。
+    Write-Host '(0i) 原文の数字を訳文へ入れる題材を用意する' -ForegroundColor Cyan
+    $placeableSource = '売上高は1,234円で、前年から5.6%増えました。'
+    $placeableOther = '営業利益も増えました。'
+    $placeableFirst = '1,234'
+    $placeableSecond = '5.6'
+    Chk ($placeableSource.Contains($placeableFirst) -and $placeableSource.Contains($placeableSecond)) '題材の原文が2つの数字を持っている'
+    Chk ($placeableSource.IndexOf($placeableFirst) -lt $placeableSource.IndexOf($placeableSecond)) ('原文での出現順は ' + $placeableFirst + ' が先')
+    $placeableProject = New-YakuCatTextProject -Root $root -Text ($placeableSource + "`n" + $placeableOther) -Settings $settings -Direction 'to_en'
+    Chk (@($placeableProject.Segments).Count -eq 2) ('題材は2行（実際 ' + @($placeableProject.Segments).Count + '）')
+    Chk ([string]@($placeableProject.Segments)[0].Text -eq $placeableSource) '1行目の原文は題材どおり'
+    # 実装が取り出す一覧そのもの。表記を均していないこと（桁区切り・小数点）を、
+    # 原文の文字と突き合わせて見る。
+    $placeableList = Get-YakuCatSegmentPlaceables -Project $placeableProject -Index 0
+    Chk ([bool]$placeableList.Ok) '原文から数字を取り出せている'
+    $placeableTexts = @(@($placeableList.Items) | ForEach-Object { [string]$_.text })
+    Chk ($placeableTexts.Count -eq 2) ('取り出した数字は2つ（実際 ' + $placeableTexts.Count + '）')
+    Chk ($placeableTexts.Count -eq 2 -and $placeableTexts[0] -eq $placeableFirst) ('1つ目は原文どおりの表記（桁区切りを均していない）: ' + (Get-YakuFirstString -Items $placeableTexts))
+    Chk ($placeableTexts.Count -eq 2 -and $placeableTexts[1] -eq $placeableSecond) ('2つ目も原文どおりの表記（小数点を均していない）: ' + $(if ($placeableTexts.Count -eq 2) { $placeableTexts[1] } else { '' }))
+    # 数字を持たない行では空であること。「いつでも2件返す」実装では通らない。
+    $placeableEmpty = Get-YakuCatSegmentPlaceables -Project $placeableProject -Index 1
+    Chk ([bool]$placeableEmpty.Ok -and @($placeableEmpty.Items).Count -eq 0) ('数字の無い行では0件（実際 ' + @($placeableEmpty.Items).Count + '）')
+    # 点検側の対。入れなければ立ち、入れれば立たない。**同じ関数・同じ行**で見る。
+    $placeableBareTarget = 'Net sales were  yen, up % from a year earlier.'
+    $placeableFullTarget = 'Net sales were 1,234 yen, up 5.6% from a year earlier.'
+    $placeableSegment = @($placeableProject.Segments)[0]
+    $null = Set-YakuCatSegmentTranslation -Project $placeableProject -Index 0 -Text $placeableBareTarget
+    $placeableBareCodes = @(@((Invoke-YakuCatSegmentValidation -Project $placeableProject -Segment $placeableSegment).Findings) | ForEach-Object { [string]$_.Code })
+    Chk ($placeableBareCodes -contains 'numeric-value-mismatch') ('数字を入れないと numeric-value-mismatch が立つ（実際: ' + ($placeableBareCodes -join ',') + '）')
+    $null = Set-YakuCatSegmentTranslation -Project $placeableProject -Index 0 -Text $placeableFullTarget
+    $placeableFullCodes = @(@((Invoke-YakuCatSegmentValidation -Project $placeableProject -Segment $placeableSegment).Findings) | ForEach-Object { [string]$_.Code })
+    Chk ($placeableFullCodes -notcontains 'numeric-value-mismatch') ('入れると立たない（実際: ' + ($placeableFullCodes -join ',') + '）')
+    # 画面へは訳文を空で渡す。運転席が自分で打ち込むところから始める。
+    $null = Set-YakuCatSegmentTranslation -Project $placeableProject -Index 0 -Text ''
+    $null = Set-YakuCatSegmentTranslation -Project $placeableProject -Index 1 -Text ''
+    $placeableProjectJson = ConvertTo-YakuCatProjectJson -Project $placeableProject
+    # 口の応答は実装が作る（ConvertTo-YakuCatSegmentPlaceablesJson）。Server.ps1 の
+    # 口も同じ関数を呼ぶので、応答の形は1か所にしかない。
+    $placeableResponseJson = ConvertTo-YakuCatSegmentPlaceablesJson -Project $placeableProject -Index 0
+
     $projectPath = Join-Path $tmp 'project.json'
     $candidatePath = Join-Path $tmp 'candidates.json'
     $observedPath = Join-Path $tmp 'observed.json'
@@ -574,7 +625,11 @@ try {
     $qcToolPath = Join-Path $tmp 'qc-tool-project.json'
     $qcNumPath = Join-Path $tmp 'qc-numeric-project.json'
     $qcLabelPath = Join-Path $tmp 'qc-label-project.json'
+    $placeablePath = Join-Path $tmp 'placeable-project.json'
+    $placeableResponsePath = Join-Path $tmp 'placeable-response.json'
     $utf8 = New-Object Text.UTF8Encoding($false)
+    [IO.File]::WriteAllText($placeablePath, $placeableProjectJson, $utf8)
+    [IO.File]::WriteAllText($placeableResponsePath, $placeableResponseJson, $utf8)
     [IO.File]::WriteAllText($qcCleanPath, $qcCleanProjectJson, $utf8)
     [IO.File]::WriteAllText($qcToolPath, $qcToolProjectJson, $utf8)
     [IO.File]::WriteAllText($qcNumPath, $qcNumProjectJson, $utf8)
@@ -588,7 +643,7 @@ try {
 
     Write-Host '(1) 本物の画面を Chromium で開いて、実際に押す' -ForegroundColor Cyan
     $stderrPath = Join-Path $tmp 'node-stderr.txt'
-    $arguments = @($driver, (Join-Path $root 'www'), $projectPath, $candidatePath, $observedPath, $previewPath, $cellPath, $qcPath, $qcPreflightPath, $qcCleanPath, $qcToolPath, $qcNumPath, $qcLabelPath) | ForEach-Object { '"' + $_ + '"' }
+    $arguments = @($driver, (Join-Path $root 'www'), $projectPath, $candidatePath, $observedPath, $previewPath, $cellPath, $qcPath, $qcPreflightPath, $qcCleanPath, $qcToolPath, $qcNumPath, $qcLabelPath, $placeablePath, $placeableResponsePath) | ForEach-Object { '"' + $_ + '"' }
     $proc = Start-Process -FilePath $nodeExe -ArgumentList $arguments -NoNewWindow -Wait -PassThru -RedirectStandardError $stderrPath
     $nodeErr = ''
     if (Test-Path -LiteralPath $stderrPath) { $nodeErr = [string][IO.File]::ReadAllText($stderrPath) }
@@ -895,6 +950,63 @@ try {
     # 一方で、指摘そのものは数える。件数が消えたら、画面から見えなくなる。
     Chk (-not [bool]$qcLabel.filterHidden) '「点検の指摘」の絞り込みは出る（件数が画面に出ている）'
     Chk ([string]$qcLabel.filterCount -eq '2') ('その件数は 2（実際: ' + [string]$qcLabel.filterCount + '）')
+
+    # ------------------------------------------------------------------ (o)
+    Write-Host '(o) 原文の数字が、キー操作でカーソル位置へ入る' -ForegroundColor Cyan
+    Chk (@($o.placeableRows).Count -eq 2) ('題材の作業が開けている。表は2行（実際 ' + @($o.placeableRows).Count + '）')
+    Chk (@($o.placeableRows).Count -eq 2 -and [string]@($o.placeableRows)[0].source -eq $placeableSource) '別の作業を見ていない'
+    Chk ([string]$o.placeableBefore -eq $placeableBareTarget) ('打ち込んだ訳文は、数字だけが欠けた形: ' + [string]$o.placeableBefore)
+    # ---- (c) の対。IME 変換中は効かず、変換中でなければ効く。
+    Chk ([bool]$o.placeableComposing.hidden) 'IME 変換中の Ctrl+D では一覧が出ない'
+    Chk ([int]$o.placeableComposingCalls -eq 0) ('変換中は口も叩かない（実際 ' + [int]$o.placeableComposingCalls + ' 回）')
+    # ここが対。キーを丸ごと殺しても上の2本は緑になるので、こちらが要る。
+    Chk (-not [bool]$o.placeableNotComposing.hidden) '変換中でなければ、同じキーで一覧が出る'
+    Chk ([int]$o.placeableNotComposingCalls -eq 1) ('そのときだけ口を1回叩く（実際 ' + [int]$o.placeableNotComposingCalls + ' 回）')
+    Chk ([bool]$o.placeableAfterEscape.hidden) 'Esc で畳める'
+    # ---- (a) 出現順に、原文どおりの表記で並ぶ
+    $shownPlaceables = @($o.placeableOpened.items)
+    Chk (-not [bool]$o.placeableOpened.hidden) '実キーの Ctrl+D でも一覧が出る'
+    Chk ([bool]$o.placeableOpened.visible) '一覧が画面上で面積を持っている（CSSで消しても緑にならない）'
+    Chk ($shownPlaceables.Count -eq 2) ('一覧は2件（実際 ' + $shownPlaceables.Count + '）')
+    Chk ($shownPlaceables.Count -eq 2 -and [string]$shownPlaceables[0] -eq $placeableFirst) ('1件目は原文の1つ目の数字: ' + (Get-YakuFirstString -Items $shownPlaceables))
+    Chk ($shownPlaceables.Count -eq 2 -and [string]$shownPlaceables[1] -eq $placeableSecond) ('2件目は原文の2つ目の数字: ' + $(if ($shownPlaceables.Count -eq 2) { [string]$shownPlaceables[1] } else { '' }))
+    Chk ((@($o.placeableOpened.shown) -join '|') -eq (($shownPlaceables) -join '|')) ('画面に出ている文字も同じ（属性だけ正しい状態ではない）: ' + (@($o.placeableOpened.shown) -join '|'))
+    Chk ((@($o.placeableOpened.numbers) -join '') -eq '12') ('番号は 1・2 と振られる（実際: ' + (@($o.placeableOpened.numbers) -join '') + '）')
+    Chk ($null -ne $o.placeableRequest -and [int]$o.placeableRequest.index -eq 0) ('口へ送った行番号が正しい（実際 ' + [string]$o.placeableRequest.index + '）')
+    Chk ($null -ne $o.placeableRequest -and [string]$o.placeableRequest.id -eq [string]$placeableProject.Id) '口へ送った作業の番号が正しい'
+    # ---- (a) カーソル位置へ入る。末尾へ足す実装では通らない題材である。
+    Chk ([int]$o.placeableCaret1.at -gt 0 -and [int]$o.placeableCaret1.at -lt ([string]$o.placeableBefore).Length) ('カーソルは訳文の途中に置いた（' + [string]$o.placeableCaret1.at + ' / ' + ([string]$o.placeableBefore).Length + '）')
+    Chk ([string]$o.placeableAfterFirst -eq 'Net sales were 1,234 yen, up % from a year earlier.') ('番号キー 1 で、その位置へ1つ目が入る: ' + [string]$o.placeableAfterFirst)
+    Chk ([bool]$o.placeableClosedAfterInsert.hidden) '入れたら一覧は畳む'
+    Chk ([string]$o.placeableAfterSecond -eq $placeableFullTarget) ('番号キー 2 で、2つ目もその位置へ入る: ' + [string]$o.placeableAfterSecond)
+    Chk ([bool]$o.placeableRowDirty) '入れた行は未保存の印が付く（保存の道は手入力と同じ）'
+    # ---- 一覧を閉じているあいだは、番号キーはただの文字である。
+    # 入れた直後のカーソルは、入れた数字の右にある。そこへ 7 が1文字打たれる。
+    Chk ([string]$o.placeableAfterPlainDigit -eq 'Net sales were 1,234 yen, up 5.67% from a year earlier.') ('一覧を閉じた後の 7 は、カーソル位置へ1文字として打たれる: ' + [string]$o.placeableAfterPlainDigit)
+    Chk (([string]$o.placeableAfterPlainDigit).Length -eq (([string]$o.placeableAfterSecond).Length + 1)) '番号キーを食べたままにしていない（訳文が1文字だけ増えている）'
+    # ---- (b) 画面が作った訳文そのものを、本物の点検へ掛ける。
+    #      入れる前は立ち、入れた後は立たない。**同じ行・同じ関数**で見る。
+    $screenSegment = @($placeableProject.Segments)[0]
+    $null = Set-YakuCatSegmentTranslation -Project $placeableProject -Index 0 -Text ([string]$o.placeableBefore)
+    $screenBareCodes = @(@((Invoke-YakuCatSegmentValidation -Project $placeableProject -Segment $screenSegment).Findings) | ForEach-Object { [string]$_.Code })
+    Chk ($screenBareCodes -contains 'numeric-value-mismatch') ('画面で打った「数字の無い訳文」は点検に落ちる（実際: ' + ($screenBareCodes -join ',') + '）')
+    $null = Set-YakuCatSegmentTranslation -Project $placeableProject -Index 0 -Text ([string]$o.placeableAfterSecond)
+    $screenFullCodes = @(@((Invoke-YakuCatSegmentValidation -Project $placeableProject -Segment $screenSegment).Findings) | ForEach-Object { [string]$_.Code })
+    Chk ($screenFullCodes -notcontains 'numeric-value-mismatch') ('画面が入れた訳文では立たない（実際: ' + ($screenFullCodes -join ',') + '）')
+    Chk ($screenFullCodes.Count -eq 0) ('その訳文は点検に1件も引っかからない（実際: ' + ($screenFullCodes -join ',') + '）')
+    # ---- (d) 押したキーが、画面のキー一覧にも載っている。
+    #      両向きの集合一致は tools/Test-YakuV9169UsabilityFixes.ps1 が見る。
+    #      ここでは「実際に効いたキー」が一覧に実在することだけを確かめる。
+    $catHtmlForKeys = Get-Content -LiteralPath (Join-Path (Join-Path $root 'www') 'cat.html') -Raw -Encoding UTF8
+    Chk ($catHtmlForKeys -match '<kbd>Ctrl</kbd>\+<kbd>D</kbd>') '画面のキー一覧に Ctrl+D が載っている'
+    Chk ($catHtmlForKeys -match ('<kbd>1' + [string][char]0xFF5E + '9</kbd>')) '画面のキー一覧に、続けて押す番号キーが載っている'
+    # 実機の口が、上と同じ関数から応答を作っていること。運転席へ返した応答は
+    # ConvertTo-YakuCatSegmentPlaceablesJson が作ったものなので、Server.ps1 が
+    # 別の作り方をしていたら実機だけ違う形を返す。**ここは字面でしか見られない**
+    # （HTTP を立てて叩く門はこの試験の範囲外）。そのつもりで読むこと。
+    $serverSource = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'Server.ps1') -Raw -Encoding UTF8
+    Chk ($serverSource -match "'placeables' \{") '/api/cat/placeables の口が実装にある'
+    Chk ($serverSource -match 'ConvertTo-YakuCatSegmentPlaceablesJson -Project \$project -Index \$index') '口の応答も、同じ関数1つから作っている'
 
     if ($script:fail -eq 0) { Write-Host ('V91.76 画面の描画と配線の回帰テストに合格しました。検査 ' + $script:checks + ' 件。') -ForegroundColor Green }
     else { Write-Host ('FAILED: ' + $script:fail + ' / ' + $script:checks) -ForegroundColor Red }

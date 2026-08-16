@@ -2981,6 +2981,15 @@ function Invoke-YakuRoute {
                         candidates = @($rows) # 旧UI/テストの読取互換
                     } | ConvertTo-Json -Depth 7 -Compress)) -ContentType 'application/json; charset=utf-8'
                 }
+                'placeables' {
+                    # 現在行の原文にある数字。訳文欄でキーを押したときだけ数える。
+                    # 出どころは点検（numeric-value-mismatch）と同じ
+                    # Get-YakuCatSegmentSourceNumericFacts である。別に取り出すと、
+                    # 画面が勧めたとおり入れたのに点検が落ちる、という食い違いになる。
+                    $index = -1
+                    try { $index = [int]$payload['index'] } catch { $index = -1 }
+                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatSegmentPlaceablesJson -Project $project -Index $index) -ContentType 'application/json; charset=utf-8'
+                }
                 'glossary-add' {
                     # 行全体の固定訳を、利用者所有の出典付きterminologyへ足す。
                     # 旧CSVやアプリ同梱glossaryへは書かない。

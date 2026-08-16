@@ -80,6 +80,11 @@ const qcCleanProjectJson = fs.readFileSync(process.argv[10], 'utf8');
 const qcToolProjectJson = fs.readFileSync(process.argv[11], 'utf8');
 const qcNumProjectJson = fs.readFileSync(process.argv[12], 'utf8');
 const qcLabelProjectJson = fs.readFileSync(process.argv[13], 'utf8');
+/* 14・15番目は「原文の数字を訳文へ入れる」（Ctrl+D）の題材と、その口の応答。
+   応答は実装（ConvertTo-YakuCatSegmentPlaceablesJson）が作ったものをそのまま
+   返す。手で書くと、数字の取り出しを写経することになる。 */
+const placeableProjectJson = fs.readFileSync(process.argv[14], 'utf8');
+const placeableResponseJson = fs.readFileSync(process.argv[15], 'utf8');
 const project = JSON.parse(projectJson);
 const previewProject = JSON.parse(previewProjectJson);
 const cellProject = JSON.parse(cellProjectJson);
@@ -88,12 +93,18 @@ const qcCleanProject = JSON.parse(qcCleanProjectJson);
 const qcToolProject = JSON.parse(qcToolProjectJson);
 const qcNumProject = JSON.parse(qcNumProjectJson);
 const qcLabelProject = JSON.parse(qcLabelProjectJson);
+const placeableProject = JSON.parse(placeableProjectJson);
 
 /* 押した位置の題材。原文の <mark> より後ろに落ちる位置を選ぶ。
    1文字目（印より前）で一度押してから2回目を押すので、位置を拾えない実装だと
    1回目の位置が残ったまま割れる（それがこの試験で見たい壊れ方である）。 */
 const FIRST_CLICK_CHAR = 1;
 const SECOND_CLICK_CHAR = 12;
+
+/* 数字を入れる題材の訳文。**原文にある2つの数字だけが欠けている**。
+   このまま確定すると numeric-value-mismatch が立ち、2つを入れると立たない。
+   その対を PowerShell 側が本物の点検に掛ける。 */
+const PLACEABLE_BARE_TARGET = 'Net sales were  yen, up % from a year earlier.';
 
 const seen = [];
 const types = {
@@ -154,6 +165,7 @@ const server = http.createServer(async function (req, res) {
     if (wanted && wanted === String(qcToolProject.id || '')) { res.end(qcToolProjectJson); return; }
     if (wanted && wanted === String(qcNumProject.id || '')) { res.end(qcNumProjectJson); return; }
     if (wanted && wanted === String(qcLabelProject.id || '')) { res.end(qcLabelProjectJson); return; }
+    if (wanted && wanted === String(placeableProject.id || '')) { res.end(placeableProjectJson); return; }
     res.end(projectJson);
     return;
   }
@@ -161,6 +173,7 @@ const server = http.createServer(async function (req, res) {
      そのまま返す。手で書くと、止まった理由の文言を写経することになる。 */
   if (p === '/api/cat/preflight') { res.end(qcPreflightJson); return; }
   if (p === '/api/cat/candidates') { res.end(candidatesJson); return; }
+  if (p === '/api/cat/placeables') { res.end(placeableResponseJson); return; }
   if (p === '/api/cat/split-at') { res.end(projectJson); return; }
   if (p === '/api/cat/replace-estimate') { res.end(JSON.stringify({ rows: 2, occurrences: 2, confirmed_rows: 0, scanned_rows: 2 })); return; }
   if (p === '/api/cat/replace') {
@@ -176,7 +189,7 @@ function calls(name) { return seen.filter(function (s) { return s.path === '/api
 function lastBody(name) { const c = calls(name); return c.length ? c[c.length - 1].body : null; }
 
 (async function () {
-  const out = { errors: [], console: [], firstClickChar: FIRST_CLICK_CHAR, secondClickChar: SECOND_CLICK_CHAR };
+  const out = { errors: [], console: [], firstClickChar: FIRST_CLICK_CHAR, secondClickChar: SECOND_CLICK_CHAR, placeableBareTarget: PLACEABLE_BARE_TARGET };
   await new Promise(function (r) { server.listen(0, '127.0.0.1', r); });
   const port = server.address().port;
   const browser = await chromium.launch();
@@ -715,6 +728,101 @@ function lastBody(name) { const c = calls(name); return c.length ? c[c.length - 
     out.qaLabelList = await qaBody();
     await page.evaluate(function () { document.getElementById('cat-qa-dialog').close('cancel'); });
     await page.waitForTimeout(200);
+
+    // ------------------ 原文の数字を訳文へ入れる（Ctrl+D → 番号キー）
+    /* 題材: 原文が `1,234` と `5.6` を持ち、訳文はその2つだけが欠けている行。
+       ここで見るのは4つ。
+         1. Ctrl+D で一覧が出て、原文どおりの表記が出現順に並ぶ
+         2. 番号キーがカーソル位置へ入れる（打ち込まれるのではなく挿入される）
+         3. IME 変換中は効かない。**変換中でなければ効く**ことと対で採る
+         4. 入れる前と入れた後の訳文そのもの（PowerShell 側が点検に掛ける）
+       3 は synthetic な keydown で採る。実キーでは isComposing を立てられない。
+       違いをその1つだけにするため、効く側も同じ作り方の synthetic で採る
+       （実キーでも効くことは、下の 1・2 が実際の press で示す）。 */
+    await page.goto('http://127.0.0.1:' + port + '/cat?project=' + placeableProject.id, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#cat-grid-body tr[data-cat-row]', { timeout: 20000 });
+    const placeableInput = '#cat-grid-body tr[data-cat-row="0"] textarea[data-cat-input="0"]';
+    out.placeableRows = await page.evaluate(function () {
+      return Array.from(document.querySelectorAll('#cat-grid-body tr[data-cat-row]')).map(function (tr) {
+        return { index: Number(tr.getAttribute('data-cat-row')), source: tr.querySelector('.cat-source-text').textContent };
+      });
+    });
+    await page.click(placeableInput);
+    /* 候補の往復が終わるのを待つ。原文へ用語の印を入れる描き直しが、
+       この後の観測へ紛れ込まないようにする。 */
+    await page.waitForTimeout(600);
+    await page.fill(placeableInput, PLACEABLE_BARE_TARGET);
+    await page.waitForTimeout(250);
+    out.placeableBefore = await page.inputValue(placeableInput);
+
+    function pickerState() {
+      return page.evaluate(function () {
+        var host = document.getElementById('cat-placeable-picker');
+        return {
+          exists: !!host,
+          hidden: !host || host.hidden,
+          items: host ? Array.from(host.querySelectorAll('[data-cat-placeable]')).map(function (b) { return b.getAttribute('data-cat-placeable-text'); }) : [],
+          shown: host ? Array.from(host.querySelectorAll('.cat-placeable-text')).map(function (s) { return s.textContent; }) : [],
+          numbers: host ? Array.from(host.querySelectorAll('.cat-placeable-key')).map(function (s) { return s.textContent; }) : [],
+          /* 画面に面積があるか。hidden を外さずに CSS で消しても緑にならないため。 */
+          visible: !!(host && host.getBoundingClientRect().width > 0 && host.getBoundingClientRect().height > 0)
+        };
+      });
+    }
+    async function sendSyntheticCtrlD(composing) {
+      await page.evaluate(function (c) {
+        var input = document.querySelector('textarea[data-cat-input="0"]');
+        input.focus();
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'd', code: 'KeyD', ctrlKey: true, isComposing: c, bubbles: true, cancelable: true }));
+      }, composing);
+      await page.waitForTimeout(500);
+    }
+    const placeableCallsBefore = calls('placeables').length;
+    await sendSyntheticCtrlD(true);
+    out.placeableComposing = await pickerState();
+    out.placeableComposingCalls = calls('placeables').length - placeableCallsBefore;
+    await sendSyntheticCtrlD(false);
+    out.placeableNotComposing = await pickerState();
+    out.placeableNotComposingCalls = calls('placeables').length - placeableCallsBefore;
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+    out.placeableAfterEscape = await pickerState();
+
+    /* ここからは実キー。カーソルは訳文の途中（` yen` の前、`%` の前）に置く。
+       末尾へ足す実装だと、この位置では通らない。 */
+    async function placeCaret(needle) {
+      return await page.evaluate(function (n) {
+        var input = document.querySelector('textarea[data-cat-input="0"]');
+        var at = input.value.indexOf(n);
+        input.focus();
+        input.setSelectionRange(at, at);
+        return { at: at, value: input.value };
+      }, needle);
+    }
+    out.placeableCaret1 = await placeCaret(' yen');
+    await page.keyboard.press('Control+d');
+    await page.waitForSelector('#cat-placeable-picker:not([hidden]) [data-cat-placeable]', { timeout: 10000 });
+    out.placeableOpened = await pickerState();
+    out.placeableRequest = lastBody('placeables');
+    await page.keyboard.press('1');
+    await page.waitForTimeout(300);
+    out.placeableAfterFirst = await page.inputValue(placeableInput);
+    out.placeableClosedAfterInsert = await pickerState();
+    out.placeableCaret2 = await placeCaret('%');
+    await page.keyboard.press('Control+d');
+    await page.waitForSelector('#cat-placeable-picker:not([hidden]) [data-cat-placeable]', { timeout: 10000 });
+    await page.keyboard.press('2');
+    await page.waitForTimeout(300);
+    out.placeableAfterSecond = await page.inputValue(placeableInput);
+    out.placeableRowDirty = await page.evaluate(function () {
+      var row = document.querySelector('#cat-grid-body tr[data-cat-row="0"]');
+      return !!(row && row.classList.contains('cat-dirty'));
+    });
+    /* 一覧を閉じたあとは、番号キーがただの文字として訳文へ入ること。
+       開いていない間まで食べる実装だと、数字が打てなくなる。 */
+    await page.keyboard.press('7');
+    await page.waitForTimeout(200);
+    out.placeableAfterPlainDigit = await page.inputValue(placeableInput);
   } catch (e) {
     out.fatal = String((e && e.stack) || e);
   } finally {

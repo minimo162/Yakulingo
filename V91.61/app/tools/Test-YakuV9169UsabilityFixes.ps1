@@ -340,6 +340,189 @@ Check-YakuUse ($catHtml -match 'ページの冒頭を見る') '別のアプリ�
 Check-YakuUse ($catJs -match 'var alignPages = \{ source: \[\], target: \[\] \}') '読み込んだページを持っておく'
 Check-YakuUse ($catCss -match '\.align-page-list') 'ページ一覧はその中だけで動かす'
 
+# ---- 画面のキー一覧と、実装が扱うキーが一致していること ---------------------
+# 差分表 #12。cat.js の keydown ハンドラが扱うキーの集合と、cat.html の <dl> に
+# 並ぶキーの集合が一致すること（片方にしか無いキーが0件）。
+#
+# なぜ字面照合では駄目か（2026-08-16 に実測）: この時点で実装には Ctrl+K
+# （過去訳を言葉で探す）と Ctrl+[（資料一覧の開閉）があったのに、一覧には
+# どちらも載っていなかった。`-match 'Ctrl\+K'` の形の表明をいくら足しても、
+# **書き忘れたキーは名前が出てこない**ので永久に見つからない。行番号でもなく
+# キー名でもなく、**両方から集合を取り出して突き合わせる**ほかない。
+#
+# 取り出しは条件式そのものから行う（`event.key === '['` の '[' を読む）。
+# 註のコメントに書いた名前は読まない。註は実装が変わっても書き換わらないので、
+# 名前照合をコメントに対して行うのと同じになる。
+function Remove-YakuJsComments {
+    <# コメントの中の `if (` を条件式と取り違えないよう、先に空白へ潰す。
+       文字列リテラルの中の `/*` は潰さない（位置がずれると括弧の対応が狂う）。 #>
+    param([Parameter(Mandatory=$true)][string]$Text)
+    $sb = New-Object System.Text.StringBuilder
+    $i = 0; $quote = ''
+    while ($i -lt $Text.Length) {
+        $ch = $Text[$i]
+        if ($quote -ne '') {
+            [void]$sb.Append($ch)
+            if ($ch -eq '\') { if (($i + 1) -lt $Text.Length) { [void]$sb.Append($Text[$i+1]) }; $i += 2; continue }
+            if ([string]$ch -eq $quote) { $quote = '' }
+            $i++; continue
+        }
+        if ($ch -eq "'" -or $ch -eq '"' -or $ch -eq [char]0x60) { $quote = [string]$ch; [void]$sb.Append($ch); $i++; continue }
+        if ($ch -eq '/' -and ($i + 1) -lt $Text.Length -and $Text[$i+1] -eq '*') {
+            $i += 2
+            while ($i -lt $Text.Length -and -not ($Text[$i] -eq '*' -and ($i+1) -lt $Text.Length -and $Text[$i+1] -eq '/')) {
+                if ($Text[$i] -eq [char]10) { [void]$sb.Append([char]10) } else { [void]$sb.Append(' ') }
+                $i++
+            }
+            [void]$sb.Append('  '); $i += 2; continue
+        }
+        if ($ch -eq '/' -and ($i + 1) -lt $Text.Length -and $Text[$i+1] -eq '/') {
+            while ($i -lt $Text.Length -and $Text[$i] -ne [char]10) { [void]$sb.Append(' '); $i++ }
+            continue
+        }
+        [void]$sb.Append($ch); $i++
+    }
+    return $sb.ToString()
+}
+function Get-YakuJsBalancedSpan {
+    param(
+        [Parameter(Mandatory=$true)][string]$Text,
+        [Parameter(Mandatory=$true)][int]$Start,
+        [Parameter(Mandatory=$true)][char]$Open,
+        [Parameter(Mandatory=$true)][char]$Close
+    )
+    $depth = 0; $i = $Start; $quote = ''
+    while ($i -lt $Text.Length) {
+        $ch = $Text[$i]
+        if ($quote -ne '') {
+            if ($ch -eq '\') { $i += 2; continue }
+            if ([string]$ch -eq $quote) { $quote = '' }
+            $i++; continue
+        }
+        if ($ch -eq "'" -or $ch -eq '"' -or $ch -eq [char]0x60) { $quote = [string]$ch; $i++; continue }
+        if ($ch -eq $Open) { $depth++ }
+        elseif ($ch -eq $Close) { $depth--; if ($depth -eq 0) { return $Text.Substring($Start, $i - $Start + 1) } }
+        $i++
+    }
+    return ''
+}
+function Get-YakuJsKeydownBody {
+    <# 画面全体のキー操作を持つのは document 直付けの keydown 1つだけ。
+       取り込み欄の Enter/Space（cat.js の drop 要素）は、押しどころの
+       起動キーであって作業画面のキー操作ではないので、ここには入れない。 #>
+    param([Parameter(Mandatory=$true)][string]$Js)
+    $at = $Js.IndexOf("document.addEventListener('keydown'", [StringComparison]::Ordinal)
+    if ($at -lt 0) { return '' }
+    $open = $Js.IndexOf('{', $at)
+    if ($open -lt 0) { return '' }
+    return (Get-YakuJsBalancedSpan -Text $Js -Start $open -Open ([char]'{') -Close ([char]'}'))
+}
+function ConvertTo-YakuKeyDisplayName {
+    <# 両側を同じ名前へ寄せる。画面は「↑」「1～9」、実装は 'ArrowUp'、'1'〜'9' と
+       書くので、どちらかに寄せないと突き合わせられない。 #>
+    param([Parameter(Mandatory=$true)][string]$Raw)
+    $v = [string]$Raw
+    if ($v -eq 'Escape' -or $v -eq 'Esc') { return 'Esc' }
+    if ($v -eq [string][char]0x2191) { return 'ArrowUp' }
+    if ($v -eq [string][char]0x2193) { return 'ArrowDown' }
+    if ($v -eq ('1' + [string][char]0xFF5E + '9')) { return '1-9' }
+    if ($v.Length -eq 1) { return $v.ToUpperInvariant() }
+    return $v
+}
+function Format-YakuShortcutName {
+    param([AllowNull()][object]$Modifiers, [Parameter(Mandatory=$true)][string]$Key)
+    $mods = @($Modifiers)
+    $parts = New-Object System.Collections.Generic.List[string]
+    if ($mods -contains 'Ctrl') { $parts.Add('Ctrl') | Out-Null }
+    if ($mods -contains 'Alt') { $parts.Add('Alt') | Out-Null }
+    if ($mods -contains 'Shift') { $parts.Add('Shift') | Out-Null }
+    $parts.Add($Key) | Out-Null
+    return (($parts.ToArray()) -join '+')
+}
+function Get-YakuJsShortcutSet {
+    <# keydown の中の if の条件式から、押されたときに通るキーを拾う。
+       `if (!(event.ctrlKey || event.metaKey)) return;` より後ろの条件は
+       Ctrl を継いでいる（Ctrl+Enter と Ctrl+1〜9 がそれ）。 #>
+    param([Parameter(Mandatory=$true)][string]$Body)
+    $set = New-Object System.Collections.Generic.List[string]
+    $guardPattern = '!\(\s*event\.ctrlKey\s*\|\|\s*event\.metaKey\s*\)'
+    $guardMatch = [regex]::Match($Body, $guardPattern)
+    $guardAt = $(if ($guardMatch.Success) { [int]$guardMatch.Index } else { -1 })
+    foreach ($m in [regex]::Matches($Body, '(?<![A-Za-z0-9_$])if\s*\(')) {
+        $parenAt = $Body.IndexOf('(', $m.Index)
+        $cond = Get-YakuJsBalancedSpan -Text $Body -Start $parenAt -Open ([char]'(') -Close ([char]')')
+        if ([string]::IsNullOrEmpty($cond)) { continue }
+        $keys = New-Object System.Collections.Generic.List[string]
+        foreach ($k in [regex]::Matches($cond, "event\.key(?:\.toLowerCase\(\))?\s*===\s*'([^']+)'")) {
+            $keys.Add((ConvertTo-YakuKeyDisplayName -Raw ([string]$k.Groups[1].Value))) | Out-Null
+        }
+        # 番号キーは範囲で書いてある（'1' 以上 '9' 以下）。両端がそろって初めて範囲。
+        $bounds = @([regex]::Matches($cond, "event\.key\s*(?:<=|>=|<|>)\s*'([19])'") | ForEach-Object { [string]$_.Groups[1].Value })
+        if (($bounds -contains '1') -and ($bounds -contains '9')) { $keys.Add('1-9') | Out-Null }
+        if ($keys.Count -eq 0) { continue }
+        $stripped = $cond -replace $guardPattern, '' -replace '!\s*event\.(?:ctrlKey|metaKey|altKey|shiftKey)', ''
+        $mods = New-Object System.Collections.Generic.List[string]
+        if (($stripped -match 'event\.(?:ctrlKey|metaKey)') -or ($guardAt -ge 0 -and $m.Index -gt $guardAt)) { $mods.Add('Ctrl') | Out-Null }
+        if ($stripped -match 'event\.altKey') { $mods.Add('Alt') | Out-Null }
+        if ($stripped -match 'event\.shiftKey') { $mods.Add('Shift') | Out-Null }
+        foreach ($key in $keys) {
+            $name = Format-YakuShortcutName -Modifiers $mods.ToArray() -Key $key
+            if (-not $set.Contains($name)) { $set.Add($name) | Out-Null }
+        }
+    }
+    return @($set.ToArray() | Sort-Object)
+}
+function Get-YakuHtmlShortcutSet {
+    param([Parameter(Mandatory=$true)][string]$Html)
+    $blockMatch = [regex]::Match($Html, '(?s)class="cat-key-help".*?<dl>(?<body>.*?)</dl>')
+    if (-not $blockMatch.Success) { return @() }
+    $set = New-Object System.Collections.Generic.List[string]
+    foreach ($dt in [regex]::Matches([string]$blockMatch.Groups['body'].Value, '(?s)<dt>(?<inner>.*?)</dt>')) {
+        $inner = [string]$dt.Groups['inner'].Value
+        # 「/」で2つ並べた行がある（Alt+↑/↓、Alt+M / Alt+K）。閉じタグの中の
+        # 「/」と紛れるので、要素の境目だけを割る。
+        $marked = [regex]::Replace($inner, '</kbd>\s*/\s*<kbd>', ('</kbd>' + [char]0x1F + '<kbd>'))
+        $carried = New-Object System.Collections.Generic.List[string]
+        foreach ($part in ($marked -split [string][char]0x1F)) {
+            $tokens = @([regex]::Matches($part, '(?s)<kbd>(?<k>.*?)</kbd>') | ForEach-Object { ([string]$_.Groups['k'].Value).Trim() })
+            if ($tokens.Count -eq 0) { continue }
+            $mods = New-Object System.Collections.Generic.List[string]
+            $keys = New-Object System.Collections.Generic.List[string]
+            foreach ($token in $tokens) {
+                if (@('Ctrl','Alt','Shift') -contains $token) { $mods.Add($token) | Out-Null }
+                else { $keys.Add((ConvertTo-YakuKeyDisplayName -Raw $token)) | Out-Null }
+            }
+            # 「Alt+↑/↓」の後ろ半分は修飾キーを書かない。同じ dt の前半から継ぐ。
+            if ($mods.Count -eq 0 -and $carried.Count -gt 0) { foreach ($mod in $carried) { $mods.Add($mod) | Out-Null } }
+            else { $carried.Clear(); foreach ($mod in $mods) { $carried.Add($mod) | Out-Null } }
+            foreach ($key in $keys) {
+                $name = Format-YakuShortcutName -Modifiers $mods.ToArray() -Key $key
+                if (-not $set.Contains($name)) { $set.Add($name) | Out-Null }
+            }
+        }
+    }
+    return @($set.ToArray() | Sort-Object)
+}
+
+$yakuKeydownBody = Get-YakuJsKeydownBody -Js (Remove-YakuJsComments -Text $catJs)
+Check-YakuUse ($yakuKeydownBody.Length -gt 500) ('画面全体の keydown ハンドラが取れる（実際 ' + $yakuKeydownBody.Length + ' 文字）')
+$yakuJsKeys = @(Get-YakuJsShortcutSet -Body $yakuKeydownBody)
+$yakuHtmlKeys = @(Get-YakuHtmlShortcutSet -Html $catHtml)
+Write-Host ('  実装 (' + $yakuJsKeys.Count + '): ' + ($yakuJsKeys -join ', '))
+Write-Host ('  一覧 (' + $yakuHtmlKeys.Count + '): ' + ($yakuHtmlKeys -join ', '))
+# 取り出しが両方とも空なら「一致」は恒真になる。空でないことを先に押さえる。
+Check-YakuUse ($yakuJsKeys.Count -ge 16) ('実装から16件以上のキーを取り出せている（実際 ' + $yakuJsKeys.Count + '）')
+Check-YakuUse ($yakuHtmlKeys.Count -ge 16) ('一覧から16件以上のキーを取り出せている（実際 ' + $yakuHtmlKeys.Count + '）')
+# 取り出しそのものが効いている証拠。修飾キー・記号・範囲・関数キーを1件ずつ。
+foreach ($yakuKeyProbe in @('Ctrl+D','1-9','Ctrl+K','Ctrl+[','Alt+ArrowUp','Ctrl+Shift+S','F8','Esc')) {
+    Check-YakuUse ($yakuJsKeys -contains $yakuKeyProbe) ('実装から ' + $yakuKeyProbe + ' を拾えている')
+    Check-YakuUse ($yakuHtmlKeys -contains $yakuKeyProbe) ('一覧から ' + $yakuKeyProbe + ' を拾えている')
+}
+$yakuKeysOnlyInJs = @($yakuJsKeys | Where-Object { $yakuHtmlKeys -notcontains $_ })
+$yakuKeysOnlyInHtml = @($yakuHtmlKeys | Where-Object { $yakuJsKeys -notcontains $_ })
+Check-YakuUse ($yakuKeysOnlyInJs.Count -eq 0) ('一覧に載っていないキーが実装に無い（実際 ' + $yakuKeysOnlyInJs.Count + '件: ' + ($yakuKeysOnlyInJs -join ', ') + '）')
+Check-YakuUse ($yakuKeysOnlyInHtml.Count -eq 0) ('実装に無いキーが一覧に載っていない（実際 ' + $yakuKeysOnlyInHtml.Count + '件: ' + ($yakuKeysOnlyInHtml -join ', ') + '）')
+
 # 2026-08-13: この行を自分で消してしまい、赤が出ても緑と報告される状態を
 # 1コミットぶん作った。判定を消したまま「41本緑」と言っていた。
 if ($script:failed -gt 0) { Write-Host ('Usability tests failed: ' + $script:failed) -ForegroundColor Red; exit 1 }

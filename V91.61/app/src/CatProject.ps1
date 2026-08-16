@@ -551,6 +551,106 @@ function Commit-YakuNewCatProject {
     return (Invoke-YakuCatProjectLock -ProjectId $projectId -Operation $operation -Arguments @($state))
 }
 
+function Get-YakuCatSegmentNormalizedSource {
+    <#
+      点検が原文として使う文字列。to_en では単位換算（1兆3,150億円 → 13,150 oku）を
+      通したものになる。ここを通さない生の原文と突き合わせると、アプリ自身が
+      換算した訳文をアプリ自身が numeric-value-mismatch で拒否する。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [Parameter(Mandatory=$true)]$Segment
+    )
+    $source = [string]$Segment.Text
+    if ([string]$Project.Direction -ne 'to_en') { return $source }
+    return [string](Convert-YakuNumericUnits -Text $source -Notation (Get-YakuCatProjectAmountNotation -Project $Project) -Location ('cat-review-' + [string]$Segment.SegmentId)).Text
+}
+
+function Get-YakuCatSegmentSourceNumericFacts {
+    <#
+      原文側の数値を取り出す唯一の経路。
+
+      なぜ関数にしたか（2026-08-16）: 訳文欄へ数字を入れるキー操作（画面の
+      placeables）を足すにあたって、取り出しをもう1つ書くと「入れたのに
+      numeric-value-mismatch が立つ」食い違いが必ず生まれる。点検と挿入は
+      同じ一覧を見る。
+
+      単位変換は原文を訳文側の表記（13,150 oku）へ書き換える。だから分類も
+      訳文と同じ側で行う。原文側だけ日本語向けの分類にすると、同じ
+      「13,150 oku」が原文では number|13150、訳文では currency:yen|1315000000000
+      になり、一致しなくなる。
+
+      -NormalizedSource は Get-YakuCatSegmentNormalizedSource の結果を持っている
+      呼び出し側のためにある。渡さなければここで引き直す（換算を2度走らせない）。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [Parameter(Mandatory=$true)]$Segment,
+        [AllowNull()][object]$NormalizedSource = $null
+    )
+    $normalized = if ($null -eq $NormalizedSource) { Get-YakuCatSegmentNormalizedSource -Project $Project -Segment $Segment } else { [string]$NormalizedSource }
+    $factsDirection = if ([string]$Project.Direction -eq 'to_en') { 'to_jp' } else { [string]$Project.Direction }
+    return @(Get-YakuCanonicalNumericFacts -Text $normalized -Direction $factsDirection -Location ('cat-review-source-' + [string]$Segment.SegmentId))
+}
+
+function Get-YakuCatSegmentPlaceables {
+    <#
+      訳文欄へキー操作で入れられる、原文の数字の一覧。出現順。
+
+      text は**原文どおりの表記**である（桁区切り・小数点をそのまま返す）。
+      Get-YakuCanonicalNumericFacts の Raw は数値マスクが切り出した文字列そのもので、
+      「1,234」を「1234」へ均したりはしない。
+
+      なぜ画面の JSON に毎回載せないか（2026-08-16 に実測）: この取り出しは
+      1行あたり約 12ms（うち Convert-YakuNumericUnits が 8.6ms）かかる。
+      200行の資料では画面用 JSON が 1.6 秒から 4.1 秒へ延びた。保存のたびに
+      作り直す JSON なので、押したときだけ数える。
+
+      取り出せない原文（CAT_NUMERIC_FACT_UNPARSEABLE）は、黙って空を返さずに
+      Ok=$false で言う。空と取り違えると「この行に数字は無い」と嘘をつく。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [Parameter(Mandatory=$true)][int]$Index
+    )
+    $segs = @($Project.Segments)
+    if ($Index -lt 0 -or $Index -ge $segs.Count) { throw 'CAT_SEGMENT_INDEX_OUT_OF_RANGE: 行が見つかりません。' }
+    $segment = $segs[$Index]
+    $items = New-Object System.Collections.Generic.List[object]
+    $ok = $true
+    try {
+        foreach ($fact in @(Get-YakuCatSegmentSourceNumericFacts -Project $Project -Segment $segment)) {
+            $items.Add([ordered]@{ text = [string]$fact.Raw; kind = [string]$fact.Category }) | Out-Null
+        }
+    } catch { $ok = $false }
+    return [pscustomobject]@{
+        Ok = $ok
+        Index = $Index
+        SegmentId = [string]$segment.SegmentId
+        Items = @($items.ToArray())
+    }
+}
+
+function ConvertTo-YakuCatSegmentPlaceablesJson {
+    <#
+      画面が読む形。Server.ps1 の口も、画面の回帰テストが Chromium へ返す
+      決め打ちの応答も、**この関数1つ**から作る。応答の形を2か所に書くと、
+      試験の中の形だけが正しいまま実物が腐る。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [Parameter(Mandatory=$true)][int]$Index
+    )
+    $placeables = Get-YakuCatSegmentPlaceables -Project $Project -Index $Index
+    return ([ordered]@{
+        index = [int]$placeables.Index
+        segment_id = [string]$placeables.SegmentId
+        # 取り出せなかったことを、数字が無いことと取り違えさせない。
+        available = [bool]$placeables.Ok
+        placeables = @($placeables.Items)
+    } | ConvertTo-Json -Depth 4 -Compress)
+}
+
 function Invoke-YakuCatSegmentValidation {
     param(
         [Parameter(Mandatory=$true)]$Project,
@@ -592,7 +692,7 @@ function Invoke-YakuCatSegmentValidation {
 
     if (-not [string]::IsNullOrWhiteSpace($target) -and -not $isVerbatimRegisteredTerm) {
         try {
-            $normalizedSource = if ([string]$Project.Direction -eq 'to_en') { [string](Convert-YakuNumericUnits -Text $source -Notation (Get-YakuCatProjectAmountNotation -Project $Project) -Location ('cat-review-' + [string]$Segment.SegmentId)).Text } else { $source }
+            $normalizedSource = Get-YakuCatSegmentNormalizedSource -Project $Project -Segment $Segment
             $targetForNumericQc = ConvertTo-YakuCatQcEquivalentTimeText -Source $source -Target $target -Direction ([string]$Project.Direction)
             $audit = Test-YakuNumericIntegrity -SourceText $normalizedSource -TranslatedText $targetForNumericQc -Location ('cat-review-' + [string]$Segment.SegmentId)
             if (-not [bool]$audit.Ok) { $findings.Add([pscustomobject]@{ Code='numeric-integrity'; Severity='error'; Detail=[string]$audit.Detail }) | Out-Null }
@@ -602,12 +702,9 @@ function Invoke-YakuCatSegmentValidation {
             # numeric-value-mismatch と numeric-value-extra で拒否していた。
             # 兆を含む金額は有報・短信で頻出し、その行は確認済みにできなかった。
             $targetDirection = if ([string]$Project.Direction -eq 'to_en') { 'to_jp' } else { 'to_en' }
-            # 単位変換は原文を訳文側の表記（13,150 oku）へ書き換える。だから分類も
-            # 訳文と同じ側で行う。原文側だけ日本語向けの分類にすると、同じ
-            # 「13,150 oku」が原文では number|13150、訳文では currency:yen|1315000000000 になり、
-            # 一致しなくなる。
-            $sourceFactsDirection = if ([string]$Project.Direction -eq 'to_en') { $targetDirection } else { [string]$Project.Direction }
-            $sourceFacts = @(Get-YakuCanonicalNumericFacts -Text $normalizedSource -Direction $sourceFactsDirection -Location ('cat-review-source-' + [string]$Segment.SegmentId))
+            # 原文側の数値は Get-YakuCatSegmentSourceNumericFacts が唯一の出どころ。
+            # 訳文欄への挿入（placeables）も同じ関数を通す。分類の理由はその関数の註を見る。
+            $sourceFacts = @(Get-YakuCatSegmentSourceNumericFacts -Project $Project -Segment $Segment -NormalizedSource $normalizedSource)
             $sourceValues = @($sourceFacts | ForEach-Object { [string]$_.Key })
             $targetFacts = @(Get-YakuCanonicalNumericFacts -Text $targetForNumericQc -Direction $targetDirection -Location ('cat-review-target-' + [string]$Segment.SegmentId))
             $targetValues = @($targetFacts | ForEach-Object { [string]$_.Key })

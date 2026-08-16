@@ -28,6 +28,13 @@
   var pendingMutationKeys = {};
   var projectLeaseSequence = 0, projectLeaseId = '', projectLeaseTimer = null;
   var termSelection = { index: -1, source: '', target: '' };
+  /* 原文の数字を訳文へ入れる一覧（Ctrl+D）。市販CATが placeable と呼ぶもので、
+     memoQ・Trados はどちらも「原文の数字を打ち直させない」ためのキーを持つ。
+     このアプリは数字の抜けを点検（numeric-value-mismatch）で捕まえるが、
+     入力側の手当てが無く、打ち間違いを起こしてから止めていた。
+     seq は往復の追い越し対策。押しっぱなしで2回飛ばしたとき、古い応答で
+     一覧を書き換えない。 */
+  var placeablePicker = { open: false, index: -1, items: [], input: null, seq: 0 };
   /* 原文のどこで分けるか。ボタンを押すと選択は消える（mousedown で解除される）
      ので、押す前の位置を覚えておく。覚えないと「クリックしたのに何も起きない」
      になる。 */
@@ -705,6 +712,8 @@
 
   function renderRows() {
     var all = project.segments || [], body = el('cat-grid-body');
+    /* 行を作り直すと、一覧が指していた訳文欄は消える。浮いたままにしない。 */
+    closePlaceablePicker();
     candidateSeq++;
     el('cat-candidates').hidden = true;
     chooseInitialActive();
@@ -1658,6 +1667,70 @@
       var restored = document.querySelector('[data-cat-input="' + index + '"]');
       YakuCommon.focus(restored);
     }).catch(function (error) { setBusy(false); status(error.message, true); });
+  }
+
+  /* ---- 原文の数字を訳文へ入れる（Ctrl+D → 番号キー） ------------------------
+     一覧はサーバから取る。数字の切り出しは点検（numeric-value-mismatch）が
+     原文に対して行うものと同じ関数（Get-YakuCatSegmentSourceNumericFacts）を
+     通っており、画面側で正規表現を書き直すと「画面が勧めたとおり入れたのに
+     点検が落ちる」食い違いが生まれる。表記も原文のまま（桁区切り・小数点を
+     均さない）で届く。 */
+  function closePlaceablePicker() {
+    placeablePicker.open = false; placeablePicker.index = -1; placeablePicker.items = []; placeablePicker.input = null;
+    var host = el('cat-placeable-picker');
+    if (!host) return;
+    host.hidden = true; host.innerHTML = '';
+  }
+  function renderPlaceablePicker(input, items) {
+    var host = el('cat-placeable-picker');
+    if (!host) return;
+    host.innerHTML = items.map(function (item, position) {
+      return '<button type="button" class="cat-placeable" data-cat-placeable="' + position + '" data-cat-placeable-text="' + esc(item.text) + '">' +
+        '<span class="cat-placeable-key" aria-hidden="true">' + (position + 1) + '</span>' +
+        '<span class="cat-placeable-text">' + esc(item.text) + '</span></button>';
+    }).join('');
+    host.hidden = false;
+    /* 訳文欄のすぐ下に置く。表の中へ差し込むと、行を描き直すたびに消える。 */
+    var rect = input.getBoundingClientRect();
+    host.style.left = Math.round(Math.max(8, rect.left)) + 'px';
+    host.style.top = Math.round(rect.bottom + 4) + 'px';
+  }
+  function openPlaceablePicker(input) {
+    if (!input) { status('先に訳文欄を選んでから Ctrl+D を押してください。'); return Promise.resolve(); }
+    var index = Number(input.getAttribute('data-cat-input'));
+    var requestScope = currentScope();
+    if (!requestScope || requestScope.id !== (input.getAttribute('data-cat-project-id') || '')) return Promise.resolve();
+    var seq = ++placeablePicker.seq;
+    return post('placeables', { index: index }, false, requestScope).then(function (data) {
+      if (seq !== placeablePicker.seq) return;
+      if (!scopeIsCurrent(requestScope, true) || !input.isConnected) return;
+      if (data && data.available === false) { closePlaceablePicker(); status('この行の原文から数字を取り出せませんでした。手で入力してください。', true); return; }
+      var items = ((data && data.placeables) || []).filter(function (item) { return item && String(item.text || '') !== ''; });
+      if (!items.length) { closePlaceablePicker(); status('この行の原文に数字はありません。'); return; }
+      placeablePicker.open = true; placeablePicker.index = index; placeablePicker.items = items; placeablePicker.input = input;
+      renderPlaceablePicker(input, items);
+      status('原文の数字を ' + items.length + ' 件出しました。番号キー（1〜' + Math.min(9, items.length) + '）で訳文へ入ります。');
+    }).catch(function (error) { closePlaceablePicker(); status(error.message, true); });
+  }
+  function insertPlaceable(position) {
+    if (!placeablePicker.open) return;
+    var input = placeablePicker.input;
+    var item = placeablePicker.items[position];
+    if (!input || !input.isConnected) { closePlaceablePicker(); status('訳文欄が見つかりませんでした。もう一度お試しください。', true); return; }
+    if (!item) { status('その番号の数字はありません。'); return; }
+    var text = String(item.text || '');
+    var start = input.selectionStart, end = input.selectionEnd;
+    if (!Number.isInteger(start)) { start = input.value.length; end = start; }
+    closePlaceablePicker();
+    /* 原文どおりの表記をそのまま置く。ここで整形すると、点検が見ている値と
+       画面が入れた文字が食い違う。 */
+    input.value = input.value.slice(0, start) + text + input.value.slice(end);
+    var caret = start + text.length;
+    try { input.setSelectionRange(caret, caret); } catch (_) {}
+    /* 保存の道は手入力と同じ（input → dirty → focusout / Ctrl+Enter で保存）。 */
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    YakuCommon.focus(input);
+    status('原文の「' + text + '」を訳文へ入れました。');
   }
 
   function openTermDialog(index) {
@@ -3116,11 +3189,14 @@
       if (button.hasAttribute('data-cat-term-exception')) return openTermException(button);
       if (button.hasAttribute('data-cat-tm-delete')) return deleteMemory(button);
       if (button.hasAttribute('data-cat-insert')) return insertReference(button);
+      if (button.hasAttribute('data-cat-placeable')) return insertPlaceable(Number(button.getAttribute('data-cat-placeable')));
       if (button.hasAttribute('data-cat-accept-revision')) return acceptRevisionComparison();
       if (button.hasAttribute('data-cat-revert-revision')) return revertRevisionComparison();
     });
     document.addEventListener('input', function (event) {
       if (!event.target.hasAttribute('data-cat-input')) return;
+      /* 打ち始めたら一覧は畳む。番号キーを食べたままにすると、数字が打てなくなる。 */
+      closePlaceablePicker();
       var index = Number(event.target.getAttribute('data-cat-input')); dirty.set(dirtyKey(event.target.getAttribute('data-cat-project-id'), index), true); event.target.closest('[data-cat-row]').classList.add('cat-dirty');
       autoGrow(event.target);
       /* 戻せるのは「開いたときの訳文と違うとき」だけ。常時出すと、押しても何も
@@ -3133,7 +3209,7 @@
       if (note) note.textContent = note.textContent.replace('その後編集なし', 'その後編集あり');
       saveStatus('変更を保存していません', false); el('cat-export').disabled = true; clearOutputDisplay();
     });
-    document.addEventListener('mousedown', function (event) { if (event.target.closest('[data-cat-insert],[data-cat-term-insert]')) event.preventDefault(); });
+    document.addEventListener('mousedown', function (event) { if (event.target.closest('[data-cat-insert],[data-cat-term-insert],[data-cat-placeable]')) event.preventDefault(); });
     document.addEventListener('mouseup', function (event) {
       var row = event.target.closest && event.target.closest('[data-cat-row]'); if (!row) return;
       var index = Number(row.getAttribute('data-cat-row'));
@@ -3152,7 +3228,7 @@
       var index = Number(input.getAttribute('data-cat-input')); if (termSelection.index !== index) termSelection = { index: index, source: '', target: '' };
       termSelection.target = input.value.slice(input.selectionStart, input.selectionEnd).trim();
     });
-    document.addEventListener('focusout', function (event) { if (event.target.hasAttribute('data-cat-input')) commit(event.target).catch(function () {}); });
+    document.addEventListener('focusout', function (event) { if (event.target.hasAttribute('data-cat-input')) { closePlaceablePicker(); commit(event.target).catch(function () {}); } });
     document.addEventListener('focusin', function (event) { var input = event.target.closest('[data-cat-input]'); if (input) { activeIndex = Number(input.getAttribute('data-cat-input')); var row = input.closest('[data-cat-row]'); activeSegmentId = row ? String(row.getAttribute('data-cat-segment-id') || '') : activeSegmentId; renderInspector(); } });
     document.addEventListener('submit', function (event) {
       if (event.target.id === 'cat-concordance-form') { event.preventDefault(); runConcordance(); return; }
@@ -3163,6 +3239,24 @@
     document.addEventListener('keydown', function (event) {
       if (event.isComposing) return;
       var input = event.target.closest && event.target.closest('[data-cat-input]');
+      /* 原文の数字を訳文へ入れる。市販CATの placeable 挿入に当たる（memoQ の
+         QuickPlace、Trados の Ctrl+, ）。打ち直させないことが目的なので、
+         一覧は原文どおりの表記で出す。数字の抜けは点検で止まるが、止める前に
+         入れ違いを起こさせない側の手当てがこれである。 */
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'd') {
+        event.preventDefault();
+        if (busy) { status('処理中は数字を挿入できません。完了してからもう一度お試しください。'); return; }
+        openPlaceablePicker(input);
+        return;
+      }
+      /* 一覧を開けているあいだだけ、番号キーが挿入になる。開けていなければ
+         素通しで、訳文欄に数字をそのまま打てる。 */
+      if (placeablePicker.open && !event.ctrlKey && !event.metaKey && !event.altKey && event.key >= '1' && event.key <= '9') {
+        event.preventDefault();
+        insertPlaceable(Number(event.key) - 1);
+        return;
+      }
+      if (placeablePicker.open && event.key === 'Escape') { event.preventDefault(); closePlaceablePicker(); return; }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') { event.preventDefault(); YakuCommon.focus(el('cat-search')); el('cat-search').select(); return; }
       /* 検索と置換。memoQ・Phrase・Trados・XTM のどれも Ctrl+H である。
          開くだけで、押すのは中の「置き換える」ボタン。 */

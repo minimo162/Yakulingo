@@ -1290,3 +1290,34 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 }
 .cat-final-review-option{margin:1rem 0;padding:.8rem;border:1px solid var(--border,#cbd5e1);border-radius:.5rem}.cat-final-review-option label{display:block}.cat-final-review-option textarea{box-sizing:border-box;width:100%;margin-top:.35rem;resize:vertical}
 .cat-publication-dialog{width:min(68rem,calc(100vw - 2rem))}.cat-publication-compare{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.cat-publication-compare section,.cat-publication-candidate{border:1px solid var(--border,#d8dde6);border-radius:.65rem;padding:1rem;margin:.75rem 0}.cat-publication-compare h3,.cat-publication-candidate h3{margin-top:0}.cat-publication-text{font-size:1.05rem;white-space:pre-wrap}.cat-publication-candidate button{margin-top:.75rem}@media(max-width:760px){.cat-publication-compare{grid-template-columns:1fr}}
+
+/* 原文の数字を訳文へ入れる一覧（Ctrl+D）。表の外に置いて、訳文欄の下へ寄せる。
+   行は絞り込みや保存のたびに作り直されるので、表の中に置くと開いたそばから消える。 */
+.cat-placeable-picker {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: min(38rem, calc(100vw - 2rem));
+  padding: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgba(15, 23, 38, .18);
+}
+.cat-placeable-picker[hidden] { display: none; }
+.cat-placeable {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 2px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  font-size: var(--font-meta);
+}
+/* 番号は押す文字より弱く見せる（.cat-op-key と同じ考え方）。 */
+.cat-placeable-key { color: var(--muted); font-variant-numeric: tabular-nums; }
+.cat-placeable-text { font-weight: 700; }
