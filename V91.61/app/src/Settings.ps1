@@ -90,7 +90,12 @@ function Get-YakuSettingsSchema {
         csv_translate_header              = @{ Type='bool'; Default=$true }
         translate_shapes                  = @{ Type='bool'; Default=$true }
         translate_charts                  = @{ Type='bool'; Default=$true }
+        # 出力書体は**向きごとに分ける**。英→和で Arial を当てると、日本語が
+        # 代替フォントへ落ちる。和書体は MS Pゴシック（利用者 2026-08-16）。
+        # output_font_name は和→英用。既に値を入れている利用者がいるので、
+        # このキーの意味は変えない。空欄はどちらも「書体を変更しない」。
         output_font_name                  = @{ Type='string'; Default='Arial'; MaxLength=80 }
+        output_font_name_jp               = @{ Type='string'; Default='MS Pゴシック'; MaxLength=80 }
         translation_cache_enabled         = @{ Type='bool'; Default=$true }
         request_timeout                   = @{ Type='int';  Default=240; Min=30; Max=1800 }
         extract_timeout_seconds           = @{ Type='int';  Default=300; Min=60; Max=3600 }
@@ -358,7 +363,7 @@ function Save-YakuUserSettings {
         if ($type -in @('bool','int')) { return [string]$Value }
         # URLs, model names, and future free-form settings may contain internal
         # information. Only the explicitly harmless display settings are logged.
-        if ($Key -notin @('output_font_name','browser_display_mode','edge_window_size')) { return '<masked>' }
+        if ($Key -notin @('output_font_name','output_font_name_jp','browser_display_mode','edge_window_size')) { return '<masked>' }
         $text = ([string]$Value).Replace("`r", ' ').Replace("`n", ' ').Replace("`t", ' ')
         if ($text.Length -gt 40) { $text = $text.Substring(0, 40) + '...' }
         return $text

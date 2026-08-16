@@ -1416,10 +1416,148 @@ function Get-YakuShapeByIndexPath {
 }
 
 function Get-YakuOutputFontName {
-    param([AllowNull()]$Settings)
-    $font = Get-YakuSettingString -Settings $Settings -Name 'output_font_name' -Default 'Arial'
+    <#
+      .SYNOPSIS
+        訳文セルへ当てる出力書体を、**訳す向きごとに**返す。
+
+      .DESCRIPTION
+        向きを見ないと、英→和のときに日本語の訳文へ Arial が当たり、字が
+        代替フォントへ落ちる。設定は向きごとに分けてある（`src/Settings.ps1`）。
+
+          to_en … output_font_name    （既定 Arial）
+          to_jp … output_font_name_jp （既定 MS Pゴシック。利用者 2026-08-16）
+
+        どちらも空欄は「書体を変更しない」。既定値をここへ書いているのは
+        Settings.ps1 が読み込まれていない場面でも壊れないようにするためで、
+        値を変えるときは両方を直す。
+    #>
+    param(
+        [AllowNull()]$Settings,
+        # 既定は to_en。従来の呼び出し（向きを渡さない）と同じ振る舞いにする。
+        [AllowNull()][string]$Direction = 'to_en'
+    )
+    $toJp = (([string]$Direction).Trim() -eq 'to_jp')
+    $key = if ($toJp) { 'output_font_name_jp' } else { 'output_font_name' }
+    $fallback = if ($toJp) { 'MS Pゴシック' } else { 'Arial' }
+    $font = Get-YakuSettingString -Settings $Settings -Name $key -Default $fallback
     if ($null -eq $font) { return '' }
     return ([string]$font).Trim()
+}
+
+function ConvertTo-YakuFontNameKey {
+    <#
+      .SYNOPSIS
+        書体名を突き合わせるための鍵へ落とす。
+
+      .DESCRIPTION
+        同じ書体が、出どころによって違う綴りで出てくる。実測（2026-08-16、
+        この機械）では GDI+ の家族名が `MS PGothic`、その日本語名が
+        **全角の** `ＭＳ Ｐゴシック` で、利用者が書いた `MS Pゴシック`
+        （半角 MS・半角 P）はどちらとも文字列としては一致しない。
+        NFKC は全角ラテンを半角へ畳むので、`ＭＳ Ｐゴシック` は
+        `MS Pゴシック` になり、そこで一致する。大小と前後の空白も落とす。
+    #>
+    param([AllowNull()][string]$Name)
+    if ([string]::IsNullOrWhiteSpace([string]$Name)) { return '' }
+    $text = [string]$Name
+    try { $text = $text.Normalize([System.Text.NormalizationForm]::FormKC) } catch {}
+    return $text.Trim().ToLowerInvariant()
+}
+
+function Get-YakuInstalledFontNameKeys {
+    <#
+      .SYNOPSIS
+        この機械に入っている書体名の鍵の集合を返す。取れなければ $null。
+
+      .DESCRIPTION
+        **Excel を起動しない。** GDI+ の InstalledFontCollection を使う
+        （実測: 初回 36ms / 2回目 3ms。Excel の起動は秒単位なので見合わない）。
+        家族ごとに、既定名・不変名・日本語名（LCID 1041）・現在の文化の名前を
+        全部入れる。GDI+ が英語名しか返さない機械があり、片方だけでは
+        `MS Pゴシック` を「無い」と誤って言うため。
+
+        **取れなかったときは $null を返す。** 空集合を返すと、道具の不在が
+        「書体が無い」という対象の欠陥に化ける。
+    #>
+    if ($null -ne $script:YakuInstalledFontKeys) { return $script:YakuInstalledFontKeys }
+    $collection = $null
+    try {
+        Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+        $collection = New-Object System.Drawing.Text.InstalledFontCollection
+        $families = @($collection.Families)
+        if ($families.Count -le 0) { return $null }
+        $set = New-Object 'System.Collections.Generic.HashSet[string]'
+        $lcid = 0
+        try { $lcid = [int][System.Globalization.CultureInfo]::CurrentCulture.LCID } catch { $lcid = 0 }
+        foreach ($family in $families) {
+            $names = New-Object System.Collections.Generic.List[string]
+            try { [void]$names.Add([string]$family.Name) } catch {}
+            try { [void]$names.Add([string]$family.GetName(0)) } catch {}
+            try { [void]$names.Add([string]$family.GetName(1041)) } catch {}
+            if ($lcid -gt 0) { try { [void]$names.Add([string]$family.GetName($lcid)) } catch {} }
+            foreach ($name in $names.ToArray()) {
+                $key = ConvertTo-YakuFontNameKey -Name $name
+                if (-not [string]::IsNullOrEmpty($key)) { [void]$set.Add($key) }
+            }
+        }
+        if ($set.Count -le 0) { return $null }
+        $script:YakuInstalledFontKeys = $set
+        return $set
+    } catch {
+        try { Write-YakuLog "Installed font enumeration unavailable. error=$($_.Exception.Message)" 'DEBUG' } catch {}
+        return $null
+    } finally {
+        if ($null -ne $collection) { try { $collection.Dispose() } catch {} }
+    }
+}
+
+function Test-YakuInstalledFontName {
+    <#
+      .SYNOPSIS
+        書体名が実在するかを 'installed' / 'missing' / 'unknown' の3つで返す。
+
+      .DESCRIPTION
+        Excel は存在しない書体名でも例外を投げず、その名前をそのまま保存する
+        （実測 2026-08-16: `threw=False storedName=NoSuchFontZZZ`）。
+        `Ariel` と打ち間違えても、どこにも何も出ないまま訳文セル全部が
+        壊れた書体になる。ここで**書き出しは止めずに**警告だけ出す。
+
+        **「測れなかった」を「無い」に畳まない。** 一覧が取れない機械では
+        'unknown' を返し、呼び出し側は何も言わない。
+    #>
+    param([AllowNull()][string]$Name)
+    if ([string]::IsNullOrWhiteSpace([string]$Name)) { return 'unknown' }
+    $keys = Get-YakuInstalledFontNameKeys
+    if ($null -eq $keys) { return 'unknown' }
+    $key = ConvertTo-YakuFontNameKey -Name $Name
+    if ([string]::IsNullOrEmpty($key)) { return 'unknown' }
+    if ($keys.Contains($key)) { return 'installed' }
+    return 'missing'
+}
+
+function Add-YakuOutputFontMissingWarning {
+    <#
+      .SYNOPSIS
+        出力書体がこの機械に無ければ警告する。**書き出しは止めない。**
+
+      .DESCRIPTION
+        止める理由（ブロッカー）を増やさないために、種別を `writeback*` に
+        しない（`Test-YakuIncompleteWarnings` が前方一致で止めるのはそちら）。
+        呼ぶのは書き戻し1回につき1度だけ。
+    #>
+    param(
+        [AllowNull()]$Warnings,
+        [AllowNull()][string]$FontName,
+        [AllowNull()][string]$Direction = ''
+    )
+    if ([string]::IsNullOrWhiteSpace([string]$FontName)) { return 'unknown' }
+    $state = Test-YakuInstalledFontName -Name $FontName
+    try { Write-YakuLog "Output font availability. font=$FontName direction=$Direction state=$state" 'INFO' } catch {}
+    if ($state -eq 'missing' -and $null -ne $Warnings) {
+        Add-YakuWarning -Warnings $Warnings -Category 'output-font-missing' -Location 'Excel' `
+            -Message "出力フォント『$FontName』はこのパソコンに見つかりません。訳文セルは代替の書体で表示されます。設定の綴りを確認してください。"
+    }
+    return $state
 }
 
 function Set-YakuComTextFontName {
@@ -1759,6 +1897,170 @@ function Merge-YakuCellRunsToRects {
     }
     if ($null -ne $current) { $rects.Add($current) | Out-Null }
     return @($rects.ToArray())
+}
+
+function Merge-YakuExcelFontAddressRanges {
+    <#
+      .SYNOPSIS
+        書体を当てる住所の一覧を、隣り合うものだけまとめて矩形の住所へ畳む。
+
+      .DESCRIPTION
+        一括箱の経路は**1セルにつき1住所**を登録する。`B5` は2文字なので
+        200文字の塊に約60件、訳文1000セルなら union を十数回叩くことになる。
+        連続範囲なら1回で当たる（実測 2026-08-16 Q5: `G1:G5` に1回で5セル）。
+
+        **繋げてよいのは、隙間の無い並びだけ。** 行の中では列が隣接する
+        ものだけを1本にまとめ、そのあと同じ列幅で行が連続するものだけを
+        矩形へ積む。`B5,B6,B8` は `B5:B6` と `B8` になる。
+        **間の B7 は対象ではないので、繋いだら書体を当ててはならないセルを
+        塗ることになる。**
+
+        住所として読めなかったものは、畳まずそのまま返す（欠かさない）。
+
+      .NOTES
+        【`Merge-YakuCellRunsToRects` を呼ばずに縦積みを書いた理由】
+        同じ仕事をする既存関数はある。**呼ぶと元が取れないので呼んでいない。**
+        1000セル（1列）で測った内訳（5.1.26100.9168、Excel 温まり済み）:
+
+          畳まないとき  union の COM 呼び出し 25回 …… 80ms
+          既存関数を使う畳み方 ……………………………… 139ms（うち既存関数 75ms）
+          住所読みを関数呼び出しにした畳み方 ………… 約60ms（ほぼ相殺）
+          この実装（読みも縦積みもその場で） ………… 3〜4ms
+          畳んだあとの COM 呼び出し 1回 ………………… 11ms
+
+        既存関数は `Sort-Object` を3つの式で回し、`| Out-Null` で Add する。
+        どちらも PowerShell では高い。**畳む費用が COM の節約を超えるなら、
+        畳む意味そのものが無い。** 振る舞いが同じことは、既存関数を使う
+        参照実装との差分試験（固定16件＋乱択500件、被覆の集合一致まで）で
+        確かめてある。並べ替えの鍵は、横に畳むとき「行→開始列」、
+        縦に積むとき「開始列→終了列→行」。**後者を忘れると、列が2本以上
+        ある題材で縦がまったく積まれない**（B5,D5,B6,D6 が4本のまま残る）。
+    #>
+    param(
+        [AllowNull()][object[]]$Addresses,
+        # 展開する行数の上限。1住所が巨大な矩形（`A1:A1048576`）のときに
+        # 行ごとへばらすと無駄なので、越えたら畳まずそのまま返す。
+        [int]$MaxExpandedRows = 200000
+    )
+    $result = New-Object System.Collections.Generic.List[string]
+    if ($null -eq $Addresses -or @($Addresses).Count -le 0) { return [string[]]@() }
+    # 行・開始列・終了列を**別々の int の並び**で持つ。
+    #
+    # **ここでは `| Out-Null` を使わない。** 実測（5.1.26100.9168）で
+    # `$list.Add(x) | Out-Null` は3000回で **260ms**、`[void]$list.Add(x)` は
+    # **2.9ms** だった。パイプラインを1回ずつ立てる費用である。
+    $spanRows = New-Object System.Collections.Generic.List[int]
+    $spanStarts = New-Object System.Collections.Generic.List[int]
+    $spanEnds = New-Object System.Collections.Generic.List[int]
+    $expanded = 0
+    # 住所を読むのは**この場で**やる。1住所ごとに関数を呼ぶ書き方は、1000件で
+    # 50〜60ms 増えた（ほぼ PowerShell の関数呼び出しの費用）。それだけで
+    # union の COM を1回に減らした節約（実測 80ms → 11ms）が消える。
+    # `B5` `B5:D7` `$B$5` `$B$5:$D$7` を読む。読めない綴りは畳まずそのまま返す。
+    $addressRegex = [regex]'^\$?([A-Za-z]{1,3})\$?([0-9]{1,7})(?::\$?([A-Za-z]{1,3})\$?([0-9]{1,7}))?$'
+    foreach ($rawAddress in @($Addresses)) {
+        $address = [string]$rawAddress
+        if ([string]::IsNullOrWhiteSpace($address)) { continue }
+        $address = $address.Trim()
+        $match = $addressRegex.Match($address)
+        if (-not $match.Success) { [void]$result.Add($address); continue }
+        $groups = $match.Groups
+        $startCol = 0
+        foreach ($ch in $groups[1].Value.ToUpperInvariant().ToCharArray()) { $startCol = ($startCol * 26) + ([int][char]$ch - 64) }
+        $startRow = [int]$groups[2].Value
+        $endCol = $startCol
+        $endRow = $startRow
+        if ($groups[3].Success) {
+            $endCol = 0
+            foreach ($ch in $groups[3].Value.ToUpperInvariant().ToCharArray()) { $endCol = ($endCol * 26) + ([int][char]$ch - 64) }
+            $endRow = [int]$groups[4].Value
+        }
+        if ($startCol -le 0 -or $startRow -le 0 -or $endCol -le 0 -or $endRow -le 0) { [void]$result.Add($address); continue }
+        if ($endRow -lt $startRow) { $swap = $startRow; $startRow = $endRow; $endRow = $swap }
+        if ($endCol -lt $startCol) { $swap = $startCol; $startCol = $endCol; $endCol = $swap }
+        $rowCount = [int]($endRow - $startRow + 1)
+        if (($expanded + $rowCount) -gt $MaxExpandedRows) { [void]$result.Add($address); continue }
+        $expanded += $rowCount
+        for ($row = $startRow; $row -le $endRow; $row++) {
+            [void]$spanRows.Add($row)
+            [void]$spanStarts.Add($startCol)
+            [void]$spanEnds.Add($endCol)
+        }
+    }
+    $spanCount = [int]$spanRows.Count
+    if ($spanCount -le 0) { return [string[]]@($result.ToArray()) }
+
+    $rowArray = $spanRows.ToArray()
+    $startArray = $spanStarts.ToArray()
+    $endArray = $spanEnds.ToArray()
+
+    # --- 横に畳む。並べ替えの鍵は「行 → 開始列」 ---------------------------
+    $keys = New-Object 'long[]' $spanCount
+    $order = New-Object 'int[]' $spanCount
+    for ($i = 0; $i -lt $spanCount; $i++) {
+        $keys[$i] = ([long]$rowArray[$i] * 1048576L) + [long]$startArray[$i]
+        $order[$i] = $i
+    }
+    [Array]::Sort($keys, $order)
+
+    $runRows = New-Object 'int[]' $spanCount
+    $runStarts = New-Object 'int[]' $spanCount
+    $runEnds = New-Object 'int[]' $spanCount
+    $runCount = 0
+    $currentRow = 0
+    $currentStart = 0
+    $currentEnd = 0
+    $hasCurrent = $false
+    for ($i = 0; $i -lt $spanCount; $i++) {
+        $at = [int]$order[$i]
+        $row = [int]$rowArray[$at]
+        $spanStart = [int]$startArray[$at]
+        $spanEnd = [int]$endArray[$at]
+        # 同じ行で、隣接（+1）までを1本にする。間が1列でも空けば別の run。
+        if ($hasCurrent -and $currentRow -eq $row -and $spanStart -le ($currentEnd + 1)) {
+            if ($spanEnd -gt $currentEnd) { $currentEnd = $spanEnd }
+            continue
+        }
+        if ($hasCurrent) {
+            $runRows[$runCount] = $currentRow; $runStarts[$runCount] = $currentStart; $runEnds[$runCount] = $currentEnd; $runCount++
+        }
+        $currentRow = $row; $currentStart = $spanStart; $currentEnd = $spanEnd; $hasCurrent = $true
+    }
+    if ($hasCurrent) {
+        $runRows[$runCount] = $currentRow; $runStarts[$runCount] = $currentStart; $runEnds[$runCount] = $currentEnd; $runCount++
+    }
+
+    # --- 縦に積む。並べ替えの鍵は「開始列 → 終了列 → 行」 -------------------
+    # ここを「行 → 開始列」のままにすると、列が2本以上ある題材で縦が1つも
+    # 積まれない（B5,D5,B6,D6 が4本のまま残る）。
+    $runKeys = New-Object 'long[]' $runCount
+    $runOrder = New-Object 'int[]' $runCount
+    for ($i = 0; $i -lt $runCount; $i++) {
+        $runKeys[$i] = ((([long]$runStarts[$i] * 16384L) + [long]$runEnds[$i]) * 1048576L) + [long]$runRows[$i]
+        $runOrder[$i] = $i
+    }
+    [Array]::Sort($runKeys, $runOrder)
+
+    $pendStartRow = 0; $pendEndRow = 0; $pendStart = 0; $pendEnd = 0
+    $hasPending = $false
+    for ($i = 0; $i -lt $runCount; $i++) {
+        $at = [int]$runOrder[$i]
+        $row = [int]$runRows[$at]
+        $runStart = [int]$runStarts[$at]
+        $runEnd = [int]$runEnds[$at]
+        if ($hasPending -and $runStart -eq $pendStart -and $runEnd -eq $pendEnd -and $row -eq ($pendEndRow + 1)) {
+            $pendEndRow = $row
+            continue
+        }
+        if ($hasPending) {
+            [void]$result.Add((Get-YakuExcelRangeAddress -StartRow $pendStartRow -StartCol $pendStart -EndRow $pendEndRow -EndCol $pendEnd))
+        }
+        $pendStartRow = $row; $pendEndRow = $row; $pendStart = $runStart; $pendEnd = $runEnd; $hasPending = $true
+    }
+    if ($hasPending) {
+        [void]$result.Add((Get-YakuExcelRangeAddress -StartRow $pendStartRow -StartCol $pendStart -EndRow $pendEndRow -EndCol $pendEnd))
+    }
+    return [string[]]@($result.ToArray())
 }
 
 function Add-YakuExcelMetricElapsed {
@@ -3006,23 +3308,25 @@ function Invoke-YakuExcelBulkBandedWrite {
     }
 }
 # ---------------------------------------------------------------------------
-# セル内部分書式（run）を巻き添えにしないための道具
+# 平文だと証明できなかったセルを、箱の巻き添えにしないための道具
 #
 # 実測（2026-08-16、Excel COM。テストファイルの複写に対して実行）:
 #   - 1〜4文字目だけ太字のセルへ Value2 で書くと、**29文字すべてが太字**になった。
 #     一括の2次元配列代入でも同じ（24文字すべて太字）。
 #   - **もっと悪いのはこちら。** 翻訳対象ではない隣のセルが一括の箱に入っていると、
 #     元の値をそのまま書き戻すだけで run が消える。**本文は1バイトも変わらない**ので、
-#     文字を比べる検査では永久に見つからない。
+#     文字を比べる検査では永久に見つからない。ふりがな（`<rPh>`）も同じで、
+#     `東京` のまま `Phonetics.Count` が 1 → 0 になった。
 #
 #   前者は「書いた後に揃え直す」、後者は「そもそも箱へ入れない」で塞ぐ。
-#   run の読み取りは Excel を使わない（src/SheetLayout.ps1）。
+#   **箱へ入れてよいのは、平文だと証明できたセルだけ**である（判定の反転。
+#   読み取りは Excel を使わない。src/SheetLayout.ps1）。
 # ---------------------------------------------------------------------------
 
-function Get-YakuExcelRunCellsBySheet {
+function Get-YakuExcelNonPlainCellsBySheet {
     <#
       .SYNOPSIS
-        原本の xlsx から、run を持つセルをシート名で引ける形にして読む。
+        原本の xlsx から、**平文だと証明できなかったセル**をシート名で引ける形にして読む。
 
       .DESCRIPTION
         読めなければ空を返す。体裁は足しであって前提ではないので、
@@ -3033,69 +3337,97 @@ function Get-YakuExcelRunCellsBySheet {
     if ([string]::IsNullOrWhiteSpace([string]$Path)) { return $bySheet }
     # SheetLayout.ps1 は SrcModules.ps1 の並びで FileProcessors.ps1 より後に読まれる。
     # 呼ぶのは実行時なので届くが、単体で dot-source された経路のために確かめる。
-    if (-not (Get-Command Get-YakuXlsxRunCells -ErrorAction SilentlyContinue)) { return $bySheet }
+    if (-not (Get-Command Get-YakuXlsxNonPlainCells -ErrorAction SilentlyContinue)) { return $bySheet }
     $started = Get-Date
     $total = 0
     try {
-        foreach ($sheet in @(Get-YakuXlsxRunCells -Path ([string]$Path))) {
+        foreach ($sheet in @(Get-YakuXlsxNonPlainCells -Path ([string]$Path))) {
             if ($null -eq $sheet) { continue }
             $name = [string]$sheet.name
             if ([string]::IsNullOrEmpty($name)) { continue }
-            $cells = @($sheet.run_cells)
+            $cells = @($sheet.non_plain_cells)
             if ($cells.Count -le 0) { continue }
             $bySheet[$name] = $cells
             $total += [int]$cells.Count
         }
-        try { Write-YakuLog "Excel writeback run cells read. sheets=$($bySheet.Count) runCells=$total ms=$([Math]::Round(((Get-Date) - $started).TotalMilliseconds, 0))" 'DEBUG' } catch {}
+        try { Write-YakuLog "Excel writeback non-plain cells read. sheets=$($bySheet.Count) nonPlainCells=$total ms=$([Math]::Round(((Get-Date) - $started).TotalMilliseconds, 0))" 'DEBUG' } catch {}
     } catch {
-        try { Write-YakuLog "Excel writeback run cell read failed; the rich text guard is skipped. error=$($_.Exception.Message)" 'DEBUG' } catch {}
+        try { Write-YakuLog "Excel writeback non-plain cell read failed; the rich text guard is skipped. error=$($_.Exception.Message)" 'DEBUG' } catch {}
         return @{}
     }
     return $bySheet
 }
 
-function Get-YakuExcelSheetRunCells {
+function Get-YakuExcelSheetNonPlainCells {
     # `@($hash[$missingKey])` は要素1（中身は $null）の配列になる。ここで畳む。
     param(
-        [AllowNull()][hashtable]$RunCellsBySheet,
+        [AllowNull()][hashtable]$NonPlainCellsBySheet,
         [AllowNull()][string]$SheetName
     )
-    if ($null -eq $RunCellsBySheet) { return @() }
+    if ($null -eq $NonPlainCellsBySheet) { return @() }
     $key = [string]$SheetName
     if ([string]::IsNullOrEmpty($key)) { return @() }
-    if (-not $RunCellsBySheet.ContainsKey($key)) { return @() }
-    $value = $RunCellsBySheet[$key]
+    if (-not $NonPlainCellsBySheet.ContainsKey($key)) { return @() }
+    $value = $NonPlainCellsBySheet[$key]
     if ($null -eq $value) { return @() }
     return @($value)
 }
 
-function Get-YakuExcelRunCellInBounds {
+function Get-YakuExcelNonTargetNonPlainCellInBounds {
     <#
       .SYNOPSIS
-        箱（bounding box）の中に run セルが1つでもあれば、そのセルを返す。無ければ $null。
+        箱（bounding box）の中にいる**翻訳対象ではない**「平文と証明できなかった
+        セル」を1つ返す。無ければ $null。
 
       .DESCRIPTION
         **件数ではなく所属で見る。** 箱は翻訳対象を囲むだけで、間に挟まった
-        非対象セルも一緒に書き戻される。巻き添えになるのはその非対象セルなので、
-        「run セルがいくつあるか」ではなく「この矩形の中にいるか」を問う。
+        非対象セルも一緒に書き戻される。巻き添えになるのはその非対象セルである。
+
+        **対象セルは巻き添えではない。** 対象セルの run は、一括だろうと矩形
+        だろうと単セルだろうと、`Value2` を書いた時点で必ず消える（実測: 一括の
+        2次元配列代入で `BBBB...........` → `BBBBBBBBBBBBBBBBBBBBBBBB`）。
+        そのあと `Set-YakuExcelRunCellDominantFormat` が支配的書式へ揃える。
+        あちらは書込経路の分岐の**外**にあるので、一括を使ったかどうかに関係なく
+        走る（同じ実測で `........................` へ戻ることを確かめた）。
+        したがって**対象セルは、箱を捨てる理由にならない**。
+
+        捨てる理由を対象セルまで広げると、証明できないセルが多いファイルで
+        一括経路が丸ごと死ぬ。実測（20行×25列＝500セル・不規則な対象配置）で、
+        書込だけで 178ms → 1,622ms（約9倍）になっていた。
+
+        `scope='sheet'` の1件は「このシートは丸ごと証明できない」を表す
+        （住所を取れないセルが在った）。どの箱が安全かを言えないので、
+        行と列によらず必ず捨てる。対象表に載りようが無いので、対象かどうかも見ない。
+
+        $TargetKeys は "行,列" を鍵に持つ表。**$null を渡したら「対象が1つも
+        分からない」＝全部を非対象とみなす**。判断の材料が無いときは、遅いほうへ
+        倒す。
     #>
     param(
-        [AllowNull()][object[]]$RunCells,
-        [AllowNull()]$Bounds
+        [AllowNull()][object[]]$NonPlainCells,
+        [AllowNull()]$Bounds,
+        [AllowNull()][hashtable]$TargetKeys = $null
     )
-    if ($null -eq $RunCells -or $RunCells.Count -le 0 -or $null -eq $Bounds) { return $null }
+    if ($null -eq $NonPlainCells -or $NonPlainCells.Count -le 0 -or $null -eq $Bounds) { return $null }
     $minRow = 0; $maxRow = 0; $minCol = 0; $maxCol = 0
     try {
         $minRow = [int]$Bounds.MinRow; $maxRow = [int]$Bounds.MaxRow
         $minCol = [int]$Bounds.MinCol; $maxCol = [int]$Bounds.MaxCol
     } catch { return $null }
-    foreach ($runCell in $RunCells) {
-        if ($null -eq $runCell) { continue }
+    foreach ($cell in $NonPlainCells) {
+        if ($null -eq $cell) { continue }
+        $scope = ''
+        try { $scope = [string]$cell.scope } catch { $scope = '' }
+        if ($scope -eq 'sheet') { return $cell }
         $row = 0; $col = 0
-        try { $row = [int]$runCell.row; $col = [int]$runCell.col } catch { continue }
+        try { $row = [int]$cell.row; $col = [int]$cell.col } catch { continue }
         if ($row -lt $minRow -or $row -gt $maxRow) { continue }
         if ($col -lt $minCol -or $col -gt $maxCol) { continue }
-        return $runCell
+        if ($null -ne $TargetKeys) {
+            $key = ([string]$row) + ',' + ([string]$col)
+            if ($TargetKeys.ContainsKey($key)) { continue }
+        }
+        return $cell
     }
     return $null
 }
@@ -3193,19 +3525,28 @@ function Set-YakuExcelRunCellDominantFormat {
       .DESCRIPTION
         経路ごとに足さないのは、書込経路が矩形・行・単セルの3つに分かれていて、
         どれも Value2 を通るためである。どの経路を通っても、ここを必ず通る。
-        触るのは**訳文を書いたセルだけ**。書いていない run セルには何もしない。
+        触るのは**訳文を書いたセルだけ**。書いていないセルには何もしない。
+
+        渡ってくるのは「平文だと証明できなかったセル」の一覧である。**そのうち
+        run を解けたものだけ**が代入表を持つ。ふりがなだけが理由のセルや、断片を
+        読めなかったセル、`scope='sheet'`（行も列も 0）はここで素通りする。
+        揃え直しをしないだけで、箱から外す守りは別に効いている。
     #>
     param(
         [Parameter(Mandatory=$true)]$Worksheet,
-        [AllowNull()][object[]]$RunCells,
+        [AllowNull()][object[]]$NonPlainCells,
         [AllowNull()][hashtable]$TargetKeys,
         [AllowNull()][string]$OutputFontName,
         [AllowNull()][string]$SheetName = '',
         [AllowNull()][hashtable]$Metrics = $null
     )
-    if ($null -eq $RunCells -or $RunCells.Count -le 0) { return 0 }
+    if ($null -eq $NonPlainCells -or $NonPlainCells.Count -le 0) { return 0 }
     $fixed = 0
-    foreach ($runCell in $RunCells) {
+    # 揃え直しはセル1つにつき COM を数回叩く。一括経路を使えたかどうかとは別勘定
+    # なので、測るときに切り分けられるよう、ここだけの時間を別に持つ。
+    $levelSw = $null
+    if ($null -ne $Metrics) { $levelSw = [System.Diagnostics.Stopwatch]::StartNew() }
+    foreach ($runCell in $NonPlainCells) {
         if ($null -eq $runCell) { continue }
         $row = 0; $col = 0
         try { $row = [int]$runCell.row; $col = [int]$runCell.col } catch { continue }
@@ -3241,8 +3582,13 @@ function Set-YakuExcelRunCellDominantFormat {
             Release-YakuComObject $cell
         }
     }
+    $levelMs = 0.0
+    if ($null -ne $levelSw) {
+        $levelMs = [double]$levelSw.Elapsed.TotalMilliseconds
+        Add-YakuExcelMetricElapsed -Metrics $Metrics -Key 'run_level_ms' -Stopwatch $levelSw
+    }
     if ($fixed -gt 0) {
-        try { Write-YakuLog "Excel writeback rich text cells levelled to dominant format. sheet=$SheetName cells=$fixed" 'DEBUG' } catch {}
+        try { Write-YakuLog "Excel writeback rich text cells levelled to dominant format. sheet=$SheetName cells=$fixed ms=$([Math]::Round($levelMs, 0))" 'DEBUG' } catch {}
     }
     if ($null -ne $Metrics) {
         try {
@@ -3261,7 +3607,11 @@ function Invoke-YakuExcelBulkBoundingBoxWrite {
         [Parameter(Mandatory=$true)]$Warnings,
         [AllowNull()][string]$SheetName = '',
         [AllowNull()][hashtable]$Metrics = $null,
-        [AllowNull()][object[]]$RunCells = $null,
+        [AllowNull()][object[]]$NonPlainCells = $null,
+        # 訳文を書くセルの住所（"行,列"）。証明できないセルであっても、ここに
+        # 載っていれば箱を捨てる理由にならない。$null は「対象が分からない」＝
+        # 全部を非対象とみなす（遅いが安全な側）。
+        [AllowNull()][hashtable]$TargetKeys = $null,
         [int]$MaxArea = 50000
     )
     if ($null -eq $Items -or $Items.Count -le 0) { return $null }
@@ -3280,17 +3630,35 @@ function Invoke-YakuExcelBulkBoundingBoxWrite {
 
         $address = Get-YakuExcelRangeAddress -StartRow ([int]$bounds.MinRow) -StartCol ([int]$bounds.MinCol) -EndRow ([int]$bounds.MaxRow) -EndCol ([int]$bounds.MaxCol)
 
-        # 箱がセル内部分書式（run）を持つセルを1つでも含むなら、箱では書かない。
-        # 箱は翻訳対象を囲むだけなので、間に挟まった**非対象**セルまで一緒に
-        # 書き戻される。実測では、値が1文字も変わらないその書き戻しだけで run が
-        # 消えた。`$null` を返せば呼び出し側は矩形・行・単セルの経路へ落ち、
-        # 対象セルしか触らなくなる。
+        # 箱が**翻訳対象ではない**「平文と証明できなかったセル」を1つでも含むなら、
+        # 箱では書かない。箱は翻訳対象を囲むだけなので、間に挟まった非対象セルまで
+        # 一緒に書き戻される。実測では、値が1文字も変わらないその書き戻しだけで
+        # run もふりがなも消えた。`$null` を返せば呼び出し側は矩形・行・単セルの
+        # 経路へ落ち、対象セルしか触らなくなる。
+        # **対象セルでは捨てない。** 対象セルの run は経路によらず Value2 で
+        # 消え、そのあと Set-YakuExcelRunCellDominantFormat が分岐の外で揃える。
+        # 捨てても得るものが無く、run の多いファイルで一括が丸ごと死ぬだけである。
         # 数式集合や結合の判定より**手前**に置く。判断に要るのは箱の位置だけで、
         # Excel への問い合わせが1回も要らないため。
-        $runCellInBox = Get-YakuExcelRunCellInBounds -RunCells $RunCells -Bounds $bounds
-        if ($null -ne $runCellInBox) {
-            try { Write-YakuLog "Excel writeback bulk box fallback. sheet=$SheetName address=$address reason=rich-text-run runCell=$($runCellInBox.address) sheetRunCells=$(@($RunCells).Count) targets=$($Items.Count)" 'DEBUG' } catch {}
-            if ($null -ne $Metrics) { try { $Metrics['bulk_run_cell_skips'] = [int]$Metrics['bulk_run_cell_skips'] + 1 } catch {} }
+        #
+        # 【帯に割らない理由（2026-08-16 に測って決めた。次に見直す人へ）】
+        # 数式のときは Add-YakuExcelFormulaFreeColumnBandPlans が「その列に1つも
+        # 数式が無い列」だけを集めて帯にする。同じ形を run にも当てられそうに見える。
+        # **当てても救えるものが無いことを数えた。**
+        # 20行×25列・全セルが run・対象は不規則に100セル、という題材（守りが働く
+        # べき側の実測題材そのもの）で、非対象の run セルを1つも含まない列は
+        # **0列**、同じく行は **0行**。帯に割っても救える対象は **0セル**である。
+        # 非対象の run セルが列ごと・行ごとにまとまっている（例: 訳さない備考欄が
+        # 1列だけ rich text）ファイルでしか効かない仕組みで、そういうファイルが
+        # 実在するという観測はまだ無い。利用者が述べたのは run セルの**割合**が
+        # ファイルによって違うということであって、**並び方**ではない。
+        # 帯は1本ごとに数式・結合の判定をやり直す新しい経路になる。効くという
+        # 観測が出てから足す。それまでは、対象セルを箱に残すこの1手で足りる。
+        #
+        $blockingCell = Get-YakuExcelNonTargetNonPlainCellInBounds -NonPlainCells $NonPlainCells -Bounds $bounds -TargetKeys $TargetKeys
+        if ($null -ne $blockingCell) {
+            try { Write-YakuLog "Excel writeback bulk box fallback. sheet=$SheetName address=$address reason=non-plain-nontarget cell=$($blockingCell.address) scope=$($blockingCell.scope) sheetNonPlainCells=$(@($NonPlainCells).Count) targetKeys=$(if ($null -eq $TargetKeys) { 'none' } else { $TargetKeys.Count }) targets=$($Items.Count)" 'DEBUG' } catch {}
+            if ($null -ne $Metrics) { try { $Metrics['bulk_non_plain_skips'] = [int]$Metrics['bulk_non_plain_skips'] + 1 } catch {} }
             return $null
         }
 
@@ -3428,36 +3796,74 @@ function Split-YakuExcelRangeAddressChunks {
 }
 
 function Invoke-YakuExcelFontUnionApply {
+    <#
+      .SYNOPSIS
+        出力書体を、住所をまとめて当てる。**数えて記録する。**
+
+      .DESCRIPTION
+        住所は先に矩形へ畳む（`Merge-YakuExcelFontAddressRanges`）。
+        連続範囲は1回で当たる（実測 2026-08-16 Q5）。塊の文字数上限 200 は
+        実測（Q4: 230〜350文字の間で `0x800A03EC`）に基づく。**変えない。**
+
+        union が落ちたら1住所ずつ当て直すが、そこが**まるごと無音**だった。
+        `font_ms` だけでは「1回で速く終わった」と「33回の退避で遅かった」を
+        区別できない。塊・退避・失敗をそれぞれ数え、記録へ出す。
+
+        **止める理由は増やさない。** 全滅したときだけ警告を1件出す。種別を
+        `writeback*` にしないのは、`Test-YakuIncompleteWarnings` がそれを
+        書き出しの中断条件として拾うためである。
+    #>
     param(
         [Parameter(Mandatory=$true)]$Worksheet,
         [AllowNull()][object[]]$Addresses,
         [AllowNull()][string]$FontName,
-        [AllowNull()][hashtable]$Metrics = $null
+        [AllowNull()][hashtable]$Metrics = $null,
+        [AllowNull()]$Warnings = $null,
+        [AllowNull()][string]$SheetName = ''
     )
     if ([string]::IsNullOrWhiteSpace([string]$FontName)) { return }
-    $allAddresses = New-Object System.Collections.Generic.List[string]
+    $inputAddresses = New-Object System.Collections.Generic.List[string]
     foreach ($addr in @($Addresses)) {
-        if (-not [string]::IsNullOrWhiteSpace([string]$addr)) { $allAddresses.Add([string]$addr) | Out-Null }
+        # `| Out-Null` はパイプラインを1回ずつ立てる。住所は数千件になる。
+        if (-not [string]::IsNullOrWhiteSpace([string]$addr)) { [void]$inputAddresses.Add([string]$addr) }
     }
+    if ($inputAddresses.Count -le 0) { return }
+    $allAddresses = @(Merge-YakuExcelFontAddressRanges -Addresses ([string[]]@($inputAddresses.ToArray())))
     if ($allAddresses.Count -le 0) { return }
+    $chunkCount = 0
+    $fallbackChunks = 0
+    $fallbackRanges = 0
+    $appliedRanges = 0
+    $failedRanges = 0
     $sw = $null
     if ($null -ne $Metrics) { $sw = [System.Diagnostics.Stopwatch]::StartNew() }
     try {
-        foreach ($chunk in @(Split-YakuExcelRangeAddressChunks -Addresses @($allAddresses.ToArray()) -MaxLength 200)) {
+        foreach ($chunk in @(Split-YakuExcelRangeAddressChunks -Addresses @($allAddresses) -MaxLength 200)) {
             $joined = ''
             try { $joined = [string]$chunk.Joined } catch { $joined = '' }
             if ([string]::IsNullOrWhiteSpace($joined)) { continue }
+            $chunkAddresses = @($chunk.Addresses)
+            $chunkCount++
             $unionRange = $null
             try {
                 $unionRange = $Worksheet.Range($joined)
                 $unionRange.Font.Name = [string]$FontName
+                $appliedRanges += [int]$chunkAddresses.Count
             } catch {
-                foreach ($addr in @($chunk.Addresses)) {
+                $fallbackChunks++
+                $unionError = [string]$_.Exception.Message
+                try { Write-YakuLog "Excel output font union fallback. sheet=$SheetName ranges=$($chunkAddresses.Count) length=$($joined.Length) error=$unionError" 'DEBUG' } catch {}
+                foreach ($addr in $chunkAddresses) {
+                    $fallbackRanges++
                     $r = $null
                     try {
                         $r = $Worksheet.Range([string]$addr)
                         $r.Font.Name = [string]$FontName
-                    } catch {}
+                        $appliedRanges++
+                    } catch {
+                        $failedRanges++
+                        try { Write-YakuLog "Excel output font apply failed. sheet=$SheetName address=$addr error=$($_.Exception.Message)" 'DEBUG' } catch {}
+                    }
                     Release-YakuComObject $r
                 }
             } finally {
@@ -3466,6 +3872,29 @@ function Invoke-YakuExcelFontUnionApply {
         }
     } finally {
         if ($null -ne $sw) { Add-YakuExcelMetricElapsed -Metrics $Metrics -Key 'font_ms' -Stopwatch $sw }
+        if ($null -ne $Metrics) {
+            try {
+                foreach ($pair in @(
+                    @('font_input_addresses', [int]$inputAddresses.Count),
+                    @('font_ranges', [int]$allAddresses.Count),
+                    @('font_union_chunks', [int]$chunkCount),
+                    @('font_union_fallback_chunks', [int]$fallbackChunks),
+                    @('font_union_fallback_ranges', [int]$fallbackRanges),
+                    @('font_ranges_applied', [int]$appliedRanges),
+                    @('font_ranges_failed', [int]$failedRanges)
+                )) {
+                    $key = [string]$pair[0]
+                    if (-not $Metrics.ContainsKey($key)) { $Metrics[$key] = 0 }
+                    $Metrics[$key] = [int]$Metrics[$key] + [int]$pair[1]
+                }
+            } catch {}
+        }
+        try { Write-YakuLog "Excel output font applied. sheet=$SheetName font=$FontName inputAddresses=$($inputAddresses.Count) ranges=$($allAddresses.Count) chunks=$chunkCount fallbackChunks=$fallbackChunks fallbackRanges=$fallbackRanges applied=$appliedRanges failed=$failedRanges" 'DEBUG' } catch {}
+        if ($appliedRanges -le 0 -and $null -ne $Warnings) {
+            $where = if ([string]::IsNullOrWhiteSpace([string]$SheetName)) { 'Excel' } else { [string]$SheetName }
+            Add-YakuWarning -Warnings $Warnings -Category 'output-font-apply-failed' -Location $where `
+                -Message "出力フォント『$FontName』を1か所も適用できませんでした。訳文の中身は書き込んでいます。対象範囲=$($allAddresses.Count)"
+        }
     }
 }
 
@@ -3606,7 +4035,7 @@ function Write-YakuExcelCellTranslationsForSheet {
         [AllowNull()][string]$OutputFontName,
         [Parameter(Mandatory=$true)]$Warnings,
         [AllowNull()][hashtable]$Metrics = $null,
-        [AllowNull()][object[]]$RunCells = $null
+        [AllowNull()][object[]]$NonPlainCells = $null
     )
     if ($null -ne $Metrics) {
         try {
@@ -3625,9 +4054,15 @@ function Write-YakuExcelCellTranslationsForSheet {
             if (-not $Metrics.ContainsKey('band_probes')) { $Metrics['band_probes'] = 0 }
             if (-not $Metrics.ContainsKey('band_depth_max')) { $Metrics['band_depth_max'] = 0 }
             if (-not $Metrics.ContainsKey('merged_anchor_rectangles')) { $Metrics['merged_anchor_rectangles'] = 0 }
-            if (-not $Metrics.ContainsKey('run_cells')) { $Metrics['run_cells'] = 0 }
+            if (-not $Metrics.ContainsKey('non_plain_cells')) { $Metrics['non_plain_cells'] = 0 }
             if (-not $Metrics.ContainsKey('run_cells_levelled')) { $Metrics['run_cells_levelled'] = 0 }
-            if (-not $Metrics.ContainsKey('bulk_run_cell_skips')) { $Metrics['bulk_run_cell_skips'] = 0 }
+            if (-not $Metrics.ContainsKey('run_level_ms')) { $Metrics['run_level_ms'] = 0.0 }
+            if (-not $Metrics.ContainsKey('bulk_non_plain_skips')) { $Metrics['bulk_non_plain_skips'] = 0 }
+            # 書体の適用は、当てた範囲の数と退避の数を分けて数える。
+            # font_ms だけでは「1回で当たった」と「退避で何十回も叩いた」を分けられない。
+            foreach ($fontKey in @('font_input_addresses','font_ranges','font_union_chunks','font_union_fallback_chunks','font_union_fallback_ranges','font_ranges_applied','font_ranges_failed')) {
+                if (-not $Metrics.ContainsKey($fontKey)) { $Metrics[$fontKey] = 0 }
+            }
         } catch {}
     }
     $plan = New-YakuExcelCellWritePlan -Blocks $Blocks -TranslationByBlockId $TranslationByBlockId
@@ -3655,12 +4090,12 @@ function Write-YakuExcelCellTranslationsForSheet {
     foreach ($block in @($mergedCellBlocks.ToArray())) {
         try { $targetCellKeys[([string]([int]$block.Meta.Row) + ',' + [string]([int]$block.Meta.Col))] = $true } catch {}
     }
-    $sheetRunCells = @()
-    if ($null -ne $RunCells) { $sheetRunCells = @($RunCells) }
-    if ($null -ne $Metrics) { try { $Metrics['run_cells'] = [int]$sheetRunCells.Count } catch {} }
+    $sheetNonPlainCells = @()
+    if ($null -ne $NonPlainCells) { $sheetNonPlainCells = @($NonPlainCells) }
+    if ($null -ne $Metrics) { try { $Metrics['non_plain_cells'] = [int]$sheetNonPlainCells.Count } catch {} }
 
     if ($cellItems.Count -gt 0) {
-        $bulkResult = Invoke-YakuExcelBulkBoundingBoxWrite -Worksheet $Worksheet -Items $cellItems -OutputFontName $OutputFontName -Warnings $Warnings -SheetName $sheetName -Metrics $Metrics -RunCells $sheetRunCells
+        $bulkResult = Invoke-YakuExcelBulkBoundingBoxWrite -Worksheet $Worksheet -Items $cellItems -OutputFontName $OutputFontName -Warnings $Warnings -SheetName $sheetName -Metrics $Metrics -NonPlainCells $sheetNonPlainCells -TargetKeys $targetCellKeys
         if ($null -ne $bulkResult -and ([bool]$bulkResult.Used)) {
             $usedBulkBox = $true
             $written += [int]$bulkResult.Written
@@ -3731,13 +4166,14 @@ function Write-YakuExcelCellTranslationsForSheet {
     }
 
     # V38/V39: フォントはアドレス連結（union）でシート単位に近い粒度で一括適用し、矩形ごとの Font.Name COM 呼び出しを削減する。
+    # V91.61: 一括箱の経路は1セル1住所を積むので、当てる前に連続ぶんを矩形へ畳む。
     if ($fontAddresses.Count -gt 0) {
-        Invoke-YakuExcelFontUnionApply -Worksheet $Worksheet -Addresses ([string[]]@($fontAddresses.ToArray())) -FontName $OutputFontName -Metrics $Metrics
+        Invoke-YakuExcelFontUnionApply -Worksheet $Worksheet -Addresses ([string[]]@($fontAddresses.ToArray())) -FontName $OutputFontName -Metrics $Metrics -Warnings $Warnings -SheetName $sheetName
     }
     # 書込経路（矩形・行・単セル）はどれも Value2 を通り、どれも1文字目の書式を
     # 文字列全体へ広げる。経路ごとに足すのではなく、最後にここで1度だけ揃える。
     # 出力書体の一括適用より後に置く（あちらが最後に勝つ決まりを崩さないため）。
-    $null = Set-YakuExcelRunCellDominantFormat -Worksheet $Worksheet -RunCells $sheetRunCells -TargetKeys $targetCellKeys -OutputFontName $OutputFontName -SheetName $sheetName -Metrics $Metrics
+    $null = Set-YakuExcelRunCellDominantFormat -Worksheet $Worksheet -NonPlainCells $sheetNonPlainCells -TargetKeys $targetCellKeys -OutputFontName $OutputFontName -SheetName $sheetName -Metrics $Metrics
     if ($null -ne $Metrics) {
         try {
             $Metrics['rectangles'] = if ($usedBulkBox) { [int]$bulkRectangles } else { [int]$rectangles.Count }
@@ -3952,9 +4388,11 @@ function Write-YakuExcelTranslations {
         [AllowNull()]$Settings,
         [AllowNull()][string]$BaselinePath = $null,
         [AllowNull()]$ProgressState = $null,
-        # セル内部分書式（run）の読み出し元。原本を渡す。省略したときは
+        # 平文だと証明できなかったセルの読み出し元。原本を渡す。省略したときは
         # 書込先を読む（Excel が開く前なので、まだ原本と同じバイト列である）。
-        [AllowNull()][string]$SourcePath = $null
+        [AllowNull()][string]$SourcePath = $null,
+        # 出力書体の判断に要る。既定は従来どおり to_en。
+        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en'
     )
     $ctx = $null
     $excel = $null
@@ -3962,8 +4400,8 @@ function Write-YakuExcelTranslations {
     $writeTargetCount = 0
     $writtenCount = 0
     try {
-        $runCellSourcePath = if ([string]::IsNullOrWhiteSpace([string]$SourcePath)) { [string]$OutputPath } else { [string]$SourcePath }
-        $runCellsBySheet = Get-YakuExcelRunCellsBySheet -Path $runCellSourcePath
+        $nonPlainSourcePath = if ([string]::IsNullOrWhiteSpace([string]$SourcePath)) { [string]$OutputPath } else { [string]$SourcePath }
+        $nonPlainCellsBySheet = Get-YakuExcelNonPlainCellsBySheet -Path $nonPlainSourcePath
         $phaseStarted = Get-Date
         $ctx = New-YakuExcelApplication
         $excel = $ctx.Application
@@ -3984,7 +4422,11 @@ function Write-YakuExcelTranslations {
             Write-YakuLog "Writeback excel open done. seconds=$phaseSeconds openSeconds=$openSeconds" 'INFO'
         } catch {}
         # V64: this is a dedicated Excel instance; do not change the user's COM add-in state.
-        $fontName = Get-YakuOutputFontName -Settings $Settings
+        # 出力書体は訳す向きで変わる。英→和へ Arial を当てると日本語が代替書体に落ちる。
+        $fontName = Get-YakuOutputFontName -Settings $Settings -Direction $Direction
+        # 綴りの間違いは Excel が例外にしてくれない（実測 2026-08-16 Q3）。
+        # ここで1回だけ実在を確かめる。**警告であって、止める理由ではない。**
+        $null = Add-YakuOutputFontMissingWarning -Warnings $Warnings -FontName $fontName -Direction $Direction
         $cellBlocksBySheet = @{}
         $otherBlocks = New-Object System.Collections.Generic.List[object]
         foreach ($block in @($Blocks)) {
@@ -4060,8 +4502,8 @@ function Write-YakuExcelTranslations {
             try { Write-YakuLog "Excel writeback sheet pagebreaks. displayPageBreaks=$oldDisplayPageBreaks" 'DEBUG' } catch {}
             try { $ws.DisplayPageBreaks = $false } catch {}
             try {
-                $sheetRunCells = @(Get-YakuExcelSheetRunCells -RunCellsBySheet $runCellsBySheet -SheetName ([string]$sheetName))
-                $sheetWritten = [int](Write-YakuExcelCellTranslationsForSheet -Worksheet $ws -Blocks @($cellBlocksBySheet[$sheetName].ToArray()) -TranslationByBlockId $TranslationByBlockId -OutputFontName $fontName -Warnings $Warnings -Metrics $metrics -RunCells $sheetRunCells)
+                $sheetNonPlainCells = @(Get-YakuExcelSheetNonPlainCells -NonPlainCellsBySheet $nonPlainCellsBySheet -SheetName ([string]$sheetName))
+                $sheetWritten = [int](Write-YakuExcelCellTranslationsForSheet -Worksheet $ws -Blocks @($cellBlocksBySheet[$sheetName].ToArray()) -TranslationByBlockId $TranslationByBlockId -OutputFontName $fontName -Warnings $Warnings -Metrics $metrics -NonPlainCells $sheetNonPlainCells)
                 $writtenCount += [int]$sheetWritten
             } catch {
                 $diag = Get-YakuExceptionDetailObject -ErrorRecord $_
@@ -4090,9 +4532,16 @@ function Write-YakuExcelTranslations {
                 $mergedCells = 0
                 $mergedAnchors = 0
                 $optimisticFailed = 0
-                $runCells = 0
+                $nonPlainCells = 0
                 $runCellsLevelled = 0
-                $bulkRunCellSkips = 0
+                $bulkNonPlainSkips = 0
+                $fontInputAddresses = 0
+                $fontRanges = 0
+                $fontChunks = 0
+                $fontFallbackChunks = 0
+                $fontFallbackRanges = 0
+                $fontApplied = 0
+                $fontFailed = 0
                 try { if ($metrics.ContainsKey('range_ms')) { $rangeMs = [Math]::Round([double]$metrics['range_ms'], 0) } } catch {}
                 try { if ($metrics.ContainsKey('value2_ms')) { $value2Ms = [Math]::Round([double]$metrics['value2_ms'], 0) } } catch {}
                 try { if ($metrics.ContainsKey('font_ms')) { $fontMs = [Math]::Round([double]$metrics['font_ms'], 0) } } catch {}
@@ -4109,11 +4558,18 @@ function Write-YakuExcelTranslations {
                 try { if ($metrics.ContainsKey('merged_cells')) { $mergedCells = [int]$metrics['merged_cells'] } } catch {}
                 try { if ($metrics.ContainsKey('merged_anchor_rectangles')) { $mergedAnchors = [int]$metrics['merged_anchor_rectangles'] } } catch {}
                 try { if ($metrics.ContainsKey('optimistic_failed')) { $optimisticFailed = [int]$metrics['optimistic_failed'] } } catch {}
-                try { if ($metrics.ContainsKey('run_cells')) { $runCells = [int]$metrics['run_cells'] } } catch {}
+                try { if ($metrics.ContainsKey('non_plain_cells')) { $nonPlainCells = [int]$metrics['non_plain_cells'] } } catch {}
                 try { if ($metrics.ContainsKey('run_cells_levelled')) { $runCellsLevelled = [int]$metrics['run_cells_levelled'] } } catch {}
-                try { if ($metrics.ContainsKey('bulk_run_cell_skips')) { $bulkRunCellSkips = [int]$metrics['bulk_run_cell_skips'] } } catch {}
+                try { if ($metrics.ContainsKey('bulk_non_plain_skips')) { $bulkNonPlainSkips = [int]$metrics['bulk_non_plain_skips'] } } catch {}
+                try { if ($metrics.ContainsKey('font_input_addresses')) { $fontInputAddresses = [int]$metrics['font_input_addresses'] } } catch {}
+                try { if ($metrics.ContainsKey('font_ranges')) { $fontRanges = [int]$metrics['font_ranges'] } } catch {}
+                try { if ($metrics.ContainsKey('font_union_chunks')) { $fontChunks = [int]$metrics['font_union_chunks'] } } catch {}
+                try { if ($metrics.ContainsKey('font_union_fallback_chunks')) { $fontFallbackChunks = [int]$metrics['font_union_fallback_chunks'] } } catch {}
+                try { if ($metrics.ContainsKey('font_union_fallback_ranges')) { $fontFallbackRanges = [int]$metrics['font_union_fallback_ranges'] } } catch {}
+                try { if ($metrics.ContainsKey('font_ranges_applied')) { $fontApplied = [int]$metrics['font_ranges_applied'] } } catch {}
+                try { if ($metrics.ContainsKey('font_ranges_failed')) { $fontFailed = [int]$metrics['font_ranges_failed'] } } catch {}
                 $msPerCell = if ($sheetWritten -gt 0) { [Math]::Round(($seconds * 1000.0) / [double]$sheetWritten, 2) } else { 0 }
-                try { Write-YakuLog "Excel writeback sheet '$sheetName': rectangles=$rectangles singleCells=$singleCells writtenCells=$sheetWritten seconds=$seconds msPerCell=$msPerCell rangeMs=$rangeMs value2Ms=$value2Ms fontMs=$fontMs bulk_box=$bulkBox bulk_mode=$bulkMode bulk_read_ms=$bulkReadMs bulk_write_ms=$bulkWriteMs riskyConstantRestores=$riskyConstantRestores errorValueRestores=$errorValueRestores bands=$bands bandFallbacks=$bandFallbacks bandProbes=$bandProbes bandDepthMax=$bandDepthMax mergedCells=$mergedCells mergedAnchors=$mergedAnchors optimisticFailed=$optimisticFailed runCells=$runCells runCellsLevelled=$runCellsLevelled bulkRunCellSkips=$bulkRunCellSkips" 'INFO' } catch {}
+                try { Write-YakuLog "Excel writeback sheet '$sheetName': rectangles=$rectangles singleCells=$singleCells writtenCells=$sheetWritten seconds=$seconds msPerCell=$msPerCell rangeMs=$rangeMs value2Ms=$value2Ms fontMs=$fontMs fontName=$fontName fontInputAddresses=$fontInputAddresses fontRanges=$fontRanges fontChunks=$fontChunks fontFallbackChunks=$fontFallbackChunks fontFallbackRanges=$fontFallbackRanges fontApplied=$fontApplied fontFailed=$fontFailed bulk_box=$bulkBox bulk_mode=$bulkMode bulk_read_ms=$bulkReadMs bulk_write_ms=$bulkWriteMs riskyConstantRestores=$riskyConstantRestores errorValueRestores=$errorValueRestores bands=$bands bandFallbacks=$bandFallbacks bandProbes=$bandProbes bandDepthMax=$bandDepthMax mergedCells=$mergedCells mergedAnchors=$mergedAnchors optimisticFailed=$optimisticFailed nonPlainCells=$nonPlainCells runCellsLevelled=$runCellsLevelled bulkNonPlainSkips=$bulkNonPlainSkips" 'INFO' } catch {}
                 try { if ($metrics.ContainsKey('value2_put_probe_done') -and [bool]$metrics['value2_put_probe_done']) { $value2PutProbeDone = $true } } catch {}
                 try { if ($oldDisplayPageBreaks -eq $true) { $ws.DisplayPageBreaks = $true } } catch {}
                 Release-YakuComObject $ws
@@ -4649,6 +5105,10 @@ function Write-YakuFileTranslations {
         [Parameter(Mandatory=$true)][hashtable]$TranslationByBlockId,
         [Parameter(Mandatory=$true)]$Settings,
         [Parameter(Mandatory=$true)]$Warnings,
+        # **既定値を置かない。** 出力書体は向きで変わるので、呼ぶ側に必ず
+        # 決めさせる。既定を置くと、渡し忘れが「英→和なのに Arial」という
+        # 無音の欠陥に戻る（これがこの直しの発端である）。
+        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
         [AllowNull()]$ProgressState = $null,
         [switch]$FailOnIncomplete
     )
@@ -4675,7 +5135,7 @@ function Write-YakuFileTranslations {
             if ($hasWriteTargets) {
                 # run（セル内部分書式）は**原本から**読む。書込先の複写は、この先で
                 # Excel が握る。原本は CAT の書き出しが直前に SHA-256 を照合している。
-                $writeResult = Write-YakuExcelTranslations -OutputPath $candidatePath -Blocks $Blocks -TranslationByBlockId $TranslationByBlockId -Warnings $Warnings -Settings $Settings -BaselinePath $baselinePath -ProgressState $ProgressState -SourcePath $InputPath
+                $writeResult = Write-YakuExcelTranslations -OutputPath $candidatePath -Blocks $Blocks -TranslationByBlockId $TranslationByBlockId -Warnings $Warnings -Settings $Settings -BaselinePath $baselinePath -ProgressState $ProgressState -SourcePath $InputPath -Direction $Direction
             } else {
                 try { Write-YakuLog "Writeback skipped; no translated blocks. jobId=$jobId" 'INFO' } catch {}
                 $writeResult = [pscustomobject]@{ WriteTargetCount=0; WrittenCount=0; SkippedCount=0 }

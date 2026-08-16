@@ -480,17 +480,427 @@ function New-YakuXlsxRunCellFormat {
     }
 }
 
-function Get-YakuXlsxRunCells {
+function Get-YakuXlsxRunsFromRichNode {
     <#
       .SYNOPSIS
-        xlsx から、**見た目に差のある run を持つセルだけ**をシートごとに返す。
+        `<si>`（共有文字列）または `<is>`（セルの中へ直書き）の直下から run を取る。
 
       .DESCRIPTION
-        Office は使わない。ZIP と XML だけで読む。読めなければ空を返す
-        （体裁は足しであって前提ではない。読めなくても書き戻しは今までどおり進む）。
+        入れ物の名前が違うだけで、中身の決まりは同じである（`<r>` が並び、
+        `<rPr>` がその run の書式、`<t>` が本文）。**同じ判定を当てるために
+        1か所へ寄せる。** 2つ書くと、片方だけ直したときに黙って食い違う。
 
-        見るのは共有文字列（`xl/sharedStrings.xml`）の `<si><r><rPr>` だけである。
-        セルの中へ直に書く形（`t="inlineStr"`）は今は見ていない。
+        **裸の `<t>` も run として数える。** `<is><t>MIXED</t><r><rPr><b/></rPr>
+        <t>BOLDPART</t></r></is>` のように `<t>` と `<r>` を並べる書き手がいる
+        （実測 2026-08-16。共有文字列側でも同じ形が実在した）。Excel はこれを
+        部分太字として描くのに、`<r>` だけを集めると run が1つになり、
+        `Count -lt 2` の門で「差は無い」に化ける。裸の `<t>` は rPr を持たない
+        ので、そのセルの字体そのものとして解く。
+
+        `<rPh>`（ふりがな）も `<t>` を持つが run ではない。見るのは直下の子だけ
+        なので、`<rPh>` の中の `<t>` はここに入らない。
+    #>
+    param([AllowNull()]$Node)
+    $runs = New-Object System.Collections.Generic.List[object]
+    if ($null -eq $Node) { return $runs.ToArray() }
+    foreach ($child in $Node.ChildNodes) {
+        $name = [string]$child.LocalName
+        if ($name -eq 't') {
+            $runs.Add([pscustomobject]@{ Text = [string]$child.InnerText; Properties = $null }) | Out-Null
+            continue
+        }
+        if ($name -ne 'r') { continue }
+        $runProperties = $null
+        $text = ''
+        foreach ($grandChild in $child.ChildNodes) {
+            if ([string]$grandChild.LocalName -eq 'rPr') { $runProperties = Get-YakuXlsxFontVisibleProperties -Node $grandChild }
+            elseif ([string]$grandChild.LocalName -eq 't') { $text = [string]$grandChild.InnerText }
+        }
+        $runs.Add([pscustomobject]@{ Text = [string]$text; Properties = $runProperties }) | Out-Null
+    }
+    # `@($list)` は List[object] に限って ArgumentException を投げる（実測 5.1.26100.9168）。
+    return $runs.ToArray()
+}
+
+function Get-YakuXlsxStyleFontMap {
+    <#
+      .SYNOPSIS
+        `xl/styles.xml` から「スタイル番号 -> そのセルの字体」を引ける表を作る。
+
+      .DESCRIPTION
+        共有文字列でもセル内直書きでも、run は**そのセルの字体の上に**解く
+        （rPr の無い run はセルの字体そのものになる）。引き当てる道具は同じなので
+        1か所へ寄せる。読むのはシートを1枚でも走査すると決まってからでよい。
+    #>
+    param([Parameter(Mandatory=$true)]$Archive)
+    $fontProperties = New-Object System.Collections.Generic.List[object]
+    $fontIdByStyle = @{}
+    $stylesXml = Get-YakuXlsxPartText -Archive $Archive -Name 'xl/styles.xml'
+    if (-not [string]::IsNullOrWhiteSpace($stylesXml)) {
+        $stylesDoc = New-Object Xml.XmlDocument
+        $stylesDoc.LoadXml($stylesXml)
+        foreach ($fontNode in @($stylesDoc.SelectNodes("//*[local-name()='fonts']/*[local-name()='font']"))) {
+            $fontProperties.Add((Get-YakuXlsxFontVisibleProperties -Node $fontNode)) | Out-Null
+        }
+        $styleIndex = -1
+        foreach ($xf in @($stylesDoc.SelectNodes("//*[local-name()='cellXfs']/*[local-name()='xf']"))) {
+            $styleIndex++
+            $fontId = 0
+            try { $fontId = [int]$xf.GetAttribute('fontId') } catch { $fontId = 0 }
+            $fontIdByStyle[$styleIndex] = [int]$fontId
+        }
+    }
+    return [pscustomobject]@{ Fonts = $fontProperties.ToArray(); FontIdByStyle = $fontIdByStyle }
+}
+
+# ---------------------------------------------------------------------------
+# 判定を**反転**するための道具（2026-08-16 の利用者判断）
+#
+#   いま  リッチだと分かったセルを箱から外す   → 見落としたら壊す
+#   反転  平文だと証明できたセルだけ箱に入れる → 見落としたら遅くなるだけ
+#
+# 「リッチな形を1つずつ列挙する」作りは2回続けて穴が出た（inlineStr の
+# `<is><r><rPr>`、そのあと `<t>`+`<r>` 混在・単引用符の属性・`<rPh>` の3つ）。
+# XML の書き方は無数にあるので列挙は終わらない。だから**証明できた形だけ**を
+# 平文として通す。この筋は `Test-YakuExcelComFalse` が `DBNull` を
+# 「偽と確定していない」として安全側へ倒すのと同じである。
+#
+# 字面を読む道具はここへ寄せる。**属性は二重引用符とは限らない。**
+# `<c r='E2' s='0' t='s'>` を書く書き手が実在する（実測 2026-08-16。
+# 二重引用符固定の正規表現は1件も拾わなかった）。両対応にするだけでは足りない
+# ので、開始タグは属性の並びごと厳密に取り、取れなければ**そのシート全体を
+# 証明できない**ものとして扱う（住所が分からない以上、どのセルかを言えない）。
+# ---------------------------------------------------------------------------
+
+function New-YakuXlsxRegex {
+    # 走査は1シートにつき数十万回まわる。組み立てを取り置く。
+    param([Parameter(Mandatory=$true)][string]$Pattern)
+    return (New-Object System.Text.RegularExpressions.Regex($Pattern, ([System.Text.RegularExpressions.RegexOptions]::Compiled)))
+}
+
+# 名前空間の接頭辞は付いていても付いていなくてもよい（`<is>` と `<x:is>`）。
+$script:YakuXlsxNamePrefixPattern = '(?:[\w.\-]+:)?'
+# 属性の並び。二重引用符でも単引用符でもよい。**これで取れない書き方は
+# 「知らない形」なので、通さない。**
+$script:YakuXlsxAttrPattern = '(?:\s+[\w:.\-]+\s*=\s*(?:"[^"]*"|' + "'[^']*'" + '))*'
+
+# 開始タグだけを数える物差し。厳密な切り出しと数が合わなければ、字面の
+# 読み方そのものが当たっていない合図である。そのときは丸ごと証明できない。
+$script:YakuXlsxCellOpenRegex = New-YakuXlsxRegex ('<' + $script:YakuXlsxNamePrefixPattern + 'c(?=[\s/>])')
+$script:YakuXlsxSiOpenRegex = New-YakuXlsxRegex ('<' + $script:YakuXlsxNamePrefixPattern + 'si(?=[\s/>])')
+# `<is>`（セルの中へ直書きする文字列）。1つも無いことは字面で確かめられる。
+$script:YakuXlsxIsOpenRegex = New-YakuXlsxRegex ('<' + $script:YakuXlsxNamePrefixPattern + 'is(?=[\s/>])')
+# `<r>`（run）。`<rPr>` `<rPh>` は次の字が英字なので当たらない。
+$script:YakuXlsxRunOpenRegex = New-YakuXlsxRegex ('<' + $script:YakuXlsxNamePrefixPattern + 'r(?=[\s/>])')
+
+# 自己終端を**先に**試す並びにしてある。中身を持つ形を先に置くと
+# `<c r="B6" s="9"/>` を飲み、`.*?</c>` が次のセルの中身を盗む。
+$script:YakuXlsxCellRegex = New-YakuXlsxRegex ('(?s)<' + $script:YakuXlsxNamePrefixPattern + 'c(?<attrs>' + $script:YakuXlsxAttrPattern + ')\s*(?:/>|>(?<body>.*?)</' + $script:YakuXlsxNamePrefixPattern + 'c>)')
+$script:YakuXlsxSiRegex = New-YakuXlsxRegex ('(?s)<' + $script:YakuXlsxNamePrefixPattern + 'si(?<attrs>' + $script:YakuXlsxAttrPattern + ')\s*(?:/>|>(?<inner>.*?)</' + $script:YakuXlsxNamePrefixPattern + 'si>)')
+$script:YakuXlsxIsRegex = New-YakuXlsxRegex ('(?s)<' + $script:YakuXlsxNamePrefixPattern + 'is(?<attrs>' + $script:YakuXlsxAttrPattern + ')\s*(?:/>|>(?<inner>.*?)</' + $script:YakuXlsxNamePrefixPattern + 'is>)')
+
+# **「平文だと証明できた」形はこれ1つだけ。** 直下が `<t>` 1つで、`<r>` も
+# `<rPh>` も `<phoneticPr>` もその他の子要素も無い。`[^<]*` は「本文に生の
+# `<` は現れない」という XML の決まりに拠る（CDATA も入れ子も、ここで外れる）。
+$script:YakuXlsxPlainTextPattern = '<' + $script:YakuXlsxNamePrefixPattern + 't' + $script:YakuXlsxAttrPattern + '\s*(?:/>|>[^<]*</' + $script:YakuXlsxNamePrefixPattern + 't>)'
+$script:YakuXlsxPlainSiPattern = '<' + $script:YakuXlsxNamePrefixPattern + 'si' + $script:YakuXlsxAttrPattern + '\s*>\s*' + $script:YakuXlsxPlainTextPattern + '\s*</' + $script:YakuXlsxNamePrefixPattern + 'si>'
+$script:YakuXlsxPlainSiRegex = New-YakuXlsxRegex $script:YakuXlsxPlainSiPattern
+$script:YakuXlsxPlainSiExactRegex = New-YakuXlsxRegex ('\A' + $script:YakuXlsxPlainSiPattern + '\z')
+
+$script:YakuXlsxCellRefRegex = New-YakuXlsxRegex ('\sr\s*=\s*(?:"([^"]*)"|' + "'([^']*)'" + ')')
+$script:YakuXlsxCellTypeRegex = New-YakuXlsxRegex ('\st\s*=\s*(?:"([^"]*)"|' + "'([^']*)'" + ')')
+$script:YakuXlsxCellStyleRegex = New-YakuXlsxRegex ('\ss\s*=\s*(?:"([^"]*)"|' + "'([^']*)'" + ')')
+$script:YakuXlsxCellValueRegex = New-YakuXlsxRegex ('\A<' + $script:YakuXlsxNamePrefixPattern + 'v' + $script:YakuXlsxAttrPattern + '\s*(?:/>|>([^<]*)</' + $script:YakuXlsxNamePrefixPattern + 'v>)\z')
+
+# 共有文字列でもインライン文字列でもない型。`<c>` の子は f / v / is / extLst
+# しか無く、文字の書式もふりがなも `<is>` か共有表にしか置けないので、
+# ここに挙げた型のセルは中身によらず平文である。
+# **知らない型はここに入れない。** 入れないものは全部「証明できない」へ倒れる。
+$script:YakuXlsxPlainCellTypes = @('', 'n', 'b', 'e', 'str', 'd')
+
+function Get-YakuXlsxMatchedAttribute {
+    # 属性が無ければ $null、在れば値。二重引用符と単引用符のどちらでも取る。
+    param($Regex, [AllowNull()][string]$Text)
+    if ([string]::IsNullOrEmpty($Text)) { return $null }
+    $match = $Regex.Match($Text)
+    if (-not $match.Success) { return $null }
+    if ($match.Groups[1].Success) { return [string]$match.Groups[1].Value }
+    return [string]$match.Groups[2].Value
+}
+
+function New-YakuXlsxSheetScopeNonPlainCell {
+    <#
+      .SYNOPSIS
+        「このシートは丸ごと証明できない」を表す1件を作る。
+
+      .DESCRIPTION
+        住所が分からないセルが1つでもあれば、どの箱が安全かを言えない。
+        行も列も 0 なので、揃え直し（`Set-YakuExcelRunCellDominantFormat`）は
+        触らない。箱の判定だけが `scope` を見て、無条件に一括経路を捨てる。
+    #>
+    return [ordered]@{
+        address = '(sheet)'
+        row = 0
+        col = 0
+        scope = 'sheet'
+        runs = @()
+        dominant_signature = ''
+        dominant_properties = $null
+        differing_properties = [string[]]@()
+    }
+}
+
+function Resolve-YakuXlsxRichFragmentFormat {
+    <#
+      .SYNOPSIS
+        `<si>` / `<is>` の断片を解いて、揃え直しに使う書式を返す。
+
+      .DESCRIPTION
+        返すのは `Format`（解けなければ $null）と `Failed`（断片を読めなかった）。
+        **読めなくても被害は増えない。** そのセルはすでに「平文と証明できない」
+        側にいるので箱からは外れており、揃え直しをしないだけである。
+        断片だけでは接頭辞が未宣言になる場合が実際にある
+        （`<worksheet>` 側で宣言した接頭辞を `<is>` の中で使う書き方）。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Document,
+        [AllowNull()][string]$Fragment,
+        [AllowNull()][hashtable]$CellProperties
+    )
+    if ([string]::IsNullOrEmpty($Fragment)) { return [pscustomobject]@{ Format = $null; Failed = $false } }
+    $parsed = $false
+    try { $Document.LoadXml($Fragment); $parsed = $true } catch { $parsed = $false }
+    $format = $null
+    if ($parsed) {
+        $runs = @(Get-YakuXlsxRunsFromRichNode -Node $Document.DocumentElement)
+        # run が1つなら、そのセルの中で書式が変わりようがない。
+        if ($runs.Count -ge 2) { $format = New-YakuXlsxRunCellFormat -Runs $runs -CellProperties $CellProperties }
+    }
+    return [pscustomobject]@{ Format = $format; Failed = (-not $parsed) }
+}
+
+function Get-YakuXlsxSharedStringText {
+    <#
+      .SYNOPSIS
+        共有文字列表の中身を返す。**パート名を決め打ちしない。**
+
+      .DESCRIPTION
+        `xl/sharedStrings.xml` は慣習であって決まりではない。Excel は
+        `xl/_rels/workbook.xml.rels` の関係（Type が `.../sharedStrings` で
+        終わるもの）を辿って読む。名前が違うだけの xlsx を Excel は普通に開く。
+
+        決め打ちで探していたため、`Target="strtable.xml"` のブックでは表そのものが
+        見えず、**シートの全セルが「平文だと証明できた」ことになって箱へ入り、
+        部分書式が消えた**（2026-08-16 に実測）。シートの側は最初から関係を
+        辿っていた（`Get-YakuXlsxSheetSpecs`）ので、ここだけが取り残されていた。
+
+        **関係はあるのに中身が読めないときは、空ではなく「読めない印」を返す。**
+        空を返すと「表が無い＝共有の rich text は存在しえない＝全部平文」という
+        枝へ落ちてしまい、いちばん危ない側へ倒れる。
+    #>
+    param([Parameter(Mandatory=$true)]$Archive)
+
+    $relsXml = Get-YakuXlsxPartText -Archive $Archive -Name 'xl/_rels/workbook.xml.rels'
+    $target = ''
+    if (-not [string]::IsNullOrWhiteSpace($relsXml)) {
+        try {
+            $relsDoc = New-Object Xml.XmlDocument
+            $relsDoc.LoadXml($relsXml)
+            foreach ($relationship in @($relsDoc.SelectNodes("//*[local-name()='Relationship']"))) {
+                $type = [string]$relationship.GetAttribute('Type')
+                if ($type -match '(?i)/sharedStrings$') { $target = [string]$relationship.GetAttribute('Target'); break }
+            }
+        } catch {
+            # 関係が読めないなら、表の在処を言えない。証明できない側へ倒す。
+            return '<!--unreadable-workbook-rels-->'
+        }
+    }
+
+    $partName = ''
+    if (-not [string]::IsNullOrWhiteSpace($target)) {
+        try {
+            $base = [Uri]'https://yaku.invalid/xl/workbook.xml'
+            $resolved = [Uri]::new($base, $target)
+            $partName = [Uri]::UnescapeDataString($resolved.AbsolutePath.TrimStart('/'))
+        } catch { $partName = '' }
+        if ([string]::IsNullOrWhiteSpace($partName)) { return '<!--unresolvable-sharedstrings-target-->' }
+        $text = Get-YakuXlsxPartText -Archive $Archive -Name $partName
+        if ([string]::IsNullOrEmpty($text)) {
+            # 関係は「ここにある」と言っているのに読めない。空扱いにしない。
+            return '<!--missing-sharedstrings-part-->'
+        }
+        return $text
+    }
+
+    # 関係が sharedStrings を宣言していないブック。慣習の名前だけを見る。
+    # 無ければ本当に表が無い（共有の rich text は存在しえない）。
+    return (Get-YakuXlsxPartText -Archive $Archive -Name 'xl/sharedStrings.xml')
+}
+
+function Resolve-YakuXlsxSharedStringPlainness {
+    <#
+      .SYNOPSIS
+        共有文字列を「平文だと**証明できた**か」で仕分ける。
+
+      .DESCRIPTION
+        返すのは4つ。
+          - AllPlain     … 表そのものが1つ残らず平文だと証明できた
+          - PlainFlags   … 番号ごとの証明結果（AllPlain のときは $null）
+          - RunFragments … run を持つ `<si>` の断片。揃え直しのために残す
+          - Unproven     … 字面の読み方が当たっていない。**全部を非平文に倒す**
+
+        速い側の道が要る。`<si>` を1つずつ調べる輪は数十万回まわるので、
+        まず**数だけで**「全部平文」を確かめる。平文の形で切り出せた数が
+        `<si>` の開始タグの数と等しければ、どの `<si>` も平文の形に収まって
+        いたことになる（切り出しは重ならず、1つの `<si>` を1回ずつ食べる）。
+        等しくないときだけ、番号を数えながら1つずつ見る。
+
+        共有表そのものが無いブックは「全部平文」にする。表が無ければ共有の
+        rich text は存在しえず、`t="s"` の参照は宙に浮く（守るべき書式が無い）。
+
+        **数える前に、数が信じられる字面かを確かめる（2026-08-16）。**
+        コメント・処理命令・CDATA・DOCTYPE の中に `<si>` を書くと、
+        `YakuXlsxSiRegex` も `YakuXlsxSiOpenRegex` も**等しく1つ数える**ので
+        門は釣り合ったまま通る。ところが Excel はそれらを読まないので、
+        `PlainFlags` の番号が実番号から丸ごとずれる。ずれた先が平文なら、
+        部分太字のセルが「証明できた」ことになって箱へ入り、書式が消える。
+        本文は1バイトも変わらないので、文字列を比べる検査では見つからない。
+
+        直し方は「落としてから数える」ではなく **「そういう字面なら証明しない」**
+        にした。落とす側は、落とし方そのものを間違える余地が残る
+        （入れ子のコメント、`--` を含むコメント、CDATA の中の `]]>` など）。
+        Excel が書く sharedStrings.xml にこれらは出てこないので、
+        出てきたら遅くて安全な道へ落ちればよい。
+
+        先頭の XML 宣言（`<?xml ... ?>`）だけは処理命令の形をしているが、
+        これは Excel 自身が必ず書く。1つ目だけを外してから見る。
+    #>
+    param([AllowNull()][string]$Xml)
+    $allPlain = [pscustomobject]@{ AllPlain = $true; PlainFlags = $null; RunFragments = @{}; Count = 0; Unproven = $false }
+    $unproven = [pscustomobject]@{ AllPlain = $false; PlainFlags = $null; RunFragments = @{}; Count = 0; Unproven = $true }
+    if ([string]::IsNullOrEmpty($Xml)) { return $allPlain }
+
+    $scan = $Xml
+    $declaration = [regex]::Match($scan, '^\s*<\?xml\b[^>]*\?>')
+    if ($declaration.Success) { $scan = $scan.Substring($declaration.Length) }
+    if ($scan.Contains('<!--') -or $scan.Contains('<?') -or $scan.Contains('<![CDATA[') -or $scan.Contains('<!DOCTYPE')) { return $unproven }
+
+    $siMatches = $script:YakuXlsxSiRegex.Matches($Xml)
+    $siOpens = $script:YakuXlsxSiOpenRegex.Matches($Xml).Count
+    if ($siMatches.Count -ne $siOpens) {
+        return [pscustomobject]@{ AllPlain = $false; PlainFlags = $null; RunFragments = @{}; Count = 0; Unproven = $true }
+    }
+    if ($siOpens -le 0) { return $allPlain }
+    # 全部平文なら、番号がずれていても引き当てる先は必ず平文なので害が無い。
+    # 速い側の道はここで返してよい（普通のブックはここを通る）。
+    if ($script:YakuXlsxPlainSiRegex.Matches($Xml).Count -eq $siOpens) { return $allPlain }
+
+    # **番号を使う前に、番号が Excel と揃っているかを確かめる（2026-08-16）。**
+    # Excel が番号を振るのは `<sst>` の直下の `<si>` だけである。ところが
+    # `<ext><si>…</si></ext>` のように**知らない要素が `<si>` を包んでいる**と、
+    # 字面を数える物差しは包まれたものも1つ数えてしまう。`<ext>` 自体は `<si>` では
+    # ないので開始タグの数とも釣り合い、門は通る。結果、番号が丸ごとずれて
+    # 部分太字のセルが「証明できた」ことになり、書式が消える（実測で再現）。
+    #
+    # 見るのは `<si>` と `<si>` のあいだだけでよい。そこが空白以外なら、
+    # 何かが挟まっている＝包んでいるかもしれない、ということである。
+    # 先頭（`<?xml…?><sst…>`）と末尾（`</sst>` や規格どおりの `<extLst>`）は
+    # `<si>` の外側なので見ない。
+    for ($gapIndex = 1; $gapIndex -lt $siMatches.Count; $gapIndex++) {
+        $gapStart = $siMatches[$gapIndex - 1].Index + $siMatches[$gapIndex - 1].Length
+        $gapLength = $siMatches[$gapIndex].Index - $gapStart
+        if ($gapLength -le 0) { continue }
+        if (-not [string]::IsNullOrWhiteSpace($Xml.Substring($gapStart, $gapLength))) { return $unproven }
+    }
+
+    $flags = New-Object 'System.Boolean[]' $siMatches.Count
+    $fragments = @{}
+    $index = -1
+    foreach ($siMatch in $siMatches) {
+        $index++
+        $fragment = [string]$siMatch.Value
+        if ($script:YakuXlsxPlainSiExactRegex.IsMatch($fragment)) { $flags[$index] = $true; continue }
+        # 平文ではない理由が run なら、揃え直しのために断片を残す。
+        # `<rPh>`（ふりがな）だけが理由なら run は無い。箱から外すには足り、
+        # 揃え直しには要らないので、断片は持たない（覚える量を増やさない）。
+        if ($script:YakuXlsxRunOpenRegex.IsMatch($fragment)) { $fragments[$index] = $fragment }
+    }
+    return [pscustomobject]@{ AllPlain = $false; PlainFlags = $flags; RunFragments = $fragments; Count = $siMatches.Count; Unproven = $false }
+}
+
+function Get-YakuXlsxNonPlainCells {
+    <#
+      .SYNOPSIS
+        xlsx から、**平文だと証明できなかったセル**をシートごとに返す。
+
+      .DESCRIPTION
+        Office は使わない。ZIP と XML だけで読む。
+
+        **箱に入れてよいのは、ここに載らなかったセルだけである。** 載せるのは
+        「リッチだと分かったセル」ではなく「平文だと証明できなかったセル」で、
+        知らない形は全部こちらへ落ちる。判定を反転したのは、列挙が2回続けて
+        穴を出したからである（inlineStr の `<is><r><rPr>` を見ていなかった件の
+        あと、さらに3つ見つかった）。XML の書き方は無数にあるので列挙は終わらない。
+
+        平文だと**証明できる**のは次の2つだけ。
+          - 共有文字列（`t="s"`）で、指す `<si>` の直下が `<t>` 1つだけ。
+            `<r>` も `<rPh>` も `<phoneticPr>` も、その他の子要素も無い
+          - 共有文字列でもインライン文字列でもないセル（数値・数式・真偽・空）
+
+        それ以外は全部こちらに載る。inlineStr、`<t>` と `<r>` の混在、
+        `<rPh>`（ふりがな）を持つもの、断片を解析できないもの、属性の引用符が
+        想定と違うもの、そして**知らない形すべて**。
+
+        返す1件は2つの役目を兼ねる。
+          1. 除外集合 … 箱の脱出口（`Invoke-YakuExcelBulkBoundingBoxWrite`）が
+             住所で使う。**こちらが主**である
+          2. run の中身 … 訳文を書いたセルを支配的な書式へ揃えるのに使う
+             （`Set-YakuExcelRunCellDominantFormat`）。読めた範囲でよい。
+             読めなければ `runs` が空になり、揃え直しをしないだけで被害は増えない
+
+        住所を取れないセルが1件でもあれば、`scope='sheet'` の1件だけを返して
+        そのシートを丸ごと証明できないものとして扱う。どの箱が安全かを
+        言えない以上、安全側は「そのシートの箱を全部捨てる」である。
+
+        塞いだ穴（すべて実測。2026-08-16、本番の入口を通したもの）:
+          - `<is><t>MIXED</t><r><rPr><b/></rPr><t>BOLDPART</t></r></is>` と、
+            同じ形の共有文字列。Excel は部分太字として描く（`.....BBBBBBBB`）のに
+            検出器は0件だった。直下の `<r>` しか集めず、run が1つになるため
+          - `<c r='E2' s='0' t='s'>`（単引用符の属性）。二重引用符固定の
+            正規表現は住所も型も1つも拾わなかった
+          - `<rPh>`（ふりがな）。本文 `東京` は1バイトも変わらないまま
+            `Phonetics.Count` が 1 → 0 になった。**これは Excel 自身が書く形である**
+
+        速さは名札で守る（時計は機械の負荷で揺れる）。平文だけのブックでは
+        シート本文を2回なでるだけで走査へ進まないので、`bulk_box=1
+        bulk_mode=value2` のまま変わらない。証明できないセルを1つ入れると
+        `bulk_run_cell_skips` が立って fallback へ落ちる。
+
+        費用（実測 2026-08-16 / PowerShell 5.1.26100.9168。同じ題材で、反転前の
+        実装と並べて測った）。前任者が入れた「解いた結果を (中身, 字体) の組で
+        覚える表（上限20,000）」は効いているので残してある。
+
+          題材（20,000行×12列＝240,000セル）             反転後（各3回）
+          平文の共有文字列だけ（シート 10,244,689文字）  124 - 265ms
+          24,000の共有文字列のうち1つだけ rich           1,665 - 2,104ms
+          全セルが inlineStr の rich・中身は全部別        1,227 / 1,283秒
+
+        3段目は 42,422,517文字のシートで、断片が1つも重ならないので覚える表が
+        効かない、いちばん重い端である（2回目は別の試験と同時に回したぶん重い）。
+
+        1段目が普通のブックの道である。共有表が1つ残らず平文で `<is>` も無ければ、
+        シート本文を2回なでるだけで走査へ進まない。
+
+        反転前と並べた実測（24,000セルに縮めて両方を同じ題材で回した）:
+
+          題材（2,000行×12列＝24,000セル）   反転前            反転後
+          平文の共有文字列だけ                111ms / 0件      68ms / 0件
+          1つだけ rich（`<t>`+`<r>` の形）    320ms / **0件**  316ms / 12件
+          全セルが inlineStr の rich          95,031ms         103,173ms
+
+        2段目の「反転前 0件」が穴1そのものである（`<t>` と `<r>` が並ぶ形を
+        1件も見なかった）。3段目は 8.6% 遅い。いちばん重い端だけの話で、
+        普通のブックはむしろ速くなっている。
     #>
     param([Parameter(Mandatory=$true)][string]$Path)
 
@@ -500,121 +910,198 @@ function Get-YakuXlsxRunCells {
     $zip = Open-YakuXlsxArchiveForRead -Path $Path
     if ($null -eq $zip) { return @() }
     try {
-        $sharedXml = Get-YakuXlsxPartText -Archive $zip -Name 'xl/sharedStrings.xml'
-        if ([string]::IsNullOrWhiteSpace($sharedXml)) { return @() }
-        # 見た目が食い違うには rPr が最低1つ要る（rPr の無い run どうしは必ず同じ）。
-        # 1つも無ければ DOM を組まずに帰る。共有表は大きな資料だと数十MBになるので、
-        # 部分書式を1つも持たないブックにその費用を払わせない。
-        # 探すのは接頭辞を含まない `rPr` なので、名前空間の書き方に左右されない。
-        if ($sharedXml.IndexOf('rPr') -lt 0) { return @() }
+        $shared = Resolve-YakuXlsxSharedStringPlainness -Xml (Get-YakuXlsxSharedStringText -Archive $zip)
 
-        # --- 共有文字列: si 番号 -> run（本文と、rPr に書かれている項目） ---------
-        $rawRunsByIndex = @{}
-        $sharedDoc = New-Object Xml.XmlDocument
-        $sharedDoc.PreserveWhitespace = $true
-        $sharedDoc.LoadXml($sharedXml)
-        $siIndex = -1
-        foreach ($si in @($sharedDoc.SelectNodes("//*[local-name()='si']"))) {
-            $siIndex++
-            $runs = New-Object System.Collections.Generic.List[object]
-            foreach ($child in $si.ChildNodes) {
-                # `<rPh>`（ふりがな）も `<t>` を持つが run ではない。直下の `<r>` だけを取る。
-                if ([string]$child.LocalName -ne 'r') { continue }
-                $runProperties = $null
-                $text = ''
-                foreach ($grandChild in $child.ChildNodes) {
-                    if ([string]$grandChild.LocalName -eq 'rPr') { $runProperties = Get-YakuXlsxFontVisibleProperties -Node $grandChild }
-                    elseif ([string]$grandChild.LocalName -eq 't') { $text = [string]$grandChild.InnerText }
-                }
-                $runs.Add([pscustomobject]@{ Text = [string]$text; Properties = $runProperties }) | Out-Null
-            }
-            # run が1つなら、そのセルの中で書式が変わりようがない。
-            if ($runs.Count -lt 2) { continue }
-            $rawRunsByIndex[$siIndex] = $runs.ToArray()
-        }
-        if ($rawRunsByIndex.Count -le 0) { return @() }
-
-        # --- styles.xml: スタイル番号 -> fontId -> そのセルの字体 -----------------
-        $fontProperties = New-Object System.Collections.Generic.List[object]
+        # styles.xml は、シートを1枚でも走査すると決まってから読む。
+        $styleMap = $null
+        $fonts = @()
         $fontIdByStyle = @{}
-        $stylesXml = Get-YakuXlsxPartText -Archive $zip -Name 'xl/styles.xml'
-        if (-not [string]::IsNullOrWhiteSpace($stylesXml)) {
-            $stylesDoc = New-Object Xml.XmlDocument
-            $stylesDoc.LoadXml($stylesXml)
-            foreach ($fontNode in @($stylesDoc.SelectNodes("//*[local-name()='fonts']/*[local-name()='font']"))) {
-                $fontProperties.Add((Get-YakuXlsxFontVisibleProperties -Node $fontNode)) | Out-Null
-            }
-            $styleIndex = -1
-            foreach ($xf in @($stylesDoc.SelectNodes("//*[local-name()='cellXfs']/*[local-name()='xf']"))) {
-                $styleIndex++
-                $fontId = 0
-                try { $fontId = [int]$xf.GetAttribute('fontId') } catch { $fontId = 0 }
-                $fontIdByStyle[$styleIndex] = [int]$fontId
-            }
-        }
-        $fonts = $fontProperties.ToArray()
 
-        $resolvedCache = @{}
+        # 断片ごとに XmlDocument を作り直さない。LoadXml は同じ器へ何度でも読める。
+        $fragmentDoc = New-Object Xml.XmlDocument
+        $fragmentDoc.PreserveWhitespace = $true
+        # 同じ共有文字列でも、参照するセルの字体が違えば結論は変わる。
+        # だから覚えるのは (共有文字列, 字体) の組である。
+        $sharedFormatCache = @{}
+        # inlineStr は共有表を通らないので、同じ文字列でもセルの数だけ書かれる。
+        # 覚えないと、そのぶんだけ解き直すことになる（実測 2026-08-16、
+        # 20,000行×12列＝240,000セルが全部 inlineStr の rich text で 808,390ms）。
+        # 全部ばらばらな資料でこの表が本文と同じ大きさに育たないよう上限を置く。
+        $inlineCache = @{}
+        $inlineCacheLimit = 20000
+
         $sheets = New-Object System.Collections.Generic.List[object]
         foreach ($sheetSpec in @(Get-YakuXlsxSheetParts -Archive $zip)) {
+            $sheetName = [string]$sheetSpec.Name
             $sheetXml = Get-YakuXlsxPartText -Archive $zip -Name ([string]$sheetSpec.PartName)
-            if (-not $sheetXml) { continue }
+            if ([string]::IsNullOrEmpty($sheetXml)) {
+                # 本文を読めないシートは、証明のしようが無い。**素通しにしない。**
+                try { Write-YakuLog ('Sheet body could not be read; the whole sheet is treated as unproven. sheet=' + $sheetName + ' part=' + [string]$sheetSpec.PartName) 'DEBUG' } catch {}
+                $sheets.Add([ordered]@{ name = $sheetName; non_plain_cells = @((New-YakuXlsxSheetScopeNonPlainCell)) }) | Out-Null
+                continue
+            }
 
-            $runCells = New-Object System.Collections.Generic.List[object]
-            # 自己終端の形を**先に**置く。中身を持つ形を先に試すと `<c r="B6" s="9"/>` を飲み、
-            # `.*?</c>` が**次のセルの中身を盗む**。盗まれた側は走査から消え、盗んだ側は
-            # 別のセルの共有文字列番号を名乗る。住所そのものがずれるので、件数では気づけない。
-            foreach ($cellNode in [regex]::Matches($sheetXml, '(?s)<c\b[^>]*/>|<c\b[^>]*>.*?</c>')) {
-                $element = [string]$cellNode.Value
-                if ($element -notmatch '\bt="s"') { continue }
-                $addressMatch = [regex]::Match($element, '\br="([A-Z]+\d+)"')
-                if (-not $addressMatch.Success) { continue }
-                $valueMatch = [regex]::Match($element, '(?s)<v[^>]*>(.*?)</v>')
-                if (-not $valueMatch.Success) { continue }
-                $index = -1
-                if (-not [int]::TryParse(([string]$valueMatch.Groups[1].Value).Trim(), [ref]$index)) { continue }
-                if (-not $rawRunsByIndex.ContainsKey($index)) { continue }
+            # --- 速い側の道 ---------------------------------------------------
+            # 共有表が1つ残らず平文で、`<is>` が1つも無ければ、このシートの
+            # どのセルも文字の書式もふりがなも持てない。`<c>` の子は f / v / is /
+            # extLst しか無く、書式もふりがなも `<is>` か共有表にしか置けないので、
+            # **これは形の列挙ではなく「置き場所が無い」という証明である。**
+            # 要るのは「在るか」だけなので `IsMatch` で問う。`Matches().Count` は
+            # 42MB のシートで240,000件を組み上げてから数える（要らない費用）。
+            $sheetHasInline = $script:YakuXlsxIsOpenRegex.IsMatch($sheetXml)
+            if ([bool]$shared.AllPlain -and -not $sheetHasInline) { continue }
 
-                $styleId = 0
-                $styleMatch = [regex]::Match($element, '\bs="(\d+)"')
-                if ($styleMatch.Success) { $styleId = [int]$styleMatch.Groups[1].Value }
-                $fontId = 0
-                if ($fontIdByStyle.ContainsKey($styleId)) { $fontId = [int]$fontIdByStyle[$styleId] }
+            if ($null -eq $styleMap) {
+                $styleMap = Get-YakuXlsxStyleFontMap -Archive $zip
+                $fonts = $styleMap.Fonts
+                $fontIdByStyle = $styleMap.FontIdByStyle
+            }
 
-                # 同じ共有文字列でも、参照するセルの字体が違えば結論は変わる。
-                # だから覚えるのは (共有文字列, 字体) の組である。
-                $cacheKey = [string]$index + '|' + [string]$fontId
-                if (-not $resolvedCache.ContainsKey($cacheKey)) {
+            $cells = New-Object System.Collections.Generic.List[object]
+            $parseFailures = 0
+            $unprovenReason = 'cell-shape'
+            # 厳密に切り出せた数と、開始タグの数。合わなければ字面の読み方が
+            # 当たっていない（引用符の書き方・閉じ忘れ・知らない接頭辞など）。
+            # 数えるほうを**先に**捨てる。両方を同時に抱えると、240,000セルの
+            # シートで Match の山を2つ持つことになる。
+            $cellOpenCount = $script:YakuXlsxCellOpenRegex.Matches($sheetXml).Count
+            $cellMatches = $script:YakuXlsxCellRegex.Matches($sheetXml)
+            $sheetUnproven = ($cellMatches.Count -ne $cellOpenCount)
+            # **この輪はセルの数だけまわる。** PowerShell の関数呼び出しと
+            # `$script:` の引き当ては1回あたりでは小さいが、240,000回では効く。
+            # 実測（2026-08-16 / 5.1.26100.9168、共有文字列24,000のうち1つだけ
+            # rich、240,000セル）: 型の取り出しと平文判定を関数のまま呼ぶと
+            # 7,407 / 7,510ms、ここへ畳むと 1,710 / 1,674 / 1,665ms。
+            # **判定の中身は1文字も変えていない**（畳んだ先に同じ式を写してある）。
+            $typeRegex = $script:YakuXlsxCellTypeRegex
+            $valueRegex = $script:YakuXlsxCellValueRegex
+            $isOpenRegex = $script:YakuXlsxIsOpenRegex
+            $plainTypes = $script:YakuXlsxPlainCellTypes
+            $sharedAllPlain = [bool]$shared.AllPlain
+            $sharedFlags = $shared.PlainFlags
+            $sharedRunFragments = $shared.RunFragments
+            if (-not $sheetUnproven) {
+                foreach ($cellMatch in $cellMatches) {
+                    $attrs = [string]$cellMatch.Groups['attrs'].Value
+                    $body = [string]$cellMatch.Groups['body'].Value
+                    $type = ''
+                    $typeMatch = $typeRegex.Match($attrs)
+                    if ($typeMatch.Success) {
+                        if ($typeMatch.Groups[1].Success) { $type = [string]$typeMatch.Groups[1].Value }
+                        else { $type = [string]$typeMatch.Groups[2].Value }
+                    }
+
+                    # --- 平文だと証明できるか。できたセルはここで捨てる --------
+                    $sharedIndex = -1
+                    $proven = $false
+                    if ($type -eq 's') {
+                        $valueMatch = $valueRegex.Match($body)
+                        if ($valueMatch.Success) {
+                            $parsedIndex = 0
+                            if ([int]::TryParse(([string]$valueMatch.Groups[1].Value).Trim(), [ref]$parsedIndex)) {
+                                $sharedIndex = [int]$parsedIndex
+                                # 番号を引けない（表の外・負）ときは証明できない。
+                                # **この4行が「共有文字列は平文か」の唯一の判定である。**
+                                # 関数へ切り出して呼ぶと 240,000回ぶんの呼び出し費用が
+                                # 乗るので畳んである。写しは他所に置かない。
+                                if ($sharedAllPlain) { $proven = $true }
+                                elseif ($null -ne $sharedFlags -and $sharedIndex -ge 0 -and $sharedIndex -lt $sharedFlags.Length) {
+                                    $proven = [bool]$sharedFlags[$sharedIndex]
+                                }
+                            }
+                        }
+                    } elseif ($plainTypes -contains $type) {
+                        # 型を名乗らずに `<is>` を書く書き手がいるので、入れ物の
+                        # 有無でも確かめる。シートに `<is>` が1つも無ければ調べない。
+                        $proven = (-not $sheetHasInline) -or (-not $isOpenRegex.IsMatch($body))
+                    }
+                    if ($proven) { continue }
+
+                    # --- 住所。取れなければ、そのシート全体を証明できない -------
+                    $address = [string](Get-YakuXlsxMatchedAttribute -Regex $script:YakuXlsxCellRefRegex -Text $attrs)
+                    $rowCol = $null
+                    if (-not [string]::IsNullOrEmpty($address)) { $rowCol = ConvertFrom-YakuXlsxCellAddress -Address $address }
+                    if ($null -eq $rowCol) { $sheetUnproven = $true; $unprovenReason = 'cell-address'; break }
+
+                    # --- 揃え直しに使う run。読めた範囲でよい -------------------
+                    # スタイル番号 -> 字体の引き当ては、共有文字列でも inlineStr でも同じ。
+                    $styleId = 0
+                    $styleText = [string](Get-YakuXlsxMatchedAttribute -Regex $script:YakuXlsxCellStyleRegex -Text $attrs)
+                    if (-not [string]::IsNullOrEmpty($styleText)) {
+                        $parsedStyle = 0
+                        if ([int]::TryParse($styleText, [ref]$parsedStyle)) { $styleId = [int]$parsedStyle }
+                    }
+                    $fontId = 0
+                    if ($fontIdByStyle.ContainsKey($styleId)) { $fontId = [int]$fontIdByStyle[$styleId] }
                     $cellFont = $null
                     if ($fontId -ge 0 -and $fontId -lt $fonts.Length) { $cellFont = $fonts[$fontId] }
-                    $resolvedCache[$cacheKey] = New-YakuXlsxRunCellFormat -Runs $rawRunsByIndex[$index] -CellProperties $cellFont
-                }
-                $format = $resolvedCache[$cacheKey]
-                if ($null -eq $format) { continue }
 
-                $address = [string]$addressMatch.Groups[1].Value
-                $rowCol = ConvertFrom-YakuXlsxCellAddress -Address $address
-                if ($null -eq $rowCol) { continue }
-                $runList = New-Object System.Collections.Generic.List[object]
-                foreach ($item in @($format.Runs)) {
-                    $runList.Add([ordered]@{ text = [string]$item.Text; length = [int]$item.Length; signature = [string]$item.Signature }) | Out-Null
+                    $entry = $null
+                    if ($type -eq 's') {
+                        if ($sharedIndex -ge 0 -and $null -ne $sharedRunFragments -and $sharedRunFragments.ContainsKey($sharedIndex)) {
+                            $cacheKey = [string]$sharedIndex + '|' + [string]$fontId
+                            if (-not $sharedFormatCache.ContainsKey($cacheKey)) {
+                                $sharedFormatCache[$cacheKey] = Resolve-YakuXlsxRichFragmentFormat -Document $fragmentDoc -Fragment ([string]$sharedRunFragments[$sharedIndex]) -CellProperties $cellFont
+                            }
+                            $entry = $sharedFormatCache[$cacheKey]
+                        }
+                    } else {
+                        # `<c>` と同じ罠。自己終端 `<is/>` を先に試す並びである。
+                        $isMatch = $script:YakuXlsxIsRegex.Match($body)
+                        if ($isMatch.Success) {
+                            $fragment = [string]$isMatch.Value
+                            # 同じ中身でも、そのセルの字体が違えば結論は変わる。
+                            $inlineKey = [string]$fontId + '|' + $fragment
+                            if ($inlineCache.ContainsKey($inlineKey)) { $entry = $inlineCache[$inlineKey] }
+                            else {
+                                $entry = Resolve-YakuXlsxRichFragmentFormat -Document $fragmentDoc -Fragment $fragment -CellProperties $cellFont
+                                if ($inlineCache.Count -lt $inlineCacheLimit) { $inlineCache[$inlineKey] = $entry }
+                            }
+                        }
+                    }
+
+                    $runList = New-Object System.Collections.Generic.List[object]
+                    $dominantSignature = ''
+                    $dominantProperties = $null
+                    $differing = [string[]]@()
+                    if ($null -ne $entry) {
+                        if ([bool]$entry.Failed) { $parseFailures++ }
+                        $format = $entry.Format
+                        if ($null -ne $format) {
+                            foreach ($item in @($format.Runs)) {
+                                $runList.Add([ordered]@{ text = [string]$item.Text; length = [int]$item.Length; signature = [string]$item.Signature }) | Out-Null
+                            }
+                            $dominantSignature = [string]$format.DominantSignature
+                            $dominantProperties = $format.DominantProperties
+                            $differing = [string[]]@($format.DifferingProperties)
+                        }
+                    }
+                    $cells.Add([ordered]@{
+                        address = $address
+                        row = [int]$rowCol.Row
+                        col = [int]$rowCol.Col
+                        scope = 'cell'
+                        runs = $runList.ToArray()
+                        dominant_signature = $dominantSignature
+                        dominant_properties = $dominantProperties
+                        differing_properties = $differing
+                    }) | Out-Null
                 }
-                $runCells.Add([ordered]@{
-                    address = $address
-                    row = [int]$rowCol.Row
-                    col = [int]$rowCol.Col
-                    runs = $runList.ToArray()
-                    dominant_signature = [string]$format.DominantSignature
-                    dominant_properties = $format.DominantProperties
-                    differing_properties = [string[]]@($format.DifferingProperties)
-                }) | Out-Null
             }
-            if ($runCells.Count -le 0) { continue }
-            $sheets.Add([ordered]@{ name = [string]$sheetSpec.Name; run_cells = $runCells.ToArray() }) | Out-Null
+            if ($sheetUnproven) {
+                try { Write-YakuLog ('Sheet could not be proven plain; every bulk box on it is dropped. sheet=' + $sheetName + ' reason=' + $unprovenReason) 'DEBUG' } catch {}
+                $cells = New-Object System.Collections.Generic.List[object]
+                $cells.Add((New-YakuXlsxSheetScopeNonPlainCell)) | Out-Null
+            }
+            if ($parseFailures -gt 0) {
+                try { Write-YakuLog ('Rich text fragments could not be parsed; those cells stay outside the bulk box without levelling. sheet=' + $sheetName + ' cells=' + [string]$parseFailures) 'DEBUG' } catch {}
+            }
+            if ($cells.Count -le 0) { continue }
+            $sheets.Add([ordered]@{ name = $sheetName; non_plain_cells = $cells.ToArray() }) | Out-Null
         }
         return $sheets.ToArray()
     } catch {
-        try { Write-YakuLog ('Rich text run read failed; writeback keeps its previous behaviour. reason=' + $_.Exception.Message) 'DEBUG' } catch {}
+        try { Write-YakuLog ('Non-plain cell read failed; writeback keeps its previous behaviour. reason=' + $_.Exception.Message) 'DEBUG' } catch {}
         return @()
     } finally {
         if ($null -ne $zip) { try { $zip.Dispose() } catch {} }

@@ -57,6 +57,7 @@ tools/eval/Build-YakuEvalPrompts.ps1	crlf
 tools/eval/Measure-YakuEvalResponses.ps1	crlf
 tools/Extract-YakuCellGlossary.ps1	crlf
 tools/Import-YakuCellGlossary.ps1	crlf
+tools/Invoke-YakuSweep.ps1	crlf
 tools/Measure-YakuUiFloor.ps1	crlf
 tools/New-YakuPackage.ps1	crlf
 tools/Open-Copilot-Login.ps1	crlf
@@ -128,7 +129,10 @@ tools/Test-YakuV9176CatScreenWiring.ps1	crlf
 tools/Test-YakuV9176ExportBlockerReasons.ps1	crlf
 tools/Test-YakuV9177CellGlossaryImport.ps1	crlf
 tools/Test-YakuV9178RichTextRuns.ps1	crlf
+tools/Test-YakuV9179OutputFont.ps1	crlf
 tools/Test-YakuV917RuntimeWarnings.ps1	crlf
+tools/Test-YakuV9180SharedStringProof.ps1	crlf
+tools/Test-YakuV9181PlainProof.ps1	crlf
 tools/V64-HTTP-Boundary-Test.ps1	crlf
 tools/V65-Saving-Validation-Test.ps1	crlf
 tools/Wait-YakuCopilotResponse-Watcher-Test.ps1	crlf

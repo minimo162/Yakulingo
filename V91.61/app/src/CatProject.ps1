@@ -5506,8 +5506,10 @@ function Export-YakuCatProject {
     if ($sourceHashBeforeWrite -ne $hashAfter) {
         throw 'CAT_EXPORT_SOURCE_CHANGED_BEFORE_COPY: 元の Excel が出力直前に変更されました。訳文はまだ書き込んでいません。もう一度出力してください。'
     }
+    # 訳す向きは出力書体を決める（英→和は和書体）。作業の向きをそのまま渡す。
     $writeResult = Write-YakuFileTranslations -InputPath ([string]$Project.Path) -OutputPath $OutputPath -Blocks @($writeBlocks) `
-        -TranslationByBlockId $currentByBlock -Warnings $Warnings -Settings $Settings -ProgressState $ProgressState -FailOnIncomplete
+        -TranslationByBlockId $currentByBlock -Warnings $Warnings -Settings $Settings -Direction ([string]$Project.Direction) `
+        -ProgressState $ProgressState -FailOnIncomplete
     return [pscustomobject]@{
         OutputPath = [string]$writeResult.PublishedPath
         OutputName = [System.IO.Path]::GetFileName([string]$writeResult.PublishedPath)
