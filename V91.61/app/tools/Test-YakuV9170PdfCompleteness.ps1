@@ -28,7 +28,8 @@ $countBlocked=$false;try{$null=Invoke-YakuCatPdfTextCompletenessReview -Project 
 Chk $countBlocked 'PDF.jsが報告したページ数と送信page配列の欠落・追加を拒否する'
 $run=Invoke-YakuCatPdfTextCompletenessReview -Project $project -RenderId $renderId -PdfSha256 $pdfHash -ExtractorContract 'pdfjs-text-v2@5.7.284' -PageCount 1 -Pages @(New-TestPdfPage -Page 1 -Texts @('Published sentence A.'))
 Chk (@($run.coverage_items).Count -eq 2 -and @($run.coverage_items|Where-Object{$_.state -eq 'unmapped'}).Count -eq 2 -and @($run.coverage_items|Where-Object{$_.reason -eq 'text_present_but_position_unassociated'}).Count -eq 1) '文字が一意に存在しても期待セルとの対応がない限り掲載確認済みにしない'
-Chk (@($project.DocumentFindings).Count -eq 2 -and @($project.DocumentFindings|Where-Object{[string]$_.category -eq 'rendered_output_completeness' -and [string]$_.message -match '欠落が確定したという意味ではありません'}).Count -eq 2) '抽出結果だけで掲載完了や欠落確定と断定しない'
+Chk (@($project.DocumentFindings).Count -eq 2 -and @($project.DocumentFindings|Where-Object{[string]$_.title -match '本文に掲載文が見つかりません'}).Count -eq 1 -and @($project.DocumentFindings|Where-Object{[string]$_.title -match '位置を自動確認できません'}).Count -eq 1) '本文に無い行と、位置が結び付かない行を別の文面にする'
+Chk (@($project.DocumentFindings|Where-Object{[string]$_.message -match '欠落が確定したわけではありません' -or [string]$_.message -match '欠落が確定したという意味ではありません'}).Count -eq 2) '抽出結果だけで掲載完了や欠落確定と断定しない'
 Chk (-not [bool]$run.coverage_summary.evidence_complete -and -not [bool]$run.coverage_summary.decision_complete) '自動確認不能を証拠完了・人判断完了と区別する'
 $unmapped=@($run.coverage_items|Where-Object{$_.state -eq 'unmapped'})
 $decision=Set-YakuCatReviewCoverageDecision -Project $project -ReviewRunId ([string]$run.review_run_id) -CoverageItemIds @($unmapped|ForEach-Object{[string]$_.coverage_item_id}) -Note 'PDF画面で全文を確認した'

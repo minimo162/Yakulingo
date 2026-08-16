@@ -701,7 +701,29 @@ function Invoke-YakuCatPdfTextCompletenessReview {
             $segment=$segmentsById[$segmentId]
             $sourceEvidence=New-YakuCatReviewEvidenceLocation -Project $Project -Segment $segment -Side source
             $renderEvidence=[pscustomobject]@{artifact_kind='pdf';segment_id=$segmentId;side='render';sheet=[string]$plan.destinations[0].sheet;cells=@($plan.destinations|ForEach-Object{[string]$_.address});text_block_ids=@();quote=$expected;pdf_sha256=$PdfSha256;page=$matchedPage;association_status='unverified';match_count=$matches.Count;bbox=$matchBbox;extractor_contract=$ExtractorContract}
-            $finding=New-YakuCatDocumentFinding -Scope render -Category rendered_output_completeness -Detector deterministic -DetectorContractVersion 'pdfjs-text-presence-v2' -Severity warning -Title 'PDFで掲載文を自動確認できません' -Message 'PDFの文字抽出結果から掲載文を一意に確認できませんでした。欠落が確定したという意味ではありません。PDF画面で切れ・重なり・印刷範囲を確認してください。' -EvidenceLocations @($sourceEvidence,$renderEvidence) -DependencyFingerprint $dependency -ReviewRunId $runId -EvidenceQuality unclear -EvidenceConfidence 0.5
+            # 「本文に無い」と「本文にあるが位置が結び付かない」を、同じ文言にしない。
+            #
+            # 2026-08-17 まで、掲載箇所すべてに同じ警告が1件ずつ立っていた。
+            # match_count は coverage_items に記録されるのに、指摘の文面が同じなので
+            # 「PDFの本文にその文字列が無い」行を利用者が拾えなかった。
+            # 利用者の判定基準は「セルに収まっているかより、pdfで見て文字が
+            # 切れていないか」であり、切れの証拠はまさに match_count = 0 である。
+            #
+            # 状態は unmapped のまま変えない。unmapped / unreadable / skipped だけが
+            # 人の目視判断を要求するので、ここを finding へ動かすと、いちばん見て
+            # ほしい行が確認義務から外れる。分けるのは文面のほうである。
+            if($matches.Count -eq 0){
+                $title='PDFの本文に掲載文が見つかりません'
+                $message='PDFから抽出した本文に、この掲載文が1件も現れませんでした。文字が切れている（列や印刷範囲からはみ出した）可能性があります。ただし抽出器が文を分けて拾った場合も同じ結果になるため、欠落が確定したわけではありません。PDF画面でそのセルを確認してください。'
+                $suggestions=@('PDF画面で該当セルを見て、文字が切れていないか確かめる','切れている場合は、そのセルの「縮小して全体を表示」か文字サイズで収める','右の空白セルへはみ出させている場合は、列幅を広げずにそのままでよい')
+                $confidence=0.8
+            } else {
+                $title='PDFで掲載文の位置を自動確認できません'
+                $message='PDFの文字抽出結果に掲載文はありますが、期待したセルの位置とは結び付けられませんでした。欠落が確定したという意味ではありません。PDF画面で切れ・重なり・印刷範囲を確認してください。'
+                $suggestions=@('PDF画面で該当セルを見て、意図した場所に出ているか確かめる')
+                $confidence=0.5
+            }
+            $finding=New-YakuCatDocumentFinding -Scope render -Category rendered_output_completeness -Detector deterministic -DetectorContractVersion 'pdfjs-text-presence-v2' -Severity warning -Title $title -Message $message -Suggestions $suggestions -EvidenceLocations @($sourceEvidence,$renderEvidence) -DependencyFingerprint $dependency -ReviewRunId $runId -EvidenceQuality unclear -EvidenceConfidence $confidence
             $findings.Add($finding)|Out-Null;$findingIds=@([string]$finding.finding_id)
         }
         $coverage.Add([pscustomobject]@{coverage_item_id=(Get-YakuCatSourceIntegrityHash -Text ('coverage-item-v2|pdf-text|'+$RenderId+'|'+[string]$plan.placement_id));scope='render';lens='rendered_output_completeness';target_kind='placement_plan';target_ids=@([string]$plan.placement_id,$segmentId);state=$state;finding_ids=$findingIds;reason=$reason;target_universe_hash='';dependency_fingerprint=$dependency;human_decision_current=$false;matched_page=$matchedPage;match_count=$matches.Count;match_bbox=$matchBbox})|Out-Null
