@@ -139,8 +139,17 @@
             # 翻訳対象だけでなく値・数式を持つ全セルの占有状態が要る。
             $occupiedCells = New-Object System.Collections.Generic.List[string]
             $formulaCells = New-Object System.Collections.Generic.List[string]
-            foreach ($cellNode in [regex]::Matches($sheetXml, '(?s)<c\b[^>]*r="([A-Z]+\d+)"[^>]*(?:/>|>.*?</c>)')) {
-                $address = [string]$cellNode.Groups[1].Value
+            # 自己終端の形を**先に**置く。中身を持つ形を先に試すと、`[^>]*` が
+            # `<c r="B6" s="9"/` まで食べたあと `/>` に外れ、`>` の枝へ落ちて
+            # `.*?</c>` が**次のセルの中身を盗む**。空セルが「占有」「数式」に化け、
+            # 盗まれた側のセルは走査から丸ごと消える。
+            # 実測（テストファイル Sheet1）: 一致 56件（正しくは512件）、
+            # occupied の44件が誤り、formula の5件が誤り。B6 は17文字の空セルなのに
+            # 336文字を1件として掴んでいた。
+            foreach ($cellNode in [regex]::Matches($sheetXml, '(?s)<c\b[^>]*/>|<c\b[^>]*>.*?</c>')) {
+                $addressMatch = [regex]::Match($cellNode.Value, '\br="([A-Z]+\d+)"')
+                if (-not $addressMatch.Success) { continue }
+                $address = [string]$addressMatch.Groups[1].Value
                 if ($cellNode.Value -match '<(?:v|is|f)\b') { [void]$occupiedCells.Add($address) }
                 if ($cellNode.Value -match '<f\b') { [void]$formulaCells.Add($address) }
             }

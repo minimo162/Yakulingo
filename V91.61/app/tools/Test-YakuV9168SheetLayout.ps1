@@ -43,7 +43,7 @@ try {
         # font 0 は普通、font 1 は太字、font 2 は <b val="0"/>（太字ではない）。
         # xf 0 は普通、xf 1 は太字＋折り返し＋中央、xf 2 は val="0" を指す。
         'xl/styles.xml' = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet><fonts count="3"><font><sz val="11"/></font><font><b/><sz val="11"/></font><font><b val="0"/><sz val="11"/></font></fonts><cellXfs count="3"><xf numFmtId="0" fontId="0"/><xf numFmtId="0" fontId="1" applyAlignment="1"><alignment horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="2"/></cellXfs></styleSheet>'
-        'xl/worksheets/layout-source.xml' = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet><sheetFormatPr defaultColWidth="9.5" defaultRowHeight="18"/><cols><col min="1" max="1" width="42.5" customWidth="1"/><col min="2" max="3" width="7.25" customWidth="1"/><col min="4" max="4" width="5" hidden="1"/></cols><sheetData><row r="1" ht="48.75" customHeight="1"><c r="A1" s="1" t="s"><v>0</v></c><c r="B1" s="0"><v>1</v></c><c r="C1" s="2"><f>1+2</f><v>3</v></c></row><row r="2"><c r="A2" s="0"><v>2</v></c></row></sheetData><mergeCells count="2"><mergeCell ref="A1:C1"/><mergeCell ref="A5:A7"/></mergeCells></worksheet>'
+        'xl/worksheets/layout-source.xml' = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet><sheetFormatPr defaultColWidth="9.5" defaultRowHeight="18"/><cols><col min="1" max="1" width="42.5" customWidth="1"/><col min="2" max="3" width="7.25" customWidth="1"/><col min="4" max="4" width="5" hidden="1"/></cols><sheetData><row r="1" ht="48.75" customHeight="1"><c r="A1" s="1" t="s"><v>0</v></c><c r="B1" s="0"><v>1</v></c><c r="C1" s="2"><f>1+2</f><v>3</v></c></row><row r="2"><c r="A2" s="0"><v>2</v></c><c r="B2" s="0"/><c r="C2" s="2"><f>3+4</f><v>7</v></c></row></sheetData><mergeCells count="2"><mergeCell ref="A1:C1"/><mergeCell ref="A5:A7"/></mergeCells></worksheet>'
     }
     $stream = New-Object System.IO.FileStream($xlsxPath, 'Create')
     try {
@@ -83,8 +83,19 @@ try {
     # 結合。実効幅が広いかどうかの判断に要る。
     $merges = @($sheet.merges)
     Check-YakuLayout ($merges.Count -eq 2 -and $merges -contains 'A1:C1') '結合セルを読む'
-    Check-YakuLayout (@($sheet.occupied_cells).Count -eq 4 -and @($sheet.occupied_cells) -contains 'C1') 'relationshipで解決したsheet partから占有セルを読む'
-    Check-YakuLayout (@($sheet.formula_cells).Count -eq 1 -and @($sheet.formula_cells)[0] -eq 'C1') '数式セルを占有と別に記録する'
+    $occupied = @($sheet.occupied_cells)
+    $formula = @($sheet.formula_cells)
+    Check-YakuLayout ($occupied.Count -eq 5 -and $occupied -contains 'C1') 'relationshipで解決したsheet partから占有セルを読む'
+    Check-YakuLayout ($formula.Count -eq 2 -and $formula -contains 'C1') '数式セルを占有と別に記録する'
+
+    # 自己終端の空セル `<c r="B2" s="0"/>` の直後に、中身のあるセル C2 を置いてある。
+    # 正規表現が自己終端を飲むと `.*?</c>` が C2 の中身を盗み、B2 が「占有」かつ
+    # 「数式」に化け、C2 は走査から消える。**件数では気づけない**（B2 が C2 の
+    # 代わりに入るだけで 5件・2件のまま）。だから所属で見る。両向きに置く。
+    Check-YakuLayout (-not ($occupied -contains 'B2')) '自己終端の空セルを占有として数えない'
+    Check-YakuLayout (-not ($formula -contains 'B2')) '自己終端の空セルを数式セルとして数えない'
+    Check-YakuLayout ($occupied -contains 'C2') '空セルの直後のセルを飲み込まずに読む'
+    Check-YakuLayout ($formula -contains 'C2') '空セルの直後の数式セルを数式として読む'
 
     # 折り返し。ON なら切らずに伸ばす、OFF なら Excel と同じく切る。
     $cells = @($sheet.cells)
