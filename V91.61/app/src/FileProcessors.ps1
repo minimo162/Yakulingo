@@ -3005,6 +3005,254 @@ function Invoke-YakuExcelBulkBandedWrite {
         return $null
     }
 }
+# ---------------------------------------------------------------------------
+# セル内部分書式（run）を巻き添えにしないための道具
+#
+# 実測（2026-08-16、Excel COM。テストファイルの複写に対して実行）:
+#   - 1〜4文字目だけ太字のセルへ Value2 で書くと、**29文字すべてが太字**になった。
+#     一括の2次元配列代入でも同じ（24文字すべて太字）。
+#   - **もっと悪いのはこちら。** 翻訳対象ではない隣のセルが一括の箱に入っていると、
+#     元の値をそのまま書き戻すだけで run が消える。**本文は1バイトも変わらない**ので、
+#     文字を比べる検査では永久に見つからない。
+#
+#   前者は「書いた後に揃え直す」、後者は「そもそも箱へ入れない」で塞ぐ。
+#   run の読み取りは Excel を使わない（src/SheetLayout.ps1）。
+# ---------------------------------------------------------------------------
+
+function Get-YakuExcelRunCellsBySheet {
+    <#
+      .SYNOPSIS
+        原本の xlsx から、run を持つセルをシート名で引ける形にして読む。
+
+      .DESCRIPTION
+        読めなければ空を返す。体裁は足しであって前提ではないので、
+        読めなくても書き戻しそのものは今までどおり進む。
+    #>
+    param([AllowNull()][string]$Path)
+    $bySheet = @{}
+    if ([string]::IsNullOrWhiteSpace([string]$Path)) { return $bySheet }
+    # SheetLayout.ps1 は SrcModules.ps1 の並びで FileProcessors.ps1 より後に読まれる。
+    # 呼ぶのは実行時なので届くが、単体で dot-source された経路のために確かめる。
+    if (-not (Get-Command Get-YakuXlsxRunCells -ErrorAction SilentlyContinue)) { return $bySheet }
+    $started = Get-Date
+    $total = 0
+    try {
+        foreach ($sheet in @(Get-YakuXlsxRunCells -Path ([string]$Path))) {
+            if ($null -eq $sheet) { continue }
+            $name = [string]$sheet.name
+            if ([string]::IsNullOrEmpty($name)) { continue }
+            $cells = @($sheet.run_cells)
+            if ($cells.Count -le 0) { continue }
+            $bySheet[$name] = $cells
+            $total += [int]$cells.Count
+        }
+        try { Write-YakuLog "Excel writeback run cells read. sheets=$($bySheet.Count) runCells=$total ms=$([Math]::Round(((Get-Date) - $started).TotalMilliseconds, 0))" 'DEBUG' } catch {}
+    } catch {
+        try { Write-YakuLog "Excel writeback run cell read failed; the rich text guard is skipped. error=$($_.Exception.Message)" 'DEBUG' } catch {}
+        return @{}
+    }
+    return $bySheet
+}
+
+function Get-YakuExcelSheetRunCells {
+    # `@($hash[$missingKey])` は要素1（中身は $null）の配列になる。ここで畳む。
+    param(
+        [AllowNull()][hashtable]$RunCellsBySheet,
+        [AllowNull()][string]$SheetName
+    )
+    if ($null -eq $RunCellsBySheet) { return @() }
+    $key = [string]$SheetName
+    if ([string]::IsNullOrEmpty($key)) { return @() }
+    if (-not $RunCellsBySheet.ContainsKey($key)) { return @() }
+    $value = $RunCellsBySheet[$key]
+    if ($null -eq $value) { return @() }
+    return @($value)
+}
+
+function Get-YakuExcelRunCellInBounds {
+    <#
+      .SYNOPSIS
+        箱（bounding box）の中に run セルが1つでもあれば、そのセルを返す。無ければ $null。
+
+      .DESCRIPTION
+        **件数ではなく所属で見る。** 箱は翻訳対象を囲むだけで、間に挟まった
+        非対象セルも一緒に書き戻される。巻き添えになるのはその非対象セルなので、
+        「run セルがいくつあるか」ではなく「この矩形の中にいるか」を問う。
+    #>
+    param(
+        [AllowNull()][object[]]$RunCells,
+        [AllowNull()]$Bounds
+    )
+    if ($null -eq $RunCells -or $RunCells.Count -le 0 -or $null -eq $Bounds) { return $null }
+    $minRow = 0; $maxRow = 0; $minCol = 0; $maxCol = 0
+    try {
+        $minRow = [int]$Bounds.MinRow; $maxRow = [int]$Bounds.MaxRow
+        $minCol = [int]$Bounds.MinCol; $maxCol = [int]$Bounds.MaxCol
+    } catch { return $null }
+    foreach ($runCell in $RunCells) {
+        if ($null -eq $runCell) { continue }
+        $row = 0; $col = 0
+        try { $row = [int]$runCell.row; $col = [int]$runCell.col } catch { continue }
+        if ($row -lt $minRow -or $row -gt $maxRow) { continue }
+        if ($col -lt $minCol -or $col -gt $maxCol) { continue }
+        return $runCell
+    }
+    return $null
+}
+
+function Get-YakuExcelRunCellFontAssignments {
+    <#
+      .SYNOPSIS
+        run を持っていたセルへ書いた**後**に、セル全体を「支配的な書式」へ
+        揃えるための代入表を作る。
+
+      .DESCRIPTION
+        **これは run を復元するものではない。** Value2 で書くと1文字目の書式が
+        文字列全体へ広がる（実測: 1〜4文字目だけ太字のセルが29文字すべて太字に
+        なった）。それを「全体が**最も多かった**書式になる」へ変えるだけである。
+        部分書式そのものは戻らない。
+
+        代入するのは run どうしで食い違っていた項目だけ。セル全体が太字だった
+        （run ではない）セルはそもそも run セルとして数えないので、1つも代入しない。
+        書体（rFont）は、出力書体を揃える設定があるときは触らない。そちらが
+        最後に勝つ決まりなので、ここで戻すと設定と食い違う。
+    #>
+    param(
+        [AllowNull()]$RunCell,
+        [AllowNull()][string]$OutputFontName
+    )
+    $assignments = New-Object System.Collections.Generic.List[object]
+    if ($null -eq $RunCell) { return @() }
+    $names = @()
+    try { $names = @($RunCell.differing_properties) } catch { $names = @() }
+    if ($names.Count -le 0) { return @() }
+    $properties = $null
+    try { $properties = $RunCell.dominant_properties } catch { $properties = $null }
+    foreach ($rawName in $names) {
+        $name = [string]$rawName
+        if ([string]::IsNullOrEmpty($name)) { continue }
+        $value = ''
+        try { if ($null -ne $properties -and $properties.ContainsKey($name)) { $value = [string]$properties[$name] } } catch { $value = '' }
+        $isOn = ($value -eq '1')
+        switch ($name) {
+            'b' { $assignments.Add([pscustomobject]@{ Property='Bold'; Value=[bool]$isOn }) | Out-Null }
+            'i' { $assignments.Add([pscustomobject]@{ Property='Italic'; Value=[bool]$isOn }) | Out-Null }
+            'strike' { $assignments.Add([pscustomobject]@{ Property='Strikethrough'; Value=[bool]$isOn }) | Out-Null }
+            'u' {
+                # xlUnderlineStyleNone=-4142 / Single=2 / Double=-4119 /
+                # SingleAccounting=4 / DoubleAccounting=5
+                # 空は「下線なし」である。switch の '' 枝に頼らず、先に外へ出す。
+                $underline = -4142
+                if (-not [string]::IsNullOrEmpty($value) -and $value -ne '0') {
+                    if ($value -eq 'double') { $underline = -4119 }
+                    elseif ($value -eq 'singleAccounting') { $underline = 4 }
+                    elseif ($value -eq 'doubleAccounting') { $underline = 5 }
+                    else { $underline = 2 }
+                }
+                $assignments.Add([pscustomobject]@{ Property='Underline'; Value=[int]$underline }) | Out-Null
+            }
+            'sz' {
+                $size = 0.0
+                if ([double]::TryParse([string]$value, [ref]$size) -and $size -gt 0) {
+                    $assignments.Add([pscustomobject]@{ Property='Size'; Value=[double]$size }) | Out-Null
+                }
+            }
+            'rFont' {
+                if ([string]::IsNullOrWhiteSpace([string]$OutputFontName) -and -not [string]::IsNullOrEmpty($value)) {
+                    $assignments.Add([pscustomobject]@{ Property='Name'; Value=[string]$value }) | Out-Null
+                }
+            }
+            'color' {
+                # 扱うのは rgb 指定だけ。theme / indexed は番号の意味がブックの
+                # 配色に依存するので、当てずっぽうで塗るより触らないほうがよい。
+                $rgbMatch = [regex]::Match([string]$value, '(?i)\brgb:([0-9A-F]{8})\b')
+                if ($rgbMatch.Success) {
+                    $hex = [string]$rgbMatch.Groups[1].Value
+                    $r = [Convert]::ToInt32($hex.Substring(2,2), 16)
+                    $g = [Convert]::ToInt32($hex.Substring(4,2), 16)
+                    $b = [Convert]::ToInt32($hex.Substring(6,2), 16)
+                    # Excel の Font.Color は BGR。RGB のまま渡すと赤と青が入れ替わる。
+                    $assignments.Add([pscustomobject]@{ Property='Color'; Value=[int](($b * 65536) + ($g * 256) + $r) }) | Out-Null
+                }
+            }
+            'vertAlign' {
+                $assignments.Add([pscustomobject]@{ Property='Superscript'; Value=[bool]([string]$value -eq 'superscript') }) | Out-Null
+                $assignments.Add([pscustomobject]@{ Property='Subscript'; Value=[bool]([string]$value -eq 'subscript') }) | Out-Null
+            }
+            default { }
+        }
+    }
+    return @($assignments.ToArray())
+}
+
+function Set-YakuExcelRunCellDominantFormat {
+    <#
+      .SYNOPSIS
+        訳文を書いた run セルを、支配的な書式へ揃え直す（シート単位の後処理）。
+
+      .DESCRIPTION
+        経路ごとに足さないのは、書込経路が矩形・行・単セルの3つに分かれていて、
+        どれも Value2 を通るためである。どの経路を通っても、ここを必ず通る。
+        触るのは**訳文を書いたセルだけ**。書いていない run セルには何もしない。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Worksheet,
+        [AllowNull()][object[]]$RunCells,
+        [AllowNull()][hashtable]$TargetKeys,
+        [AllowNull()][string]$OutputFontName,
+        [AllowNull()][string]$SheetName = '',
+        [AllowNull()][hashtable]$Metrics = $null
+    )
+    if ($null -eq $RunCells -or $RunCells.Count -le 0) { return 0 }
+    $fixed = 0
+    foreach ($runCell in $RunCells) {
+        if ($null -eq $runCell) { continue }
+        $row = 0; $col = 0
+        try { $row = [int]$runCell.row; $col = [int]$runCell.col } catch { continue }
+        if ($row -le 0 -or $col -le 0) { continue }
+        if ($null -ne $TargetKeys -and -not $TargetKeys.ContainsKey(([string]$row + ',' + [string]$col))) { continue }
+        $assignments = @(Get-YakuExcelRunCellFontAssignments -RunCell $runCell -OutputFontName $OutputFontName)
+        if ($assignments.Count -le 0) { continue }
+        $cell = $null
+        $font = $null
+        try {
+            $cell = $Worksheet.Cells.Item($row, $col)
+            $font = $cell.Font
+            foreach ($assignment in $assignments) {
+                try {
+                    switch ([string]$assignment.Property) {
+                        'Bold' { $font.Bold = [bool]$assignment.Value }
+                        'Italic' { $font.Italic = [bool]$assignment.Value }
+                        'Strikethrough' { $font.Strikethrough = [bool]$assignment.Value }
+                        'Underline' { $font.Underline = [int]$assignment.Value }
+                        'Size' { $font.Size = [double]$assignment.Value }
+                        'Name' { $font.Name = [string]$assignment.Value }
+                        'Color' { $font.Color = [int]$assignment.Value }
+                        'Superscript' { $font.Superscript = [bool]$assignment.Value }
+                        'Subscript' { $font.Subscript = [bool]$assignment.Value }
+                        default { }
+                    }
+                } catch {}
+            }
+            $fixed++
+        } catch {
+        } finally {
+            Release-YakuComObject $font
+            Release-YakuComObject $cell
+        }
+    }
+    if ($fixed -gt 0) {
+        try { Write-YakuLog "Excel writeback rich text cells levelled to dominant format. sheet=$SheetName cells=$fixed" 'DEBUG' } catch {}
+    }
+    if ($null -ne $Metrics) {
+        try {
+            if (-not $Metrics.ContainsKey('run_cells_levelled')) { $Metrics['run_cells_levelled'] = 0 }
+            $Metrics['run_cells_levelled'] = [int]$Metrics['run_cells_levelled'] + [int]$fixed
+        } catch {}
+    }
+    return [int]$fixed
+}
+
 function Invoke-YakuExcelBulkBoundingBoxWrite {
     param(
         [Parameter(Mandatory=$true)]$Worksheet,
@@ -3013,6 +3261,7 @@ function Invoke-YakuExcelBulkBoundingBoxWrite {
         [Parameter(Mandatory=$true)]$Warnings,
         [AllowNull()][string]$SheetName = '',
         [AllowNull()][hashtable]$Metrics = $null,
+        [AllowNull()][object[]]$RunCells = $null,
         [int]$MaxArea = 50000
     )
     if ($null -eq $Items -or $Items.Count -le 0) { return $null }
@@ -3030,6 +3279,21 @@ function Invoke-YakuExcelBulkBoundingBoxWrite {
         }
 
         $address = Get-YakuExcelRangeAddress -StartRow ([int]$bounds.MinRow) -StartCol ([int]$bounds.MinCol) -EndRow ([int]$bounds.MaxRow) -EndCol ([int]$bounds.MaxCol)
+
+        # 箱がセル内部分書式（run）を持つセルを1つでも含むなら、箱では書かない。
+        # 箱は翻訳対象を囲むだけなので、間に挟まった**非対象**セルまで一緒に
+        # 書き戻される。実測では、値が1文字も変わらないその書き戻しだけで run が
+        # 消えた。`$null` を返せば呼び出し側は矩形・行・単セルの経路へ落ち、
+        # 対象セルしか触らなくなる。
+        # 数式集合や結合の判定より**手前**に置く。判断に要るのは箱の位置だけで、
+        # Excel への問い合わせが1回も要らないため。
+        $runCellInBox = Get-YakuExcelRunCellInBounds -RunCells $RunCells -Bounds $bounds
+        if ($null -ne $runCellInBox) {
+            try { Write-YakuLog "Excel writeback bulk box fallback. sheet=$SheetName address=$address reason=rich-text-run runCell=$($runCellInBox.address) sheetRunCells=$(@($RunCells).Count) targets=$($Items.Count)" 'DEBUG' } catch {}
+            if ($null -ne $Metrics) { try { $Metrics['bulk_run_cell_skips'] = [int]$Metrics['bulk_run_cell_skips'] + 1 } catch {} }
+            return $null
+        }
+
         if ($null -ne $Metrics) { $sw = [System.Diagnostics.Stopwatch]::StartNew() }
         $box = $Worksheet.Range($address)
         if ($null -ne $sw) { Add-YakuExcelMetricElapsed -Metrics $Metrics -Key 'range_ms' -Stopwatch $sw }
@@ -3341,7 +3605,8 @@ function Write-YakuExcelCellTranslationsForSheet {
         [Parameter(Mandatory=$true)][hashtable]$TranslationByBlockId,
         [AllowNull()][string]$OutputFontName,
         [Parameter(Mandatory=$true)]$Warnings,
-        [AllowNull()][hashtable]$Metrics = $null
+        [AllowNull()][hashtable]$Metrics = $null,
+        [AllowNull()][object[]]$RunCells = $null
     )
     if ($null -ne $Metrics) {
         try {
@@ -3360,6 +3625,9 @@ function Write-YakuExcelCellTranslationsForSheet {
             if (-not $Metrics.ContainsKey('band_probes')) { $Metrics['band_probes'] = 0 }
             if (-not $Metrics.ContainsKey('band_depth_max')) { $Metrics['band_depth_max'] = 0 }
             if (-not $Metrics.ContainsKey('merged_anchor_rectangles')) { $Metrics['merged_anchor_rectangles'] = 0 }
+            if (-not $Metrics.ContainsKey('run_cells')) { $Metrics['run_cells'] = 0 }
+            if (-not $Metrics.ContainsKey('run_cells_levelled')) { $Metrics['run_cells_levelled'] = 0 }
+            if (-not $Metrics.ContainsKey('bulk_run_cell_skips')) { $Metrics['bulk_run_cell_skips'] = 0 }
         } catch {}
     }
     $plan = New-YakuExcelCellWritePlan -Blocks $Blocks -TranslationByBlockId $TranslationByBlockId
@@ -3379,8 +3647,20 @@ function Write-YakuExcelCellTranslationsForSheet {
     $bulkRectangles = 0
     $mergedAnchorRectangles = 0
 
+    # 訳文を書いたセルの住所。書いていない run セルへは、後処理で1つも触らない。
+    $targetCellKeys = @{}
+    foreach ($item in $cellItems) {
+        try { $targetCellKeys[([string]([int]$item.Row) + ',' + [string]([int]$item.Col))] = $true } catch {}
+    }
+    foreach ($block in @($mergedCellBlocks.ToArray())) {
+        try { $targetCellKeys[([string]([int]$block.Meta.Row) + ',' + [string]([int]$block.Meta.Col))] = $true } catch {}
+    }
+    $sheetRunCells = @()
+    if ($null -ne $RunCells) { $sheetRunCells = @($RunCells) }
+    if ($null -ne $Metrics) { try { $Metrics['run_cells'] = [int]$sheetRunCells.Count } catch {} }
+
     if ($cellItems.Count -gt 0) {
-        $bulkResult = Invoke-YakuExcelBulkBoundingBoxWrite -Worksheet $Worksheet -Items $cellItems -OutputFontName $OutputFontName -Warnings $Warnings -SheetName $sheetName -Metrics $Metrics
+        $bulkResult = Invoke-YakuExcelBulkBoundingBoxWrite -Worksheet $Worksheet -Items $cellItems -OutputFontName $OutputFontName -Warnings $Warnings -SheetName $sheetName -Metrics $Metrics -RunCells $sheetRunCells
         if ($null -ne $bulkResult -and ([bool]$bulkResult.Used)) {
             $usedBulkBox = $true
             $written += [int]$bulkResult.Written
@@ -3454,6 +3734,10 @@ function Write-YakuExcelCellTranslationsForSheet {
     if ($fontAddresses.Count -gt 0) {
         Invoke-YakuExcelFontUnionApply -Worksheet $Worksheet -Addresses ([string[]]@($fontAddresses.ToArray())) -FontName $OutputFontName -Metrics $Metrics
     }
+    # 書込経路（矩形・行・単セル）はどれも Value2 を通り、どれも1文字目の書式を
+    # 文字列全体へ広げる。経路ごとに足すのではなく、最後にここで1度だけ揃える。
+    # 出力書体の一括適用より後に置く（あちらが最後に勝つ決まりを崩さないため）。
+    $null = Set-YakuExcelRunCellDominantFormat -Worksheet $Worksheet -RunCells $sheetRunCells -TargetKeys $targetCellKeys -OutputFontName $OutputFontName -SheetName $sheetName -Metrics $Metrics
     if ($null -ne $Metrics) {
         try {
             $Metrics['rectangles'] = if ($usedBulkBox) { [int]$bulkRectangles } else { [int]$rectangles.Count }
@@ -3667,7 +3951,10 @@ function Write-YakuExcelTranslations {
         [Parameter(Mandatory=$true)]$Warnings,
         [AllowNull()]$Settings,
         [AllowNull()][string]$BaselinePath = $null,
-        [AllowNull()]$ProgressState = $null
+        [AllowNull()]$ProgressState = $null,
+        # セル内部分書式（run）の読み出し元。原本を渡す。省略したときは
+        # 書込先を読む（Excel が開く前なので、まだ原本と同じバイト列である）。
+        [AllowNull()][string]$SourcePath = $null
     )
     $ctx = $null
     $excel = $null
@@ -3675,6 +3962,8 @@ function Write-YakuExcelTranslations {
     $writeTargetCount = 0
     $writtenCount = 0
     try {
+        $runCellSourcePath = if ([string]::IsNullOrWhiteSpace([string]$SourcePath)) { [string]$OutputPath } else { [string]$SourcePath }
+        $runCellsBySheet = Get-YakuExcelRunCellsBySheet -Path $runCellSourcePath
         $phaseStarted = Get-Date
         $ctx = New-YakuExcelApplication
         $excel = $ctx.Application
@@ -3771,7 +4060,8 @@ function Write-YakuExcelTranslations {
             try { Write-YakuLog "Excel writeback sheet pagebreaks. displayPageBreaks=$oldDisplayPageBreaks" 'DEBUG' } catch {}
             try { $ws.DisplayPageBreaks = $false } catch {}
             try {
-                $sheetWritten = [int](Write-YakuExcelCellTranslationsForSheet -Worksheet $ws -Blocks @($cellBlocksBySheet[$sheetName].ToArray()) -TranslationByBlockId $TranslationByBlockId -OutputFontName $fontName -Warnings $Warnings -Metrics $metrics)
+                $sheetRunCells = @(Get-YakuExcelSheetRunCells -RunCellsBySheet $runCellsBySheet -SheetName ([string]$sheetName))
+                $sheetWritten = [int](Write-YakuExcelCellTranslationsForSheet -Worksheet $ws -Blocks @($cellBlocksBySheet[$sheetName].ToArray()) -TranslationByBlockId $TranslationByBlockId -OutputFontName $fontName -Warnings $Warnings -Metrics $metrics -RunCells $sheetRunCells)
                 $writtenCount += [int]$sheetWritten
             } catch {
                 $diag = Get-YakuExceptionDetailObject -ErrorRecord $_
@@ -3800,6 +4090,9 @@ function Write-YakuExcelTranslations {
                 $mergedCells = 0
                 $mergedAnchors = 0
                 $optimisticFailed = 0
+                $runCells = 0
+                $runCellsLevelled = 0
+                $bulkRunCellSkips = 0
                 try { if ($metrics.ContainsKey('range_ms')) { $rangeMs = [Math]::Round([double]$metrics['range_ms'], 0) } } catch {}
                 try { if ($metrics.ContainsKey('value2_ms')) { $value2Ms = [Math]::Round([double]$metrics['value2_ms'], 0) } } catch {}
                 try { if ($metrics.ContainsKey('font_ms')) { $fontMs = [Math]::Round([double]$metrics['font_ms'], 0) } } catch {}
@@ -3816,8 +4109,11 @@ function Write-YakuExcelTranslations {
                 try { if ($metrics.ContainsKey('merged_cells')) { $mergedCells = [int]$metrics['merged_cells'] } } catch {}
                 try { if ($metrics.ContainsKey('merged_anchor_rectangles')) { $mergedAnchors = [int]$metrics['merged_anchor_rectangles'] } } catch {}
                 try { if ($metrics.ContainsKey('optimistic_failed')) { $optimisticFailed = [int]$metrics['optimistic_failed'] } } catch {}
+                try { if ($metrics.ContainsKey('run_cells')) { $runCells = [int]$metrics['run_cells'] } } catch {}
+                try { if ($metrics.ContainsKey('run_cells_levelled')) { $runCellsLevelled = [int]$metrics['run_cells_levelled'] } } catch {}
+                try { if ($metrics.ContainsKey('bulk_run_cell_skips')) { $bulkRunCellSkips = [int]$metrics['bulk_run_cell_skips'] } } catch {}
                 $msPerCell = if ($sheetWritten -gt 0) { [Math]::Round(($seconds * 1000.0) / [double]$sheetWritten, 2) } else { 0 }
-                try { Write-YakuLog "Excel writeback sheet '$sheetName': rectangles=$rectangles singleCells=$singleCells writtenCells=$sheetWritten seconds=$seconds msPerCell=$msPerCell rangeMs=$rangeMs value2Ms=$value2Ms fontMs=$fontMs bulk_box=$bulkBox bulk_mode=$bulkMode bulk_read_ms=$bulkReadMs bulk_write_ms=$bulkWriteMs riskyConstantRestores=$riskyConstantRestores errorValueRestores=$errorValueRestores bands=$bands bandFallbacks=$bandFallbacks bandProbes=$bandProbes bandDepthMax=$bandDepthMax mergedCells=$mergedCells mergedAnchors=$mergedAnchors optimisticFailed=$optimisticFailed" 'INFO' } catch {}
+                try { Write-YakuLog "Excel writeback sheet '$sheetName': rectangles=$rectangles singleCells=$singleCells writtenCells=$sheetWritten seconds=$seconds msPerCell=$msPerCell rangeMs=$rangeMs value2Ms=$value2Ms fontMs=$fontMs bulk_box=$bulkBox bulk_mode=$bulkMode bulk_read_ms=$bulkReadMs bulk_write_ms=$bulkWriteMs riskyConstantRestores=$riskyConstantRestores errorValueRestores=$errorValueRestores bands=$bands bandFallbacks=$bandFallbacks bandProbes=$bandProbes bandDepthMax=$bandDepthMax mergedCells=$mergedCells mergedAnchors=$mergedAnchors optimisticFailed=$optimisticFailed runCells=$runCells runCellsLevelled=$runCellsLevelled bulkRunCellSkips=$bulkRunCellSkips" 'INFO' } catch {}
                 try { if ($metrics.ContainsKey('value2_put_probe_done') -and [bool]$metrics['value2_put_probe_done']) { $value2PutProbeDone = $true } } catch {}
                 try { if ($oldDisplayPageBreaks -eq $true) { $ws.DisplayPageBreaks = $true } } catch {}
                 Release-YakuComObject $ws
@@ -4377,7 +4673,9 @@ function Write-YakuFileTranslations {
             Clear-YakuOutputReadOnlyAttribute -Path $candidatePath | Out-Null
             try { Write-YakuLog "Writeback copy done. seconds=$([Math]::Round(((Get-Date) - $copyStarted).TotalSeconds, 2)) jobId=$jobId" 'INFO' } catch {}
             if ($hasWriteTargets) {
-                $writeResult = Write-YakuExcelTranslations -OutputPath $candidatePath -Blocks $Blocks -TranslationByBlockId $TranslationByBlockId -Warnings $Warnings -Settings $Settings -BaselinePath $baselinePath -ProgressState $ProgressState
+                # run（セル内部分書式）は**原本から**読む。書込先の複写は、この先で
+                # Excel が握る。原本は CAT の書き出しが直前に SHA-256 を照合している。
+                $writeResult = Write-YakuExcelTranslations -OutputPath $candidatePath -Blocks $Blocks -TranslationByBlockId $TranslationByBlockId -Warnings $Warnings -Settings $Settings -BaselinePath $baselinePath -ProgressState $ProgressState -SourcePath $InputPath
             } else {
                 try { Write-YakuLog "Writeback skipped; no translated blocks. jobId=$jobId" 'INFO' } catch {}
                 $writeResult = [pscustomobject]@{ WriteTargetCount=0; WrittenCount=0; SkippedCount=0 }
