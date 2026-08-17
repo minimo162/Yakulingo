@@ -15,7 +15,7 @@
       if (tourMeta) tourMeta.setAttribute('content', '1');
     }
   } catch (_) {}
-  var ready = false, busy = false, project = null, pendingDirection = null, uploaded = null;
+  var ready = false, busy = false, project = null, pendingDirection = null, uploaded = null, directFilePath = '';
   var dirty = new Map(), saveChain = Promise.resolve(), jobTimer = null, jobContext = null, candidateSeq = 0;
   var deleteTarget = null, preflightScope = null, jobSerial = 0, viewEpoch = 0, outputScope = null;
   var activeSegmentId = '', activeIndex = -1, currentFilter = 'actionable', currentLocation = 'all', currentChange = 'all', inspectorTab = 'candidates';
@@ -186,7 +186,7 @@
      器の高さを窓に固定する規則（cat-workspace.css）は、一覧が主役の確認作業に
      しか合わない。選ぶ画面とその場で訳す状態は、内容の丈だけ縦に伸びてよい。 */
   function setView(name) { document.body.setAttribute('data-cat-view', name); }
-  function showPicker() { if(project) reportProjectLease('closed'); syncLocation(''); viewEpoch++; candidateSeq++; project = null; activeSegmentId = ''; activeIndex = -1; revisionComparison = null; currentFilter = 'actionable'; currentLocation = 'all'; currentChange = 'all'; resetSearchTools(); termSelection = { index: -1, source: '', target: '' }; dirty.clear(); clearOutputDisplay(); document.title = '翻訳 - YakuLingo'; el('cat-page-title').textContent = '翻訳'; setView('start'); el('cat-picker').hidden = false; el('cat-workspace').hidden = true; el('cat-current-summary').hidden = true; closeStartPanels(); loadRecent(); }
+  function showPicker() { if(project) reportProjectLease('closed'); syncLocation(''); viewEpoch++; candidateSeq++; project = null; activeSegmentId = ''; activeIndex = -1; revisionComparison = null; currentFilter = 'actionable'; currentLocation = 'all'; currentChange = 'all'; resetSearchTools(); termSelection = { index: -1, source: '', target: '' }; dirty.clear(); directFilePath = ''; clearOutputDisplay(); document.title = '翻訳 - YakuLingo'; el('cat-page-title').textContent = '翻訳'; setView('start'); el('cat-picker').hidden = false; el('cat-workspace').hidden = true; el('cat-current-summary').hidden = true; closeStartPanels(); loadRecent(); }
   function closeStartPanels() { document.querySelectorAll('.cat-start-panel').forEach(function (panel) { panel.hidden = true; }); el('cat-direction-choice').hidden = true; }
   /* 開いた欄は、いちばん少ない移動で見える所へ入れる（block:'nearest'）。
      画面の中央へ寄せていたころは、押しただけで 560px 飛び、押したボタン自身が
@@ -194,12 +194,9 @@
      上端で切れて残っていた（2026-08-13 実測、1240x860）。 */
   function showStart(mode) {
     closeStartPanels();
+    if (mode !== 'align') return;
     var panel = el('cat-source-' + mode);
     if (!panel) return;
-    /* 保存場所から取り込む欄を開くときは、選び済みのファイルを忘れる。
-       source() はファイルを先に見るので、前に選んで失敗したファイルが残っていると、
-       入力した場所ではなくそちらを取り込みにいく（2026-08-13、実機で発生）。 */
-    if (mode === 'file') { el('cat-file-input').value = ''; uploaded = null; }
     panel.hidden = false;
     if (mode === 'align') updateAlignEstimate();
     var first = panel.querySelector('input,textarea,[role="button"],button');
@@ -900,12 +897,6 @@
     el('cat-translate').hidden = isAlignment;
     /* 対応確認では訳さないので、下訳の入口も出さない（訳す入口と同じ扱い）。 */
     el('cat-tm-pretranslate').hidden = isAlignment;
-    var transient = project.lifecycle === 'transient';
-    el('cat-transient-actions').hidden = !transient;
-    if (transient) {
-      var expiry = new Date(project.retention_until || '');
-      el('cat-transient-expiry').textContent = (isNaN(expiry.getTime()) ? 'この一時作業は自動削除の対象です。' : ('この一時作業は ' + expiry.toLocaleString('ja-JP') + ' 以降、開いていなければ削除されます。')) + ' 翻訳メモリへ登録済みの訳は残ります。';
-    }
     startProjectLease();
     el('cat-source-update-open').hidden = project.source !== 'file';
     var pct = project.total ? Math.round(100 * Number(project.confirmed) / Number(project.total)) : 0;
@@ -956,7 +947,7 @@
     pendingDirection = retry; el('cat-direction-choice').hidden = false; status(error.data.error || '翻訳先を選んでください。'); YakuCommon.focus(el('cat-direction-choice').querySelector('[data-cat-direction]')); return true;
   }
   function source(mode, fileOverride) {
-    if (mode === 'text') { var text = el('cat-text').value; return text.trim() ? Promise.resolve({ text: text }) : Promise.reject(new Error('翻訳したい文章を貼り付けてください。')); }
+    if (mode === 'text') { var text = el('quick-input').value; return text.trim() ? Promise.resolve({ text: text }) : Promise.reject(new Error('翻訳したい文章を貼り付けてください。')); }
     /* Edgeでは、ドロップした FileList を hidden input.files へ代入してから
        change を発火する経路が安定しない。ドロップ時は File を直接渡し、
        ファイル選択ダイアログのときだけ input.files を読む。 */
@@ -968,7 +959,7 @@
       if (uploaded && uploaded.key === key) return Promise.resolve({ file_handle: uploaded.handle });
       return YakuCommon.upload('/api/upload', file).then(function (data) { if (!data.file_handle) throw new Error('ファイルを読み込めませんでした。そのファイルがWordやExcelで開いたままになっていないかご確認のうえ、もう一度お選びください。'); uploaded = { key: key, handle: data.file_handle }; return { file_handle: data.file_handle }; });
     }
-    var path = el('cat-path').value.trim(); return path ? Promise.resolve({ file_path: path }) : Promise.reject(new Error('Word・Excelを選択してください。'));
+    var path = String(directFilePath || '').trim(); return path ? Promise.resolve({ file_path: path }) : Promise.reject(new Error('Word・Excelを選択してください。'));
   }
   function openSource(mode, intent, fileOverride) {
     var epoch = ++viewEpoch;
@@ -3193,8 +3184,8 @@
     el('cat-docs-toggle').addEventListener('click', function () {
       applyDocsPane(!el('cat-editor-layout').classList.contains('is-docs-open'), true);
     });
-    el('cat-docs-import').addEventListener('click', function () { showPicker(); showStart('file'); });
-    el('cat-align-next-document').addEventListener('click', function () { showPicker(); showStart('file'); });
+    el('cat-docs-import').addEventListener('click', function () { showPicker(); YakuCommon.focus(el('cat-open-file-entry')); });
+    el('cat-align-next-document').addEventListener('click', function () { showPicker(); YakuCommon.focus(el('cat-open-file-entry')); });
     el('cat-docs-pane-list').addEventListener('click', function (event) {
       var choice = event.target.closest ? event.target.closest('[data-cat-doc-open]') : null;
       if (!choice || choice.disabled) return;
@@ -3205,7 +3196,7 @@
     el('cat-doc-dialog-import').addEventListener('click', function () {
       el('cat-doc-dialog').close();
       showPicker();
-      showStart('file');
+      YakuCommon.focus(el('cat-open-file-entry'));
     });
     /* 貼り付けも同じ扱いの入口になったので、ここから始められるようにする。
        開始画面へ戻して、貼り付け欄へ焦点を置くだけでよい。 */
@@ -3234,15 +3225,15 @@
     document.addEventListener('visibilitychange', function () {
       if (document.visibilityState === 'hidden' && !busy) { try { flush(); } catch (_) {} }
     });
-    document.querySelectorAll('[data-cat-open]').forEach(function (button) { button.addEventListener('click', function () { openSource(button.getAttribute('data-cat-open'), 'auto'); }); });
     document.querySelectorAll('[data-cat-direction]').forEach(function (button) { button.addEventListener('click', function () { el('cat-direction-choice').hidden = true; if (pendingDirection) pendingDirection(button.getAttribute('data-cat-direction')); }); });
     /* 「Word・Excelを取り込む」は、ファイル選択をそのまま開く。押しても欄が
        開くだけだったころは、そこにもう一度「選ぶ」があり、さらに「取り込んで
        確認を始める」を押す必要があった（2026-08-13、利用者の指摘）。 */
-    el('cat-open-file-entry').addEventListener('click', function () { el('cat-file-input').value = ''; el('cat-file-input').click(); });
+    el('cat-open-file-entry').addEventListener('click', function () { directFilePath = ''; el('cat-file-input').value = ''; el('cat-file-input').click(); });
     /* 選んだ時点で取り込みを始める。押す回数を3回から1回にする。 */
     el('cat-file-input').addEventListener('change', function () {
       uploaded = null;
+      directFilePath = '';
       if (this.files.length) openSource('file', 'auto');
     });
     /* 落とし先は外側の枠1か所だけにする（2026-08-16）。入口を1つにしたので
@@ -3300,20 +3291,6 @@
     /* 同じ口へ寄せる。畳んで一覧へ戻すのではなく、その場で選ばせる。
        打ちかけの訳文は先に保存してから開く（開いたあと入れ替わるため）。 */
     el('cat-switch-project').addEventListener('click', function () { if (busy) return; flush().then(openDocDialog).catch(function (error) { status(error.message, true); }); });
-    el('cat-project-save').addEventListener('click', function () {
-      return mutate('project-save', {}, 'この作業を保存しています…').then(function (data) {
-        if (data) status('この作業を保存しました。あとから「最近の作業」から再開できます。');
-        return data;
-      });
-    });
-    el('cat-project-retain').addEventListener('click', function () {
-      return mutate('project-retain', {}, '削除予定を延長しています…').then(function (data) { if (data) status('一時作業の削除予定を7日延ばしました。'); return data; });
-    });
-    el('cat-copy-close').addEventListener('click', function () {
-      if (!project || project.lifecycle !== 'transient' || busy) return;
-      var target=null;setBusy(true);status('訳文をコピーして一時作業を削除しています…');
-      return flush().then(function(){target=currentScope();if(!target)throw new Error('一時作業を確認できません。');return post('export',{},true,target);}).then(function(output){return YakuCommon.copyText(String(output.text||''),null,el('cat-status')).then(function(copied){if(!copied)throw new Error('クリップボードへコピーできなかったため、一時作業は削除していません。');return post('project-close-delete',{memory_policy:'retain_tm',client_id:YakuCommon.clientId()},true,target);});}).then(function(){setBusy(false);showPicker();status('訳文をコピーし、一時作業を削除しました。翻訳メモリへ登録済みの訳は残しています。');}).catch(function(error){setBusy(false);status(error.message,true);});
-    });
     el('cat-translate').addEventListener('click', translate); el('cat-export').addEventListener('click', openExportPreflight);
     el('cat-export-reviewed').addEventListener('click', exportReviewed);
     el('cat-qa-open').addEventListener('click', openQaList);
@@ -3772,11 +3749,21 @@
        いた経路。訳文を送り返す promote とは別で、そちらは artifact ID だけ） */
     window.addEventListener('yaku-instant-handoff', function (event) {
       var detail = (event && event.detail) || {};
-      var filePath = String(detail.filePath || '');
+      /* DesktopIntegration の既存イベントは detail.filePath に絶対パスを渡す。
+         旧 #cat-path 欄へ書き戻す経路は撤去したが、この外部入口そのものは
+         単一CAT入口へ残す。前後の引用符と空白だけを整え、NULや文字列以外は
+         サーバへ送らない。実在性・共有フォルダ可否はサーバ側で判定する。 */
+      var rawFilePath = detail.filePath;
+      var filePath = typeof rawFilePath === 'string' ? rawFilePath.trim().replace(/^"(.*)"$/, '$1').trim() : '';
+      if (rawFilePath != null && String(rawFilePath).trim() && (!filePath || filePath.indexOf('\0') >= 0)) {
+        directFilePath = '';
+        status('ファイルの保存場所を読み込めませんでした。', true);
+        return;
+      }
       if (filePath) {
         showPicker();
         el('cat-file-input').value = '';
-        el('cat-path').value = filePath;
+        directFilePath = filePath;
         openSource('file', 'auto');
         return;
       }
@@ -3785,7 +3772,7 @@
       /* 先に選ぶ画面へ戻してから始める。訳す向きを聞き返されたときの二択は
          選ぶ画面の中に居るので、隠したままだと行き止まりになる。 */
       showPicker();
-      el('cat-text').value = text;
+      el('quick-input').value = text;
       openSource('text', 'auto');
     });
   }

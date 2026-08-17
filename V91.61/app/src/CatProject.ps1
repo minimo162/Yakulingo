@@ -313,10 +313,17 @@ function Initialize-YakuCatProjectState {
     if (-not ($Project.PSObject.Properties.Name -contains 'Revision')) { $Project | Add-Member -NotePropertyName Revision -NotePropertyValue 0 -Force }
     if (-not ($Project.PSObject.Properties.Name -contains 'SchemaVersion')) { $Project | Add-Member -NotePropertyName SchemaVersion -NotePropertyValue 8 -Force }
     elseif ([int]$Project.SchemaVersion -lt 8) { $Project.SchemaVersion = 8 }
-    if (-not ($Project.PSObject.Properties.Name -contains 'Lifecycle') -or @('transient','saved','deleting','deleted') -notcontains [string]$Project.Lifecycle) {
+    $legacyTransient = ($Project.PSObject.Properties.Name -contains 'Lifecycle' -and [string]$Project.Lifecycle -eq 'transient')
+    if (-not ($Project.PSObject.Properties.Name -contains 'Lifecycle') -or @('saved','deleting','deleted') -notcontains [string]$Project.Lifecycle) {
         $Project | Add-Member -NotePropertyName Lifecycle -NotePropertyValue 'saved' -Force
     }
     if (-not ($Project.PSObject.Properties.Name -contains 'RetentionUntil')) { $Project | Add-Member -NotePropertyName RetentionUntil -NotePropertyValue '' -Force }
+    # transient は旧版の保存形式にだけ残る値。期限切れかどうかに関係なく、
+    # 読み込んだ時点で通常の保存作業へ移し、期限は無効にする。
+    if ($legacyTransient -or [string]$Project.Lifecycle -eq 'saved') {
+        $Project.Lifecycle = 'saved'
+        $Project.RetentionUntil = ''
+    }
     if (-not ($Project.PSObject.Properties.Name -contains 'PromotedAt')) { $Project | Add-Member -NotePropertyName PromotedAt -NotePropertyValue '' -Force }
     if (-not ($Project.PSObject.Properties.Name -contains 'DeletionMemoryPolicy')) { $Project | Add-Member -NotePropertyName DeletionMemoryPolicy -NotePropertyValue '' -Force }
     if (-not ($Project.PSObject.Properties.Name -contains 'TextSourceStructure')) { $Project | Add-Member -NotePropertyName TextSourceStructure -NotePropertyValue $null -Force }
@@ -2044,8 +2051,10 @@ function New-YakuCatTextProject {
         Segments  = @($segments.ToArray())
         Warnings  = @()
         Source    = 'text'
-        Lifecycle = 'transient'
-        RetentionUntil = (Get-Date).AddDays(7).ToString('o')
+        # 貼り付けた文章も作成時点から通常の保存作業にする。期限付きの
+        # transient は旧版の互換読み込みだけに残し、新規作成では使わない。
+        Lifecycle = 'saved'
+        RetentionUntil = ''
         PromotionReferenceTranslation = [string]$(if (-not $useTargets) { $Translation } else { '' })
         CreatedAt = (Get-Date).ToString('s')
     }
@@ -2236,6 +2245,25 @@ function Save-YakuCatProjectToCorpus {
 
 function Get-YakuCatProjectStoreDir {
     return (Get-YakuSubDir 'cat')
+}
+
+function Get-YakuCatProjectDiskRevision {
+    <# Restore が manifest CAS 競合で失敗したとき、HTTP 409 の current_revision
+       をメモリにまだ載っていない作業からも返せるようにする。読み取り専用で、
+       project.json と旧形式の <id>.json 以外は見ない。 #>
+    param([Parameter(Mandatory=$true)][string]$Id)
+    if ($Id -notmatch '^[a-fA-F0-9]{32}$') { return $null }
+    $store = [System.IO.Path]::GetFullPath((Get-YakuCatProjectStoreDir)).TrimEnd('\')
+    $projectDir = [System.IO.Path]::GetFullPath((Join-Path $store $Id))
+    if (-not $projectDir.StartsWith($store + '\', [StringComparison]::OrdinalIgnoreCase)) { return $null }
+    $file = Join-Path $projectDir 'project.json'
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { $file = Join-Path $store ($Id + '.json') }
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return $null }
+    try {
+        $manifest = Get-Content -LiteralPath $file -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($manifest.PSObject.Properties.Name -notcontains 'revision') { return $null }
+        return [int]$manifest.revision
+    } catch { return $null }
 }
 
 function Get-YakuCatOwnedSourceArtifactPath {
@@ -2624,25 +2652,22 @@ function Write-YakuCatCommitManifestCas {
 }
 
 function Start-YakuCatProjectDeletion {
-    <# lifecycleを先にcommit manifestへCASし、後続mutationを止めてから実体を消す。
-       cleanupが期限を読んだ後に保存・延長された場合はcandidate内の再検査で停止する。 #>
+    <# lifecycleを先にcommit manifestへCASし、後続mutationを止めてから実体を消す。 #>
     param(
         [Parameter(Mandatory=$true)][string]$ProjectId,
         [Parameter(Mandatory=$true)][int]$ExpectedRevision,
         [Parameter(Mandatory=$true)][string]$ExpectedGenerationId,
         [string]$ExpectedLifecycle='',
-        [ValidateSet('retain_tm','revoke_tm')][string]$MemoryPolicy='retain_tm',
-        [switch]$RequireExpired
+        [ValidateSet('retain_tm','revoke_tm')][string]$MemoryPolicy='retain_tm'
     )
-    $mutation={param($candidate,$innerGeneration,$innerLifecycle,$innerMemoryPolicy,$innerRequireExpired)
+    $mutation={param($candidate,$innerGeneration,$innerLifecycle,$innerMemoryPolicy)
         if((Get-Command Test-YakuProjectLeaseActive -ErrorAction SilentlyContinue) -and (Test-YakuProjectLeaseActive -ProjectId ([string]$candidate.Id))){throw 'CAT_PROJECT_ACTIVE_LEASE'}
         if((Get-Command Test-YakuProjectJobActive -ErrorAction SilentlyContinue) -and (Test-YakuProjectJobActive -ProjectId ([string]$candidate.Id))){throw 'CAT_PROJECT_ACTIVE_JOB'}
         if([string]$candidate.ActiveGenerationId -cne $innerGeneration){throw 'CAT_PROJECT_DELETE_CAS_MISMATCH'}
         if(-not [string]::IsNullOrWhiteSpace($innerLifecycle) -and [string]$candidate.Lifecycle -cne $innerLifecycle){throw 'CAT_PROJECT_DELETE_CAS_MISMATCH'}
-        if([bool]$innerRequireExpired){$expiry=try{[datetime]$candidate.RetentionUntil}catch{[datetime]::MaxValue};if([string]$candidate.Lifecycle -ne 'transient' -or $expiry.ToUniversalTime() -gt [datetime]::UtcNow){throw 'CAT_PROJECT_DELETE_NOT_EXPIRED'}}
         $candidate.Lifecycle='deleting';$candidate.DeletionMemoryPolicy=$innerMemoryPolicy;return [pscustomobject]@{lifecycle='deleting';memory_policy=$innerMemoryPolicy;previous_generation_id=$innerGeneration}
     }
-    return (Invoke-YakuCatProjectMutation -ProjectId $ProjectId -ExpectedRevision $ExpectedRevision -Mutation $mutation -Arguments @($ExpectedGenerationId,$ExpectedLifecycle,$MemoryPolicy,[bool]$RequireExpired) -Action project-delete-start)
+    return (Invoke-YakuCatProjectMutation -ProjectId $ProjectId -ExpectedRevision $ExpectedRevision -Mutation $mutation -Arguments @($ExpectedGenerationId,$ExpectedLifecycle,$MemoryPolicy) -Action project-delete-start)
 }
 
 function Save-YakuCatProject {
@@ -2886,7 +2911,6 @@ function Get-YakuCatSavedProjects {
     foreach ($f in @($files.ToArray() | Sort-Object LastWriteTime -Descending | Select-Object -First $Limit)) {
         try {
             $o = Get-Content -LiteralPath $f.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ([string]$o.lifecycle -eq 'transient') { continue }
             $segs = @($o.segments)
             if ([int]$o.schema_version -ge 2) {
                 $generationId = [string]$o.generation_id
@@ -2902,6 +2926,9 @@ function Get-YakuCatSavedProjects {
                     Id = [string]$o.id
                     FileName = [string]$o.file_name
                     Direction = [string]$o.direction
+                    # recent API が旧 transient だけを復元・移行するための内部状態。
+                    # 通常の saved 全件を Restore する必要はない。
+                    Lifecycle = [string]$o.lifecycle
                     # 一覧からそのまま消せるようにする。削除は expected_revision が要る。
                     Revision = $(try { [int]$o.revision } catch { 0 })
                     Total = $segs.Count
@@ -3165,8 +3192,10 @@ function Restore-YakuCatProject {
         DirectionSourceFingerprint = [string]$o.direction_source_fingerprint
         TerminologySnapshotHash = [string]$o.terminology_snapshot_hash
         TmOutbox = @($o.tm_outbox)
-        Lifecycle = $(if (@('transient','saved','deleting','deleted') -contains [string]$o.lifecycle) { [string]$o.lifecycle } else { 'saved' })
-        RetentionUntil = [string]$o.retention_until
+        # 旧 manifest の transient は通常の保存作業として読み込む。削除中・
+        # 削除済みだけは状態を保ち、明示削除の途中を復活させない。
+        Lifecycle = $(if (@('deleting','deleted') -contains [string]$o.lifecycle) { [string]$o.lifecycle } else { 'saved' })
+        RetentionUntil = $(if ([string]$o.lifecycle -eq 'saved') { [string]$o.retention_until } else { '' })
         PromotedAt = [string]$o.promoted_at
         DeletionMemoryPolicy = [string]$o.deletion_memory_policy
         ReviewEvents = @($savedReviewEvents)
@@ -3219,6 +3248,16 @@ function Restore-YakuCatProject {
         $null = Assert-YakuCatStructuralUndoSnapshot -Project $project -Snapshot $project.PendingStructuralUndo -RequireCurrent
     }
     $null = Assert-YakuCatActiveSourceSnapshotFingerprints -Project $project
+    # 旧 transient は全 snapshot/source 検証を通った後に saved へ正規化する。
+    # 既存のcommit manifest CASを通してディスク側も1世代として移行する。
+    if ([string]$o.lifecycle -eq 'transient') {
+        try { $null = Save-YakuCatProject -Project $project -ThrowOnError }
+        catch {
+            $inner = [string]$_.Exception.Message
+            if ($inner -match '^CAT_[A-Z0-9_]+') { throw }
+            throw ('CAT_LEGACY_TRANSIENT_MIGRATION_FAILED: ' + $inner)
+        }
+    }
     if ([string]$project.Source -eq 'file' -and
         ([string]::IsNullOrWhiteSpace([string]$project.SourceArtifactRelativePath) -or [string]$project.SourceArtifactContractVersion -ne 'cat-source-v2') -and
         (Test-Path -LiteralPath ([string]$project.Path) -PathType Leaf)) {
@@ -5574,7 +5613,7 @@ function Sync-YakuCatTranslationMemoryOutbox {
         }
     }
     # 成功済みeventは外部TM側がevent identityで冪等に保持する。outboxには
-    # 未同期だけを残し、transient削除を永久に妨げない。
+    # 未同期だけを残し、通常の作業削除を永久に妨げない。
     $Project.TmOutbox=@($pendingEvents.ToArray())
     $pending=@($Project.TmOutbox).Count
     $Project | Add-Member -NotePropertyName TmPendingCount -NotePropertyValue ([int]$pending) -Force

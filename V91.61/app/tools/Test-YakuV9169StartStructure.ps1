@@ -54,6 +54,11 @@ $pickerEnd = $pickerFragment.IndexOf('id="cat-workspace"')
 if ($pickerEnd -lt 0) { $pickerEnd = $pickerFragment.Length }
 $startFragment = $pickerFragment.Substring(0, $pickerEnd)
 Check-YakuTab ($startFragment.Contains('id="quick-area"') -and $startFragment.Contains('id="quick-input"') -and $startFragment.Contains('id="cat-file-area"')) '文章とファイルを開始画面の同じ枠で受ける'
+Check-YakuTab ($startFragment -match 'id="cat-align-entry"' -and $startFragment -match 'id="cat-open-align-entry"' -and
+    $startFragment -match '過去の訳を登録' -and $startFragment -match '日本語版と英語版のPDF' -and
+    $startFragment -match '翻訳メモリへ登録した訳だけ') '過去の訳を登録する入口を開始画面で明示する'
+Check-YakuTab ($html -notmatch '<details[^>]*class="entry-more(?:["\s]|$)|そのほかの始め方|data-cat-source-show|id="cat-source-file"|id="cat-source-prior"') '廃止した手動経路・旧版貼り付け経路を画面から到達不能にする'
+Check-YakuTab ($js -match "cat-open-align-entry'[\s\S]{0,500}?/cat\?import=1" -and $js -match "showStart\('align'\)") '可視の過去訳入口は既存の対訳フォームへ進む'
 
 # 確認作業に入ったら、始めるための入口は出さない。#cat-instant は #cat-picker の
 # 外に居るので、picker の hidden では消えない。view で消す。
@@ -62,7 +67,7 @@ Check-YakuTab ($css -match 'body\[data-cat-view="workspace"\] #cat-instant \{ di
 # 貼り付けはCAT作業を作り、必ず確認画面へ移る。
 $serverText = Get-Content -LiteralPath (Join-Path $root 'src\Server.ps1') -Raw -Encoding UTF8
 $quickJs = Get-Content -LiteralPath (Join-Path $root 'www\assets\quick.js') -Raw -Encoding UTF8
-Check-YakuTab ($html -match 'id="quick-submit-note"[^>]*>確認画面へ進みます') '貼り付けた文章の行き先を押す前に書く'
+Check-YakuTab ($html -match 'id="quick-submit-reason"[^>]*class="quick-submit-reason"[^>]*role="status"' -and $html -notmatch 'quick-submit-note|確認画面へ進みます') '貼り付けの状態説明は主操作の直下へ動的に出す'
 Check-YakuTab ($serverText -match "path -eq '/quick'" -and $serverText -match "path -eq '/cat'") '/quick と /cat は同じサーバの後ろにある'
 Check-YakuTab ($quickJs -notmatch '/api/quick/jobs' -and $quickJs -match '/api/cat/open' -and $html -notmatch 'id="quick-result"') '貼り付けは別結果カードを増やさずCATへ進む'
 
@@ -107,7 +112,7 @@ Check-YakuTab ($js -match "el\('cat-switch-project'\)[\s\S]{0,200}?openDocDialog
 Check-YakuTab ($html -match 'id="cat-start-title"[^>]*>文章とWord・Excelを訳す') '統合した入口を読み上げでも説明する'
 Check-YakuTab ($html -match 'id="cat-docs-entry-title"[^>]*>Word・Excelを訳す') 'ファイルの入口にも読み上げ名がある'
 Check-YakuTab ($html -match 'ファイル全体を取り込み、1文ずつ確認する画面へ進みます') 'ファイルの作業内容を落とす前に示す'
-Check-YakuTab ($html -match 'id="quick-submit-note"[^>]*>確認画面へ進みます') '短文も確認画面へ進むと示す'
+Check-YakuTab ($html -match 'id="quick-submit-reason"[^>]*class="quick-submit-reason"[^>]*role="status"' -and $html -notmatch 'quick-submit-note|確認画面へ進みます') '短文の状態説明を主操作の直下へ出す'
 Check-YakuTab ($html -match 'id="cat-picker"[^>]*aria-labelledby="cat-page-title"') '開始画面全体をページ見出しに結び付ける'
 Check-YakuTab ($html -match 'id="cat-instant"[^>]*aria-labelledby="cat-start-title"') '貼り付け側も見出しに結び付ける'
 

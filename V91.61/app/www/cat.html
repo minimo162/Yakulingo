@@ -86,7 +86,11 @@
               <div id="cat-resume-list"></div>
               <button type="button" id="cat-resume-more" class="link-button" hidden aria-expanded="false"></button>
             </div>
-            <button type="button" id="cat-open-align-entry" class="secondary-button entry-more-pdf-card">過去の日本語版・英語版PDFを読み込む</button>
+            <section id="cat-align-entry" class="cat-align-entry" aria-labelledby="cat-align-entry-title">
+              <h2 id="cat-align-entry-title">過去の訳を登録</h2>
+              <p class="cat-align-entry-note">日本語版と英語版のPDFを読み込み、対応を確認して翻訳メモリへ登録した訳だけを、次の資料の候補に使えます。</p>
+              <button type="button" id="cat-open-align-entry" class="secondary-button entry-more-pdf-card">過去の日本語版・英語版PDFを読み込む</button>
+            </section>
             <!-- 使い方と設定は別々のリンクにして、目的の場所へ直接移動できるようにする。 -->
             <nav id="cat-help-links" class="home-help-links" aria-label="使い方と設定">
               <a href="/tutorial">使い方</a>
@@ -157,15 +161,6 @@
           </div>
         </div>
 
-        <!-- 選んだ時点で取り込みが始まるので、確認のボタンは置かない。
-             ファイルを選べない環境のために、保存場所の入力だけを残す。 -->
-        <div id="cat-source-file" class="cat-start-panel" hidden>
-          <label class="field-label" for="cat-path">ファイルの保存場所<input id="cat-path" type="text" placeholder="例: C:\Documents\資料.docx"></label>
-          <button type="button" data-cat-open="file">この場所から取り込む</button>
-        </div>
-        <div id="cat-source-text" class="cat-start-panel" hidden>
-          <h3>長い文章を貼り付ける</h3><label for="cat-text" class="sr-only">翻訳したい文章</label><textarea id="cat-text" rows="9" placeholder="翻訳したい文章を貼り付け"></textarea><button type="button" data-cat-open="text">確認を始める</button>
-        </div>
         <!-- 過去の日英資料の取り込み。PDF を直接読めるようにした（2026-08-13）。
              利用者の実情として、正式版は PDF で、元の Word・Excel は章ごとに
              細切れだったり印刷範囲外にゴミがあったりして、そのままでは使えない。
@@ -173,7 +168,7 @@
              PDF の解析はこの画面の中（WebAssembly）で行い、ファイルは送らない。 -->
         <div id="cat-source-align" class="cat-start-panel" hidden>
           <h3>過去の訳を登録する</h3>
-          <p class="muted">同じ資料の日本語版と英語版を読み込み、対応する文を確認します。確認済みにした訳だけが、次の資料から候補として出ます。</p>
+          <p class="muted">同じ資料の日本語版と英語版を読み込み、対応する文を確認します。確認済みにしただけでは候補にならず、翻訳メモリへ登録した訳だけが次の資料から候補として出ます。</p>
           <p class="muted">PDFファイル自体は送らず、選んだページから取り出した日本語と英語の文をCopilotへ送って対応を探します。</p>
           <div class="align-file-row">
             <label class="field-label" for="cat-align-source-file">日本語版のPDF<input id="cat-align-source-file" type="file" accept=".pdf"></label>
@@ -236,7 +231,7 @@
             <span id="cat-save-status" class="cat-save-status" role="status" aria-live="polite">保存済み</span>
           </div>
           <label class="cat-toolbar-search" for="cat-search"><span>検索</span><input id="cat-search" type="search" placeholder="原文・訳文を検索"></label>
-         <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">訳していない行を訳す</button><button id="cat-export" type="button" class="secondary-button">訳文を取り出す</button><button id="cat-qa-open" type="button" class="secondary-button" title="出す前に、直すところを一覧で見ます（F8）">点検</button><div id="cat-transient-actions" class="cat-transient-actions" hidden><p id="cat-transient-expiry" class="muted"></p><p class="muted">コピーして終了すると、この一時作業は削除されます。翻訳メモリへ登録済みの訳は残ります。</p><button id="cat-project-save" type="button" class="secondary-button">この作業を残す</button><button id="cat-project-retain" type="button" class="secondary-button">削除予定を7日延ばす</button><button id="cat-copy-close" type="button" class="secondary-button">コピーして終了</button></div><details class="cat-more-actions"><summary>そのほか</summary><div class="cat-more-actions-list"><button id="cat-tm-pretranslate" type="button" class="secondary-button" title="翻訳メモリに完全一致がある行を、Copilotへ送る前に訳文欄へ入れます">翻訳メモリで下訳する</button><button id="cat-preview-dock-toggle" type="button" class="secondary-button" aria-pressed="false" title="格子の下に体裁を出したまま訳します">体裁を下に出す</button><button id="cat-preview-open" type="button" class="secondary-button">体裁で見る</button><button id="cat-source-update-open" type="button" class="secondary-button">原文ファイルを差し替える</button><input id="cat-source-update-file" type="file" accept=".xlsx,.xlsm,.csv,.docx" hidden><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みの行だけコピー</button><button id="cat-switch-project" type="button" class="secondary-button">ほかの資料に切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>右の候補を上から順に訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>D</kbd></dt><dd>原文にある数字を一覧に出す（打ち直さずに入れる）</dd></div><div><dt><kbd>1～9</kbd></dt><dd>Ctrl+Dで出した数字を、番号でカーソル位置へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></dt><dd>原文をそのまま訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd></dt><dd>確認を取り消す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>M</kbd> / <kbd>Alt</kbd>+<kbd>K</kbd></dt><dd>次の行とつなげる / つなげた行を戻す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>S</kbd></dt><dd>原文の選んだ位置で行を2つに分ける（先に原文の中をクリック）</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>H</kbd></dt><dd>検索と置換</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>K</kbd></dt><dd>過去訳を言葉で探す</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>[</kbd></dt><dd>資料の一覧を開く・畳む</dd></div><div><dt><kbd>F7</kbd></dt><dd>ほかの資料に切り替える</dd></div><div><dt><kbd>F8</kbd></dt><dd>点検の一覧</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や右側から訳文欄へ戻る</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
+         <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">訳していない行を訳す</button><button id="cat-export" type="button" class="secondary-button">訳文を取り出す</button><button id="cat-qa-open" type="button" class="secondary-button" title="出す前に、直すところを一覧で見ます（F8）">点検</button><details class="cat-more-actions"><summary>そのほか</summary><div class="cat-more-actions-list"><button id="cat-tm-pretranslate" type="button" class="secondary-button" title="翻訳メモリに完全一致がある行を、Copilotへ送る前に訳文欄へ入れます">翻訳メモリで下訳する</button><button id="cat-preview-dock-toggle" type="button" class="secondary-button" aria-pressed="false" title="格子の下に体裁を出したまま訳します">体裁を下に出す</button><button id="cat-preview-open" type="button" class="secondary-button">体裁で見る</button><button id="cat-source-update-open" type="button" class="secondary-button">原文ファイルを差し替える</button><input id="cat-source-update-file" type="file" accept=".xlsx,.xlsm,.csv,.docx" hidden><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みの行だけコピー</button><button id="cat-switch-project" type="button" class="secondary-button">ほかの資料に切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>右の候補を上から順に訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>D</kbd></dt><dd>原文にある数字を一覧に出す（打ち直さずに入れる）</dd></div><div><dt><kbd>1～9</kbd></dt><dd>Ctrl+Dで出した数字を、番号でカーソル位置へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></dt><dd>原文をそのまま訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd></dt><dd>確認を取り消す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>M</kbd> / <kbd>Alt</kbd>+<kbd>K</kbd></dt><dd>次の行とつなげる / つなげた行を戻す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>S</kbd></dt><dd>原文の選んだ位置で行を2つに分ける（先に原文の中をクリック）</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>H</kbd></dt><dd>検索と置換</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>K</kbd></dt><dd>過去訳を言葉で探す</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>[</kbd></dt><dd>資料の一覧を開く・畳む</dd></div><div><dt><kbd>F7</kbd></dt><dd>ほかの資料に切り替える</dd></div><div><dt><kbd>F8</kbd></dt><dd>点検の一覧</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や右側から訳文欄へ戻る</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
           <section aria-labelledby="cat-personal-glossary-title">
             <h3 id="cat-personal-glossary-title">今後も使う訳</h3>
             <p class="muted">取り消しても、訳した文章は残ります。</p>
@@ -341,7 +336,7 @@
             <section id="cat-align-review-guide" class="cat-align-review-guide" aria-labelledby="cat-align-review-title" hidden>
               <div>
                 <strong id="cat-align-review-title">過去訳の対応候補を確認します</strong>
-                <p>自動で作った対応は推測です。日本語と英語を見比べ、違えば英語を直してから「確認済みにする」を押してください。確認済みの行だけが、次の資料の候補になります。</p>
+                <p>自動で作った対応は推測です。日本語と英語を見比べ、違えば英語を直してから「確認済みにする」を押してください。確認済みにしただけでは候補にならず、翻訳メモリへ登録した行だけが次の資料の候補になります。</p>
               </div>
               <button id="cat-align-next-document" type="button" class="secondary-button">次に、今回のWord・Excelを取り込む</button>
             </section>

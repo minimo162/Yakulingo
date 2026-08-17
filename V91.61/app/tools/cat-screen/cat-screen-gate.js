@@ -313,23 +313,33 @@ function lastBody(name) { const c = calls(name); return c.length ? c[c.length - 
     // -------------------------------------------------- 開始画面（2026-08-16 の統合入口）
     // project を開く前の実画面で、静的な字面では分からない2件を固定する。
     // 1) cat.js の一括解除後も、空の quick-submit は押せないまま。
-    // 2) 子要素へ落としたファイルも、外枠の drop 1回だけで change 1回になる。
+    // 2) 子要素へ落としたファイルも、外枠の drop 1回だけで直接Fileのupload 1回になる。
     await page.goto('http://127.0.0.1:' + port + '/cat', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(function () {
-      var reason = document.getElementById('quick-submit-reason');
-      return !!(reason && reason.textContent === '文章を入力してください');
+      var submit = document.getElementById('quick-submit');
+      var input = document.getElementById('quick-input');
+      var file = document.getElementById('cat-open-file-entry');
+      var align = document.getElementById('cat-open-align-entry');
+      return !!(submit && input && file && align &&
+        submit.textContent.trim() === '英語に訳す' &&
+        submit.disabled &&
+        align.classList.contains('entry-more-pdf-card') &&
+        align.getClientRects().length > 0);
     }, null, { timeout: 10000 });
     out.startScreen = await page.evaluate(function () {
       var submit = document.getElementById('quick-submit');
       var guide = document.getElementById('quick-empty-guide');
       var area = document.getElementById('quick-area');
       var file = document.getElementById('cat-file-area');
+      var align = document.getElementById('cat-open-align-entry');
       return {
         buttonText: submit ? submit.textContent : '',
         disabled: submit ? submit.disabled : null,
         reason: document.getElementById('quick-submit-reason').textContent,
         guideVisible: !!(guide && !guide.hidden),
-        unified: !!(area && file && area.contains(file))
+        unified: !!(area && file && area.contains(file)),
+        alignmentVisible: !!(align && align.getClientRects().length > 0),
+        alignmentCard: !!(align && align.classList.contains('entry-more-pdf-card'))
       };
     });
     await page.evaluate(function () {
@@ -341,14 +351,18 @@ function lastBody(name) { const c = calls(name); return c.length ? c[c.length - 
     await page.focus('#quick-input');
     await page.keyboard.press('Enter');
     out.startScreen.fileClicksFromTextareaEnter = await page.evaluate(function () { return window.__startProbe.fileClicks; });
+    const nestedDropUpload = page.waitForRequest(function (request) {
+      return request.method() === 'POST' && request.url().indexOf('/api/upload') >= 0;
+    }, { timeout: 5000 });
     await page.evaluate(function () {
       var transfer = new DataTransfer();
       transfer.items.add(new File(['screen gate'], 'screen-gate.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
       var target = document.querySelector('.file-lane-lead');
       target.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }));
     });
-    await page.waitForFunction(function () { return window.__startProbe.changes >= 1; }, null, { timeout: 5000 });
+    await nestedDropUpload;
     out.startScreen.changesFromNestedDrop = await page.evaluate(function () { return window.__startProbe.changes; });
+    out.startScreen.uploadsFromNestedDrop = 1;
 
     await page.goto('http://127.0.0.1:' + port + '/cat?project=' + project.id, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#cat-grid-body tr[data-cat-row]', { timeout: 20000 });

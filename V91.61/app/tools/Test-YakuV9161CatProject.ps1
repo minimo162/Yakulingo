@@ -274,6 +274,7 @@ $pasted = @"
 今後も市場環境を注視してまいります。
 "@
 $tp = New-YakuCatTextProject -Root $root -Text $pasted -Settings $settings -Direction 'to_en'
+Chk ([string]$tp.Lifecycle -eq 'saved' -and [string]::IsNullOrWhiteSpace([string]$tp.RetentionUntil)) '貼り付けは作成時点から期限なしの保存CAT作業になる'
 $tsegs = @($tp.Segments)
 Chk ($tsegs.Count -eq 3) ('行と句点で分かれる: ' + $tsegs.Count)
 Chk ([string]$tsegs[0].Text -eq '当第1四半期は、生産体制の見直しにより固定費を圧縮しました。') '1文目'
@@ -318,7 +319,8 @@ $quickJsText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 
 # 88af5fc で下の表明が入ったとき、$catProjectSource を読む行が抜けていた。
 # 未定義のまま -match すると常に false になり、表明が働かない。
 $catProjectSource = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CatProject.ps1'))
-Chk (-not $quickJsText.Contains('/api/quick/jobs') -and $quickJsText.Contains('/api/cat/open') -and -not $quickJsText.Contains('/api/cat/promote')) '貼り付けは一時CAT作業へ一本化する'
+Chk (-not $quickJsText.Contains('/api/quick/jobs') -and $quickJsText.Contains('/api/cat/open') -and -not $quickJsText.Contains('/api/cat/promote') -and
+    $catProjectSource -match "Lifecycle\s*=\s*'saved'[\s\S]{0,120}?RetentionUntil\s*=\s*''") '貼り付けは作成時点から期限なしの保存CAT作業へ一本化する'
 Chk ($catProjectSource -match "DocumentFormat\s*=\s*\[IO\.Path\]::GetExtension\(\`$Path\)") 'Excel取り込み時に出力形式を作業へ保持する'
 Chk (-not $quickJsText.Contains('translation:') -and -not $quickJsText.Contains('target_text')) '訳文を送り返す経路は作らない'
 $indexText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'cat.html'))
@@ -326,15 +328,17 @@ $indexText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'c
 # 送れないときだけ、貼り付けた本文をそのまま確認作業へ渡す。
 # 貼り付けは「入口」ではなく、始める画面にそのまま置いてある（2026-08-12）。
 # 押して別の画面へ入れ替わる作りをやめたので、開く導線ではなく同居を見る。
-Chk ($indexText.Contains('data-cat-source-show="file"') -and $indexText -notmatch 'id="cat-open-instant"') 'ファイルの入口はあり、貼り付けを開く導線は要らなくなった'
+Chk ($indexText.Contains('id="cat-open-file-entry"') -and $indexText.Contains('id="cat-file-input"') -and
+    $indexText -notmatch 'id="cat-source-file"|id="cat-path"|id="cat-text"|data-cat-open') 'ファイルの入口はあり、旧保存場所・旧貼付導線は要らなくなった'
 # 2026-08-13 に帯（タブ）を足し、同じ日に外した。外した理由は、貼り付けた文章も
 # 資料と同じ確認作業になったので、切り替える相手そのものが無くなったこと
 # （利用者判断「保存しない約束は要らない」）。帯を押しても同じ入口に着くだけの
 # 飾りになっていた。守るべきもの（起動したら貼り付け欄に着地する）は変わらない。
 Chk ($indexText -match 'id="cat-instant"' -and $indexText -match 'id="quick-input"') '貼り付け欄は起動して最初の画面にある'
 Chk ($indexText -notmatch 'data-cat-tab-to=') '切り替える相手が無いのに帯だけ残す、をしていない'
-Chk ($quickJsText.Contains('yaku-instant-handoff') -and $appJsText.Contains('yaku-instant-handoff') -and $appJsText -match "showPicker\(\);\s*\r?\n\s*el\('cat-text'\)\.value = text;") '長すぎる文章は確認作業へ渡せる'
-Chk ($indexText -match 'id="cat-text"') 'CAT に貼り付け欄がある'
+Chk ($quickJsText.Contains("new CustomEvent('yaku-instant-handoff'") -and
+    ($appJsText -match "window\.addEventListener\('yaku-instant-handoff'[\s\S]{0,1600}?el\('quick-input'\)\.value = text;[\s\S]{0,160}?openSource\('text'") ) '長すぎる文章はquick-inputからCAT確認作業へ渡せる'
+Chk ($indexText -match 'id="quick-input"' -and $indexText -notmatch 'id="cat-text"') 'CATの貼り付け欄はquick-inputに一本化される'
 
 # ---------------------------------------------------------------- 一覧の作法
 # 市販の CAT エディタが備えていて、こちらに無かったもの（2026-08-06 の比較）。

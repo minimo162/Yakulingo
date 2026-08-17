@@ -68,7 +68,11 @@ Check-YakuTutorial ($tutorialCompletedBody -ne '' -and $tutorialCompletedBody.Co
 Check-YakuTutorial (-not $html.Contains('Ctrl</kbd>＋<kbd>Alt') -and -not $html.Contains('読み込むのは押した時だけ')) 'retired global hotkey must not remain in the tutorial'
 # 2026-08-13: ボタン名が「訳して確認する」へ変わり、資料の文も同じ経路で送るように
 # なったので、送るものの範囲も書き足した。守るのは「実物の名前で、押すまで送らないと書く」。
-Check-YakuTutorial ($html.Contains('「日本語に訳す」「英語に訳す」') -and $html.Contains('「この文章を保存して確認画面へ」')) 'the about page states the explicit-send boundary with the real button names'
+Check-YakuTutorial ($html.Contains('「日本語に訳す」') -and $html.Contains('「英語に訳す」') -and
+    -not $html.Contains('「この文章を保存して確認画面へ」') -and
+    $html.Contains('過去の訳を登録') -and $html.Contains('日本語版と英語版のPDF') -and
+    $html.Contains('翻訳メモリへ登録した訳だけ')) `
+    'the about page names real send controls and documents the visible past-translation registration path'
 Check-YakuTutorial ($html.Contains('ファイルそのものは送りません')) 'the about page says the file itself is not sent'
 Check-YakuTutorial (-not ($html -match '文章は自動では読み取りません|貼り付けて「翻訳」を押す')) 'the retired no-reading claim must not come back'
 Check-YakuTutorial ($html.Contains('YakuLingoのタブを閉じると終了します') -and $html.Contains('翻訳中だけ、閉じてよいか確認します')) 'tutorial explains the browser-tab exit contract'
@@ -111,10 +115,12 @@ Check-YakuTutorial ($css.Contains('min-height: 48px') -and $css.Contains('width:
 Check-YakuTutorial ($css.Contains('@media (max-width: 640px)') -and $css.Contains('@media (prefers-reduced-motion: reduce)')) 'narrow and reduced-motion layouts are defined'
 Check-YakuTutorial ($css.Contains('font-size: clamp(2rem') -and $css.Contains('font-size: 1.25rem')) 'headings and instructional text remain readable at high zoom'
 
-# 2026-08-13、利用者の指摘「3つもリンクがあってどれを選べばよいかわからない。
-# 一つでよくない？」。行き先の /tutorial が、使い方・送るもの・起動とショートカットを
-# 1枚で持っており、案内の再生もその画面から始められる。出口は1つにする。
-Check-YakuTutorial ($homeHtml.Contains('>使い方と設定</a>') -and (([regex]::Matches($homeHtml, '<a href="/tutorial')).Count -eq 1) -and -not $homeHtml.Contains('/cat?tour=1')) 'home exposes exactly one way into help and settings'
+# 2026-08-17: PR #55 で、使い方と設定を目的地へ直接開く2リンクに分けた。
+# 案内の再生は /tutorial 側から始めるので、開始画面には再生用の別入口を増やさない。
+Check-YakuTutorial ($homeHtml.Contains('id="cat-help-links"') -and
+    (([regex]::Matches($homeHtml, '<a href="/tutorial"')).Count -eq 1) -and
+    (([regex]::Matches($homeHtml, '<a href="/tutorial#settings"')).Count -eq 1) -and
+    -not $homeHtml.Contains('>使い方と設定</a>') -and -not $homeHtml.Contains('/cat?tour=1')) 'home exposes direct help and settings links'
 Check-YakuTutorial ($html.Contains('href="/cat?tour=1"')) 'the tour can still be replayed from that page'
 # 既定オフにしたので、「オフです」と知らせる帯は催促にしかならない。外した。
 Check-YakuTutorial (-not $homeHtml.Contains('id="background-disabled-banner"')) 'the startup-off nag banner must stay removed'
