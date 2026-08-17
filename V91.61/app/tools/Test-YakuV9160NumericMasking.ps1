@@ -1008,12 +1008,30 @@ try {
     foreach ($case in @(
         @{ Text=($yen + '1,315 billion'); Pass=$true;  Why='規約どおり（¥1,315 billion）は通る' }
         @{ Text='1,315 billion yen';      Pass=$true;  Why='yen を後ろに書いた形も通る' }
-        @{ Text=($yen + '13,150 billion'); Pass=$false; Why='10 倍の誤りは止まる' }
+        @{ Text=($yen + '13,150 billion'); Pass=$true; Code='numeric-value-mismatch'; Why='10 倍の誤りは警告として残る' }
     )) {
         $null = Set-YakuCatSegmentTranslation -Project $notationProject -Index 0 -Text ('Net sales for Q1 were ' + [string]$case.Text + '.')
         $verdict = Invoke-YakuCatSegmentValidation -Project $notationProject -Segment @($notationProject.Segments)[0]
-        Assert-YakuMask ([bool]$verdict.Passed -eq [bool]$case.Pass) ([string]$case.Why + '（' + (@($verdict.Findings | ForEach-Object { [string]$_.Code }) -join ',') + '）')
+        $codes = @($verdict.Findings | ForEach-Object { [string]$_.Code })
+        $codeOk = [string]::IsNullOrWhiteSpace([string]$case.Code) -or ($codes -contains [string]$case.Code)
+        Assert-YakuMask ([bool]$verdict.Passed -eq [bool]$case.Pass -and $codeOk) ([string]$case.Why + '（' + ($codes -join ',') + '）')
+        if (-not [string]::IsNullOrWhiteSpace([string]$case.Code)) {
+            $eligibility = Get-YakuCatOutputEligibility -Project $notationProject
+            $preflight = Get-YakuCatOutputPreflight -Project $notationProject
+            Assert-YakuMask ([bool]$eligibility.TranslationListEligible -and [bool]$preflight.Eligible) '数値警告があっても確認・書き出し可能'
+        }
     }
+
+    $scaleProject = New-YakuCatTextProject -Root $root -Text '1,315 billion yen' -Settings ([pscustomobject]@{ amount_notation='billion' }) -Direction 'to_en'
+    try {
+        $null = Set-YakuCatSegmentTranslation -Project $scaleProject -Index 0 -Text '1,315 million yen'
+        $scaleVerdict = Invoke-YakuCatSegmentValidation -Project $scaleProject -Segment @($scaleProject.Segments)[0]
+        $scaleCodes = @($scaleVerdict.Findings | ForEach-Object { [string]$_.Code })
+        $scaleEligibility = Get-YakuCatOutputEligibility -Project $scaleProject
+        $scalePreflight = Get-YakuCatOutputPreflight -Project $scaleProject
+        Assert-YakuMask ([bool]$scaleVerdict.Passed -and ($scaleCodes -contains 'numeric-scale-mismatch')) '桁違いは numeric-scale-mismatch 警告として見える'
+        Assert-YakuMask ([bool]$scaleEligibility.TranslationListEligible -and [bool]$scalePreflight.Eligible) '桁違いの警告があっても確認・書き出し可能'
+    } finally { Remove-YakuCatProject -Id ([string]$scaleProject.Id) }
 } finally { Remove-YakuCatProject -Id ([string]$notationProject.Id) }
 
 if ([string]::IsNullOrWhiteSpace($oldDataDir)) { Remove-Item Env:\YAKULINGO_DATA_DIR -ErrorAction SilentlyContinue } else { $env:YAKULINGO_DATA_DIR = $oldDataDir }

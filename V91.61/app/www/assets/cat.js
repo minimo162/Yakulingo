@@ -19,6 +19,9 @@
   var dirty = new Map(), saveChain = Promise.resolve(), jobTimer = null, jobContext = null, candidateSeq = 0;
   var deleteTarget = null, preflightScope = null, jobSerial = 0, viewEpoch = 0, outputScope = null;
   var activeSegmentId = '', activeIndex = -1, currentFilter = 'actionable', currentLocation = 'all', currentChange = 'all', inspectorTab = 'candidates';
+  /* 作業メモの入力途中はサーバへ送らない。行や資料を切り替えても、別の行へ
+     誤登録しないよう、保存先の資料IDとsegment_idをキーにして画面内だけで保持する。 */
+  var reviewNoteDrafts = {};
   /* 検索の掛け方。市販CAT（memoQ / Phrase / Trados / XTM）はどれも「どこを探すか」
      「大文字小文字を区別するか」「正規表現か」を持っている。ここまでは原文・訳文・
      場所を連結した小文字化部分一致1本だけで、絞りようが無かった。 */
@@ -252,6 +255,7 @@
     document.querySelectorAll('button').forEach(function (button) { if (!isAlwaysEnabled(button)) button.disabled = value || (button.id === 'cat-translate' && !ready); });
     /* readOnly なら、待っているあいだも訳文を読んで選択・コピーできる。 */
     document.querySelectorAll('textarea[data-cat-input], input.revise-input').forEach(function (input) { input.readOnly = value; input.disabled = false; });
+    syncReviewNoteFormState(!!activeSegment());
     if (!value) {
       el('cat-translate').disabled = !ready || !project || Number(project && project.untranslated) <= 0;
       updateActionLabels();
@@ -352,12 +356,12 @@
   function qcMessages(segment) {
     var labels = {
       empty: '訳文が空です。', 'invalid-or-source-fallback': '訳文として成立していないか、原文のままです。',
-      'placeholder-residue': '訳文に「[[N1]]」のような記号が残っています。左の原文の同じ位置にある数字に、手で置き換えてください。', 'numeric-integrity': '左の原文と、訳文の数字または単位が合っていません。原文を見ながら直してください。',
-      'numeric-value-mismatch': '原文にある数字が、訳文で違う値になっているか、抜けています。原文と見比べてください。', 'numeric-value-extra': '原文に無い数字が訳文に入っています。余分な数字を消してください。',
-      'numeric-value-order-mismatch': '原文と訳文で、数字の並ぶ順番が違っています。原文と見比べて、同じ順番に直してください。',
-      'numeric-scale-mismatch': '数字の桁（億・百万など）が原文と合っていません。原文の単位をご確認ください。', 'numeric-sign-missing': '損失や減少を示すマイナスが訳文に入っていません。原文をご確認ください。',
-      'accounting-polarity-mismatch': '利益と損失、または増加と減少が、原文と逆になっているようです。原文と見比べてください。', 'currency-mismatch': '通貨（円・ドルなど）が原文と合っていません。原文をご確認ください。',
-      'numeric-validation-error': '数字の点検が最後まで終わりませんでした。この行は出力できません。もう一度「確認済みにする」を押してください。それでも直らない場合は、この画面のまま管理者へご連絡ください。',
+      'placeholder-residue': '訳文に「[[N1]]」のような記号が残っています。左の原文の同じ位置にある数字に、手で置き換えてください。',
+      'numeric-value-mismatch': '原文と訳文の数字の意味が一致しません。原文と見比べてください。書き出しは止まりません。', 'numeric-value-extra': '原文に無い数字が訳文に入っています。余分な数字を確認してください。書き出しは止まりません。',
+      'numeric-value-order-mismatch': '原文と訳文で、数字の並ぶ順番が違います。どの数字がどこに掛かるか確認してください。書き出しは止まりません。',
+      'numeric-scale-mismatch': '数字の桁（億・百万など）が原文と合っていません。原文の単位をご確認ください。書き出しは止まりません。', 'numeric-sign-missing': '損失や減少を示すマイナスが訳文に入っていません。原文をご確認ください。書き出しは止まりません。',
+      'accounting-polarity-mismatch': '利益と損失、または増加と減少が、原文と逆になっているようです。原文と見比べてください。書き出しは止まりません。', 'currency-mismatch': '通貨（円・ドルなど）が原文と合っていません。原文をご確認ください。書き出しは止まりません。',
+      'numeric-validation-error': '数字の点検を最後まで完了できませんでした。確認と書き出しは続けられます。必要なら原文と訳文をご確認ください。',
       'structure-integrity': '見出しや箇条書きの形が原文と違っています。原文と見比べてください。', 'structure-validation-error': '見出しや箇条書きの形の点検が最後まで終わりませんでした。この行は出力できません。もう一度「確認済みにする」を押してください。それでも直らない場合は、この画面のまま管理者へご連絡ください。'
       , 'terminology-missing': '登録した訳語が使われていません。右の「用語・参考訳」に出ている訳語をお使いください。この行だけ別の言い方にしたい場合は、その行の設定から外せます。'
       , 'terminology-forbidden': '「使わない」と登録した表現が訳文に入っています。右の「用語・参考訳」に出ている訳語に置き換えてください。'
@@ -449,17 +453,20 @@
      で、ここはその写しである。両者が集合として一致することを
      tools/Test-YakuV9171CatQcLabelCoverage.ps1 の CASE 5 が見る。
 
-     道具の不調とは別の群にする。あちらは直しようが無いもの、こちらは
-     **直せるが、直さなくても書き出せる**ものである。error と同じ赤で出すと
+     numeric-validation-error は点検不能でも確認と書き出しを止めないが、
+     道具の不調群として表示する。それ以外はこちらは
+     **直せるが、直さなくても書き出せる**ものである。
+     error と同じ赤で出すと
      「押せるのに押せない」と読め、tool と同じにすると自分で対処できることが
      伝わらない。色は表示だけの話で、止める条件はサーバの Severity が決める。 */
-  var QC_WARNING_CODES = ['label-not-in-glossary', 'paired-delimiter-mismatch'];
+  var QC_WARNING_CODES = ['numeric-value-mismatch', 'numeric-value-extra', 'numeric-value-order-mismatch', 'numeric-sign-missing', 'numeric-scale-mismatch', 'currency-mismatch', 'accounting-polarity-mismatch', 'label-not-in-glossary', 'paired-delimiter-mismatch'];
   function qcGroup(code) {
     if (QC_TOOL_TROUBLE_CODES.indexOf(code) >= 0) return 'tool';
     if (QC_WARNING_CODES.indexOf(code) >= 0) return 'warn';
     return 'error';
   }
   function qcWarningGroupKey(code) {
+    if (['numeric-value-mismatch', 'numeric-value-extra', 'numeric-value-order-mismatch', 'numeric-sign-missing', 'numeric-scale-mismatch', 'currency-mismatch', 'accounting-polarity-mismatch', 'numeric-validation-error'].indexOf(code) >= 0) return 'numeric-warning';
     if (code === 'label-not-in-glossary') return 'label-warning';
     if (code === 'paired-delimiter-mismatch') return 'delimiter-warning';
     return 'warning';
@@ -510,6 +517,25 @@
     return '';
   }
   function segmentState(segment) { return segment.status || segment.state || (segment.translation ? 'machine_draft' : 'untranslated'); }
+  function reviewNotesOf(segment) { return segment && Array.isArray(segment.review_notes) ? segment.review_notes : []; }
+  function unresolvedReviewNotes(segment) { return reviewNotesOf(segment).filter(function (note) { return String(note.state || '') === 'open'; }); }
+  function segmentHasReviewNotes(segment) { return unresolvedReviewNotes(segment).length > 0; }
+  function reviewNoteDraftKey(projectValue, segment) {
+    if (!projectValue || !segment) return '';
+    var projectId = String(projectValue.id || ''), segmentId = String(segment.segment_id || '');
+    return projectId && segmentId ? projectId + '|' + segmentId : '';
+  }
+  function reviewNoteDraftFor(segment) {
+    var key = reviewNoteDraftKey(project, segment);
+    return key && Object.prototype.hasOwnProperty.call(reviewNoteDrafts, key) ? reviewNoteDrafts[key] : '';
+  }
+  function syncReviewNoteFormState(hasSegment) {
+    var input = el('cat-review-notes-input'), submit = el('cat-review-notes-submit');
+    if (input) input.disabled = busy || !hasSegment;
+    if (submit) submit.disabled = busy || !hasSegment;
+  }
+  function reviewNoteStateLabel(note) { return String(note && note.state || '') === 'resolved' ? '解決済み' : '未解決'; }
+  function reviewNoteCreatedLabel(note) { return savedLabel(note && note.created_at) || '日時不明'; }
   function segmentHasQc(segment) { return qcMessages(segment).length > 0; }
   function editorLanguages() {
     return project && project.direction === 'to_jp' ? { source: 'en', target: 'ja' } : { source: 'ja', target: 'en' };
@@ -520,7 +546,7 @@
      足していないこと自体は欠陥ではない（決定 §1「用語集を網羅する必要はない」）。
      警告が1件も無い資料では、この関数は segmentHasQc と同じ値を返す。 */
   function segmentBlockingQc(segment) {
-    return qcFindingViews(segment).some(function (view) { return qcGroup(view.code) !== 'warn'; });
+    return qcFindingViews(segment).some(function (view) { return qcGroup(view.code) !== 'warn' && view.code !== 'numeric-validation-error'; });
   }
   function segmentActionable(segment) { return !segment.confirmed || segmentBlockingQc(segment); }
   function changeGroup(segment) {
@@ -565,6 +591,7 @@
   var stateFilters = {
     actionable: function (segment) { return segmentActionable(segment); },
     qc: function (segment) { return segmentHasQc(segment); },
+    review_notes: function (segment) { return segmentHasReviewNotes(segment); },
     repetition: function (segment) { return Number(segment.repetition_count || 1) > 1; },
     reviewed: function (segment) { return !!segment.confirmed; },
     all: function () { return true; }
@@ -663,19 +690,7 @@
       var target = document.querySelector('[data-cat-count="' + name + '"]');
       if (target) target.textContent = counts[name];
     });
-    /* 点検の指摘は例外の入口。1件も無いときに 0 と並べても、選べる場所が
-       増えるだけで何も伝えない（2026-08-12）。 */
-    var qcFilter = document.querySelector('[data-cat-filter="qc"]');
-    if (qcFilter) {
-      qcFilter.hidden = counts.qc < 1;
-      if (qcFilter.hidden && currentFilter === 'qc') currentFilter = 'actionable';
-    }
-    /* 同じ原文の行も、無い資料では出さない（点検の指摘と同じ理由）。 */
-    var repetitionFilter = document.querySelector('[data-cat-filter="repetition"]');
-    if (repetitionFilter) {
-      repetitionFilter.hidden = counts.repetition < 1;
-      if (repetitionFilter.hidden && currentFilter === 'repetition') currentFilter = 'actionable';
-    }
+    syncOptionalStateFilters(counts);
     document.querySelectorAll('[data-cat-filter]').forEach(function (button) { button.setAttribute('aria-pressed', String(button.getAttribute('data-cat-filter') === currentFilter)); });
     var changeCounts = { unchanged: 0, changed: 0, new: 0 }, hasChanges = false;
     all.forEach(function (segment) { var group = changeGroup(segment); if (group) { changeCounts[group]++; hasChanges = true; } });
@@ -700,16 +715,40 @@
       return '<button type="button" data-cat-location="' + esc(name) + '" aria-pressed="' + String(currentLocation === name) + '">' + esc(name) + ' <span>' + groups[name] + '</span></button>';
     }).join('');
   }
+  function syncOptionalStateFilters(counts) {
+    ['qc','repetition','review_notes'].forEach(function (name) {
+      var button = document.querySelector('[data-cat-filter="' + name + '"]');
+      if (!button) return;
+      button.hidden = Number(counts[name] || 0) < 1;
+      if (button.hidden && currentFilter === name) currentFilter = 'actionable';
+    });
+  }
   function renderInspector() {
     /* 選択が動いたら、常設の体裁の印も動かす。ここは行を移るたびに通る唯一の
        場所なので、追随の入口をここに置く。組み直しはしない（印の付け替えだけ）。 */
     syncDockActive(false);
     var segment = activeSegment(), all = project.segments || [];
     document.querySelectorAll('[data-cat-inspector]').forEach(function (button) { var selected = button.getAttribute('data-cat-inspector') === inspectorTab; button.setAttribute('aria-selected', String(selected)); });
-    ['candidates','qc','context'].forEach(function (name) { el('cat-panel-' + name).hidden = name !== inspectorTab; });
+    var inspectorPanels = { candidates: 'candidates', qc: 'qc', context: 'context', review_notes: 'review-notes' };
+    Object.keys(inspectorPanels).forEach(function (name) { el('cat-panel-' + inspectorPanels[name]).hidden = name !== inspectorTab; });
     if (!segment) {
-      el('cat-qc-count').textContent = '0'; el('cat-qc-list').innerHTML = '<p class="muted">行を選ぶと、その行の点検結果が出ます。</p>'; el('cat-context').innerHTML = '<p class="muted">行を選ぶと、資料のどこにある文かが分かります。</p>'; return;
+      el('cat-qc-count').textContent = '0'; el('cat-qc-list').innerHTML = '<p class="muted">行を選ぶと、その行の点検結果が出ます。</p>'; el('cat-context').innerHTML = '<p class="muted">行を選ぶと、資料のどこにある文かが分かります。</p>';
+      el('cat-review-notes-count').textContent = '0'; el('cat-review-notes-list').innerHTML = '<p class="muted">行を選ぶと、その行の作業メモが出ます。</p>'; syncReviewNoteFormState(false);
+      var emptyNoteInput = el('cat-review-notes-input'); if (emptyNoteInput) emptyNoteInput.value = '';
+      return;
     }
+    var reviewNotes = reviewNotesOf(segment), openReviewNotes = unresolvedReviewNotes(segment);
+    el('cat-review-notes-count').textContent = String(openReviewNotes.length);
+    el('cat-review-notes-list').innerHTML = reviewNotes.length ? reviewNotes.map(function (note) {
+      var resolved = String(note.state || '') === 'resolved', nextState = resolved ? 'open' : 'resolved';
+      return '<article class="cat-review-note' + (resolved ? ' is-resolved' : '') + '">' +
+        '<div class="cat-review-note-head"><span class="cat-review-note-state">' + reviewNoteStateLabel(note) + '</span><time class="cat-review-note-time" datetime="' + esc(note.created_at || '') + '">' + esc(reviewNoteCreatedLabel(note)) + '</time></div>' +
+        '<p class="cat-review-note-text">' + esc(note.text || '') + '</p>' +
+        '<div class="cat-review-note-actions"><button type="button" class="secondary-button" data-cat-review-note-state="' + nextState + '" data-cat-review-note-index="' + Number(segment.index) + '" data-cat-review-note-id="' + esc(note.note_id || '') + '">' + (resolved ? '未解決に戻す' : '解決済みにする') + '</button></div>' +
+        '</article>';
+    }).join('') : '<p class="muted">この行には作業メモがありません。</p>';
+    syncReviewNoteFormState(true);
+    var noteInput = el('cat-review-notes-input'); if (noteInput) noteInput.value = reviewNoteDraftFor(segment);
     var views = qcFindingViews(segment), findings = qcMessages(segment);
     el('cat-qc-count').textContent = String(findings.length);
     el('cat-qc-list').innerHTML = findings.length ? findings.map(function (message, findingIndex) {
@@ -744,6 +783,12 @@
   function renderRows() {
     var all = project.segments || [], body = el('cat-grid-body');
     var languages = editorLanguages();
+    /* 任意状態filterが最後の1件を失うときは、行の選択・表示を計算する前に
+       fallbackへ戻す。後から切り替えると、ボタンだけ「残り」なのに一覧が
+       0件のまま次の操作まで残る。 */
+    var optionalFilterCounts = {};
+    ['qc','repetition','review_notes'].forEach(function (name) { optionalFilterCounts[name] = all.filter(stateFilters[name]).length; });
+    syncOptionalStateFilters(optionalFilterCounts);
     /* 行を作り直すと、一覧が指していた訳文欄は消える。浮いたままにしない。 */
     closePlaceablePicker();
     candidateSeq++;
@@ -809,9 +854,9 @@
    2段の折りたたみの中にあり、開くまで見えなかった（実測 2026-08-13）。
    1行ずつ確定していく作業なので、いちばん押す操作のそばに置く。 */
         '<button type="button" class="cat-op cat-op-ok" data-cat-confirm="' + index + '" title="確認して次の行へ（Ctrl+Enter）" aria-keyshortcuts="Control+Enter">' + icon('i-reviewed') + '確認済みにする<span class="cat-op-key" aria-hidden="true">Ctrl+Enter</span></button>') + rowPrimary + '</div><details class="cat-more-row"><summary>そのほかの操作</summary><div class="cat-ops">' + ops + '</div>' + '<button type="button" class="cat-op secondary-button" data-cat-revert="' + index + '" hidden>編集を取り消す</button>' + (segment.translation ? '<button type="button" class="cat-op secondary-button" data-cat-term-open="' + index + '">用語を登録</button>' : '') + ((segment.kind === 'cell' && segment.translation && String(segment.source).length <= 40) ? '<button type="button" class="cat-op secondary-button" data-cat-glossary="' + index + '">このセルの訳を今後も自動で使う</button>' : '') + '</details>' + qc + compare + (segment.can_revise ? '<details class="cat-more-row"><summary>基準訳をCopilotに直してもらう</summary><form class="revise-form" data-cat-revise="' + index + '"><p class="muted">ここで直すと、確認済み状態は解除されます。Excelの枠に合わせるだけなら「体裁で見る」から掲載候補を作ってください。</p><label class="revise-label">どこをどう直すか入力</label><div class="revise-row"><input class="revise-input" type="text" placeholder="例：「increase」を「rise」に変える"><button class="secondary-button" type="submit">この指示で基準訳を直す</button></div></form></details>' : '');
-      var change = changeLabel(segment);
+      var change = changeLabel(segment), reviewNoteCount = unresolvedReviewNotes(segment).length;
       return '<tr class="' + (isActive ? 'is-active' : '') + '" data-cat-row="' + index + '" data-cat-segment-id="' + esc(segment.segment_id || '') + '" data-cat-confirmed="' + (segment.confirmed ? '1' : '0') + '" data-yaku-cat-state="' + esc(state) + '">' +
-        '<td class="cat-col-no"><span class="cat-card-label">行番号・状態</span>' + row + '<span class="cat-state cat-state-' + esc(state) + '" title="' + esc(stateTitle(state)) + '">' + stateIcon(state) + '<span>' + esc(stateLabel(state)) + '</span></span>' + ((change && isActive) ? '<span class="cat-change-badge cat-change-' + esc(changeGroup(segment)) + '" title="' + esc(changeTitle(segment)) + '">' + esc(change) + '</span>' : '') + '</td>' +
+        '<td class="cat-col-no"><span class="cat-card-label">行番号・状態</span>' + row + '<span class="cat-state cat-state-' + esc(state) + '" title="' + esc(stateTitle(state)) + '">' + stateIcon(state) + '<span>' + esc(stateLabel(state)) + '</span></span>' + ((change && isActive) ? '<span class="cat-change-badge cat-change-' + esc(changeGroup(segment)) + '" title="' + esc(changeTitle(segment)) + '">' + esc(change) + '</span>' : '') + (reviewNoteCount ? '<span class="cat-review-note-badge" title="未解決の作業メモ ' + reviewNoteCount + '件">メモ ' + reviewNoteCount + '</span>' : '') + '</td>' +
         /* 場所は幅が狭く、長いシート名だと番地まで届かない（実測 2026-08-13、
            窓 1760px: 「2026年3月期 連結決算サマリー, AB123」は 366px 必要なのに
            89px しか無く、番地が1文字も出ない）。どのセルかは Excel の作業では
@@ -2097,6 +2142,7 @@
          人が数字を見に行く。書き出しの窓が言う理由と同じ顔ぶれにする。 */
       { key: 'qc', title: '自動点検の指摘', blocking: true, items: [] },
       { key: 'unconfirmed', title: '未確認', blocking: false, items: [] },
+      { key: 'numeric-warning', title: '数字・単位の確認', blocking: false, items: [] },
       { key: 'label-warning', title: '用語集に無い短いラベル', blocking: false, items: [] },
       { key: 'delimiter-warning', title: '括弧・引用符の対応', blocking: false, items: [] },
       /* 正本へ warning が増えたのに専用群をまだ足していない場合も、warning を
@@ -2113,7 +2159,8 @@
       if (empty) emptyGroup.items.push({ index: Number(segment.index), source: segment.source, message: '' });
       views.forEach(function (view, viewIndex) {
         var message = String(messages[viewIndex] || '');
-        var target = qcGroup(view.code) === 'warn' ? qaGroupByKey(groups, qcWarningGroupKey(view.code)) : qcGroupItems;
+        var nonBlocking = qcGroup(view.code) === 'warn' || view.code === 'numeric-validation-error';
+        var target = nonBlocking ? qaGroupByKey(groups, qcWarningGroupKey(view.code)) : qcGroupItems;
         if (!target) target = qcGroupItems;
         if (target === qcGroupItems) {
           if (empty && message.indexOf('訳文が空') >= 0) return;
@@ -2955,16 +3002,18 @@
     if (!project) { status('資料が開かれていません。'); return; }
     var groups = qaFindings();
     var blocking = groups.filter(function (group) { return group.blocking; }).reduce(function (sum, group) { return sum + group.items.length; }, 0);
-    var unconfirmedGroup = qaGroupByKey(groups, 'unconfirmed'), labelWarningGroup = qaGroupByKey(groups, 'label-warning'), delimiterWarningGroup = qaGroupByKey(groups, 'delimiter-warning'), genericWarningGroup = qaGroupByKey(groups, 'warning');
+    var unconfirmedGroup = qaGroupByKey(groups, 'unconfirmed'), numericWarningGroup = qaGroupByKey(groups, 'numeric-warning'), labelWarningGroup = qaGroupByKey(groups, 'label-warning'), delimiterWarningGroup = qaGroupByKey(groups, 'delimiter-warning'), genericWarningGroup = qaGroupByKey(groups, 'warning');
     var unconfirmed = unconfirmedGroup ? unconfirmedGroup.items.length : 0;
     /* 止めない警告は、要約でも「止める指摘」と混ぜない。かといって黙らせない。
        警告が0件のときの文言は1文字も変えないので、「調べたが直すところは無かった」
        を見る表明（Test-YakuV9176CatScreenWiring の (k)）はそのまま生きる。 */
+    var numericWarnings = numericWarningGroup ? numericWarningGroup.items.length : 0;
     var labelWarnings = labelWarningGroup ? labelWarningGroup.items.length : 0;
     var delimiterWarnings = delimiterWarningGroup ? delimiterWarningGroup.items.length : 0;
     var genericWarnings = genericWarningGroup ? genericWarningGroup.items.length : 0;
-    var warned = labelWarnings + delimiterWarnings + genericWarnings;
-    var warnNote = (labelWarnings ? ('用語集に無い短いラベルが ' + labelWarnings + ' 行あります。書き出しは止まりません。') : '') +
+    var warned = numericWarnings + labelWarnings + delimiterWarnings + genericWarnings;
+    var warnNote = (numericWarnings ? ('数字・単位を確認する行が ' + numericWarnings + ' 行あります。書き出しは止まりません。') : '') +
+      (labelWarnings ? ('用語集に無い短いラベルが ' + labelWarnings + ' 行あります。書き出しは止まりません。') : '') +
       (delimiterWarnings ? ('括弧・引用符の対応を確認する行が ' + delimiterWarnings + ' 行あります。書き出しは止まりません。') : '') +
       (genericWarnings ? ('書き出しを止めない確認事項が ' + genericWarnings + ' 行あります。書き出しは止まりません。') : '');
     el('cat-qa-summary').textContent = nothingTranslatedYet()
@@ -3440,7 +3489,7 @@
     });
     document.addEventListener('click', function (event) {
       var button = event.target.closest('button'); if (!button) return;
-      if (busy && (button.id === 'cat-confirm-bulk' || button.id === 'cat-replace-run' || button.id === 'cat-replace-undo' || button.id === 'cat-structure-undo' || button.id === 'cat-tm-pretranslate' || button.hasAttribute('data-cat-translate-row') || button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-tm-register') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-split-at') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
+      if (busy && (button.id === 'cat-confirm-bulk' || button.id === 'cat-replace-run' || button.id === 'cat-replace-undo' || button.id === 'cat-structure-undo' || button.id === 'cat-tm-pretranslate' || button.hasAttribute('data-cat-translate-row') || button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-tm-register') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-split-at') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision') || button.hasAttribute('data-cat-review-note-state'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
       if (button.hasAttribute('data-cat-preview-mode')) { setPreviewMode(button.getAttribute('data-cat-preview-mode')); return; }
       if (button.hasAttribute('data-cat-preview-side')) { previewSide = button.getAttribute('data-cat-preview-side') || 'target'; renderPreview(); return; }
       if (button.hasAttribute('data-cat-dock-side')) { dockSide = button.getAttribute('data-cat-dock-side') || 'target'; renderDockPreview(); return; }
@@ -3463,6 +3512,15 @@
       if (button.hasAttribute('data-cat-change')) { currentChange = button.getAttribute('data-cat-change') || 'all'; return redrawAfterFlush(); }
       if (button.hasAttribute('data-cat-search-scope')) { searchScope = button.getAttribute('data-cat-search-scope') || 'both'; return redrawAfterFlush(); }
       if (button.hasAttribute('data-cat-inspector')) { inspectorTab = button.getAttribute('data-cat-inspector') || 'candidates'; renderInspector(); return; }
+      if (button.hasAttribute('data-cat-review-note-state')) {
+        var noteStateIndex = Number(button.getAttribute('data-cat-review-note-index'));
+        var noteStateId = String(button.getAttribute('data-cat-review-note-id') || '');
+        var noteState = button.getAttribute('data-cat-review-note-state') || 'open';
+        return mutate('review-note-state', { index: noteStateIndex, note_id: noteStateId, state: noteState }, '作業メモを更新しています…').then(function (data) {
+          if (data) status(noteState === 'resolved' ? '作業メモを解決済みにしました。' : '作業メモを未解決に戻しました。');
+          return data;
+        });
+      }
       if (button.hasAttribute('data-yaku-cancel-job')) {
         if (!window.confirm('翻訳をやめますか？\n\nここまでにできあがった訳文は保存されています。\nあとで「訳していない行を訳す」を押すと、続きから再開できます。')) return;
         button.disabled = true; button.textContent = 'やめています…';
@@ -3534,6 +3592,11 @@
       if (button.hasAttribute('data-cat-revert-revision')) return revertRevisionComparison();
     });
     document.addEventListener('input', function (event) {
+      if (event.target.id === 'cat-review-notes-input') {
+        var draftSegment = activeSegment(), draftKey = reviewNoteDraftKey(project, draftSegment);
+        if (draftKey) reviewNoteDrafts[draftKey] = String(event.target.value || '');
+        return;
+      }
       if (!event.target.hasAttribute('data-cat-input')) return;
       /* 打ち始めたら一覧は畳む。番号キーを食べたままにすると、数字が打てなくなる。 */
       closePlaceablePicker();
@@ -3572,6 +3635,22 @@
     document.addEventListener('focusin', function (event) { var input = event.target.closest('[data-cat-input]'); if (input) { activeIndex = Number(input.getAttribute('data-cat-input')); var row = input.closest('[data-cat-row]'); activeSegmentId = row ? String(row.getAttribute('data-cat-segment-id') || '') : activeSegmentId; renderInspector(); } });
     document.addEventListener('submit', function (event) {
       if (event.target.id === 'cat-concordance-form') { event.preventDefault(); runConcordance(); return; }
+      if (event.target.id === 'cat-review-notes-form') {
+        event.preventDefault();
+        if (busy) { status('処理中です。終わってからもう一度お試しください。'); return; }
+        var noteSegment = activeSegment(), noteInput = el('cat-review-notes-input'), noteKey = reviewNoteDraftKey(project, noteSegment), noteProjectId = String(project && project.id || ''), noteSegmentId = String(noteSegment && noteSegment.segment_id || ''), noteText = String(noteInput && noteInput.value || '').trim();
+        if (!noteSegment) { status('作業メモを付ける行を選んでください。', true); return; }
+        if (!noteText) { status('作業メモを入力してください。', true); if (noteInput) YakuCommon.focus(noteInput); return; }
+        return mutate('review-note-add', { index: Number(noteSegment.index), text: noteText }, '作業メモを保存しています…').then(function (data) {
+          if (data) {
+            if (noteKey) delete reviewNoteDrafts[noteKey];
+            var currentNoteSegment = activeSegment();
+            if (noteInput && String(project && project.id || '') === noteProjectId && String(currentNoteSegment && currentNoteSegment.segment_id || '') === noteSegmentId) noteInput.value = '';
+            status('作業メモを追加しました。');
+          }
+          return data;
+        });
+      }
       if (event.target.id === 'cat-term-form') { event.preventDefault(); if (!busy) saveTerm(); return; }
       if (event.target.id === 'cat-term-exception-form') { event.preventDefault(); if (!busy) saveTermException(); return; }
       var form = event.target.closest('[data-cat-revise]'); if (form) { event.preventDefault(); if (busy) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; } revise(form); }

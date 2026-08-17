@@ -389,23 +389,142 @@ function ConvertFrom-YakuJapaneseNumberText {
 
 function ConvertFrom-YakuEnglishNumberText {
     param([AllowNull()][string]$Text)
-    $s = ([string]$Text).ToLowerInvariant().Replace('-', ' ')
-    $words = @($s -split '\s+' | Where-Object { $_ -and $_ -ne 'and' })
-    if ($words.Count -eq 0) { return [pscustomobject]@{ Ok=$false; Value=[decimal]0 } }
+    $s = ([string]$Text).ToLowerInvariant()
+    $s = [regex]::Replace($s, '[‐‑‒–—−]', '-')
+    $s = $s.Replace('-', ' ')
+    $words = @($s -split '\s+' | Where-Object { $_ })
+    if ($words.Count -eq 0) { return [pscustomobject]@{ Ok=$false; Value=[decimal]0; IncludesScale=$false; HasHundred=$false; TrailingScale='' } }
     $values = @{
         a=1; zero=0; one=1; two=2; three=3; four=4; five=5; six=6; seven=7; eight=8; nine=9; ten=10
         eleven=11; twelve=12; thirteen=13; fourteen=14; fifteen=15; sixteen=16; seventeen=17; eighteen=18; nineteen=19
         twenty=20; thirty=30; forty=40; fifty=50; sixty=60; seventy=70; eighty=80; ninety=90
     }
     $large = @{ thousand=[decimal]1000; million=[decimal]1000000; billion=[decimal]1000000000; trillion=[decimal]1000000000000 }
-    [decimal]$total=0; [decimal]$current=0
-    foreach ($word in $words) {
-        if ($values.ContainsKey($word)) { $current += [decimal]$values[$word]; continue }
-        if ($word -eq 'hundred') { if ($current -eq 0) { $current=1 }; $current *= 100; continue }
-        if ($large.ContainsKey($word)) { if ($current -eq 0) { $current=1 }; $total += $current * [decimal]$large[$word]; $current=0; continue }
-        return [pscustomobject]@{ Ok=$false; Value=[decimal]0 }
+    $negative = $false
+    if (@('minus','negative') -contains [string]$words[0]) {
+        $negative = $true
+        if ($words.Count -eq 1) { return [pscustomobject]@{ Ok=$false; Value=[decimal]0; IncludesScale=$false; HasHundred=$false; TrailingScale='' } }
+        $words = @($words | Select-Object -Skip 1)
     }
-    return [pscustomobject]@{ Ok=$true; Value=($total + $current) }
+    $ordinalValues = @{
+        first=1; second=2; third=3; fourth=4; fifth=5; sixth=6; seventh=7; eighth=8; ninth=9; tenth=10
+        eleventh=11; twelfth=12; thirteenth=13; fourteenth=14; fifteenth=15; sixteenth=16; seventeenth=17; eighteenth=18; nineteenth=19
+        twentieth=20; thirtieth=30; fortieth=40; fiftieth=50; sixtieth=60; seventieth=70; eightieth=80; ninetieth=90
+        hundredth=100; thousandth=1000; millionth=1000000; billionth=1000000000; trillionth=1000000000000
+    }
+    if ($words.Count -eq 1 -and $ordinalValues.ContainsKey([string]$words[0])) {
+        [decimal]$ordinalValue = [decimal]$ordinalValues[[string]$words[0]]
+        if ($negative) { $ordinalValue = -$ordinalValue }
+        return [pscustomobject]@{ Ok=$true; Value=$ordinalValue; IncludesScale=$false; HasHundred=$false; TrailingScale='' }
+    }
+    $point = [array]::IndexOf([string[]]$words, 'point')
+    if (($words | Where-Object { $_ -eq 'point' }).Count -gt 1) {
+        return [pscustomobject]@{ Ok=$false; Value=[decimal]0; IncludesScale=$false; HasHundred=$false; TrailingScale='' }
+    }
+    if ($point -eq 0) {
+        return [pscustomobject]@{ Ok=$false; Value=[decimal]0; IncludesScale=$false; HasHundred=$false; TrailingScale='' }
+    }
+    $integerWords = if ($point -gt 0) { @($words[0..($point - 1)]) } else { @($words) }
+    $fractionWords = if ($point -ge 0 -and $point -lt ($words.Count - 1)) { @($words[($point + 1)..($words.Count - 1)]) } else { @() }
+    if ($point -ge 0 -and $fractionWords.Count -eq 0) {
+        return [pscustomobject]@{ Ok=$false; Value=[decimal]0; IncludesScale=$false; HasHundred=$false; TrailingScale='' }
+    }
+    $parseInteger = {
+        param([object[]]$Tokens)
+        [decimal]$total = 0; [decimal]$group = 0; [decimal]$lastLarge = [decimal]::MaxValue
+        $seenHundred = $false; $afterLarge = $false; $hasLarge = $false
+        $seenAny = $false; $largeNames = New-Object 'System.Collections.Generic.HashSet[string]'
+        $cardinalCount = 0; $lastCardinalValue = [decimal]0; $lastStructuralWord = ''; $expectCardinalAfterAnd = $false
+        foreach ($word in @($Tokens)) {
+            $wordText = [string]$word
+            if ($wordText -eq 'and') {
+                if ($lastStructuralWord -notin @('hundred','large')) { return [pscustomobject]@{ Ok=$false } }
+                $expectCardinalAfterAnd = $true; $lastStructuralWord = 'and'; continue
+            }
+            if ($values.ContainsKey($wordText)) {
+                [decimal]$cardinalValue = [decimal]$values[$wordText]
+                if ($cardinalCount -gt 0 -and -not ($cardinalCount -eq 1 -and $lastCardinalValue -ge 20 -and $lastCardinalValue -le 90 -and $cardinalValue -ge 1 -and $cardinalValue -le 9)) {
+                    return [pscustomobject]@{ Ok=$false }
+                }
+                $group += $cardinalValue; $seenAny = $true; $afterLarge = $false
+                $cardinalCount++ ; $lastCardinalValue = $cardinalValue; $lastStructuralWord = 'cardinal'; $expectCardinalAfterAnd = $false
+                continue
+            }
+            if ($wordText -eq 'hundred') {
+                if ($expectCardinalAfterAnd) { return [pscustomobject]@{ Ok=$false } }
+                # `one hundred hundred` is not a number phrase. A repeated
+                # hundred or a bare hundred after a large scale is rejected.
+                if ($seenHundred -or ($afterLarge -and $group -eq 0)) { return [pscustomobject]@{ Ok=$false } }
+                if ($group -eq 0) { $group = 1 }
+                $group *= 100; $seenHundred = $true; $seenAny = $true
+                $cardinalCount = 0; $lastCardinalValue = [decimal]0; $lastStructuralWord = 'hundred'; $expectCardinalAfterAnd = $false; $afterLarge = $false; continue
+            }
+            if ($large.ContainsKey($wordText)) {
+                if ($expectCardinalAfterAnd) { return [pscustomobject]@{ Ok=$false } }
+                $scale = [decimal]$large[$wordText]
+                if (-not $largeNames.Add($wordText) -or $scale -ge $lastLarge) { return [pscustomobject]@{ Ok=$false } }
+                if ($group -eq 0) { $group = 1 }
+                $total += $group * $scale; $group = 0; $lastLarge = $scale
+                $seenHundred = $false; $afterLarge = $true; $hasLarge = $true; $seenAny = $true
+                $cardinalCount = 0; $lastCardinalValue = [decimal]0; $lastStructuralWord = 'large'; $expectCardinalAfterAnd = $false; continue
+            }
+            return [pscustomobject]@{ Ok=$false }
+        }
+        if (-not $seenAny -or $expectCardinalAfterAnd) { return [pscustomobject]@{ Ok=$false } }
+        return [pscustomobject]@{ Ok=$true; Value=($total + $group); HasLargeScale=$hasLarge; HasHundred=$seenHundred }
+    }
+    $integer = & $parseInteger $integerWords
+    if ($null -eq $integer -or -not [bool]$integer.Ok) {
+        # A scale at the end may be an external unit applied to a compound
+        # coefficient, for example "one thousand three hundred and fifteen
+        # billion". The ordinary descending-scale parser rejects thousand
+        # followed by billion; parse the coefficient before that final scale.
+        if ($point -lt 0 -and $integerWords.Count -gt 1) {
+            $candidateScale = [string]$integerWords[$integerWords.Count - 1]
+            $candidateRepeated = @($integerWords[0..($integerWords.Count - 2)] | Where-Object { [string]$_ -eq $candidateScale }).Count -gt 0
+            if ($large.ContainsKey($candidateScale) -and -not $candidateRepeated -and @($integerWords | Where-Object { $_ -eq 'thousand' }).Count -gt 0) {
+                [decimal]$candidateValue = [decimal]$large[$candidateScale]
+                $larger = @($integerWords[0..($integerWords.Count - 2)] | Where-Object { $large.ContainsKey([string]$_) -and [decimal]$large[[string]$_] -gt $candidateValue })
+                if ($larger.Count -eq 0) {
+                    $prefix = & $parseInteger @($integerWords[0..($integerWords.Count - 2)])
+                    if ($null -ne $prefix -and [bool]$prefix.Ok) {
+                        [decimal]$coefficientValue = [decimal]$prefix.Value * $candidateValue
+                        if ($negative) { $coefficientValue = -$coefficientValue }
+                        return [pscustomobject]@{ Ok=$true; Value=$coefficientValue; IncludesScale=$true; HasHundred=([bool]$prefix.HasHundred); TrailingScale=$candidateScale }
+                    }
+                }
+            }
+        }
+        return [pscustomobject]@{ Ok=$false; Value=[decimal]0; IncludesScale=$false; HasHundred=$false; TrailingScale='' }
+    }
+    [decimal]$value = [decimal]$integer.Value
+    if ($fractionWords.Count -gt 0) {
+        $digits = New-Object System.Collections.Generic.List[string]
+        foreach ($word in @($fractionWords)) {
+            if ([string]$word -eq 'and') { continue }
+            if (@('zero','one','two','three','four','five','six','seven','eight','nine') -notcontains [string]$word) {
+                return [pscustomobject]@{ Ok=$false; Value=[decimal]0; IncludesScale=$false; HasHundred=$false; TrailingScale='' }
+            }
+            $digits.Add([string]$values[[string]$word]) | Out-Null
+        }
+        if ($digits.Count -eq 0) { return [pscustomobject]@{ Ok=$false; Value=[decimal]0; IncludesScale=$false; HasHundred=$false; TrailingScale='' } }
+        try { $value = [decimal]::Parse(([string]$integer.Value.ToString([Globalization.CultureInfo]::InvariantCulture) + '.' + ($digits -join '')), [Globalization.CultureInfo]::InvariantCulture) }
+        catch { return [pscustomobject]@{ Ok=$false; Value=[decimal]0; IncludesScale=$false; HasHundred=$false; TrailingScale='' } }
+    }
+    if ($negative) { $value = -$value }
+    $trailingScale = if ($point -lt 0 -and $integerWords.Count -gt 0 -and $large.ContainsKey([string]$integerWords[$integerWords.Count - 1])) { [string]$integerWords[$integerWords.Count - 1] } else { '' }
+    # A phrase such as "one thousand three hundred and fifteen billion" is a
+    # coefficient followed by an external scale, not 315,000,001,000. Use the
+    # coefficient form when the prefix contains thousand but no larger scale.
+    if ($trailingScale -and $integerWords.Count -gt 1 -and @($integerWords | Where-Object { $_ -eq 'thousand' }).Count -gt 0) {
+        $scaleValue = [decimal]$large[$trailingScale]
+        $larger = @($integerWords[0..($integerWords.Count - 2)] | Where-Object { $large.ContainsKey([string]$_) -and [decimal]$large[[string]$_] -gt $scaleValue })
+        if ($larger.Count -eq 0) {
+            $prefix = & $parseInteger @($integerWords[0..($integerWords.Count - 2)])
+            if ($prefix.Ok) { $value = [decimal]$prefix.Value * $scaleValue }
+        }
+    }
+    return [pscustomobject]@{ Ok=$true; Value=$value; IncludesScale=([bool]$integer.HasLargeScale); HasHundred=([bool]$integer.HasHundred); TrailingScale=$trailingScale }
 }
 
 function Get-YakuNumericContextDescriptor {
@@ -493,7 +612,7 @@ function ConvertTo-YakuNumericRestoreValue {
             $value=[decimal]$jp.Value;$parsed=$true;$includesScale=$true
         }
     }
-    if (-not $parsed -and $raw -match '(?i)\b(?:a|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|trillion)\b') {
+    if (-not $parsed -and $raw -match '(?i)\b(?:a|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth|fortieth|fiftieth|sixtieth|seventieth|eightieth|ninetieth|hundredth|thousandth|millionth|billionth|trillionth|hundred|thousand|million|billion|trillion|point)\b') {
         $en = ConvertFrom-YakuEnglishNumberText -Text $raw
         if ([bool]$en.Ok) {$value=[decimal]$en.Value;$parsed=$true;$includesScale=$true}
     }
@@ -518,6 +637,7 @@ function ConvertTo-YakuNumericRestoreValue {
             }
         }
         if($includesScale){return (ConvertTo-YakuInvariantNumberText -Value $value -UseGrouping)}
+        if($Direction -eq 'to_jp'){return (ConvertTo-YakuInvariantNumberText -Value $value -UseGrouping)}
         # 全角の数字は日本語の字形であって、英文には出さない。値は変えない。
         #
         # 2026-08-17 の実測。この関数の註は「言語に依存しないアラビア数字へ
@@ -868,6 +988,27 @@ function New-YakuNumericMaskMap {
         param([int]$Start, [int]$Length, [bool]$Force = $false)
         if ($Length -le 0) { return }
         if (-not $Force -and (Test-YakuMaskSpanCovered -Spans $protected -Start $Start -End ($Start + $Length))) { $targetStats.Kept++; return }
+        # Candidate patterns intentionally overlap (for example a decimal
+        # phrase and its unit-bearing suffix). Keep the longest complete span
+        # so replacement cannot split a word or leave "pointint" behind.
+        $overlaps = @($targets.ToArray() | Where-Object {
+            [int]$Start -lt ([int]$_.Start + [int]$_.Length) -and
+                ([int]$Start + [int]$Length) -gt [int]$_.Start
+        })
+        foreach ($existing in $overlaps) {
+            $existingStart = [int]$existing.Start
+            $existingEnd = $existingStart + [int]$existing.Length
+            $newEnd = $Start + $Length
+            if ($existingStart -le $Start -and $existingEnd -ge $newEnd) { return }
+            if ($Start -le $existingStart -and $newEnd -ge $existingEnd) {
+                [void]$targetKeys.Remove([string]$existingStart + ':' + [string]$existing.Length)
+                [void]$targets.Remove($existing)
+                continue
+            }
+            if ([int]$existing.Length -gt $Length) { return }
+            [void]$targetKeys.Remove([string]$existingStart + ':' + [string]$existing.Length)
+            [void]$targets.Remove($existing)
+        }
         $key = [string]$Start + ':' + [string]$Length
         if ($targetKeys.ContainsKey($key)) { return }
         $targetKeys[$key] = $true
@@ -893,17 +1034,110 @@ function New-YakuNumericMaskMap {
     # 英語の綴り数も同じ扱いにする。hundred 以上の位を含む並び、または
     # 通貨・数量単位の直前にある並びだけを対象にし、ordinary “one way” 等は除く。
     $cardinalWord = '(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)'
+    $ordinalWord = '(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth|fortieth|fiftieth|sixtieth|seventieth|eightieth|ninetieth|hundredth|thousandth|millionth|billionth|trillionth)'
     $numberWord = '(?:' + $cardinalWord + '|hundred|thousand|million|billion|trillion)'
+    $repeatedScalePattern = '(?i)\b(hundred|thousand|million|billion|trillion)\s+\1\b'
+    $fractionDigitWord = '(?:zero|one|two|three|four|five|six|seven|eight|nine)'
     $wordOptions = [Text.RegularExpressions.RegexOptions]::IgnoreCase
     # scale語単独（Arabic値の後ろにある “1,111 million” の million）は
     # 単位なので伏せない。必ず a/cardinal から始まる綴り数だけを対象にする。
     $magnitudePattern = '\b(?:a|' + $cardinalWord + ')(?:[\s-]+(?:and[\s-]+)?' + $numberWord + ')*\b'
     foreach ($m in [regex]::Matches($normalized, $magnitudePattern, $wordOptions)) {
         if ($m.Value -notmatch '(?i)\b(?:hundred|thousand|million|billion|trillion)\b') { continue }
+        $parsedMagnitude = ConvertFrom-YakuEnglishNumberText -Text ([string]$m.Value)
+        if (-not [bool]$parsedMagnitude.Ok) {
+            # Keep repeated scales together so canonical QC reports the
+            # parser/tool failure instead of silently treating the malformed
+            # phrase as a valid sum.
+            if ($m.Value -match $repeatedScalePattern) { & $addTarget $m.Index $m.Length $true }
+            continue
+        }
+        $magnitudeBefore = if ($m.Index -gt 0) { $normalized.Substring([Math]::Max(0, $m.Index - 32), [Math]::Min(32, $m.Index)) } else { '' }
+        if ($magnitudeBefore -match '(?i)\b' + $cardinalWord + '\s*$') { continue }
         & $addTarget $m.Index $m.Length $true
     }
-    $unitPattern = $magnitudePattern + '(?=\s+(?:yen|dollars?|euros?|pounds?|units?|shares?|vehicles?|cars?|points?|percent|percentage)\b)'
+    # Decimal number words are bounded by `point` followed by digit words.
+    # This prevents ordinary prose such as "one point to consider" from
+    # entering the number mask while preserving "five point six".
+    $decimalPattern = '\b(?:a|' + $cardinalWord + ')(?:[\s-]+(?:and[\s-]+)?' + $numberWord + ')*[\s-]+point[\s-]+' + $fractionDigitWord + '(?:[\s-]+' + $fractionDigitWord + ')*\b'
+    foreach ($m in [regex]::Matches($normalized, $decimalPattern, $wordOptions)) {
+        $parsedDecimal = ConvertFrom-YakuEnglishNumberText -Text ([string]$m.Value)
+        if (-not [bool]$parsedDecimal.Ok) {
+            if ($m.Value -match $repeatedScalePattern) { & $addTarget $m.Index $m.Length $true }
+            continue
+        }
+        $decimalBefore = if ($m.Index -gt 0) { $normalized.Substring([Math]::Max(0, $m.Index - 32), [Math]::Min(32, $m.Index)) } else { '' }
+        if ($decimalBefore -match '(?i)\b' + $cardinalWord + '\s*$') { continue }
+        & $addTarget $m.Index $m.Length $true
+    }
+    $unitPattern = $magnitudePattern + '(?=\s+(?:yen|dollars?|euros?|pounds?|units?|shares?|vehicles?|cars?|cases?|points|percent|percentage)\b)'
     foreach ($m in [regex]::Matches($normalized, $unitPattern, $wordOptions)) {
+        $unitValue = [string]$m.Value
+        $hasScaleWord = $unitValue -match '(?i)\b(?:hundred|thousand|million|billion|trillion)\b'
+        $hasPointWord = $unitValue -match '(?i)\bpoint\b'
+        $unitBefore = if ($m.Index -gt 0) { $normalized.Substring([Math]::Max(0, $m.Index - 32), [Math]::Min(32, $m.Index)) } else { '' }
+        $unitWords = @([regex]::Matches($unitValue, ('(?i)\b' + $cardinalWord + '\b')))
+        $smallNumber = $unitValue -match ('(?i)^(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[\s-]+(?:one|two|three|four|five|six|seven|eight|nine))?$')
+        $isIndependentList = (-not $hasScaleWord -and -not $hasPointWord -and
+            (($unitValue -match '(?i)\band\b') -or ($unitWords.Count -gt 2 -and -not $smallNumber)))
+        if ($isIndependentList) {
+            # Keep range/list grammar and mask every valid cardinal word
+            # independently: `between [[N1]] and [[N2]] percent`. This avoids
+            # treating the whole list as one sum while still protecting every
+            # number before it is sent outside the process.
+            foreach ($wordMatch in $unitWords) {
+                & $addTarget ($m.Index + $wordMatch.Index) $wordMatch.Length $true
+            }
+            continue
+        }
+        if ($hasScaleWord) {
+            $parsedUnitValue = ConvertFrom-YakuEnglishNumberText -Text $unitValue
+            if (-not [bool]$parsedUnitValue.Ok) {
+                if ($unitValue -match $repeatedScalePattern) {
+                    & $addTarget $m.Index $m.Length $true
+                    continue
+                }
+                $fallbackWordPattern = '(?i)\b(?:' + $cardinalWord + '|hundred|thousand|million|billion|trillion)\b'
+                foreach ($fallbackWord in [regex]::Matches($unitValue, $fallbackWordPattern)) {
+                    & $addTarget ($m.Index + $fallbackWord.Index) $fallbackWord.Length $true
+                }
+                continue
+            }
+        }
+        # `and` is valid inside a scaled number ("five hundred and two"),
+        # but not as a range/list connector ("one and two percent").
+        if ($unitValue -match '(?i)\band\b' -and $unitValue -notmatch '(?i)\b(?:hundred|thousand|million|billion|trillion)\s+and\s+') { continue }
+        if (-not $hasScaleWord -and -not $hasPointWord) {
+            if ($unitValue -match '(?i)\band\b' -or $unitBefore -match '(?i)(?:\band\b|\b' + $cardinalWord + ')\s*$' -or ($unitValue -match '\s' -and -not $smallNumber)) { continue }
+        }
+        & $addTarget $m.Index $m.Length $true
+    }
+    # The only scale-free compound grammar is tens plus an optional units
+    # word ("twenty four"). Do not fold `and` enumerations or repeated groups
+    # such as "twenty twenty four" into one numeric value.
+    $tensWord = '(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)'
+    $unitsWord = '(?:one|two|three|four|five|six|seven|eight|nine)'
+    $boundedCompoundPattern = '\b' + $tensWord + '(?:[\s-]+' + $unitsWord + ')?\b'
+    foreach ($m in [regex]::Matches($normalized, $boundedCompoundPattern, $wordOptions)) {
+        $alreadyTokenized = @($targets.ToArray() | Where-Object {
+            [int]$m.Index -lt ([int]$_.Start + [int]$_.Length) -and
+                ([int]$m.Index + [int]$m.Length) -gt [int]$_.Start
+        }).Count -gt 0
+        if ($alreadyTokenized) { continue }
+        $before = if ($m.Index -gt 0) { $normalized.Substring([Math]::Max(0, $m.Index - 32), [Math]::Min(32, $m.Index)) } else { '' }
+        $afterStart = $m.Index + $m.Length
+        $after = if ($afterStart -lt $normalized.Length) { $normalized.Substring($afterStart, [Math]::Min(32, $normalized.Length - $afterStart)) } else { '' }
+        if ($before -match '(?i)(?:\b' + $cardinalWord + ')\s*$' -or $after -match '(?i)^\s+' + $cardinalWord + '\b') { continue }
+        & $addTarget $m.Index $m.Length $true
+    }
+    # Reserve valid multi-word number phrases above, then protect every
+    # remaining standalone cardinal/ordinal word independently. This keeps
+    # connectors, punctuation, whitespace, and units untouched in ranges and
+    # lists such as "from one to two percent" and "one, two and three percent".
+    # addTarget's longest-span rule keeps reserved decimal/scale compounds as
+    # one token and prevents overlap with these independent words.
+    $standaloneNumericWordPattern = '\b(?:' + $cardinalWord + '|' + $ordinalWord + ')\b'
+    foreach ($m in [regex]::Matches($normalized, $standaloneNumericWordPattern, $wordOptions)) {
         & $addTarget $m.Index $m.Length $true
     }
     $kept = [int]$targetStats.Kept
@@ -940,6 +1174,17 @@ function Restore-YakuNumericMask {
     )
     $result = [string]$Text
     if ([string]::IsNullOrEmpty($result) -or $null -eq $Map -or $Map.Count -eq 0) { return $result }
+    # When a source sentence with several independently masked number words is
+    # round-tripped unchanged, retain its original wording. This keeps range /
+    # list connectors and spacing exact; translated output still follows the
+    # normal numeric restoration path below.
+    if (-not [string]::IsNullOrEmpty([string]$SourceText)) {
+        try {
+            $sourceMask = New-YakuNumericMaskMap -Text ([string]$SourceText) -Direction $Direction -Location 'restore-source-check'
+            $sourceHasContext = ([regex]::Replace([string]$sourceMask.Text, '\[\[N\d+\]\]', '') -match '\S')
+            if ([string]$sourceMask.Text -eq $result -and [int]$sourceMask.Map.Count -eq [int]$Map.Count -and ($Map.Count -gt 1 -or $sourceHasContext)) { return [string]$SourceText }
+        } catch {}
+    }
     # 番号の大きい順に置換する。[[N1]]が[[N10]]の一部を壊さないため。
     foreach ($token in @($Map.Keys | Sort-Object { [int]([regex]::Match([string]$_, '\d+').Value) } -Descending)) {
         $replacement=ConvertTo-YakuNumericRestoreValue -Text ([string]$Map[$token]) -Direction $Direction -Context $result -Token ([string]$token) -SourceContext $SourceText

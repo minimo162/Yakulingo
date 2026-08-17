@@ -2648,7 +2648,7 @@ function Invoke-YakuRoute {
             }
             if ($null -eq $project) { throw '取り込んだファイルが見つかりません。もう一度「取り込んで確認を始める」を押してください。' }
 
-            $revisionActions = @('delete','glossary','merge','split','split-at','structure-undo','placement','publication-candidates','publication-apply','publication-revert','abbreviation-register','glossary-add','term-add','term-deactivate','term-insert','term-exception','tm-delete','tm-register','confirm','confirm-bulk','replace','replace-undo','tm-pretranslate','render-start','review-start','copilot-review-start','copilot-review-apply','finding-decision','pdf-review-apply','coverage-decision','final-review-decision','source-update-preview','source-update-decision','source-update-apply','save-corpus','segment','translate','apply','preflight','export','export-reviewed','personal-glossary-list','personal-glossary-remove')
+            $revisionActions = @('delete','glossary','merge','split','split-at','structure-undo','review-note-add','review-note-state','placement','publication-candidates','publication-apply','publication-revert','abbreviation-register','glossary-add','term-add','term-deactivate','term-insert','term-exception','tm-delete','tm-register','confirm','confirm-bulk','replace','replace-undo','tm-pretranslate','render-start','review-start','copilot-review-start','copilot-review-apply','finding-decision','pdf-review-apply','coverage-decision','final-review-decision','source-update-preview','source-update-decision','source-update-apply','save-corpus','segment','translate','apply','preflight','export','export-reviewed','personal-glossary-list','personal-glossary-remove')
             $receiptActions = @('placement','publication-apply','publication-revert','abbreviation-register','source-update-apply')
             if ($receiptActions -contains $action -and [string]::IsNullOrWhiteSpace([string]$payload['idempotency_key'])) {
                 throw 'CAT_IDEMPOTENCY_KEY_REQUIRED: この更新には操作識別子が必要です。'
@@ -2972,6 +2972,34 @@ function Invoke-YakuRoute {
                     $body | Add-Member -NotePropertyName structure_undo_restored -NotePropertyValue ([int]$commit.Result.Restored) -Force
                     $body | Add-Member -NotePropertyName structure_undo_operation -NotePropertyValue ([string]$commit.Result.Operation) -Force
                     Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 8 -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                'review-note-add' {
+                    $index = -1
+                    try { $index = [int]$payload['index'] } catch { $index = -1 }
+                    $text = ''
+                    try { $text = [string]$payload['text'] } catch { $text = '' }
+                    $mutation = {
+                        param($candidate,$innerIndex,$innerText)
+                        return (Add-YakuCatSegmentReviewNote -Project $candidate -Index $innerIndex -Text $innerText)
+                    }
+                    $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($index,$text) -Action review-note-add
+                    $project = $commit.Project
+                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
+                }
+                'review-note-state' {
+                    $index = -1
+                    try { $index = [int]$payload['index'] } catch { $index = -1 }
+                    $noteId = ''
+                    try { $noteId = [string]$payload['note_id'] } catch { $noteId = '' }
+                    $state = ''
+                    try { $state = [string]$payload['state'] } catch { $state = '' }
+                    $mutation = {
+                        param($candidate,$innerIndex,$innerNoteId,$innerState)
+                        return (Set-YakuCatSegmentReviewNoteState -Project $candidate -Index $innerIndex -NoteId $innerNoteId -State $innerState)
+                    }
+                    $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($index,$noteId,$state) -Action review-note-state
+                    $project = $commit.Project
+                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 }
                 'candidates' {
                     # 現在行の候補。利用者が登録した用語、確認済みTM、当該
