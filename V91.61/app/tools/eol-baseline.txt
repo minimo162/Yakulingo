@@ -142,6 +142,7 @@ tools/Test-YakuV9187CompactionBudget.ps1	crlf
 tools/Test-YakuV9188EditorLanguage.ps1	crlf
 tools/Test-YakuV9189SearchReplaceUndo.ps1	crlf
 tools/Test-YakuV9190StructuralUndo.ps1	crlf
+tools/Test-YakuV9191PairedDelimiterQa.ps1	crlf
 tools/V64-HTTP-Boundary-Test.ps1	crlf
 tools/V65-Saving-Validation-Test.ps1	crlf
 tools/Wait-YakuCopilotResponse-Watcher-Test.ps1	crlf

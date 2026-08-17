@@ -160,7 +160,16 @@ Check-YakuDual ($catClient -match "type: 'translate', scope: jobScope" -and $cat
 Check-YakuDual ($catClient -match "event\.key === 'Enter'" -and $catClient -match '処理中は確認できません' -and $catClient -match 'function focusAfter\(index\)') 'Ctrl+Enter is guarded while busy and advances after confirmation'
 # 2026-08-13: ドロップ先は取り込みボタン自身になった（枠を1つ減らした）。
 Check-YakuDual ($catClient -match "bindFileDrop\(el\('cat-open-file-entry'\), el\('cat-file-input'\)\)" -and $catClient -match "event\.key === 'Enter' \|\| event\.key === ' '") 'file drop supports drag-drop and keyboard activation'
-Check-YakuDual ($catClient -match 'data-cat-loss' -and $catClient -match 'この行と次の行をつなげて1文にします。' -and $catClient -match 'つなげた行を元の2行に戻します。' -and ([regex]::Matches($catClient, '消えた訳文は元に戻せません').Count -ge 2)) 'merge and split warn before discarding a translation'
+# 構造編集は直前の1回だけ元に戻せる。古い試験は「元に戻せません」を要求しており、
+# 実装済みの復元口を欠陥として扱っていた。3操作すべてが、訳文を消す前に範囲と
+# 一回限りの復元を伝えることを固定する。
+Check-YakuDual ($catClient -match 'data-cat-loss' -and
+  $catClient -match 'この行と次の行をつなげて1文にします。' -and
+  $catClient -match 'つなげた行を元の2行に戻します。' -and
+  $catClient -match 'この行を、原文の選んだ位置で2つに分けます。' -and
+  $catClient -match '直前のこの結合だけを元に戻せます。' -and
+  $catClient -match '直前のこの分割解除だけを元に戻せます。' -and
+  $catClient -match '直前のこの分割だけを元に戻せます。') 'merge and split warn before discarding a translation and promise the bounded recovery path'
 Check-YakuDual ($catClient -match 'data\.review_blocked' -and $catClient -match 'var same = document\.querySelector') 'QC-blocked confirmation returns focus to the same row'
 Check-YakuDual ($catClient -match 'function redrawAfterFlush\(\)[\s\S]*?return flush\(\)\.then' -and $catClient -match "button\.hasAttribute\('data-cat-filter'\)[\s\S]{0,180}redrawAfterFlush\(\)") 'filter redraw waits for the shared save barrier'
 

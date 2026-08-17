@@ -225,6 +225,69 @@ function Test-YakuCatTranslationInvalid {
     return $false
 }
 
+function Find-YakuCatPairedDelimiterMismatch {
+    <#
+      訳文だけを一度走査して、対応する開き・閉じ記号が壊れていないかを調べる。
+
+      これは誤字・組版の見落としを拾うための **warning** であり、原文と同じ
+      記号を要求する検査ではない。日英では句読点も引用符の置き方も変わり得る。
+      ASCII の quote / apostrophe と curly single quote は英語の短縮形や単位の
+      prime と区別できないため、意図的に対象にしない。< > も比較演算子・HTML
+      断片との区別が付かないので対象外にする。
+
+      FormKC を掛けず、( と ）のような混在も見た目どおり不一致として扱う。
+      対象の記号はすべて BMP 内なので、PowerShell 5.1 の UTF-16 code unit を
+      一つずつ読むだけで足りる。正規表現・ファイルI/O・用語集照会は行わず、
+      時間 O(n)、追加メモリ O(入れ子の深さ) である。
+    #>
+    param([AllowNull()][string]$Text)
+
+    $value = [string]$Text
+    if ([string]::IsNullOrEmpty($value)) { return $null }
+    $pairs = @{
+        '(' = ')'; '[' = ']'; '{' = '}'
+        '（' = '）'; '［' = '］'; '｛' = '｝'
+        '「' = '」'; '『' = '』'; '【' = '】'; '〔' = '〕'; '〈' = '〉'; '《' = '》'
+        '“' = '”'
+    }
+    $closing = @{}
+    foreach ($opening in @($pairs.Keys)) { $closing[[string]$pairs[[string]$opening]] = [string]$opening }
+    $stack = New-Object System.Collections.Generic.List[string]
+    for ($i = 0; $i -lt $value.Length; $i++) {
+        $mark = [string]$value[$i]
+        # 数値マスク [[N1]] / [[P1]] は既存の placeholder-residue が専用に
+        # 扱う。通常の [] として二重に数えない。完全な保護トークンだけを飛ばし、
+        # 壊れた token は記号自体の不整合としてここで見えるままにする。
+        if ($mark -eq '[' -and ($i + 5) -lt $value.Length -and [string]$value[$i + 1] -eq '[' -and ([string]$value[$i + 2] -eq 'N' -or [string]$value[$i + 2] -eq 'P')) {
+            $tokenEnd = $i + 3
+            while ($tokenEnd -lt $value.Length -and [char]::IsDigit($value[$tokenEnd])) { $tokenEnd++ }
+            if ($tokenEnd -gt ($i + 3) -and ($tokenEnd + 1) -lt $value.Length -and [string]$value[$tokenEnd] -eq ']' -and [string]$value[$tokenEnd + 1] -eq ']') {
+                $i = $tokenEnd + 1
+                continue
+            }
+        }
+        if ($pairs.ContainsKey($mark)) {
+            $stack.Add($mark) | Out-Null
+            continue
+        }
+        if (-not $closing.ContainsKey($mark)) { continue }
+        if ($stack.Count -eq 0) {
+            return [pscustomobject]@{ Reason='unexpected-closing'; Position=[int]$i; Mark=$mark; Expected='' }
+        }
+        $opening = [string]$stack[$stack.Count - 1]
+        $expected = [string]$pairs[$opening]
+        if ($expected -ne $mark) {
+            return [pscustomobject]@{ Reason='mismatched-closing'; Position=[int]$i; Mark=$mark; Expected=$expected }
+        }
+        $stack.RemoveAt($stack.Count - 1)
+    }
+    if ($stack.Count -gt 0) {
+        $opening = [string]$stack[$stack.Count - 1]
+        return [pscustomobject]@{ Reason='missing-closing'; Position=[int]$value.Length; Mark=$opening; Expected=[string]$pairs[$opening] }
+    }
+    return $null
+}
+
 function Get-YakuCatAuditableNumericValueCount {
     param(
         [AllowNull()][string]$Text,
@@ -688,6 +751,10 @@ function Invoke-YakuCatSegmentValidation {
         $findings.Add([pscustomobject]@{ Code='invalid-or-source-fallback'; Severity='error' }) | Out-Null
     }
     if ($target -match '\[\[(?:N|P)\d+\]\]') { $findings.Add([pscustomobject]@{ Code='placeholder-residue'; Severity='error' }) | Out-Null }
+    $pairedDelimiter = Find-YakuCatPairedDelimiterMismatch -Text $target
+    if ($null -ne $pairedDelimiter) {
+        $findings.Add([pscustomobject]@{ Code='paired-delimiter-mismatch'; Severity='warning'; Detail=([string]$pairedDelimiter.Reason) }) | Out-Null
+    }
 
     # 利用者が登録した固定訳（cell_exact）を、アプリがセル丸ごと一字一句そのまま入れた場合だけ、
     # 数値の増減チェックを外す。
@@ -967,6 +1034,16 @@ function Get-YakuCatOutputEligibility {
     foreach ($segment in @($Project.Segments)) {
         if ([string]::IsNullOrWhiteSpace([string]$segment.Translation)) { $reasons.Add('segment-untranslated') | Out-Null; continue }
         if ([string]$segment.State -eq 'reviewed') {
+            # warning の追加で QC 契約を上げると、保存済みの確認行が一斉に
+            # segment-qc-not-current になり、書き出しまで止まる。これは advisory
+            # な検査なので契約は据え置く。その代わりこの純粋な検査だけを写しで
+            # 走らせ、古い確認行にも preview として見せる。行・revision・監査は
+            # 一切書き換えない。新しく確認した行は Invoke 側で通常どおり永続化する。
+            $legacyDelimiter = Find-YakuCatPairedDelimiterMismatch -Text ([string]$segment.Translation)
+            $persistedDelimiter = @($segment.QcFindings | Where-Object { [string]$_.Code -eq 'paired-delimiter-mismatch' }).Count -gt 0
+            if ($null -ne $legacyDelimiter -and -not $persistedDelimiter) {
+                $qcRows.Add([pscustomobject]@{ SegmentId=[string]$segment.SegmentId; Codes=@('paired-delimiter-mismatch') }) | Out-Null
+            }
             if (-not (Test-YakuCatSegmentQcCurrent -Segment $segment -TerminologySnapshotHash ([string]$Project.TerminologySnapshotHash))) {
                 $reasons.Add('segment-qc-not-current') | Out-Null
             }
@@ -1109,7 +1186,8 @@ function Get-YakuCatQcWarningCodes {
       この一覧を読まない。止める条件は Severity='error' だけで決まる。
     #>
     return @(
-        'label-not-in-glossary'
+        'label-not-in-glossary',
+        'paired-delimiter-mismatch'
     )
 }
 
@@ -3186,7 +3264,10 @@ function Remove-YakuCatProject {
 }
 
 function Get-YakuCatProjectSummary {
-    param([Parameter(Mandatory=$true)]$Project)
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [AllowNull()]$Eligibility = $null
+    )
     $null = Initialize-YakuCatProjectState -Project $Project
     $segs = @($Project.Segments)
     $done = @($segs | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.Translation) }).Count
@@ -3204,7 +3285,7 @@ function Get-YakuCatProjectSummary {
         $sourceChars += $length
         if ([string]$seg.State -eq 'reviewed') { $confirmedChars += $length }
     }
-    $eligibility = Get-YakuCatOutputEligibility -Project $Project
+    if ($null -eq $Eligibility) { $Eligibility = Get-YakuCatOutputEligibility -Project $Project }
     return [pscustomobject]@{
         Id        = [string]$Project.Id
         FileName  = [string]$Project.FileName
@@ -3221,10 +3302,10 @@ function Get-YakuCatProjectSummary {
         ConfirmedChars = [int]$confirmedChars
         RemainingChars = [int]($sourceChars - $confirmedChars)
         Revision = [int]$Project.Revision
-        TranslationListEligible = [bool]$eligibility.TranslationListEligible
-        ExcelDraftEligible = [bool]$eligibility.ExcelDraftEligible
-        WordDraftEligible = [bool]$eligibility.WordDraftEligible
-        EligibilityReasons = @($eligibility.Reasons)
+        TranslationListEligible = [bool]$Eligibility.TranslationListEligible
+        ExcelDraftEligible = [bool]$Eligibility.ExcelDraftEligible
+        WordDraftEligible = [bool]$Eligibility.WordDraftEligible
+        EligibilityReasons = @($Eligibility.Reasons)
     }
 }
 
@@ -3296,7 +3377,8 @@ function ConvertTo-YakuCatProjectJson {
     $documentFormat = $(try { [string]$Project.DocumentFormat } catch { '' })
     $exportBlocked = if ([string]$Project.Source -ne 'file') { -not [bool]$eligibility.TranslationListEligible } elseif ($documentFormat -eq 'docx') { -not [bool]$eligibility.TranslationListEligible } else { -not [bool]$eligibility.ExcelDraftEligible }
     $rows = New-Object System.Collections.Generic.List[object]
-    # 未確認の行を写しに掛けた点検の結果（種別だけ）。書き出しを止めた理由の案内が
+    # 未確認の行を写しに掛けた点検と、契約を上げずに表示する advisory warning の
+    # 結果（種別だけ）。書き出しを止めた理由の案内が
     # 「左の『点検の指摘』を押してください」と言う、その案内先を実際に開けるようにする。
     # **Segment.QcFindings とは別の鍵にする。** 混ぜると「この行の点検はいつ・どの
     # 用語一覧で行われたか」（Test-YakuCatSegmentQcCurrent と監査）が壊れる。
@@ -3417,8 +3499,9 @@ function ConvertTo-YakuCatProjectJson {
             state       = [string]$segs[$i].State
             qc_status   = [string]$segs[$i].QcStatus
             qc_findings = @($segs[$i].QcFindings)
-            # まだ確定していない行を写しに掛けたときの種別。実セグメントには残らない
-            # （残すと点検の履歴が嘘になる）ので、画面へはこちらで渡す。
+            # 未確定行を写しに掛けた結果、または保存済みの確認行へ advisory として
+            # 足した種別。実セグメントには残らない（残すと点検の履歴が嘘になる）ので、
+            # 画面へはこちらで渡す。
             # 種別だけを持ち、用語の免除に使う TermId は載せない。
             qc_preview = @($(if ($qcPreviewBySegment.ContainsKey([string]$segs[$i].SegmentId)) { $qcPreviewBySegment[[string]$segs[$i].SegmentId] } else { @() }))
             qc_terminology_hash = [string]$segs[$i].QcTerminologyHash
@@ -3453,7 +3536,7 @@ function ConvertTo-YakuCatProjectJson {
             repetition_first = [bool]($repetitionFirst.ContainsKey([string]$repetitionKeys[$i]) -and [int]$repetitionFirst[[string]$repetitionKeys[$i]] -eq $i)
         })
     }
-    $summary = Get-YakuCatProjectSummary -Project $Project
+    $summary = Get-YakuCatProjectSummary -Project $Project -Eligibility $eligibility
     # 引いた文例。検索したときだけ入る。何が引けたかを見てから
     # 使うかどうか決められるようにするため（利用者の判断 2026-08-06）。
     $corpusExamples = @()

@@ -362,6 +362,7 @@
          文中で「このセルの訳を今後も自動で使う」を名指しするのは、それが
          この行に実際に描かれるボタンだからである（下の renderRows を参照）。 */
       , 'label-not-in-glossary': '用語集に無い短いラベルです。訳が長いと列からはみ出すことがあります。この訳でよければ「そのほかの操作」の「このセルの訳を今後も自動で使う」で登録しておくと、次からも同じ訳になります。書き出しは止まりません。'
+      , 'paired-delimiter-mismatch': '対応する開き括弧・閉じ括弧の組み合わせが合っていません。訳文の記号を見比べてください。書き出しは止まりません。'
     };
     return qcFindingViews(segment).map(function (view) { return labels[view.code] || '自動点検で気になる点が見つかりました。左の原文と見比べてください。'; });
   }
@@ -370,7 +371,8 @@
 
      qc_findings … その行を「確認済みにする」ときに実際に走った点検の結果。
                    いつ・どの用語一覧で行われたかまで行に残っている。
-     qc_preview  … まだ確定していない行を、サーバが写しに掛けた結果の種別だけ。
+     qc_preview  … 未確定行をサーバが写しに掛けた結果、または保存済みの確認行へ
+                   advisory として足した種別だけ。
 
      2つ目が要る理由（2026-08-15）: 書き出しが止まった理由の案内は
      「左の『点検の指摘』を押すと、その行だけ表示できます」と言う。ところが
@@ -434,12 +436,18 @@
      **直せるが、直さなくても書き出せる**ものである。error と同じ赤で出すと
      「押せるのに押せない」と読め、tool と同じにすると自分で対処できることが
      伝わらない。色は表示だけの話で、止める条件はサーバの Severity が決める。 */
-  var QC_WARNING_CODES = ['label-not-in-glossary'];
+  var QC_WARNING_CODES = ['label-not-in-glossary', 'paired-delimiter-mismatch'];
   function qcGroup(code) {
     if (QC_TOOL_TROUBLE_CODES.indexOf(code) >= 0) return 'tool';
     if (QC_WARNING_CODES.indexOf(code) >= 0) return 'warn';
     return 'error';
   }
+  function qcWarningGroupKey(code) {
+    if (code === 'label-not-in-glossary') return 'label-warning';
+    if (code === 'paired-delimiter-mismatch') return 'delimiter-warning';
+    return 'warning';
+  }
+  function qaGroupByKey(groups, key) { return groups.find(function (group) { return group.key === key; }) || null; }
   /* 一覧の印は短く。長い名前は狭い列から溢れて隣の列に重なる。
    意味は title と、左の絞り込み（要対応・未翻訳・未確認…）が持つ。 */
   function stateLabel(state) { return state === 'reviewed' ? '確認済' : state === 'human_edited' ? '手直し' : state === 'machine_draft' ? '未確認' : state === 'stale' ? '再確認' : '未翻訳'; }
@@ -2055,9 +2063,8 @@
   }
   /* 出力を止めない警告は、止める指摘と同じ群へ入れない。同じ群に入れると
      見出しの数字が「ファイルを作れない指摘」の件数として読まれ、押せるはずの
-     書き出しが押せないように見える。群は**末尾へ足す**。updateQaButton は
-     blocking の印から数えるが、openQaList は groups[2] を添字で引いているので、
-     間に割り込ませると未確認の件数がすり替わる。 */
+     書き出しが押せないように見える。群は意味ごとに分け、添字ではなく key で
+     引く。warning を後から足しても未確認数や出力前要約がすり替わらない。 */
   function qaFindings() {
     var all = (project && project.segments) || [], groups = [
       { key: 'empty', title: '訳文が空', blocking: true, items: [] },
@@ -2066,7 +2073,11 @@
          人が数字を見に行く。書き出しの窓が言う理由と同じ顔ぶれにする。 */
       { key: 'qc', title: '自動点検の指摘', blocking: true, items: [] },
       { key: 'unconfirmed', title: '未確認', blocking: false, items: [] },
-      { key: 'warn', title: '用語集に無い短いラベル', blocking: false, items: [] }
+      { key: 'label-warning', title: '用語集に無い短いラベル', blocking: false, items: [] },
+      { key: 'delimiter-warning', title: '括弧・引用符の対応', blocking: false, items: [] },
+      /* 正本へ warning が増えたのに専用群をまだ足していない場合も、warning を
+         blocker 群へ落とさない。専用群を追加するまでの安全な受け皿である。 */
+      { key: 'warning', title: '書き出しを止めない確認事項', blocking: false, items: [] }
     ];
     if (nothingTranslatedYet()) return groups;
     all.forEach(function (segment) {
@@ -2074,17 +2085,19 @@
          qcFindingViews と同じ並びを返すので、添字で対にできる。 */
       var views = qcFindingViews(segment), messages = qcMessages(segment);
       var empty = !String(segment.translation || '').trim();
-      if (empty) groups[0].items.push({ index: Number(segment.index), source: segment.source, message: '' });
+      var emptyGroup = qaGroupByKey(groups, 'empty'), qcGroupItems = qaGroupByKey(groups, 'qc'), unconfirmedGroup = qaGroupByKey(groups, 'unconfirmed');
+      if (empty) emptyGroup.items.push({ index: Number(segment.index), source: segment.source, message: '' });
       views.forEach(function (view, viewIndex) {
         var message = String(messages[viewIndex] || '');
-        var target = qcGroup(view.code) === 'warn' ? groups[3] : groups[1];
-        if (target === groups[1]) {
+        var target = qcGroup(view.code) === 'warn' ? qaGroupByKey(groups, qcWarningGroupKey(view.code)) : qcGroupItems;
+        if (!target) target = qcGroupItems;
+        if (target === qcGroupItems) {
           if (empty && message.indexOf('訳文が空') >= 0) return;
           if (empty && /空/.test(message)) return;
         }
         target.items.push({ index: Number(segment.index), source: segment.source, message: message });
       });
-      if (!segment.confirmed && !empty) groups[2].items.push({ index: Number(segment.index), source: segment.source, message: '' });
+      if (!segment.confirmed && !empty) unconfirmedGroup.items.push({ index: Number(segment.index), source: segment.source, message: '' });
     });
     return groups;
   }
@@ -2918,12 +2931,18 @@
     if (!project) { status('資料が開かれていません。'); return; }
     var groups = qaFindings();
     var blocking = groups.filter(function (group) { return group.blocking; }).reduce(function (sum, group) { return sum + group.items.length; }, 0);
-    var unconfirmed = groups[2].items.length;
+    var unconfirmedGroup = qaGroupByKey(groups, 'unconfirmed'), labelWarningGroup = qaGroupByKey(groups, 'label-warning'), delimiterWarningGroup = qaGroupByKey(groups, 'delimiter-warning'), genericWarningGroup = qaGroupByKey(groups, 'warning');
+    var unconfirmed = unconfirmedGroup ? unconfirmedGroup.items.length : 0;
     /* 止めない警告は、要約でも「止める指摘」と混ぜない。かといって黙らせない。
        警告が0件のときの文言は1文字も変えないので、「調べたが直すところは無かった」
        を見る表明（Test-YakuV9176CatScreenWiring の (k)）はそのまま生きる。 */
-    var warned = groups[3].items.length;
-    var warnNote = warned ? ('用語集に無い短いラベルが ' + warned + ' 行あります。書き出しは止まりません。') : '';
+    var labelWarnings = labelWarningGroup ? labelWarningGroup.items.length : 0;
+    var delimiterWarnings = delimiterWarningGroup ? delimiterWarningGroup.items.length : 0;
+    var genericWarnings = genericWarningGroup ? genericWarningGroup.items.length : 0;
+    var warned = labelWarnings + delimiterWarnings + genericWarnings;
+    var warnNote = (labelWarnings ? ('用語集に無い短いラベルが ' + labelWarnings + ' 行あります。書き出しは止まりません。') : '') +
+      (delimiterWarnings ? ('括弧・引用符の対応を確認する行が ' + delimiterWarnings + ' 行あります。書き出しは止まりません。') : '') +
+      (genericWarnings ? ('書き出しを止めない確認事項が ' + genericWarnings + ' 行あります。書き出しは止まりません。') : '');
     el('cat-qa-summary').textContent = nothingTranslatedYet()
       ? 'まだ訳していません。「訳していない行を訳す」を押すと、Copilotへ送ります。'
       : blocking

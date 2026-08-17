@@ -138,7 +138,9 @@ Check-YakuUse ($quickJs -notmatch "hidden = !text\.trim\(\) \|\| !explicitDirect
 # 同じ画面の「訳文を取り出す」は最初から「残り2行の訳案を作ってください。」と
 # 正しく言っていたので、言い方はそちらへ揃える。1行でも訳ができれば指摘に戻る。
 Check-YakuUse ($catJs -match 'function nothingTranslatedYet') 'まだ一度も訳していない状態を見分ける'
-Check-YakuUse ($catJs -match '(?s)function qaFindings\(\)[\s\S]{0,600}?if \(nothingTranslatedYet\(\)\) return groups;') '訳す前は指摘を数えない'
+# 群の説明や種類が増えても、関数内のガードそのものを見失わない。文字数で距離を
+# 600字に固定すると、挙動が同じまま説明を足しただけで物差しが赤になる。
+Check-YakuUse ($catJs -match '(?s)function qaFindings\(\)\s*\{[\s\S]*?if \(nothingTranslatedYet\(\)\) return groups;') '訳す前は指摘を数えない'
 Check-YakuUse ($catJs -match 'まだ訳していません。「訳していない行を訳す」を押すと') '点検一覧は次にやることを書く'
 
 # 帯と行で、同じことを違う名前で呼んでいた（帯は「訳案」、行は「訳文」）。
