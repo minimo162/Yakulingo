@@ -78,7 +78,7 @@
            （実測 2026-08-16 1912x987: 入力欄の器は角丸16px・内側24px・影 none）。 -->
       <section id="cat-picker" class="cat-picker" aria-labelledby="cat-page-title">
         <div id="cat-entry-body" class="entry-body">
-          <!-- 左の柱。続きの作業・そのほかの始め方・使い方と設定を1本の縦線に乗せる。
+          <!-- 左の柱。続きの作業・PDF取り込み・使い方と設定を1本の縦線に乗せる。
                主役（貼り付けと取り込みの枠）の外にある入口は、全部ここへ集める。 -->
           <div class="entry-rail">
             <div id="cat-resume" class="cat-resume" hidden role="complementary" aria-labelledby="cat-resume-title">
@@ -86,16 +86,11 @@
               <div id="cat-resume-list"></div>
               <button type="button" id="cat-resume-more" class="link-button" hidden aria-expanded="false"></button>
             </div>
-            <details class="entry-more"><summary>そのほかの始め方</summary><div class="entry-more-actions">
-              <button type="button" class="secondary-button" data-cat-source-show="prior">前回の資料をもとに、今回の分だけ訳す</button>
-              <button type="button" id="cat-open-align-entry" class="secondary-button">過去の日本語版・英語版PDFを読み込む</button>
-              <button type="button" class="secondary-button" data-cat-source-show="file">ファイルの保存場所を入力して取り込む</button>
-            </div></details>
-            <!-- 出口は1つ（2026-08-13、利用者の指摘「3つもリンクがあってどれを選べば
-                 よいかわからない」）。行き先の /tutorial が、使い方・送るもの・
-                 起動とショートカットを1枚で持っている。 -->
+            <button type="button" id="cat-open-align-entry" class="secondary-button entry-more-pdf-card">過去の日本語版・英語版PDFを読み込む</button>
+            <!-- 使い方と設定は別々のリンクにして、目的の場所へ直接移動できるようにする。 -->
             <nav id="cat-help-links" class="home-help-links" aria-label="使い方と設定">
-              <a href="/tutorial">使い方と設定</a>
+              <a href="/tutorial">使い方</a>
+              <a href="/tutorial#settings">設定</a>
             </nav>
           </div>
 
@@ -152,8 +147,8 @@
                   </select>
                   <span id="amount-notation-status" role="status" aria-live="polite"></span>
                 </p>
-                <div class="command-bar"><span id="quick-submit-note" class="command-bar-note">確認画面へ進みます</span><button id="quick-submit" type="submit" disabled>英語に訳す</button></div>
-                <!-- 押せない理由は、ボタンの直下に必ず出す（quick.js:141 の意図）。 -->
+                <div class="command-bar"><button id="quick-submit" type="submit" disabled>英語に訳す</button></div>
+                <!-- 必要な状態の説明はボタンの直下に出す。空欄には追加文を出さない。 -->
                 <p id="quick-submit-reason" class="quick-submit-reason" role="status" aria-live="polite"></p>
               </form>
 
@@ -170,14 +165,6 @@
         </div>
         <div id="cat-source-text" class="cat-start-panel" hidden>
           <h3>長い文章を貼り付ける</h3><label for="cat-text" class="sr-only">翻訳したい文章</label><textarea id="cat-text" rows="9" placeholder="翻訳したい文章を貼り付け"></textarea><button type="button" data-cat-open="text">確認を始める</button>
-        </div>
-        <div id="cat-source-prior" class="cat-start-panel" hidden>
-          <p class="muted">前回の英語は「前回版」として参考に出します。自動では反映しません。</p>
-          <label class="field-label" for="cat-prior-ja">前回の日本語<textarea id="cat-prior-ja" rows="4"></textarea></label>
-          <label class="field-label" for="cat-prior-en">前回の英語<textarea id="cat-prior-en" rows="4"></textarea></label>
-          <label class="field-label" for="cat-current-ja">今回の日本語<textarea id="cat-current-ja" rows="4"></textarea></label>
-          <label class="field-label" for="cat-prior-name">資料名<input id="cat-prior-name" type="text"></label>
-          <button type="button" id="cat-prior-open">貼り付けた文章で始める</button>
         </div>
         <!-- 過去の日英資料の取り込み。PDF を直接読めるようにした（2026-08-13）。
              利用者の実情として、正式版は PDF で、元の Word・Excel は章ごとに
