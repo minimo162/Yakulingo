@@ -138,20 +138,12 @@
     var amountSetting = el('quick-amount-setting');
     if (amountSetting) amountSetting.hidden = direction !== 'to_en';
     var submit = el('quick-submit');
-    /* 押せない理由を出すのはやめていない。出す場所をボタンの中から
-       ボタンの直下へ移した（2026-08-16）。元の註（下に残す）が言う懸念
-       ——「ラベルが『訳案を作る』のまま灰色になると、利用者は理由が分からず
-       押し続けて諦める」——は正当なので、理由は必ず画面に出す。ただし、
-       ラベルを理由で置き換えると、ボタンが何をするものなのかが起動画面から
-       消える（実測 2026-08-16: 起動直後のラベルは「文章を入力してください」で、
-       訳す道具だと読めるものが画面上に1つも無かった）。DeepL も同じ解き方で、
-       空の入力領域と操作部に理由を書き、ボタンは行為の名前を名乗る。 */
-    /* 押した先が確認画面になったので、その旨は #quick-submit-note が言う（2026-08-13）。 */
+    /* 押せない理由はボタンの直下へ出す。ボタン自体は常に行為の名前を名乗る。 */
     var resolved = direction === 'to_en' || direction === 'to_jp';
     submit.textContent = (resolved ? direction : 'to_en') === 'to_en' ? '英語に訳す' : '日本語に訳す';
     var reason = el('quick-submit-reason');
     if (reason) {
-      reason.textContent = !text.trim() ? '文章を入力してください'
+      reason.textContent = !text.trim() ? ''
         : busy ? '確認作業を準備しています…'
         : !resolved ? (detectedDirection === 'unknown' ? '翻訳先を選んでください' : '翻訳先を確認中…')
         : !ready ? 'Copilotは準備中です。押すと予約します'
@@ -160,8 +152,6 @@
     /* 空の作業領域の中の案内は、打ち始めたら消す。 */
     var guide = el('quick-empty-guide');
     if (guide) guide.hidden = !!text;
-    var submitNote = el('quick-submit-note');
-    if (submitNote) submitNote.textContent = '確認画面へ進みます';
     submit.disabled = !text.trim() || busy || !resolved;
     el('quick-input').readOnly = busy;
   }
