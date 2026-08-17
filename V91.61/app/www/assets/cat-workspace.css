@@ -1270,17 +1270,20 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 
 .cat-revision-compare {
   margin-top: 12px;
-  border: 2px solid var(--accent);
-  border-radius: var(--radius-control);
-  background: var(--accent-soft);
+  border: 1px solid #d8d0e7;
+  border-radius: 4px;
+  background: #faf8ff;
   padding: 12px;
 }
 
 .cat-revision-compare h4 { margin: 0 0 10px; font-size: 1rem; }
 .cat-revision-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.cat-revision-pair > div { border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); padding: 10px; }
+.cat-revision-pair > div { border: 1px solid var(--line); border-radius: 3px; background: var(--surface); padding: 10px; }
 .cat-revision-pair p { margin: 6px 0 0; overflow-wrap: anywhere; }
 .cat-revision-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.cat-revision-local { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.cat-revision-local h4 { margin: 0 0 4px; font-size: 1rem; }
+.cat-revision-local p { margin: 0 0 8px; }
 
 .cat-export-dialog .draft-warning {
   margin: 14px 0;
@@ -1618,4 +1621,1157 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
   min-height: 0;
   overflow: auto;
   padding: 0 var(--space-2) var(--space-2);
+}
+
+/* ==== Smartcat-like editor density (2026-08-17) ============================
+   Wide screens keep the bilingual grid as the only permanent canvas. Auxiliary
+   information and preview share one bottom dock; the document list is an
+   overlay when explicitly opened. */
+@media (min-width: 1320px) {
+  .cat-editor-layout,
+  .cat-editor-layout.is-docs-open,
+  .cat-editor-layout.is-docs-open.is-inspector-hidden {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    position: relative;
+  }
+
+  .cat-editor-pane { min-width: 0; }
+
+  .cat-editor-layout.is-docs-open .cat-docs-pane {
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 12;
+    width: min(22rem, 86vw);
+    min-width: 0;
+    border-right: 1px solid var(--line-strong);
+    background: var(--surface);
+    box-shadow: 10px 0 28px rgba(24, 24, 27, .14);
+    padding: var(--space-2);
+  }
+}
+
+.cat-bottom-dock {
+  width: 100%;
+  margin-top: var(--space-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+}
+
+.cat-bottom-dock-bar {
+  display: flex;
+  align-items: stretch;
+  min-height: 44px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.cat-bottom-dock-bar .cat-inspector-tabs {
+  position: static;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  border-bottom: 0;
+}
+
+.cat-bottom-dock-bar .cat-inspector-tabs button {
+  flex: 0 1 auto;
+  min-width: max-content;
+  min-height: 44px;
+  padding: 5px 13px;
+  white-space: nowrap;
+}
+
+.cat-bottom-dock-bar > #cat-preview-dock-close {
+  flex: 0 0 auto;
+  align-self: center;
+  min-height: 36px;
+  margin: 4px 8px 4px 4px;
+}
+
+.cat-preview-dock > .cat-inspector-pane {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border: 0;
+  background: var(--surface);
+}
+
+.cat-preview-dock > .cat-inspector-pane > [role="tabpanel"] {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-1) var(--space-2);
+}
+
+.cat-preview-dock > .cat-inspector-pane > #cat-panel-preview {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+.cat-preview-dock > .cat-inspector-pane > #cat-panel-preview[hidden] {
+  display: none;
+}
+
+.cat-preview-dock-head {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 4px var(--space-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.cat-preview-dock-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 var(--space-2) var(--space-1);
+}
+
+/* The document list is an explicit overlay, never a permanent third column. */
+@media (min-width: 1320px) {
+  .cat-editor-layout.is-docs-open .cat-docs-pane {
+    display: flex;
+  }
+}
+
+/* Keep the far-right state rail readable without turning rows into cards. */
+.cat-grid .cat-col-confirm { width: 7.25rem; }
+.cat-grid tbody .cat-col-confirm {
+  vertical-align: middle;
+  padding-inline: 6px;
+  text-align: right;
+}
+
+.cat-confirm-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 5px;
+  width: 100%;
+  min-height: 36px;
+  padding: 4px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--font-meta);
+  font-weight: 700;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.cat-confirm-control:hover { border-color: var(--accent); }
+.cat-confirm-control:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  outline-offset: 2px;
+}
+.cat-confirm-control.is-confirmed {
+  border-color: color-mix(in srgb, var(--success) 55%, var(--line-strong));
+  color: var(--success);
+}
+.cat-confirm-control .cat-confirm-mark {
+  flex: 0 0 auto;
+  width: 1.1em;
+  text-align: center;
+  font-size: 1.1em;
+}
+
+.cat-grid tbody tr.is-active {
+  outline: 2px solid color-mix(in srgb, var(--accent) 62%, var(--line-strong));
+  outline-offset: -2px;
+}
+.cat-grid tbody tr.is-active > td {
+  border-top: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
+  background: color-mix(in srgb, var(--surface) 96%, var(--accent) 4%);
+  padding-block: 5px;
+}
+.cat-grid tbody tr:not(.is-active) > td {
+  padding-block: 3px;
+}
+
+.cat-grid tbody tr.is-active .cat-more-row > summary {
+  min-height: 32px;
+  margin-top: 3px;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle, #fafafa);
+}
+.cat-grid tbody tr.is-active .cat-more-row[open] > summary {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.cat-grid tbody tr.is-active .cat-row-details { padding-top: 4px; }
+.cat-grid tbody tr.is-active .cat-row-primary { margin-top: 0; }
+
+/* A closed overflow/details control is the only extra element in an ordinary
+   active row. Expanded QC, revision, or details content may grow deliberately. */
+.cat-grid tbody tr:not(.is-active) .cat-confirm-control {
+  min-height: 32px;
+  padding-block: 2px;
+}
+
+@media (max-width: 760px) {
+  .cat-bottom-dock-bar .cat-inspector-tabs button { padding-inline: 9px; }
+  .cat-bottom-dock-bar > #cat-preview-dock-close { margin-right: 4px; }
+  .cat-grid .cat-col-confirm { width: 6.5rem; }
+}
+
+/* Smartcat-like visual tokens for the wide CAT workspace.  Keep the existing
+   controls and contracts, but let the canvas read as a light table rather than
+   a stack of dark cards. */
+body.app-cat[data-cat-view="workspace"],
+body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar,
+body.app-cat[data-cat-view="workspace"] .cat-grid,
+body.app-cat[data-cat-view="workspace"] .cat-bottom-dock {
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+body.app-cat[data-cat-view="workspace"] .cat-grid {
+  font-size: 16px;
+  font-weight: 400;
+}
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody {
+  font-weight: 400;
+}
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody .cat-state {
+  font-weight: 500;
+}
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) .cat-location-main,
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) .cat-state > span {
+  font-weight: 400;
+}
+
+/* The table headings remain in the DOM for screen readers and column mapping.
+   At this width the toolbar already communicates direction and language, so a
+   visible header row would spend a full line repeating that information. */
+@media (min-width: 1320px) {
+  body.app-cat[data-cat-view="workspace"] .cat-grid thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+
+/* Tabs are text controls on a white dock.  Only the selected tab gets a soft
+   lavender surface and a slim purple edge. */
+body.app-cat[data-cat-view="workspace"] .cat-bottom-dock-bar .cat-inspector-tabs button {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: var(--muted);
+  font-weight: 400;
+}
+body.app-cat[data-cat-view="workspace"] .cat-bottom-dock-bar .cat-inspector-tabs button:hover,
+body.app-cat[data-cat-view="workspace"] .cat-bottom-dock-bar .cat-inspector-tabs button:focus-visible {
+  background: var(--surface-subtle, #fafafa);
+  color: var(--text);
+}
+body.app-cat[data-cat-view="workspace"] .cat-bottom-dock-bar .cat-inspector-tabs button[aria-selected="true"] {
+  background: var(--accent-soft);
+  border-bottom-color: color-mix(in srgb, var(--accent) 72%, #6b4bb6);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+/* The confirmation rail is deliberately a small square state control.  The
+   Japanese state text stays in the accessible name and visually-hidden span. */
+body.app-cat[data-cat-view="workspace"] .cat-grid .cat-col-confirm {
+  width: 3.25rem;
+}
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody .cat-col-confirm {
+  padding-inline: 4px;
+  text-align: center;
+}
+body.app-cat[data-cat-view="workspace"] .cat-confirm-control {
+  width: 34px;
+  min-width: 34px;
+  max-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  max-height: 34px;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0;
+  font-weight: 400;
+  text-align: center;
+}
+body.app-cat[data-cat-view="workspace"] .cat-confirm-control .cat-confirm-mark {
+  width: auto;
+  font-size: 18px;
+  line-height: 1;
+}
+body.app-cat[data-cat-view="workspace"] .cat-confirm-control > span:last-child {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed {
+  border-color: color-mix(in srgb, var(--success) 55%, var(--line-strong));
+  background: color-mix(in srgb, var(--surface) 94%, var(--success) 6%);
+  color: var(--success);
+}
+body.app-cat[data-cat-view="workspace"] .cat-confirm-control:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  outline-offset: 2px;
+}
+
+/* A selected row is a quiet lavender surface with a one-pixel edge. */
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active {
+  outline: 1px solid color-mix(in srgb, var(--accent) 34%, var(--line));
+  outline-offset: -1px;
+}
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active > td {
+  border-top: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 72%, var(--surface));
+}
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active textarea[data-cat-input] {
+  background: var(--surface);
+  border-color: var(--line-strong);
+}
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) textarea[data-cat-input] {
+  background: transparent;
+  border-color: transparent;
+}
+
+/* Keep secondary toolbar controls neutral; the translation/export actions keep
+   their existing primary/eligibility styling. */
+body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .secondary-button,
+body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-more-actions > summary,
+body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-toolbar-menu > summary,
+body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar #cat-docs-toggle,
+body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar #cat-inspector-toggle {
+  border-color: var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+}
+
+/* Wide-screen table skeleton: keep the location cell in the DOM for names and
+   assistive technology, but give the bilingual pair the two main columns. */
+@media (min-width: 1320px) {
+  body.app-cat[data-cat-view="workspace"] .cat-workspace {
+    margin-top: 0;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid {
+    table-layout: fixed;
+    width: 100%;
+    background: #fff;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid col.cat-col-no {
+    width: 5.5rem;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid col.cat-col-loc {
+    width: 1px;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid col.cat-col-source,
+  body.app-cat[data-cat-view="workspace"] .cat-grid col.cat-col-target {
+    width: calc((100% - 8.75rem - 1px) / 2);
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid col.cat-col-confirm {
+    width: 3.25rem;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid .cat-col-no {
+    width: 5.5rem;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid .cat-col-loc {
+    width: 1px;
+    min-width: 1px;
+    max-width: 1px;
+    padding-inline: 0;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid .cat-col-loc > * {
+    display: block;
+    width: 1px;
+    max-width: 1px;
+    height: 1px;
+    max-height: 1px;
+    overflow: hidden;
+    white-space: nowrap;
+    font-size: 1px;
+    line-height: 1px;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid .cat-col-loc > .cat-card-label {
+    display: none;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid .cat-col-confirm {
+    width: 3.25rem;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr > td {
+    border-bottom: 1px solid #eceaf0;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) > td {
+    padding-block: 6px;
+    background: #fff;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active > td {
+    padding-block: 0;
+    border-top-color: #eceaf0;
+    border-bottom-color: #eceaf0;
+    border-radius: 0;
+    background: #faf8ff;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active > td:first-child,
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active > td:last-child {
+    border-radius: 0;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active textarea[data-cat-input] {
+    min-height: 30px;
+    padding-block: 1px;
+    background: #fff;
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(98, 57, 198, .30);
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-target {
+    position: relative;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active textarea[data-cat-input] {
+    padding-right: 12rem;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-row-flag {
+    position: absolute;
+    top: 3px;
+    right: 6px;
+    z-index: 1;
+    margin: 0;
+    pointer-events: none;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) textarea[data-cat-input]:focus {
+    background: #fff;
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(98, 57, 198, .30);
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-more-row > summary {
+    height: 22px;
+    min-height: 22px;
+    line-height: 20px;
+    margin-top: 1px;
+    padding: 0 6px;
+    border-color: #e6e4ea;
+    border-radius: 4px;
+    background: #fff;
+    font-size: var(--font-meta);
+    font-weight: 400;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-more-row[open] > summary {
+    border-color: #d8d0e7;
+    background: #faf8ff;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-row-flag {
+    margin-top: 1px;
+    padding: 2px 6px;
+    border: 1px solid #e6e4ea;
+    border-radius: 4px;
+    background: #fffdf5;
+    color: #7a4f00;
+    font-size: var(--font-meta);
+    font-weight: 400;
+  }
+
+  /* Compact two-line chrome: keep all existing controls, with the filter row
+     as a short second line so the editor begins near the Smartcat reference. */
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar {
+    gap: 6px;
+    padding: 4px 8px;
+    border-color: #e6e4ea;
+    border-radius: 4px;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-actions {
+    gap: 4px;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-actions button,
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-more-actions > summary,
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-doc-switch {
+    min-height: 34px;
+    padding-block: 3px;
+    border-radius: 4px;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar #cat-search,
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar input[type="search"] {
+    min-height: 34px;
+    height: 34px;
+    padding-block: 3px;
+    border-color: #e6e4ea;
+    border-radius: 4px;
+    background: #f7f6f9;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-toolbar-filters {
+    gap: 2px 4px;
+    padding-top: 3px;
+    border-top-color: #e6e4ea;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-toolbar-filters .cat-state-filters button,
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-toolbar-menu > summary,
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar #cat-docs-toggle,
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar #cat-inspector-toggle {
+    min-height: 30px;
+    padding-block: 2px;
+    border-radius: 4px;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-progress,
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-progress-row,
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-save-status {
+    font-size: var(--font-meta);
+  }
+
+  body.app-cat[data-cat-view="workspace"] .cat-bottom-dock-bar {
+    min-height: 36px;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-bottom-dock-bar .cat-inspector-tabs button {
+    min-height: 36px;
+    padding-block: 2px;
+  }
+}
+
+@media (min-width: 1320px) {
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar {
+    align-items: center;
+    gap: 0;
+    padding: 0 6px;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar > .cat-actions {
+    align-self: center;
+    align-items: center;
+    flex-wrap: nowrap;
+    min-height: 36px;
+    max-height: 40px;
+    overflow: visible;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar > .cat-actions > *,
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar > .cat-actions > details > summary {
+    align-self: center;
+    flex: 0 0 auto;
+    max-height: 36px;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar > .cat-segment-actions {
+    grid-column: 1 / -1;
+    grid-row: auto;
+    width: 100%;
+    min-height: 26px;
+    height: 26px;
+    max-height: 40px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions .cat-segment-button,
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions .cat-segment-revise > summary { min-height: 26px; max-height: 26px; padding-block: 0; }
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar > .cat-toolbar-filters {
+    min-height: 28px;
+    height: 28px;
+    max-height: 28px;
+    flex-wrap: nowrap;
+    align-items: center;
+    overflow: hidden;
+    padding-block: 0;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar > .cat-toolbar-filters > * { flex: 0 0 auto; }
+}
+
+@media (min-width: 1320px) {
+  body.app-cat[data-cat-view="workspace"] #cat-export-reviewed {
+    width: 30px;
+    min-width: 30px;
+    max-width: 30px;
+    padding-inline: 0;
+    overflow: hidden;
+    font-size: 0;
+  }
+  body.app-cat[data-cat-view="workspace"] #cat-export-reviewed::after { content: '▾'; font-size: 14px; line-height: 1; }
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-actions .secondary-button:disabled,
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar #cat-translate:disabled {
+    border-color: #e6e4ea;
+    background: #f7f6f9;
+    color: #9a94a8;
+    opacity: 1;
+  }
+  body.app-cat[data-cat-view="workspace"] #cat-preview-open[hidden] { display: none; }
+  body.app-cat[data-cat-view="workspace"] #cat-docs-pane .cat-docs-pane-head > #cat-switch-project,
+  body.app-cat[data-cat-view="workspace"] #cat-docs-pane .cat-docs-pane-head > #cat-source-update-open { display: block; margin-top: 4px; }
+  body.app-cat[data-cat-view="workspace"] #cat-docs-pane .cat-docs-pane-head > #cat-danger-zone { display: block; margin-top: 8px; }
+}
+
+/* Auxiliary dock separators/cards stay hairline and quiet too. */
+body.app-cat[data-cat-view="workspace"] .cat-bottom-dock {
+  border-color: #e6e4ea;
+  border-radius: 4px;
+}
+body.app-cat[data-cat-view="workspace"] .cat-bottom-dock-bar {
+  border-bottom-color: #eceaf0;
+}
+body.app-cat[data-cat-view="workspace"] .cat-bottom-dock .cat-candidates-title {
+  border-bottom-width: 1px;
+  border-bottom-color: #eceaf0;
+  font-weight: 600;
+}
+body.app-cat[data-cat-view="workspace"] .cat-bottom-dock .cat-term-card {
+  border-left-width: 2px;
+  border-color: #d8d0e7;
+  background: #fff;
+}
+
+/* Selected-row actions live in the compact top ribbon, never in the table row. */
+.cat-segment-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.cat-segment-actions-label { color: var(--muted); font-size: var(--font-meta); font-weight: 600; }
+.cat-segment-actions .cat-segment-button,
+.cat-segment-actions .cat-segment-revise > summary {
+  min-height: 30px;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--font-meta);
+  white-space: nowrap;
+}
+.cat-segment-actions .cat-segment-button:hover,
+.cat-segment-actions .cat-segment-button:focus-visible,
+.cat-segment-actions .cat-segment-revise[open] > summary { background: var(--accent-soft); border-color: var(--accent); }
+.cat-segment-actions .cat-segment-status { color: var(--muted); font-size: var(--font-meta); }
+.cat-segment-revise { position: relative; }
+.cat-segment-revise[open] > form { position: absolute; z-index: 31; top: 100%; right: 0; min-width: 300px; padding: 8px; border: 1px solid var(--line-strong); background: var(--surface); box-shadow: 0 8px 20px rgba(24,24,27,.12); }
+@media (min-width: 1320px) {
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-actions { gap: 3px; flex-wrap: nowrap; min-width: 0; overflow: hidden; }
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-actions > button,
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-actions > details > summary { min-height: 32px; padding-block: 2px; }
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions { flex: 1 1 100%; order: 20; }
+}
+
+/* Final wide-screen density pass: keep the row skeleton close to
+   number | source | target | state, without hiding its accessible names. */
+@media (min-width: 1320px) {
+  body.app-cat[data-cat-view="workspace"] .hero { padding-block: 0; }
+  body.app-cat[data-cat-view="workspace"] .cat-grid col.cat-col-no,
+  body.app-cat[data-cat-view="workspace"] .cat-grid .cat-col-no { width: 3.5rem; }
+  body.app-cat[data-cat-view="workspace"] .cat-grid col.cat-col-source { width: 44%; }
+  body.app-cat[data-cat-view="workspace"] .cat-grid col.cat-col-target { width: calc(100% - 3.5rem - 1px - 3.25rem - 44%); }
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-more-row > summary {
+    width: 28px;
+    min-width: 28px;
+    height: 18px;
+    min-height: 18px;
+    margin-top: 0;
+    padding: 0;
+    border-radius: 3px;
+    font-size: 0;
+    line-height: 16px;
+    justify-content: center;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-more-row > summary::after {
+    content: '⋯';
+    color: var(--muted);
+    font-size: 16px;
+    line-height: 16px;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-row-flag {
+    max-width: 7rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 1px 4px;
+    font-size: var(--font-meta);
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-more-row[open] > summary::after { color: var(--accent-text); }
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-state > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-more-row > .cat-row-details { margin-top: 0; }
+
+  /* Candidate matches are a compact two-column list; details occupy the
+     right-hand 22% and update from the focused/selected match. */
+  body.app-cat[data-cat-view="workspace"] #cat-panel-candidates > .cat-candidates {
+    display: grid;
+    grid-template-columns: minmax(0, 78fr) minmax(15rem, 22fr);
+    gap: 0 12px;
+    align-items: start;
+  }
+  body.app-cat[data-cat-view="workspace"] #cat-panel-candidates > .cat-candidates > section { min-width: 0; }
+  body.app-cat[data-cat-view="workspace"] #cat-panel-candidates > .cat-candidates > section:nth-child(2) { grid-column: 1; }
+  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    min-width: 0;
+    margin-top: 0;
+    padding: 8px 10px;
+    border-left: 1px solid #eceaf0;
+    background: #fff;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail-subtitle,
+  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail-diff { margin: 4px 0; font-size: var(--font-meta); }
+  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail-diff { overflow-wrap: anywhere; line-height: 1.35; }
+  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail-meta { margin: 8px 0 0; font-size: var(--font-meta); }
+  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail-meta > div { display: grid; grid-template-columns: 5.5em minmax(0, 1fr); gap: 6px; border-top: 1px solid #eceaf0; padding: 4px 0; }
+  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail-meta dt { color: var(--muted); }
+  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail-meta dd { margin: 0; overflow-wrap: anywhere; }
+  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid #eceaf0;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail-actions button {
+    min-height: 34px;
+    padding: 5px 9px;
+    border: 1px solid #d8d0e7;
+    border-radius: 3px;
+    background: #fff;
+    color: var(--accent-text);
+    font: inherit;
+    font-size: var(--font-meta);
+    font-weight: 600;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail-actions button:hover,
+  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail-actions button:focus-visible {
+    background: #faf8ff;
+    border-color: #8160d1;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate {
+    display: grid;
+    grid-template-columns: 26px minmax(0, 1fr) minmax(0, 1fr);
+    align-items: center;
+    gap: 2px 8px;
+    min-height: 38px;
+    margin: 0;
+    padding: 4px 6px;
+    border: 0;
+    border-bottom: 1px solid #eceaf0;
+    border-radius: 0;
+    background: transparent;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate:hover,
+  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate:focus-visible,
+  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate.is-selected { background: #faf8ff; }
+  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate .cat-candidate-number,
+  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate .cat-candidate-shortcut { position: static; }
+  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate .cat-candidate-number { width: 24px; height: 24px; font-size: 12px; background: transparent; color: var(--muted); }
+  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate .cat-candidate-shortcut { display: none; }
+  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate .cat-candidate-meta { grid-column: 2 / -1; display: flex; gap: 7px; align-items: center; min-width: 0; overflow: hidden; white-space: nowrap; font-size: var(--font-meta); }
+  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate .cat-candidate-meta > span { overflow: hidden; text-overflow: ellipsis; }
+  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate .cat-candidate-source,
+  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate .cat-candidate-target { min-width: 0; }
+  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate strong,
+  body.app-cat[data-cat-view="workspace"] .cat-term-card strong { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); clip-path: inset(50%); white-space: nowrap; }
+  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate .cat-cand-src,
+  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate .cat-cand-tgt { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 400; }
+  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate > .cat-candidate-source { grid-column: 2; }
+  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate > .cat-candidate-target { grid-column: 3; }
+  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate > .muted,
+  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate > .cat-row-actions { grid-column: 2 / -1; margin: 0; }
+  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate > .muted { display: none; }
+  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate > .cat-row-actions { display: none; }
+  body.app-cat[data-cat-view="workspace"] .cat-term-card { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 12px; min-height: 36px; padding: 4px 6px; border: 0; border-bottom: 1px solid #eceaf0; border-left: 0; border-radius: 0; background: transparent; }
+  body.app-cat[data-cat-view="workspace"] .cat-term-card .cat-candidate-meta,
+  body.app-cat[data-cat-view="workspace"] .cat-term-card .cat-row-actions { grid-column: 1 / -1; }
+  body.app-cat[data-cat-view="workspace"] .cat-term-card .cat-cand-src,
+  body.app-cat[data-cat-view="workspace"] .cat-term-card .cat-cand-tgt { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+
+/* Final confirmation token override. */
+body.app-cat[data-cat-view="workspace"] .cat-confirm-control { border-color: #dedbe5; background: #fff; color: #9a94a8; }
+body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { border-color: #00a98f; background: #eefaf7; color: #008f7a; }
+
+@media (min-width: 1320px) {
+  body.app-cat[data-cat-view="workspace"] #cat-search-menu > div { min-width: 360px; width: min(380px, 38vw); }
+}
+.cat-search-title { margin: 0; font-size: 15px; font-weight: 600; }
+.cat-search-section-label { color: var(--muted); font-size: var(--font-meta); font-weight: 600; }
+.cat-search-tools .cat-state-filters { display: flex; gap: 0; }
+.cat-search-tools .cat-state-filters button { min-height: 30px; border-radius: 0; white-space: nowrap; }
+.cat-search-tools .cat-state-filters button:first-child { border-radius: 4px 0 0 4px; }
+.cat-search-tools .cat-state-filters button:last-child { border-radius: 0 4px 4px 0; }
+.cat-search-tools .cat-search-replace { margin-top: 2px; font-weight: 600; }
+
+@media (min-width: 1320px) {
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active > td {
+    border-top-width: 1px;
+    border-bottom-width: 1px;
+    vertical-align: middle;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr > td { height: 56px; }
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody .cat-state > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active textarea[data-cat-input] {
+    min-height: 36px;
+    height: auto;
+    max-height: none;
+    overflow-y: hidden;
+    line-height: 20px;
+    padding-block: 7px 8px;
+  }
+}
+
+/* Final wide-screen chrome: three short strips keep the document canvas first.
+   Row A identifies the document and save/progress state, Row B is the selected
+   segment's icon ribbon, and Row C owns search/filter plus the three primary
+   actions. Existing IDs stay in place even when JS moves low-frequency tools. */
+@media (min-width: 1320px) {
+  body.app-cat[data-cat-view="workspace"] .hero {
+    height: 44px;
+    min-height: 44px;
+    padding-block: 0;
+  }
+  body.app-cat[data-cat-view="workspace"] .brand-block,
+  body.app-cat[data-cat-view="workspace"] .header-actions {
+    min-height: 44px;
+    align-items: center;
+  }
+  body.app-cat[data-cat-view="workspace"] .brand-block { gap: 8px; }
+  body.app-cat[data-cat-view="workspace"] .brand { font-size: 1rem; font-weight: 600; }
+  body.app-cat[data-cat-view="workspace"] .version-label { font-size: var(--font-meta); }
+  body.app-cat[data-cat-view="workspace"] .header-actions { gap: 8px; }
+  body.app-cat[data-cat-view="workspace"] .status-block { flex-direction: row; align-items: center; gap: 8px; }
+  body.app-cat[data-cat-view="workspace"] #copilot-window-open { min-height: 28px; padding-block: 0; }
+
+  body.app-cat[data-cat-view="workspace"] .tab-panel { margin-top: 4px; }
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar {
+    grid-template-columns: minmax(260px, 1fr) minmax(460px, 1.45fr) minmax(400px, auto);
+    grid-template-rows: 36px 32px 38px;
+    column-gap: 8px;
+    row-gap: 0;
+    align-items: center;
+    min-height: 106px;
+    height: 106px;
+    padding: 0 8px;
+    overflow: visible;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-toolbar-document {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+    height: 32px;
+    align-items: center;
+    flex-wrap: nowrap;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-toolbar-document .cat-doc-switch {
+    min-height: 32px;
+    max-height: 32px;
+    width: 100%;
+    padding-block: 2px;
+    border-radius: 3px;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-toolbar-progress {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+    height: 32px;
+    justify-content: flex-start;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-toolbar-progress .cat-progress-row { min-width: 220px; }
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar > .cat-segment-actions {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+    height: 32px;
+    min-height: 32px;
+    max-height: 32px;
+    flex: none;
+    order: initial;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-top: 1px solid #eceaf0;
+    border-bottom: 1px solid #eceaf0;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-toolbar-search {
+    grid-column: 1;
+    grid-row: 3;
+    width: 100%;
+    height: 32px;
+    min-height: 32px;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 6px;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-toolbar-search input,
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar #cat-search {
+    height: 30px;
+    min-height: 30px;
+    border-radius: 3px;
+    background: #f7f6f9;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-toolbar-filters {
+    grid-column: 2;
+    grid-row: 3;
+    width: 100%;
+    height: 32px;
+    min-height: 32px;
+    max-height: 32px;
+    padding: 0;
+    border-top: 0;
+    flex-wrap: nowrap;
+    gap: 2px 4px;
+    overflow: hidden;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-toolbar-filters .cat-state-filters { flex-wrap: nowrap; gap: 2px; min-width: 0; }
+  body.app-cat[data-cat-view="workspace"] .cat-toolbar-filters .cat-state-filters button,
+  body.app-cat[data-cat-view="workspace"] .cat-toolbar-menu > summary,
+  body.app-cat[data-cat-view="workspace"] .cat-toolbar-filters > .link-button {
+    min-height: 30px;
+    max-height: 30px;
+    padding-block: 1px;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar > .cat-actions {
+    grid-column: 3;
+    grid-row: 3;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    width: 100%;
+    min-width: 0;
+    height: 38px;
+    min-height: 38px;
+    max-height: 38px;
+    margin: 0;
+    flex-wrap: nowrap;
+    overflow: visible;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar > .cat-actions > button,
+  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar > .cat-actions > details > summary {
+    flex: 0 0 auto;
+    min-height: 32px;
+    max-height: 34px;
+    padding-block: 2px;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  body.app-cat[data-cat-view="workspace"] #cat-translate {
+    min-width: 188px;
+    padding-inline: 12px;
+    white-space: nowrap;
+  }
+  body.app-cat[data-cat-view="workspace"] #cat-export { min-width: 112px; }
+  body.app-cat[data-cat-view="workspace"] #cat-qa-open { min-width: 86px; }
+  body.app-cat[data-cat-view="workspace"] #cat-export-reviewed {
+    width: 30px;
+    min-width: 30px;
+    max-width: 30px;
+    padding-inline: 0;
+    overflow: hidden;
+    font-size: 0;
+  }
+  body.app-cat[data-cat-view="workspace"] #cat-export-reviewed::after { content: '▾'; font-size: 14px; line-height: 1; }
+
+  /* Row B actions are icon buttons with accessible names retained in
+     title/aria-label and a visually hidden text span. */
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > .cat-segment-button,
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-tm-pretranslate,
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-dock-toggle,
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-open,
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-confirm-bulk,
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > .cat-key-help > summary {
+    position: relative;
+    display: inline-flex;
+    flex: 0 0 30px;
+    width: 30px;
+    min-width: 30px;
+    max-width: 30px;
+    height: 30px;
+    min-height: 30px;
+    max-height: 30px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid #e6e4ea;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--muted);
+    line-height: 1;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > .cat-segment-button:hover,
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > .cat-segment-button:focus-visible,
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-tm-pretranslate:hover,
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-tm-pretranslate:focus-visible,
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-dock-toggle:hover,
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-dock-toggle:focus-visible,
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-open:hover,
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-open:focus-visible,
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-confirm-bulk:hover,
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-confirm-bulk:focus-visible,
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > .cat-key-help[open] > summary {
+    background: #faf8ff;
+    border-color: #d8d0e7;
+    color: var(--accent-text);
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions .cat-key-help > summary {
+    list-style: none;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions .cat-key-help > summary::-webkit-details-marker { display: none; }
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions .cat-key-help > summary::marker { content: ''; }
+  body.app-cat[data-cat-view="workspace"] .cat-bottom-dock-bar {
+    min-height: 34px;
+    height: 34px;
+    max-height: 36px;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-bottom-dock-bar .cat-inspector-tabs button {
+    min-height: 34px;
+    height: 34px;
+    max-height: 36px;
+    padding-block: 0;
+    color: #797389;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-bottom-dock-bar .cat-inspector-tabs button[aria-selected="true"] {
+    background: #f9f7fc;
+    border-bottom-color: #8160d1;
+    color: #8160d1;
+    font-weight: 600;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions .yaku-icon { width: 16px; height: 16px; }
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions .cat-segment-button-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions .cat-segment-status {
+    flex: 0 0 auto;
+    font-size: var(--font-meta);
+    white-space: nowrap;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions-dynamic { display: contents; }
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions-dynamic > .cat-segment-button {
+    position: relative;
+    display: inline-flex;
+    flex: 0 0 30px;
+    width: 30px;
+    min-width: 30px;
+    max-width: 30px;
+    height: 30px;
+    min-height: 30px;
+    max-height: 30px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid #e6e4ea;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--muted);
+    line-height: 1;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions-dynamic > .cat-segment-button:hover,
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions-dynamic > .cat-segment-button:focus-visible {
+    background: #faf8ff;
+    border-color: #d8d0e7;
+    color: var(--accent-text);
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions .cat-key-help {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex: 0 0 30px;
+    width: 30px;
+    height: 30px;
+    min-height: 30px;
+    max-height: 30px;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions .cat-key-help > dl {
+    position: absolute;
+    z-index: 40;
+    top: 34px;
+    right: 0;
+    width: 260px;
+    max-height: min(60vh, 420px);
+    overflow: auto;
+    margin: 0;
+    padding: 8px;
+    border: 1px solid #e6e4ea;
+    background: #fff;
+    box-shadow: 0 8px 20px rgba(24,24,27,.12);
+  }
+
+  /* The number cell is a locator, not a second state rail. State text and
+     exception badges remain in the DOM/title contracts but do not compete with
+     the single far-right confirmation control in the wide table. */
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody .cat-col-no .cat-state,
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody .cat-col-no .cat-change-badge,
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody .cat-col-no .cat-review-note-badge {
+    display: none;
+  }
+}
+
+/* Narrow workspaces keep the bilingual editor full width as well.  The
+   document list is an overlay so an explicitly restored open preference never
+   brings back an empty inspector track. */
+@media (max-width: 1319px) {
+  body.app-cat[data-cat-view="workspace"] .cat-editor-layout,
+  body.app-cat[data-cat-view="workspace"] .cat-editor-layout.is-docs-open,
+  body.app-cat[data-cat-view="workspace"] .cat-editor-layout.is-docs-open.is-inspector-hidden {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    position: relative;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-editor-layout.is-docs-open .cat-docs-pane {
+    display: flex;
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 12;
+    width: min(22rem, 86vw);
+    min-width: 0;
+    min-height: 0;
+    border-right: 1px solid var(--line-strong);
+    background: var(--surface);
+    box-shadow: 10px 0 28px rgba(24, 24, 27, .14);
+    padding: var(--space-2);
+  }
 }
