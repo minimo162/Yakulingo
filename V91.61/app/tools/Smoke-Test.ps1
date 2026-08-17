@@ -268,16 +268,16 @@ Assert-Yaku -Condition ($server -match "path -eq '/'" -and $server -notmatch "Pa
 # 一つでよくない？」。行き先の /tutorial が、使い方・送るもの・起動とショートカットを
 # 1枚で持ち、案内の再生もその画面から始められる。出口は1つに寄せた。
 Assert-Yaku -Condition ($catIndex.Contains('>使い方と設定</a>') -and (([regex]::Matches($catIndex, '<a href="/tutorial')).Count -eq 1)) -Message 'the way out of the deleted landing screen is a single link on the translation screen'
-# メールなどを少し訳す入口も一時CAT作業を作り、確認・QCと同じ経路へ進む。
-$instantBlock = ''
-if ($quickIndex -match '(?s)<section id="cat-instant".*?</section>\s*<!--') { $instantBlock = $Matches[0] }
-Assert-Yaku -Condition ($instantBlock.Contains('一時作業を作って確認画面へ移ります') -and $instantBlock.Contains('確認するまで翻訳メモリには登録しません') -and $instantBlock.Contains('id="quick-form"')) -Message 'the paste box must explain its temporary CAT and TM boundary'
+# 文章とWord・Excelは同じ枠から入り、どちらも確認画面へ進む。
+$entryBlock = ''
+if ($quickIndex -match '(?s)<section id="cat-picker".*?<section id="cat-workspace"') { $entryBlock = $Matches[0] }
+Assert-Yaku -Condition ($entryBlock.Contains('id="quick-form"') -and $entryBlock.Contains('id="quick-area"') -and $entryBlock.Contains('id="cat-file-area"') -and $entryBlock.Contains('確認画面へ進みます')) -Message 'text and file inputs must share one start surface and lead to review'
 Assert-Yaku -Condition ($quickIndex -notmatch 'id="cat-instant"[^>]*\shidden' -and $quickIndex -match 'id="cat-workspace"[^>]*\shidden') -Message 'the paste box is available on the start view while the review workspace waits for a document'
 # 貼り付け先は1つ。「保存する／しない」で入口を分けない（2026-08-11）。初見の人は
 # 訳案を見る前に1文ずつ直したいかを決められないので、選択は訳案のあとへ置く。
 # 2026-08-12: 「訳したい文章を貼り付けてください」という説明文で貼り付け口を数えていたが、
 # 見出しと同じことを繰り返す一文だったので消した。数えるのは説明文ではなく貼り付け欄そのもの。
-Assert-Yaku -Condition ($catIndex.Contains('Word・Excelを取り込む') -and $catIndex.Contains('id="quick-input"') -and $catIndex.Contains('続きの作業を開く')) -Message 'the start screen must connect paste and file inputs to the same review workspace'
+Assert-Yaku -Condition ($catIndex.Contains('Word・Excelはここへドラッグ') -and $catIndex.Contains('id="quick-input"') -and $catIndex.Contains('続きの作業')) -Message 'the start screen must connect paste, file, and saved-work inputs to the same review workspace'
 Assert-Yaku -Condition ((([regex]::Matches($catIndex, 'id="cat-open-file-entry"')).Count -eq 1) -and (([regex]::Matches($catIndex, 'id="quick-input"')).Count -eq 1)) -Message 'the front door must keep exactly one file entry and one text entry'
 # 長さの境目は画面が決めない。確認作業が分割に使っている設定値をそのまま使う。
 Assert-Yaku -Condition ($catIndex.Contains('__YAKU_MAX_BATCH_CHARS__') -and $quickClient.Contains('yaku-max-batch-chars') -and $quickClient -notmatch 'length > 3000|length > 2000') -Message 'the long-text threshold must come from the server batch budget, not a number chosen in the page'
@@ -299,7 +299,7 @@ Assert-Yaku -Condition ($quickClient.Contains('/api/cat/open') -and -not $quickC
 Assert-Yaku -Condition ($commonClient.Contains('function plainError') -and $commonClient.Contains("box.textContent || box.innerText") -and $commonClient.Contains('new Error(plainError(body)')) -Message 'HTML API errors must be reduced to readable text before rendering'
 Assert-Yaku -Condition ($catClient.Contains('dirty = new Map()') -and $catClient.Contains('function flush()') -and $catClient.Contains('return flush().then') -and $catClient.Contains('dirty.set(dirtyKey(')) -Message 'CAT edits must become dirty on input and pass through the shared save barrier before commands'
 Assert-Yaku -Condition ($catClient.Contains('var projectId = input.getAttribute(') -and $catClient.Contains('scopeIsCurrent(packet.scope, true)') -and $catClient.Contains("String(packet.data.id || '') !== projectId")) -Message 'late CAT save responses must remain scoped to their originating project and revision'
-Assert-Yaku -Condition ($catClient.Contains('data-cat-resume') -and $catClient.Contains('前回開いた作業') -and $catClient.Contains('保存した作業')) -Message 'saved CAT projects must use a labelled chooser with the most recent project clearly identified'
+Assert-Yaku -Condition ($catClient.Contains('data-cat-resume') -and $catClient.Contains('cat-resume-name') -and $catClient.Contains('cat-resume-time') -and $catClient.Contains('savedLabel(item.saved)')) -Message 'saved CAT projects must show a distinct name and saved metadata in the chooser'
 Assert-Yaku -Condition ($catClient.Contains('function clearOutputDisplay()') -and $catClient.Contains('data-cat-output-project') -and $catClient.Contains('function outputGuidance()') -and -not $catClient.Contains("'出力条件を満たしていません: '")) -Message 'CAT output display and blockers must be project-scoped and actionable without internal reason codes'
 Assert-Yaku -Condition ($indexSource.Contains('cat-save-status') -and $indexSource.Contains('cat-output-help') -and $indexSource.Contains('role="status"')) -Message 'CAT save and output readiness must be announced accessibly'
 # 独自の「文字を大きく」は 2026-08-11 に廃止した。本文は既に 17px、原文と訳文は

@@ -98,20 +98,19 @@ Check-YakuUse ($styles -notmatch 'body\[data-cat-view="local-start"\] \.workspac
 Check-YakuUse ($styles -match '(?s)body\[data-cat-view="start"\] \.workspace-heading \{[^}]*clip: rect\(0, 0, 0, 0\)') '開始画面では場所だけ取らせない'
 Check-YakuUse ($catCss -match '(?s)\.app-cat \.workspace-heading \{[^}]*clip: rect\(0, 0, 0, 0\)') '確認作業でも見出しは文書に残す'
 
-# 3. 使い方への出口は、どちらのタブからも届く（着地タブに1本も無かった）。
+# 3. 使い方への出口は、開始画面の左レールから届く。
 Check-YakuUse ($catHtml -match 'id="cat-help-links"') '使い方への出口に名前を付ける'
-# 守りたいのは「資料側のパネルの中に無いこと」。パネルの最後の要素
-# （cat-direction-choice）と出口のあいだに </section> があれば、外に出ている。
-Check-YakuUse ($catHtml -match '(?s)id="cat-direction-choice"[\s\S]*?</section>[\s\S]*?id="cat-help-links"') '出口は資料側のパネルの外にある'
+# 主役の入力枠へ混ぜず、続きの作業と同じ左レールに置く。
+$railPos = $catHtml.IndexOf('class="entry-rail"')
+$helpPos = $catHtml.IndexOf('id="cat-help-links"')
+$mainPos = $catHtml.IndexOf('class="entry-main"')
+Check-YakuUse ($railPos -ge 0 -and $helpPos -gt $railPos -and $helpPos -lt $mainPos) '出口は入力枠の外の左レールにある'
 Check-YakuUse ($catCss -match 'body\[data-cat-view="workspace"\] #cat-help-links \{ display: none; \}') '確認作業中は出さない'
 
-# 資料の側にも、外へ送ることと伏せることを書いた（2026-08-13 午前）。
-# 同じ日の夕方に、それが原因で同じ文が1画面に2回出ていると分かった
-# （実測 y438 と y680）。1つに寄せ、資料の話もその1行に含める。
-# 開始画面は1枚なので、貼り付け欄の下にあれば取り込みボタンより前に必ず通る。
-Check-YakuUse ($catHtml -match '資料は訳す文だけを送り、ファイルそのものは送りません') '資料のことも同じ1行で書く'
-Check-YakuUse (([regex]::Matches($catHtml, '社名・人名・文章はそのまま送信されます')).Count -eq 1) '同じ文を1画面に2回出さない'
-Check-YakuUse ($catHtml -match 'ファイルそのものは送りません') '送るのは文だけだと書く'
+# 外へ送るものは、統合した入力枠の直下で短く1回だけ説明する。
+Check-YakuUse ($catHtml -match '数値は伏せて送ります。社名・人名と文章はそのまま送ります。ファイルは送りません。') '送るものと送らないものを同じ1行で書く'
+Check-YakuUse (([regex]::Matches($catHtml, '社名・人名と文章はそのまま送ります')).Count -eq 1) '送信の説明を1画面に重ねない'
+Check-YakuUse ($catHtml -match 'ファイルは送りません') '送るのは文だけだと書く'
 
 # ファイルの中の印は 2026-08-13 に利用者判断で外した（「そもそもその機能自体
 # いらない」）。形式ごとに書き分ける相手も無くなったので、言うのは
@@ -238,7 +237,7 @@ Check-YakuUse ($serverForView -match "(?s)/api/direction-preview[\s\S]{0,900}?Re
 Check-YakuUse ($quickJs -match 'function refreshDirection' -and $quickJs -match "'/api/direction-preview'") '打ち終わったら聞きにいく'
 # 注釈にも同じ字面を書いているので、字面ではなく「画面へ出す値」を見る。
 Check-YakuUse ($quickJs -notmatch ": '文章を見て、英語か日本語かを決めます';") '決め方だけを書く一文は残さない'
-Check-YakuUse ($quickJs -match "direction === 'to_en' \? '英語に訳す'") '決まった向きを実行ボタンへ出す'
+Check-YakuUse ($quickJs -match "\(resolved \? direction : 'to_en'\) === 'to_en' \? '英語に訳す' : '日本語に訳す'") '実行ボタンは空のときも行為の名前を保ち、決まった向きを出す'
 
 # 他の始め方を見ただけで、打ちかけのメールを消さない。PDF取り込みは WebAssembly
 # を許可するため ?import=1 へ読み直す必要があるので、移動前にこのタブ内だけへ退避する。
@@ -253,26 +252,25 @@ Check-YakuUse ($catHtml -match 'id="quick-amount-setting"[^>]*hidden') '金額�
 Check-YakuUse ($quickJs -match "amountSetting\.hidden = direction !== 'to_en'") '英訳するときだけ金額表記を出す'
 
 # 貼り付けはCATへ一本化し、保存有無を開始前に選ばせない。
-Check-YakuUse ($catHtml -match '一時作業を作って翻訳し' -and $catHtml -match '確認するまで翻訳メモリには登録しません') '一時CATとTM境界を入口で示す'
-Check-YakuUse ($catHtml -match 'ファイル全体を開き、原文を見ながら訳文を直せます。途中まで自動保存され、あとから再開できます。') 'ファイル確認画面・自動保存・再開を説明する'
+Check-YakuUse ($catHtml -match 'id="quick-submit-note"[^>]*>確認画面へ進みます') '貼り付けた文章の行き先を主操作のそばで示す'
+Check-YakuUse ($catHtml -match 'ファイル全体を取り込み、1文ずつ確認する画面へ進みます。原本は触らず、訳文はコピーに書きます') 'ファイルの行き先と原本を触らないことを示す'
 Check-YakuUse ($catHtml -notmatch 'あとで続けるため、確認作業として保存する') '内部的な作業名だけの説明へ戻さない'
-Check-YakuUse ($catHtml -notmatch 'class="quick-save-choice"' -and $catHtml -match 'class="review-entry-grid"') '主操作の意味をチェックボックスで切り替えない'
+Check-YakuUse ($catHtml -notmatch 'class="quick-save-choice"' -and $catHtml -notmatch 'id="quick-save-submit"') '主操作の意味をチェックボックスや二つ目のボタンで切り替えない'
 Check-YakuUse ($quickJs -notmatch 'quick-save-submit|saveAsWork' -and $quickJs -match "/api/cat/open") '貼り付けは単一のCAT操作へ進む'
 # 言語の選択は送信ではない。選択後に主操作へ戻し、利用者が明示的に押すまで
 # Copilotへの送信を始めない。
 $directionChoiceHandler = [regex]::Match($quickJs, "(?s)el\('quick-direction-select'\)\.addEventListener\('change'.*?^    \}\);", [System.Text.RegularExpressions.RegexOptions]::Multiline).Value
 Check-YakuUse ($directionChoiceHandler -match "YakuCommon\.focus\(el\('quick-submit'\)\)" -and $directionChoiceHandler -notmatch 'requestSubmit') '訳す言語の選択だけでは送信しない'
 
-# 開始画面と作業画面を分ける構成を、初見でも予測できるようにする。
-Check-YakuUse ($catHtml -match '<span class="start-kind">短い文章</span>' -and $catHtml -match '<span class="start-kind">ファイルを訳す</span>') '開始方法を入力形式で区別する'
-Check-YakuUse ($catHtml -match 'ファイルを選んで確認画面へ') 'ファイル選択後の行き先をボタンで示す'
+# 文章とファイルをタブで分けず、同じ枠で受ける。
+Check-YakuUse ($catHtml -match '(?s)id="quick-area"[\s\S]*?id="quick-input"[\s\S]*?id="cat-file-area"[\s\S]*?id="cat-open-file-entry"') '文章とファイルを1つの入力枠で受ける'
+Check-YakuUse ($catHtml -match 'Word・Excelはここへドラッグ' -and $catHtml -match '>ファイルを選ぶ<') 'ドラッグと単一ポインタの両方で取り込める'
 Check-YakuUse ($catHtml -notmatch 'id="quick-save-submit"' -and $catHtml -match 'id="cat-open-file-entry"') '保存有無の二重入口を残さない'
-Check-YakuUse ($catHtml -match '続きの作業を開く' -and $catHtml -match '保存したところから再開します') '保存済み一覧を再開の入口として示す'
-Check-YakuUse ($styles -match '(?s)\.cat-instant\s*\{[^}]*border-left:\s*5px solid var\(--accent\)[^}]*linear-gradient') '短文の主入口は囲いを増やさず色面と左線で強くする'
-Check-YakuUse ($styles -match '(?s)\.start-kind\s*\{[^}]*background:\s*var\(--accent\)[^}]*color:\s*#fff') '短文の用途ラベルを最初に拾える強さにする'
-Check-YakuUse ($styles -match '(?s)\.review-entry-option button\s*\{[^}]*border:\s*2px solid var\(--accent\)') '確認画面への二つの開始ボタンは輪郭を見失わない'
-Check-YakuUse ($styles -match '(?s)\.review-entry-option button\[disabled\]\s*\{[^}]*background:\s*#e4e4e9') '文章が空の保存ボタンを有効に見せない'
-Check-YakuUse ($styles -match '(?s)\.entry-secondary \.cat-resume\s*\{[^}]*background:\s*var\(--surface-subtle\)') '続きの作業を補助領域としてまとめる'
+Check-YakuUse ($catHtml -match 'id="cat-resume-title"[^>]*>続きの作業<' -and $catHtml -match 'class="entry-rail"') '保存済み一覧を左レールの再開入口として示す'
+Check-YakuUse ($catCss -match '(?s)\.quick-area\s*\{[^}]*border:\s*1px solid var\(--line\)[^}]*border-radius:\s*var\(--yk-r-card\)') '文章とファイルの主入口を1枚の枠にする'
+Check-YakuUse ($catCss -match '(?s)\.file-lane\s*\{[^}]*border:\s*1px dashed var\(--line-strong\)') 'ファイルを落とせる領域を見た目でも示す'
+Check-YakuUse ($catCss -match '(?s)#quick-submit\[disabled\][^{]*\{[^}]*background:\s*#cdd6e4') '空の主ボタンを有効に見せない'
+Check-YakuUse ($catCss -match '(?s)\.entry-rail\s*\{[^}]*flex:\s*0 0 var\(--yk-rail\)') '続きの作業を主入力と競合しない左レールにまとめる'
 
 # 「Word・Excelを取り込む」を押しても、下に欄が開くだけで何も起きないように見えた。
 # その欄の中にもう一度「選ぶ」があり、さらに確認のボタンがあった（押す回数3回）。
@@ -280,6 +278,7 @@ Check-YakuUse ($catJs -match "el\('cat-open-file-entry'\)\.addEventListener\('cl
 Check-YakuUse ($catJs -match "(?s)cat-file-input'\)\.addEventListener\('change'[\s\S]{0,220}?openSource\('file', 'auto'\)") '選んだ時点で取り込みが始まる'
 Check-YakuUse ($catHtml -notmatch 'Word・Excelを選ぶ' -and $catHtml -notmatch 'ここにファイルをドロップ') '同じことを言う欄を下に置かない'
 Check-YakuUse ($catJs -match "(?s)function showStart\(mode\)[\s\S]{0,600}?if \(mode === 'file'\) \{ el\('cat-file-input'\)\.value = ''") '保存場所から取り込むときは、選び済みのファイルを忘れる'
+Check-YakuUse ($catJs -match "bindFileDrop\(el\('quick-area'\), el\('cat-file-input'\)\)" -and ([regex]::Matches($catJs, 'bindFileDrop\(')).Count -eq 2) 'ドロップ処理は関数定義と外枠への結線1回だけにする'
 
 # 1文ずつ依頼する道と、1文だけコピーする道が無かった（2026-08-13、利用者の指摘）。
 # まとめて行う道は道具の帯にあり、名前もそう言っている。

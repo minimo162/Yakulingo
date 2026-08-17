@@ -44,30 +44,31 @@ Write-Host 'Quick and document work start from one screen' -ForegroundColor Cyan
 Check-YakuTab ($html -notmatch 'cat-tabs') 'もう帯は無い'
 Check-YakuTab ($css -notmatch 'data-cat-tab=' -and $js -notmatch 'function setTab') '帯の名残（CSS・関数）も残っていない'
 
-# いちばん大事な構造: その場で訳す は picker の外に居る
+# いちばん大事な構造: 文章とWord・Excelは picker 内の同じ quick-area に居る
 $instantPos = $html.IndexOf('id="cat-instant"')
 $pickerPos  = $html.IndexOf('id="cat-picker"')
-Check-YakuTab ($instantPos -gt 0 -and $pickerPos -gt 0 -and $instantPos -lt $pickerPos) 'その場で訳す は資料側より前にあり、入れ子になっていない'
-# picker の開始タグから終了までの間に cat-instant が現れないこと
+Check-YakuTab ($instantPos -gt $pickerPos -and $pickerPos -gt 0) '貼り付け欄は開始画面の器に入っている'
+# picker の中、workspace より前に、文章とファイルの入口が1つずつあること
 $pickerFragment = $html.Substring($pickerPos)
 $pickerEnd = $pickerFragment.IndexOf('id="cat-workspace"')
 if ($pickerEnd -lt 0) { $pickerEnd = $pickerFragment.Length }
-Check-YakuTab (-not $pickerFragment.Substring(0, $pickerEnd).Contains('id="cat-instant"')) '資料側の中にその場で訳すを入れていない'
+$startFragment = $pickerFragment.Substring(0, $pickerEnd)
+Check-YakuTab ($startFragment.Contains('id="quick-area"') -and $startFragment.Contains('id="quick-input"') -and $startFragment.Contains('id="cat-file-area"')) '文章とファイルを開始画面の同じ枠で受ける'
 
 # 確認作業に入ったら、始めるための入口は出さない。#cat-instant は #cat-picker の
 # 外に居るので、picker の hidden では消えない。view で消す。
 Check-YakuTab ($css -match 'body\[data-cat-view="workspace"\] #cat-instant \{ display: none; \}') '確認作業のあいだは貼り付け欄を出さない'
 
-# 貼り付けは一時CAT作業を作り、必ず確認画面へ移る。
+# 貼り付けはCAT作業を作り、必ず確認画面へ移る。
 $serverText = Get-Content -LiteralPath (Join-Path $root 'src\Server.ps1') -Raw -Encoding UTF8
 $quickJs = Get-Content -LiteralPath (Join-Path $root 'www\assets\quick.js') -Raw -Encoding UTF8
-Check-YakuTab ($html -match '一時作業を作って確認画面へ移ります' -and $html -match '確認するまで翻訳メモリには登録しません') '一時保存とTM登録の境界を押す前に書く'
+Check-YakuTab ($html -match 'id="quick-submit-note"[^>]*>確認画面へ進みます') '貼り付けた文章の行き先を押す前に書く'
 Check-YakuTab ($serverText -match "path -eq '/quick'" -and $serverText -match "path -eq '/cat'") '/quick と /cat は同じサーバの後ろにある'
 Check-YakuTab ($quickJs -notmatch '/api/quick/jobs' -and $quickJs -match '/api/cat/open' -and $html -notmatch 'id="quick-result"') '貼り付けは別結果カードを増やさずCATへ進む'
 
-# 箱を増やさない（2026-08-12 の決定）
+# 入口の箱は quick-area 1枚だけにする。
 Check-YakuTab ($html -notmatch 'id="cat-instant" class="cat-instant translate-form"') 'その場で訳すにカードの器を付けない'
-Check-YakuTab ($css -match '(?s)\.cat-picker,\s*\r?\n?\s*\.cat-instant \{') '器の作法は1か所で決める'
+Check-YakuTab ($css -match '(?s)\.quick-area\s*\{[^}]*border:\s*1px solid var\(--line\)') '統合した入口の器を1か所で決める'
 
 # 戻るが効く（資料を開くと履歴が1つ積まれ、戻ると始める画面へ戻る）
 Check-YakuTab ($js -match 'history\.pushState') '資料を開いたら履歴に積む'
@@ -102,12 +103,12 @@ Check-YakuTab ($js -match "el\('cat-switch-project'\)[\s\S]{0,200}?openDocDialog
 # 幅で条件を分ける。実測 2026-08-13:
 #   1380px 既定は閉じる（1列 412.6px）。開いても 323.8px で 321px を下回らない
 #   1920px 既定で開く（1列 501.7px。1380px で閉じているときの 421px より広い）
-# 短文はこの画面、文書は作業画面へ進む。二つを押す前に区別できる見出しを出す。
-Check-YakuTab ($html -match 'id="cat-start-title">メールやチャットを訳す') '短文もCATで訳す入口だと分かる'
-Check-YakuTab ($html -match 'id="cat-docs-entry-title">Word・Excelを取り込む') 'ファイルも同じ確認画面へ進むと分かる'
-Check-YakuTab ($html -match 'ファイル全体を開き') 'ファイルの作業内容を押す前に示す'
-Check-YakuTab ($html -match '一時作業を作って翻訳し') '短文も確認画面へ進むと示す'
-Check-YakuTab ($html -match 'id="cat-picker"[^>]*aria-labelledby="cat-docs-entry-title"') '資料側をその見出しに結び付ける'
+# 短文と文書は同じ画面から確認作業へ進む。ファイルは落とした結果を押す前に示す。
+Check-YakuTab ($html -match 'id="cat-start-title"[^>]*>文章とWord・Excelを訳す') '統合した入口を読み上げでも説明する'
+Check-YakuTab ($html -match 'id="cat-docs-entry-title"[^>]*>Word・Excelを訳す') 'ファイルの入口にも読み上げ名がある'
+Check-YakuTab ($html -match 'ファイル全体を取り込み、1文ずつ確認する画面へ進みます') 'ファイルの作業内容を落とす前に示す'
+Check-YakuTab ($html -match 'id="quick-submit-note"[^>]*>確認画面へ進みます') '短文も確認画面へ進むと示す'
+Check-YakuTab ($html -match 'id="cat-picker"[^>]*aria-labelledby="cat-page-title"') '開始画面全体をページ見出しに結び付ける'
 Check-YakuTab ($html -match 'id="cat-instant"[^>]*aria-labelledby="cat-start-title"') '貼り付け側も見出しに結び付ける'
 
 Check-YakuTab ($html -match 'id="cat-docs-pane"') '資料の一覧が作業画面の中にある'

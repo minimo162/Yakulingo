@@ -97,7 +97,7 @@ Check-YakuDual ($catClient -notmatch 'hideInstant' -and $catClient -notmatch 'ya
 Check-YakuDual ($catClient -match "setView\('start'\)" -and $catClient -match "setView\('workspace'\)") 'the screen names only the two states it still has'
 # 貼り付けは入力形式であり、別の保存しない翻訳エンジンではない。
 Check-YakuDual ($quickClient -notmatch '/api/quick/jobs' -and $quickClient -match '/api/cat/open') '貼り付けはCAT経路へ一本化する'
-Check-YakuDual ($catPage -notmatch 'id="quick-save-work"' -and $catPage -notmatch 'id="quick-save-submit"' -and $catPage -match '確認するまで翻訳メモリには登録しません') '保存とTM登録の境界を送る前に読める'
+Check-YakuDual ($catPage -notmatch 'id="quick-save-work"' -and $catPage -notmatch 'id="quick-save-submit"' -and $catPage -match 'id="quick-submit-note"[^>]*>確認画面へ進みます') '貼り付けは二重の保存選択を置かず確認画面へ進むと読める'
 Check-YakuDual ($catClient -notmatch '/api/quick/') '確認画面は貼り付け側のAPIを呼ばない'
 
 Write-Host 'Load production helpers for dynamic contracts' -ForegroundColor Cyan
@@ -158,8 +158,8 @@ Check-YakuDual ($catClient -match 'scopeIsCurrent\(packet\.scope, true\)' -and $
 Check-YakuDual ($catClient -match 'deleteTarget = currentScope\(\)' -and $catClient -match "post\('delete', \{ id: target\.id, memory_policy:" -and $catClient -match 'client_id: YakuCommon\.clientId\(\)') 'delete confirmation stays bound to its displayed project'
 Check-YakuDual ($catClient -match "type: 'translate', scope: jobScope" -and $catClient -match "post\('apply', \{ job_id: jobId \}, true, context\.scope\)") 'job apply stays bound to its starting project and revision'
 Check-YakuDual ($catClient -match "event\.key === 'Enter'" -and $catClient -match '処理中は確認できません' -and $catClient -match 'function focusAfter\(index\)') 'Ctrl+Enter is guarded while busy and advances after confirmation'
-# 2026-08-13: ドロップ先は取り込みボタン自身になった（枠を1つ減らした）。
-Check-YakuDual ($catClient -match "bindFileDrop\(el\('cat-open-file-entry'\), el\('cat-file-input'\)\)" -and $catClient -match "event\.key === 'Enter' \|\| event\.key === ' '") 'file drop supports drag-drop and keyboard activation'
+# 2026-08-16: 文章とファイルの外枠だけをドロップ先にする。子要素へ重ねて付けない。
+Check-YakuDual ($catClient -match "bindFileDrop\(el\('quick-area'\), el\('cat-file-input'\)\)" -and $catClient -match "target\.closest\('textarea, input, select, button, a, \[contenteditable\]'") 'file drop uses one outer target and leaves interactive children alone'
 # 構造編集は直前の1回だけ元に戻せる。古い試験は「元に戻せません」を要求しており、
 # 実装済みの復元口を欠陥として扱っていた。3操作すべてが、訳文を消す前に範囲と
 # 一回限りの復元を伝えることを固定する。

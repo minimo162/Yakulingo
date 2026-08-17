@@ -21,7 +21,16 @@
   --pane-docs: clamp(9rem, 12vw, 15rem);
 }
 
+/* 起動画面の器。以前は .cat-picker / .cat-instant が max-width:920px で真ん中に
+   立っており、1912px の窓では中身が 920px＝48.1%（実測 2026-08-16）しか使わず、
+   残りの半分以上が空白だった。起動画面は器の幅をそのまま使う。
+   data-cat-view は JavaScript が入れるので、それを待つ規則にすると1回目の描画で
+   幅が飛ぶ。既定を起動画面の幅にして、確認作業のほうを広げる向きで書く。 */
 .app-cat .shell {
+  width: min(1440px, calc(100% - 32px));
+  max-width: 1440px;
+}
+.app-cat[data-cat-view="workspace"] .shell {
   width: min(1600px, calc(100% - 32px));
   max-width: 1600px;
 }
@@ -33,28 +42,213 @@
   .app-cat[data-cat-view="workspace"] .shell { width: calc(100% - 48px); max-width: 2200px; }
 }
 
-/* 最初の画面は、白いカードで全体を囲まない（2026-08-12）。生成された画面の指紋の
-   ひとつが「角丸カードの入れ子」で、ここは中身を1つも区切っていない只の器だった。
-   枠と影を外し、地の紙に直接置く。区切りが要るところは罫線（.quick-fineprint /
-   .entry-secondary の border-top）が既に持っている。 */
-/* 帯で分けたあとも同じ扱い。#cat-instant を外へ出したとき translate-form を
-   付けてしまい、外したはずのカード（枠1px・角丸10px・影）が戻っていた
-   （実測 2026-08-13）。器の作法はここ1か所で決める。 */
+/* 最初の画面は、白いカードで全体を囲まない（2026-08-12）。器そのものは只の枠にして、
+   面を持たせるのは中の「貼り付けと取り込みの枠」だけにする。 */
 .cat-picker,
 .cat-instant {
-  max-width: 920px;
-  margin-inline: auto;
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
   border: 0;
   border-radius: 0;
   box-shadow: none;
   background: transparent;
-  padding-inline: 0;
+  padding: 0;
 }
 
 /* 使い方への出口は、始める画面のどこからでも届く場所に置いてある。確認作業に入ったら、
    道具の帯とキーボード操作の一覧が案内を持つので、ここは出さない。 */
+/* ==== 起動画面（2026-08-16 に入口を1つへ作り直した） =======================
+
+   入口は1つで、同じ枠が貼り付けとファイルの落とし先を兼ねる。見出しの
+   Copilot状態は右上へ戻し、地・帯・白い作業面の3層を影なしで分ける。
+   実測した DeepL / Google翻訳 / Notion / Linear と Material 3 の尺度から、
+   角丸は器16px・帯12px・操作8pxの3段にした。 */
+.app-cat:not([data-cat-view="workspace"]) {
+  --yk-rail: 300px;
+  --yk-gutter: 40px;
+  --yk-pad: 24px;
+  --yk-step: calc(var(--yk-gutter) + var(--yk-pad));
+  --yk-lane-inset: 16px;
+  --yk-r-card: 16px;
+  --yk-r-lane: 12px;
+  --bg: #eef1f7;
+  --yk-l2: #f3f6fc;
+  --line: #dbe1ec;
+  --line-strong: #c7cfdd;
+  --muted: #4c4d56;
+  --faint: #4c4d56;
+  --radius-control: 8px;
+}
+
+.app-cat:not([data-cat-view="workspace"]) .shell {
+  width: min(1440px, calc(100% - 96px));
+  padding-bottom: var(--space-2);
+}
+
+.app-cat:not([data-cat-view="workspace"]) .hero {
+  display: grid;
+  grid-template-columns: var(--yk-rail) minmax(0, 1fr);
+  column-gap: var(--yk-step);
+  align-items: start;
+  padding: 18px var(--yk-pad) 16px 0;
+}
+.app-cat:not([data-cat-view="workspace"]) .brand-block { display: block; }
+.app-cat:not([data-cat-view="workspace"]) .brand { display: block; font-size: 1.24rem; letter-spacing: .01em; }
+.app-cat:not([data-cat-view="workspace"]) .version-label { display: block; margin-top: 1px; }
+.app-cat:not([data-cat-view="workspace"]) .header-actions { display: block; }
+.app-cat:not([data-cat-view="workspace"]) .status-block { display: block; }
+.app-cat:not([data-cat-view="workspace"]) #copilot-status {
+  display: flex; justify-content: flex-end; align-items: center; gap: 8px;
+  min-height: 26px;
+}
+.app-cat:not([data-cat-view="workspace"]) #copilot-window-open {
+  display: flex; justify-content: flex-end; width: 100%;
+  min-height: 30px; margin-top: 2px; padding: 0; text-align: right;
+}
+.app-cat:not([data-cat-view="workspace"]) .status-detail { max-width: none; text-align: right; }
+.app-cat:not([data-cat-view="workspace"]) .tab-panel { margin-top: 22px; }
+
+.entry-body { display: flex; align-items: stretch; gap: var(--yk-gutter); }
+.entry-rail { flex: 0 0 var(--yk-rail); min-width: 0; display: flex; flex-direction: column; }
+.entry-main { flex: 1 1 auto; min-width: 0; }
+
+.app-cat .cat-resume {
+  flex: 0 0 auto; min-width: 0; display: block; margin: 0;
+  border-radius: 0; background: transparent; padding: 0;
+}
+.cat-resume-title {
+  margin: 0 0 10px; color: var(--muted);
+  font-size: var(--font-meta); font-weight: 700; letter-spacing: .04em;
+}
+.app-cat #cat-resume-list { display: block; margin-top: 0; }
+.app-cat .cat-resume-row { position: relative; display: block; }
+.app-cat #cat-resume-list .cat-resume-row:first-child { border-top: 1px solid var(--line); }
+.app-cat .cat-resume-row:last-child { border-bottom: 1px solid var(--line); }
+.app-cat .cat-resume-card {
+  display: block; width: calc(100% + 28px); min-height: 0;
+  margin: 0 -14px; border: 0; border-radius: var(--yk-r-lane); background: transparent;
+  padding: 12px 14px; text-align: left; line-height: 1.45;
+}
+.app-cat .cat-resume-card:hover,
+.app-cat .cat-resume-card:focus-visible { background: var(--surface); }
+.app-cat .cat-resume-name {
+  display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  color: var(--text); font-size: var(--font-ui); font-weight: 600;
+}
+.app-cat .cat-resume-card .cat-resume-time {
+  display: block; margin: 3px 0 0; padding-right: 56px;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  color: var(--muted); font-size: var(--font-meta); font-weight: 400;
+}
+.app-cat .cat-resume-drop {
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%); z-index: 2;
+  margin: 0; padding: 12px 0; min-height: 0;
+  color: var(--muted); font-size: var(--font-meta);
+}
+.app-cat .cat-resume-drop:hover { color: var(--danger, #a11); }
+.app-cat #cat-resume-more { display: block; width: 100%; margin-top: 12px; text-align: left; }
+
+.app-cat .entry-rail .entry-more { display: block; margin-top: 22px; }
+.app-cat .entry-rail .entry-more > summary { display: block; text-decoration: underline; }
+.app-cat .entry-rail .entry-more[open] .entry-more-actions {
+  display: grid; grid-template-columns: var(--yk-rail); gap: 6px; margin-top: 8px;
+}
+.app-cat .entry-rail .entry-more-actions button {
+  width: var(--yk-rail); justify-content: flex-start;
+  min-height: 44px; padding-block: 5px; font-size: var(--font-meta); text-align: left;
+}
+.app-cat .entry-rail .home-help-links {
+  display: block; margin-top: 22px; padding-top: 14px; max-width: none;
+  border-top: 1px solid var(--line);
+}
+.app-cat .entry-rail .home-help-links a { display: block; }
+
+.quick-inline { display: block; padding-inline: var(--yk-pad); }
+.quick-area {
+  position: relative;
+  margin-inline: calc(-1 * var(--yk-pad));
+  border: 1px solid var(--line); border-radius: var(--yk-r-card);
+  background: var(--surface);
+  box-shadow: none;
+  padding: calc(var(--yk-pad) - 1px);
+  transition: border-color var(--motion) var(--ease), background var(--motion) var(--ease);
+}
+.quick-area:focus-within { border-color: var(--accent); outline: 1px solid var(--accent); outline-offset: -2px; }
+.quick-area.dragover { border-color: var(--accent); border-style: dashed; background: var(--accent-soft); }
+.quick-area.dragover .file-lane { background: var(--surface); }
+.quick-area-editor { position: relative; display: block; }
+.app-cat .quick-inline #quick-input {
+  display: block; min-height: 0; height: clamp(150px, calc(76vh - 480px), 320px);
+  background: transparent; border: 0; border-radius: 0; padding: 0;
+  font-size: 1.06rem; line-height: 1.75;
+  resize: none;
+}
+.app-cat .quick-inline #quick-input:focus { background: transparent; box-shadow: none; outline: none; }
+.quick-empty-guide {
+  position: absolute; inset: 0 0 auto 0;
+  pointer-events: none;
+}
+.quick-empty-guide p { display: block; margin: 0; }
+.quick-empty-guide-lead { color: var(--text); font-size: 1.3rem; font-weight: 700; line-height: 1.5; }
+.app-cat #quick-count {
+  display: block; margin-top: 8px; color: var(--muted);
+  font-size: var(--font-meta); font-variant-numeric: tabular-nums;
+}
+
+.file-lane {
+  position: relative; display: block;
+  margin: 16px calc(-1 * var(--yk-lane-inset)) 0;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--yk-r-lane);
+  background: var(--yk-l2);
+  padding: 15px calc(var(--yk-lane-inset) - 1px);
+}
+.file-lane-lead {
+  display: block; margin: 0; padding-right: 46px;
+  color: var(--text); font-size: 1.06rem; font-weight: 700; line-height: 1.5;
+}
+.file-lane-note {
+  display: block; margin: 4px 0 0;
+  color: var(--muted); font-size: var(--font-meta); line-height: 1.6;
+}
+.app-cat .file-lane #cat-open-file-entry {
+  display: flex; width: var(--yk-rail); margin-top: 12px;
+  background: var(--surface); border-color: var(--line-strong);
+}
+.file-lane-icon {
+  position: absolute; right: calc(var(--yk-lane-inset) - 1px); top: 15px;
+  width: 40px; height: 40px; color: var(--accent); opacity: .34;
+}
+
+.app-cat .input-meta { display: block; margin-top: 10px; }
+.app-cat .input-meta > * { display: block; }
+.app-cat .quick-fineprint-line { display: block; max-width: none; margin-top: 4px; }
+.app-cat .quick-inline .command-bar { display: block; margin-top: 14px; }
+.app-cat .quick-inline .command-bar-note { display: block; margin-bottom: 8px; }
+.app-cat .quick-inline #quick-submit { display: flex; width: var(--yk-rail); min-height: 52px; }
+.app-cat .quick-inline #quick-submit[disabled] {
+  background: #cdd6e4; border-color: #b7c2d4; color: #2c3a4e;
+}
+.app-cat #quick-direction-summary {
+  display: block; width: auto; margin-top: 8px;
+  border: 0; border-radius: 0; background: transparent; padding: 0;
+}
+.app-cat #quick-direction-summary label,
+.app-cat #quick-amount-setting label {
+  display: block; margin-bottom: 3px; line-height: 1.3;
+  color: var(--muted); font-size: var(--font-meta);
+}
+.app-cat #quick-direction-select { display: block; width: var(--yk-rail); }
+.app-cat #quick-amount-setting { display: block; margin-top: 6px; }
+.app-cat #amount-notation { display: block; width: var(--yk-rail); }
+.app-cat #amount-notation-status { display: block; }
+.quick-submit-reason { display: block; margin: 10px 0 0; color: var(--muted); font-size: var(--font-meta); text-align: left; }
+.quick-submit-reason:empty { display: none; }
+.app-cat #quick-job:empty { display: none; min-height: 0; }
+
 body[data-cat-view="workspace"] #cat-help-links { display: none; }
-.home-help-links { max-width: 920px; margin-inline: auto; }
+.home-help-links { max-width: none; margin-inline: 0; margin-top: var(--space-3); }
 
 /* 空の帯が高さを持つのをやめる。同じ規則が @media (min-width:1320px) の中にあったが、
    実機のホームの窓は 1224px なので効いておらず、見出しの下に 156px の空白が

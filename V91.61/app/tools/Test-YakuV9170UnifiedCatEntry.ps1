@@ -101,7 +101,7 @@ try {
     Chk (-not $serverText.Contains('/api/quick/jobs') -and -not $entryText.Contains('/api/quick/jobs')) '保存しないQuick APIと呼出を廃止する'
     Chk ($entryText.Contains("post('/api/cat/open'") -and $entryText.Contains('&translate=1')) '貼り付けはCAT作成後に翻訳を開始する'
     Chk (-not $htmlText.Contains('id="quick-save-submit"') -and -not $htmlText.Contains('id="quick-save-work"')) '保存有無を選ぶ二重入口を廃止する'
-    Chk ($htmlText.Contains('確認するまで翻訳メモリには登録しません')) '保存とTM登録の境界を送信前に説明する'
+    Chk ($htmlText.Contains('id="quick-submit-note" class="command-bar-note">確認画面へ進みます')) '貼り付けの行き先を送信前に説明する'
     $catClientText=Get-Content -LiteralPath (Join-Path (Join-Path $root 'www\assets') 'cat.js') -Raw -Encoding UTF8
     Chk ($serverText.Contains('Invoke-YakuExpiredTransientProjectCleanup') -and $serverText.Contains('YakuProjectLeases') -and $serverText.Contains('YakuTransientCleanupNotBeforeUtc') -and $serverText.Contains("'project-presence'") -and $serverText.Contains("'project-retain'")) '再起動直後の再接続猶予を含め、一時作業cleanupを編集中leaseと延長操作で保護する'
     Chk ($serverText.Contains("ValidateSet('retain_tm','revoke_tm')") -and $htmlText.Contains('翻訳メモリの訳は残す') -and $htmlText.Contains('翻訳メモリ登録も取り消す')) '作業削除時に翻訳メモリを残すか取り消すか選べる'

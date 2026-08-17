@@ -657,6 +657,16 @@ try {
     if ($null -eq $o) { throw 'CAT_SCREEN_GATE_NO_OBSERVATION' }
     Chk ([string]::IsNullOrEmpty([string]$o.fatal)) ('画面の操作が途中で止まっていない' + $(if($o.fatal){' / ' + ([string]$o.fatal).Substring(0,[Math]::Min(400,([string]$o.fatal).Length))}else{''}))
 
+    # ---------------------------------------------------------------- (開始画面)
+    Write-Host '(開始画面) 統合した入口の状態と操作を実ブラウザーで守る' -ForegroundColor Cyan
+    Chk ([string]$o.startScreen.buttonText -eq '英語に訳す') '空の主ボタンも行為の名前を名乗る'
+    Chk ([bool]$o.startScreen.disabled) '準備完了後も文章が空なら主ボタンは押せない'
+    Chk ([string]$o.startScreen.reason -eq '文章を入力してください') '押せない理由をボタンの外に出す'
+    Chk ([bool]$o.startScreen.guideVisible) '空の入力欄には貼り付け案内が見える'
+    Chk ([bool]$o.startScreen.unified) 'ファイルの入口は文章と同じ外枠の中にある'
+    Chk ([int]$o.startScreen.fileClicksFromTextareaEnter -eq 0) '文章欄のEnterでファイル選択を開かない'
+    Chk ([int]$o.startScreen.changesFromNestedDrop -eq 1) '子要素へ落としてもファイル変更は1回だけ起きる'
+
     # ---------------------------------------------------------------- (幅)
     # **畳んだ帯が、窓の中に収まって開くか。ここだけ2つの幅で測る。**
     #

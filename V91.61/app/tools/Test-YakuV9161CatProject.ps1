@@ -358,14 +358,13 @@ Chk ($indexText -match 'id="cat-progress-bar"') '進捗バーがある'
 # 触っただけのセグメントを「手直し」にしない。以前は離れるたびに保存して
 # いたので、一覧を上から見ていくだけで全部が手直し扱いになっていた。
 Chk ($appJsText.Contains("data-original")) '変更が無ければ保存しない（触っただけで手直しにしない）'
-# 2026-08-13: ドロップ用の枠を外し、取り込みボタン自身をドロップ先にした。
-# 押しても欄が開くだけで、その中にもう一度「選ぶ」があり、さらに確認のボタンが
-# あった（利用者の指摘「押しても何も起こらない。訳が分からなくなっている」）。
-Chk ($appJsText.Contains("bindFileDrop(el('cat-open-file-entry'), el('cat-file-input'))") -and $appJsText.Contains("event.key === 'Enter' || event.key === ' '")) '取り込みボタンへドロップとキーボード操作を結線する'
+  # 2026-08-16: 貼り付けとファイルを1枚の枠へ統合した。子要素へも結線すると
+  # drop の伝播で同じファイルを複数回取り込むため、外枠だけをドロップ先にする。
+  Chk ($appJsText.Contains("bindFileDrop(el('quick-area'), el('cat-file-input'))") -and $appJsText.Contains('target.closest(''textarea, input, select, button, a, [contenteditable]'')')) '統合した外枠だけへドロップを結線し、入力中のキーを奪わない'
 Chk ($appJsText.Contains("'行目の訳文`"")) '動的な訳文欄に行ごとの読み上げ名がある'
 Chk ($appJsText.Contains("data-cat-loss")) '結合・解除ボタンが訳文消失の有無を持つ'
-Chk ($appJsText -match "data-cat-merge[\s\S]{0,200}?window\.confirm\('[^']*訳文は消えます[^']*元に戻せません") '訳文がある行の結合前に、消えることを告げて確認する'
-Chk ($appJsText -match "data-cat-split[\s\S]{0,200}?window\.confirm\('[^']*訳文は消えます[^']*元に戻せません") '訳文がある行の解除前に、消えることを告げて確認する'
+  Chk ($appJsText -match "data-cat-merge[\s\S]{0,220}?window\.confirm\('[^']*訳文は消えます[^']*直前のこの結合だけを元に戻せます") '訳文がある行の結合前に、消えることと直前の1回だけ戻せることを告げる'
+  Chk ($appJsText -match "data-cat-split[\s\S]{0,220}?window\.confirm\('[^']*訳文は消えます[^']*直前のこの分割解除だけを元に戻せます") '訳文がある行の解除前に、消えることと直前の1回だけ戻せることを告げる'
 Chk ($cssText -match '--focus:\s*#[0-9A-Fa-f]{6}\s*;') 'フォーカスリングは白地で見える不透明色を使う'
 Chk ($appJsText.Contains('data-cat-revise')) 'CAT の訳文行に自由入力の修正欄を出す'
 Chk ($appJsText.Contains("mode: 'revise'")) '修正指示を CAT ジョブとして送る'
