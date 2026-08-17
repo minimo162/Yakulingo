@@ -149,20 +149,20 @@
 .app-cat .cat-resume-drop:hover { color: var(--danger, #a11); }
 .app-cat #cat-resume-more { display: block; width: 100%; margin-top: 12px; text-align: left; }
 
-.app-cat .entry-rail .entry-more { display: block; margin-top: 22px; }
-.app-cat .entry-rail .entry-more > summary { display: block; text-decoration: underline; }
-.app-cat .entry-rail .entry-more[open] .entry-more-actions {
-  display: grid; grid-template-columns: var(--yk-rail); gap: 6px; margin-top: 8px;
-}
-.app-cat .entry-rail .entry-more-actions button {
-  width: var(--yk-rail); justify-content: flex-start;
-  min-height: 44px; padding-block: 5px; font-size: var(--font-meta); text-align: left;
+.app-cat .entry-rail .entry-more-pdf-card {
+  display: flex; width: var(--yk-rail); margin-top: 18px; min-height: 72px;
+  justify-content: flex-start; padding: 14px 16px; border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control); background: var(--soft);
+  color: var(--text); font-size: var(--font-meta); font-weight: 700; text-align: left;
 }
 .app-cat .entry-rail .home-help-links {
   display: block; margin-top: 22px; padding-top: 14px; max-width: none;
   border-top: 1px solid var(--line);
 }
-.app-cat .entry-rail .home-help-links a { display: block; }
+.app-cat .entry-rail .home-help-links a {
+  display: inline-flex; position: relative; z-index: 1; pointer-events: auto;
+  min-height: 44px; align-items: center; margin-right: 14px;
+}
 
 .quick-inline { display: block; padding-inline: var(--yk-pad); }
 .quick-area {

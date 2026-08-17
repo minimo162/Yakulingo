@@ -218,7 +218,7 @@
     /* 貼り付け側の主ボタンは quick.js が持ち場を持っている（文章の有無・翻訳先・
        準備状況で押せるかどうかを決める）。ここで一律に触ると、文章が空でも
        押せる状態に戻ってしまう。実測 2026-08-16: 起動直後の #quick-submit は
-       ラベルが「文章を入力してください」なのに disabled=false だった。 */
+       ラベルが空欄の操作指示なのに disabled=false だった。 */
     if (button.id === 'quick-submit') return true;
     if (button.hasAttribute('data-cat-filter') || button.hasAttribute('data-cat-location') ||
         button.hasAttribute('data-cat-change') || button.hasAttribute('data-cat-inspector')) return true;
@@ -955,9 +955,12 @@
     if (!(error.status === 409 && error.data && error.data.code === 'DIRECTION_CONFIRMATION_REQUIRED')) return false;
     pendingDirection = retry; el('cat-direction-choice').hidden = false; status(error.data.error || '翻訳先を選んでください。'); YakuCommon.focus(el('cat-direction-choice').querySelector('[data-cat-direction]')); return true;
   }
-  function source(mode) {
+  function source(mode, fileOverride) {
     if (mode === 'text') { var text = el('cat-text').value; return text.trim() ? Promise.resolve({ text: text }) : Promise.reject(new Error('翻訳したい文章を貼り付けてください。')); }
-    var file = el('cat-file-input').files && el('cat-file-input').files[0];
+    /* Edgeでは、ドロップした FileList を hidden input.files へ代入してから
+       change を発火する経路が安定しない。ドロップ時は File を直接渡し、
+       ファイル選択ダイアログのときだけ input.files を読む。 */
+    var file = fileOverride || (el('cat-file-input').files && el('cat-file-input').files[0]);
     if (file) {
       if (!file.size) return Promise.reject(new Error('空のファイルは取り込めません。'));
       if (file.size > YakuCommon.maxUploadBytes) return Promise.reject(new Error('ファイルが大きすぎます。取り込めるのは ' + Math.round(YakuCommon.maxUploadBytes / 1048576) + 'MB までですが、このファイルは ' + (file.size / 1048576).toFixed(1) + 'MB あります。資料を分けてからお試しください。'));
@@ -967,10 +970,10 @@
     }
     var path = el('cat-path').value.trim(); return path ? Promise.resolve({ file_path: path }) : Promise.reject(new Error('Word・Excelを選択してください。'));
   }
-  function openSource(mode, intent) {
+  function openSource(mode, intent, fileOverride) {
     var epoch = ++viewEpoch;
     setBusy(true); status('取り込んでいます…');
-    return source(mode).then(function (payload) { payload.direction_intent = intent || 'auto'; return post('open', payload, false, null); }).then(function (data) { if (epoch !== viewEpoch) return; pendingDirection = null; render(data, true); }).catch(function (error) { if (epoch !== viewEpoch) return; setBusy(false); if (!handleDirection(error, function (dir) { return openSource(mode, dir); })) status(error.message, true); });
+    return source(mode, fileOverride).then(function (payload) { payload.direction_intent = intent || 'auto'; return post('open', payload, false, null); }).then(function (data) { if (epoch !== viewEpoch) return; pendingDirection = null; render(data, true); }).catch(function (error) { if (epoch !== viewEpoch) return; setBusy(false); if (!handleDirection(error, function (dir) { return openSource(mode, dir, fileOverride); })) status(error.message, true); });
   }
   function resume(id) { var epoch = ++viewEpoch; setBusy(true); status('続きの作業を開いています…'); return post('resume', { project_id: id }, false, null).then(function (data) { if (epoch === viewEpoch) render(data, true); }).catch(function (error) { if (epoch !== viewEpoch) return; setBusy(false); status(error.message, true); }); }
 
@@ -1597,7 +1600,14 @@
     drop.addEventListener('keydown', function (event) { if (event.target.closest('textarea, input, select, button, a, [contenteditable]')) return; if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); input.click(); } });
     ['dragenter','dragover'].forEach(function (name) { drop.addEventListener(name, function (event) { event.preventDefault(); drop.classList.add('dragover'); }); });
     ['dragleave','drop'].forEach(function (name) { drop.addEventListener(name, function (event) { event.preventDefault(); drop.classList.remove('dragover'); }); });
-    drop.addEventListener('drop', function (event) { if (event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files.length) { input.files = event.dataTransfer.files; input.dispatchEvent(new Event('change')); } });
+    drop.addEventListener('drop', function (event) {
+      event.stopPropagation();
+      var files = event.dataTransfer && event.dataTransfer.files;
+      if (!files || !files.length) return;
+      /* FileList の代入・change 発火を経由せず、同じアップロード処理へ渡す。 */
+      uploaded = null;
+      openSource('file', 'auto', files[0]);
+    });
   }
 
   var filterSeq = 0;
@@ -3224,7 +3234,6 @@
     document.addEventListener('visibilitychange', function () {
       if (document.visibilityState === 'hidden' && !busy) { try { flush(); } catch (_) {} }
     });
-    document.querySelectorAll('[data-cat-source-show]').forEach(function (button) { button.addEventListener('click', function () { showStart(button.getAttribute('data-cat-source-show')); }); });
     document.querySelectorAll('[data-cat-open]').forEach(function (button) { button.addEventListener('click', function () { openSource(button.getAttribute('data-cat-open'), 'auto'); }); });
     document.querySelectorAll('[data-cat-direction]').forEach(function (button) { button.addEventListener('click', function () { el('cat-direction-choice').hidden = true; if (pendingDirection) pendingDirection(button.getAttribute('data-cat-direction')); }); });
     /* 「Word・Excelを取り込む」は、ファイル選択をそのまま開く。押しても欄が
@@ -3241,7 +3250,6 @@
        3か所へ付けると、ドロップが順に伝わって change が3回出て、同じファイルを
        3回取り込みにいく（drop は bubble する）。落とし先は枠だけに付ける。 */
     bindFileDrop(el('quick-area'), el('cat-file-input'));
-    el('cat-prior-open').addEventListener('click', function () { var epoch = ++viewEpoch; setBusy(true); post('from-prior-version', { prior_ja: el('cat-prior-ja').value, prior_en: el('cat-prior-en').value, current_ja: el('cat-current-ja').value, document_name: el('cat-prior-name').value }, false, null).then(function (data) { if (epoch === viewEpoch) render(data, true); }).catch(function (error) { if (epoch !== viewEpoch) return; setBusy(false); status(error.message, true); }); });
     /* 過去の日英資料の入口。PDF を読むには WebAssembly が要り、それは
        ?import=1 で開いた画面にしか許していない（普段の作業では CSP を
        'self' のままにするため）。押したらその画面へ移る。 */

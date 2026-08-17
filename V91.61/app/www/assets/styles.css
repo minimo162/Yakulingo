@@ -159,7 +159,7 @@ button:not(.secondary-button, .tab-button, .file-clear-button, .link-button, .da
 button:not(.secondary-button, .tab-button, .file-clear-button, .link-button, .danger-button, .tutorial-skip, [disabled]):hover, .button:not(.secondary-button, .danger-button, [disabled]):hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 button:active:not([disabled]), .button:active:not([disabled]) { transform: translateY(.5px); }
 /* 無効ボタンを opacity で薄くすると、主ボタンの白文字が背景に溶けて 2.1:1 まで落ちる。
-   「文章を入力してください」のような操作指示そのものが読めなくなるので、実色で塗る。 */
+   空欄時の操作指示そのものが読めなくなるので、実色で塗る。 */
 button[disabled], .button[disabled] { cursor: not-allowed; opacity: 1; background: #e4e4e9; border-color: #c2c3cc; color: #3c3d45; }
 .secondary-button { background: transparent; border: 1px solid var(--line-strong); color: var(--text); }
 .secondary-button:hover { background: var(--soft); }
@@ -169,14 +169,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 .startup-message { margin-top: var(--space-2); padding: 12px 14px; color: var(--muted); font-size: var(--font-meta); }
 .entry-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: var(--space-2); }
-.entry-more { position: relative; }
-.entry-more > summary, .cat-source-picker > summary { cursor: pointer; color: var(--muted); font-size: var(--font-meta); }
-/* 閉じた <details> の中身へ display を書くと、ブラウザの「閉じたら隠す」を
-   打ち消してしまう。「そのほかの始め方」は閉じているのに、中の2つのボタンが
-   ずっと画面に出ていた（2026-08-12、実機 1380px で closed のまま実測 44px）。
-   開いているときだけ flex にする。 */
-.entry-more-actions { display: none; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
-.entry-more[open] .entry-more-actions { display: flex; }
 .workspace-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-2); }
 .workspace-heading .muted { margin: 6px 0 0; font-size: var(--font-meta); }
 .cat-source-picker { margin: var(--space-2) 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-control); }
@@ -488,7 +480,7 @@ summary { cursor: pointer; color: var(--text); font-size: var(--font-meta); min-
   .file-fields { grid-template-columns: 1fr; }
   .result-card header, .result-card-header, .job-bottomline, .workspace-heading { align-items: stretch; flex-direction: column; }
   .command-bar, .result-actions { justify-content: flex-start; }
-  .entry-actions, .entry-more-actions { align-items: stretch; flex-direction: column; }
+  .entry-actions { align-items: stretch; flex-direction: column; }
   .hero { align-items: stretch; flex-direction: column; }
   .header-actions { width: 100%; align-items: stretch; flex-direction: column; }
   .status { justify-content: flex-end; }
