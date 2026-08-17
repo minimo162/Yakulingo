@@ -310,6 +310,46 @@ function lastBody(name) { const c = calls(name); return c.length ? c[c.length - 
   page.on('dialog', function (d) { dialogs.push({ type: d.type(), message: d.message() }); d.accept().catch(function () {}); });
 
   try {
+    // -------------------------------------------------- 開始画面（2026-08-16 の統合入口）
+    // project を開く前の実画面で、静的な字面では分からない2件を固定する。
+    // 1) cat.js の一括解除後も、空の quick-submit は押せないまま。
+    // 2) 子要素へ落としたファイルも、外枠の drop 1回だけで change 1回になる。
+    await page.goto('http://127.0.0.1:' + port + '/cat', { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(function () {
+      var reason = document.getElementById('quick-submit-reason');
+      return !!(reason && reason.textContent === '文章を入力してください');
+    }, null, { timeout: 10000 });
+    out.startScreen = await page.evaluate(function () {
+      var submit = document.getElementById('quick-submit');
+      var guide = document.getElementById('quick-empty-guide');
+      var area = document.getElementById('quick-area');
+      var file = document.getElementById('cat-file-area');
+      return {
+        buttonText: submit ? submit.textContent : '',
+        disabled: submit ? submit.disabled : null,
+        reason: document.getElementById('quick-submit-reason').textContent,
+        guideVisible: !!(guide && !guide.hidden),
+        unified: !!(area && file && area.contains(file))
+      };
+    });
+    await page.evaluate(function () {
+      window.__startProbe = { fileClicks: 0, changes: 0 };
+      var input = document.getElementById('cat-file-input');
+      input.addEventListener('click', function (event) { window.__startProbe.fileClicks++; event.preventDefault(); });
+      input.addEventListener('change', function () { window.__startProbe.changes++; });
+    });
+    await page.focus('#quick-input');
+    await page.keyboard.press('Enter');
+    out.startScreen.fileClicksFromTextareaEnter = await page.evaluate(function () { return window.__startProbe.fileClicks; });
+    await page.evaluate(function () {
+      var transfer = new DataTransfer();
+      transfer.items.add(new File(['screen gate'], 'screen-gate.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
+      var target = document.querySelector('.file-lane-lead');
+      target.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+    });
+    await page.waitForFunction(function () { return window.__startProbe.changes >= 1; }, null, { timeout: 5000 });
+    out.startScreen.changesFromNestedDrop = await page.evaluate(function () { return window.__startProbe.changes; });
+
     await page.goto('http://127.0.0.1:' + port + '/cat?project=' + project.id, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#cat-grid-body tr[data-cat-row]', { timeout: 20000 });
 

@@ -623,7 +623,7 @@ Assert-YakuMask ($resultHtml -like '*数値 5 件をマスクして送信しま�
 # 一般画面の説明
 # 2026-08-12: 選ばせる開始画面を削除した。一般利用者の画面は翻訳画面そのもの。
 $indexHtml = Get-Content -LiteralPath (Join-Path (Join-Path $root 'www') 'cat.html') -Raw -Encoding UTF8
-Assert-YakuMask ($indexHtml -like '*金額などの数値は、Copilotへ送る前に自動で伏せます*') '利用者向けの言葉で自動保護を説明する'
+Assert-YakuMask ($indexHtml -like '*数値は伏せて送ります*') '利用者向けの短い言葉で自動保護を説明する'
 Assert-YakuMask (-not ($indexHtml -match 'プレースホルダー|122 oku')) '内部用語を一般画面へ出さない'
 
 Write-Host 'CASE 22: 受容基準の残り（仕様書 §10）'

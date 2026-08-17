@@ -215,6 +215,11 @@
   function isAlwaysEnabled(button) {
     if (button.closest('dialog')) return true;
     if (button.classList.contains('job-cancel')) return true;
+    /* 貼り付け側の主ボタンは quick.js が持ち場を持っている（文章の有無・翻訳先・
+       準備状況で押せるかどうかを決める）。ここで一律に触ると、文章が空でも
+       押せる状態に戻ってしまう。実測 2026-08-16: 起動直後の #quick-submit は
+       ラベルが「文章を入力してください」なのに disabled=false だった。 */
+    if (button.id === 'quick-submit') return true;
     if (button.hasAttribute('data-cat-filter') || button.hasAttribute('data-cat-location') ||
         button.hasAttribute('data-cat-change') || button.hasAttribute('data-cat-inspector')) return true;
     return false;
@@ -305,14 +310,29 @@
       var remaining = Math.max(0, Number(item.total) - Number(item.confirmed));
       var name = esc(item.file_name || '名称未設定');
       var saved = savedLabel(item.saved);
+      /* 左のレールへ移したので、1件目の「前回開いた作業」の札は外した
+         （2026-08-16）。並びは新しい順で、1件目は必ずいちばん上にあり、
+         保存時刻もカードの中に出ている。向きは記号で足りる（ツールバーと同じ）。 */
+      /* 資料名・進み具合・日時は性質が違うので、1本の「・」で繋がない
+         （2026-08-16、利用者の指摘「レールの1件が読みにくい」）。
+         実測 1912x987 では 3件とも資料名が2行に折り返し、どこまでが
+         ファイル名なのかが読み取れなかった。資料名だけを1行目に置いて
+         溢れは「…」で切り、向き・残り・日時は2行目へまとめる。 */
+      var meta = [
+        esc(item.source === 'align' ? '過去訳の対応確認' : directionMark(item.direction)),
+        remaining ? 'あと' + remaining + '行' : '確認完了'
+      ];
+      if (saved) meta.push(esc(saved));
       return '<div class="cat-resume-row">' +
-        '<button type="button" class="cat-resume-card secondary-button" data-cat-resume="' + esc(item.id) + '">' + (i === 0 ? '<span class="cat-resume-recent">前回開いた作業</span>' : '') + '<span>' + name + '・' + esc(workName(item.source, item.direction)) + '・' + (remaining ? 'あと' + remaining + '行' : '確認完了') + '</span>' + (saved ? '<span class="cat-resume-time">' + esc(saved) + '</span>' : '') + '</button>' +
-        '<button type="button" class="cat-resume-drop secondary-button" data-cat-resume-drop="' + esc(item.id) + '" data-cat-resume-revision="' + (Number(item.revision) || 0) + '" data-cat-resume-name="' + name + '" title="この作業を一覧から消す" aria-label="' + name + ' の作業を消す">消す</button>' +
+        '<button type="button" class="cat-resume-card secondary-button" data-cat-resume="' + esc(item.id) + '">' +
+        '<span class="cat-resume-name">' + name + '</span>' +
+        '<span class="cat-resume-time">' + meta.join('・') + '</span>' + '</button>' +
+        '<button type="button" class="cat-resume-drop link-button" data-cat-resume-drop="' + esc(item.id) + '" data-cat-resume-revision="' + (Number(item.revision) || 0) + '" data-cat-resume-name="' + name + '" title="この作業を一覧から消す" aria-label="' + name + ' の作業を消す">消す</button>' +
         '</div>';
     }).join('');
     var hiddenCount = resumeItems.length - RESUME_VISIBLE;
     more.hidden = hiddenCount <= 0;
-    more.textContent = resumeExpanded ? '直近3件だけ表示する' : ('続きの作業をすべて表示（あと' + hiddenCount + '件）');
+    more.textContent = resumeExpanded ? '3件だけ表示' : ('ほかに' + hiddenCount + '件');
     more.setAttribute('aria-expanded', resumeExpanded ? 'true' : 'false');
     /* 左の資料一覧も同じ元データで描く。読み込みが終わってから呼ぶ必要がある
        （開いた時点では resumeItems がまだ空のことがある）。 */
@@ -1571,7 +1591,10 @@
 
   function bindFileDrop(drop, input) {
     if (!drop || !input) return;
-    drop.addEventListener('keydown', function (event) { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); input.click(); } });
+    /* 枠そのものをドロップ先にしたので、中に入力欄があることがある
+       （貼り付け欄）。そこで打った Enter や空白まで拾うと、文章を打つだけで
+       ファイル選択の窓が開く。入力欄の中のキーには手を出さない。 */
+    drop.addEventListener('keydown', function (event) { if (event.target.closest('textarea, input, select, button, a, [contenteditable]')) return; if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); input.click(); } });
     ['dragenter','dragover'].forEach(function (name) { drop.addEventListener(name, function (event) { event.preventDefault(); drop.classList.add('dragover'); }); });
     ['dragleave','drop'].forEach(function (name) { drop.addEventListener(name, function (event) { event.preventDefault(); drop.classList.remove('dragover'); }); });
     drop.addEventListener('drop', function (event) { if (event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files.length) { input.files = event.dataTransfer.files; input.dispatchEvent(new Event('change')); } });
@@ -3213,8 +3236,11 @@
       uploaded = null;
       if (this.files.length) openSource('file', 'auto');
     });
-    /* ドロップ先はボタン自身。専用の枠を置くと、押す場所が2つに見える。 */
-    bindFileDrop(el('cat-open-file-entry'), el('cat-file-input'));
+    /* 落とし先は外側の枠1か所だけにする（2026-08-16）。入口を1つにしたので
+       #cat-file-area も #cat-open-file-entry も #quick-area の中にある。
+       3か所へ付けると、ドロップが順に伝わって change が3回出て、同じファイルを
+       3回取り込みにいく（drop は bubble する）。落とし先は枠だけに付ける。 */
+    bindFileDrop(el('quick-area'), el('cat-file-input'));
     el('cat-prior-open').addEventListener('click', function () { var epoch = ++viewEpoch; setBusy(true); post('from-prior-version', { prior_ja: el('cat-prior-ja').value, prior_en: el('cat-prior-en').value, current_ja: el('cat-current-ja').value, document_name: el('cat-prior-name').value }, false, null).then(function (data) { if (epoch === viewEpoch) render(data, true); }).catch(function (error) { if (epoch !== viewEpoch) return; setBusy(false); status(error.message, true); }); });
     /* 過去の日英資料の入口。PDF を読むには WebAssembly が要り、それは
        ?import=1 で開いた画面にしか許していない（普段の作業では CSP を
