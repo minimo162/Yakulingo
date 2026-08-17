@@ -1258,7 +1258,7 @@ function Get-YakuCatOutputEligibility {
             $legacyDelimiter = Find-YakuCatPairedDelimiterMismatch -Text ([string]$segment.Translation)
             $persistedDelimiter = @($segment.QcFindings | Where-Object { [string]$_.Code -eq 'paired-delimiter-mismatch' }).Count -gt 0
             if ($null -ne $legacyDelimiter -and -not $persistedDelimiter) {
-                $qcRows.Add([pscustomobject]@{ SegmentId=[string]$segment.SegmentId; Codes=@('paired-delimiter-mismatch') }) | Out-Null
+                $qcRows.Add([pscustomobject]@{ SegmentId=[string]$segment.SegmentId; Codes=@('paired-delimiter-mismatch'); Findings=@([ordered]@{ code='paired-delimiter-mismatch'; severity='warning' }) }) | Out-Null
             }
             if (-not (Test-YakuCatSegmentQcCurrent -Segment $segment -TerminologySnapshotHash ([string]$Project.TerminologySnapshotHash))) {
                 $reasons.Add('segment-qc-not-current') | Out-Null
@@ -1299,7 +1299,7 @@ function Get-YakuCatOutputEligibility {
                 else { $qcFailureRows[$code] = 1 }
             }
         }
-        # 行ごとの内訳。**種別だけを持つ**。用語の finding が持つ TermId や
+        # 行ごとの内訳。種別と重大度だけを持つ。用語の finding が持つ TermId や
         # SourceTerm はここへ載せない。載せると画面の点検欄が
         # 「この行では別の表現を使う」（用語の免除。訳文を書き換える操作）を
         # 未確認の行にも出せてしまい、免除の場面が黙って広がる。
@@ -1313,7 +1313,10 @@ function Get-YakuCatOutputEligibility {
         foreach ($code in $seenCodes.ToArray()) { $rowCodes.Add([string]$code) | Out-Null }
         foreach ($code in $warnCodes.ToArray()) { if (-not $rowCodes.Contains([string]$code)) { $rowCodes.Add([string]$code) | Out-Null } }
         if ($rowCodes.Count -gt 0) {
-            $qcRows.Add([pscustomobject]@{ SegmentId=[string]$segment.SegmentId; Codes=@($rowCodes.ToArray()) }) | Out-Null
+            $rowFindings = New-Object System.Collections.Generic.List[object]
+            foreach ($code in $seenCodes.ToArray()) { $rowFindings.Add([ordered]@{ code=[string]$code; severity='error' }) | Out-Null }
+            foreach ($code in $warnCodes.ToArray()) { if (-not $seenCodes.Contains($code)) { $rowFindings.Add([ordered]@{ code=[string]$code; severity='warning' }) | Out-Null } }
+            $qcRows.Add([pscustomobject]@{ SegmentId=[string]$segment.SegmentId; Codes=@($rowCodes.ToArray()); Findings=@($rowFindings.ToArray()) }) | Out-Null
         }
     }
     $qcFailures = New-Object System.Collections.Generic.List[object]
@@ -1341,7 +1344,8 @@ function Get-YakuCatOutputEligibility {
         # segment-qc-failed の内訳。止める条件ではなく、止まった理由の説明のための材料。
         QcFailures = @($qcFailures.ToArray())
         # 同じ内訳を行ごとに。案内文が指す「点検の指摘」を実際に開けるようにするため
-        # だけのもので、これも止める条件ではない。**実セグメントへは書かない。**
+        # だけのもので、これも止める条件ではない。種別と重大度を持つが、
+        # **実セグメントへは書かない。**
         QcRows = @($qcRows.ToArray())
     }
 }
@@ -3112,6 +3116,22 @@ function Save-YakuCatProject {
     }
 }
 
+function Get-YakuCatSavedSourcePreview {
+    <# recent の見出し用に、保存済み行の最初の非空原文だけを読む。
+       翻訳・確認状態は変更せず、一覧に内容の手掛かりを出すための読み取り専用値。 #>
+    param([AllowNull()][object[]]$Segments)
+    foreach ($segment in @($Segments)) {
+        $value = [string]$segment.text
+        if ([string]::IsNullOrWhiteSpace($value)) { $value = [string]$segment.source }
+        if ([string]::IsNullOrWhiteSpace($value)) { $value = [string]$segment.source_text }
+        if ([string]::IsNullOrWhiteSpace($value)) { continue }
+        $value = [regex]::Replace($value, '\s+', ' ').Trim()
+        if ($value.Length -gt 160) { $value = $value.Substring(0, 159) + '…' }
+        return $value
+    }
+    return ''
+}
+
 function Get-YakuCatSavedProjects {
     <#
       保存してあるものの一覧。新しい順。
@@ -3133,6 +3153,7 @@ function Get-YakuCatSavedProjects {
                 $segPath = if ($generationId -match '^[a-f0-9]{32}$') { Join-Path (Join-Path (Join-Path $f.DirectoryName 'generations') $generationId) 'segments.jsonl' } else { Join-Path $f.DirectoryName 'segments.jsonl' }
                 if (Test-Path -LiteralPath $segPath -PathType Leaf) { $segs = @(Get-Content -LiteralPath $segPath -Encoding UTF8 | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_ | ConvertFrom-Json }) }
             }
+            $sourcePreview = Get-YakuCatSavedSourcePreview -Segments $segs
             $savedSourcePath = [string]$o.path
             if ([string]$o.source -eq 'file' -and -not [string]::IsNullOrWhiteSpace([string]$o.source_artifact_relative_path)) {
                 try { $savedSourcePath = Resolve-YakuCatSavedSourceArtifact -ProjectDir $f.DirectoryName -Record $o }
@@ -3151,6 +3172,7 @@ function Get-YakuCatSavedProjects {
                     Confirmed = @($segs | Where-Object { [bool]$_.confirmed }).Count
                     Saved = [string]$o.saved
                     Source = [string]$o.source
+                    SourcePreview = $sourcePreview
                     # ファイル型は元ファイルが残っていれば、出力時に読み直して
                     # 原文を再対応付けできる。無い場合だけ押す前に止める。
                     ExportBlocked = ([string]$o.source -eq 'file' -and -not (Test-Path -LiteralPath $savedSourcePath -PathType Leaf))
@@ -3639,14 +3661,21 @@ function ConvertTo-YakuCatProjectJson {
     $exportBlocked = if ([string]$Project.Source -ne 'file') { -not [bool]$eligibility.TranslationListEligible } elseif ($documentFormat -eq 'docx') { -not [bool]$eligibility.TranslationListEligible } else { -not [bool]$eligibility.ExcelDraftEligible }
     $rows = New-Object System.Collections.Generic.List[object]
     # 未確認の行を写しに掛けた点検と、契約を上げずに表示する advisory warning の
-    # 結果（種別だけ）。書き出しを止めた理由の案内が
+    # 結果（種別と重大度）。書き出しを止めた理由の案内が
     # 「左の『点検の指摘』を押してください」と言う、その案内先を実際に開けるようにする。
     # **Segment.QcFindings とは別の鍵にする。** 混ぜると「この行の点検はいつ・どの
     # 用語一覧で行われたか」（Test-YakuCatSegmentQcCurrent と監査）が壊れる。
     $qcPreviewBySegment = @{}
     foreach ($qcRow in @($eligibility.QcRows)) {
         if ($null -eq $qcRow) { continue }
-        $qcPreviewBySegment[[string]$qcRow.SegmentId] = @(@($qcRow.Codes) | ForEach-Object { [ordered]@{ code = [string]$_ } })
+        $previewFindings = @($qcRow.Findings | Where-Object { $null -ne $_ })
+        if ($previewFindings.Count -gt 0) {
+            $qcPreviewBySegment[[string]$qcRow.SegmentId] = @($previewFindings | ForEach-Object { [ordered]@{ code = [string]$_.code; severity = [string]$_.severity } })
+        } else {
+            # 古い QcRows は Codes しか持たない。画面側の code-only fallback を
+            # 生かすため、ここでは既存の形をそのまま返す。
+            $qcPreviewBySegment[[string]$qcRow.SegmentId] = @(@($qcRow.Codes) | ForEach-Object { [ordered]@{ code = [string]$_ } })
+        }
     }
     $placementBySegment = @{}
     foreach ($placement in @($Project.PlacementPlans)) { $placementBySegment[[string]$placement.segment_id] = $placement }
@@ -3762,7 +3791,7 @@ function ConvertTo-YakuCatProjectJson {
              qc_findings = @($segs[$i].QcFindings)
              review_notes = @($(try { $segs[$i].ReviewNotes | ForEach-Object { ConvertTo-YakuCatReviewNoteJsonValue -Note $_ } } catch { @() }))
              # 未確定行を写しに掛けた結果、または保存済みの確認行へ advisory として
-            # 足した種別。実セグメントには残らない（残すと点検の履歴が嘘になる）ので、
+             # 足した種別と重大度。実セグメントには残らない（残すと点検の履歴が嘘になる）ので、
             # 画面へはこちらで渡す。
             # 種別だけを持ち、用語の免除に使う TermId は載せない。
             qc_preview = @($(if ($qcPreviewBySegment.ContainsKey([string]$segs[$i].SegmentId)) { $qcPreviewBySegment[[string]$segs[$i].SegmentId] } else { @() }))

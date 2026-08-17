@@ -15,7 +15,8 @@
    (a) 完全一致の行が埋まり、出どころ・状態・未確認が決まった値になること
    (b) Get-YakuCatCopilotUsage の UniqueRemaining が、いくつ減るか
    (c) 翻訳メモリが壊れていても例外を投げず、対象行が空のまま残ること
-   (d) 埋めた行が数字の点検に落ちるなら、書き出しが segment-qc-failed で止まること
+   (d) 埋めた行の数字の点検結果は warning として見え、確認・書き出しを止めず、
+       非数値の構造欠陥だけは従来どおり止まること
    (e) 人が直した行を踏まないこと・あいまい一致は使わないこと
 
 .EXAMPLE
@@ -280,7 +281,7 @@ try {
     Remove-YakuCatProject -Id ([string]$pc2.Id)
 
     # ------------------------------------------------------------------ (d)
-    Write-Host '(d) 数字の点検に落ちる訳は書き出しを止める' -ForegroundColor Cyan
+    Write-Host '(d) 数字の点検は warning、非数値の欠陥は blocker' -ForegroundColor Cyan
     $tmD = Join-Path $tmp 'tm-d.jsonl'
     $null = Add-TestTm -Source '売上高は100百万円でした。' -Target 'Revenue was 999 million yen.' -Path $tmD
     $pd = New-YakuCatTextProject -Root $root -Text '売上高は100百万円でした。' -Settings $settings -Direction 'to_en'
@@ -289,14 +290,26 @@ try {
     Chk ([int]$rd.Applied -eq 1) '数字が合わない訳でも、埋めること自体は行う'
     Chk (-not [bool]$segD.Confirmed -and [string]$segD.State -eq 'machine_draft') '埋めた時点では確認済みにしない'
     $eligibility = Get-YakuCatOutputEligibility -Project $pd
-    Chk (-not [bool]$eligibility.TranslationListEligible) '数字が抜けた訳のままでは書き出せない'
-    Chk (@($eligibility.Reasons) -contains 'segment-qc-failed') '止まる理由が segment-qc-failed である'
+    Chk (@($eligibility.QcRows | Where-Object { @($_.Codes) -contains 'numeric-value-mismatch' }).Count -ge 1) '数字の不一致は行へ warning として載る'
+    Chk ([bool]$eligibility.TranslationListEligible) '数字の不一致だけでは書き出しを止めない'
+    Chk (@($eligibility.Reasons) -notcontains 'segment-qc-failed') '数字の warning を segment-qc-failed に丸めない'
     Chk ([int]$eligibility.UnconfirmedCount -eq 1) '未確認として数える'
-    # 確定しようとしても点検で止まる（埋めたことが確認の代わりにならない）
-    $confirmBlocked = $false
-    try { $null = Set-YakuCatSegmentConfirmed -Project $pd -Index 0 } catch { $confirmBlocked = ($_.Exception.Message -match 'CAT_REVIEW_QC_FAILED') }
-    Chk $confirmBlocked '確定しようとしても数字の点検で止まる'
+    $confirmAllowed = $true
+    try { $null = Set-YakuCatSegmentConfirmed -Project $pd -Index 0 } catch { $confirmAllowed = $false }
+    Chk $confirmAllowed '数字の warning だけなら確認できる'
+    Chk ([bool](Get-YakuCatOutputEligibility -Project $pd).TranslationListEligible) '確認後も数字の warning だけでは書き出しを止めない'
     Remove-YakuCatProject -Id ([string]$pd.Id)
+
+    # 数字以外の構造欠陥は、warning へ逃がさず確認・書き出しを止める。
+    $pStructure = New-YakuCatTextProject -Root $root -Text '【概要】' -Settings $settings -Direction 'to_en'
+    $null = Set-YakuCatSegmentTranslation -Project $pStructure -Index 0 -Text 'Overview'
+    $structureEligibility = Get-YakuCatOutputEligibility -Project $pStructure
+    Chk (@($structureEligibility.QcFailures | Where-Object { [string]$_.Code -eq 'structure-integrity' }).Count -ge 1) '非数値の構造欠陥は error として残る'
+    Chk (-not [bool]$structureEligibility.TranslationListEligible -and @($structureEligibility.Reasons) -contains 'segment-qc-failed') '非数値の構造欠陥は書き出しを止める'
+    $structureConfirmBlocked = $false
+    try { $null = Set-YakuCatSegmentConfirmed -Project $pStructure -Index 0 } catch { $structureConfirmBlocked = ($_.Exception.Message -match 'CAT_REVIEW_QC_FAILED') }
+    Chk $structureConfirmBlocked '非数値の構造欠陥は確認も止める'
+    Remove-YakuCatProject -Id ([string]$pStructure.Id)
 
     # 数字が合っている訳なら、これまでどおり書き出せる
     $tmD2 = Join-Path $tmp 'tm-d2.jsonl'

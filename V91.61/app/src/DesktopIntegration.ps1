@@ -172,19 +172,21 @@ function Set-YakuDesktopPreferences {
         throw 'APP_LAUNCHER_MISSING: 起動ショートカットを準備できません。アプリを一式更新してください。'
     }
     $locations = Get-YakuDesktopShortcutLocations
+    # 起動とデスクトップだけをこの設定画面の管理対象にする。スタートメニューは
+    # 既存のものも含めて触らない（別の配布物や利用者が置いた入口を消さない）。
+    $managedNames = @('startup', 'desktop')
     $desired = [ordered]@{
         startup = $false
         desktop = [bool]$DesktopShortcut
-        start_menu = $true
     }
-    $arguments = @{ startup=''; desktop=''; start_menu='' }
+    $arguments = @{ startup=''; desktop='' }
     $snapshots = @{}
-    foreach ($name in $locations.Keys) {
+    foreach ($name in $managedNames) {
         $path = [string]$locations[$name]
         $snapshots[$path] = if (Test-Path -LiteralPath $path -PathType Leaf) { [IO.File]::ReadAllBytes($path) } else { $null }
     }
     try {
-        foreach ($name in $locations.Keys) {
+        foreach ($name in $managedNames) {
             $path = [string]$locations[$name]
             if ([bool]$desired[$name]) {
                 if ((Test-Path -LiteralPath $path -PathType Leaf) -and -not (Test-YakuOwnedShortcut -Path $path -TargetPath $shellPath)) {

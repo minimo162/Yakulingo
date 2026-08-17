@@ -4,7 +4,7 @@
 
 .DESCRIPTION
   CLAUDE.md が唯一「宿題」と明記していた項目。止まる理由コードは
-  segment-qc-failed の1本しか無いのに、その裏では 18 種の QC error が動いている。
+  segment-qc-failed の1本しか無いのに、その裏では 9 種の QC error が動いている（数値意味系は warning として別に表示される）。
   1本に丸めたままだと、用語集で止まった利用者が「数字の点検に通らない行が
   あります」と言われ、数字を見に行く。何を直せば押せるのかが画面から分からない。
 
@@ -91,7 +91,7 @@ function Get-YakuQcFindingCodes {
       点検が積む finding を構文木で拾い、Code と Severity を対で見て仕分ける。
 
       なぜ Severity まで見るか（2026-08-15）: ここが `Code=` の字面を数えるだけだと、
-      **警告専用の finding を1つ足しただけで「18種」の数え上げが赤くなる。**
+      **警告専用の finding を1つ足しただけで、止める種別の数え上げへ混ざる。**
       次の担当者はその赤を消すために、絶対に止まらないコードへ文言を足して緑へ戻す。
       門が数えているものが「止める種別」から「finding の種類」へ静かに入れ替わり、
       本来この門が守っていた「止める種別には必ず専用の文言がある」が空になる。
@@ -199,7 +199,7 @@ try {
     Chk (-not [string]::IsNullOrWhiteSpace($validationText) -and -not [string]::IsNullOrWhiteSpace($complianceText)) '点検2本を構文木から取り出せた'
 
     # 数え上げは Severity まで見る。`Code=` の字面だけを数えると、warning 専用の
-    # finding を1つ足しただけで門が「19種」で赤くなり、次の担当者が
+    # finding を1つ足しただけで門の種別数が増え、次の担当者が
     # **絶対に止まらないコードへ文言を足して緑へ戻す**。門が守るものが入れ替わる。
     $qcFindingDefs = @(@(Get-YakuQcFindingCodes -Path $catPath -Name 'Invoke-YakuCatSegmentValidation') + `
                        @(Get-YakuQcFindingCodes -Path $termPath -Name 'Test-YakuTerminologyCompliance'))
@@ -211,11 +211,11 @@ try {
     $nonErrorCodes = @(@($qcFindingDefs | Where-Object { [string]$_.Kind -eq 'other' } | ForEach-Object { [string]$_.Code }) | Sort-Object -Unique)
     Write-Host ('     segment-qc-failed へ丸められる error コード = ' + $qcCodes.Count + ' : ' + ($qcCodes -join ','))
     Write-Host ('     error にならない finding = ' + $nonErrorCodes.Count + ' : ' + ($nonErrorCodes -join ','))
-    Chk ($qcCodes.Count -eq 18) ('QC の error コードは 18 種（実際 ' + $qcCodes.Count + '）')
+    Chk ($qcCodes.Count -eq 9) ('QC の error コードは 9 種（実際 ' + $qcCodes.Count + '）')
     # error になり得ない種別を「止める種別」として数えていないこと。
     Chk (@($nonErrorCodes | Where-Object { $qcCodes -contains $_ }).Count -eq 0) 'error にならない finding を、止める種別として数えていない'
 
-    # 種別ごとの文言が、18種すべてに用意されていること。ここが空くと、点検を
+    # 種別ごとの文言が、9種すべてに用意されていること。ここが空くと、点検を
     # 増やしたのに説明を足し忘れた分だけ「自動点検に通らない」へ落ちる。
     $generic = '自動点検に通らない行が'
     $covered = 0
@@ -224,7 +224,7 @@ try {
         if (-not [string]::IsNullOrWhiteSpace($message) -and -not $message.StartsWith($generic)) { $covered++ }
         else { Write-Host ('     未整備: ' + $code) -ForegroundColor Yellow }
     }
-    Chk ($covered -eq $qcCodes.Count) ('18種すべてに専用の文言がある（実際 ' + $covered + '/' + $qcCodes.Count + '）')
+    Chk ($covered -eq $qcCodes.Count) ('9種すべてに専用の文言がある（実際 ' + $covered + '/' + $qcCodes.Count + '）')
     # 知らないコードが来ても黙らせない（落とすと押せない理由が消える）
     $unknown = @(Get-YakuCatQcBlockerMessages -Failures @([pscustomobject]@{ Code='brand-new-check'; Rows=3 }))
     $unknownMessage = Get-YakuFirstString -Items @($unknown | ForEach-Object { [string]$_.Message })
@@ -290,10 +290,10 @@ try {
     Chk ($ruleViolations.Count -eq 0) ('種別ごとの文言が、無関係な言葉を持ち出さない（違反: ' + (@($ruleViolations.ToArray()) -join ' / ') + '）')
     Chk ($ruleChecked -eq $messageCodes.Count) ('文言を規則で見た種別が ' + $messageCodes.Count + ' 種（実際 ' + $ruleChecked + '）')
     Chk ($rowsMissing.Count -eq 0) ('どの種別の文言にも行数が入る（欠け: ' + (@($rowsMissing.ToArray()) -join ',') + '）')
-    # 種別ごとに違う文言であること（19本すべてで見る。end-to-end で作れる12種だけでは
+    # 種別ごとに違う文言であること（9種と validation-unavailable で見る。end-to-end で
     # 足りない。写経して差し替え忘れた文言は、ここでしか捕まらない）。
     $allMessages = @($messageCodes | ForEach-Object { Get-YakuQcMessageFor -Code $_ -Rows 1 })
-    Chk (@($allMessages | Sort-Object -Unique).Count -eq $messageCodes.Count) ('19本の文言が互いに違う（実際 ' + @($allMessages | Sort-Object -Unique).Count + '/' + $messageCodes.Count + '）')
+    Chk (@($allMessages | Sort-Object -Unique).Count -eq $messageCodes.Count) ('種別ごとの文言が互いに違う（実際 ' + @($allMessages | Sort-Object -Unique).Count + '/' + $messageCodes.Count + '）')
 
     # ------------------------------------------------------------------ 共通
     function New-BlockedProject {
@@ -340,16 +340,9 @@ try {
     #   桁の文言が確かに出ることを見る。
     $cases = @(
         [pscustomobject]@{ Name='terminology-missing'; Sources=@($srcFixed); Targets=@('We cut overhead.'); Setup=$addFixedTerm; Sole=$true; Expect='登録した訳語が使われていない' }
-        [pscustomobject]@{ Name='currency-mismatch'; Sources=@($srcDollar); Targets=@('Sales were recorded.'); Setup=$null; Sole=$true; Expect='通貨（円・ドルなど）が原文と合っていない' }
-        [pscustomobject]@{ Name='numeric-sign-missing'; Sources=@($srcSign); Targets=@('152 oku yen.'); Setup=$null; Sole=$true; Expect='損失や減少を示すマイナスが訳文に入っていない' }
-        [pscustomobject]@{ Name='numeric-value-order-mismatch'; Sources=@($srcOrder); Targets=@('Profit was 200 and revenue was 100.'); Setup=$null; Sole=$true; Expect='数字の並ぶ順番が原文と違う' }
-        [pscustomobject]@{ Name='numeric-value-extra'; Sources=@($srcAmount); Targets=@('Revenue was 100 oku yen in 2026.'); Setup=$null; Sole=$true; Expect='原文に無い数字が訳文に入っている' }
-        [pscustomobject]@{ Name='accounting-polarity-mismatch'; Sources=@($srcProfit); Targets=@('The result declined.'); Setup=$null; Sole=$true; Expect='利益と損失、または増加と減少が原文と逆になっている' }
         [pscustomobject]@{ Name='structure-integrity'; Sources=@($srcHead); Targets=@('Overview'); Setup=$null; Sole=$true; Expect='見出しや箇条書きの形が原文と違う' }
         [pscustomobject]@{ Name='invalid-or-source-fallback'; Sources=@($srcFixed); Targets=@($srcFixed); Setup=$null; Sole=$true; Expect='訳文が原文のままか' }
         [pscustomobject]@{ Name='placeholder-residue'; Sources=@($srcFixed); Targets=@('We cut [[N1]] costs.'); Setup=$null; Sole=$false; Expect='のような差し込み記号が残っている' }
-        [pscustomobject]@{ Name='numeric-value-mismatch'; Sources=@($srcAmount); Targets=@('Revenue was strong in yen.'); Setup=$null; Sole=$false; Expect='訳文で違う値になっているか抜けている' }
-        [pscustomobject]@{ Name='numeric-scale-mismatch'; Sources=@('Revenue was 5 billion yen.'); Targets=@('売上高は5百万円でした。'); Setup=$null; Sole=$false; Expect='数字の桁（億・百万など）が原文と合っていない'; Direction='to_jp' }
     )
     $seenMessages = @{}
     foreach ($case in $cases) {
@@ -375,12 +368,36 @@ try {
     $termOnly = $seenMessages['terminology-missing']
     Chk (-not [string]::IsNullOrWhiteSpace($termOnly) -and $termOnly.Contains('用語')) '用語で止まった文言が用語を指している'
 
+    # 数値意味系は画面へ warning として載るが、確認・書き出しは止めない。
+    $warningCases = @(
+        [pscustomobject]@{ Name='currency-mismatch'; Sources=@($srcDollar); Targets=@('Sales were recorded.') }
+        [pscustomobject]@{ Name='numeric-sign-missing'; Sources=@($srcSign); Targets=@('152 oku yen.') }
+        [pscustomobject]@{ Name='numeric-value-order-mismatch'; Sources=@($srcOrder); Targets=@('Profit was 200 and revenue was 100.') }
+        [pscustomobject]@{ Name='numeric-value-extra'; Sources=@($srcAmount); Targets=@('Revenue was 100 oku yen in 2026.') }
+        [pscustomobject]@{ Name='accounting-polarity-mismatch'; Sources=@($srcProfit); Targets=@('The result declined.') }
+        [pscustomobject]@{ Name='numeric-value-mismatch'; Sources=@($srcAmount); Targets=@('Revenue was strong in yen.') }
+        [pscustomobject]@{ Name='numeric-scale-mismatch'; Sources=@('Revenue was 5 billion yen.'); Targets=@('売上高は5百万円でした。'); Direction='to_jp' }
+    )
+    foreach ($case in $warningCases) {
+        $direction = if ([string]::IsNullOrWhiteSpace([string]$case.Direction)) { 'to_en' } else { [string]$case.Direction }
+        $project = New-BlockedProject -Sources @($case.Sources) -Targets @($case.Targets) -Direction $direction
+        $eligibility = Get-YakuCatOutputEligibility -Project $project
+        $warningRows = @(@($eligibility.QcRows) | Where-Object {
+            (@($_.Findings) | Where-Object { [string]$_.code -eq [string]$case.Name }).Count -gt 0 -or
+            @($_.Codes) -contains [string]$case.Name
+        })
+        Chk ($warningRows.Count -ge 1) ([string]$case.Name + ' は warning として行に残る')
+        Chk (@($eligibility.QcFailures | Where-Object { [string]$_.Code -eq [string]$case.Name }).Count -eq 0) ([string]$case.Name + ' は blocker に昇格しない')
+        Chk ([bool]$eligibility.TranslationListEligible) ([string]$case.Name + ' は書き出しを止めない')
+        Remove-YakuCatProject -Id ([string]$project.Id)
+    }
+
     # ------------------------------------------------------------------ (d)
     Write-Host '(d) 道具の不調は、訳を見比べろとは言わない' -ForegroundColor Cyan
     # 点検そのものを落として測る。字面ではなく、実際にその枝を通す。
     $faults = @(
-        [pscustomobject]@{ Function='Test-YakuNumericIntegrity'; Code='numeric-validation-error' }
-        [pscustomobject]@{ Function='Test-YakuTextStructureIntegrity'; Code='structure-validation-error' }
+        [pscustomobject]@{ Function='Get-YakuCanonicalNumericFacts'; Code='numeric-validation-error'; Warning=$true }
+        [pscustomobject]@{ Function='Test-YakuTextStructureIntegrity'; Code='structure-validation-error'; Warning=$false }
         [pscustomobject]@{ Function='Test-YakuTerminologyCompliance'; Code='terminology-check-unavailable' }
         [pscustomobject]@{ Function='Invoke-YakuCatSegmentValidation'; Code='validation-unavailable' }
     )
@@ -388,13 +405,20 @@ try {
         $saved = (Get-Item ('function:' + [string]$fault.Function)).ScriptBlock
         Set-Item ('function:' + [string]$fault.Function) -Value { param() throw 'INJECTED_FOR_TEST' }
         try {
-            $project = New-BlockedProject -Sources @($srcFixed) -Targets @('We cut fixed costs.')
+            $faultSource = if ([bool]$fault.Warning) { $srcAmount } else { $srcFixed }
+            $faultTarget = if ([bool]$fault.Warning) { 'Revenue was 100 oku yen.' } else { 'We cut fixed costs.' }
+            $project = New-BlockedProject -Sources @($faultSource) -Targets @($faultTarget)
             $codes = Get-QcCodesOf -Project $project
             $messages = Get-BlockerMessages -Project $project
-            Chk ($codes -contains [string]$fault.Code) ([string]$fault.Code + ' として立つ（実際: ' + ($codes -join ',') + '）')
-            $told = @($messages | Where-Object { $_.Contains('管理者へご連絡ください') })
-            Chk ($told.Count -eq 1) ([string]$fault.Code + ' は、直しようが無いことを認めて連絡先を出す')
-            Chk (@($messages | Where-Object { $_.Contains('見比べて') }).Count -eq 0) ([string]$fault.Code + ' で「原文と見比べて」とは言わない')
+            if ([bool]$fault.Warning) {
+                Chk (-not ($codes -contains [string]$fault.Code)) ([string]$fault.Code + ' は点検不能でも blocker にしない（実際: ' + ($codes -join ',') + '）')
+                Chk ([bool](Get-YakuCatOutputEligibility -Project $project).TranslationListEligible) ([string]$fault.Code + ' は書き出しを止めない')
+            } else {
+                Chk ($codes -contains [string]$fault.Code) ([string]$fault.Code + ' として立つ（実際: ' + ($codes -join ',') + '）')
+                $told = @($messages | Where-Object { $_.Contains('管理者へご連絡ください') })
+                Chk ($told.Count -eq 1) ([string]$fault.Code + ' は、直しようが無いことを認めて連絡先を出す')
+                Chk (@($messages | Where-Object { $_.Contains('見比べて') }).Count -eq 0) ([string]$fault.Code + ' で「原文と見比べて」とは言わない')
+            }
             Remove-YakuCatProject -Id ([string]$project.Id)
         } finally { Set-Item ('function:' + [string]$fault.Function) -Value $saved }
     }
@@ -410,13 +434,10 @@ try {
                                 -Setup $addFixedTerm
     $multiCodes = Get-QcCodesOf -Project $multi
     $multiMessages = Get-BlockerMessages -Project $multi
-    Chk ($multiCodes -contains 'terminology-missing' -and $multiCodes -contains 'currency-mismatch' -and $multiCodes -contains 'numeric-sign-missing') ('3種が同時に立つ（実際: ' + ($multiCodes -join ',') + '）')
+    Chk ($multiCodes.Count -eq 1 -and $multiCodes -contains 'terminology-missing') ('非数値 error だけが blocker に残る（実際: ' + ($multiCodes -join ',') + '）')
     $indexOf = { param([string]$needle) return [array]::FindIndex([string[]]$multiMessages, [Predicate[string]]{ param($m) $m.Contains($needle) }) }
-    $iSign = & $indexOf '損失や減少を示すマイナス'
-    $iCurrency = & $indexOf '通貨（円・ドルなど）'
     $iTerm = & $indexOf '登録した訳語が使われていない'
-    Chk ($iSign -ge 0 -and $iCurrency -ge 0 -and $iTerm -ge 0) '3種の文言がすべて出る（1つに丸めない）'
-    Chk ($iSign -lt $iCurrency -and $iCurrency -lt $iTerm) ('並びは 数字 → 通貨 → 用語 で固定（実際 ' + $iSign + ',' + $iCurrency + ',' + $iTerm + '）')
+    Chk ($iTerm -ge 0) '非数値 error の文言が出る（warning を blocker に丸めない）'
     $termRows = @(@((Get-YakuCatOutputEligibility -Project $multi).QcFailures) | Where-Object { [string]$_.Code -eq 'terminology-missing' })
     $termRowCount = if ($termRows.Count -ge 1) { [int]$termRows[0].Rows } else { -1 }
     Chk ($termRows.Count -eq 1 -and $termRowCount -eq 2) ('同じ種別で落ちた行数を数えている（用語 2 行、実際 ' + $termRowCount + '）')
@@ -429,8 +450,8 @@ try {
     Chk ($termMessage.Contains('2 行')) '行数が文言に出る'
     # 押せない理由が blockers に入っていること（warnings へ逃がしていないこと）
     $multiPreflight = Get-YakuCatOutputPreflight -Project $multi
-    Chk (-not [bool]$multiPreflight.Eligible -and @($multiPreflight.Blockers).Count -ge 3) '止まっている以上、blockers に出る'
-    Chk (@(@($multiPreflight.Blockers) | Where-Object { [string]$_.code -eq 'segment-qc-failed' }).Count -ge 3) '機械が読む code は segment-qc-failed のまま（鍵は変えない）'
+    Chk (-not [bool]$multiPreflight.Eligible -and @($multiPreflight.Blockers).Count -ge 1) '非数値 error が残る以上、blockers に出る'
+    Chk (@(@($multiPreflight.Blockers) | Where-Object { [string]$_.code -eq 'segment-qc-failed' }).Count -ge 1) '機械が読む code は segment-qc-failed のまま（鍵は変えない）'
     Chk (@(@($multiPreflight.Blockers) | Where-Object { [string]$_.qc_code -eq 'terminology-missing' }).Count -eq 1) '種別は qc_code に足してある'
     # rows は誰も表明していなかった。rows=0 へ固定する変異が緑で通る（2026-08-15 実測）。
     Chk (@(@($multiPreflight.Blockers) | Where-Object { [string]$_.qc_code -eq 'terminology-missing' -and [int]$_.rows -eq 2 }).Count -eq 1) 'blocker の rows に、その種別で落ちた行数が入る（用語 2 行）'
@@ -495,7 +516,7 @@ try {
         }
     }
     $failureCodes = @(@($previewEligibility.QcFailures) | ForEach-Object { [string]$_.Code })
-    Chk ($failureCodes.Count -ge 2) ('題材は2種以上で止まっている（実際: ' + ($failureCodes -join ',') + '）')
+    Chk ($failureCodes.Count -eq 1 -and $failureCodes -contains 'terminology-missing') ('非数値 error だけが書き出しを止める（実際: ' + ($failureCodes -join ',') + '）')
     $previewMismatch = New-Object System.Collections.Generic.List[string]
     foreach ($failure in @($previewEligibility.QcFailures)) {
         $c = [string]$failure.Code
@@ -503,7 +524,8 @@ try {
         if ($have -ne [int]$failure.Rows) { $previewMismatch.Add($c + ' 数えた=' + [string][int]$failure.Rows + ' 載った=' + [string]$have) | Out-Null }
     }
     Chk ($previewMismatch.Count -eq 0) ('数えた行数と、行に載った件数が種別ごとに一致する（ずれ: ' + (@($previewMismatch.ToArray()) -join ' / ') + '）')
-    Chk (@($previewByCode.Keys).Count -eq $failureCodes.Count) ('載っている種別は数えたものと同じ顔ぶれ（実際: ' + ((@($previewByCode.Keys)) -join ',') + '）')
+    Chk (@($failureCodes | Where-Object { -not $previewByCode.ContainsKey([string]$_) }).Count -eq 0) ('止めた種別は行の写しから引ける（実際: ' + ((@($previewByCode.Keys)) -join ',') + '）')
+    Chk (@($previewRows | ForEach-Object { @($_.qc_preview) } | Where-Object { [string]$_.code -eq 'currency-mismatch' -and [string]$_.severity -eq 'warning' }).Count -ge 1) 'numeric warning は preview に残るが blocker ではない'
     # 文言が名指しした種別も、行から引ける（案内先が実在する）
     foreach ($blocker in @($previewBlockers | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.qc_code) })) {
         Chk ($previewByCode.ContainsKey([string]$blocker.qc_code)) ('文言が名指しした ' + [string]$blocker.qc_code + ' を、行からも引ける')
@@ -515,10 +537,10 @@ try {
     $leaked = New-Object System.Collections.Generic.List[string]
     foreach ($row in $previewRows) {
         foreach ($item in @($row.qc_preview)) {
-            foreach ($name in @($item.PSObject.Properties.Name)) { if ($name -ne 'code') { $leaked.Add($name) | Out-Null } }
+            foreach ($name in @($item.PSObject.Properties.Name)) { if ($name -notin @('code','severity')) { $leaked.Add($name) | Out-Null } }
         }
     }
-    Chk ($leaked.Count -eq 0) ('写しの指摘は種別だけを持つ（余分な鍵: ' + (@($leaked.ToArray() | Sort-Object -Unique) -join ',') + '）')
+    Chk ($leaked.Count -eq 0) ('写しの指摘は種別と severity だけを持つ（余分な鍵: ' + (@($leaked.ToArray() | Sort-Object -Unique) -join ',') + '）')
     Remove-YakuCatProject -Id ([string]$previewProject.Id)
     # 確定して落ちた行は、従来どおり qc_findings を持つ（そちらを壊していない）
     $confirmedProject = New-BlockedProject -Sources @($srcFixed) -Targets @('We cut overhead.') -Setup $addFixedTerm

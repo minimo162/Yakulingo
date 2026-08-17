@@ -37,7 +37,7 @@
    (l) 点検そのものが走らなかった行（validation-unavailable）が、
        利用者の訳の欠陥（赤）ではなく**道具の不調**として塗られること
    (m) 数字の点検が最後まで走らなかった行（numeric-validation-error）も同じこと。
-       止める条件は変えない（その行は塗り分けても止まったまま）
+       点検不能は警告として見せるが、確認・書き出しは止めない
    (n) 用語集に無い短いラベル（label-not-in-glossary）が、**止めない警告**として
        出ること。点検一覧にその行数が件数として出て、群は「ファイルを作れない
        指摘」ではなく、点検欄の色は赤でも道具の不調でもない。同じ画面で
@@ -501,30 +501,30 @@ try {
     Chk (@(@($qcToolProject.Segments) | Where-Object { @($_.QcFindings).Count -gt 0 }).Count -eq 0) '合成した種別を、行そのものへは書いていない（監査を汚さない）'
 
     # 数字の点検そのものが落ちた行の題材（(m) 用）。
-    # Invoke-YakuCatSegmentValidation は Test-YakuNumericIntegrity を try で囲み、
+    # Invoke-YakuCatSegmentValidation は Get-YakuCanonicalNumericFacts を try で囲み、
     # 落ちたら numeric-validation-error を積む。合成ではなく**点検の中の枝**なので、
-    # 落とす相手は点検そのものではなく、その中で呼ぶ数字の照合にする。
+    # 落とす相手は現行の数字事実抽出関数にする。
     # ここも写しの JSON を手で書かない。枝を通らないまま「出た形」だけを見ることになる。
     Write-Host '(0g) 数字の点検が最後まで走らなかった行の題材を用意する' -ForegroundColor Cyan
     # 題材が正しい枝を指していることを、src の宣言そのもので確かめる。
     # 名前をここで手書きしても、道具の不調かどうかは src が決める。
     Chk (@(Get-YakuCatQcToolTroubleCodes) -contains 'numeric-validation-error') 'src は numeric-validation-error を道具の不調と分類している（画面の色はこの宣言に従う）'
     Chk (@(Get-YakuCatQcToolTroubleCodes) -contains 'structure-validation-error') 'src は structure-validation-error も道具の不調と分類している'
-    $numSourceA = '販売費は横ばいでした。'
-    $numSourceB = '研究費も横ばいでした。'
+    $numSourceA = '販売費は100億円でした。'
+    $numSourceB = '研究費も20億円でした。'
     $qcNumProject = New-YakuCatTextProject -Root $root -Text ($numSourceA + "`n" + $numSourceB) -Settings $settings -Direction 'to_en'
-    $null = Set-YakuCatSegmentTranslation -Project $qcNumProject -Index 0 -Text 'Selling expenses were flat.'
-    $null = Set-YakuCatSegmentTranslation -Project $qcNumProject -Index 1 -Text 'Research expenses were also flat.'
-    $originalNumeric = ${function:Test-YakuNumericIntegrity}
-    Chk ($null -ne $originalNumeric) '差し替える前の数字の点検を掴めた（掴めなければ戻せない）'
+    $null = Set-YakuCatSegmentTranslation -Project $qcNumProject -Index 0 -Text 'Selling expenses were 100 oku yen.'
+    $null = Set-YakuCatSegmentTranslation -Project $qcNumProject -Index 1 -Text 'Research expenses were 20 oku yen.'
+    $originalNumeric = ${function:Get-YakuCanonicalNumericFacts}
+    Chk ($null -ne $originalNumeric) '差し替える前の数字事実抽出を掴めた（掴めなければ戻せない）'
     $qcNumProjectJson = ''
     $qcNumEligibility = $null
     try {
-        ${function:Test-YakuNumericIntegrity} = { param($SourceText, $TranslatedText, $Location) throw 'yaku-probe: numeric integrity unavailable' }
+        ${function:Get-YakuCanonicalNumericFacts} = { param($Text, $Direction, $Location) throw 'yaku-probe: numeric integrity unavailable' }
         $qcNumEligibility = Get-YakuCatOutputEligibility -Project $qcNumProject
         $qcNumProjectJson = ConvertTo-YakuCatProjectJson -Project $qcNumProject
     } finally {
-        ${function:Test-YakuNumericIntegrity} = $originalNumeric
+        ${function:Get-YakuCanonicalNumericFacts} = $originalNumeric
     }
     # 戻したことを、次へ進む前に確かめる。戻し損ねると以降の判定が全部嘘になる。
     $qcNumRestoreCheck = Get-YakuCatOutputEligibility -Project $qcCleanProject
@@ -532,12 +532,15 @@ try {
     $qcNumCodes = @(@($qcNumEligibility.QcFailures) | ForEach-Object { [string]$_.Code })
     # ここが要点。**合成された validation-unavailable ではなく**、点検の中で積まれた
     # numeric-validation-error であること。(l) と同じ枝を見ていたら、この題材は空振りする。
-    Chk ($qcNumCodes.Count -eq 1 -and $qcNumCodes[0] -eq 'numeric-validation-error') ('止まった種別は numeric-validation-error だけ（実際: ' + ($qcNumCodes -join ',') + '）')
-    Chk (-not [bool]$qcNumEligibility.TranslationListEligible) '題材は書き出しが止まっている'
+    # 数値意味系は warning なので QcFailures（error のみ）には入らず、QcRows の
+    # advisory finding として画面へ渡り、確認・書き出しを止めない。
+    $qcNumRow = @($qcNumEligibility.QcRows | Where-Object { @($_.Codes) -contains 'numeric-validation-error' }) | Select-Object -First 1
+    Chk ($qcNumCodes.Count -eq 0 -and $null -ne $qcNumRow) ('numeric-validation-error は止める理由ではなく写しの警告へ入る（failures=' + ($qcNumCodes -join ',') + '; rows=' + @($qcNumEligibility.QcRows).Count + '）')
+    Chk ([bool]$qcNumEligibility.TranslationListEligible) '数値点検不能でも書き出しは続けられる'
     $qcNumView = $qcNumProjectJson | ConvertFrom-Json
     $qcNumViewRows = @($qcNumView.segments)
     Chk ($qcNumViewRows.Count -eq 2) ('画面へ渡す行は2行（実際 ' + $qcNumViewRows.Count + '）')
-    Chk (@($qcNumViewRows[0].qc_preview).Count -eq 1 -and [string]@($qcNumViewRows[0].qc_preview)[0].code -eq 'numeric-validation-error') '画面へ渡す1行目に、その種別が載っている（この題材が空振りでないこと）'
+    Chk (@($qcNumViewRows[0].qc_preview).Count -eq 1 -and [string]@($qcNumViewRows[0].qc_preview)[0].code -eq 'numeric-validation-error' -and [string]@($qcNumViewRows[0].qc_preview)[0].severity -eq 'warning') '画面へ渡す1行目に、重大度 warning のその種別が載っている（この題材が空振りでないこと）'
 
     Write-Host '(0h) 用語集に無い短いラベルの題材を用意する（止めない警告）' -ForegroundColor Cyan
     # 題材が正しい群を指していることを、src の宣言そのもので確かめる。
@@ -781,7 +784,7 @@ try {
     # ------------------------------------------------------------------ (e)
     Write-Host '(e) 「訳文を置き換える」が置換の口へつながっている' -ForegroundColor Cyan
     Chk (-not [bool]$o.replaceReady.disabled) '対象がある状態でボタンが押せる'
-    Chk ([string]$o.replaceReady.label -match '表示中の2行の訳文を置き換える') ('押す前に対象行数を札に出す: ' + [string]$o.replaceReady.label)
+    Chk ([string]$o.replaceReady.label -match '一致する2行を置換') ('押す前に対象行数を札に出す: ' + [string]$o.replaceReady.label)
     Chk ([int]$o.replaceRun.estimateCalls -eq 1) ('押すと、まず数える口を1回叩く（実際 ' + [int]$o.replaceRun.estimateCalls + ' 回）')
     Chk ([int]$o.replaceRun.replaceCalls -eq 1) ('確認のあと、置換の口を1回叩く（実際 ' + [int]$o.replaceRun.replaceCalls + ' 回）')
     Chk ($null -ne $o.replaceRun.replaceBody -and [string]$o.replaceRun.replaceBody.find -eq 'The Company') '送った検索語が画面のとおり'
@@ -792,7 +795,7 @@ try {
     # ------------------------------------------------------------------ (f)
     Write-Host '(f) 探す場所が原文だけのときは、押しても訳文を書き換えない' -ForegroundColor Cyan
     Chk ([bool]$o.scopeSource.disabled) 'ボタンが押せない状態になる'
-    Chk ([string]$o.scopeSource.label -eq '訳文を置き換える') ('札に対象行数を出さない（実際: ' + [string]$o.scopeSource.label + '）')
+    Chk ([string]$o.scopeSource.label -eq '置換する') ('現在の置換ボタン名を保ったまま無効になる（実際: ' + [string]$o.scopeSource.label + '）')
     Chk ([string]$o.scopeSource.summary -match '原文は書き換えません') ('理由を書く: ' + [string]$o.scopeSource.summary)
     Chk ([int]$o.scopeSourceForcedClick.estimateCalls -eq 0) '無理やり押しても、数える口を叩かない'
     Chk ([int]$o.scopeSourceForcedClick.replaceCalls -eq 0) '無理やり押しても、置換の口を叩かない'
@@ -863,7 +866,7 @@ try {
     Chk (-not [bool]$qcScreen.filterHidden) '「点検の指摘」の絞り込みが隠れていない'
     Chk ([bool]$qcScreen.filterVisible) '「点検の指摘」の絞り込みが画面上で面積を持っている（CSSで消しても緑にならない）'
     Chk ([string]$qcScreen.filterCount -eq '1') ('件数は 1（実際 ' + [string]$qcScreen.filterCount + '）')
-    Chk ([string]$qcScreen.qaButtonLabel -match '点検\s*1') ('道具の帯の「点検」も件数を出す（実際: ' + [string]$qcScreen.qaButtonLabel + '）')
+    Chk ([string]$qcScreen.qaButtonLabel -match '^点検結果\s*1$') ('直接表示される「点検結果」も件数を出す（実際: ' + [string]$qcScreen.qaButtonLabel + '）')
     Chk ([bool]$qcScreen.qaButtonHasBlockers) '「点検」が、止めている指摘があると分かる見た目になる'
     # 止める条件は変えていない。押せないままであること。
     Chk ([bool]$qcScreen.exportDisabled) '取り出しボタンは従来どおり押せない（止める条件を緩めていない）'
@@ -886,7 +889,7 @@ try {
     # 用語の免除（訳文を書き換える操作）は、確定を1度も通していない行には出さない。
     Chk ((@($qcCards | ForEach-Object { [int]$_.exceptionButtons }) | Measure-Object -Sum).Sum -eq 0) '「この行では別の表現を使う」は出さない（見ることと決めることを混ぜない）'
     Chk ([string]$qcInspector.inputInvalid -eq 'true') '訳文欄が aria-invalid になる（読み上げにも伝わる）'
-    Chk ([string]$qcInspector.rowFindingText -ne '') '行の中にも指摘の文が出る'
+    Chk ([string]$qcInspector.rowFindingText -eq '' -and $qcCards.Count -eq 1 -and (Test-YakuAnyContains -Items @($qcCards | ForEach-Object { [string]$_.text }) -Needle '登録した訳語が使われていません')) '指摘文は行内ではなく右側の点検カードへ出る'
     # 道具の帯の「点検」から開く一覧（F8 と同じ入口）。ここが実際の案内先である。
     $qaList = $o.qaList
     Chk ([bool]$qaList.open) '「点検」を押すと一覧が開く'
@@ -942,7 +945,7 @@ try {
     # (j) で「出る」ことを見た絞り込みが、指摘が無いときは隠れていること。
     # 常時出す実装にしても (j) は緑になるので、こちらが対になる。
     Chk ([bool]$qcClean.filterHidden) '指摘が1件も無いときは「点検の指摘」の絞り込みは隠れている'
-    Chk ([string]$qcClean.qaButtonLabel -eq '点検') ('道具の帯の「点検」は件数を出さない（実際: ' + [string]$qcClean.qaButtonLabel + '）')
+    Chk ([string]$qcClean.qaButtonLabel -eq '点検結果') ('直接表示される「点検結果」は件数を出さない（実際: ' + [string]$qcClean.qaButtonLabel + '）')
     Chk (-not [bool]$qcClean.qaButtonHasBlockers) '止めている指摘がある見た目にはならない'
     Chk (-not [bool]$qcClean.exportDisabled) '未確認だけでは取り出しを止めない（未確認は止める条件ではない）'
     $qaClean = $o.qaCleanList
@@ -978,15 +981,15 @@ try {
     # 観測点そのものが空でないことを先に見る。空のまま下の -not を並べると、
     # 「1件も出ていない」が緑になる（測れなかったものを緑へ畳まない）。
     Chk ($qcNumCards.Count -eq 1) ('点検欄に指摘が1件出る（実際 ' + $qcNumCards.Count + ' 件）')
-    Chk (Test-YakuAnyContains -Items @($qcNumCards | ForEach-Object { [string]$_.text }) -Needle '数字の点検が最後まで終わりませんでした') ('何が起きたかを名指しする: ' + (Get-YakuFirstString -Items @($qcNumCards | ForEach-Object { [string]$_.text })))
+    Chk ((Test-YakuAnyContains -Items @($qcNumCards | ForEach-Object { [string]$_.text }) -Needle '数字の点検を最後まで完了できませんでした') -and (Test-YakuAnyContains -Items @($qcNumCards | ForEach-Object { [string]$_.text }) -Needle '確認と書き出しは続けられます')) ('数字の点検不能を警告として名指しし、確認・書き出しは続けられると伝える: ' + (Get-YakuFirstString -Items @($qcNumCards | ForEach-Object { [string]$_.text })))
     Chk (-not (Test-YakuAnyContains -Items @($qcNumCards | ForEach-Object { [string]$_.text }) -Needle '自動点検で気になる点が見つかりました')) '汎用文へ落ちていない（種別に説明文がある）'
     Chk (-not (Test-YakuAnyContains -Items @($qcNumCards | ForEach-Object { [string]$_.text }) -Needle '原文と見比べて')) '「原文と見比べて直せ」と言わない（訳を直しても消えない）'
     # ここが直した欠陥そのもの。色は class にしか出ない。
     Chk (Test-YakuAnyContains -Items @($qcNumCards | ForEach-Object { [string]$_.classes }) -Needle 'is-tool') ('道具の不調として塗られる（実際の class: ' + (Get-YakuFirstString -Items @($qcNumCards | ForEach-Object { [string]$_.classes })) + '）')
     Chk (-not (Test-YakuAnyContains -Items @($qcNumCards | ForEach-Object { [string]$_.classes }) -Needle 'is-error')) '利用者の訳の欠陥（赤）としては塗らない'
-    # 色は表示だけの話である。止める条件は1つも減らしていない。
-    Chk ([bool]$o.qcNumScreen.exportDisabled) '取り出しボタンは従来どおり押せない（赤をやめても、その行は止まったまま）'
-    Chk ([string]$o.qcNumScreen.exportTitle -ne '') ('押せない理由がボタンに書いてある: ' + [string]$o.qcNumScreen.exportTitle)
+    # 色は表示だけの話ではない。数値意味系は warning なので確認・書き出しを止めない。
+    Chk (-not [bool]$o.qcNumScreen.exportDisabled) '取り出しボタンは押せたまま（数値点検不能は警告であり、書き出しを止めない）'
+    Chk ([string]$o.qcNumScreen.exportTitle -match 'まだ確認していない2行も、そのまま入ります') ('数値警告を押せない理由へ誤変換せず、未確認行の通知を表示する: ' + [string]$o.qcNumScreen.exportTitle)
 
     # ------------------------------------------------------------------ (n)
     Write-Host '(n) 用語集に無い短いラベルは、止めない警告として件数まで出る' -ForegroundColor Cyan
@@ -1016,7 +1019,7 @@ try {
     Chk (-not ([string]$qaLabel.summary).Contains('直すところは見つかりませんでした')) ('警告を出しながら「直すところは見つかりませんでした」と言わない: ' + [string]$qaLabel.summary)
     # 止める条件は1つも増やしていない。同じ画面で、押せることを見る。
     Chk (-not [bool]$qcLabel.exportDisabled) '取り出しボタンは押せたまま（警告は止めない）'
-    Chk ([string]$qcLabel.qaButtonLabel -eq '点検') ('道具の帯の「点検」は件数を出さない（止めた指摘は0件。実際: ' + [string]$qcLabel.qaButtonLabel + '）')
+    Chk ([string]$qcLabel.qaButtonLabel -eq '点検結果') ('直接表示される「点検結果」は件数を出さない（止めた指摘は0件。実際: ' + [string]$qcLabel.qaButtonLabel + '）')
     Chk (-not [bool]$qcLabel.qaButtonHasBlockers) '止めている指摘がある見た目にはならない'
     # 「要対応」に数えない。数えると、確認し終えた資料が永久に終わらない。
     Chk ([string]$qcLabel.actionableCount -eq '0') ('要対応は 0 行（実際: ' + [string]$qcLabel.actionableCount + '）')

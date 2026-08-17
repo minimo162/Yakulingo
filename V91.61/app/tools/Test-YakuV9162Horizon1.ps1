@@ -243,7 +243,8 @@ try {
     Check-YakuH1 ([string]$segment.State -eq 'human_edited' -and -not [bool]$segment.Confirmed) 'manual editing does not imply review'
     # 2026-08-12: 全行確認をファイル作成の条件から外した（市販ツールはどれも
     # 「書き出す」と「完了にする」を分けている）。未確認でも出せるが、何行が
-    # 未確認かを必ず数えて返す。数字の点検に落ちる行は、これまでどおり出せない。
+    # 未確認かを必ず数えて返す。数字の意味系 finding は warning として見せるが、
+    # 確認・書き出しは止めない。非数値の error はこれまでどおり止める。
     $before = Get-YakuCatOutputEligibility -Project $project
     Check-YakuH1 ([bool]$before.TranslationListEligible) 'unreviewed but sound translation can still be exported'
     Check-YakuH1 ([int]$before.UnconfirmedCount -eq 1) 'the unconfirmed rows are counted, not hidden'
@@ -254,12 +255,13 @@ try {
 
     # 承認は「その時点の原文と訳文」にだけ有効でなければならない。メモリ上の
     # オブジェクトが別経路で書き換わっても、古いQCを使って出力してはいけない。
-    # 訳文を裏から書き換えたら、確認済みの扱いは外れる。数値が原文と合わなくなる
-    # ため、点検にも落ちて出せない（未確認そのものではなく、欠陥だから止まる）。
+    # 訳文を裏から書き換えたら、確認済みの扱いは外れる。古いQCは捨てて
+    # machine_draft/not_run へ戻し、数字の warning そのものは blocker にしない。
     $segment.Translation = 'Revenue was 999 million yen.'
     $afterMutation = Get-YakuCatOutputEligibility -Project $project
-    Check-YakuH1 (-not [bool]$afterMutation.TranslationListEligible -and [string]$segment.State -ne 'reviewed') 'target mutation invalidates review and blocks output through QC'
-    Check-YakuH1 (@($afterMutation.Reasons) -contains 'segment-qc-failed') 'the block is reported as a numeric check failure'
+    Check-YakuH1 ([string]$segment.State -ne 'reviewed' -and -not [bool]$segment.Confirmed -and [string]$segment.QcStatus -eq 'not_run') 'target mutation invalidates review and resets QC'
+    Check-YakuH1 ([bool]$afterMutation.TranslationListEligible -and @($afterMutation.Reasons) -notcontains 'segment-qc-failed') 'target mutation leaves a numeric warning exportable'
+    Check-YakuH1 (@($afterMutation.QcRows | Where-Object { @($_.Codes) -contains 'numeric-value-mismatch' }).Count -ge 1) 'target mutation exposes the numeric warning in the row preview'
     $null = Set-YakuCatSegmentTranslation -Project $project -Index 0 -Text 'Revenue was 100 million yen.'
     $null = Set-YakuCatSegmentConfirmed -Project $project -Index 0
     # 古い契約版の点検結果は、確認済みの根拠にならない。実測すると、その行は
@@ -271,10 +273,22 @@ try {
     $null = Set-YakuCatSegmentConfirmed -Project $project -Index 0
 
     $bad = New-YakuCatTextProject -Root $root -Text '売上高は200百万円でした。' -Settings $null -Direction 'to_en' -Translation 'Revenue increased.'
-    $qcBlocked = $false
-    try { $null = Set-YakuCatSegmentConfirmed -Project $bad -Index 0 } catch { $qcBlocked = ($_.Exception.Message -match 'CAT_REVIEW_QC_FAILED') }
-    Check-YakuH1 $qcBlocked 'numeric-integrity failure blocks review'
-    Check-YakuH1 ([string]@($bad.Segments)[0].State -ne 'reviewed') 'failed QC cannot be overridden into reviewed state'
+    $badEligibility = Get-YakuCatOutputEligibility -Project $bad
+    Check-YakuH1 (@($badEligibility.QcRows | Where-Object { @($_.Codes) -contains 'numeric-value-mismatch' }).Count -ge 1) 'numeric mismatch is visible as a row warning'
+    Check-YakuH1 ([bool]$badEligibility.TranslationListEligible -and @($badEligibility.Reasons) -notcontains 'segment-qc-failed') 'numeric warning does not block output'
+    $badAllowed = $true
+    try { $null = Set-YakuCatSegmentConfirmed -Project $bad -Index 0 } catch { $badAllowed = $false }
+    Check-YakuH1 $badAllowed 'numeric warning does not block confirmation'
+    Check-YakuH1 ([string]@($bad.Segments)[0].State -eq 'reviewed' -and [bool]@($bad.Segments)[0].Confirmed) 'numeric warning can be confirmed'
+    Check-YakuH1 ([bool](Get-YakuCatOutputEligibility -Project $bad).TranslationListEligible) 'confirmed numeric warning remains exportable'
+
+    $nonNumeric = New-YakuCatTextProject -Root $root -Text '【概要】' -Settings $null -Direction 'to_en' -Translation 'Overview'
+    $nonNumericEligibility = Get-YakuCatOutputEligibility -Project $nonNumeric
+    Check-YakuH1 (@($nonNumericEligibility.QcFailures | Where-Object { [string]$_.Code -eq 'structure-integrity' }).Count -ge 1) 'non-numeric structure defect remains an error'
+    Check-YakuH1 (-not [bool]$nonNumericEligibility.TranslationListEligible -and @($nonNumericEligibility.Reasons) -contains 'segment-qc-failed') 'non-numeric structure defect blocks output'
+    $nonNumericBlocked = $false
+    try { $null = Set-YakuCatSegmentConfirmed -Project $nonNumeric -Index 0 } catch { $nonNumericBlocked = ($_.Exception.Message -match 'CAT_REVIEW_QC_FAILED') }
+    Check-YakuH1 $nonNumericBlocked 'non-numeric structure defect blocks confirmation'
 
     foreach ($case in @(
         @{ Source='営業損失は(100)百万円でした。'; Target='Operating profit was 100 million yen.'; Direction='to_en'; Label='accounting negative sign' },
@@ -286,9 +300,14 @@ try {
         @{ Source='売上高は100百万円でした。'; Target='Revenue was 100 million yen and profit was 100 million yen.'; Direction='to_en'; Label='invented extra number' }
     )) {
         $p = New-YakuCatTextProject -Root $root -Text $case.Source -Settings $null -Direction $case.Direction -Translation $case.Target
-        $blocked = $false
-        try { $null = Set-YakuCatSegmentConfirmed -Project $p -Index 0 } catch { $blocked = ($_.Exception.Message -match 'CAT_REVIEW_QC_FAILED') }
-        Check-YakuH1 $blocked ($case.Label + ' blocks review')
+        $warningEligibility = Get-YakuCatOutputEligibility -Project $p
+        $warningCodes = @($warningEligibility.QcRows | ForEach-Object { @($_.Codes) })
+        Check-YakuH1 ($warningCodes.Count -ge 1 -and @($warningCodes | Where-Object { $_ -match '^(numeric-|currency-mismatch|accounting-polarity-mismatch)' }).Count -ge 1) ($case.Label + ' is visible as a numeric warning')
+        Check-YakuH1 ([bool]$warningEligibility.TranslationListEligible) ($case.Label + ' warning does not block output')
+        $allowed = $true
+        try { $null = Set-YakuCatSegmentConfirmed -Project $p -Index 0 } catch { $allowed = $false }
+        Check-YakuH1 $allowed ($case.Label + ' warning does not block review')
+        Remove-YakuCatProject -Id ([string]$p.Id)
     }
     foreach ($case in @(
         @{ Source='売上高は一億二千万円でした。'; Target='Revenue was 120 million yen.'; Direction='to_en'; Label='Japanese written amount equivalent' },
@@ -315,13 +334,16 @@ try {
         'hyphenated financial scale restores the canonical amount without multiplying it'
     $hyphenBad = New-YakuCatTextProject -Root $root -Text $hyphenSource -Settings $null -Direction to_en `
         -Translation 'Net sales recorded a 120,000,000-million-yen increase.'
-    $hyphenBadBlocked = $false
-    try { $null = Set-YakuCatSegmentConfirmed -Project $hyphenBad -Index 0 } catch { $hyphenBadBlocked = ($_.Exception.Message -match 'CAT_REVIEW_QC_FAILED') }
-    Check-YakuH1 $hyphenBadBlocked 'QC rejects a multiplied hyphenated financial amount'
+    $hyphenBadEligibility = Get-YakuCatOutputEligibility -Project $hyphenBad
+    Check-YakuH1 (@($hyphenBadEligibility.QcRows | ForEach-Object { @($_.Codes) } | Where-Object { $_ -match '^numeric-' }).Count -ge 1) 'multiplied hyphenated amount is visible as a numeric warning'
+    Check-YakuH1 ([bool]$hyphenBadEligibility.TranslationListEligible) 'multiplied hyphenated amount warning does not block output'
+    $hyphenBadAllowed = $true
+    try { $null = Set-YakuCatSegmentConfirmed -Project $hyphenBad -Index 0 } catch { $hyphenBadAllowed = $false }
+    Check-YakuH1 $hyphenBadAllowed 'multiplied hyphenated amount warning does not block confirmation'
 
     # 個数だけでは足りない。入れ替わってもN1/N2は両方あるので、意味の取り違えは
     # 個数検査では見えない。ただし復元はトークン名で行うため実値は取り違えない。
-    # よってマスク検査は「順序が違う」と報告するに留め、確定を止めるのは確認時のQC。
+    # よってマスク検査は「順序が違う」と報告するに留め、確認時も warning として扱う。
     $swapItem = [pscustomobject]@{ Index=91; Text='売上高は100百万円、営業利益は10百万円でした。' }
     $null = Protect-YakuCatItems -Items @($swapItem) -Root $root -Direction to_en
     $swappedMaskedTarget = 'Net sales were [[N2]] million yen and operating profit was [[N1]] million yen.'
@@ -330,9 +352,12 @@ try {
     Check-YakuH1 ([bool]$swapIntegrity.Ok) 'order swap alone keeps the translation restorable'
     $swappedManual = New-YakuCatTextProject -Root $root -Text '売上高は100百万円、営業利益は10百万円でした。' -Settings $null -Direction to_en `
         -Translation 'Net sales were 10 million yen and operating profit was 100 million yen.'
-    $swappedManualBlocked = $false
-    try { $null = Set-YakuCatSegmentConfirmed -Project $swappedManual -Index 0 } catch { $swappedManualBlocked = ($_.Exception.Message -match 'CAT_REVIEW_QC_FAILED') }
-    Check-YakuH1 $swappedManualBlocked 'QC rejects manually swapped financial amounts after restoration'
+    $swappedEligibility = Get-YakuCatOutputEligibility -Project $swappedManual
+    Check-YakuH1 (@($swappedEligibility.QcRows | ForEach-Object { @($_.Codes) } | Where-Object { $_ -eq 'numeric-value-order-mismatch' }).Count -ge 1) 'manually swapped financial amounts are visible as an order warning'
+    Check-YakuH1 ([bool]$swappedEligibility.TranslationListEligible) 'order warning does not block output'
+    $swappedAllowed = $true
+    try { $null = Set-YakuCatSegmentConfirmed -Project $swappedManual -Index 0 } catch { $swappedAllowed = $false }
+    Check-YakuH1 $swappedAllowed 'order warning does not block confirmation'
 
     # Accounting signs may be rendered semantically rather than as a minus
     # glyph.  A decrease is equivalent to △; an increase or omitted direction
@@ -348,9 +373,12 @@ try {
         'Operating profit was 100 million yen year on year.'
     )) {
         $negativeBad = New-YakuCatTextProject -Root $root -Text $negativeSource -Settings $null -Direction to_en -Translation $negativeBadTarget
-        $negativeBadBlocked = $false
-        try { $null = Set-YakuCatSegmentConfirmed -Project $negativeBad -Index 0 } catch { $negativeBadBlocked = ($_.Exception.Message -match 'CAT_REVIEW_QC_FAILED') }
-        Check-YakuH1 $negativeBadBlocked ('triangle-negative amount rejects wrong or missing direction: ' + $negativeBadTarget)
+        $negativeBadEligibility = Get-YakuCatOutputEligibility -Project $negativeBad
+        Check-YakuH1 (@($negativeBadEligibility.QcRows | ForEach-Object { @($_.Codes) } | Where-Object { $_ -in @('numeric-sign-missing','accounting-polarity-mismatch') }).Count -ge 1) ('triangle-negative finding is visible as a warning: ' + $negativeBadTarget)
+        Check-YakuH1 ([bool]$negativeBadEligibility.TranslationListEligible) ('triangle-negative warning does not block output: ' + $negativeBadTarget)
+        $negativeBadAllowed = $true
+        try { $null = Set-YakuCatSegmentConfirmed -Project $negativeBad -Index 0 } catch { $negativeBadAllowed = $false }
+        Check-YakuH1 $negativeBadAllowed ('triangle-negative warning does not block confirmation: ' + $negativeBadTarget)
     }
 
     foreach ($case in @(

@@ -460,12 +460,17 @@
          API が読み取り専用の source_preview を返す場合だけ使い、無い資料は
          保存時刻を見出しにする。現在開いている資料だけは、既に画面にある
          segments から原文を使える。 */
-      var fallbackNames = {};
+      var fallbackNames = {}, previewNames = {};
       items.forEach(function (item) {
         if (!isGenericPastedName(item.file_name) || item.display_name) return;
         var preview = shortDocumentPreview(item.source_preview || item.source_text || item.first_source || item.preview);
         if (!preview && project && String(project.id || '') === String(item.id || '')) preview = firstDocumentSource(project);
-        if (preview) { item.display_name = preview; return; }
+        if (preview) {
+          var previewKey = preview, previewCount = (previewNames[previewKey] || 0) + 1;
+          previewNames[previewKey] = previewCount;
+          item.display_name = previewCount === 1 ? preview : previewCount + ': ' + preview;
+          return;
+        }
         var saved = savedLabel(item.saved), base = '貼り付け' + (saved ? ' ' + saved : ''), candidate = base;
         var suffix = String(item.id || '').slice(-6);
         if (fallbackNames[base]) candidate = base + (suffix ? '・' + suffix : '・' + (fallbackNames[base] + 1));
@@ -518,7 +523,7 @@
      qc_findings … その行を「確認済みにする」ときに実際に走った点検の結果。
                    いつ・どの用語一覧で行われたかまで行に残っている。
      qc_preview  … 未確定行をサーバが写しに掛けた結果、または保存済みの確認行へ
-                   advisory として足した種別だけ。
+                   advisory として足した種別。新しい payload は severity も持つ。
 
      2つ目が要る理由（2026-08-15）: 書き出しが止まった理由の案内は
      「左の『点検の指摘』を押すと、その行だけ表示できます」と言う。ところが
@@ -585,10 +590,35 @@
      「押せるのに押せない」と読め、tool と同じにすると自分で対処できることが
      伝わらない。色は表示だけの話で、止める条件はサーバの Severity が決める。 */
   var QC_WARNING_CODES = ['numeric-value-mismatch', 'numeric-value-extra', 'numeric-value-order-mismatch', 'numeric-sign-missing', 'numeric-scale-mismatch', 'currency-mismatch', 'accounting-polarity-mismatch', 'label-not-in-glossary', 'paired-delimiter-mismatch'];
+  var QC_PREVIEW_BLOCKING_CODES = ['structure-validation-error', 'terminology-check-unavailable', 'validation-unavailable'];
   function qcGroup(code) {
     if (QC_TOOL_TROUBLE_CODES.indexOf(code) >= 0) return 'tool';
     if (QC_WARNING_CODES.indexOf(code) >= 0) return 'warn';
     return 'error';
+  }
+  /* The server's finding severity is authoritative for the editor boundary.
+     Numeric findings are warnings by contract, even when an older fixture did
+     not carry an explicit severity field. Legacy code-only preview payloads
+     still identify the three non-numeric tool failures as blockers. Displaying
+     a warning in the QC list must not make the editable cell look invalid or
+     block correction. */
+  function qcFindingSeverity(view) {
+    var finding = view && view.finding || {};
+    var severity = String(finding.severity || finding.Severity || '').toLowerCase();
+    if (severity === 'error') return 'error';
+    if (severity === 'warning' || severity === 'warn') return 'warning';
+    if (view && view.code === 'numeric-validation-error') return 'warning';
+    if (view && QC_PREVIEW_BLOCKING_CODES.indexOf(view.code) >= 0) return 'error';
+    return qcGroup(view && view.code || '') === 'error' ? 'error' : 'warning';
+  }
+  /* A tool-trouble code keeps its separate display group, while ordinary
+     cards follow the authoritative finding severity. This prevents a new
+     explicit warning/error code from inheriting the old code table blindly. */
+  function qcCardGroup(view) {
+    return qcGroup(view && view.code || '') === 'tool' ? 'tool' : (qcFindingSeverity(view) === 'error' ? 'error' : 'warn');
+  }
+  function segmentHasBlockingError(segment) {
+    return qcFindingViews(segment).some(function (view) { return qcFindingSeverity(view) === 'error'; });
   }
   function qcWarningGroupKey(code) {
     if (['numeric-value-mismatch', 'numeric-value-extra', 'numeric-value-order-mismatch', 'numeric-sign-missing', 'numeric-scale-mismatch', 'currency-mismatch', 'accounting-polarity-mismatch', 'numeric-validation-error'].indexOf(code) >= 0) return 'numeric-warning';
@@ -671,7 +701,7 @@
      足していないこと自体は欠陥ではない（決定 §1「用語集を網羅する必要はない」）。
      警告が1件も無い資料では、この関数は segmentHasQc と同じ値を返す。 */
   function segmentBlockingQc(segment) {
-    return qcFindingViews(segment).some(function (view) { return qcGroup(view.code) !== 'warn' && view.code !== 'numeric-validation-error'; });
+    return qcFindingViews(segment).some(function (view) { return qcFindingSeverity(view) === 'error'; });
   }
   function segmentActionable(segment) { return !segment.confirmed || segmentBlockingQc(segment); }
   function changeGroup(segment) {
@@ -894,10 +924,11 @@
       var view = views[findingIndex] || { code: '', finding: {}, preview: false }, finding = view.finding || {}, code = view.code;
       /* 用語の免除は、その語を「この行では使わない」と決める操作である。
          決めるには、どの語の・どの版の登録を外すのかが要る。写しの点検
-         （qc_preview）は種別しか持たないので、そもそも作れないし、作らない。
+         （qc_preview）は種別と重大度しか持たず、用語の詳細が無いので、そもそも
+         作れないし、作らない。
          確定を1回通してから決める、という順序をここで守る。 */
       var termAction = (!view.preview && (code === 'terminology-missing' || code === 'terminology-forbidden')) ? '<button type="button" class="secondary-button" data-cat-term-exception="' + Number(segment.index) + '" data-cat-term-id="' + esc(finding.termId || finding.TermId || '') + '" data-cat-term-version="' + Number(finding.termVersion || finding.TermVersion || 0) + '" data-cat-term-source="' + esc(finding.sourceTerm || finding.SourceTerm || '') + '">この行では別の表現を使う</button>' : '';
-      return '<div class="cat-qc-card is-' + qcGroup(code) + '"' + (view.preview ? ' data-cat-qc-preview="1"' : '') + '><p>' + esc(message) + '</p>' + termAction + '</div>';
+      return '<div class="cat-qc-card is-' + qcCardGroup(view) + '"' + (view.preview ? ' data-cat-qc-preview="1"' : '') + '><p>' + esc(message) + '</p>' + termAction + '</div>';
     }).join('') : '<div class="cat-qc-card">自動点検では、気になる点は見つかりませんでした。</div>';
     el('cat-next-qc').disabled = !all.some(segmentHasQc);
     var index = Number(segment.index), previous = all.find(function (item) { return Number(item.index) === index - 1; }), next = all.find(function (item) { return Number(item.index) === index + 1; });
@@ -1050,10 +1081,11 @@
          memoQ の表は訳文セルをその場で直す作り（"type or edit the translation in
          the cell on the right"／未確認でも自動保存）で、押して開く段は無い。
          開いている行だけは、下に操作と点検結果を出す。 */
-      var editor = '<textarea rows="1" data-cat-input="' + index + '" data-cat-project-id="' + esc(project.id) + '" data-original="' + esc(segment.translation || '') + '" lang="' + languages.target + '" spellcheck="true" aria-label="' + row + '行目の訳文" aria-invalid="' + (findings.length ? 'true' : 'false') + '"' + (findings.length ? ' aria-describedby="cat-qc-list"' : '') + '>' + esc(segment.translation || '') + '</textarea>';
+      var blockingError = segmentHasBlockingError(segment);
+      var editor = '<textarea rows="1" data-cat-input="' + index + '" data-cat-project-id="' + esc(project.id) + '" data-original="' + esc(segment.translation || '') + '" lang="' + languages.target + '" spellcheck="true" aria-label="' + row + '行目の訳文" aria-invalid="' + (blockingError ? 'true' : 'false') + '"' + (blockingError ? ' aria-describedby="cat-qc-list"' : '') + '>' + esc(segment.translation || '') + '</textarea>';
       var confirmation = segment.confirmed
         ? '<button type="button" class="cat-confirm-control is-confirmed" data-cat-unconfirm="' + index + '" title="確認済み。押すと確認を取り消す（Ctrl+Shift+U）" aria-label="' + row + '行目は確認済み。押すと確認を取り消す（Ctrl+Shift+U）" aria-keyshortcuts="Control+Shift+U"><span class="cat-confirm-mark" aria-hidden="true">✓</span><span>確認済み</span></button>'
-        : '<button type="button" class="cat-confirm-control" data-cat-confirm="' + index + '" title="この行を確認済みにする（Ctrl+Enter）" aria-label="' + row + '行目を確認済みにする（Ctrl+Enter）" aria-keyshortcuts="Control+Enter"><span class="cat-confirm-mark" aria-hidden="true">✓</span><span>未確認</span></button>';
+        : '<button type="button" class="cat-confirm-control" data-cat-confirm="' + index + '" title="この行を確認済みにする（Ctrl+Enter）" aria-label="' + row + '行目を確認済みにする（Ctrl+Enter）" aria-keyshortcuts="Control+Enter"><span class="cat-confirm-mark" aria-hidden="true">–</span><span>未確認</span></button>';
       /* 行の高さを操作の置き場にしない。行固有の操作は上部の選択行リボンへ
          移し、点検結果・修正比較は下部ドックで表示する。 */
       var extras = '';
@@ -1142,8 +1174,15 @@
     el('cat-toolbar-direction').textContent = directionMark(project.direction);
     el('cat-current-kicker').textContent = isAlignment ? '過去訳の対応確認' : '現在の確認作業';
     el('cat-align-review-guide').hidden = !isAlignment;
-    el('cat-source-heading').textContent = isAlignment ? '日本語' : '原文';
-    el('cat-target-heading').textContent = isAlignment ? '英語' : '訳文';
+    /* 見出しは役割と実際の言語を一緒に持つ。thead は密度を守るため視覚的に
+       畳むが、既存 ID と列見出しは支援技術へ残す。 */
+    var headingLabels = isAlignment
+      ? { source: '日本語', target: '英語' }
+      : (project.direction === 'to_jp'
+        ? { source: '原文・英語', target: '訳文・日本語' }
+        : { source: '原文・日本語', target: '訳文・英語' });
+    el('cat-source-heading').textContent = headingLabels.source;
+    el('cat-target-heading').textContent = headingLabels.target;
     el('cat-translate').hidden = isAlignment;
     /* 対応確認では訳さないので、下訳の入口も出さない（訳す入口と同じ扱い）。 */
     el('cat-tm-pretranslate').hidden = isAlignment;
@@ -2378,7 +2417,7 @@
       if (empty) emptyGroup.items.push({ index: Number(segment.index), source: segment.source, message: '' });
       views.forEach(function (view, viewIndex) {
         var message = String(messages[viewIndex] || '');
-        var nonBlocking = qcGroup(view.code) === 'warn' || view.code === 'numeric-validation-error';
+        var nonBlocking = qcFindingSeverity(view) !== 'error';
         var target = nonBlocking ? qaGroupByKey(groups, qcWarningGroupKey(view.code)) : qcGroupItems;
         if (!target) target = qcGroupItems;
         if (target === qcGroupItems) {

@@ -51,14 +51,25 @@ try {
     Assert-YakuDesktopTest (-not [bool]$enabled.startup_enabled) 'background startup must stay disabled even when an old client requests it'
     Assert-YakuDesktopTest (-not (Test-Path -LiteralPath (Join-Path $testRoot 'links\Startup\YakuLingo.lnk'))) 'background startup shortcut must not be created'
     Assert-YakuDesktopTest ([bool]$enabled.desktop_shortcut) 'desktop shortcut should be enabled'
-    Assert-YakuDesktopTest ([bool]$enabled.start_menu_shortcut) 'start menu shortcut should always exist'
+    Assert-YakuDesktopTest (-not [bool]$enabled.start_menu_shortcut) 'start menu shortcut should not be created by preferences'
+    Assert-YakuDesktopTest (-not (Test-Path -LiteralPath (Join-Path $testRoot 'links\Programs\YakuLingo.lnk') -PathType Leaf)) 'enabling preferences must not create a start menu shortcut'
     Assert-YakuDesktopTest ([bool]$enabled.tutorial_completed) 'final confirmation should complete tutorial'
     Assert-YakuDesktopTest ([string]::Equals([IO.Path]::GetFullPath([string](Get-YakuShortcutTarget -Path $legacyDesktop).TargetPath), [IO.Path]::GetFullPath($fakeExe), [StringComparison]::OrdinalIgnoreCase)) 'legacy shortcut should be rebound to the shell'
+
+    $startMenuPath = Join-Path $testRoot 'links\Programs\YakuLingo.lnk'
+    $startMenuTarget = Join-Path $legacyRoot 'start-menu.cmd'
+    [IO.File]::WriteAllText($startMenuTarget, '@echo off')
+    Set-YakuDesktopShortcutFile -Path $startMenuPath -TargetPath $startMenuTarget
+    $startMenuSnapshot = [Convert]::ToBase64String([IO.File]::ReadAllBytes($startMenuPath))
+    $enabledWithExistingStartMenu = Set-YakuDesktopPreferences -StartupEnabled $true -DesktopShortcut $true
+    Assert-YakuDesktopTest (-not [bool]$enabledWithExistingStartMenu.start_menu_shortcut) 'foreign start menu shortcut remains outside preference state'
+    Assert-YakuDesktopTest ((Test-Path -LiteralPath $startMenuPath -PathType Leaf) -and [Convert]::ToBase64String([IO.File]::ReadAllBytes($startMenuPath)) -eq $startMenuSnapshot) 'enabling preferences must leave an existing start menu shortcut untouched'
 
     $disabled = Set-YakuDesktopPreferences -StartupEnabled $false -DesktopShortcut $false
     Assert-YakuDesktopTest (-not [bool]$disabled.startup_enabled) 'startup shortcut should be removable'
     Assert-YakuDesktopTest (-not [bool]$disabled.desktop_shortcut) 'desktop shortcut should be removable'
-    Assert-YakuDesktopTest ([bool]$disabled.start_menu_shortcut) 'start menu shortcut must remain discoverable'
+    Assert-YakuDesktopTest (-not [bool]$disabled.start_menu_shortcut) 'foreign start menu shortcut stays outside preference state'
+    Assert-YakuDesktopTest ((Test-Path -LiteralPath $startMenuPath -PathType Leaf) -and [Convert]::ToBase64String([IO.File]::ReadAllBytes($startMenuPath)) -eq $startMenuSnapshot) 'disabling preferences must leave an existing start menu shortcut untouched'
 
     $foreignExe = Join-Path $testRoot 'foreign.exe'
     [IO.File]::WriteAllBytes($foreignExe, [byte[]]@(77,90))
