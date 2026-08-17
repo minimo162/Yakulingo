@@ -62,7 +62,14 @@ function Invoke-YakuWarmupFreshChatWithRetry {
     for ($attempt = 0; $attempt -le 2; $attempt++) {
         if ($attempt -gt 0) {
             Start-Sleep -Milliseconds 2000
-            try { $currentPage = Get-YakuCopilotPage -Port $Port -Url $Url } catch {
+            try {
+                # A backgrounded Copilot tab can keep answering CDP pings while
+                # its timers/requestAnimationFrame are suspended. Bring it to
+                # the foreground before running the fresh-chat wait so the
+                # first tab does not need a manual second-tab reopen.
+                $currentPage = Get-YakuCopilotPage -Port $Port -Url $Url
+                $currentPage = Restore-YakuCopilotTabVisibility -Page $currentPage
+            } catch {
                 $lastFresh = [pscustomobject]@{ ok=$false; error=$_.Exception.Message; contextDestroyed=$true }
                 continue
             }
@@ -225,6 +232,7 @@ try {
     while ((Get-Date) -lt $deadline) {
         try {
             $page = Get-YakuCopilotPage -Port $port -Url $copilotUrl
+            $page = Restore-YakuCopilotTabVisibility -Page $page
             $state = Get-YakuCopilotState -Page $page -TimeoutSeconds 6
             $url = ConvertTo-YakuSafeString -Value $state.url
             $title = ConvertTo-YakuSafeString -Value $state.title
