@@ -223,6 +223,7 @@ try {
 
 $catIndex = Get-Content -LiteralPath (Join-Path $root 'www\cat.html') -Raw -Encoding UTF8
 $catClient = Get-Content -LiteralPath (Join-Path $root 'www\assets\cat.js') -Raw -Encoding UTF8
+$tutorial = Get-Content -LiteralPath (Join-Path $root 'www\tutorial.html') -Raw -Encoding UTF8
 # 画面は一つになった。その場で訳す状態も cat.html の中にある。
 $quickIndex = $catIndex
 $quickClient = Get-Content -LiteralPath (Join-Path $root 'www\assets\quick.js') -Raw -Encoding UTF8
@@ -264,14 +265,13 @@ Assert-Yaku -Condition ($appJs -notmatch 'readAsDataURL|file_b64|application/x-w
 Assert-Yaku -Condition (-not (Test-Path -LiteralPath (Join-Path $root 'www\index.html'))) -Message 'the launcher must not present a choice screen before the translator'
 Assert-Yaku -Condition ($server -match "path -eq '/'" -and $server -notmatch "PageName 'index.html'" -and
     ([regex]::Matches($server, [regex]::Escape("Serve-YakuAppPage -Context `$Context -PageName 'cat.html'")).Count -ge 2)) -Message 'the root route must land on the translation screen itself'
-# 2026-08-13、利用者の指摘「3つもリンクがあってどれを選べばよいかわからない。
-# 一つでよくない？」。行き先の /tutorial が、使い方・送るもの・起動とショートカットを
-# 1枚で持ち、案内の再生もその画面から始められる。出口は1つに寄せた。
-Assert-Yaku -Condition ($catIndex.Contains('>使い方と設定</a>') -and (([regex]::Matches($catIndex, '<a href="/tutorial')).Count -eq 1)) -Message 'the way out of the deleted landing screen is a single link on the translation screen'
-# 文章とWord・Excelは同じ枠から入り、どちらも確認画面へ進む。
+# 使い方と設定は目的の位置へ直接移動できる2リンクにする。チュートリアル側にも
+# 設定の実体があることを同時に確認し、リンク切れを見逃さない。
+Assert-Yaku -Condition ($catIndex.Contains('href="/tutorial">使い方</a>') -and $catIndex.Contains('href="/tutorial#settings">設定</a>') -and $tutorial.Contains('id="settings"')) -Message 'the home screen must link to the tutorial and its settings section'
+# 文章とWord・Excelは同じ枠から入る。開始画面には確認を促す重複文を置かない。
 $entryBlock = ''
 if ($quickIndex -match '(?s)<section id="cat-picker".*?<section id="cat-workspace"') { $entryBlock = $Matches[0] }
-Assert-Yaku -Condition ($entryBlock.Contains('id="quick-form"') -and $entryBlock.Contains('id="quick-area"') -and $entryBlock.Contains('id="cat-file-area"') -and $entryBlock.Contains('確認画面へ進みます')) -Message 'text and file inputs must share one start surface and lead to review'
+Assert-Yaku -Condition ($entryBlock.Contains('id="quick-form"') -and $entryBlock.Contains('id="quick-area"') -and $entryBlock.Contains('id="cat-file-area"') -and -not $entryBlock.Contains('確認画面へ進みます')) -Message 'text and file inputs must share one start surface without redundant review guidance'
 Assert-Yaku -Condition ($quickIndex -notmatch 'id="cat-instant"[^>]*\shidden' -and $quickIndex -match 'id="cat-workspace"[^>]*\shidden') -Message 'the paste box is available on the start view while the review workspace waits for a document'
 # 貼り付け先は1つ。「保存する／しない」で入口を分けない（2026-08-11）。初見の人は
 # 訳案を見る前に1文ずつ直したいかを決められないので、選択は訳案のあとへ置く。
@@ -281,10 +281,11 @@ Assert-Yaku -Condition ($catIndex.Contains('Word・Excelはここへドラッグ
 Assert-Yaku -Condition ((([regex]::Matches($catIndex, 'id="cat-open-file-entry"')).Count -eq 1) -and (([regex]::Matches($catIndex, 'id="quick-input"')).Count -eq 1)) -Message 'the front door must keep exactly one file entry and one text entry'
 # 長さの境目は画面が決めない。確認作業が分割に使っている設定値をそのまま使う。
 Assert-Yaku -Condition ($catIndex.Contains('__YAKU_MAX_BATCH_CHARS__') -and $quickClient.Contains('yaku-max-batch-chars') -and $quickClient -notmatch 'length > 3000|length > 2000') -Message 'the long-text threshold must come from the server batch budget, not a number chosen in the page'
-# 2026-08-14: 入口で対応形式がPDFだと分かる名前にした。「前回」と
-# 言っていたので、手持ちの過去資料全般に使えるものだと読めなかった（利用者の指摘
-# 「どうやって取り込めばよいか分からない」）。主役の入口にはしない、は変えない。
-Assert-Yaku -Condition ($catIndex.Contains('過去の日本語版・英語版PDFを読み込む') -and $catIndex.Contains('そのほかの始め方')) -Message 'project-bound prior bilingual PDF import must remain available without appearing as a primary mode choice'
+# 2026-08-17: PDF取り込みだけを目立つカードとして残し、「そのほかの始め方」という
+# 見出しや旧入口を増やさない。
+Assert-Yaku -Condition (([regex]::Matches($catIndex, '過去の日本語版・英語版PDFを読み込む').Count -eq 1) -and ([regex]::Matches($catIndex, 'id="cat-open-align-entry"').Count -eq 1) -and $catIndex.Contains('entry-more-pdf-card') -and -not $catIndex.Contains('そのほかの始め方')) -Message 'the PDF import must be the only prominent alternative entry and must have no heading'
+Assert-Yaku -Condition (-not $catIndex.Contains('id="cat-source-prior"') -and -not $catIndex.Contains('id="cat-prior-open"') -and -not $catIndex.Contains('data-cat-source-show="file"') -and -not $catClient.Contains('cat-prior-open') -and -not $catClient.Contains('data-cat-source-show')) -Message 'retired prior and source-show entries must be absent'
+Assert-Yaku -Condition (-not (($indexSource + "`n" + $quickClient) -match '確認画面へ進みます|文章を入力してください')) -Message 'removed start-screen guidance phrases must stay absent'
 # 訳案カードを外したので「訳案」の見出しは無い。呼び名で守っていたのは
 # 「未確認のものを完成訳と呼ばない」ことなので、そちらを直接見る（2026-08-13）。
 Assert-Yaku -Condition (-not $indexSource.Contains('すぐ訳した完成訳') -and -not $indexSource.Contains('完成訳')) -Message 'unreviewed output must never be called a finished translation'
@@ -349,7 +350,7 @@ Assert-Yaku -Condition (-not ($indexSource -match '122 oku|設定とデータ管
 #  - 保存した作業が10件で685px、画面1555pxの44%を占めていた。既定は直近3件
 #  - この作業を削除は .danger-button なのに accent で塗られていた。基本ルールの
 #    :not() リストに入れて、詳細度を上げずに部品側へ勝たせる
-Assert-Yaku -Condition ($catIndex -match 'class="secondary-button" data-cat-source-show="file"') -Message 'the file entry must not compete with the paste action as a second filled button'
+Assert-Yaku -Condition ($catIndex -match 'id="cat-open-file-entry"[^>]*class="secondary-button"' -and -not $catIndex.Contains('data-cat-source-show="file"')) -Message 'the file entry must not compete with the paste action as a second filled button'
 Assert-Yaku -Condition ($catClient.Contains('var RESUME_VISIBLE = 3') -and $catIndex.Contains('id="cat-resume-more"')) -Message 'the saved work list must fold to the most recent few with a count of the rest'
 # 2026-08-12（同日追記）: 除外する名前を字面で丸ごと固定していたため、名前を1つ
 # 足すたびに落ちていた。見たいのは2つ。除外が入っていること、そして詳細度を
@@ -368,7 +369,7 @@ Assert-Yaku -Condition ($stylesSource -match '\.button:not\(\.secondary-button, 
 # 受け側（Protect-YakuCatItems / Invoke-YakuCatTranslationItems）は
 # $cat.amount_notation を見ているので、送り側が積んでいるかを字面で押さえる。
 Assert-Yaku -Condition ($server -match 'mode = \$catMode; amount_notation = \(Get-YakuCatProjectAmountNotation -Project \$project\)') -Message 'the CAT translation job payload must carry the project amount notation into the worker runspace'
-Assert-Yaku -Condition ($stylesSource -match '\.entry-more-actions \{ display: none;' -and $stylesSource -match '\.entry-more\[open\] \.entry-more-actions \{ display: flex; \}') -Message 'collapsed alternative entries must actually be hidden instead of being forced visible by their own display rule'
+Assert-Yaku -Condition ($stylesSource.Contains('.entry-more-pdf-card') -and $stylesSource.Contains('border-radius: var(--radius-control)') -and $stylesSource -notmatch '--yk-r-control') -Message 'the single PDF entry must be a prominent card with the defined control radius'
 Assert-Yaku -Condition ($catClient.Contains("exportButton.classList.toggle('secondary-button', drafting)") -and $catClient.Contains("translate.classList.toggle('secondary-button', !drafting)")) -Message 'the toolbar filled button must follow the next step instead of staying on a finished action'
 Assert-Yaku -Condition (([regex]::Matches($catIndex, 'id="amount-notation"').Count -eq 1) -and
     $quickClient.Contains('meta[name="yaku-amount-notation"]') -and
