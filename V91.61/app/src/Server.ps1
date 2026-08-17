@@ -1792,6 +1792,15 @@ function Send-YakuTextResponse {
     Send-YakuResponse -Context $Context -Bytes $bytes -ContentType $ContentType -StatusCode $StatusCode -AllowWasm:$AllowWasm
 }
 
+function Send-YakuRedirectResponse {
+    param(
+        [Parameter(Mandatory=$true)]$Context,
+        [Parameter(Mandatory=$true)][string]$Location
+    )
+    $Context.Response.RedirectLocation = $Location
+    Send-YakuTextResponse -Context $Context -Text ('Redirecting to ' + $Location) -ContentType 'text/plain; charset=utf-8' -StatusCode 302
+}
+
 function Get-YakuQueryValue {
     <#
       クエリ文字列の値を UTF-8 として取り出す。
@@ -1963,7 +1972,6 @@ function Serve-YakuAppPage {
     param(
         [Parameter(Mandatory=$true)]$Context,
         [Parameter(Mandatory=$true)][ValidateSet('cat.html','tutorial.html')][string]$PageName,
-        [switch]$StartTour,
         # 開いた瞬間の状態。?project= で来たと分かっているなら、始める画面を
         # 一度も描かずに確認作業として開く。付けないと、貼り付け欄が一瞬出てから
         # 入れ替わり、画面が点滅して見える（2026-08-13、利用者の指摘）。
@@ -1996,8 +2004,11 @@ function Serve-YakuAppPage {
     try { $outputFontJp = [string]$settings.output_font_name_jp } catch { $outputFontJp = '' }
     $html = $html.Replace('__YAKU_OUTPUT_FONT__', (ConvertTo-YakuHtml $outputFont))
     $html = $html.Replace('__YAKU_OUTPUT_FONT_JP__', (ConvertTo-YakuHtml $outputFontJp))
-    $html = $html.Replace('__YAKU_TOUR__', $(if ($StartTour) { '1' } else { '' }))
-    $html = $html.Replace('__YAKU_VIEW__', $(if ($InitialView -eq 'workspace') { ' data-cat-view="workspace"' } else { '' }))
+    # Keep the first paint's view in the one template attribute.  The start
+    # surface must receive its CAT workspace rules before deferred JavaScript
+    # chooses a view; a missing value here causes the old landing layout to
+    # flash on every fresh start-screen response.
+    $html = $html.Replace('__YAKU_VIEW__', $(if ($InitialView -eq 'workspace') { 'workspace' } else { 'start' }))
     $html = $html.Replace('__YAKU_IMPORT__', $(if ($AllowWasm) { '1' } else { '' }))
     Send-YakuTextResponse -Context $Context -Text $html -ContentType 'text/html; charset=utf-8' -AllowWasm:$AllowWasm
 }
@@ -2048,6 +2059,7 @@ function Get-YakuCatRecentProjectRows {
             $item.Revision = [int]$migrated.Revision
             $item.Total = @($migrated.Segments).Count
             $item.Confirmed = @($migrated.Segments | Where-Object { [bool]$_.Confirmed }).Count
+            $item.SourcePreview = Get-YakuCatSavedSourcePreview -Segments $migrated.Segments
             $item.Lifecycle = [string]$migrated.Lifecycle
             $item.ExportBlocked = ([string]$migrated.Source -eq 'file' -and
                 ([string]::IsNullOrWhiteSpace([string]$migrated.Path) -or
@@ -2062,6 +2074,7 @@ function Get-YakuCatRecentProjectRows {
             total = [int]$item.Total
             confirmed = [int]$item.Confirmed
             saved = [string]$item.Saved
+            source_preview = [string]$item.SourcePreview
             export_blocked = [bool]$item.ExportBlocked
         })
     }
@@ -2086,14 +2099,7 @@ function Invoke-YakuRoute {
         # 「アプリ起動すると選択肢が提示されて選ばなくてはいけないのはストレス」）。
         # 「文章を貼り付ける」「資料を取り込む」の2枚のカードは、どちらも同じ画面へ
         # 行き先が同じだった。取り込みは、着地した画面の中に脇役として置いてある。
-        # 初回は同じ画面の上で3か所だけ吹き出しを出す（前置きの説明は読み飛ばされ、
-        # 作業の成績も上がらないという調査に合わせた）。
-        $desktopPreferences = Get-YakuDesktopPreferences
-        if ([bool]$desktopPreferences.available -and -not [bool]$desktopPreferences.tutorial_completed) {
-            Serve-YakuAppPage -Context $Context -PageName 'cat.html' -StartTour
-        } else {
-            Serve-YakuAppPage -Context $Context -PageName 'cat.html'
-        }
+        Serve-YakuAppPage -Context $Context -PageName 'cat.html'
         return
     }
     # 画面は一つ（2026-08-11 の利用者判断「画面を一つにするのでok」）。/quick は
@@ -2113,7 +2119,7 @@ function Invoke-YakuRoute {
         return
     }
     if ($method -eq 'GET' -and $path -eq '/tutorial') {
-        Serve-YakuAppPage -Context $Context -PageName 'tutorial.html'
+        Send-YakuRedirectResponse -Context $Context -Location '/cat'
         return
     }
     if ($method -eq 'GET' -and $path.StartsWith('/assets/')) {

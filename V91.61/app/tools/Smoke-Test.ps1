@@ -266,9 +266,10 @@ Assert-Yaku -Condition ($appJs -notmatch 'readAsDataURL|file_b64|application/x-w
 Assert-Yaku -Condition (-not (Test-Path -LiteralPath (Join-Path $root 'www\index.html'))) -Message 'the launcher must not present a choice screen before the translator'
 Assert-Yaku -Condition ($server -match "path -eq '/'" -and $server -notmatch "PageName 'index.html'" -and
     ([regex]::Matches($server, [regex]::Escape("Serve-YakuAppPage -Context `$Context -PageName 'cat.html'")).Count -ge 2)) -Message 'the root route must land on the translation screen itself'
-# 使い方と設定は目的の位置へ直接移動できる2リンクにする。チュートリアル側にも
-# 設定の実体があることを同時に確認し、リンク切れを見逃さない。
-Assert-Yaku -Condition ($catIndex.Contains('href="/tutorial">使い方</a>') -and $catIndex.Contains('href="/tutorial#settings">設定</a>') -and $tutorial.Contains('id="settings"')) -Message 'the home screen must link to the tutorial and its settings section'
+# 使い方・設定・ツアーのユーザー向け入口は退役した。互換ページは残っても、
+# 開始画面から辿れるリンクや CAT の tour hook は残さない。
+Assert-Yaku -Condition (-not $catIndex.Contains('href="/tutorial') -and -not $catIndex.Contains('id="cat-help-links"') -and -not $catIndex.Contains('name="yaku-tour"') -and -not $catIndex.Contains('/assets/tour.js')) -Message 'the start screen must not expose retired tutorial/settings/tour entries'
+Assert-Yaku -Condition ($server.Contains("if (`$method -eq 'GET' -and `$path -eq '/tutorial')") -and $server.Contains("Send-YakuRedirectResponse -Context `$Context -Location '/cat'") -and $server -notmatch 'StartTour|__YAKU_TOUR__') -Message 'the retired /tutorial route must redirect to CAT without a tour hook'
 # 文章とWord・Excelは同じ枠から入る。開始画面には確認を促す重複文を置かない。
 $entryBlock = ''
 if ($quickIndex -match '(?s)<section id="cat-picker".*?<section id="cat-workspace"') { $entryBlock = $Matches[0] }
@@ -278,7 +279,7 @@ Assert-Yaku -Condition ($quickIndex -notmatch 'id="cat-instant"[^>]*\shidden' -a
 # 訳案を見る前に1文ずつ直したいかを決められないので、選択は訳案のあとへ置く。
 # 2026-08-12: 「訳したい文章を貼り付けてください」という説明文で貼り付け口を数えていたが、
 # 見出しと同じことを繰り返す一文だったので消した。数えるのは説明文ではなく貼り付け欄そのもの。
-Assert-Yaku -Condition ($catIndex.Contains('Word・Excelはここへドラッグ') -and $catIndex.Contains('id="quick-input"') -and $catIndex.Contains('続きの作業')) -Message 'the start screen must connect paste, file, and saved-work inputs to the same review workspace'
+Assert-Yaku -Condition ($catIndex.Contains('Word・Excelを訳す') -and $catIndex.Contains('id="quick-input"') -and $catIndex.Contains('最近の作業') -and $catIndex.IndexOf('class="entry-main"') -lt $catIndex.IndexOf('class="entry-rail"')) -Message 'the start screen must connect paste, file, and recent work in main-first order'
 Assert-Yaku -Condition ((([regex]::Matches($catIndex, 'id="cat-open-file-entry"')).Count -eq 1) -and (([regex]::Matches($catIndex, 'id="quick-input"')).Count -eq 1)) -Message 'the front door must keep exactly one file entry and one text entry'
 # 長さの境目は画面が決めない。確認作業が分割に使っている設定値をそのまま使う。
 Assert-Yaku -Condition ($catIndex.Contains('__YAKU_MAX_BATCH_CHARS__') -and $quickClient.Contains('yaku-max-batch-chars') -and $quickClient -notmatch 'length > 3000|length > 2000') -Message 'the long-text threshold must come from the server batch budget, not a number chosen in the page'
@@ -318,12 +319,23 @@ Assert-Yaku -Condition ($indexSource.Contains('cat-current-summary') -and $index
 # 社外に送るひとなんていない」「社内確認用のファイルというのもよくわからない」。
 # 説教はやめ、事実だけを1回言う。守るのは「完成版に見せない」ことであって、
 # 社外配布を戒める文そのものではない。
-Assert-Yaku -Condition ($indexSource.Contains('原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。') -and $indexSource.Contains('訳文を入れたコピーを作りました') -and $appJs.Contains('訳文入りのWordを作る') -and -not $appJs.Contains('成果物を作成できます') -and -not $appJs.Contains('完成版')) -Message 'DRAFT output must be named as a copy with a DRAFT_ prefix and never as a finished deliverable'
+Assert-Yaku -Condition ($indexSource.Contains('原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。') -and $indexSource.Contains('訳文を入れたコピーを作りました') -and $appJs.Contains('訳文入りWordを作る') -and -not $appJs.Contains('成果物を作成できます') -and -not $appJs.Contains('完成版')) -Message 'DRAFT output must be named as a copy with a DRAFT_ prefix and never as a finished deliverable'
 # 出したあとに同じことを2度言わない。ファイル名を出す行だけにする。
 Assert-Yaku -Condition (-not $indexSource.Contains('cat-draft-warning') -and -not $appJs.Contains('cat-draft-warning')) -Message 'the post-export notice must not repeat what the pre-export dialog already said'
 Assert-Yaku -Condition ($indexSource.Contains('id="cat-delete-dialog"') -and $indexSource.Contains('autofocus>削除しない') -and -not $appJs.Contains("window.confirm('この翻訳作業")) -Message 'project deletion must use a cancel-first named confirmation dialog'
 Assert-Yaku -Condition ($indexSource.Contains('id="cat-text-output-value"') -and $commonClient.Contains('コピーできませんでした。全文を選択したので、Ctrl+Cでコピーしてください') -and $catClient.Contains("el('cat-text-output-value').select()")) -Message 'clipboard failure must preserve the assembled translation and provide a keyboard recovery path'
-Assert-Yaku -Condition ($catClient.Contains('aria-describedby="' + "' + findingId + '" + '"') -and $catClient.Contains('data.review_blocked') -and $catClient.Contains('function focusAfter(index)')) -Message 'QC findings must be tied to the editor and confirmation focus must advance by segment index'
+$qcEditorBoundaryPattern = "(?s)var blockingError = segmentHasBlockingError\(segment\);[\s\S]{0,600}aria-invalid=.*?blockingError \? 'true' : 'false'.*?blockingError \? ' aria-describedby=`"cat-qc-list`"' : ''"
+$qcEditorBoundaryContract = [regex]::IsMatch($catClient, $qcEditorBoundaryPattern) -and
+    $catClient.Contains("function qcFindingSeverity(view)") -and
+    $catClient.Contains("if (severity === 'error') return 'error';") -and
+    $catClient.Contains("if (severity === 'warning' || severity === 'warn') return 'warning';") -and
+    $catClient.Contains("function segmentHasBlockingError(segment)") -and
+    $catClient.Contains("qcFindingViews(segment).some(function (view) { return qcFindingSeverity(view) === 'error'; });")
+$qcWarningVisibleContract = $catClient.Contains("var QC_WARNING_CODES = ['numeric-value-mismatch'") -and
+    $catClient.Contains('function qcWarningGroupKey(code)') -and
+    $catClient.Contains('var warned = numericWarnings + labelWarnings + delimiterWarnings + genericWarnings;') -and
+    $catClient -match '(?s)\bwarned\s*\?'
+Assert-Yaku -Condition ($qcEditorBoundaryContract -and $qcWarningVisibleContract -and $catClient.Contains('data.review_blocked') -and $catClient.Contains('function focusAfter(index)')) -Message 'QC warnings must remain visible without invalid/error semantics, blocking errors must describe the QA list, and confirmation focus must advance by segment index'
 Assert-Yaku -Condition ($indexSource.Contains('<caption class="sr-only">') -and $stylesSource.Contains('@media (prefers-reduced-motion: reduce)') -and -not $indexSource.Contains('class="input-meta" aria-live="polite"')) -Message 'CAT semantics and reduced-motion support must remain accessible without noisy character-count announcements'
 Assert-Yaku -Condition ($catClient.Contains("type: 'translate', scope: jobScope") -and $catClient.Contains("post('apply', { job_id: jobId }, true, context.scope)") -and $server.Contains('CAT_JOB_PROJECT_MISMATCH') -and $server.Contains('CAT_JOB_SOURCE_MISMATCH')) -Message 'CAT job results must stay bound to their starting project, revision, and source text'
 # 2026-08-12: 一覧のその場でも消せるようにした。開いている作業を消すときは

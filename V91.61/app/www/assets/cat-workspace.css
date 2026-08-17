@@ -2775,3 +2775,414 @@ body.app-cat[data-cat-view="workspace"] .cat-grid tbody .cat-col-no .cat-review-
     padding: var(--space-2);
   }
 }
+
+/* Shared CAT/start visual system.  The start page is a work canvas with the
+   same quiet rules, white surfaces, small corners, and restrained lavender
+   focus language as the editor. */
+body.app-cat[data-cat-view="start"] {
+  --bg: #fafafa;
+  --surface: #ffffff;
+  --soft: #f8f7fa;
+  --line: #eceaf0;
+  --line-strong: #dcd8e4;
+  --yk-l2: #f8f7fa;
+  --yk-gutter: 24px;
+  --yk-pad: 20px;
+  --yk-lane-inset: 12px;
+  --yk-r-card: 5px;
+  --yk-r-lane: 5px;
+  --radius-control: 5px;
+  --accent: #8160d1;
+  --accent-hover: #6f52bc;
+  --accent-text: #6543a9;
+  --accent-soft: #faf8ff;
+  --focus: #8160d1;
+}
+
+body.app-cat[data-cat-view="start"] .shell {
+  width: calc(100% - 48px);
+  max-width: 2200px;
+  padding-bottom: var(--space-2);
+}
+body.app-cat[data-cat-view="start"] .hero {
+  display: flex;
+  min-height: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0;
+  border-bottom: 1px solid var(--line);
+}
+body.app-cat[data-cat-view="start"] .brand-block,
+body.app-cat[data-cat-view="start"] .header-actions {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+}
+body.app-cat[data-cat-view="start"] .brand-block { gap: 8px; }
+body.app-cat[data-cat-view="start"] .brand { font-size: 1rem; font-weight: 600; }
+body.app-cat[data-cat-view="start"] .version-label { font-size: var(--font-meta); }
+body.app-cat[data-cat-view="start"] .header-actions { gap: 8px; }
+body.app-cat[data-cat-view="start"] .status-block {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+body.app-cat[data-cat-view="start"] #copilot-status { min-height: 28px; }
+body.app-cat[data-cat-view="start"] #copilot-window-open { min-height: 28px; padding-block: 0; }
+body.app-cat[data-cat-view="start"] .tab-panel { margin-top: 4px; }
+body.app-cat[data-cat-view="start"] #cat-picker { width: 100%; }
+
+body.app-cat[data-cat-view="start"] .entry-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 340px);
+  gap: 0;
+  width: 100%;
+  max-width: none;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #ffffff;
+}
+body.app-cat[data-cat-view="start"] .entry-main {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  padding: 20px 24px 24px;
+  background: #ffffff;
+}
+body.app-cat[data-cat-view="start"] .entry-rail {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  padding: 20px;
+  border-left: 1px solid var(--line);
+  background: #fcfbfd;
+}
+body.app-cat[data-cat-view="start"] #cat-start-title {
+  margin: 0 0 16px;
+  color: transparent;
+  font-size: 0;
+  font-weight: 700;
+  line-height: 1.35;
+}
+body.app-cat[data-cat-view="start"] #cat-start-title .cat-start-title-visible {
+  color: var(--text);
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+/* The prompt inside the editor is the visible start cue; keep the pane
+   heading available to assistive technology without repeating that cue. */
+body.app-cat[data-cat-view="start"] #cat-start-title.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+  color: transparent;
+  font-size: 1px;
+  line-height: 1px;
+}
+body.app-cat[data-cat-view="start"] .quick-inline { padding-inline: 0; }
+body.app-cat[data-cat-view="start"] .quick-area {
+  margin-inline: 0;
+  border-color: var(--line);
+  border-radius: 5px;
+  background: #ffffff;
+  padding: 19px;
+}
+body.app-cat[data-cat-view="start"] .quick-area:focus-within {
+  border-color: #cfc3e6;
+  outline: 1px solid #d9d0ec;
+  outline-offset: -2px;
+}
+body.app-cat[data-cat-view="start"] .quick-inline #quick-input:focus,
+body.app-cat[data-cat-view="start"] .quick-inline #quick-input:focus-visible {
+  outline: 2px solid #6f52bc;
+  outline-offset: 1px;
+  border-radius: 4px;
+  box-shadow: 0 0 0 2px rgba(129, 96, 209, .18);
+}
+body.app-cat[data-cat-view="start"] .quick-inline #quick-input {
+  box-sizing: border-box;
+  padding: 10px 12px;
+}
+body.app-cat[data-cat-view="start"] .quick-empty-guide {
+  inset: 10px 12px auto 12px;
+}
+body.app-cat[data-cat-view="start"] .file-lane {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 16px;
+  row-gap: 2px;
+  margin: 16px 0 0;
+  padding: 12px 0 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+body.app-cat[data-cat-view="start"] .file-lane-icon { display: none; }
+body.app-cat[data-cat-view="start"] .file-lane-lead {
+  grid-column: 1;
+  grid-row: 1;
+  padding-right: 0;
+  font-size: var(--font-ui);
+}
+body.app-cat[data-cat-view="start"] .file-lane-note {
+  grid-column: 1;
+  grid-row: 2;
+  margin-top: 0;
+  line-height: 1.45;
+}
+body.app-cat[data-cat-view="start"] .file-lane #cat-open-file-entry {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  width: auto;
+  min-width: 124px;
+  margin-top: 0;
+  min-height: 44px;
+  background: #ffffff;
+  border-color: var(--line-strong);
+}
+body.app-cat[data-cat-view="start"] .quick-inline .command-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  margin-top: 14px;
+}
+body.app-cat[data-cat-view="start"] .quick-inline #quick-submit {
+  width: auto;
+  min-width: 180px;
+  min-height: 44px;
+}
+body.app-cat[data-cat-view="start"] #quick-direction-summary { max-width: 240px; }
+body.app-cat[data-cat-view="start"] #quick-direction-select,
+body.app-cat[data-cat-view="start"] #amount-notation { width: min(240px, 100%); }
+body.app-cat[data-cat-view="start"] .entry-rail .cat-resume-card {
+  width: auto;
+  min-width: 0;
+  margin-inline: 0;
+  padding-inline: 0;
+}
+body.app-cat[data-cat-view="start"] .entry-rail .cat-resume-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 12px;
+  align-items: stretch;
+  margin-inline: -20px;
+  padding-inline: 20px;
+}
+body.app-cat[data-cat-view="start"] .entry-rail .cat-resume-drop {
+  position: static;
+  transform: none;
+  align-self: center;
+  justify-self: end;
+  min-width: 44px;
+  padding-inline: 0;
+  text-align: right;
+}
+body.app-cat[data-cat-view="start"] .entry-rail .entry-more-pdf-card {
+  width: 100%;
+  max-width: 100%;
+  min-height: 44px;
+  margin-top: 12px;
+  padding: 11px 12px;
+  border-color: var(--line-strong);
+  border-radius: 5px;
+  background: #ffffff;
+}
+body.app-cat[data-cat-view="start"] .entry-rail .cat-align-entry { margin-top: 24px; }
+body.app-cat[data-cat-view="start"] .entry-rail .home-help-links {
+  margin-top: 24px;
+  padding-top: 14px;
+  border-top-color: var(--line);
+}
+body.app-cat[data-cat-view="start"] .quick-inline #quick-submit[disabled] {
+  background: #eceaf0;
+  border-color: var(--line-strong);
+  color: #55515f;
+}
+
+/* The existing table headings retain role/language text for assistive
+   technology, but the dense editor does not spend a row on a repeated band. */
+@media (min-width: 901px) {
+  body.app-cat[data-cat-view="workspace"] .cat-grid thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+
+/* Ordinary rows are one quiet white surface.  The target column is identified
+   by the editable control and a one-pixel neutral gutter, not a boxed grid. */
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody td.cat-source,
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody td.cat-target {
+  background: #ffffff;
+}
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody td.cat-target {
+  border-left: 1px solid #f0eef3;
+}
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody td.cat-source,
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody td.cat-target {
+  vertical-align: middle;
+}
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody .cat-source-text,
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody textarea[data-cat-input] {
+  font-size: 16px;
+  line-height: 20px;
+}
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr > td {
+  transition: background-color 120ms ease;
+}
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active):hover > td {
+  background: #fcfbfe;
+}
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active):hover > td.cat-target {
+  background: #ffffff;
+}
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active {
+  outline: 1px solid #e7e0f3;
+  outline-offset: -1px;
+}
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active > td {
+  border-top: 0;
+  border-bottom: 0;
+  background: #f9f7fc;
+}
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active > td.cat-target {
+  border-left-color: #ece8f2;
+}
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody textarea[data-cat-input] {
+  border-color: transparent;
+  border-radius: 4px;
+  background: #ffffff;
+  box-shadow: none;
+  cursor: text;
+}
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody textarea[data-cat-input]:focus,
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody textarea[data-cat-input]:focus-visible {
+  border-color: #d7cbea;
+  outline: 2px solid #6f52bc;
+  outline-offset: 1px;
+  box-shadow: 0 0 0 2px rgba(129, 96, 209, .28);
+}
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active textarea[data-cat-input]:focus,
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active textarea[data-cat-input]:focus-visible {
+  border-color: #d7cbea;
+  outline: 2px solid #6f52bc;
+  outline-offset: 1px;
+  box-shadow: 0 0 0 2px rgba(129, 96, 209, .28);
+}
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody textarea[data-cat-input][aria-invalid="true"] {
+  border: 2px solid #b42318;
+  border-radius: 4px;
+  background: #ffffff;
+  padding-left: 4px;
+}
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody textarea[data-cat-input][aria-invalid="true"]:focus,
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody textarea[data-cat-input][aria-invalid="true"]:focus-visible {
+  border-color: #b42318;
+  outline: 2px solid #6f52bc;
+  outline-offset: 1px;
+  box-shadow: 0 0 0 2px rgba(129, 96, 209, .28);
+}
+
+/* The single far-right confirmation control keeps the original check glyph
+   and accessible names.  Unconfirmed is a faint light square; confirmed is
+   the same geometry with the established teal treatment. */
+body.app-cat[data-cat-view="workspace"] .cat-confirm-control {
+  border-style: solid;
+  border-color: #dedbe5;
+  background: #ffffff;
+  color: #5c5668;
+}
+body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed {
+  border-style: solid;
+  border-color: #00a98f;
+  background: #eefaf7;
+  color: #008f7a;
+}
+body.app-cat[data-cat-view="workspace"] .cat-confirm-control:focus,
+body.app-cat[data-cat-view="workspace"] .cat-confirm-control:focus-visible {
+  outline: 2px solid #6f52bc;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px rgba(129, 96, 209, .18);
+}
+body.app-cat[data-cat-view="workspace"] .cat-confirm-control:hover {
+  border-color: #cfc3e6;
+  background: #faf8ff;
+}
+
+/* Keep the blocking boundary ahead of the ordinary-row transparent border
+   rule without introducing an icon or a separate issue marker. */
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr[data-cat-row] textarea[data-cat-input][aria-invalid="true"] {
+  border: 2px solid #b42318;
+  border-radius: 4px;
+  background: #ffffff;
+  padding-left: 4px;
+}
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr[data-cat-row] textarea[data-cat-input][aria-invalid="true"]:focus,
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr[data-cat-row] textarea[data-cat-input][aria-invalid="true"]:focus-visible {
+  border-color: #b42318;
+  outline: 2px solid #6f52bc;
+  outline-offset: 1px;
+  box-shadow: 0 0 0 2px rgba(129, 96, 209, .28);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr > td {
+    transition: none;
+  }
+}
+
+@media (max-width: 900px) {
+  body.app-cat[data-cat-view="start"] .shell { width: calc(100% - 24px); }
+  body.app-cat[data-cat-view="start"] .entry-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  body.app-cat[data-cat-view="start"] .entry-main {
+    grid-column: 1;
+    grid-row: 1;
+    padding: 16px;
+  }
+  body.app-cat[data-cat-view="start"] .entry-rail {
+    grid-column: 1;
+    grid-row: 2;
+    padding: 16px;
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+  body.app-cat[data-cat-view="start"] .entry-rail .cat-resume-card {
+    width: auto;
+    margin-inline: 0;
+    padding-inline: 0;
+  }
+  body.app-cat[data-cat-view="start"] .entry-rail .cat-resume-row {
+    margin-inline: -16px;
+    padding-inline: 16px;
+  }
+  body.app-cat[data-cat-view="start"] .file-lane {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  body.app-cat[data-cat-view="start"] .file-lane #cat-open-file-entry {
+    grid-column: 1;
+    grid-row: 3;
+    justify-self: start;
+    margin-top: 8px;
+  }
+}

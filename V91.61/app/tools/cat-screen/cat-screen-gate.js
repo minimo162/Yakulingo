@@ -137,7 +137,7 @@ if (process.argv[2] === '--width-preview') {
           accessibleLabels: accessibleLabels
         };
       });
-      await page.click('details.cat-more-actions > summary');
+      // Preview is directly visible in the toolbar; the retired "その他" menu is gone.
       await page.click('#cat-preview-open');
       await page.waitForSelector('#cat-preview-dialog[open]', { timeout: 10000 });
       await page.waitForSelector('#cat-preview-body .cat-preview-cell[data-cat-preview-index="2"]', { timeout: 20000 });
@@ -551,8 +551,7 @@ function lastBody(name) { const c = calls(name); return c.length ? c[c.length - 
         };
       });
     });
-    /* 「体裁で見る」は「そのほか」の折りたたみの中にある。実際に開いて押す。 */
-    await page.click('details.cat-more-actions > summary');
+    /* 「体裁で見る」はツールバーに直接見えているので、そのまま押す。 */
     await page.click('#cat-preview-open');
     await page.waitForSelector('#cat-preview-dialog[open]', { timeout: 10000 });
     await page.waitForTimeout(250);
@@ -601,7 +600,7 @@ function lastBody(name) { const c = calls(name); return c.length ? c[c.length - 
         };
       });
     });
-    await page.click('details.cat-more-actions > summary');
+    // The preview control remains directly visible for cell-placement previews too.
     await page.click('#cat-preview-open');
     await page.waitForSelector('#cat-preview-dialog[open]', { timeout: 10000 });
     await page.waitForTimeout(250);

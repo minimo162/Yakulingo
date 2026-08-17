@@ -10,8 +10,8 @@
    (a) 置換で訳文が変わった行は confirmed が落ち、QcStatus が not_run へ戻る
        （**ここが最重要。** 落とさないと、点検を通っていない訳が確認済みのまま
         残り「数値が抜けた訳は警告ではなく欠陥」に触れる）
-   (b) 置換の結果 numeric-value-mismatch になる行は確定できず、書き出しも止まる。
-       止まる理由は既存の3つのままで、増えていないこと
+   (b) 置換の結果 numeric-value-mismatch になる行は warning として見え、確認・
+       書き出しを止めない。非数値の構造欠陥は従来どおり止まり、理由は増えないこと
    (c) 置換は絞り込み結果（indexes）の中だけに掛かる。押す前に告げた行数と、
        実際に変わった行数が一致する
    (d) cat.js の絞り込みの鍵と cat.html のボタンが1対1である（到達不能な枝が無い）。
@@ -199,7 +199,7 @@ try {
     Remove-YakuCatProject -Id ([string]$pa.Id)
 
     # ------------------------------------------------------------------ (b)
-    Write-Host '(b) 置換で数字が合わなくなった行は確定できず、書き出しも止まる' -ForegroundColor Cyan
+    Write-Host '(b) 置換の数字は warning、非数値の欠陥は blocker' -ForegroundColor Cyan
     $pc = New-YakuCatTextProject -Root $root -Text '売上高は100百万円でした。' -Settings $settings -Direction 'to_en'
     $null = Set-YakuCatSegmentTranslation -Project $pc -Index 0 -Text 'Revenue was 100 million yen.'
     $null = Set-YakuCatSegmentConfirmed -Project $pc -Index 0 -Confirmed $true
@@ -211,17 +211,32 @@ try {
     $segC = @($pc.Segments)[0]
     Chk ([string]$segC.Translation -eq 'Revenue was 900 million yen.') '訳文の数字が変わっている'
     Chk (-not [bool]$segC.Confirmed) '確認済みが落ちている'
-    $confirmBlocked = $false
+    $numericEligibility = Get-YakuCatOutputEligibility -Project $pc
+    Chk (@($numericEligibility.QcRows | Where-Object { @($_.Codes) -contains 'numeric-value-mismatch' }).Count -ge 1) '数字の不一致は行へ warning として載る'
+    Chk ([bool]$numericEligibility.TranslationListEligible) '数字の warning だけでは書き出しを止めない'
+    Chk (@($numericEligibility.Reasons) -notcontains 'segment-qc-failed') '数字の warning を segment-qc-failed に丸めない'
+    $confirmAllowed = $true
     try { $null = Set-YakuCatSegmentConfirmed -Project $pc -Index 0 -Confirmed $true }
-    catch { $confirmBlocked = ([string]$_.Exception.Message -match 'CAT_REVIEW_QC_FAILED') }
-    Chk $confirmBlocked '確定しようとすると数字の点検で止まる'
+    catch { $confirmAllowed = $false }
+    Chk $confirmAllowed '数字の warning だけなら確認できる'
     $afterEligibility = Get-YakuCatOutputEligibility -Project $pc
-    Chk (-not [bool]$afterEligibility.TranslationListEligible) '数字が合わないままでは書き出せない'
-    Chk (@($afterEligibility.Reasons) -contains 'segment-qc-failed') '止まる理由が segment-qc-failed である'
+    Chk ([bool]$afterEligibility.TranslationListEligible) '確認後も数字の warning だけでは書き出しを止めない'
+    Chk (@($afterEligibility.Reasons) -notcontains 'segment-qc-failed') '確認後も数字の warning を blocker にしない'
     # 止める理由を増やしていないこと。DRAFT を止めるのは3つだけ、という決まり。
     $allowedReasons = @('segment-untranslated','segment-qc-failed','segment-qc-not-current','project-empty','source-file-missing','word-unsupported-structure')
     Chk (@(@($afterEligibility.Reasons) | Where-Object { $allowedReasons -notcontains $_ }).Count -eq 0) ('止める理由を増やしていない（実際: ' + ((@($afterEligibility.Reasons)) -join ',') + '）')
     Remove-YakuCatProject -Id ([string]$pc.Id)
+
+    # 数字以外の構造欠陥は、warning へ逃がさず確認・書き出しを止める。
+    $pStructure = New-YakuCatTextProject -Root $root -Text '【概要】' -Settings $settings -Direction 'to_en'
+    $null = Set-YakuCatSegmentTranslation -Project $pStructure -Index 0 -Text 'Overview'
+    $structureEligibility = Get-YakuCatOutputEligibility -Project $pStructure
+    Chk (@($structureEligibility.QcFailures | Where-Object { [string]$_.Code -eq 'structure-integrity' }).Count -ge 1) '非数値の構造欠陥は error として残る'
+    Chk (-not [bool]$structureEligibility.TranslationListEligible -and @($structureEligibility.Reasons) -contains 'segment-qc-failed') '非数値の構造欠陥は書き出しを止める'
+    $structureConfirmBlocked = $false
+    try { $null = Set-YakuCatSegmentConfirmed -Project $pStructure -Index 0 -Confirmed $true } catch { $structureConfirmBlocked = ($_.Exception.Message -match 'CAT_REVIEW_QC_FAILED') }
+    Chk $structureConfirmBlocked '非数値の構造欠陥は確認も止める'
+    Remove-YakuCatProject -Id ([string]$pStructure.Id)
 
     # ------------------------------------------------------------------ (c)
     Write-Host '(c) 置換は絞り込み結果の中だけに掛かる' -ForegroundColor Cyan
@@ -301,15 +316,15 @@ try {
     $stateFilterBlock = Get-YakuCatJsBlock -Text $catJs -Header '  var stateFilters = {'
     Chk (-not [string]::IsNullOrWhiteSpace($stateFilterBlock)) 'cat.js から絞り込みの表を取り出せた'
     Chk ([string]::IsNullOrWhiteSpace((Get-YakuCatJsBlock -Text $catJs -Header '  var noSuchTableHere = {'))) '無い名前では取り出せない（取り出しが空振りでないこと）'
-    $jsFilterKeys = @([regex]::Matches($stateFilterBlock, '(?m)^\s{4}([a-z]+):') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
-    $htmlFilterKeys = @([regex]::Matches($catHtml, 'data-cat-filter="([a-z]+)"') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+    $jsFilterKeys = @([regex]::Matches($stateFilterBlock, '(?m)^\s{4}([a-z_]+):') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+    $htmlFilterKeys = @([regex]::Matches($catHtml, 'data-cat-filter="([a-z_]+)"') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
     Chk ($jsFilterKeys.Count -ge 4) ('cat.js の鍵を取り出せた（' + ($jsFilterKeys -join ',') + '）')
     Chk ($htmlFilterKeys.Count -ge 4) ('cat.html のボタンを取り出せた（' + ($htmlFilterKeys -join ',') + '）')
     $onlyInJs = @($jsFilterKeys | Where-Object { $htmlFilterKeys -notcontains $_ })
     $onlyInHtml = @($htmlFilterKeys | Where-Object { $jsFilterKeys -notcontains $_ })
     Chk ($onlyInJs.Count -eq 0) ('押すボタンの無い枝が cat.js に無い（余り: ' + ($onlyInJs -join ',') + '）')
     Chk ($onlyInHtml.Count -eq 0) ('受け手の無いボタンが cat.html に無い（余り: ' + ($onlyInHtml -join ',') + '）')
-    $htmlCountKeys = @([regex]::Matches($catHtml, 'data-cat-count="([a-z]+)"') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+    $htmlCountKeys = @([regex]::Matches($catHtml, 'data-cat-count="([a-z_]+)"') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
     $countOrphans = @($htmlCountKeys | Where-Object { $jsFilterKeys -notcontains $_ })
     Chk ($countOrphans.Count -eq 0) ('件数の置き場も鍵と1対1（余り: ' + ($countOrphans -join ',') + '）')
     Chk ($catJs -notmatch "currentFilter === 'untranslated'" -and $catJs -notmatch "currentFilter === 'unconfirmed'") '到達できなかった untranslated / unconfirmed の枝が残っていない'
@@ -339,6 +354,13 @@ try {
         qcFindingViews = '  function qcFindingViews('
         qcMessages = '  function qcMessages('
         qcGroup = '  function qcGroup('
+        # The editor boundary uses the authoritative finding severity rather
+        # than qcGroup alone. Extract both production pieces so the harness
+        # executes the same warning/error decision as the live CAT screen.
+        qcFindingSeverity = '  function qcFindingSeverity('
+        reviewNotesOf = '  function reviewNotesOf('
+        unresolvedReviewNotes = '  function unresolvedReviewNotes('
+        segmentHasReviewNotes = '  function segmentHasReviewNotes('
         segmentHasQc = '  function segmentHasQc('
         # 「要対応」は止める指摘だけで数える。segmentActionable がこれを読むので、
         # 切り出さないと harness が ReferenceError で落ちる（写経で埋めない）。
@@ -358,6 +380,7 @@ try {
     $jsArrayBlocks = [ordered]@{
         QC_TOOL_TROUBLE_CODES = '  var QC_TOOL_TROUBLE_CODES = ['
         QC_WARNING_CODES = '  var QC_WARNING_CODES = ['
+        QC_PREVIEW_BLOCKING_CODES = '  var QC_PREVIEW_BLOCKING_CODES = ['
     }
     $harnessParts = New-Object System.Collections.Generic.List[string]
     $missingBlocks = New-Object System.Collections.Generic.List[string]
@@ -406,10 +429,11 @@ try {
     )
     # 「点検の指摘」の絞り込みは、2つの出どころを両方見て初めて 6 と 7 の
     # 両方を選ぶ。片方を読む式を取り除くと、ここが1行になって赤になる。
-    # actionable も同じ理由で 6 を含む（確定済みだが指摘があるので残る）。
+    # actionable は止める指摘だけを対象にするため、数値 warning の6は含めない。
     $filterCases = @(
-        [ordered]@{ key='actionable'; rows=@(0,2,3,4,5,6,7) }
+        [ordered]@{ key='actionable'; rows=@(0,2,3,4,5,7) }
         [ordered]@{ key='qc';         rows=@(6,7) }
+        [ordered]@{ key='review_notes'; rows=@() }
         [ordered]@{ key='reviewed';   rows=@(1,6) }
         [ordered]@{ key='all';        rows=@(0,1,2,3,4,5,6,7) }
     )
@@ -462,6 +486,8 @@ function changeGroup(segment) { return String(segment.change_kind || ''); }
 function updateActionLabels() {}
 function updateQaButton() {}
 function updateAlignEstimate() {}
+function activeSegment() { return null; }
+function syncReviewNoteFormState() {}
 
 $($harnessParts.ToArray() -join "`n")
 
@@ -600,9 +626,9 @@ fs.writeFileSync(process.argv[3], JSON.stringify({
         # 走らせて、押せるかどうかの値を見る。
         Chk ([bool]$nodeOut.busyState.disabled) '処理中は置換のボタンを押せない'
         Chk ([bool]$nodeOut.idleEmpty.disabled) '処理が終わっても、探す文字列が空なら押せないままにする'
-        Chk ([string]$nodeOut.idleEmpty.label -eq '訳文を置き換える') '押せないときのボタンは行数を名乗らない'
+        Chk ([string]$nodeOut.idleEmpty.label -eq '置換する') '押せないときのボタンは行数を名乗らない'
         Chk (-not [bool]$nodeOut.idleHit.disabled) '探す文字列が当たれば、処理が終わったあとに押せる'
-        Chk ([string]$nodeOut.idleHit.label -match '^表示中の\d+行の訳文を置き換える$') ('押せるときのボタンに対象行数が出る（実際 ' + [string]$nodeOut.idleHit.label + '）')
+        Chk ([string]$nodeOut.idleHit.label -match '^一致する\d+行を置換$') ('押せるときのボタンに対象行数が出る（実際 ' + [string]$nodeOut.idleHit.label + '）')
     }
 
     # ------------------------------------------------------------ サーバの口
@@ -636,8 +662,8 @@ fs.writeFileSync(process.argv[3], JSON.stringify({
             '当社は二つ目です。',
             '当社は三つ目です。'
         ) -join "`n"
-        # 訳文に数字を入れない。原文に無い数字を入れると数字の点検に落ちて、
-        # ここで確認済みにできなくなる（それはそれで正しい振る舞いである）。
+        # 行の対応を見やすくするため、原文の順序語は自然な英語へ置き換える。
+        # 数値系 finding が出ても warning であり、確認を止める理由にはならない。
         $rtTargets = @('The Company is first.','The Company is second.','The Company is third.')
         $rtDraft = New-YakuCatTextProject -Root $root -Text $rtText -Settings $settings -Direction 'to_en'
         $project = Commit-YakuNewCatProject -Project $rtDraft

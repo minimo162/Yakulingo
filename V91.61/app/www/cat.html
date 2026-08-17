@@ -12,7 +12,6 @@
        だった。Arial のほうが広いので、判定は「収まる」と言い過ぎる側へ外れていた。 -->
   <meta name="yaku-output-font" content="__YAKU_OUTPUT_FONT__">
   <meta name="yaku-output-font-jp" content="__YAKU_OUTPUT_FONT_JP__">
-  <meta name="yaku-tour" content="__YAKU_TOUR__">
   <!-- 過去の対訳の取り込みで来たかどうか。1 のときだけ WebAssembly が使える。 -->
   <meta name="yaku-import" content="__YAKU_IMPORT__">
   <title>翻訳 - YakuLingo</title>
@@ -21,9 +20,8 @@
   <script src="/assets/common.js" defer></script>
   <script src="/assets/quick.js" defer></script>
   <script src="/assets/cat.js" defer></script>
-  <script src="/assets/tour.js" defer></script>
 </head>
-<body class="app-cat"__YAKU_VIEW__>
+<body class="app-cat" data-cat-view="__YAKU_VIEW__">
     <!-- 行の状態を示す記号。輪郭が5つとも違うので、白黒でも色覚特性でも区別できる。
          ○（空）→ ◐（途中）→ ✓（完了）は塗り量の階段で、言葉を介さずに読める。
          画像ファイルを増やさないため、文書内の symbol として持つ。色は currentColor。 -->
@@ -84,29 +82,11 @@
            （実測 2026-08-16 1912x987: 入力欄の器は角丸16px・内側24px・影 none）。 -->
       <section id="cat-picker" class="cat-picker" aria-labelledby="cat-page-title">
         <div id="cat-entry-body" class="entry-body">
-          <!-- 左の柱。続きの作業・PDF取り込み・使い方と設定を1本の縦線に乗せる。
-               主役（貼り付けと取り込みの枠）の外にある入口は、全部ここへ集める。 -->
-          <div class="entry-rail">
-            <div id="cat-resume" class="cat-resume" hidden role="complementary" aria-labelledby="cat-resume-title">
-              <h2 id="cat-resume-title" class="cat-resume-title">続きの作業</h2>
-              <div id="cat-resume-list"></div>
-              <button type="button" id="cat-resume-more" class="link-button" hidden aria-expanded="false"></button>
-            </div>
-            <section id="cat-align-entry" class="cat-align-entry" aria-labelledby="cat-align-entry-title">
-              <h2 id="cat-align-entry-title">過去の訳を登録</h2>
-              <p class="cat-align-entry-note">日本語版と英語版のPDFを読み込み、対応を確認して翻訳メモリへ登録した訳だけを、次の資料の候補に使えます。</p>
-              <button type="button" id="cat-open-align-entry" class="secondary-button entry-more-pdf-card">過去の日本語版・英語版PDFを読み込む</button>
-            </section>
-            <!-- 使い方と設定は別々のリンクにして、目的の場所へ直接移動できるようにする。 -->
-            <nav id="cat-help-links" class="home-help-links" aria-label="使い方と設定">
-              <a href="/tutorial">使い方</a>
-              <a href="/tutorial#settings">設定</a>
-            </nav>
-          </div>
-
+          <!-- 主役の新しい翻訳を先に置く。最近の作業・過去訳登録・設定は
+               右の補助ペインへまとめ、視線と読み上げの順序を揃える。 -->
           <div class="entry-main">
             <section id="cat-instant" class="cat-instant" aria-labelledby="cat-start-title">
-              <h2 id="cat-start-title" class="sr-only">文章とWord・Excelを訳す</h2>
+              <h2 id="cat-start-title" class="cat-start-title sr-only">文章とWord・Excelを訳す</h2>
               <form id="quick-form" class="quick-inline">
                 <label for="quick-input" class="sr-only">訳したい文章</label>
                 <!-- 枠は1つ。上半分が貼り付け、下の帯がファイル。枠のどこへ落としても
@@ -128,8 +108,8 @@
                   <div id="cat-file-area" class="file-lane" role="group" aria-labelledby="cat-docs-entry-title">
                     <h2 id="cat-docs-entry-title" class="sr-only">Word・Excelを訳す</h2>
                     <svg class="file-lane-icon" width="30" height="30" aria-hidden="true" focusable="false"><use href="#i-doc"></use></svg>
-                    <p class="file-lane-lead">Word・Excelはここへドラッグ</p>
-                    <p class="file-lane-note">ファイル全体を取り込み、1文ずつ確認する画面へ進みます。原本は触らず、訳文はコピーに書きます</p>
+                    <p class="file-lane-lead">Word・Excelを訳す</p>
+                    <p class="file-lane-note">ファイルを選ぶと、文章を行ごとに確認できます。元のファイルは変更せず、訳したファイルを新しいコピーとして保存します。</p>
                     <button type="button" id="cat-open-file-entry" class="secondary-button">ファイルを選ぶ<input id="cat-file-input" type="file" accept=".docx,.xlsx,.xlsm" hidden></button>
                   </div>
                 </div>
@@ -163,6 +143,19 @@
               </form>
 
               <section id="quick-job" class="result-target" aria-live="polite"></section>
+            </section>
+          </div>
+
+          <div class="entry-rail">
+            <div id="cat-resume" class="cat-resume" hidden role="complementary" aria-labelledby="cat-resume-title">
+              <h2 id="cat-resume-title" class="cat-resume-title">最近の作業</h2>
+              <div id="cat-resume-list"></div>
+              <button type="button" id="cat-resume-more" class="link-button" hidden aria-expanded="false"></button>
+            </div>
+            <section id="cat-align-entry" class="cat-align-entry" aria-labelledby="cat-align-entry-title">
+              <h2 id="cat-align-entry-title">過去の訳を登録</h2>
+              <p class="cat-align-entry-note">日本語版と英語版のPDFから、再利用する訳を登録します。登録した訳は、次の資料で候補に出ます。</p>
+              <button type="button" id="cat-open-align-entry" class="secondary-button entry-more-pdf-card">過去の日本語版・英語版PDFを読み込む</button>
             </section>
           </div>
         </div>

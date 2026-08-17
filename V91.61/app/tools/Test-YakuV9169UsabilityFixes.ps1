@@ -73,7 +73,8 @@ Check-YakuUse ($catJs -match "el\('cat-output-reason'\)\.textContent") '押せ�
 Check-YakuUse ($catJs -match "el\('cat-export-blocked'\)\.textContent = '';") '理由の帯は畳んだまま'
 
 # 4. Ctrl+Enter を、いちばん押すボタンのそばに置く
-Check-YakuUse ($catJs -match 'data-cat-confirm="' + "' \+ index \+ '" + '" title="確認して次の行へ（Ctrl\+Enter）"') '確認ボタンがキーの名前を持つ'
+Check-YakuUse ($catJs -match 'data-cat-confirm="' + "' \+ index \+ '" + '" title="この行を確認済みにする（Ctrl\+Enter）"' -and
+    $catJs.Contains('aria-label="確認済みにする（Ctrl+Enter）"')) '確認ボタンがキーの名前を持つ'
 Check-YakuUse ($catJs -match 'aria-keyshortcuts="Control\+Enter"') '読み上げにもキーを伝える'
 Check-YakuUse ($catJs -match 'cat-op-key') '画面にもキーを出す'
 Check-YakuUse ($catCss -match '\.cat-op-key') 'キーは操作名より弱く見せる'
@@ -83,29 +84,27 @@ Check-YakuUse ($catHtml -match 'cat-key-help') 'キーボード操作の一覧�
 # 初回利用者の目で見て見つかった3件（2026-08-13、実機と3体の点検）。
 $styles = Get-Content -LiteralPath (Join-Path $root 'www\assets\styles.css') -Raw -Encoding UTF8
 $tourJs = Get-Content -LiteralPath (Join-Path $root 'www\assets\tour.js') -Raw -Encoding UTF8
+$serverForView = Get-Content -LiteralPath (Join-Path $root 'src\Server.ps1') -Raw -Encoding UTF8
 
-# 1. 「使い方を見る」（/cat?tour=1）で案内が始まる。syncLocation がアドレスを
-#    書き換えるより先に、tour=1 を meta へ写しておく必要がある。
-#    実測: 直す前は アドレス /cat?tab=quick・meta 空・案内の要素0個。
-Check-YakuUse ($catJs -match "get\('tour'\) === '1'") 'アドレスの案内指定を読む'
-Check-YakuUse ($catJs -match "querySelector\('meta\[name=\x22yaku-tour\x22\]'\)") '書き換わる前に印へ写す'
-Check-YakuUse ($tourJs -match 'meta\[name="yaku-tour"\]') '案内は印を先に見る'
-# 写す処理は syncLocation の定義より前に無いと意味がない
-Check-YakuUse ($catJs.IndexOf("get('tour') === '1'") -lt $catJs.IndexOf('function syncLocation')) '写すのはアドレスを書き換える処理より前'
+# 1. 使い方・設定・初回ツアーの入口は開始画面から退役した。
+#    互換アセットは残すが、CAT の URL/meta/script からは到達できない。
+Check-YakuUse ($catJs -notmatch "location\.(?:assign|href).*?/tutorial(?:#settings)?") 'CAT client に tutorial/settings への遷移を残さない'
+Check-YakuUse ($catHtml -notmatch 'name="yaku-tour"' -and $catHtml -notmatch '/assets/tour.js') 'CAT テンプレートにツアーの meta/script を残さない'
+Check-YakuUse ($catHtml -notmatch '__YAKU_TOUR__' -and $catHtml -notmatch 'tour=1') 'CAT テンプレートに退役したツアー placeholder/URL hook を残さない'
+Check-YakuUse ($serverForView -notmatch 'StartTour') 'サーバ本文に StartTour hook を残さない'
 
 # 2. 画面から消した見出しでも、文書の見出しは残す（h1 が読み上げから落ちていた）。
 Check-YakuUse ($styles -notmatch 'body\[data-cat-view="local-start"\] \.workspace-heading \{ display: none; \}') '開始画面の見出しを display:none で消さない'
 Check-YakuUse ($styles -match '(?s)body\[data-cat-view="start"\] \.workspace-heading \{[^}]*clip: rect\(0, 0, 0, 0\)') '開始画面では場所だけ取らせない'
 Check-YakuUse ($catCss -match '(?s)\.app-cat \.workspace-heading \{[^}]*clip: rect\(0, 0, 0, 0\)') '確認作業でも見出しは文書に残す'
 
-# 3. 使い方への出口は、開始画面の左レールから届く。
-Check-YakuUse ($catHtml -match 'id="cat-help-links"') '使い方への出口に名前を付ける'
-# 主役の入力枠へ混ぜず、続きの作業と同じ左レールに置く。
-$railPos = $catHtml.IndexOf('class="entry-rail"')
-$helpPos = $catHtml.IndexOf('id="cat-help-links"')
+# 3. 退役した使い方・設定の入口は、開始画面にも確認作業にも出さない。
+Check-YakuUse ($catHtml -notmatch 'id="cat-help-links"' -and $catHtml -notmatch 'href="/tutorial(?:#settings)?"') '開始画面に退役した help/settings link を残さない'
+# 主役の入力面を DOM の先頭に置き、右の最近の作業/TM rail を補助にする。
 $mainPos = $catHtml.IndexOf('class="entry-main"')
-Check-YakuUse ($railPos -ge 0 -and $helpPos -gt $railPos -and $helpPos -lt $mainPos) '出口は入力枠の外の左レールにある'
-Check-YakuUse ($catCss -match 'body\[data-cat-view="workspace"\] #cat-help-links \{ display: none; \}') '確認作業中は出さない'
+$railPos = $catHtml.IndexOf('class="entry-rail"')
+Check-YakuUse ($mainPos -ge 0 -and $railPos -gt $mainPos) '主役の入力面を最近の作業 rail より先に置く'
+Check-YakuUse ($serverForView.Contains("if (`$method -eq 'GET' -and `$path -eq '/tutorial')") -and $serverForView.Contains("Send-YakuRedirectResponse -Context `$Context -Location '/cat'")) '退役した /tutorial は CAT へ redirect する'
 
 # 外へ送るものは、統合した入力枠の直下で短く1回だけ説明する。
 Check-YakuUse ($catHtml -match '数値は伏せて送ります。社名・人名と文章はそのまま送ります。ファイルは送りません。') '送るものと送らないものを同じ1行で書く'
@@ -140,15 +139,15 @@ Check-YakuUse ($catJs -match 'function nothingTranslatedYet') 'まだ一度も�
 # 群の説明や種類が増えても、関数内のガードそのものを見失わない。文字数で距離を
 # 600字に固定すると、挙動が同じまま説明を足しただけで物差しが赤になる。
 Check-YakuUse ($catJs -match '(?s)function qaFindings\(\)\s*\{[\s\S]*?if \(nothingTranslatedYet\(\)\) return groups;') '訳す前は指摘を数えない'
-Check-YakuUse ($catJs -match 'まだ訳していません。「訳していない行を訳す」を押すと') '点検一覧は次にやることを書く'
+Check-YakuUse ($catJs -match 'まだ訳していません。「Copilotで未訳を翻訳」を押すと') '点検一覧は次にやることを書く'
 
 # 帯と行で、同じことを違う名前で呼んでいた（帯は「訳案」、行は「訳文」）。
 # 範囲も帯の側だけ名乗っていなかった（2026-08-13、利用者の指摘
 # 「パッと見て分かりにくいかも」）。並べて読めるように、範囲を名前へ入れる。
 #   訳す   この行だけ訳す        / 訳していない行を訳す
 #   コピー この行の訳文をコピー  / すべての訳文をコピー / 確認済みの行だけコピー
-Check-YakuUse ($catHtml -match '>訳していない行を訳す</button>') 'まとめて訳すボタンが範囲を名乗る'
-Check-YakuUse ($catJs -match "'すべての訳文をコピー'") 'まとめてコピーが範囲を名乗る'
+Check-YakuUse ($catHtml -match '<button id="cat-translate"[^>]*>Copilotで未訳を翻訳</button>') 'まとめて訳すボタンが範囲を名乗る'
+Check-YakuUse ($catHtml -match '<button id="cat-export"[^>]*>訳文をコピー</button>') 'まとめてコピーが範囲を名乗る'
 Check-YakuUse ($catJs -notmatch '残りの訳案を作る' -and $catHtml -notmatch '残りの訳案を作る') '古い呼び名を画面に残さない'
 
 # 出す先はファイルとは限らない。訳文のコピーはクリップボードへ写すだけで、
@@ -217,7 +216,7 @@ Check-YakuUse ($catJs -match 'Copilotの準備ができ次第、送ります') '
 # 資料を開いた形で読み込むとき、貼り付け欄が一瞬出てから入れ替わり、点滅して見えた。
 # サーバが ?project= を見て body へ状態を入れ、1回目の描画から確認作業として出す。
 $serverForView = Get-Content -LiteralPath (Join-Path $root 'src\Server.ps1') -Raw -Encoding UTF8
-Check-YakuUse ($catHtml -match '<body class="app-cat"__YAKU_VIEW__>') '開いた瞬間の状態を差し込む口がある'
+Check-YakuUse ($catHtml -match '<body class="app-cat" data-cat-view="__YAKU_VIEW__">' -and $catHtml -notmatch '__YAKU_TOUR__') '開いた瞬間の view 属性だけを差し込む口がある'
 Check-YakuUse ($serverForView -match "InitialView -eq 'workspace'") 'サーバが確認作業として開く'
 Check-YakuUse ($serverForView -match 'wantedProject -match') '住所の project を見て決める'
 Check-YakuUse ($catCss -match 'body\[data-cat-view="workspace"\] #cat-picker \{ display: none; \}') '始める画面の器も最初から出さない'
@@ -253,7 +252,7 @@ Check-YakuUse ($quickJs -match "amountSetting\.hidden = direction !== 'to_en'") 
 
 # 貼り付けはCATへ一本化し、保存有無を開始前に選ばせない。
 Check-YakuUse ($catHtml -match 'id="quick-submit-reason"[^>]*class="quick-submit-reason"[^>]*role="status"' -and $catHtml -notmatch 'quick-submit-note|確認画面へ進みます') '貼り付けの状態説明を主操作の直下へ動的に出す'
-Check-YakuUse ($catHtml -match 'ファイル全体を取り込み、1文ずつ確認する画面へ進みます。原本は触らず、訳文はコピーに書きます') 'ファイルの行き先と原本を触らないことを示す'
+Check-YakuUse ($catHtml -match 'Word・Excelを訳す' -and $catHtml -match 'ファイルを選ぶと、文章を行ごとに確認できます。元のファイルは変更せず、訳したファイルを新しいコピーとして保存します。') 'Word・Excel の入口と原本を触らないことを簡潔に示す'
 Check-YakuUse ($catHtml -notmatch 'あとで続けるため、確認作業として保存する') '内部的な作業名だけの説明へ戻さない'
 Check-YakuUse ($catHtml -notmatch 'class="quick-save-choice"' -and $catHtml -notmatch 'id="quick-save-submit"') '主操作の意味をチェックボックスや二つ目のボタンで切り替えない'
 Check-YakuUse ($quickJs -notmatch 'quick-save-submit|saveAsWork' -and $quickJs -match "/api/cat/open") '貼り付けは単一のCAT操作へ進む'
@@ -264,9 +263,16 @@ Check-YakuUse ($directionChoiceHandler -match "YakuCommon\.focus\(el\('quick-sub
 
 # 文章とファイルをタブで分けず、同じ枠で受ける。
 Check-YakuUse ($catHtml -match '(?s)id="quick-area"[\s\S]*?id="quick-input"[\s\S]*?id="cat-file-area"[\s\S]*?id="cat-open-file-entry"') '文章とファイルを1つの入力枠で受ける'
-Check-YakuUse ($catHtml -match 'Word・Excelはここへドラッグ' -and $catHtml -match '>ファイルを選ぶ<') 'ドラッグと単一ポインタの両方で取り込める'
+Check-YakuUse ($catHtml -match 'Word・Excelを訳す' -and
+    $catHtml -match 'ファイルを選ぶと、文章を行ごとに確認できます。元のファイルは変更せず、訳したファイルを新しいコピーとして保存します。' -and
+    $catHtml -match 'id="cat-open-file-entry"[^>]*>ファイルを選ぶ' -and
+    $catHtml -match 'id="cat-file-input"[^>]*type="file"' -and
+    $catJs.Contains("bindFileDrop(el('quick-area'), el('cat-file-input'))") -and
+    $catJs.Contains("drop.addEventListener('keydown'") -and
+    $catJs.Contains("event.key === 'Enter' || event.key === ' '") -and
+    $catJs.Contains("drop.addEventListener('drop'")) 'ドラッグと単一ポインタの両方で取り込める'
 Check-YakuUse ($catHtml -notmatch 'id="quick-save-submit"' -and $catHtml -match 'id="cat-open-file-entry"') '保存有無の二重入口を残さない'
-Check-YakuUse ($catHtml -match 'id="cat-resume-title"[^>]*>続きの作業<' -and $catHtml -match 'class="entry-rail"') '保存済み一覧を左レールの再開入口として示す'
+Check-YakuUse ($catHtml -match 'id="cat-resume-title"[^>]*>最近の作業<' -and $mainPos -ge 0 -and $railPos -gt $mainPos) '最近の作業を主入力の後段にある utility rail として示す'
 Check-YakuUse ($catCss -match '(?s)\.quick-area\s*\{[^}]*border:\s*1px solid var\(--line\)[^}]*border-radius:\s*var\(--yk-r-card\)') '文章とファイルの主入口を1枚の枠にする'
 Check-YakuUse ($catCss -match '(?s)\.file-lane\s*\{[^}]*border:\s*1px dashed var\(--line-strong\)') 'ファイルを落とせる領域を見た目でも示す'
 Check-YakuUse ($catCss -match '(?s)#quick-submit\[disabled\][^{]*\{[^}]*background:\s*#cdd6e4') '空の主ボタンを有効に見せない'
@@ -336,7 +342,10 @@ Check-YakuUse ($serverForView -match 'source = \[string\]\$_.Source') '保存一
 Check-YakuUse ($catJs -match "source === 'align' \? '過去訳の対応確認'") '対訳作業を新規翻訳と呼ばない'
 Check-YakuUse ($catHtml -match 'id="cat-align-review-guide"' -and $catHtml -match '自動で作った対応は推測です') '自動対応は人が確認すると表の前で伝える'
 Check-YakuUse ($catHtml -match 'id="cat-align-next-document"' -and $catHtml -match '今回のWord・Excelを取り込む' -and $catJs -match "cat-align-next-document'.*showPicker\(\); YakuCommon\.focus\(el\('cat-open-file-entry'\)\)") '過去訳の確認後に今回の資料へ進む導線がある'
-Check-YakuUse ($catJs -match "el\('cat-source-heading'\)\.textContent = isAlignment \? '日本語'" -and $catJs -match "el\('cat-target-heading'\)\.textContent = isAlignment \? '英語'") '対訳画面の左右を言語名で示す'
+Check-YakuUse ($catJs.Contains("var headingLabels = isAlignment") -and
+    $catJs.Contains("{ source: '日本語', target: '英語' }") -and
+    $catJs.Contains("el('cat-source-heading').textContent = headingLabels.source") -and
+    $catJs.Contains("el('cat-target-heading').textContent = headingLabels.target")) '対訳画面の columnHeadings は 日本語 / 英語 を示す'
 Check-YakuUse ($catJs -match "el\('cat-translate'\)\.hidden = isAlignment") '対訳確認では新規翻訳の操作を隠す'
 Check-YakuUse ($catJs -match "el\('cat-page-title'\)\.textContent = isAlignment \? '過去訳の対応確認' : '翻訳'") 'ページ全体も対訳確認として名乗る'
 Check-YakuUse ($catJs -match 'function renderAlignPages') 'ページの冒頭を並べる'
@@ -511,8 +520,12 @@ function Get-YakuHtmlShortcutSet {
 
 $yakuKeydownBody = Get-YakuJsKeydownBody -Js (Remove-YakuJsComments -Text $catJs)
 Check-YakuUse ($yakuKeydownBody.Length -gt 500) ('画面全体の keydown ハンドラが取れる（実際 ' + $yakuKeydownBody.Length + ' 文字）')
-$yakuJsKeys = @(Get-YakuJsShortcutSet -Body $yakuKeydownBody)
+$nativeActivationKeys = @('Enter', ' ')
+$yakuJsKeys = @(Get-YakuJsShortcutSet -Body $yakuKeydownBody | Where-Object { $nativeActivationKeys -notcontains $_ })
 $yakuHtmlKeys = @(Get-YakuHtmlShortcutSet -Html $catHtml)
+Check-YakuUse ($catJs.Contains("bindFileDrop(el('quick-area'), el('cat-file-input'))") -and
+    $catJs.Contains("event.key === 'Enter' || event.key === ' '") -and
+    $catJs.Contains("drop.addEventListener('drop'")) '開始画面のファイル枠の Enter / Space は CAT ショートカット一覧へ混ぜない'
 Write-Host ('  実装 (' + $yakuJsKeys.Count + '): ' + ($yakuJsKeys -join ', '))
 Write-Host ('  一覧 (' + $yakuHtmlKeys.Count + '): ' + ($yakuHtmlKeys -join ', '))
 # 取り出しが両方とも空なら「一致」は恒真になる。空でないことを先に押さえる。
