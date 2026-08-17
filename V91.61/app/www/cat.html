@@ -36,6 +36,12 @@
       <symbol id="i-undo" viewBox="0 0 16 16"><path d="M2.8 8a5.4 5.4 0 1 0 1.9-4.1" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M2.3 2.4v3.5h3.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
       <symbol id="i-merge" viewBox="0 0 16 16"><path d="M2.6 3.2h10.8M2.6 12.8h10.8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M5.6 5.9L8 8.1l2.4-2.2M5.6 10.1L8 7.9l2.4 2.2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
       <symbol id="i-split" viewBox="0 0 16 16"><path d="M2.6 8h10.8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M5.6 4.4L8 2.2l2.4 2.2M5.6 11.6L8 13.8l2.4-2.2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 16 16"><rect x="4.2" y="4.2" width="8.4" height="9" rx="1.1" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3.1 11.2H2.8a1.1 1.1 0 0 1-1.1-1.1V2.9a1.1 1.1 0 0 1 1.1-1.1h7.2a1.1 1.1 0 0 1 1.1 1.1v.4" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+      <symbol id="i-translate" viewBox="0 0 16 16"><path d="M2.2 3h7.5M5.9 1.6v1.8M3.2 10.4c1.6-1.4 2.7-3.5 3.2-5.5M4.8 6.4c.9 1.6 2.2 2.8 3.7 3.7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M9.4 8.5h3.4l2.2 5.9M10.4 12.1h4.1" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-check" viewBox="0 0 16 16"><path d="M2.4 8.4l3.2 3.1 7.9-7.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-book" viewBox="0 0 16 16"><path d="M2.1 2.5h4.6c1 0 1.8.8 1.8 1.8v9.1c0-1-.8-1.8-1.8-1.8H2.1zM13.9 2.5H9.3c-1 0-1.8.8-1.8 1.8v9.1c0-1-.8-1.8-1.8-1.8h4.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 16 16"><path d="M1.4 8s2.3-3.6 6.6-3.6S14.6 8 14.6 8s-2.3 3.6-6.6 3.6S1.4 8 1.4 8z" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="1.6" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+      <symbol id="i-help" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.3 6.1a1.8 1.8 0 1 1 3.1 1.3c-.8.7-1.4 1-1.4 2.1M8 12.1v.1" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
       <symbol id="i-doc" viewBox="0 0 24 24"><path d="M6.2 2.9h6.9l5.1 5.1V21a1.2 1.2 0 0 1-1.2 1.2H6.2A1.2 1.2 0 0 1 5 21V4.1a1.2 1.2 0 0 1 1.2-1.2z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M12.8 3.1v5.4h5.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M8.3 13.4h7.4M8.3 17.1h5.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
     </svg>
   <main class="shell">
@@ -231,7 +237,7 @@
             <span id="cat-save-status" class="cat-save-status" role="status" aria-live="polite">保存済み</span>
           </div>
           <label class="cat-toolbar-search" for="cat-search"><span>検索</span><input id="cat-search" type="search" placeholder="原文・訳文を検索"></label>
-         <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">訳していない行を訳す</button><button id="cat-export" type="button" class="secondary-button">訳文を取り出す</button><button id="cat-qa-open" type="button" class="secondary-button" title="出す前に、直すところを一覧で見ます（F8）">点検</button><details class="cat-more-actions"><summary>そのほか</summary><div class="cat-more-actions-list"><button id="cat-tm-pretranslate" type="button" class="secondary-button" title="翻訳メモリに完全一致がある行を、Copilotへ送る前に訳文欄へ入れます">翻訳メモリで下訳する</button><button id="cat-preview-dock-toggle" type="button" class="secondary-button" aria-pressed="false" title="格子の下に体裁を出したまま訳します">体裁を下に出す</button><button id="cat-preview-open" type="button" class="secondary-button">体裁で見る</button><button id="cat-source-update-open" type="button" class="secondary-button">原文ファイルを差し替える</button><input id="cat-source-update-file" type="file" accept=".xlsx,.xlsm,.csv,.docx" hidden><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みの行だけコピー</button><button id="cat-switch-project" type="button" class="secondary-button">ほかの資料に切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>右の候補を上から順に訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>D</kbd></dt><dd>原文にある数字を一覧に出す（打ち直さずに入れる）</dd></div><div><dt><kbd>1～9</kbd></dt><dd>Ctrl+Dで出した数字を、番号でカーソル位置へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></dt><dd>原文をそのまま訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd></dt><dd>確認を取り消す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>M</kbd> / <kbd>Alt</kbd>+<kbd>K</kbd></dt><dd>次の行とつなげる / つなげた行を戻す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>S</kbd></dt><dd>原文の選んだ位置で行を2つに分ける（先に原文の中をクリック）</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>H</kbd></dt><dd>検索と置換</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>K</kbd></dt><dd>過去訳を言葉で探す</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>[</kbd></dt><dd>資料の一覧を開く・畳む</dd></div><div><dt><kbd>F7</kbd></dt><dd>ほかの資料に切り替える</dd></div><div><dt><kbd>F8</kbd></dt><dd>点検の一覧</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や右側から訳文欄へ戻る</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
+         <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">Copilotで未訳を翻訳</button><button id="cat-tm-pretranslate" type="button" class="secondary-button" title="翻訳メモリの完全一致を未訳の行へ先に入れます">翻訳メモリから未訳を入力</button><button id="cat-export" type="button" class="secondary-button">訳文をコピー</button><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みだけコピー</button><button id="cat-qa-open" type="button" class="secondary-button" title="数字・単位・用語などの自動比較結果を表示します（F8）">点検結果</button><button id="cat-preview-dock-toggle" type="button" class="secondary-button" aria-pressed="false" title="下部のプレビュータブを開きます">プレビュー</button><button id="cat-preview-open" type="button" class="secondary-button">体裁で見る</button><button id="cat-switch-project" type="button" class="link-button">資料を切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>候補を訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>D</kbd></dt><dd>原文の数字を一覧に出す</dd></div><div><dt><kbd>1～9</kbd></dt><dd>数字をカーソル位置へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></dt><dd>原文を訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd></dt><dd>確認を取り消す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>M</kbd> / <kbd>Alt</kbd>+<kbd>K</kbd></dt><dd>前後の行をつなぐ・戻す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>S</kbd></dt><dd>原文の途中で行を分ける</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>H</kbd></dt><dd>検索と置換</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>K</kbd></dt><dd>過去訳を探す</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>[</kbd></dt><dd>資料一覧を開く・畳む</dd></div><div><dt><kbd>F7</kbd></dt><dd>資料を切り替える</dd></div><div><dt><kbd>F8</kbd></dt><dd>点検結果</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や参考情報から訳文欄へ戻す</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
           <section aria-labelledby="cat-personal-glossary-title">
             <h3 id="cat-personal-glossary-title">今後も使う訳</h3>
             <p class="muted">取り消しても、訳した文章は残ります。</p>
@@ -241,7 +247,7 @@
             <h3 id="cat-delete-title">この作業を削除する</h3>
             <button id="cat-delete" type="button" class="danger-button">この作業を削除</button>
           </section>
-        </details></div></details></div>
+        </details></div><div id="cat-segment-actions" class="cat-segment-actions" role="toolbar" aria-label="選択中の行の操作" hidden></div><button id="cat-source-update-open" type="button" class="link-button" hidden>原文ファイルを差し替える</button><input id="cat-source-update-file" type="file" accept=".xlsx,.xlsm,.csv,.docx" hidden>
           <!-- 絞り込みは表の上（2026-08-12）。以前は左に列を1本立てていたが、
                memoQ・Trados・Phrase はどれも表の上の帯で絞り込む。左の列に
                187px を常時渡すと、原文と訳文が1列 321px しか取れなかった。 -->
@@ -283,18 +289,19 @@
                  実機ではなく、利用者の 1912 ではパネルが窓の上端の外へ出ていた。 -->
             <details id="cat-search-menu" class="cat-toolbar-menu"><summary aria-keyshortcuts="Control+H" title="検索の掛け方を変える・訳文をまとめて置き換える（Ctrl+H）">検索と置換</summary>
               <div class="cat-search-tools">
-                <p class="muted">上の検索欄の文字列を、表示中の行の訳文の中で置き換えます。原文は変えません。</p>
-                <div class="cat-state-filters" role="group" aria-label="探す場所">
+                <h3 class="cat-search-title">検索と置換</h3>
+                <span class="cat-search-section-label">検索する場所</span>
+                <div class="cat-state-filters" role="group" aria-label="検索する場所">
                   <button type="button" data-cat-search-scope="both" aria-pressed="true">原文と訳文</button>
-                  <button type="button" data-cat-search-scope="source" aria-pressed="false">原文だけ</button>
-                  <button type="button" data-cat-search-scope="target" aria-pressed="false">訳文だけ</button>
+                  <button type="button" data-cat-search-scope="source" aria-pressed="false">原文</button>
+                  <button type="button" data-cat-search-scope="target" aria-pressed="false">訳文</button>
                 </div>
-                <label class="cat-search-option"><input id="cat-search-case" type="checkbox"> 大文字と小文字を区別する</label>
-                <label class="cat-search-option"><input id="cat-search-regex" type="checkbox"> 正規表現として読む</label>
-                <label class="cat-search-replace" for="cat-replace-input">置き換えたあとの文字列</label>
-                <input id="cat-replace-input" type="text" placeholder="空のままにすると、その文字列を消します">
+                <label class="cat-search-option"><input id="cat-search-case" type="checkbox"> 大文字と小文字を区別</label>
+                <label class="cat-search-option"><input id="cat-search-regex" type="checkbox"> 正規表現を使う</label>
+                <label class="cat-search-replace" for="cat-replace-input">置換後</label>
+                <input id="cat-replace-input" type="text" placeholder="置換後の文字列（空欄なら削除）">
                 <p id="cat-replace-summary" class="muted" role="status"></p>
-                <button id="cat-replace-run" type="button" class="secondary-button" disabled>訳文を置き換える</button>
+                <button id="cat-replace-run" type="button" class="secondary-button" disabled>置換する</button>
               </div>
             </details>
             <span id="cat-filter-count" class="muted"></span>
@@ -343,60 +350,56 @@
             </section>
             <div id="cat-complete-state" class="cat-complete-state" hidden><strong>すべての行を確認し終えました</strong></div>
             <details id="cat-promotion-reference" class="cat-promotion-reference" hidden><summary>行に割り当てできなかった訳案</summary><p class="muted">原文の文の数と、訳案の文の数が合わなかったため、行ごとには入れていません。ここから必要な部分を選んで、各行の訳文へ手で写してください。</p><p id="cat-promotion-reference-text" class="cat-promotion-reference-text"></p></details><div id="cat-empty-state" class="cat-empty-state" hidden>この絞り込みに当てはまる行はありません。左の「すべて」を押すと、全部の行が表示されます。</div>
-            <div id="cat-grid-wrap" class="cat-grid-wrap"><table class="cat-grid"><caption class="sr-only">原文と訳案を1行ずつ確認する一覧</caption><thead><tr><th class="cat-col-no">#</th><th class="cat-col-loc">場所</th><th id="cat-source-heading">原文</th><th id="cat-target-heading">訳文</th></tr></thead><tbody id="cat-grid-body"></tbody></table></div>
-            <!-- 体裁を、格子の下に据える（2026-08-16）。
-                 これまでは「体裁で見る」ダイアログの中だけにあった。訳しながら
-                 見られないので、収まりの手がかりにならなかった。Smartcat は
-                 プレビューを下部に常設し、仕切りで広げられ、選択に追随する
-                 （実測。出典 _docs/対比_Smartcat_2026-08-16.md）。
-                 ここに置くのは「Excelへの配置」だけである。元のファイルを開かず、
-                 画面が既に持っている行だけで組むので軽い。印刷結果PDFは重いので
-                 これまでどおりダイアログに残す。
-                 仕切りは掴んで動かすが、**掴めない人のために矢印キーでも動く**
-                 （WCAG 2.2 SC 2.5.7。ドラッグには非ドラッグの代替が要る）。 -->
-            <div id="cat-preview-dock" class="cat-preview-dock" hidden>
-              <div id="cat-preview-dock-splitter" class="cat-preview-dock-splitter" role="separator"
-                   aria-orientation="horizontal" aria-label="体裁の高さ" tabindex="0"
-                   aria-valuemin="80" aria-valuemax="600" aria-valuenow="180"
-                   title="ドラッグ、または上下の矢印キーで高さを変えます"></div>
-              <div class="cat-preview-dock-head">
-                <span class="cat-preview-dock-title">体裁</span>
-                <div class="cat-state-filters" role="group" aria-label="体裁で見るもの">
-                  <button type="button" data-cat-dock-side="target" aria-pressed="true">訳文</button>
-                  <button type="button" data-cat-dock-side="source" aria-pressed="false">原文</button>
-                </div>
-                <span id="cat-preview-dock-note" class="muted"></span>
-                <button type="button" id="cat-preview-dock-close" class="secondary-button">畳む</button>
-              </div>
-              <div id="cat-preview-dock-body" class="cat-preview-dock-body"></div>
-            </div>
+            <div id="cat-grid-wrap" class="cat-grid-wrap"><table class="cat-grid"><caption class="sr-only">原文と訳案を1行ずつ確認する一覧</caption><colgroup><col class="cat-col-no"><col class="cat-col-loc"><col class="cat-col-source"><col class="cat-col-target"><col class="cat-col-confirm"></colgroup><thead><tr><th class="cat-col-no">#</th><th class="cat-col-loc">場所</th><th id="cat-source-heading">原文</th><th id="cat-target-heading">訳文</th><th id="cat-confirm-heading" class="cat-col-confirm">状態</th></tr></thead><tbody id="cat-grid-body"></tbody></table></div>
           </section>
+        </div>
 
-          <aside id="cat-inspector-pane" class="cat-inspector-pane" aria-label="選択中の行の情報">
-            <div class="cat-inspector-tabs" role="tablist" aria-label="行の参考情報">
-              <button id="cat-tab-candidates" type="button" role="tab" aria-selected="true" aria-controls="cat-panel-candidates" data-cat-inspector="candidates" title="この行で使う登録用語と、似ている過去の訳">用語・参考訳 <span id="cat-candidate-count">0</span></button>
-              <button id="cat-tab-qc" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-qc" data-cat-inspector="qc" title="原文と訳文で、数字・単位・符号が食い違っていないかを自動で点検した結果">数字の点検 <span id="cat-qc-count">0</span></button>
+        <!-- 参考情報と体裁を1つの下部ドックへまとめる。右の常設列は置かず、
+             表の幅を確保する。高さ・仕切り・既存IDは cat.js が引き続き管理する。 -->
+        <section id="cat-preview-dock" class="cat-preview-dock cat-bottom-dock" hidden>
+          <div id="cat-preview-dock-splitter" class="cat-preview-dock-splitter" role="separator"
+               aria-orientation="horizontal" aria-label="参考情報の高さ" tabindex="0"
+               aria-valuemin="80" aria-valuemax="600" aria-valuenow="280"
+               title="ドラッグ、または上下の矢印キーで高さを変えます"></div>
+          <div class="cat-bottom-dock-bar">
+            <div class="cat-inspector-tabs" role="tablist" aria-label="参考情報と体裁">
+              <button id="cat-tab-candidates" type="button" role="tab" aria-selected="true" aria-controls="cat-panel-candidates" data-cat-inspector="candidates" title="この行で使う登録用語と、似ている過去の訳">候補 <span id="cat-candidate-count">0</span></button>
+              <button id="cat-tab-concordance" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-concordance" data-cat-inspector="concordance" title="過去に使った訳を言葉で探します">過去訳検索</button>
+              <button id="cat-tab-revisions" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-revisions" data-cat-inspector="revisions" title="この行の修正案と変更を確認します">変更履歴</button>
               <button id="cat-tab-context" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-context" data-cat-inspector="context">文脈</button>
+              <button id="cat-tab-qc" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-qc" data-cat-inspector="qc" title="数字・単位・用語などの自動比較結果を表示します">点検結果 <span id="cat-qc-count">0</span></button>
               <button id="cat-tab-review-notes" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-review-notes" data-cat-inspector="review_notes">作業メモ <span id="cat-review-notes-count">0</span></button>
+              <button id="cat-tab-preview" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-preview" data-cat-inspector="preview">プレビュー</button>
             </div>
+            <button type="button" id="cat-preview-dock-close" class="secondary-button compact">畳む</button>
+          </div>
+          <aside id="cat-inspector-pane" class="cat-inspector-pane" aria-label="選択中の行の情報">
             <section id="cat-panel-candidates" role="tabpanel" aria-labelledby="cat-tab-candidates"><div id="cat-candidates" class="cat-candidates">
               <section aria-labelledby="cat-terms-title"><div class="cat-candidates-title" id="cat-terms-title">この行で使う用語</div><div id="cat-terms-list"><p class="muted">行を選ぶと用語を探します。</p></div></section>
-              <!-- 過去訳を言葉で探す（市販CATのコンコーダンス）。いまの行に対して
-                   自動で出る「似ている過去の訳」とは別の道具で、「あの言い回しは
-                   前にどう訳したか」を引くためにある。 -->
-              <section aria-labelledby="cat-concordance-title">
-                <div class="cat-candidates-title" id="cat-concordance-title">過去の訳を言葉で探す</div>
-                <form id="cat-concordance-form" class="cat-concordance-form">
-                  <label class="sr-only" for="cat-concordance-input">探す言葉</label>
-                  <input id="cat-concordance-input" type="search" placeholder="例：固定費" autocomplete="off">
-                  <button type="submit" class="secondary-button compact">探す</button>
-                </form>
-                <div id="cat-concordance-list"></div>
-              </section>
               <section aria-labelledby="cat-segment-matches-title"><div class="cat-candidates-title" id="cat-segment-matches-title">似ている過去の訳</div><div id="cat-candidates-list"><p class="muted">行を選ぶと、似た訳を探します。</p><details class="pane-note"><summary>どこから探しますか</summary><p class="muted">これまでに確認した訳と、この作業へ読み込んだ前回の資料の訳から探します。</p></details></div></section>
+              <aside id="cat-candidate-detail" class="cat-candidate-detail" aria-labelledby="cat-candidate-detail-title">
+                <h3 id="cat-candidate-detail-title">翻訳メモリ一致</h3>
+                <p id="cat-candidate-detail-subtitle" class="cat-candidate-detail-subtitle">原文との差</p>
+                <p id="cat-candidate-detail-diff" class="cat-candidate-detail-diff">候補を選ぶと差分が出ます。</p>
+                <dl id="cat-candidate-detail-meta" class="cat-candidate-detail-meta"></dl>
+                <div id="cat-candidate-detail-actions" class="cat-candidate-detail-actions"></div>
+              </aside>
             </div></section>
-            <section id="cat-panel-qc" role="tabpanel" aria-labelledby="cat-tab-qc" hidden><div id="cat-qc-list"></div><button id="cat-next-qc" type="button" class="secondary-button">点検の必要な次の行へ移る</button></section>
+            <section id="cat-panel-concordance" role="tabpanel" aria-labelledby="cat-tab-concordance" hidden>
+              <div class="cat-candidates-title">過去の訳を言葉で探す</div>
+              <form id="cat-concordance-form" class="cat-concordance-form">
+                <label class="sr-only" for="cat-concordance-input">探す言葉</label>
+                <input id="cat-concordance-input" type="search" placeholder="例：固定費" autocomplete="off">
+                <button type="submit" class="secondary-button compact">探す</button>
+              </form>
+              <div id="cat-concordance-list"></div>
+            </section>
+            <section id="cat-panel-revisions" role="tabpanel" aria-labelledby="cat-tab-revisions" hidden>
+              <div class="cat-candidates-title">変更履歴</div>
+              <div id="cat-revisions-list"><p class="muted">行を選ぶと、その行の変更を確認できます。</p></div>
+            </section>
             <section id="cat-panel-context" role="tabpanel" aria-labelledby="cat-tab-context" hidden><div id="cat-context"></div></section>
+            <section id="cat-panel-qc" role="tabpanel" aria-labelledby="cat-tab-qc" hidden><div id="cat-qc-list"></div><button id="cat-next-qc" type="button" class="secondary-button">点検の必要な次の行へ移る</button></section>
             <section id="cat-panel-review-notes" role="tabpanel" aria-labelledby="cat-tab-review-notes" hidden>
               <div id="cat-review-notes-list"></div>
               <form id="cat-review-notes-form" class="cat-review-notes-form">
@@ -405,8 +408,20 @@
                 <button id="cat-review-notes-submit" type="submit">メモを追加</button>
               </form>
             </section>
+            <section id="cat-panel-preview" role="tabpanel" aria-labelledby="cat-tab-preview" hidden>
+              <div class="cat-preview-dock-head">
+                <span class="cat-preview-dock-title">体裁プレビュー</span>
+                <div class="cat-state-filters" role="group" aria-label="体裁で見るもの">
+                  <button type="button" data-cat-dock-side="target" aria-pressed="true">訳文</button>
+                  <button type="button" data-cat-dock-side="source" aria-pressed="false">原文</button>
+                </div>
+                <button id="cat-preview-open-dock" type="button" class="secondary-button compact">体裁で見る</button>
+                <span id="cat-preview-dock-note" class="muted"></span>
+              </div>
+              <div id="cat-preview-dock-body" class="cat-preview-dock-body"></div>
+            </section>
           </aside>
-        </div>
+        </section>
 
         <div id="cat-output-row" class="cat-output-row" hidden><span>訳文を入れたコピーを作りました：<strong id="cat-output-name"></strong></span><button id="cat-open-folder" type="button">フォルダを開く</button></div>
         <dialog id="cat-text-output" class="cat-text-output"><h2>訳文</h2><p id="cat-text-output-note" class="cat-text-output-note" role="status" aria-live="polite"></p><p class="muted">コピーできない場合も全文はここに残ります。</p><textarea id="cat-text-output-value" readonly></textarea><div class="cat-text-output-actions"><button id="cat-copy-again" type="button">もう一度コピー</button><button id="cat-select-all" type="button" class="secondary-button">全文を選ぶ（このあとCtrl+Cでコピー）</button><button id="cat-text-output-close" type="button" class="secondary-button">閉じる</button></div></dialog>
