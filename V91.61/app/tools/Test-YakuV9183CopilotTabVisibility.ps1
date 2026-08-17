@@ -33,6 +33,7 @@ $ErrorActionPreference = 'Stop'
 $YakuT9183Root = Split-Path -Parent $PSScriptRoot
 $YakuT9183Src = Join-Path $YakuT9183Root 'src'
 $YakuT9183ClientPath = Join-Path $YakuT9183Src 'CopilotClient.ps1'
+$YakuT9183WarmupPath = Join-Path $YakuT9183Root 'tools\Prepare-Copilot.ps1'
 . (Join-Path $YakuT9183Src 'SrcModules.ps1')
 foreach ($YakuT9183File in $script:YakuSrcModuleFiles) { . (Join-Path $YakuT9183Src $YakuT9183File) }
 
@@ -101,6 +102,20 @@ Write-Host ('       [diag] client chars=' + $YakuT9183Text.Length)
 Assert-T9183 -Condition ($YakuT9183Text.Length -gt 1000) -Message 'CopilotClient.ps1 was read'
 Assert-T9183 -Condition ($YakuT9183Text.IndexOf("Expression 'document.hidden'") -ge 0) -Message 'the wording is chosen from an observation, not from a guess'
 Assert-T9183 -Condition ($YakuT9183Text.IndexOf('Restore-YakuCopilotTabVisibility') -ge 0) -Message 'the restore helper is wired into the client'
+
+# The initial warmup worker used to call Get-YakuCopilotPage and immediately
+# inspect the DOM. That left a hidden/frozen first tab waiting forever until a
+# user opened another tab. Keep visibility repair on the first poll and the
+# fresh-chat retry; the resident readiness monitor must not steal the tab while
+# the user is working in it.
+$YakuT9183WarmupText = [IO.File]::ReadAllText($YakuT9183WarmupPath, [Text.Encoding]::UTF8)
+Assert-T9183 -Condition ($YakuT9183WarmupText -match '(?s)\$page\s*=\s*Get-YakuCopilotPage\s+-Port\s+\$port\s+-Url\s+\$copilotUrl\s*\r?\n\s*\$page\s*=\s*Restore-YakuCopilotTabVisibility') `
+    -Message 'initial warmup restores the first Copilot tab before state inspection'
+Assert-T9183 -Condition ($YakuT9183WarmupText -match '(?s)\$currentPage\s*=\s*Get-YakuCopilotPage\s+-Port\s+\$Port\s+-Url\s+\$Url\s*\r?\n\s*\$currentPage\s*=\s*Restore-YakuCopilotTabVisibility') `
+    -Message 'fresh-chat retry restores a reacquired Copilot tab before evaluation'
+$YakuT9183WatchMatch = [regex]::Match($YakuT9183WarmupText, '(?s)function Watch-YakuCopilotReadiness\b.*?(?=\r?\ntry\s*\{)')
+Assert-T9183 -Condition ($YakuT9183WatchMatch.Success -and $YakuT9183WatchMatch.Value.IndexOf('Restore-YakuCopilotTabVisibility') -lt 0) `
+    -Message 'resident readiness monitoring does not restore or steal the active Copilot tab'
 
 Write-Host ''
 if ($script:T9183Failures.Count -eq 0) {
