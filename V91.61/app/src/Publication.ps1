@@ -89,7 +89,15 @@ function New-YakuCatProtectedPublicationCandidateRequest {
     $payload=[ordered]@{segment_id=[string]$segment.SegmentId;source=[string]$segment.Text;canonical_translation=[string]$segment.Translation;allowed_abbreviations=$allowed;required_terms=@($context.Value.required_terms);protected_facts=@($context.Value.protected_facts);placement_budget=$safeBudget;surrounding_context=$context.Value.surrounding_context}
     $original=$payload|ConvertTo-Json -Depth 8 -Compress;$mask=New-YakuNumericMaskMap -Text $original -Root $Root -Direction ([string]$Project.Direction) -Location 'publication-candidate'
     $field=[pscustomobject]@{Name='publication_sidecar';OriginalText=$original;ProtectedText=[string]$mask.Text;NumericMaskMaps=@($mask.Map)}
-    $package=New-YakuProtectedPromptPackage -Kind compaction -Root $Root -Direction ([string]$Project.Direction) -Fields @($field) -Arguments ([pscustomobject]@{ContractVersion='compaction-candidate-v1'})
+    # max_chars はクライアントが現訳の長さから作る概算目標であり、実際のセル幅ではない。
+    # 数字を含むsidecarは必ずマスクしたままにし、固定プロンプト用には安全な2桁だけを
+    # 別引数で渡す。無効値は従来どおり目標を指示しない。
+    [int]$promptTarget=0
+    try{
+        [int]$parsedTarget=0
+        if([int]::TryParse([string]$PlacementBudget.max_chars,[ref]$parsedTarget) -and $parsedTarget -ge 8 -and $parsedTarget -le 99){$promptTarget=$parsedTarget}
+    }catch{}
+    $package=New-YakuProtectedPromptPackage -Kind compaction -Root $Root -Direction ([string]$Project.Direction) -Fields @($field) -Arguments ([pscustomobject]@{ContractVersion='compaction-candidate-v1';MaxChars=$promptTarget})
     $null=Assert-YakuNumericPromptProtected -Prompt ([string]$package.Prompt) -MaskMap $mask.Map
     $budgetHash=Get-YakuCatSourceIntegrityHash -Text ($PlacementBudget|ConvertTo-Json -Depth 6 -Compress)
     return [pscustomobject]@{Envelope=$package.Envelope;RequestId=[string]$package.RequestId;ContractVersion='compaction-candidate-v1';ProjectId=[string]$Project.Id;ProjectRevision=[int]$Project.Revision;SegmentId=[string]$segment.SegmentId;SegmentIndex=$Index;SourceHash=[string]$segment.SourceIntegrityHash;CanonicalHash=(Get-YakuCatSourceIntegrityHash -Text ([string]$segment.Translation));SourceFactsHash=[string]$context.FactsHash;TerminologyHash=[string]$Project.TerminologySnapshotHash;AbbreviationRegistryHash=(Get-YakuCatAbbreviationRegistryHash -Project $Project);PlacementBudget=$PlacementBudget;PlacementBudgetHash=$budgetHash;DependencyFingerprint=(Get-YakuCatPublicationCandidateDependencyFingerprint -Project $Project -Segment $segment -PlacementBudgetHash $budgetHash);NumericMaskMap=$mask.Map;ProtectedSidecar=[string]$mask.Text;AllowedAbbreviations=$allowed}
@@ -102,7 +110,38 @@ function ConvertFrom-YakuPublicationCandidateResponse {
     if($start -ge 0){$json=$normalized.Substring($start+$prefix.Length,$normalized.Length-($start+$prefix.Length)-$(if($hasEnd){$end.Length}else{0})).Trim()}elseif($normalized.StartsWith('{')){$json=$(if($hasEnd){$normalized.Substring(0,$normalized.Length-$end.Length).Trim()}else{$normalized})}else{throw 'CAT_PUBLICATION_RESPONSE_CONTRACT_MISSING'}
     try{$payload=$json|ConvertFrom-Json}catch{throw 'CAT_PUBLICATION_RESPONSE_JSON_INVALID'}
     if([string]$payload.contract -ne [string]$Request.ContractVersion -or [string]$payload.request_id -ne [string]$Request.RequestId){throw 'CAT_PUBLICATION_RESPONSE_BINDING_MISMATCH'}
+    # 申告の照合表は、素の entry_id だけでなく**送った形**でも引けるようにする。
+    #
+    # 2026-08-17 に実行して再現した。sidecar は丸ごと数値マスクを通るので、
+    # entry_id（32桁の16進）は数字の並びごとに置き換わって出ていく。
+    #
+    #   登録 b5ed71b05d4646aab96ae1e447b1f7ce
+    #   送信 b[[N10]]ed[[N11]]b[[N12]]d[[N13]]aab[[N14]]ae[[N15]]e[[N16]]b[[N17]]f[[N18]]ce
+    #   version は [[N19]]
+    #
+    # モデルは見せられた形しか返せない。素の id で作った表と突き合わせると
+    # 必ず外れ、CAT_PUBLICATION_RESPONSE_ABBREVIATION_NOT_ALLOWED が
+    # **応答全体**に対して投げられる。つまり利用者が略語を登録し、モデルが
+    # それを使ったと申告した瞬間に、候補生成が丸ごと落ちていた。
+    #
+    # 試験（Test-YakuV9170Publication）は素の entry_id で応答を組むので緑のまま
+    # だった。試験が本番と違う入力を作っていた。
+    #
+    # 直し方は、照合表に「送った形」の鍵を足すだけにする。素の鍵は残すので、
+    # 既存の呼び出しも試験もそのまま通る。対応づけは位置で取る。sidecar は
+    # 同じ JSON の値だけを置換したものなので、allowed_abbreviations[i] は
+    # 1対1で対応する。
     $allowed=@{};foreach($entry in @($Request.AllowedAbbreviations)){$allowed[[string]$entry.entry_id+':'+[string]$entry.version]=$entry}
+    try{
+        $sentAbbreviations=@((([string]$Request.ProtectedSidecar)|ConvertFrom-Json).allowed_abbreviations)
+        $rawAbbreviations=@($Request.AllowedAbbreviations)
+        if($sentAbbreviations.Count -eq $rawAbbreviations.Count){
+            for($abbrIndex=0;$abbrIndex -lt $sentAbbreviations.Count;$abbrIndex++){
+                $sentKey=[string]$sentAbbreviations[$abbrIndex].entry_id+':'+[string]$sentAbbreviations[$abbrIndex].version
+                if(-not $allowed.ContainsKey($sentKey)){$allowed[$sentKey]=$rawAbbreviations[$abbrIndex]}
+            }
+        }
+    }catch{}
     $candidates=New-Object System.Collections.Generic.List[object];$ordinal=0
     foreach($row in @($payload.candidates|Select-Object -First 5)){
         $protectedText=([string]$row.text).Trim();if([string]::IsNullOrWhiteSpace($protectedText)-or $protectedText.Length -gt 20000){throw 'CAT_PUBLICATION_RESPONSE_CANDIDATE_INVALID'}
@@ -111,7 +150,10 @@ function ConvertFrom-YakuPublicationCandidateResponse {
         foreach($use in @($row.used_abbreviations)){
             $key=[string]$use.entry_id+':'+[string]$use.version
             if(-not $allowed.ContainsKey($key)){throw 'CAT_PUBLICATION_RESPONSE_ABBREVIATION_NOT_ALLOWED'}
-            $used.Add([pscustomobject]@{entry_id=[string]$use.entry_id;version=[int]$use.version;abbreviation=[string]$allowed[$key].abbreviation;full_form=[string]$allowed[$key].full_form;meaning=[string]$allowed[$key].meaning})|Out-Null
+            # 記録するのは登録簿の値であって、モデルの復唱ではない。
+            # 復唱はマスク済みの形なので、[int] へ落とすと "[[N19]]" で壊れる。
+            # 素の値は照合で引き当てた $allowed[$key] が持っている。
+            $used.Add([pscustomobject]@{entry_id=[string]$allowed[$key].entry_id;version=[int]$allowed[$key].version;abbreviation=[string]$allowed[$key].abbreviation;full_form=[string]$allowed[$key].full_form;meaning=[string]$allowed[$key].meaning})|Out-Null
         }
         $text=Restore-YakuNumericMask -Text $protectedText -Map $Request.NumericMaskMap -Direction auto -SourceText ([string]$Request.ProtectedSidecar)
         foreach($use in @($used.ToArray())){
@@ -135,6 +177,31 @@ function Complete-YakuCatPublicationCandidateSet {
         $maxChars=[int]$(try{$Request.PlacementBudget.max_chars}catch{0});$candidate.fit_verification_status=$(if($maxChars -gt 0 -and ([string]$candidate.text).Length -gt $maxChars){'estimated_overflow'}else{'within_estimate'})
     }
     return [pscustomobject]@{candidate_set_id=[string]$Parsed.CandidateSetId;project_id=[string]$Project.Id;segment_id=[string]$Request.SegmentId;base_revision=[int]$Request.ProjectRevision;source_hash=[string]$Request.SourceHash;canonical_hash=[string]$Request.CanonicalHash;source_facts_hash=[string]$Request.SourceFactsHash;terminology_hash=[string]$Request.TerminologyHash;abbreviation_registry_hash=[string]$Request.AbbreviationRegistryHash;placement_budget=$Request.PlacementBudget;placement_budget_hash=[string]$Request.PlacementBudgetHash;dependency_fingerprint=[string]$Request.DependencyFingerprint;request_contract_version=[string]$Request.ContractVersion;candidates=@($Parsed.Candidates);cannot_fit_reason=[string]$Parsed.CannotFitReason}
+}
+
+function Invoke-YakuCatPublicationCandidateRequest {
+    <# Copilotへ送るのはここだけ。数値maskを作るのが同じファイルの
+       New-YakuCatProtectedPublicationCandidateRequest なので、送信も同じ
+       ファイルに置く。ジョブのランスペースから直接Copilotを叩くと、
+       「どこで伏せたか」をファイル単位の統制
+       （tools/Test-YakuV9160NumericMasking.ps1 §10-21）で名指しできない。 #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Root,
+        [Parameter(Mandatory=$true)]$Project,
+        [Parameter(Mandatory=$true)][int]$Index,
+        [Parameter(Mandatory=$true)]$PlacementBudget,
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$StartedDependencyFingerprint,
+        [Parameter(Mandatory=$true)][AllowNull()]$Settings,
+        [AllowNull()]$Warnings,
+        [AllowNull()]$ProgressState
+    )
+    $request=New-YakuCatProtectedPublicationCandidateRequest -Root $Root -Project $Project -Index $Index -PlacementBudget $PlacementBudget
+    if([string]$request.DependencyFingerprint -ne $StartedDependencyFingerprint){throw 'CAT_PUBLICATION_DEPENDENCY_STALE'}
+    Set-YakuTranslationProgress -ProgressState $ProgressState -Mode 'working' -Label 'Excelに入れる候補を作っています' -Progress 35 -Detail '情報を削らずに短くできる案を確認しています。' -Phase 'publication_candidates'
+    $raw=Invoke-YakuProtectedCopilotPrompt -Envelope $request.Envelope -Settings $Settings -AnswerFormat labeled -PreserveEndMarker -Warnings $Warnings -ProgressState $ProgressState
+    $parsed=ConvertFrom-YakuPublicationCandidateResponse -Response $raw -Request $request
+    $candidateSet=Complete-YakuCatPublicationCandidateSet -Project $Project -Request $request -Parsed $parsed
+    return [pscustomobject]@{CandidateSet=$candidateSet;SegmentId=[string]$request.SegmentId;PlacementBudgetHash=[string]$request.PlacementBudgetHash;DependencyFingerprint=[string]$request.DependencyFingerprint}
 }
 
 function Apply-YakuCatPublicationCandidate {

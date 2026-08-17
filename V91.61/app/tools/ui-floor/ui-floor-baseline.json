@@ -1,0 +1,11 @@
+﻿{
+    "note":  "画面の床の基準値。ここに載っている違反は「今もある」という記録であって、正しいという意味ではない。",
+    "viewport":  {
+                     "width":  1380,
+                     "height":  900
+                 },
+    "recorded_at":  "2026-08-14T21:18:17",
+    "violations":  [
+                       "workspace|label|form#cat-concordance-form \u003e button.secondary-button.compact|探す|wrapped"
+                   ]
+}

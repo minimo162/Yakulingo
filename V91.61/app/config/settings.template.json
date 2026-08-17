@@ -6,6 +6,7 @@
   "translate_shapes": true,
   "translate_charts": true,
   "output_font_name": "Arial",
+  "output_font_name_jp": "MS Pゴシック",
   "translation_cache_enabled": true,
   "request_timeout": 240,
   "extract_timeout_seconds": 300,

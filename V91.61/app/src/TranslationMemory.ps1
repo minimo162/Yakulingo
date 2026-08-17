@@ -150,6 +150,399 @@ function Test-YakuTranslationMemoryTombstone {
     return ([string]$Entry.event_id -eq $expected)
 }
 
+function Clear-YakuTranslationMemoryCache {
+    <#
+      記憶化を捨てる。記憶化は足しであって前提ではないので、いつ捨てても
+      結果は変わらず、次の呼び出しがJSONLから作り直すだけである。
+    #>
+    $script:YakuTranslationMemorySnapshotCache = @{}
+}
+
+function Get-YakuTranslationMemorySnapshotCache {
+    if (-not (Get-Variable -Name YakuTranslationMemorySnapshotCache -Scope Script -ErrorAction SilentlyContinue)) {
+        $script:YakuTranslationMemorySnapshotCache = @{}
+    }
+    return $script:YakuTranslationMemorySnapshotCache
+}
+
+function Get-YakuTranslationMemoryContentDigest {
+    <#
+      byte列の一部または全部のSHA-256。指紋にも、前半の照合にも同じ物差しを使う。
+
+      $Bytes に [Parameter(Mandatory=$true)] を付けてはならない。PowerShell 5.1 は
+      必須パラメータが「空か」を判定するために配列を全要素たどる。5MBのbyte[]で
+      1回あたり **185ms**（実測 5.1.26100.9168）。中身のSHA-256そのものは1.3msである。
+      つまり計算ではなく引数の受け渡しが費用の99%を占める。同じ理由で
+      [AllowEmptyCollection()] 単独は無害（1.3ms）。必須にするのが高い。
+    #>
+    param(
+        [byte[]]$Bytes,
+        [int]$Offset = 0,
+        [int]$Count = -1
+    )
+    if ($null -eq $Bytes) { $Bytes = [byte[]]@() }
+    if ($Count -lt 0) { $Count = $Bytes.Length - $Offset }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { return [BitConverter]::ToString($sha.ComputeHash($Bytes, $Offset, $Count)).Replace('-', '') } finally { $sha.Dispose() }
+}
+
+function New-YakuTranslationMemorySnapshotState {
+    return [pscustomobject]@{
+        Fingerprint  = ''
+        Length       = [long]0
+        Digest       = ''
+        EndsAtLine   = $true
+        Map          = [ordered]@{}
+        EventIds     = (New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal))
+        CandidateMap = $null
+        Candidates   = $null
+        # 完全一致だけを引くための索引（鍵 → 候補）。Find-YakuTranslationMemoryExact
+        # が最初に引かれたときに作る。追記があれば捨てて作り直す。
+        ExactIndex   = $null
+        Broken       = 0
+        LastUsed     = [DateTime]::UtcNow.Ticks
+    }
+}
+
+function Get-YakuTranslationMemoryDecodedLineCount {
+    <#
+      このプロセスが起動してからJSONLの行をのべ何本解いたか。
+
+      速さの門をここへ置く。時計は機械の混み具合で揺れるが、この数は揺れない。
+      追記のたびに全件を解き直す作りへ戻すと、追記1回につき種の件数ぶん増える。
+      snapshotごとではなくプロセス全体で数える。作り直すたびに新しいsnapshotを
+      作る実装だと、snapshotの中に持たせた数は毎回0へ戻り、増えたことが見えない。
+    #>
+    if (-not (Get-Variable -Name YakuTranslationMemoryDecodedLines -Scope Script -ErrorAction SilentlyContinue)) {
+        $script:YakuTranslationMemoryDecodedLines = [long]0
+    }
+    return [long]$script:YakuTranslationMemoryDecodedLines
+}
+
+function Add-YakuTranslationMemorySnapshotLines {
+    <#
+      JSONLの行をsnapshotへ取り込む。全件を作り直すときも、末尾へ追記された
+      分だけを取り込むときも、この1本を通す。触れたunit_idを返す。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$State,
+        [AllowEmptyCollection()][string[]]$Lines = @()
+    )
+    $touched = New-Object 'System.Collections.Generic.List[string]'
+    $decoded = Get-YakuTranslationMemoryDecodedLineCount
+    foreach ($line in $Lines) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        $decoded = $decoded + 1
+        try {
+            $o = $line | ConvertFrom-Json
+            $schema = 0
+            try { $schema = [int]$o.schema_version } catch { $schema = 0 }
+            # 上書きされた行のevent IDも残す。outbox再送の冪等はunitの現在値では
+            # なく「その追記を一度受けたか」で決まる。
+            if ($schema -eq 3 -and [string]$o.event_id -match '^[a-f0-9]{64}$') { [void]$State.EventIds.Add([string]$o.event_id) }
+            $unitId = Resolve-YakuTranslationMemoryRecordUnitId -Entry $o
+            if ($schema -eq 3) {
+                # unit_id自体だけを書き換えても、出典から導いたunitへfail-closedにする。
+                if ([string]::IsNullOrWhiteSpace($unitId)) { $unitId = 'invalid:' + (Get-YakuTranslationMemoryHash -Text $line) }
+            } elseif ($schema -eq 2 -and -not [string]::IsNullOrWhiteSpace($unitId)) {
+                # 出典検証できるv2はunit_idをそのまま使う。
+            } else {
+                # 出典の無い旧形式は移行調査のため読めるが、Findでは候補にしない。
+                $key = [string]$o.key
+                if ([string]::IsNullOrWhiteSpace($key)) { continue }
+                $unitId = 'legacy:' + (Get-YakuTranslationMemoryHash -Text ($key + [string][char]31 + [string]$o.target))
+            }
+            $State.Map[$unitId] = $o
+            [void]$touched.Add($unitId)
+        } catch { $State.Broken = [int]$State.Broken + 1 }
+    }
+    $script:YakuTranslationMemoryDecodedLines = [long]$decoded
+    return ,$touched
+}
+
+function ConvertTo-YakuTranslationMemoryCandidate {
+    <#
+      出典検証を通ったentryだけを、照合に使う軽い姿へ写す。通らなければ$null。
+      憶えるのは「検証を通った」という結論ではなく、通ったentryそのものである。
+    #>
+    param([AllowNull()]$Entry)
+    if (-not (Test-YakuTranslationMemoryProvenance -Entry $Entry)) { return $null }
+    $source = [string]$Entry.source
+    $target = [string]$Entry.target
+    $storedKey = [string]$Entry.key
+    return [pscustomobject]@{
+        Key         = $storedKey
+        KeyLength   = $storedKey.Length
+        Direction   = [string]$Entry.direction
+        Source      = $source
+        Target      = $target
+        SourceLower = $source.ToLowerInvariant()
+        TargetLower = $target.ToLowerInvariant()
+        Saved       = [string]$Entry.saved
+        UnitId      = $(if ([int]$Entry.schema_version -eq 3) { [string]$Entry.unit_id } else { Resolve-YakuTranslationMemoryRecordUnitId -Entry $Entry })
+        ReferenceId = [string]$Entry.reference_id
+        SourceName  = [string]$Entry.origin_file_name
+        Location    = [string]$Entry.origin_location
+        Page        = [int]$Entry.origin_page
+        OriginProjectId = [string]$Entry.origin_project_id
+        OriginSegmentId = [string]$Entry.origin_segment_id
+        ReviewRevision  = [int]$Entry.review_revision
+        SourceHash  = [string]$Entry.source_hash
+        TargetHash  = [string]$Entry.target_hash
+    }
+}
+
+function ConvertTo-YakuTranslationMemoryHit {
+    <#
+      候補を、呼び出し側へ返す姿へ組み立てる。
+
+      完全一致だけの口（Find-YakuTranslationMemoryExact）と、あいまいも含む口
+      （Find-YakuTranslationMemory）で**同じ組み立てを通す**。片方に写経すると、
+      項目を足したときにもう片方が黙って欠ける。CAT側は ReferenceId が無いと
+      出典を書けないので、欠けても訳文だけは入り、出典だけが静かに消える。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Candidate,
+        [bool]$Exact = $false,
+        [double]$Score = 0
+    )
+    $e = $Candidate
+    return [pscustomobject]@{
+        Source = $e.Source
+        Target = $e.Target
+        Exact  = [bool]$Exact
+        Ratio  = [double]$Score
+        Score  = [double]$Score
+        MatchType = $(if ([bool]$Exact) { 'exact' } else { 'fuzzy' })
+        Saved  = $e.Saved
+        UnitId = $e.UnitId
+        ReferenceId = $e.ReferenceId
+        SourceName = $e.SourceName
+        Location = $e.Location
+        Page = $e.Page
+        OriginProjectId = $e.OriginProjectId
+        OriginSegmentId = $e.OriginSegmentId
+        ReviewRevision = $e.ReviewRevision
+        SourceHash = $e.SourceHash
+        TargetHash = $e.TargetHash
+    }
+}
+
+function Get-YakuTranslationMemorySnapshot {
+    <#
+      同じ世代のJSONLを1回だけ読み、解いた姿をプロセス内に憶える。
+
+      なぜ要るか。Find-YakuTranslationMemoryはCATで行を移るたびに呼ばれる。
+      素で書くと、変わっていない同じファイルに対して毎回
+      ConvertFrom-Json（行ごと）と Test-...Provenance（entryごとにSHA-256を5個）を
+      やり直す。実データ123件で約104ms、合成5,000件で約6秒かかっていた。
+
+      世代の見分けには中身のSHA-256を使う。長さとmtimeだけだと、Windowsの
+      ファイル時刻の更新間隔（約15.6ms）の内側で同じ長さに書き換えられた場合に
+      古い姿を返してしまう。改ざんされた行を候補から外すのはこの層より上
+      （Test-...Provenance）の仕事だが、その判定を憶えておく以上、憶えた鍵が
+      中身と一対一でなければ意味がない。5MBのJSONLでも読取と要約で約6msである。
+
+      指紋が合わなくても、まだ全部作り直すとは限らない。JSONLは追記専用なので、
+      いま読んだbyte列の**前半が、前に憶えたときのbyte列とSHA-256で一致する**なら、
+      増えた分だけを取り込んで憶えている姿を前へ進める。「伸びた」ことだけを
+      根拠にはしない。前半が1byteでも違えば全部作り直す。ここを緩めると、
+      追記に見せかけた差し替えが素通りする。
+
+      これが要るのは、確認済みにするたびにTMへ1行追記するからである。追記の
+      たびに全件を作り直すと、読みで得た分を書きで失い、さらに次の読みが
+      毎回coldになる（実測: 実データ123件で追記直後のFindが88.8ms）。
+
+      記憶化はプロセス内だけに置く。ディスクにも共有フォルダにも書かない。
+    #>
+    param([Parameter(Mandatory=$true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return (New-YakuTranslationMemorySnapshotState) }
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    $bytes = [IO.File]::ReadAllBytes($fullPath)
+    $digest = Get-YakuTranslationMemoryContentDigest -Bytes $bytes
+    $fingerprint = ([string]$bytes.Length + '|' + $digest)
+
+    $cache = Get-YakuTranslationMemorySnapshotCache
+    $state = $null
+    $tailOffset = 0
+    if ($cache.ContainsKey($fullPath)) {
+        $hit = $cache[$fullPath]
+        if ([string]$hit.Fingerprint -eq $fingerprint) {
+            $hit.LastUsed = [DateTime]::UtcNow.Ticks
+            return $hit
+        }
+        # 憶えた分が行の途中で終わっていたら前へ進めない。次の追記はその行の
+        # 続きとして連結され、憶えている「1行」と食い違う。
+        if ([bool]$hit.EndsAtLine -and [long]$hit.Length -gt 0 -and [long]$bytes.Length -gt [long]$hit.Length) {
+            $prefix = Get-YakuTranslationMemoryContentDigest -Bytes $bytes -Offset 0 -Count ([int]$hit.Length)
+            if ($prefix -eq [string]$hit.Digest) {
+                $state = $hit
+                $tailOffset = [int]$hit.Length
+            }
+        }
+    }
+    if ($null -eq $state) { $state = New-YakuTranslationMemorySnapshotState }
+
+    # 読んだそのbyte列から復号する。指紋用と本文用で二度読むと、その隙間の
+    # 書き込みで指紋と中身が食い違う。
+    $text = [Text.Encoding]::UTF8.GetString($bytes, $tailOffset, ($bytes.Length - $tailOffset))
+    if ($tailOffset -eq 0 -and $text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }
+    $brokenBefore = [int]$state.Broken
+    $touched = Add-YakuTranslationMemorySnapshotLines -State $state -Lines ($text -split "`r`n|`n|`r")
+    $brokenNow = [int]$state.Broken - $brokenBefore
+    if ($brokenNow -gt 0) { try { Write-YakuLog "Translation memory had unreadable lines. broken=$brokenNow" 'WARN' } catch {} }
+
+    # 候補の姿は Find / Concordance が最初に呼ぶまで作らない。書き込み経路は
+    # 候補一覧を使わないので、その費用（entryごとにSHA-256を5個）を払わない。
+    # すでに作ってあるなら、触れたunitだけ作り直す。
+    if ($null -ne $state.CandidateMap) {
+        foreach ($unitKey in $touched) {
+            $candidate = ConvertTo-YakuTranslationMemoryCandidate -Entry $state.Map[$unitKey]
+            if ($null -eq $candidate) {
+                if ($state.CandidateMap.Contains($unitKey)) { $state.CandidateMap.Remove($unitKey) }
+            } else {
+                $state.CandidateMap[$unitKey] = $candidate
+            }
+        }
+        $state.Candidates = $null
+    }
+    # 中身が変わったのに索引を残すと、消えた単位を引き続ける。ここへ来たのは
+    # 追記か作り直しのどちらかなので、必ず捨てる。作り直す費用は候補の件数ぶんの
+    # 辞書挿入だけで、あいまい照合1回よりはるかに安い。
+    $state.ExactIndex = $null
+
+    $state.Fingerprint = $fingerprint
+    $state.Length = [long]$bytes.Length
+    $state.Digest = $digest
+    $state.EndsAtLine = ($bytes.Length -eq 0 -or $bytes[$bytes.Length - 1] -eq 10 -or $bytes[$bytes.Length - 1] -eq 13)
+    $state.LastUsed = [DateTime]::UtcNow.Ticks
+    # 常駐プロセスなので置きっぱなしにしない。実運用の宛先は方向ごとの2本だが、
+    # 試験は使い捨ての一時ファイルを次々に作る。
+    if (-not $cache.ContainsKey($fullPath) -and $cache.Count -ge 8) {
+        $oldest = $null
+        foreach ($k in @($cache.Keys)) {
+            if ($null -eq $oldest -or [long]$cache[$k].LastUsed -lt [long]$cache[$oldest].LastUsed) { $oldest = $k }
+        }
+        if ($null -ne $oldest) { $cache.Remove($oldest) }
+    }
+    $cache[$fullPath] = $state
+    return $state
+}
+
+function Resolve-YakuTranslationMemoryCandidateList {
+    <#
+      snapshotから候補の一覧を作る（無ければ作って憶える）。
+
+      Path ではなく State を受け取るのは、索引を作る側が同じ世代の State へ
+      索引を結び付けられるようにするため。Path で二度引くと、その間にJSONLが
+      追記された場合、索引を「もう cache に居ない State」へ付けてしまい、
+      次回また作り直す。遅くなるだけで結果は正しいので、**黙って遅くなる**。
+    #>
+    param([Parameter(Mandatory=$true)]$State)
+    if ($null -eq $State.CandidateMap) {
+        $built = [ordered]@{}
+        foreach ($unitKey in $State.Map.Keys) {
+            $candidate = ConvertTo-YakuTranslationMemoryCandidate -Entry $State.Map[$unitKey]
+            if ($null -ne $candidate) { $built[$unitKey] = $candidate }
+        }
+        $State.CandidateMap = $built
+        $State.Candidates = $null
+    }
+    if ($null -eq $State.Candidates) {
+        # 並びはMapの順、つまりJSONLで最初に現れた順にそろえる。差分で
+        # 進めても全件で作り直しても同じ順にするための一手間である。
+        $list = New-Object 'System.Collections.Generic.List[object]'
+        foreach ($unitKey in $State.Map.Keys) {
+            if ($State.CandidateMap.Contains($unitKey)) { [void]$list.Add($State.CandidateMap[$unitKey]) }
+        }
+        $State.Candidates = $list
+    }
+    return ,$State.Candidates
+}
+
+function Get-YakuTranslationMemoryCandidates {
+    <#
+      照合に使う姿。出典検証を通ったentryだけが入る。
+      最初に引かれたときに作り、以後は追記で触れたunitだけを作り直す。
+    #>
+    param([Parameter(Mandatory=$true)][string]$Path)
+    $state = Get-YakuTranslationMemorySnapshot -Path $Path
+    return ,(Resolve-YakuTranslationMemoryCandidateList -State $state)
+}
+
+function Get-YakuTranslationMemoryExactKey {
+    <# 索引の鍵。方向が違う訳を引かないよう、方向を鍵に含める。 #>
+    param([AllowNull()][string]$Direction, [AllowNull()][string]$Key)
+    return ([string]$Direction + [string][char]31 + [string]$Key)
+}
+
+function Get-YakuTranslationMemoryExactIndex {
+    <#
+      正規化鍵 → 候補の索引。完全一致だけを引くために持つ。
+
+      snapshot と同じ世代に結び付ける。追記や作り直しがあれば
+      Get-YakuTranslationMemorySnapshot が捨てるので、古い索引は残らない。
+    #>
+    param([Parameter(Mandatory=$true)][string]$Path)
+    $state = Get-YakuTranslationMemorySnapshot -Path $Path
+    if ($null -ne $state.ExactIndex) { return $state.ExactIndex }
+    $index = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([System.StringComparer]::Ordinal)
+    foreach ($candidate in (Resolve-YakuTranslationMemoryCandidateList -State $state)) {
+        $key = Get-YakuTranslationMemoryExactKey -Direction ([string]$candidate.Direction) -Key ([string]$candidate.Key)
+        if (-not $index.ContainsKey($key)) { $index[$key] = New-Object 'System.Collections.Generic.List[object]' }
+        [void]$index[$key].Add($candidate)
+    }
+    $state.ExactIndex = $index
+    return $index
+}
+
+function Find-YakuTranslationMemoryExact {
+    <#
+      完全一致だけを引く。あいまい照合は回さない。
+
+      **なぜ別の口にするか（2026-08-15 の実測）。** 事前翻訳は行ごとに完全一致を
+      引くが、Find-YakuTranslationMemory は全件を走査して3-gram Dice を計算して
+      から Exact 以外を捨てる。翻訳メモリに件数の上限は無いので、費用は件数に
+      比例して伸びる。400行の資料・1回の押下ぶんで実測:
+
+        TM   123件 → 見積り 1,759ms + 反映 2,111ms
+        TM 1,000件 → 9,005ms + 9,033ms
+        TM 3,000件 → 25,670ms + 24,389ms
+
+      Server.ps1 の待ち受けは GetContext → Invoke-YakuRoute の直列1本なので、
+      これは「ボタンが遅い」ではなく**アプリ全体が数十秒止まる**ことを意味する。
+      完全一致は正規化鍵で引けるので、索引を1つ持てば件数に依存しなくなる。
+
+      返す姿は Find-YakuTranslationMemory と同じ組み立て（ConvertTo-...Hit）を
+      使う。ここで写経すると、片方に項目を足したときにもう片方が黙って欠ける。
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Text,
+        [ValidateSet('to_en', 'to_jp')][string]$Direction = 'to_en',
+        [int]$MinLength = 4,
+        [AllowNull()][string]$Path
+    )
+    $t = ([string]$Text).Trim()
+    if ($t.Length -lt $MinLength) { return @() }
+    $targetPath = if ([string]::IsNullOrWhiteSpace($Path)) { Get-YakuTranslationMemoryPath -Direction $Direction } else { $Path }
+    $tn = ConvertTo-YakuTranslationMemoryKey -Text $t
+    if ([string]::IsNullOrWhiteSpace($tn)) { return @() }
+    $index = Get-YakuTranslationMemoryExactIndex -Path $targetPath
+    $key = Get-YakuTranslationMemoryExactKey -Direction $Direction -Key $tn
+    if (-not $index.ContainsKey($key)) { return @() }
+    # 並びは Find-YakuTranslationMemory と同じ意味にする。完全一致どうしは
+    # Saved の新しい順で、同着はJSONLに先に現れたほうを採る。
+    $best = $null
+    foreach ($candidate in $index[$key]) {
+        if ([int]$candidate.KeyLength -lt $MinLength) { continue }
+        if ($null -eq $best) { $best = $candidate; continue }
+        if ([string]::CompareOrdinal([string]$candidate.Saved, [string]$best.Saved) -gt 0) { $best = $candidate }
+    }
+    if ($null -eq $best) { return @() }
+    return @((ConvertTo-YakuTranslationMemoryHit -Candidate $best -Exact $true -Score ([double]1)))
+}
+
 function Read-YakuTranslationMemory {
     <#
       active eventをunit_idごとに返す。後のupsert/tombstoneが同unitの前行を
@@ -160,74 +553,40 @@ function Read-YakuTranslationMemory {
         [AllowNull()][string]$Path
     )
     $target = if ([string]::IsNullOrWhiteSpace($Path)) { Get-YakuTranslationMemoryPath -Direction $Direction } else { $Path }
+    $snapshot = Get-YakuTranslationMemorySnapshot -Path $target
+    # 憶えている辞書そのものは渡さない。呼び出し側が足したり消したりすると
+    # 次の読みが濁る。中のentryは共有のままなので、書き換えずに読むこと。
     $map = [ordered]@{}
-    if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { return $map }
-    $broken = 0
-    foreach ($line in [IO.File]::ReadAllLines($target, [Text.UTF8Encoding]::new($false))) {
-        if ([string]::IsNullOrWhiteSpace($line)) { continue }
-        try {
-            $o = $line | ConvertFrom-Json
-            $schema = 0
-            try { $schema = [int]$o.schema_version } catch { $schema = 0 }
-            $unitId = Resolve-YakuTranslationMemoryRecordUnitId -Entry $o
-            if ($schema -eq 3) {
-                # unit_id自体だけを書き換えても、出典から導いたunitへfail-closedにする。
-                if ([string]::IsNullOrWhiteSpace($unitId)) { $unitId = 'invalid:' + (Get-YakuTranslationMemoryHash -Text $line) }
-                $map[$unitId] = $o
-                continue
-            }
-            if ($schema -eq 2 -and -not [string]::IsNullOrWhiteSpace($unitId)) {
-                $map[$unitId] = $o
-                continue
-            }
-            # 出典の無い旧形式は移行調査のため読めるが、Findでは候補にしない。
-            $key = [string]$o.key
-            if ([string]::IsNullOrWhiteSpace($key)) { continue }
-            $map['legacy:' + (Get-YakuTranslationMemoryHash -Text ($key + [string][char]31 + [string]$o.target))] = $o
-        } catch { $broken++ }
-    }
-    if ($broken -gt 0) { try { Write-YakuLog "Translation memory had unreadable lines. broken=$broken" 'WARN' } catch {} }
+    foreach ($k in $snapshot.Map.Keys) { $map[$k] = $snapshot.Map[$k] }
     return $map
 }
 
+function Get-YakuTranslationMemoryActiveEntry {
+    <#
+      1つのunitのいま有効なeventだけを返す。書き込み経路はここしか見ないので、
+      写しを作る Read-YakuTranslationMemory を通さない。写しは全件ぶんの
+      詰め替えになり、追記1件のたびに払う筋合いがない。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [Parameter(Mandatory=$true)][string]$UnitId
+    )
+    $state = Get-YakuTranslationMemorySnapshot -Path $Path
+    if ($state.Map.Contains($UnitId)) { return $state.Map[$UnitId] }
+    return $null
+}
+
 function Test-YakuTranslationMemoryEventExists {
+    <#
+      outboxは確認済み行の数だけ増える。同期間隔ごとにeventごと全JSONLを読むと
+      二乗になるため、同じファイル世代のevent IDを1回だけ索引化する。
+    #>
     param(
         [Parameter(Mandatory=$true)][string]$Path,
         [Parameter(Mandatory=$true)][string]$EventId
     )
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
-    if (-not (Get-Variable -Name YakuTranslationMemoryEventCache -Scope Script -ErrorAction SilentlyContinue)) {
-        $script:YakuTranslationMemoryEventCache = @{}
-    }
-    $fullPath = [IO.Path]::GetFullPath($Path)
-    $info = Get-Item -LiteralPath $fullPath
-    $fingerprint = ([string]$info.Length + '|' + [string]$info.LastWriteTimeUtc.Ticks)
-    $cached = $null
-    if ($script:YakuTranslationMemoryEventCache.ContainsKey($fullPath)) {
-        $candidate = $script:YakuTranslationMemoryEventCache[$fullPath]
-        if ([string]$candidate.Fingerprint -eq $fingerprint) { $cached = $candidate }
-    }
-    if ($null -ne $cached) { return [bool]$cached.EventIds.Contains($EventId) }
-
-    # outboxは確認済み行の数だけ増える。同期間隔ごとにeventごと全JSONLを
-    # 読むと二乗になるため、同じファイル世代のevent IDを1回だけ索引化する。
-    # lengthとmtimeはTM mutexの内側で取得しており、他processの追記も次回に
-    # fingerprint不一致として再読込する。
-    $eventIds = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-    foreach ($line in [IO.File]::ReadAllLines($fullPath, [Text.UTF8Encoding]::new($false))) {
-        if ([string]::IsNullOrWhiteSpace($line)) { continue }
-        try {
-            $record = $line | ConvertFrom-Json
-            if ([int]$record.schema_version -eq 3 -and [string]$record.event_id -match '^[a-f0-9]{64}$') {
-                [void]$eventIds.Add([string]$record.event_id)
-            }
-        } catch {}
-    }
-    $script:YakuTranslationMemoryEventCache[$fullPath] = [pscustomobject]@{
-        Fingerprint = $fingerprint
-        EventIds = $eventIds
-    }
-    return [bool]$eventIds.Contains($EventId)
+    return [bool](Get-YakuTranslationMemorySnapshot -Path $Path).EventIds.Contains($EventId)
 }
 
 function Add-YakuTranslationMemoryEntry {
@@ -283,8 +642,7 @@ function Add-YakuTranslationMemoryEntry {
         if (Test-YakuTranslationMemoryEventExists -Path $targetPath -EventId $eventId) {
             return [pscustomobject]@{ Added = $false; Reason = 'same'; Key = $key; UnitId = $unitId; ReferenceId = $referenceId }
         }
-        $existing = Read-YakuTranslationMemory -Direction $Direction -Path $targetPath
-        $current = if ($existing.Contains($unitId)) { $existing[$unitId] } else { $null }
+        $current = Get-YakuTranslationMemoryActiveEntry -Path $targetPath -UnitId $unitId
         if ($null -ne $current -and (Test-YakuTranslationMemoryProvenance -Entry $current) -and
             [string]$current.source -eq $src -and [string]$current.target -eq $tgt -and
             [string]$current.reference_id -eq $referenceId) {
@@ -353,11 +711,10 @@ function Add-YakuTranslationMemoryTombstone {
         if (Test-YakuTranslationMemoryEventExists -Path $targetPath -EventId $eventId) {
             return [pscustomobject]@{ Added = $false; Reason = 'same'; UnitId = $unitId }
         }
-        $existing = Read-YakuTranslationMemory -Direction $Direction -Path $targetPath
-        if (-not $existing.Contains($unitId)) {
+        $current = Get-YakuTranslationMemoryActiveEntry -Path $targetPath -UnitId $unitId
+        if ($null -eq $current) {
             return [pscustomobject]@{ Added = $false; Reason = 'missing'; UnitId = $unitId }
         }
-        $current = $existing[$unitId]
         if (Test-YakuTranslationMemoryTombstone -Entry $current) {
             return [pscustomobject]@{ Added = $false; Reason = 'same'; UnitId = $unitId }
         }
@@ -385,27 +742,119 @@ function Add-YakuTranslationMemoryTombstone {
     }
 }
 
-function Get-YakuTranslationMemoryNgrams {
-    param([Parameter(Mandatory=$true)][string]$Text, [int]$Size = 3)
-    $set = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-    if ($Text.Length -le $Size) { [void]$set.Add($Text); return $set }
-    for ($i = 0; $i -le ($Text.Length - $Size); $i++) { [void]$set.Add($Text.Substring($i, $Size)) }
-    return $set
+function Get-YakuTranslationMemoryScorer {
+    <#
+      一致率を出す型を返す。作れなければ $null を返し、呼び出し側が
+      Get-YakuTranslationMemoryEditRatio の PowerShell 版へ落ちる。
+
+      Add-Type はプロセスにつき1回で 91ms（実測）。2度目以降は既に読み込まれた
+      型を拾う。試験は同じプロセスで何度も読み直すので、先に型の有無を見ないと
+      「その型は既にある」で落ちる。
+    #>
+    if ($script:YakuTmScorerChecked) { return $script:YakuTmScorerType }
+    $script:YakuTmScorerChecked = $true
+    $existing = 'YakuLingoTmScorer' -as [type]
+    if ($null -ne $existing) { $script:YakuTmScorerType = $existing; return $existing }
+    try {
+        Add-Type -ErrorAction Stop -TypeDefinition @'
+public static class YakuLingoTmScorer {
+    // 正規化した編集距離。1 - distance / max(length) を返す。
+    // 行と行の比較しかしないので、直前の1行だけを持つ実装で足りる。
+    public static double Score(string a, string b) {
+        if (a == null || b == null) return 0.0;
+        if (a == b) return 1.0;
+        if (a.Length == 0 || b.Length == 0) return 0.0;
+        int[] prev = new int[b.Length + 1];
+        int[] cur = new int[b.Length + 1];
+        for (int j = 0; j <= b.Length; j++) { prev[j] = j; }
+        for (int i = 1; i <= a.Length; i++) {
+            cur[0] = i;
+            char ca = a[i - 1];
+            for (int j = 1; j <= b.Length; j++) {
+                int cost = (ca == b[j - 1]) ? 0 : 1;
+                int d = prev[j] + 1;
+                int ins = cur[j - 1] + 1;
+                if (ins < d) { d = ins; }
+                int sub = prev[j - 1] + cost;
+                if (sub < d) { d = sub; }
+                cur[j] = d;
+            }
+            int[] t = prev; prev = cur; cur = t;
+        }
+        int max = a.Length > b.Length ? a.Length : b.Length;
+        return 1.0 - ((double)prev[b.Length] / max);
+    }
+}
+'@ | Out-Null
+        $script:YakuTmScorerType = 'YakuLingoTmScorer' -as [type]
+    } catch {
+        $script:YakuTmScorerType = $null
+    }
+    return $script:YakuTmScorerType
+}
+
+function Get-YakuTranslationMemoryEditRatioManaged {
+    <#
+      Add-Type が使えない環境のための控え。**本体と同じ値を返さなければならない。**
+      別の関数に分けてあるのは、突き合わせの試験が本体を2回呼ぶ形にならないため
+      （同じ経路を2回測って「一致した」と言うのは、何も確かめていない）。
+    #>
+    param([AllowNull()][string]$Left, [AllowNull()][string]$Right)
+    $a = [string]$Left; $b = [string]$Right
+    if ([string]::Equals($a, $b, [StringComparison]::Ordinal)) { return [double]1 }
+    if ($a.Length -eq 0 -or $b.Length -eq 0) { return [double]0 }
+    $prev = New-Object 'int[]' ($b.Length + 1)
+    $cur = New-Object 'int[]' ($b.Length + 1)
+    for ($j = 0; $j -le $b.Length; $j++) { $prev[$j] = $j }
+    for ($i = 1; $i -le $a.Length; $i++) {
+        $cur[0] = $i
+        for ($j = 1; $j -le $b.Length; $j++) {
+            $cost = if ($a[$i - 1] -ceq $b[$j - 1]) { 0 } else { 1 }
+            $d = $prev[$j] + 1
+            if (($cur[$j - 1] + 1) -lt $d) { $d = $cur[$j - 1] + 1 }
+            if (($prev[$j - 1] + $cost) -lt $d) { $d = $prev[$j - 1] + $cost }
+            $cur[$j] = $d
+        }
+        $swap = $prev; $prev = $cur; $cur = $swap
+    }
+    $max = [Math]::Max($a.Length, $b.Length)
+    return [double](1.0 - ($prev[$b.Length] / $max))
+}
+
+function Get-YakuTranslationMemoryEditRatio {
+    <# 正規化済みの2つの鍵の一致率。型が作れなければ控えへ落ちる。 #>
+    param([AllowNull()][string]$Left, [AllowNull()][string]$Right)
+    $scorer = Get-YakuTranslationMemoryScorer
+    if ($null -eq $scorer) { return (Get-YakuTranslationMemoryEditRatioManaged -Left $Left -Right $Right) }
+    return [double]$scorer::Score([string]$Left, [string]$Right)
 }
 
 function Get-YakuTranslationMemorySimilarity {
-    <# 正規化文字trigramのDice係数。日本語でも形態素辞書なしで差分を拾える。 #>
+    <#
+      正規化した文字列どうしの編集距離。1 - distance / max(length)。
+
+      2026-08-16 まで文字trigramのDice係数だった。**文の長さで結果が変わる**ため
+      取り替えた。n文字の文で隣り合う2字を書き換えると、trigramは n-2 個のうち
+      4個が壊れるので Dice は 1 - 4/(n-2) になる。式のとおりに実測した。
+
+          n=12 → 0.600（式 0.600）  n=25 → 0.826  n=45 → 0.905
+
+      つまり **16字未満の文は、1語違うだけで必ず 0.70 を割って隠れる**。
+      勘定科目名・表の見出し・短い注記はほぼ全部この長さである。一方で
+      「1文まるごと余計にくっついた候補」は 0.793、「前後の節を入れ替えただけ」は
+      0.750 で表に出ていた。**役に立たない候補が、役に立つ候補より上に来ていた。**
+
+      編集距離は同じ9組で、使い回せる6組が全部 0.733 以上、部分的な2組が
+      0.641 と 0.444、無関係が 0.200 と、順序が入れ替わらない。
+      費用も 5,000件 19ms（Diceはn-gramを作り置きしても92ms、作る初回が645ms）。
+
+      出典 `_docs/測定_一致率_2026-08-16.md`
+    #>
     param([AllowNull()][string]$Left, [AllowNull()][string]$Right)
     $a = ConvertTo-YakuTranslationMemoryKey -Text $Left
     $b = ConvertTo-YakuTranslationMemoryKey -Text $Right
     if ([string]::IsNullOrWhiteSpace($a) -or [string]::IsNullOrWhiteSpace($b)) { return [double]0 }
-    if ([string]::Equals($a, $b, [StringComparison]::Ordinal)) { return [double]1 }
-    $gramsA = Get-YakuTranslationMemoryNgrams -Text $a -Size 3
-    $gramsB = Get-YakuTranslationMemoryNgrams -Text $b -Size 3
-    $intersection = 0
-    foreach ($gram in $gramsA) { if ($gramsB.Contains($gram)) { $intersection++ } }
-    if (($gramsA.Count + $gramsB.Count) -eq 0) { return [double]0 }
-    return [double](2.0 * $intersection / ($gramsA.Count + $gramsB.Count))
+    return (Get-YakuTranslationMemoryEditRatio -Left $a -Right $b)
 }
 
 function Search-YakuTranslationMemoryConcordance {
@@ -426,29 +875,26 @@ function Search-YakuTranslationMemoryConcordance {
     $needle = ([string]$Query).Trim()
     if ($needle.Length -lt 2) { return @() }
     $lowered = $needle.ToLowerInvariant()
-    $entries = Read-YakuTranslationMemory -Direction $Direction -Path $Path
+    $target = if ([string]::IsNullOrWhiteSpace($Path)) { Get-YakuTranslationMemoryPath -Direction $Direction } else { $Path }
+    $entries = Get-YakuTranslationMemoryCandidates -Path $target
     if ($entries.Count -eq 0) { return @() }
     $hits = New-Object System.Collections.Generic.List[object]
-    foreach ($unitId in $entries.Keys) {
-        $e = $entries[$unitId]
-        if (-not (Test-YakuTranslationMemoryProvenance -Entry $e)) { continue }
-        if ([string]$e.direction -ne $Direction) { continue }
-        $source = [string]$e.source
-        $target = [string]$e.target
-        $inSource = $source.ToLowerInvariant().Contains($lowered)
-        $inTarget = $target.ToLowerInvariant().Contains($lowered)
+    foreach ($e in $entries) {
+        if ($e.Direction -ne $Direction) { continue }
+        $inSource = $e.SourceLower.Contains($lowered)
+        $inTarget = $e.TargetLower.Contains($lowered)
         if (-not $inSource -and -not $inTarget) { continue }
         [void]$hits.Add([pscustomobject]@{
-                Source = $source
-                Target = $target
+                Source = $e.Source
+                Target = $e.Target
                 MatchedIn = $(if ($inSource -and $inTarget) { 'both' } elseif ($inSource) { 'source' } else { 'target' })
-                Saved = [string]$e.saved
-                SourceName = [string]$e.origin_file_name
-                Location = [string]$e.origin_location
+                Saved = $e.Saved
+                SourceName = $e.SourceName
+                Location = $e.Location
             })
     }
     # 新しく確認したものから見せる。古い言い回しを先に出しても役に立たない。
-    return @(@($hits.ToArray()) | Sort-Object -Property @{ Expression = { [string]$_.Saved }; Descending = $true } | Select-Object -First $Limit)
+    return @(@($hits.ToArray()) | Sort-Object -Property @{ Expression = 'Saved'; Descending = $true } | Select-Object -First $Limit)
 }
 
 function Find-YakuTranslationMemory {
@@ -463,41 +909,63 @@ function Find-YakuTranslationMemory {
     )
     $t = ([string]$Text).Trim()
     if ($t.Length -lt $MinLength) { return @() }
-    $entries = Read-YakuTranslationMemory -Direction $Direction -Path $Path
+    $targetPath = if ([string]::IsNullOrWhiteSpace($Path)) { Get-YakuTranslationMemoryPath -Direction $Direction } else { $Path }
+    $entries = Get-YakuTranslationMemoryCandidates -Path $targetPath
     if ($entries.Count -eq 0) { return @() }
     $tn = ConvertTo-YakuTranslationMemoryKey -Text $t
+    # 出典検証で key = ConvertTo-Key(source) を確かめてあるので、entry側の
+    # 正規化はやり直さない。
+    $blank = [string]::IsNullOrWhiteSpace($tn)
+    # 型は輪の外で1回だけ引く。輪の中で関数を挟むと、5,000件でその呼び出し費用が
+    # 計算そのものより大きくなる。
+    $scorer = Get-YakuTranslationMemoryScorer
+    $queryLength = $tn.Length
+    # 長さの差だけで足切りできる。編集距離は必ず長さの差以上なので、
+    # 1 - |差|/長いほう が MinScore に届かない候補は計算する前に落とせる。
+    $lengthSlack = [double](1.0 - $MinScore)
     $hits = New-Object System.Collections.Generic.List[object]
-    foreach ($unitId in $entries.Keys) {
-        $e = $entries[$unitId]
-        if (-not (Test-YakuTranslationMemoryProvenance -Entry $e)) { continue }
-        if ([string]$e.direction -ne $Direction) { continue }
-        $sn = [string]$e.key
-        if ($sn.Length -lt $MinLength) { continue }
-        $exact = [string]::Equals($sn, $tn, [StringComparison]::Ordinal)
-        $ratio = if ($exact) { [double]1 } else { Get-YakuTranslationMemorySimilarity -Left $t -Right ([string]$e.source) }
-        if (-not $exact -and $ratio -lt $MinScore) { continue }
+    foreach ($e in $entries) {
+        if ($e.Direction -ne $Direction) { continue }
+        if ($e.KeyLength -lt $MinLength) { continue }
+        $exact = [string]::Equals($e.Key, $tn, [StringComparison]::Ordinal)
+        if ($exact) {
+            $ratio = [double]1
+        } else {
+            # Get-YakuTranslationMemorySimilarity は正規化後が空なら0を返す。
+            # MinLength=0 で呼ばれた場合にだけ効く枝で、そこも同じにしておく。
+            # MinScore=0 で呼ばれると、一致率0のものも拾う枝だった。数え方を
+            # 変えるとそこが黙って変わるので、条件はそのまま残す。
+            if ($blank -or $e.KeyLength -eq 0) {
+                if ([double]0 -lt $MinScore) { continue }
+                $ratio = [double]0
+                [void]$hits.Add([pscustomobject]@{ Candidate = $e; Exact = $false; Score = $ratio; Saved = $e.Saved })
+                continue
+            }
+            $longer = if ($e.KeyLength -gt $queryLength) { $e.KeyLength } else { $queryLength }
+            if ($longer -gt 0 -and ([Math]::Abs($e.KeyLength - $queryLength) / [double]$longer) -gt $lengthSlack) { continue }
+            $ratio = if ($null -ne $scorer) { [double]$scorer::Score($tn, [string]$e.Key) }
+                     else { Get-YakuTranslationMemoryEditRatio -Left $tn -Right ([string]$e.Key) }
+            if ($ratio -lt $MinScore) { continue }
+        }
+        # 並べ替えるまでは軽い姿で持つ。最悪ケース（5,000件が全部閾値を超える）
+        # では、ここで17項目のオブジェクトを5,000個作る費用が最大になる。
+        # 出典付きの姿に組み立てるのは、Limit件へ絞ったあとでよい。
         [void]$hits.Add([pscustomobject]@{
-                Source = [string]$e.source
-                Target = [string]$e.target
-                Exact  = $exact
-                Ratio  = [double]$ratio
-                Score  = [double]$ratio
-                MatchType = $(if ($exact) { 'exact' } else { 'fuzzy' })
-                Saved  = [string]$e.saved
-                UnitId = $(if ([int]$e.schema_version -eq 3) { [string]$e.unit_id } else { Resolve-YakuTranslationMemoryRecordUnitId -Entry $e })
-                ReferenceId = [string]$e.reference_id
-                SourceName = [string]$e.origin_file_name
-                Location = [string]$e.origin_location
-                Page = [int]$e.origin_page
-                OriginProjectId = [string]$e.origin_project_id
-                OriginSegmentId = [string]$e.origin_segment_id
-                ReviewRevision = [int]$e.review_revision
-                SourceHash = [string]$e.source_hash
-                TargetHash = [string]$e.target_hash
+                Candidate = $e
+                Exact     = $exact
+                Score     = [double]$ratio
+                Saved     = $e.Saved
             })
     }
-    return @(@($hits.ToArray()) | Sort-Object -Property `
-        @{ Expression = { if ([bool]$_.Exact) { 1 } else { 0 } }; Descending = $true }, `
-        @{ Expression = { [double]$_.Score }; Descending = $true }, `
-        @{ Expression = { [string]$_.Saved }; Descending = $true } | Select-Object -First $Limit)
+    # Expressionへ式ではなく項目名を渡す。式にすると要素ごとにscriptblockを
+    # 呼ぶので、5,000件で82ms対34msの差になる。比較の意味は変わらない。
+    $ranked = @(@($hits.ToArray()) | Sort-Object -Property `
+        @{ Expression = 'Exact'; Descending = $true }, `
+        @{ Expression = 'Score'; Descending = $true }, `
+        @{ Expression = 'Saved'; Descending = $true } | Select-Object -First $Limit)
+    $out = New-Object System.Collections.Generic.List[object]
+    foreach ($hit in $ranked) {
+        [void]$out.Add((ConvertTo-YakuTranslationMemoryHit -Candidate $hit.Candidate -Exact ([bool]$hit.Exact) -Score ([double]$hit.Score)))
+    }
+    return @($out.ToArray())
 }

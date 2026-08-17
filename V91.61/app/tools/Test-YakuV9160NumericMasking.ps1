@@ -689,7 +689,14 @@ foreach ($srcFile in @(Get-ChildItem -LiteralPath (Join-Path $root 'src') -Filte
 # V91.61: Alignment.ps1 が加わる。日英の対を Copilot に取らせる経路で、
 # 原文を外部へ送る点は翻訳と同じ。こちらは値を戻さない非可逆マスクを使う
 # （返るのは行番号だけで復元が要らないため、安全側に倒せる）。
-$outside = @($callSites | Where-Object { $_ -notin @('CopilotClient.ps1','Translation.ps1','CatBatch.ps1','CorpusReference.ps1','Alignment.ps1') })
+# V91.61（2026-08-14）: Publication.ps1（Excelに入れる候補）と Review.ps1
+# （文書全体の確認）が加わる。どちらも 2026-08-13 の統合時には Server.ps1 の
+# ジョブ用ランスペースへ直に書かれていて、伏せる関数と送る関数が別のファイルに
+# 分かれていた。それではこの統制が「どこで伏せたか」を名指しできないので、
+# 送信をマスクを持つファイルへ戻した。Server.ps1 は許可しない。ここは
+# 最大のファイルで、丸ごと許すと以後どこから送っても統制が何も言わなくなる。
+# 足したぶんのマスクは下（掲載候補・文書校正）で名指しして確かめる。
+$outside = @($callSites | Where-Object { $_ -notin @('CopilotClient.ps1','Translation.ps1','CatBatch.ps1','CorpusReference.ps1','Alignment.ps1','Publication.ps1','Review.ps1') })
 Assert-YakuMask ($outside.Count -eq 0) ("翻訳経路の外から呼ばれていない: " + (@($outside | Select-Object -Unique) -join ','))
 
 # 許可しただけでは統制にならない。Alignment.ps1 が実際にマスクを通してから
@@ -734,6 +741,54 @@ $sendAt = $corpusRefText.IndexOf('Invoke-YakuProtectedCopilotPrompt')
 Assert-YakuMask ($maskAt -ge 0) 'コーパス検索語の経路もマスクを呼ぶ'
 Assert-YakuMask ($sendAt -ge 0 -and $maskAt -lt $sendAt) 'マスクしてから送っている'
 Assert-YakuMask ($corpusRefText -match "Location 'corpus-query'") '記録に経路名が残る（どこでマスクしたか分かる）'
+
+# 許可一覧へ足しただけでは統制にならない。足した2経路（掲載候補・文書校正）が
+# 実際に「伏せる → 封をする → 平文が残っていないか検査する → 送る」の順で
+# 動いていることを、関数の中だけを見て確かめる。ファイル全体の出現位置で
+# 順序を見ると、別の呼び出し元や関数定義そのものを拾う（2026-08-08 に踏んだ）。
+function Get-YakuMaskSendingFunctionText {
+    param([Parameter(Mandatory=$true)][string]$Source, [Parameter(Mandatory=$true)][string]$Name)
+    return [string]([regex]::Match($Source, '(?ms)^function\s+' + [regex]::Escape($Name) + '\s*\{.*?(?=^function\s|\z)').Value)
+}
+
+$publicationSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Publication.ps1'))
+$pubBuild = Get-YakuMaskSendingFunctionText -Source $publicationSrc -Name 'New-YakuCatProtectedPublicationCandidateRequest'
+$pubSend = Get-YakuMaskSendingFunctionText -Source $publicationSrc -Name 'Invoke-YakuCatPublicationCandidateRequest'
+Assert-YakuMask ($pubBuild.Length -gt 0 -and $pubSend.Length -gt 0) '掲載候補は伏せる関数と送る関数が同じファイルにある'
+$pubMaskAt = $pubBuild.IndexOf('New-YakuNumericMaskMap')
+$pubPackAt = $pubBuild.IndexOf('New-YakuProtectedPromptPackage')
+$pubAssertAt = $pubBuild.IndexOf('Assert-YakuNumericPromptProtected')
+Assert-YakuMask ($pubMaskAt -ge 0 -and $pubPackAt -gt $pubMaskAt) '掲載候補は封をする前にマスクを作る'
+Assert-YakuMask ($pubBuild -match 'ProtectedText=\[string\]\$mask\.Text') '掲載候補は伏せた本文だけを封へ渡す'
+Assert-YakuMask ($pubAssertAt -gt $pubPackAt) '掲載候補は送る前に平文が残っていないか検査する'
+Assert-YakuMask ($pubBuild -match "Location 'publication-candidate'") '掲載候補の記録に経路名が残る'
+$pubReqAt = $pubSend.IndexOf('New-YakuCatProtectedPublicationCandidateRequest')
+$pubSendAt = $pubSend.IndexOf('Invoke-YakuProtectedCopilotPrompt')
+Assert-YakuMask ($pubReqAt -ge 0 -and $pubSendAt -gt $pubReqAt -and $pubSend -match '-Envelope \$request\.Envelope') '掲載候補は保護済みrequestのEnvelopeだけを送る'
+Assert-YakuMask ($publicationSrc -match 'Restore-YakuNumericMask') '掲載候補は応答の数値を実値へ戻す'
+
+$reviewSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Review.ps1'))
+$revBuild = Get-YakuMaskSendingFunctionText -Source $reviewSrc -Name 'New-YakuCatProtectedDocumentReviewRequest'
+$revSend = Get-YakuMaskSendingFunctionText -Source $reviewSrc -Name 'Invoke-YakuCatDocumentReviewRequests'
+Assert-YakuMask ($revBuild.Length -gt 0 -and $revSend.Length -gt 0) '文書校正は伏せる関数と送る関数が同じファイルにある'
+$revMaskAt = $revBuild.IndexOf('New-YakuNumericMaskMap')
+$revPackAt = $revBuild.IndexOf('New-YakuProtectedPromptPackage')
+$revAssertAt = $revBuild.IndexOf('Assert-YakuNumericPromptProtected')
+Assert-YakuMask ($revMaskAt -ge 0 -and $revPackAt -gt $revMaskAt) '文書校正は封をする前にマスクを作る'
+Assert-YakuMask ($revBuild -match 'ProtectedText=\[string\]\$mask\.Text') '文書校正は伏せた本文だけを封へ渡す'
+Assert-YakuMask ($revAssertAt -gt $revPackAt) '文書校正は送る前に平文が残っていないか検査する'
+Assert-YakuMask ($revBuild -match "Location 'document-review'") '文書校正の記録に経路名が残る'
+$revReqAt = $revSend.IndexOf('New-YakuCatProtectedDocumentReviewRequest')
+$revSendAt = $revSend.IndexOf('Invoke-YakuProtectedCopilotPrompt')
+Assert-YakuMask ($revReqAt -ge 0 -and $revSendAt -gt $revReqAt -and $revSend -match '-Envelope \$request\.Envelope') '文書校正は保護済みrequestのEnvelopeだけを送る'
+Assert-YakuMask ($reviewSrc -match 'Restore-YakuNumericMask') '文書校正は引用の数値を実値へ戻す'
+# 送り終えた後に placeholder 辞書と masked sidecar を持ち出さない。
+Assert-YakuMask ($revSend -match 'ConvertTo-YakuSanitizedDocumentReviewPacket' -and $revSend -notmatch 'ProtectedSidecar|NumericMaskMap') '文書校正はsanitized packetだけを外へ返す'
+# ジョブ側（Server.ps1）は、この2経路を自分で送らず委譲していること。
+# 直に書き戻されたら §10-21 の許可一覧で落ちるが、委譲先の名前でも見張る。
+$serverDelegationSrc = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Server.ps1'))
+Assert-YakuMask ($serverDelegationSrc -match 'Invoke-YakuCatPublicationCandidateRequest' -and
+    $serverDelegationSrc -match 'Invoke-YakuCatDocumentReviewRequests') 'ジョブ側は掲載候補・文書校正の送信をマスク側へ委ねる'
 # V91.61（2026-08-06）: 修正の依頼が2箇所目になる。訳文へ指示を1つ当てて直す
 # 経路で、原文と現訳を外部へ送る点は翻訳と同じ。件数で見張るのは、
 # 送る経路が黙って増えるのを気づかせるため。増やすときは下の確認も足すこと。
@@ -767,6 +822,10 @@ $sendingPaths = @(
     @{ File = 'CatProject.ps1';      Numeric = 'New-YakuNumericMaskMap' }
     @{ File = 'CorpusReference.ps1'; Numeric = 'New-YakuNumericMaskMap' }
     @{ File = 'Alignment.ps1';       Numeric = 'Protect-YakuAlignmentLines' }
+    # Excelに入れる候補と文書全体の確認。どちらも sidecar の JSON をまるごと
+    # 伏せてから送る。伏せる関数と送る関数は同じファイルにあり、上で名指しした。
+    @{ File = 'Publication.ps1';     Numeric = 'New-YakuNumericMaskMap' }
+    @{ File = 'Review.ps1';          Numeric = 'New-YakuNumericMaskMap' }
     # ジョブのランスペースから直接送る経路。CAT の「残りを訳す」はここを通る。
     # 自分では伏せず、切り出した Protect-YakuCatItems へ委ねる。順序は下で別に見る。
     @{ File = 'Server.ps1';          Numeric = 'Protect-YakuCatItems' }

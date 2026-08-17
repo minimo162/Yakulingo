@@ -122,10 +122,13 @@ function New-YakuTerminologyEntry {
         [AllowNull()][object[]]$EnglishForbidden,
         [AllowNull()][string]$Note,
         [string]$Origin = 'cat-term-editor',
-        [Parameter(Mandatory=$true)][string]$OriginProjectId,
-        [Parameter(Mandatory=$true)][string]$OriginFileName,
-        [Parameter(Mandatory=$true)][string]$OriginSegmentId,
-        [Parameter(Mandatory=$true)][string]$OriginLocation,
+        # 空文字も束縛させる。束縛で弾くと、呼び出し元は「引数が空です」という
+        # 一般の文言だけを受け取り、出典必須という規則そのものは一度も口を利かない。
+        # 空は下の TERMINOLOGY_PROVENANCE_REQUIRED が同じ厳しさで拒否する。
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$OriginProjectId,
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$OriginFileName,
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$OriginSegmentId,
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$OriginLocation,
         [int]$OriginRevision = 0,
         [AllowNull()][string]$CreatedAt
     )

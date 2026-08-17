@@ -1,0 +1,540 @@
+Consolidated Financial Results for the First Quarter of the Fiscal Year Ending March 2027 [Japanese GAAP]
+August 4, 2026
+Listed Company Name Mazda Motor Corporation Stock Exchange Tokyo
+Securities Code 7261 URL https://www.mazda.com/ja/
+Representative (Title) Representative Director, President and Chief Executive Officer (Name) Masahiro Moro
+Contact Person (Title) General Manager, Accounting Department, Finance Division (Name) Keiji Watanabe (TEL) 082-282-1111
+Scheduled Commencement Date of Dividend Payments －
+Availability of Supplementary Financial Results Materials: Yes
+Financial Results Briefing: Yes (For securities analysts, institutional investors, and the media)
+(Amounts of less than one million yen rounded to the nearest million yen)
+
+1. Consolidated Financial Results for the First Quarter of the Fiscal Year Ending March 2027 (April 1, 2026 to June 30, 2026)
+(１) Consolidated Operating Results (Cumulative) (Percentages indicate year-on-year changes)
+Net Sales Operating Profit Ordinary Profit Quarterly Profit Attributable
+to Owners of the Parent
+Millions of yen % Millions of yen % Millions of yen % Millions of yen %
+First quarter of fiscal year ending March 2027 1,285,706 16.9 32,836 － 42,843 － 29,630 －
+First quarter of fiscal year ended March 2026 1,099,770 (8.8) (46,115) － (34,255) － (42,104) －
+(Note) Comprehensive income First quarter of fiscal year ending March 2027 31,752 million yen (－%) First quarter of fiscal year ended March 2026 (53,033) million yen (－%)
+Quarterly Profit
+per Share
+Diluted Quarterly
+Profit per Share
+Yen Sen Yen Sen
+First quarter of fiscal year ending March 2027 46.97 46.95
+First quarter of fiscal year ended March 2026 (66.79) －
+(２) Consolidated Financial Position
+Total Assets Net Assets Equity Ratio
+Millions of yen Millions of yen %
+First quarter of fiscal year ending March 2027 4,434,293 1,937,617 43.3
+Fiscal year ended March 2026 4,479,493 1,924,950 42.5
+(Reference) Equity First quarter of fiscal year ending March 2027 1,917,886 million yen Fiscal year ended March 2026 1,905,559 million yen
+
+2. Dividends
+Annual Dividend per Share
+End of First Quarter End of Second Quarter End of Third Quarter Year-end Total
+Yen Sen Yen Sen Yen Sen Yen Sen Yen Sen
+Fiscal year ended March 2026 － 25.00 － 30.00 55.00
+Fiscal year ending March 2027 －
+Fiscal year ending March 2027 (Forecast) 25.00 － 30.00 55.00
+(Note) Revisions to the most recently announced dividend forecast: No
+
+3. Consolidated Financial Results Forecast for the Fiscal Year Ending March 2027 (April 1, 2026 to March 31, 2027)
+(Percentages indicate year-on-year changes)
+Net Sales Operating Profit Ordinary Profit Profit Attributable
+to Owners of the Parent
+Profit
+per Share
+Millions of yen % Millions of yen % Millions of yen % Millions of yen % Yen Sen
+Full year 5,500,000 11.8 150,000 190.8 140,000 6.2 90,000 156.5 142.67
+(Note) Revisions to the most recently announced financial results forecast: No
+
+※ Notes
+(１) Significant changes in the scope of consolidation during the cumulative consolidated first-quarter period: No
+Newly included － companies (Company names), Excluded － companies (Company names)
+(２) Application of accounting methods specific to the preparation of quarterly consolidated financial statements: No
+(３) Changes in accounting policies, changes in accounting estimates, and retrospective restatement
+① Changes in accounting policies due to revisions to accounting standards and other regulations: No
+② Changes in accounting policies other than ①: No
+③ Changes in accounting estimates: No
+④ Retrospective restatement: No
+(４) Number of issued shares (Common stock)
+① Number of issued shares at period-end (including treasury shares) First quarter of fiscal year ending March 2027 631,803,979 shares Fiscal year ended March 2026 631,803,979 shares
+② Number of treasury shares at period-end First quarter of fiscal year ending March 2027 996,926 shares Fiscal year ended March 2026 1,024,049 shares
+③ Average number of shares during the period (Cumulative quarterly period) First quarter of fiscal year ending March 2027 630,800,328 shares First quarter of fiscal year ended March 2026 630,369,629 shares
+※ Review of the attached quarterly consolidated financial statements by a certified public accountant or audit firm: No
+※ Explanation regarding the appropriate use of financial results forecasts and other special notes
+Forward-looking statements, including financial results forecasts, contained in these materials are based on information currently available to the Company and certain assumptions deemed reasonable, and are not intended as a commitment by the Company to achieve them. Actual financial results and other outcomes may differ significantly due to various factors.
+For the assumptions underlying the financial results forecast and other information, please refer to page 3 of the Quarterly Financial Results (Attached Materials), “1. Overview of Operating Results and Other Matters (3) Explanation Regarding Forward-looking Information, Including the Consolidated Financial Results Forecast.”
+
+Mazda Motor Corporation (7261) Consolidated Financial Results for the First Quarter of the Fiscal Year Ending March 2027
+－ 1 －
+Table of Contents of Attached Materials
+
+1. Overview of Operating Results and Other Matters ………………………………………………………………………… 2
+(１) Overview of Operating Results for the Cumulative Consolidated First-Quarter Period …………………………………………… 2
+(２) Overview of Financial Position and Cash Flows for the Cumulative Consolidated First-Quarter Period ……………… 2
+(３) Explanation Regarding Forward-looking Information, Including the Consolidated Financial Results Forecast …………………………………… 3
+
+2. Quarterly Consolidated Financial Statements and Major Notes ……………………………………………………… 4
+(１) Quarterly Consolidated Balance Sheet ………………………………………………………………… 4
+(２) Quarterly Consolidated Statement of Income and Quarterly Consolidated Statement of Comprehensive Income …………………………… 6
+(３) Quarterly Consolidated Statement of Cash Flows ……………………………………………… 8
+(４) Notes to the Quarterly Consolidated Financial Statements ………………………………………………10
+(Notes on the Going Concern Assumption)…………………………………………………………10
+(Notes on Significant Changes in the Amount of Shareholders’ Equity)…………………………………10
+(Additional Information)…………………………………………………………………………………10
+(Segment Information and Other Matters)………………………………………………………………………11
+(Significant Subsequent Events)…………………………………………………………………………11
+※ Reference Materials Financial Results Reference Materials for the First Quarter of the Fiscal Year Ending March 2027 (Consolidated)
+
+Mazda Motor Corporation (7261) Consolidated Financial Results for the First Quarter of the Fiscal Year Ending March 2027
+－ 2 －
+
+1. Overview of Operating Results and Other Matters
+(１) Overview of Operating Results for the Consolidated Cumulative First Quarter
+[Global Sales]
+Global sales volume for the consolidated cumulative first quarter was 304 k units, up 1.2% year on year, due to increased sales in major markets such as North America and Europe.
+(Unit: thousands of units)
+Fiscal Year Ended March 2026
+First Quarter
+Fiscal Year Ending March 2027
+First Quarter
+Year on Year
+Change Percentage Change
+Japan 32 33 +1 +2.7%
+North America 147 154 +7 +4.8%
+Europe 39 43 +5 +11.6%
+China 18 18 +0 +0.5%
+Other 65 56 (9) (14.0)%
+Total 301 304 +4 +1.2%
+<Breakdown>
+United States 100 107 +7 +7.4%
+[Operating Results]
+Consolidated results for the consolidated cumulative first quarter were net sales of 12,857 oku, an increase of 1,859 oku, or 16.9%, year on year; operating profit of 328 oku, compared with a loss of 461 oku in the same period of the previous year; and ordinary profit of 428 oku, compared with a loss of 343 oku in the same period of the previous year. Quarterly net profit attributable to owners of the parent was 296 oku, compared with a loss of 421 oku in the same period of the previous year, due in part to income taxes of 99 oku.
+The main factors behind the change in operating profit, an increase of 789 oku year on year, were as follows.
+Volume and mix +434 oku
+Foreign exchange +413 oku
+Raw material and logistics costs, etc. (240) oku
+Cost improvements +157 oku
+Growth investments (98) oku
+Fixed costs and other +123 oku
+Total +789 oku
+(２) Overview of Financial Position and Cash Flows for the Consolidated Cumulative First Quarter
+[Assets, Liabilities and Net Assets]
+Total assets at the end of the consolidated first quarter were 44,343 oku, a decrease of 452 oku from the end of the previous consolidated fiscal year, and total liabilities were 24,967 oku, a decrease of 579 oku from the end of the previous consolidated fiscal year. Net assets were 19,376 oku, an increase of 127 oku from the end of the previous consolidated fiscal year, due in part to quarterly net profit attributable to owners of the parent of 296 oku. The shareholders’ equity ratio was 43.3%, an increase of 0.7 percentage points from the end of the previous consolidated fiscal year, or 44.0% after taking into account the equity nature of subordinated loans.
+[Cash Flows]
+At the end of the consolidated first quarter, cash and cash equivalents were 12,148 oku, a decrease of 784 oku from the end of the previous consolidated fiscal year, and interest-bearing debt was 8,429 oku, a decrease of 72 oku. As a result, the Company had a net cash position of 3,719 oku.
+The status of each cash flow for the consolidated cumulative first quarter was as follows.
+Cash Flows from Operating Activities
+Cash flows from operating activities decreased by 406 oku, compared with a decrease of 1,411 oku in the same period of the previous year, due to factors including an increase in inventories, against quarterly net profit before income taxes of 399 oku.
+
+Mazda Motor Corporation (7261) Consolidated Financial Results for the First Quarter of the Fiscal Year Ending March 2027
+－ 3 －
+Cash Flows from Investing Activities
+Cash flows from investing activities decreased by 286 oku, compared with an increase of 443 oku in the same period of the previous year, due to factors including purchases of property, plant and equipment.
+As a result, consolidated free cash flow, the sum of cash flows from operating activities and cash flows from investing activities, decreased by 692 oku, compared with a decrease of 968 oku in the same period of the previous year.
+Cash Flows from Financing Activities
+Cash flows from financing activities decreased by 275 oku, compared with a decrease of 257 oku in the same period of the previous year, due to factors including dividend payments and repayments of long-term borrowings.
+(３) Explanation of Forward-Looking Information, Including Consolidated Earnings Forecasts
+The full-year consolidated earnings forecasts remain unchanged from the figures announced on May 12, 2026.
+
+Mazda Motor Corporation (7261) Consolidated Financial Results for the First Quarter of the Fiscal Year Ending March 2027
+－ 4 －
+2. Quarterly Consolidated Financial Statements and Significant Notes
+(１) Quarterly Consolidated Balance Sheets
+(Unit: millions of yen)
+Previous Consolidated Fiscal Year
+(March 31, 2026)
+Consolidated First Quarter
+(June 30, 2026)
+Assets
+Current Assets
+Cash and deposits 1,083,696 1,074,333
+Notes and accounts receivable 183,829 176,244
+Securities 209,500 140,500
+Inventories 696,071 753,717
+Other 276,857 249,188
+Allowance for doubtful accounts (603) (643)
+Total current assets 2,449,350 2,393,339
+Non-current Assets
+Property, Plant and Equipment
+Buildings and structures, net 217,270 217,934
+Machinery, equipment and vehicles, net 416,831 415,463
+Land 425,619 425,841
+Lease assets, net 32,624 31,646
+Other, net 141,775 133,874
+Total property, plant and equipment 1,234,119 1,224,758
+Intangible assets 74,070 73,839
+Investments and Other Assets
+Investment securities 316,060 305,813
+Net defined benefit asset 150,798 152,990
+Other 255,342 283,798
+Allowance for doubtful accounts (246) (244)
+Total investments and other assets 721,954 742,357
+Total non-current assets 2,030,143 2,040,954
+Total assets 4,479,493 4,434,293
+
+Mazda Motor Corporation (7261) Consolidated Financial Results for the First Quarter of the Fiscal Year Ending March 2027
+－ 5 －
+(Millions of yen)
+Previous consolidated fiscal year
+(March 31, 2026)
+Current first-quarter consolidated accounting period
+(June 30, 2026)
+Liabilities
+Current liabilities
+Notes and accounts payable-trade 528,679 509,923
+Short-term borrowings 31,059 35,336
+Bonds due for redemption within 1 years 20,000 20,000
+Long-term borrowings due for repayment within 1 years 55,386 122,358
+Lease liabilities 8,434 8,654
+Income taxes payable 41,990 43,568
+Accrued expenses 499,102 495,606
+Provision for product warranties 179,209 177,364
+Provision for losses related to discontinuation of production 2,246 2,246
+Provision for environmental regulations 17,577 16,609
+Other 229,934 195,739
+Total current liabilities 1,613,616 1,627,403
+Non-current liabilities
+Bonds 105,000 105,000
+Long-term borrowings 622,300 544,298
+Lease liabilities 27,350 26,181
+Deferred tax liabilities for land revaluation 66,246 66,246
+Provision for losses related to discontinuation of production 1,020 1,020
+Provision for environmental regulations 23,311 27,765
+Net defined benefit liability 58,613 59,991
+Other 37,087 38,772
+Total non-current liabilities 940,927 869,273
+Total liabilities 2,554,543 2,496,676
+Net assets
+Shareholders' equity
+Share capital 283,957 283,957
+Capital surplus 262,954 262,948
+Retained earnings 952,082 962,788
+Treasury shares (1,109) (1,080)
+Total shareholders' equity 1,497,884 1,508,613
+Accumulated other comprehensive income
+Valuation difference on available-for-sale securities 59,786 50,001
+Deferred gains or losses on hedges 379 328
+Revaluation reserve for land 143,459 143,459
+Foreign currency translation adjustment 137,450 150,540
+Remeasurements of defined benefit plans 66,601 64,945
+Total accumulated other comprehensive income 407,675 409,273
+Share acquisition rights 340 317
+Non-controlling interests 19,051 19,414
+Total net assets 1,924,950 1,937,617
+Total liabilities and net assets 4,479,493 4,434,293
+
+Mazda Motor Corporation (7261) Consolidated Financial Results for the First Quarter of the Fiscal Year Ending March 2027
+－ 6 －
+(２) Quarterly Consolidated Statements of Income and Quarterly Consolidated Statements of Comprehensive Income
+Quarterly Consolidated Statements of Income
+Consolidated cumulative first quarter
+(Millions of yen)
+Previous consolidated cumulative first quarter
+(From April 1, 2025
+to June 30, 2025)
+Current consolidated cumulative first quarter
+(From April 1, 2026
+to June 30, 2026)
+Net sales 1,099,770 1,285,706
+Cost of sales 931,521 1,031,573
+Gross profit 168,249 254,133
+Selling, general and administrative expenses 214,364 221,297
+Operating profit or operating loss (loss) (46,115) 32,836
+Non-operating income
+Interest income 5,731 7,424
+Share of profit of entities accounted for using the equity method 4,160 4,183
+Foreign exchange gains 5,574 5,733
+Other 1,974 1,543
+Total non-operating income 17,439 18,883
+Non-operating expenses
+Interest expenses 2,726 3,934
+Loss on sale of receivables 1,943 2,021
+Other 910 2,921
+Total non-operating expenses 5,579 8,876
+Ordinary profit or ordinary loss (loss) (34,255) 42,843
+Extraordinary income
+Gain on sale of non-current assets 169 26
+Total extraordinary income 169 26
+Extraordinary losses
+Loss on disposal and sale of non-current assets 1,055 1,377
+Impairment losses 257 43
+Valuation loss on investment securities 32 1,556
+Special retirement expenses 7,510 －
+Total extraordinary losses 8,854 2,976
+Quarterly profit before income taxes
+or quarterly loss before income taxes (loss) (42,940) 39,893
+Income taxes-current 3,626 17,107
+Income taxes-deferred (4,552) (7,246)
+Total income taxes (926) 9,861
+Quarterly profit or quarterly loss (loss) (42,014) 30,032
+Quarterly profit attributable to non-controlling interests 90 402
+Quarterly profit attributable to owners of the parent
+or quarterly loss attributable to owners of the parent (loss) (42,104) 29,630
+
+Mazda Motor Corporation (7261) Consolidated Financial Results for the First Quarter of the Fiscal Year Ending March 2027
+－ 7 －
+Quarterly Consolidated Statements of Comprehensive Income
+Consolidated cumulative first quarter
+(Millions of yen)
+Previous consolidated cumulative first quarter
+(From April 1, 2025
+to June 30, 2025)
+Current consolidated cumulative first quarter
+(From April 1, 2026
+to June 30, 2026)
+Quarterly profit or quarterly loss (loss) (42,014) 30,032
+Other comprehensive income
+Valuation difference on available-for-sale securities (3,698) (9,784)
+Foreign currency translation adjustment (743) 12,447
+Remeasurements of defined benefit plans (1,315) (1,642)
+Share of other comprehensive income of entities accounted for using the equity method (5,263) 699
+Total other comprehensive income (11,019) 1,720
+Quarterly comprehensive income (53,033) 31,752
+(Breakdown)
+Quarterly comprehensive income attributable to owners of the parent (52,944) 31,228
+Quarterly comprehensive income attributable to non-controlling interests (89) 524
+
+Mazda Motor Corporation (7261) Consolidated Financial Results for the First Quarter of the Fiscal Year Ending March 2027
+－ 8 －
+(３) Quarterly Consolidated Statement of Cash Flows
+(Millions of yen)
+Previous first-quarter consolidated cumulative period
+(From April 1, 2025
+to June 30, 2025)
+Current first-quarter consolidated cumulative period
+(From April 1, 2026
+to June 30, 2026)
+Cash flows from operating activities
+Profit before income taxes
+or loss before income taxes ((△)) (42,940) 39,893
+Depreciation and amortization 29,016 30,796
+Impairment losses 257 43
+Gain or loss on valuation of investment securities (△ indicates gain) 32 1,556
+Special retirement expenses 7,510 －
+Increase or decrease in allowance for doubtful accounts (△ indicates decrease) (123) 39
+Increase or decrease in provision for product warranties (△ indicates decrease) (2,490) (2,589)
+Increase or decrease in provision for losses related to discontinued production (△ indicates decrease) (12,535) －
+Increase or decrease in provision related to environmental regulations (△ indicates decrease) 14,759 3,514
+Increase or decrease in assets and liabilities related to retirement benefits (2,456) (3,131)
+Interest and dividends received (5,917) (7,587)
+Interest paid 2,726 3,934
+Share of profit or loss of entities accounted for using the equity method (△ indicates profit) (4,160) (4,183)
+Gain or loss on disposal and sale of property, plant and equipment (△ indicates gain) 886 1,351
+Increase or decrease in trade receivables (△ indicates increase) 11,397 8,666
+Increase or decrease in inventories (△ indicates increase) (15,396) (50,792)
+Increase or decrease in other current assets (△ indicates increase) (10,071) 32,988
+Increase or decrease in other investments and other assets (△ indicates increase) (28,723) (19,221)
+Increase or decrease in trade payables (△ indicates decrease) (43,486) (21,151)
+Increase or decrease in other current liabilities (△ indicates decrease) (31,995) (37,354)
+Other (4,905) (4,381)
+Subtotal (138,614) (27,609)
+Interest and dividends received 11,823 11,630
+Interest paid (2,865) (4,482)
+Special retirement payments － (1,455)
+Income taxes paid or refunded (△ indicates payment) (11,441) (18,636)
+Cash flows from operating activities (141,097) (40,552)
+Cash flows from investing activities
+Net increase or decrease in time deposits (△ indicates increase) 43,210 4
+Net increase or decrease in securities (△ indicates increase) 35,000 －
+Purchase of property, plant and equipment (30,472) (28,024)
+Purchase of intangible assets (5,740) (4,531)
+Net increase or decrease in short-term loans receivable (△ indicates increase) (4,169) 3,770
+Other 6,451 150
+Cash flows from investing activities 44,280 (28,631)
+
+Mazda Motor Corporation (7261) Consolidated Financial Results for the First Quarter of the Fiscal Year Ending March 2027
+－ 9 －
+(Millions of yen)
+Previous first-quarter consolidated cumulative period
+(From April 1, 2025
+to June 30, 2025)
+Current first-quarter consolidated cumulative period
+(From April 1, 2026
+to June 30, 2026)
+Cash flows from financing activities
+Net increase or decrease in short-term borrowings (△ indicates decrease) 1,303 4,277
+Proceeds from long-term borrowings 67,500 4,000
+Repayments of long-term borrowings (73,357) (15,025)
+Proceeds from sale-and-leaseback transactions 6 8
+Repayments of lease liabilities (1,482) (1,605)
+Dividends paid (18,911) (18,924)
+Dividends paid to non-controlling interests (802) (237)
+Net increase or decrease in treasury shares (△ indicates increase) 30 －
+Cash flows from financing activities (25,713) (27,506)
+Effect of exchange rate changes on cash and cash equivalents 6,288 18,330
+Increase or decrease in cash and cash equivalents (△ indicates decrease) (116,242) (78,359)
+Cash and cash equivalents at beginning of period 1,105,585 1,293,162
+Cash and cash equivalents at end of quarter 989,343 1,214,803
+
+Mazda Motor Corporation (7261) Consolidated Financial Results for the First Quarter of the Fiscal Year Ending March 2027
+－ 10 －
+(４) Notes to the Quarterly Consolidated Financial Statements
+(Notes on Going Concern Assumption)
+Not applicable.
+(Notes on Significant Changes in the Amount of Shareholders' Equity)
+Not applicable.
+(Additional Information)
+(Financing through a New Subordinated Loan and Early Repayment of Existing Subordinated Loans)
+On July 21, 2026, the Company conducted financing through a new subordinated loan (hereinafter, the "Subordinated Loan") and early repayment of existing subordinated loans (hereinafter, the "Existing Subordinated Loans"). The details are as follows.
+(１) Overview of the Subordinated Loan
+Amount borrowed 700 oku
+Use of funds Applied to repayment of the Existing Subordinated Loans
+Execution date July 21, 2026
+Repayment date
+July 21, 2086
+However, all or part of the principal may be repaid early on each interest payment date on or after July 21, 2031, or if certain other events occur.
+Refinancing restriction clause
+When making early repayment of the Subordinated Loan, the Company intends to refinance within 12 months before the early repayment date through financing that has been recognized by a credit rating agency as having equity characteristics equal to or greater than those of the Subordinated Loan. However, for early repayment on or after July 21, 2031, if certain financial criteria are met, the Company may elect not to refinance through financing that has been recognized by a credit rating agency as having equity characteristics equal to or greater than those of the Subordinated Loan.
+Clause regarding interest payments Except when dividends are paid on common shares or in similar circumstances, the Company may, at its discretion, defer all or part of the interest payments on the Subordinated Loan.
+Subordination clause
+If liquidation, bankruptcy, corporate reorganization, civil rehabilitation, or equivalent proceedings not governed by Japanese law are commenced and remain ongoing with respect to the Company, the right to demand payment of claims under this agreement shall become effective subject to the condition precedent that all claims, other than claims with subordination clauses or other provisions substantially similar to those of the Subordinated Loan, have been paid in full or otherwise fully satisfied.
+The provisions of this agreement shall not be amended in any manner that is detrimental to creditors other than creditors of subordinated claims.
+Equity assessment of the Subordinated
+Loan by a credit rating agency Class ３, 50% (Rating and Investment Information, Inc.)
+Investors participating in
+the Subordinated Loan (lenders)
+Sumitomo Mitsui Banking Corporation, Sumitomo Mitsui Trust Bank, Limited, Development Bank of Japan Inc.,
+The Hiroshima Bank, Ltd., The Yamaguchi Bank, Ltd., Momiji Bank, Ltd.
+(２) Details of Early Repayment of the Existing Subordinated Loans
+Early repayment date July 21, 2026
+Total early repayment amount 700 oku
+Reason for early repayment Pursuant to the early repayment provisions of the Existing Subordinated Loans. (*)
+*Repayment will be made by notifying all lenders on the initially designated early repayment date for the Existing Subordinated Loans, namely an interest payment date on or after July 20, 2026.
+(３) Impact on Financial Results
+The impact of financing through the Subordinated Loan and early repayment of the Existing Subordinated Loans on the Company's consolidated financial results is immaterial.
+
+Mazda Motor Corporation (7261) Consolidated Financial Results for the First Quarter of the Fiscal Year Ending March 2027
+－ 11 －
+(Segment Information, etc.)
+
+Ⅰ Previous first-quarter consolidated cumulative period (From April 1, 2025 to June 30, 2025)
+
+1. Information on net sales and profit or loss by reportable segment
+(Millions of yen)
+Reportable segments Adjustments
+(Note) １
+Amounts recognized in the
+quarterly consolidated
+statement of income
+(Note) ２ Japan North America Europe Other
+regions Total
+Net sales
+Net sales to external customers 213,458 601,104 151,317 133,891 1,099,770 － 1,099,770
+Intersegment internal net sales
+or transfers 535,701 73,036 7,433 15,572 631,742 (631,742) －
+Total 749,159 674,140 158,750 149,463 1,731,512 (631,742) 1,099,770
+Segment profit
+or loss (△) (64,215) (3,176) 3,776 4,273 (59,342) 13,227 (46,115)
+(Note) １. Adjustments to segment profit or loss (△) represent the elimination of intersegment transactions.
+
+2. Segment profit or loss (△) is reconciled with operating loss in the quarterly consolidated statement of income.
+
+3. Information on impairment losses on non-current assets, goodwill, etc. by reportable segment
+There was no recognition of material impairment losses on non-current assets, no material change in the amount of goodwill, and no recognition of material gains on negative goodwill.
+Ⅱ Current first-quarter consolidated cumulative period (From April 1, 2026 to June 30, 2026)
+
+4. Information on net sales and profit or loss by reportable segment
+(Millions of yen)
+Reportable segments Adjustments
+(Note) １
+Amounts recognized in the
+quarterly consolidated
+statement of income
+(Note) ２ Japan North America Europe Other
+regions Total
+Net sales
+Net sales to external customers 212,599 752,566 172,569 147,972 1,285,706 － 1,285,706
+Intersegment internal net sales
+or transfers 671,347 78,369 7,261 16,143 773,120 (773,120) －
+Total 883,946 830,935 179,830 164,115 2,058,826 (773,120) 1,285,706
+Segment profit
+or loss (△) (13,897) 41,157 6,114 6,563 39,937 (7,101) 32,836
+(Note) １. Adjustments to segment profit or loss (△) represent the elimination of intersegment transactions.
+
+5. Segment profit or loss (△) is reconciled with operating profit in the quarterly consolidated statement of income.
+
+6. Information on impairment losses on non-current assets, goodwill, etc. by reportable segment
+There was no recognition of material impairment losses on non-current assets, no material change in the amount of goodwill, and no recognition of material gains on negative goodwill.
+(Significant Subsequent Events)
+Not applicable.
+
+Reference Materials for Consolidated Financial Results for the First Quarter of the Fiscal Year Ending March 2027 August 4, 2026
+Mazda Motor Corporation
+(Unit: k units/oku)
+Fiscal Year Ended March 2026
+First Quarter
+(25.4 to 25.6)
+Fiscal Year Ending March 2027
+First Quarter
+(26.4 to 26.6)
+Fiscal Year Ended March 2026
+Full Year
+(25.4 to 26.3)
+Fiscal Year Ending March 2027
+Full-Year Forecast
+(26.4 to 27.3) (Top left: Ratio to net sales)
+Net
+Sales
+％ ％ ％ ％
+Domestic 1 1,524 +24.3 1,474 (3.3) 6,160 +6.5 6,400 +3.9
+Overseas 2 9,474 (12.5) 11,383 +20.2 43,022 (3.1) 48,600 +13.0
+Total 3 10,998 (8.8) 12,857 +16.9 49,182 (2.0) 55,000 +11.8
+(4.2)% 2.6% 1.0% 2.7%
+Operating profit 4 (461) － 328 － 516 (72.3) 1,500 +190.8
+(3.1)% 3.3% 2.7% 2.5%
+Ordinary profit 5 (343) － 428 － 1,318 (30.2) 1,400 +6.2
+Quarterly (Annual) Profit
+Before Income Taxes
+(3.9)% 3.1% 1.2% 2.4%
+6 (429) － 399 － 594 (61.9) 1,300 +118.9
+Quarterly (Annual) Profit Attributable to
+Owners of the Parent
+(3.8)% 2.3% 0.7% 1.6%
+7 (421) － 296 － 351 (69.2) 900 +156.5
+Operating Profit by Segment (Location)
+Japan 8 (642) (139) (1,618)
+North America 9 (32) 412 1,675
+Europe 10 38 61 180
+Other Regions 11 43 66 327
+Factors Behind Changes in Operating Profit
+Volume and Mix 12 +434 +698
+Foreign Exchange 13 +413 +798
+Raw Materials, Logistics Costs, etc. 14 (240) (817)
+Cost Improvements 15 +157 +776
+Growth Investments 16 (98) (305)
+Fixed Costs and Other 17 +123 (166)
+Total 18 +789 +984
+Foreign Exchange Rates (Yen)
+U.S. Dollar 19 145 160 151 155
+Euro 20 164 185 175 180
+Capital Expenditures 21 225 200 1,200 1,500
+Depreciation and Amortization 22 290 308 1,211 1,200
+R&D Expenses 23 445 400 1,609 1,600
+Total Assets 24 39,223 44,343 44,795
+Equity 25 17,205 19,179 19,056
+Interest-Bearing Debt 26 6,996 8,429 8,501
+Net Cash 27 2,897 3,719 4,430
+Free Cash Flow 28 (968) (692) (6)
+Japan 29 32 +10.5 33 +2.7 144 (5.3) 153 +6.1
+North America 30 147 +0.7 154 +4.8 582 (5.7) 629 +8.1
+Europe 31 39 (20.8) 43 +11.6 164 (6.0) 197 +20.5
+China 32 18 (2.3) 18 +0.5 71 (4.0) 71 (0.6)
+Other 33 65 (3.1) 56 (14.0) 262 (8.2) 274 +4.8
+Total 34 301 (2.8) 304 +1.2 1,223 (6.1) 1,324 +8.3
+Consolidated
+Shipment
+Volume
+Japan 35 35 +22.0 33 (6.4) 142 +4.9 148 +3.7
+North America 36 142 (7.7) 159 +11.9 581 (9.6) 632 +8.7
+Europe 37 30 (24.6) 32 +5.3 169 +10.2 184 +8.7
+Other 38 58 (14.4) 56 (3.4) 254 (11.3) 270 +6.2
+Total 39 266 (8.6) 280 +5.3 1,147 (5.9) 1,233 +7.5
+Domestic 40 167 (10.0) 188 +12.5 735 (1.8)
+Overseas 41 109 (4.9) 108 (1.2) 430 (6.3)
+Total 42 276 (8.0) 296 +7.1 1,165 (3.5)
+※ Global Sales Volume: Worldwide retail sales volume of vehicles sold under the Mazda brand name.
+※ Global Production Volume: The volume produced at plants in Japan and Mexico, plus the volume produced under the Mazda brand name at other overseas plants, mainly in the United States, China, and Thailand.

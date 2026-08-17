@@ -518,6 +518,22 @@ function ConvertTo-YakuNumericRestoreValue {
             }
         }
         if($includesScale){return (ConvertTo-YakuInvariantNumberText -Value $value -UseGrouping)}
+        # 全角の数字は日本語の字形であって、英文には出さない。値は変えない。
+        #
+        # 2026-08-17 の実測。この関数の註は「言語に依存しないアラビア数字へ
+        # 正規化してから復元する」と書いているが、全角だけがそこを素通りして
+        # いた。半角化は $normalized の中でしており、解析にしか使っていない。
+        # 結果、英訳へ全角がそのまま出ていた。
+        #
+        #   第１５９期 (至 2025年３月31日) -> Fiscal Year １５９ (ending 2025 Year ３ Month 31 Day)
+        #   当第３四半期…                  -> ... consolidated first ３ quarters ...
+        #
+        # 実測した範囲では、表のラベル20行のうち7行、散文20行のうち6行。
+        # 同じ題材で DeepL・Nani・素のLLM・公表英文は 0 行だった。
+        if($Direction -eq 'to_en'){
+            $halfWidth=ConvertTo-YakuMaskNormalizedText -Text $raw
+            if($halfWidth -ne $raw){return $halfWidth}
+        }
     }
     return $raw
 }

@@ -178,6 +178,13 @@ $null = Set-YakuCatSegmentTranslation -Project $project -Index $proseIndex -Text
 for ($i = 0; $i -lt @($project.Segments).Count; $i++) {
     $null = Set-YakuCatSegmentConfirmed -Project $project -Index $i
 }
+# 本番は出力までに必ず保存を通っている。作成は Server.ps1:2485-2490 の
+# New-YakuCatProject -Register $false → Commit-YakuNewCatProject で、Commit は
+# CatProject.ps1:516 で Save-YakuCatProject -ThrowOnError を呼ぶ。保存が
+# Initialize-YakuCatProjectSourceArtifact を走らせ（CatProject.ps1:2093）、
+# 原本を project 専用領域へ固定して SourceArtifactSha256 を入れる。
+# 保存していない file 作業は本番に存在しないので、テストもこの段を飛ばさない。
+$null = Save-YakuCatProject -Project $project
 $exported = Export-YakuCatProject -Project $project -OutputPath $outPath -Settings $settings
 Chk (Test-Path -LiteralPath $outPath) '出力ファイルができる'
 Chk ([string]$exported.OutputName -eq 'out.xlsx') '出力名が返る'
@@ -206,7 +213,10 @@ Write-Host '保存後に再開し、project専用原本から安全に書き戻�
 Chk (Save-YakuCatProject -Project $project) '原文スナップショットを含めて保存できる'
 $ownedSourcePath = [string]$project.Path
 $ownedSourceHash = (Get-FileHash -LiteralPath $ownedSourcePath -Algorithm SHA256).Hash
-Chk ($ownedSourcePath -ne $srcPath -and $ownedSourcePath -match 'source\\original\.xlsx$') '取込原本をproject専用領域へ固定する'
+# 原本の置き場は cat-source-v2（source/revisions/<原本hashの先頭32桁>/original.ext）。
+# CatProject.ps1:1796,1824 が決め、Resolve-YakuCatSavedSourceArtifact
+# （CatProject.ps1:1856）が契約として検査する。source/original.xlsx は v1 の旧形。
+Chk ($ownedSourcePath -ne $srcPath -and $ownedSourcePath -match 'source\\revisions\\[a-f0-9]{32}\\original\.xlsx$') '取込原本をproject専用領域へ固定する'
 Chk ([string]$project.FileName -eq 'in.xlsx') 'project専用原本でも利用者の元ファイル名を保持する'
 $savedId = [string]$project.Id
 Remove-YakuCatProject -Id $savedId
@@ -305,6 +315,9 @@ Remove-YakuCatProject -Id ([string]$tp.Id)
 # 「長い文章を貼り付ける」が通っていたものと同じ。
 $appJsText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'assets\cat.js'))
 $quickJsText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'assets\quick.js'))
+# 88af5fc で下の表明が入ったとき、$catProjectSource を読む行が抜けていた。
+# 未定義のまま -match すると常に false になり、表明が働かない。
+$catProjectSource = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CatProject.ps1'))
 Chk (-not $quickJsText.Contains('/api/quick/jobs') -and $quickJsText.Contains('/api/cat/open') -and -not $quickJsText.Contains('/api/cat/promote')) '貼り付けは一時CAT作業へ一本化する'
 Chk ($catProjectSource -match "DocumentFormat\s*=\s*\[IO\.Path\]::GetExtension\(\`$Path\)") 'Excel取り込み時に出力形式を作業へ保持する'
 Chk (-not $quickJsText.Contains('translation:') -and -not $quickJsText.Contains('target_text')) '訳文を送り返す経路は作らない'
@@ -393,7 +406,18 @@ $retrySeg = [pscustomobject]@{ Text='保存再試行原文'; Translation=''; Mas
 $retryProject = [pscustomobject]@{ Id='checkpoint-retry'; Path=''; FileName='貼り付け'; Direction='to_en'; Blocks=@(); Segments=@($retrySeg); Source='text'; CreatedAt=(Get-Date).ToString('s') }
 $null = Save-YakuCatBatchCheckpoint -ProjectId $retryProject.Id -ProjectRevision ([int]$retryProject.Revision) -Translations @([ordered]@{ index=0; source='保存再試行原文'; text='Retry saved'; masked='Retry saved' })
 $originalSaveFunction = (Get-Command Save-YakuCatProject).ScriptBlock
-Set-Item -LiteralPath Function:\Save-YakuCatProject -Value { param($Project) return $false }
+# 保存失敗の伝え方が da9c34d で変わった。以前は Invoke-YakuCatProjectMutation が
+# 戻り値 $false を見ていたので、$false を返す差し替えで失敗を作れた。いまは
+# 「$null = Save-YakuCatProject -Project $candidate -ThrowOnError」（CatProject.ps1:490）
+# で戻り値を捨て、失敗は throw で伝わる（CatProject.ps1:2276 の
+# 「if($ThrowOnError){throw $saveError}」）。$false を返すだけの差し替えは、簡易関数が
+# 未知の -ThrowOnError を $args へ流すため素通りし、保存失敗を1つも作らない。
+# 差し替えも本物と同じ契約（-ThrowOnError なら throw、そうでなければ $false）にする。
+Set-Item -LiteralPath Function:\Save-YakuCatProject -Value {
+    param($Project,[switch]$ThrowOnError)
+    if ($ThrowOnError) { throw 'CAT_PROJECT_SAVE_FAILED: 試験用に保存を失敗させる' }
+    return $false
+}
 $firstApply = Apply-YakuCatBatchCheckpoint -Project $retryProject
 $retryCheckpointPath = Get-YakuCatCheckpointPath -ProjectId $retryProject.Id
 Chk ($firstApply -eq 0 -and (Test-Path -LiteralPath $retryCheckpointPath -PathType Leaf)) 'Project保存に失敗したらチェックポイントを残す'
@@ -557,6 +581,50 @@ Chk ([string]$after[2].Origin -eq 'propagated') '出どころが分かる'
 Chk (-not [bool]$after[2].Confirmed) '配った行は確認済みにしない'
 Chk ([string]$after[2].MaskedTranslation -eq '') 'マスク後の訳文は引き継がない'
 Remove-YakuCatProject -Id ([string]$rp.Id)
+
+# ------------------------------------------- 保存失敗の伝え方（挙動で見る）
+#
+# 2026-08-14、Assert-YakuCatProjectPersisted が下位の例外を包み直したせいで
+# CAT_COMMIT_MANIFEST_CONFLICT が先頭から消え、別プロセスが先に保存した競合が
+# HTTP 409 から 400 へ落ち、current_revision も返らなくなった。
+# そのとき回帰は47本すべて緑だった。これを見張っていた表明が Server.ps1 の
+# 本文を字面で探すだけで、応答コードを一度も計算していなかったからである。
+# だからここは字面ではなく、Server.ps1 と同じ式で status を出して確かめる。
+Write-Host '保存に失敗したときの伝え方'
+$yakuOriginalSaver = ${function:Save-YakuCatProject}
+try {
+    $conflictCodes = @('CAT_PROJECT_REVISION_CONFLICT','CAT_PUBLICATION_CANDIDATE_TARGET_CONFLICT',
+        'CAT_PUBLICATION_VARIANT_TARGET_CONFLICT','CAT_ABBREVIATION_REGISTRY_CONFLICT','CAT_IDEMPOTENCY_KEY_REUSED',
+        'CAT_REBASE_APPLY_CAS_MISMATCH','CAT_REBASE_APPLY_TARGET_MISMATCH','CAT_COMMIT_MANIFEST_CONFLICT',
+        'CAT_PROJECT_DELETE_CAS_MISMATCH','CAT_PROJECT_DELETE_NOT_EXPIRED','CAT_PROJECT_DELETING',
+        'CAT_PROJECT_ACTIVE_LEASE','CAT_PROJECT_ACTIVE_JOB')
+    function Get-YakuProbeStatus {
+        param([string]$Message)
+        $c = $(if ($Message -match '^(CAT_[A-Z0-9_]+)') { $Matches[1] } else { 'CAT_REQUEST_FAILED' })
+        return [pscustomobject]@{ Code = $c; Status = $(if ($conflictCodes -contains $c) { 409 } else { 400 }) }
+    }
+    $probeProject = [pscustomobject]@{ Revision = 7 }
+
+    Set-Item -Path Function:Save-YakuCatProject -Value { param($Project,[switch]$ThrowOnError) throw 'CAT_COMMIT_MANIFEST_CONFLICT: another process saved first.' }
+    $m1 = ''
+    try { Assert-YakuCatProjectPersisted -Project $probeProject } catch { $m1 = [string]$_.Exception.Message }
+    $r1 = Get-YakuProbeStatus $m1
+    Chk ($r1.Code -eq 'CAT_COMMIT_MANIFEST_CONFLICT') '競合コードは先頭に残る（包み直さない）'
+    Chk ($r1.Status -eq 409) '競合は 409 になる'
+
+    Set-Item -Path Function:Save-YakuCatProject -Value { param($Project,[switch]$ThrowOnError) throw 'forced transactional generation failure' }
+    $m2 = ''
+    try { Assert-YakuCatProjectPersisted -Project $probeProject } catch { $m2 = [string]$_.Exception.Message }
+    Chk ((Get-YakuProbeStatus $m2).Code -eq 'CAT_PROJECT_SAVE_FAILED') 'CAT_ で始まらない失敗は従来どおり包む'
+    Chk ($m2 -match 'forced transactional generation failure') '包んでも下位の原因はメッセージに残る'
+
+    # -ThrowOnError を無視して $false を返す実装でも、未保存のまま先へ進ませない。
+    Set-Item -Path Function:Save-YakuCatProject -Value { param($Project) return $false }
+    $m3 = ''
+    try { Assert-YakuCatProjectPersisted -Project $probeProject } catch { $m3 = [string]$_.Exception.Message }
+    Chk ($m3 -match '^CAT_PROJECT_SAVE_FAILED') '黙って $false を返す失敗も止める'
+}
+finally { Set-Item -Path Function:Save-YakuCatProject -Value $yakuOriginalSaver }
 
 # ---------------------------------------------------------------- 片付け
 Remove-YakuCatProject -Id ([string]$project.Id)

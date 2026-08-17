@@ -366,13 +366,17 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .cat-cand-tag { border-radius: 999px; padding: 2px 9px; background: var(--soft); color: var(--text); font-size: var(--font-meta); font-weight: 700; text-align: center; }
 .cat-cand-tag.is-exact { background: #6b5416; color: #fff; }
 .cat-cand-src { color: var(--muted); overflow-wrap: anywhere; }
-/* 一致率と差分。市販CAT（memoQ・Trados・Phrase）はどれも率だけでなく、
+/* 一致の度合いと差分。市販CAT（memoQ・Trados・Phrase）はどれも率だけでなく、
    過去訳の原文がいまの原文とどこで違うかを示す。率だけだと「93%」がどこの
    93% か分からず、結局2文を目で読み比べることになる。
-   色だけに頼らない: 100% は塗り、それ以外は枠。違う箇所は太字＋下線。 */
+   率は「%」で出す（2026-08-16。一度やめて戻した。理由は cat.js の
+   scoreBadge を組む所）。帯は3段で、境目は Smartcat の実測に合わせてある。
+   **色だけに頼らない。塗りの形が3種類とも違う**:
+   100% は塗りつぶし、85〜99% は実線の枠、それ未満は破線の枠。 */
 .cat-cand-score { border-radius: 999px; padding: 2px 9px; border: 1px solid var(--line-strong); color: var(--text); font-size: var(--font-meta); font-weight: 700; font-variant-numeric: tabular-nums; }
 .cat-cand-score.is-exact { border-color: var(--success); background: var(--success); color: #fff; }
-.cat-cand-score.is-high { border-color: var(--accent); color: var(--accent-text); }
+.cat-cand-score.is-high { border-style: solid; border-color: var(--accent); color: var(--accent-text); }
+.cat-cand-score.is-low { border-style: dashed; border-color: var(--line-strong); color: var(--muted); }
 .cat-diff-ins { font-weight: 700; color: var(--text); text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 2px; }
 .cat-cand-tgt { overflow-wrap: anywhere; }
 

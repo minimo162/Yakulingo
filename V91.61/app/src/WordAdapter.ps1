@@ -288,8 +288,10 @@ function Export-YakuWordDraft {
     $sourceBlocks = @($Project.Blocks); $currentBlocks=@($inventory.Blocks)
     if ($sourceBlocks.Count -ne $currentBlocks.Count) { throw 'CAT_WORD_SOURCE_BLOCK_COUNT_CHANGED' }
     $translations = @{}
-    foreach ($s in @($Project.Segments)) {
-        foreach ($id in @($s.BlockIds)) { $translations[[string]$id] = [string]$s.Translation }
+    # 任意位置で割った行は、同じ段落を指す。畳まずに回すと後の行が前の行を
+    # 上書きし、前半の訳が黙って消える（Excel 側と同じ理由）。
+    foreach ($unit in @(Group-YakuCatSplitSegments -Segments @($Project.Segments))) {
+        foreach ($id in @($unit.Segment.BlockIds)) { $translations[[string]$id] = [string]$unit.Segment.Translation }
     }
     for ($i=0; $i -lt $sourceBlocks.Count; $i++) {
         if ([string]$sourceBlocks[$i].Id -ne [string]$currentBlocks[$i].Id -or [string]$sourceBlocks[$i].Text -ne [string]$currentBlocks[$i].Text) {

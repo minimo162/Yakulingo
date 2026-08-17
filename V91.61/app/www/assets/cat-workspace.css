@@ -393,6 +393,43 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 }
 .cat-location-list button { justify-content: space-between; width: 100%; text-align: left; }
 
+/* 検索と置換の中身。畳んだ帯の中に縦へ積む（幅は .cat-toolbar-menu > div の
+   min-width 15rem に従う）。詳細度は class 1つ分に留める。ここを競わせると、
+   2026-08-11 に踏んだ「基本ルールが部品を踏み潰す」をもう一度やることになる。 */
+/* 上へ開く指定。**静的には付けない（2026-08-17 に直した）。**
+
+   2026-08-15 に「実機の窓（1380x860）では帯が y=574 にあり、下へ開くと
+   『訳文を置き換える』が y=965 に出て画面の外で押せない」として、この帯へ
+   固定で付けていた。**その 1380 が実機ではなかった。**
+
+   利用者の機械（inner 1912x987）では操作ブロックが折り返さないので帯は y=309 に
+   あり、高さ 427 のパネルを上へ開くと **top=-127**、つまり 127px が窓の上端の外へ
+   出る。「原文だけ」は y=-37〜-5 で完全に画面の外にあり、押せなかった（実測）。
+   **利用者が見ない幅のために入れた対策が、利用者が見る幅で同じ不具合を作っていた。**
+
+   いまは cat.js が開くたびに上下の空きを測って付け外しする。どちらの幅でも収まる。
+   詳細度は class 2つ分 (0,2,0)。基本ルール (0,2,0) より後ろに置いて勝たせる。 */
+.cat-toolbar-menu.is-drop-up > div {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: var(--space-1);
+}
+
+.cat-search-tools { display: grid; gap: var(--space-1); }
+.cat-search-tools p { margin: 0; font-size: var(--font-meta); }
+.cat-search-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-meta);
+}
+.cat-search-option input { width: auto; margin: 0; }
+.cat-search-replace { font-size: var(--font-meta); }
+.cat-search-tools input[type="text"] { width: 100%; min-width: 0; }
+/* .muted は (0,1,0)。ここは (0,2,0) で足りる。ID は使わない。 */
+.cat-search-tools .is-error { color: var(--error); }
+
 /* 参考情報を畳む。閉じている間は主役（原文・訳文）が右端まで使う。 */
 .cat-inspector-toggle { margin-left: auto; font-size: var(--font-meta); }
 .cat-editor-layout.is-inspector-hidden { grid-template-columns: minmax(0, 1fr); }
@@ -801,11 +838,23 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
   background: #fff0ee;
 }
 
-/* 「用語集を読み込めませんでした」は、訳の欠陥ではなくアプリ側の不調。
-   赤で出すと、直しようのないものを直そうとして時間を失う。 */
+/* 「点検が最後まで走りませんでした」「用語集を読み込めませんでした」の類は、
+   訳の欠陥ではなくアプリ側の不調。赤で出すと、直しようのないものを直そうとして
+   時間を失う。顔ぶれは src/CatProject.ps1 の Get-YakuCatQcToolTroubleCodes が
+   決め、cat.js の qcGroup がこの class を付ける。 */
 .cat-qc-card.is-tool {
   border-left: 4px solid var(--warning);
   background: #f6efe6;
+}
+
+/* 「用語集に無い短いラベル」の類は、直せるが直さなくても書き出せる。
+   赤（--error）にすると押せるはずの書き出しが押せないように見え、
+   道具の不調（--warning）にすると自分で対処できることが伝わらない。
+   顔ぶれは src/CatProject.ps1 の Get-YakuCatQcWarningCodes が決め、
+   cat.js の qcGroup がこの class を付ける。 */
+.cat-qc-card.is-warn {
+  border-left: 4px solid var(--accent);
+  background: var(--accent-soft);
 }
 
 .cat-context-label {
@@ -1251,3 +1300,91 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 }
 .cat-final-review-option{margin:1rem 0;padding:.8rem;border:1px solid var(--border,#cbd5e1);border-radius:.5rem}.cat-final-review-option label{display:block}.cat-final-review-option textarea{box-sizing:border-box;width:100%;margin-top:.35rem;resize:vertical}
 .cat-publication-dialog{width:min(68rem,calc(100vw - 2rem))}.cat-publication-compare{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.cat-publication-compare section,.cat-publication-candidate{border:1px solid var(--border,#d8dde6);border-radius:.65rem;padding:1rem;margin:.75rem 0}.cat-publication-compare h3,.cat-publication-candidate h3{margin-top:0}.cat-publication-text{font-size:1.05rem;white-space:pre-wrap}.cat-publication-candidate button{margin-top:.75rem}@media(max-width:760px){.cat-publication-compare{grid-template-columns:1fr}}
+
+/* 原文の数字を訳文へ入れる一覧（Ctrl+D）。表の外に置いて、訳文欄の下へ寄せる。
+   行は絞り込みや保存のたびに作り直されるので、表の中に置くと開いたそばから消える。 */
+.cat-placeable-picker {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: min(38rem, calc(100vw - 2rem));
+  padding: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgba(15, 23, 38, .18);
+}
+.cat-placeable-picker[hidden] { display: none; }
+.cat-placeable {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 2px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  font-size: var(--font-meta);
+}
+/* 番号は押す文字より弱く見せる（.cat-op-key と同じ考え方）。 */
+.cat-placeable-key { color: var(--muted); font-variant-numeric: tabular-nums; }
+.cat-placeable-text { font-weight: 700; }
+
+/* 体裁の常設（2026-08-16）。格子の下に据え、訳しながら収まりを見る。
+   これまでは「体裁で見る」ダイアログの中だけにあり、訳しながら見られなかった。
+   Smartcat はプレビューを下部に常設し、細い仕切りで広げられ、選択に追随する
+   （実測。出典 _docs/対比_Smartcat_2026-08-16.md）。
+
+   高さは JS が --cat-dock-height に入れる。既定は 180px と狭くしてある。
+   Smartcat も既定は狭く、必要なときだけ大きくする作りだった。 */
+.cat-preview-dock {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: var(--cat-dock-height, 180px);
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+
+/* 仕切り。Smartcat は 4px・全幅・row-resize だった（実測）。
+   4px は掴む的として小さいので、当たり判定だけ上下へ広げる
+   （見た目は 4px のまま。WCAG 2.2 SC 2.5.8 の的の大きさ）。 */
+.cat-preview-dock-splitter {
+  flex: 0 0 auto;
+  height: 4px;
+  margin: 4px 0;
+  cursor: row-resize;
+  background: var(--line);
+  border: 0;
+  position: relative;
+}
+.cat-preview-dock-splitter::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; top: -6px; bottom: -6px;
+}
+.cat-preview-dock-splitter:hover,
+.cat-preview-dock-splitter:focus-visible { background: var(--accent); }
+.cat-preview-dock-splitter:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* 掴んでいるあいだ、行の選択が走ると文字が青く反転して読めなくなる。 */
+.cat-preview-dock.is-resizing { user-select: none; }
+
+.cat-preview-dock-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2) var(--space-1);
+}
+.cat-preview-dock-title { font-weight: 700; font-size: var(--font-meta); }
+.cat-preview-dock-head #cat-preview-dock-close { margin-left: auto; }
+
+.cat-preview-dock-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 var(--space-2) var(--space-2);
+}

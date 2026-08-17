@@ -160,7 +160,16 @@ Check-YakuDual ($catClient -match "type: 'translate', scope: jobScope" -and $cat
 Check-YakuDual ($catClient -match "event\.key === 'Enter'" -and $catClient -match '処理中は確認できません' -and $catClient -match 'function focusAfter\(index\)') 'Ctrl+Enter is guarded while busy and advances after confirmation'
 # 2026-08-13: ドロップ先は取り込みボタン自身になった（枠を1つ減らした）。
 Check-YakuDual ($catClient -match "bindFileDrop\(el\('cat-open-file-entry'\), el\('cat-file-input'\)\)" -and $catClient -match "event\.key === 'Enter' \|\| event\.key === ' '") 'file drop supports drag-drop and keyboard activation'
-Check-YakuDual ($catClient -match 'data-cat-loss' -and $catClient -match 'この行と次の行をつなげて1文にします。' -and $catClient -match 'つなげた行を元の2行に戻します。' -and ([regex]::Matches($catClient, '消えた訳文は元に戻せません').Count -ge 2)) 'merge and split warn before discarding a translation'
+# 構造編集は直前の1回だけ元に戻せる。古い試験は「元に戻せません」を要求しており、
+# 実装済みの復元口を欠陥として扱っていた。3操作すべてが、訳文を消す前に範囲と
+# 一回限りの復元を伝えることを固定する。
+Check-YakuDual ($catClient -match 'data-cat-loss' -and
+  $catClient -match 'この行と次の行をつなげて1文にします。' -and
+  $catClient -match 'つなげた行を元の2行に戻します。' -and
+  $catClient -match 'この行を、原文の選んだ位置で2つに分けます。' -and
+  $catClient -match '直前のこの結合だけを元に戻せます。' -and
+  $catClient -match '直前のこの分割解除だけを元に戻せます。' -and
+  $catClient -match '直前のこの分割だけを元に戻せます。') 'merge and split warn before discarding a translation and promise the bounded recovery path'
 Check-YakuDual ($catClient -match 'data\.review_blocked' -and $catClient -match 'var same = document\.querySelector') 'QC-blocked confirmation returns focus to the same row'
 Check-YakuDual ($catClient -match 'function redrawAfterFlush\(\)[\s\S]*?return flush\(\)\.then' -and $catClient -match "button\.hasAttribute\('data-cat-filter'\)[\s\S]{0,180}redrawAfterFlush\(\)") 'filter redraw waits for the shared save barrier'
 
@@ -228,7 +237,13 @@ Check-YakuDual ($catClient -notmatch 'data-cat-shorten' -and $catClient -match '
 # お確かめください。」は責任放棄に読める一文で、前半（何を点検しているか）だけで
 # 同じことが伝わる。守るのは「機械の点検を、訳の良し悪しの保証に見せない」ことなので、
 # 点検の範囲を言い切っていることを見る。
-Check-YakuDual ($catPage -match '自動で点検しているのは、数字と単位の写しちがいだけです' -and $catPage -notmatch 'ご自身でお確かめください' -and $catClient -match '気になる点は見つかりませんでした') 'CAT states what the mechanical check covers, without claiming quality'
+# 2026-08-15: 点検の範囲を言い切るのは同じだが、範囲そのものを実装へ合わせた。
+# Invoke-YakuCatSegmentValidation が error として積むのは18種あり、通貨・見出しの
+# 形・登録した用語もその中に居る。「数字と単位だけ」は狭すぎて、用語で止まった
+# 利用者が数字を見に行っていた。守る不変条件（機械の点検を訳の良し悪しの保証に
+# 見せない）は変えないので、「訳の中身は見ていません」を明示で足す。
+Check-YakuDual ($catPage -match '自動で点検しているのは、数字・単位・通貨・見出しの形・登録した用語の写しちがいだけです' -and $catPage -match '訳の中身は見ていません' -and $catPage -notmatch 'ご自身でお確かめください' -and $catClient -match '気になる点は見つかりませんでした') 'CAT states what the mechanical check covers, without claiming quality'
+Check-YakuDual ($catPage -notmatch '自動で点検しているのは、数字と単位の写しちがいだけです') 'CAT does not narrow the stated check back to numbers alone'
 Check-YakuDual ($catClient -match "el\('cat-export-dialog'\)\.addEventListener\('close'" -and $catClient -match 'scopeIsCurrent\(scope, true\)' -and $catClient -match 'exportProject\(\)') 'export runs only after an unchanged preflight scope is confirmed'
 
 Write-Host 'Inserted reference keeps its provenance through save and resume' -ForegroundColor Cyan

@@ -108,7 +108,12 @@ try{
     $clientText=Get-Content -LiteralPath (Join-Path (Join-Path $root 'www\assets') 'cat.js') -Raw -Encoding UTF8
     $pageText=Get-Content -LiteralPath (Join-Path (Join-Path $root 'www') 'cat.html') -Raw -Encoding UTF8
     Chk ($serverText -match "'review-start'" -and $serverText -match "'copilot-review-preview'" -and $serverText -match "'copilot-review-start'" -and $serverText -match "'copilot-review-apply'" -and $serverText -match "'finding-decision'") '決定論review・保護済み送信preview・Copilot job・人の判断APIを公開する'
-    Chk ($serverText -match "catMode -eq 'document_review'" -and $serverText -match 'SkipFreshChatWait:\(\$requestNumber -gt 1\)' -and $serverText -match 'copilotPromptCharLimit') '複数校正batchでチャット準備と入力上限を制御する'
+    # V91.61（2026-08-14）: 送信ループを Review.ps1 側へ戻した。伏せる関数と送る
+    # 関数が別ファイルだと、数値マスクの統制（Test-YakuV9160NumericMasking.ps1
+    # §10-21）が経路を名指しできない。見張る条件は同じまま、見る場所だけを
+    # 実装のある側へ移し、ジョブ側が委譲していることを1つ足す。
+    $reviewText=Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'Review.ps1') -Raw -Encoding UTF8
+    Chk ($serverText -match "catMode -eq 'document_review'" -and $serverText -match 'Invoke-YakuCatDocumentReviewRequests' -and $reviewText -match 'SkipFreshChatWait:\(\$requestNumber -gt 1\)' -and $reviewText -match 'copilotPromptCharLimit') '複数校正batchでチャット準備と入力上限を制御する'
     $copilotText=Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'CopilotClient.ps1') -Raw -Encoding UTF8
     Chk ($copilotText -match 'fresh chat retry discarded an unresponsive CDP socket' -and $copilotText -match 'Remove-YakuCdpCachedSocket') '新しいチャット操作のCDP timeoutは同じ故障ソケットを再利用しない'
     Chk ($copilotText -match "obj\.contract === 'document-review-copilot-v2'" -and $copilotText -match 'obj\.request_id === requestId' -and $copilotText -match 'REVIEW_JSON') '回答監視が校正JSONをrequest固有IDへ束縛する'

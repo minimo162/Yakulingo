@@ -163,6 +163,315 @@ try {
     [IO.File]::WriteAllLines($tamperedOrigin, [string[]]@(($tamperedOriginRecord | ConvertTo-Json -Compress -Depth 4)), [Text.UTF8Encoding]::new($false))
     Chk (@(Find-YakuTranslationMemory -Text ([string]$tamperedOriginRecord.source) -Path $tamperedOrigin).Count -eq 0) '出典表示だけを書き換えたTM行も候補に表示しない'
 
+    Write-Host '記憶化は足しであって前提ではない' -ForegroundColor Cyan
+    # 行を移るたびに同じJSONLを読み直さないよう、検証済みの姿をプロセス内に
+    # 憶えている。憶えたものを捨てても答えが変わらないことを固定する。
+    function Get-TranslationMemoryShape { param($Hits)
+        return ((@($Hits) | ForEach-Object { [string]$_.UnitId + '|' + [string]$_.MatchType + '|' + ('{0:F9}' -f [double]$_.Score) + '|' + [string]$_.Target }) -join "`n")
+    }
+    $warmHits = @(Find-YakuTranslationMemory -Text '当社は電動化を進めます。' -Path $tm)
+    Clear-YakuTranslationMemoryCache
+    $coldHits = @(Find-YakuTranslationMemory -Text '当社は電動化を進めます。' -Path $tm)
+    Chk ($warmHits.Count -eq $coldHits.Count -and (Get-TranslationMemoryShape -Hits $warmHits) -eq (Get-TranslationMemoryShape -Hits $coldHits)) '記憶化を捨てても同じ候補が同じ順で出る'
+    Clear-YakuTranslationMemoryCache
+    Chk (@(Find-YakuTranslationMemory -Text 'x' -Path (Join-Path $tmp 'no-such.jsonl')).Count -eq 0) '記憶化を捨てた直後にメモリが無くても落ちない'
+    Clear-YakuTranslationMemoryCache
+    $coldConcordance = @(Search-YakuTranslationMemoryConcordance -Query '固定費' -Direction 'to_en' -Path $tm)
+    $warmConcordance = @(Search-YakuTranslationMemoryConcordance -Query '固定費' -Direction 'to_en' -Path $tm)
+    Chk ($coldConcordance.Count -eq $warmConcordance.Count) 'コンコーダンスも記憶化の有無で変わらない'
+
+    Write-Host '改ざんは記憶化を素通りしない' -ForegroundColor Cyan
+    # 長さもmtimeも同じまま中身だけ差し替える。Windowsのファイル時刻は約15.6ms
+    # ごとにしか進まないので、長さとmtimeだけを鍵にすると古い姿を返してしまう。
+    # ここを外して速くするのは改善ではない。
+    $sneak = Join-Path $tmp 'sneak.jsonl'
+    $sneakRecord = (Get-Content -LiteralPath $tm -Encoding UTF8 | Select-Object -First 1) | ConvertFrom-Json
+    $sneakGood = ($sneakRecord | ConvertTo-Json -Compress -Depth 4)
+    [IO.File]::WriteAllLines($sneak, [string[]]@($sneakGood), [Text.UTF8Encoding]::new($false))
+    $sneakStamp = [IO.File]::GetLastWriteTimeUtc($sneak)
+    Chk (@(Find-YakuTranslationMemory -Text ([string]$sneakRecord.source) -Path $sneak).Count -eq 1) '差し替える前は候補に出る（記憶化に載せる）'
+    $sneakRecord.target = ([string]$sneakRecord.target).ToUpperInvariant()
+    $sneakBad = ($sneakRecord | ConvertTo-Json -Compress -Depth 4)
+    [IO.File]::WriteAllLines($sneak, [string[]]@($sneakBad), [Text.UTF8Encoding]::new($false))
+    [IO.File]::SetLastWriteTimeUtc($sneak, $sneakStamp)
+    # -ne は既定で大小を畳む。大文字化しただけの差し替えを「同じ」と見て、
+    # この確認そのものが空振りする。中身の比較は -cne で行う。
+    Chk ($sneakGood.Length -eq $sneakBad.Length -and $sneakGood -cne $sneakBad) '長さの変わらない差し替えで試している'
+    Chk ([IO.File]::GetLastWriteTimeUtc($sneak) -eq $sneakStamp) 'mtimeも同じに戻してある'
+    Chk (@(Find-YakuTranslationMemory -Text ([string]$sneakRecord.source) -Path $sneak).Count -eq 0) '長さもmtimeも同じ改ざんを記憶化が素通りさせない'
+
+    Write-Host '追記のたびに全件を読み直さない' -ForegroundColor Cyan
+    # 「確認済みにする」はCAT作業でいちばん回数の多い操作で、そのたびにTMへ
+    # 1行追記する。追記で記憶化を捨てて作り直す作りにすると、読みで得た分を
+    # 書きで失い、さらに追記直後の照合が毎回coldになる。
+    # 実測（実データ123件、追記5回の中央値）:
+    #   HEAD          追記 33.2ms / 追記直後の照合 105.7ms
+    #   捨てて作り直す 追記  4.3ms / 追記直後の照合  88.8ms
+    #   前へ進める     追記  3.4ms / 追記直後の照合   5.1ms
+    # 合成5,000件の追記では 1,261.5ms → 11.0ms。
+    #
+    # 門は時計ではなく「やった仕事の量」で置く。CPUの混み具合で揺れないためで、
+    # 遅くなった原因そのもの（全行のJSON解析と全件の出典検証）を数える。
+    function New-TestTranslationMemorySeedFile {
+        param([string]$Path, [int]$Count, [string]$Prefix = 'seed')
+        $lines = New-Object 'System.Collections.Generic.List[string]'
+        $sources = New-Object 'System.Collections.Generic.List[string]'
+        for ($i = 0; $i -lt $Count; $i++) {
+            # 原文どうしを似せない。似ているとfuzzyで全部当たり、門が測りたい
+            # ものではなく並べ替えの費用を測ってしまう。
+            $token = (Get-YakuTranslationMemoryHash -Text ($Prefix + '-' + $i)).Substring(0, 24)
+            $src = ('第' + $i + '節。' + $token + 'の件について当社は説明します。')
+            $tgt = ('Section ' + $i + '. We explain ' + $token + ' in this material.')
+            $projectId = (Get-YakuTranslationMemoryHash -Text ($Prefix + '-project-' + $i)).Substring(0, 32)
+            $segmentId = (Get-YakuTranslationMemoryHash -Text ($Prefix + '-segment-' + $i)).Substring(0, 32)
+            $sourceHash = Get-YakuTranslationMemoryHash -Text $src
+            $targetHash = Get-YakuTranslationMemoryHash -Text $tgt
+            $unitId = Get-YakuTranslationMemoryUnitId -OriginProjectId $projectId -OriginSegmentId $segmentId -Direction 'to_en'
+            $referenceId = Get-YakuTranslationMemoryReferenceId -OriginProjectId $projectId -OriginFileName 'seed.xlsx' `
+                -OriginSegmentId $segmentId -OriginLocation ('Sheet1, A' + ($i + 1)) -OriginPage 1 -ReviewRevision 1 `
+                -Direction 'to_en' -SourceHash $sourceHash -TargetHash $targetHash
+            $eventId = Get-YakuTranslationMemoryEventId -EventType 'upsert' -UnitId $unitId -Direction 'to_en' `
+                -ReviewRevision 1 -ReferenceId $referenceId
+            $record = [ordered]@{
+                schema_version    = 3
+                event_type        = 'upsert'
+                event_id          = $eventId
+                unit_id           = $unitId
+                key               = (ConvertTo-YakuTranslationMemoryKey -Text $src)
+                source            = $src
+                target            = $tgt
+                direction         = 'to_en'
+                origin            = 'seed'
+                reference_id      = $referenceId
+                origin_project_id = $projectId
+                origin_file_name  = 'seed.xlsx'
+                origin_segment_id = $segmentId
+                origin_location   = ('Sheet1, A' + ($i + 1))
+                origin_page       = 1
+                source_hash       = $sourceHash
+                target_hash       = $targetHash
+                review_revision   = 1
+                saved             = (Get-Date).ToString('s')
+            }
+            $null = $lines.Add(($record | ConvertTo-Json -Compress -Depth 4))
+            $null = $sources.Add($src)
+        }
+        [IO.File]::WriteAllLines($Path, $lines.ToArray(), [Text.UTF8Encoding]::new($false))
+        # `return ,$array` にしてはならない。呼び出し側が @() で包むので入れ子になり、
+        # 要素1個の配列（中身は配列全体）になる。実際これで3本を赤にした。
+        return $sources.ToArray()
+    }
+    function Add-TestGateEntry {
+        param([string]$Path, [int]$Index)
+        return (Add-YakuTranslationMemoryEntry -Path $Path `
+            -Source ('追記' + $Index + '件目。' + (Get-YakuTranslationMemoryHash -Text ('gate-add-' + $Index)).Substring(0, 24) + 'について述べます。') `
+            -Target ('Appended ' + $Index + '. We describe it here.') `
+            -OriginProjectId (Get-YakuTranslationMemoryHash -Text ('gate-add-project-' + $Index)).Substring(0, 32) `
+            -OriginFileName 'gate.xlsx' `
+            -OriginSegmentId (Get-YakuTranslationMemoryHash -Text ('gate-add-segment-' + $Index)).Substring(0, 32) `
+            -OriginLocation ('Sheet9, A' + ($Index + 1)) -OriginPage 1 -ReviewRevision 1)
+    }
+    function Get-TestMedian { param([double[]]$Values)
+        $s = @($Values | Sort-Object)
+        return [double]$s[[Math]::Floor($s.Count / 2)]
+    }
+
+    $gate = Join-Path $tmp 'writepath.jsonl'
+    $gateSeed = 400
+    $gateSources = @(New-TestTranslationMemorySeedFile -Path $gate -Count $gateSeed -Prefix 'gate')
+    $gateQuery = [string]$gateSources[0]
+    Clear-YakuTranslationMemoryCache
+
+    # 出典検証の回数を数える。速さのためにここを飛ばす実装は、この数が減る
+    # のではなく、追記のたびに全件へ走ることで増える。
+    $script:tmProvenanceCalls = 0
+    $script:tmProvenanceInner = ${function:Test-YakuTranslationMemoryProvenance}
+    function Test-YakuTranslationMemoryProvenance {
+        param([AllowNull()]$Entry)
+        $script:tmProvenanceCalls = [int]$script:tmProvenanceCalls + 1
+        return (& $script:tmProvenanceInner -Entry $Entry)
+    }
+    try {
+        # 対照。冷えた状態では全行を解き、全件の出典検証を通す。
+        $script:tmProvenanceCalls = 0
+        $coldLinesBefore = Get-YakuTranslationMemoryDecodedLineCount
+        $coldFindSw = [Diagnostics.Stopwatch]::StartNew()
+        $gateCold = @(Find-YakuTranslationMemory -Text $gateQuery -Path $gate)
+        $coldFindSw.Stop()
+        $coldProvenance = [int]$script:tmProvenanceCalls
+        $coldLines = [long](Get-YakuTranslationMemoryDecodedLineCount) - $coldLinesBefore
+        Chk ($gateCold.Count -eq 1 -and [bool]$gateCold[0].Exact) '種を積んだ翻訳メモリから完全一致を引ける'
+        Chk ($coldProvenance -ge $gateSeed) ('冷えた照合では全件の出典検証が走る（' + $coldProvenance + '件 / 種' + $gateSeed + '件）')
+        Chk ($coldLines -ge $gateSeed) ('冷えた照合では全行を解く（' + $coldLines + '行）')
+
+        # 本番その1。確認済みを続けて2件。1件目でファイルが変わるので、2件目が
+        # 「前の追記で失効した記憶化を、追記のたびに作り直していないか」を見る。
+        # 退行はここに出ていた（合成5,000件で 1,261.5ms → 3,374.1ms）。
+        $gateAdded = Add-TestGateEntry -Path $gate -Index 0
+        $script:tmProvenanceCalls = 0
+        $addLinesBefore = Get-YakuTranslationMemoryDecodedLineCount
+        $gateAdded2 = Add-TestGateEntry -Path $gate -Index 1
+        $addProvenance = [int]$script:tmProvenanceCalls
+        $addLines = [long](Get-YakuTranslationMemoryDecodedLineCount) - $addLinesBefore
+        Chk ([bool]$gateAdded.Added -and [bool]$gateAdded2.Added) '種を積んだ翻訳メモリへ続けて追記できる'
+        Chk ($addProvenance -le 2) ('追記の次の追記で出典検証が全件へ走らない（' + $addProvenance + '件）')
+        Chk ($addLines -le 2) ('追記の次の追記で解き直すのは増えた行だけ（' + $addLines + '行）')
+
+        # 本番その2。追記して、そのまま次の行を引く。CATで確認済みにした直後の動き。
+        $script:tmProvenanceCalls = 0
+        $findLinesBefore = Get-YakuTranslationMemoryDecodedLineCount
+        $null = Add-TestGateEntry -Path $gate -Index 2
+        $addOnlyProvenance = [int]$script:tmProvenanceCalls
+        $findSw = [Diagnostics.Stopwatch]::StartNew()
+        $gateWarm = @(Find-YakuTranslationMemory -Text $gateQuery -Path $gate)
+        $findSw.Stop()
+        $findProvenance = [int]$script:tmProvenanceCalls - $addOnlyProvenance
+        $findLines = [long](Get-YakuTranslationMemoryDecodedLineCount) - $findLinesBefore
+        Chk ($findProvenance -le 2) ('追記の直後の照合で全件の出典検証をやり直さない（' + $findProvenance + '件）')
+        Chk ($findLines -le 3) ('追記の直後に解き直すのは追記した行だけ（' + $findLines + '行）')
+        Chk ($gateWarm.Count -eq 1 -and [bool]$gateWarm[0].Exact -and
+             [string]$gateWarm[0].Target -eq [string]$gateCold[0].Target) '追記しても既存の候補は同じものが出る'
+
+        # 時計でも見ておく。1件目は作り直しになるので、2件目以降と比べる。
+        Clear-YakuTranslationMemoryCache
+        $coldAddSw = [Diagnostics.Stopwatch]::StartNew()
+        $null = Add-TestGateEntry -Path $gate -Index 10
+        $coldAddSw.Stop()
+        $coldAddMs = [double]$coldAddSw.Elapsed.TotalMilliseconds
+        $warmAdds = New-Object 'System.Collections.Generic.List[double]'
+        foreach ($n in 11..15) {
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            $null = Add-TestGateEntry -Path $gate -Index $n
+            $sw.Stop()
+            $null = $warmAdds.Add([double]$sw.Elapsed.TotalMilliseconds)
+        }
+        $warmAddMs = Get-TestMedian -Values $warmAdds.ToArray()
+        Write-Host ('       種' + $gateSeed + '件: 冷えた照合 ' + ('{0:N1}' -f $coldFindSw.Elapsed.TotalMilliseconds) +
+            'ms / 冷えた追記 ' + ('{0:N1}' -f $coldAddMs) + 'ms / 温まった追記 ' + ('{0:N1}' -f $warmAddMs) +
+            'ms / 追記直後の照合 ' + ('{0:N1}' -f $findSw.Elapsed.TotalMilliseconds) + 'ms') -ForegroundColor DarkGray
+        Chk (($warmAddMs * 3) -lt $coldAddMs) ('2件目以降の追記が作り直しより速い（' +
+            ('{0:N1}' -f $warmAddMs) + 'ms 対 ' + ('{0:N1}' -f $coldAddMs) + 'ms）')
+    }
+    finally { ${function:Test-YakuTranslationMemoryProvenance} = $script:tmProvenanceInner }
+
+    Write-Host '追記に見せかけた差し替えを前へ進めない' -ForegroundColor Cyan
+    # 記憶化を前へ進めてよいのは、いま読んだbyte列の前半が、前に憶えたときの
+    # byte列とSHA-256で一致したときだけである。「伸びた」ことは根拠にしない。
+    $grow = Join-Path $tmp 'grow.jsonl'
+    $growSources = @(New-TestTranslationMemorySeedFile -Path $grow -Count 3 -Prefix 'grow')
+    Clear-YakuTranslationMemoryCache
+    $growQuery = [string]$growSources[0]
+    Chk (@(Find-YakuTranslationMemory -Text $growQuery -Path $grow | Where-Object { [bool]$_.Exact }).Count -eq 1) '差し替える前は候補に出る（記憶化に載せる）'
+    $growLines = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($l in [IO.File]::ReadAllLines($grow)) { if (-not [string]::IsNullOrWhiteSpace($l)) { $null = $growLines.Add($l) } }
+    $growFirst = $growLines[0] | ConvertFrom-Json
+    $growFirst.target = 'Tampered after caching'
+    $growLines[0] = ($growFirst | ConvertTo-Json -Compress -Depth 4)
+    $null = $growLines.Add('{"schema_version":3,"event_type":"upsert","event_id":"' + ('9' * 64) + '"}')
+    [IO.File]::WriteAllLines($grow, $growLines.ToArray(), [Text.UTF8Encoding]::new($false))
+    Chk (@(Find-YakuTranslationMemory -Text $growQuery -Path $grow | Where-Object { [bool]$_.Exact }).Count -eq 0) '長くなっても前半が違えば作り直して改ざんを弾く'
+
+    # 追記そのものは正しく前へ進むこと。上と対にしておかないと、何も進めない
+    # 実装でも上の1本は通ってしまう。
+    $growSources2 = @(New-TestTranslationMemorySeedFile -Path $grow -Count 3 -Prefix 'grow2')
+    Clear-YakuTranslationMemoryCache
+    $null = @(Find-YakuTranslationMemory -Text ([string]$growSources2[0]) -Path $grow)
+    $appendSources = @(New-TestTranslationMemorySeedFile -Path (Join-Path $tmp 'append-src.jsonl') -Count 1 -Prefix 'grow3')
+    $appendLine = @([IO.File]::ReadAllLines((Join-Path $tmp 'append-src.jsonl')))[0]
+    [IO.File]::AppendAllLines($grow, [string[]]@($appendLine), [Text.UTF8Encoding]::new($false))
+    Chk (@(Find-YakuTranslationMemory -Text ([string]$appendSources[0]) -Path $grow | Where-Object { [bool]$_.Exact }).Count -eq 1) '正しく追記された行は候補に加わる'
+
+    # 差分で取り込む行にも出典検証を通す。ここを飛ばすと、正しい前半のうしろへ
+    # 1行足すだけで何でも候補に出せてしまう。
+    $tamperSources = @(New-TestTranslationMemorySeedFile -Path (Join-Path $tmp 'tamper-src.jsonl') -Count 1 -Prefix 'grow4')
+    $tamperRecord = @([IO.File]::ReadAllLines((Join-Path $tmp 'tamper-src.jsonl')))[0] | ConvertFrom-Json
+    $tamperRecord.target = 'Tampered on append'
+    [IO.File]::AppendAllLines($grow, [string[]]@(($tamperRecord | ConvertTo-Json -Compress -Depth 4)), [Text.UTF8Encoding]::new($false))
+    Chk (@(Find-YakuTranslationMemory -Text ([string]$tamperSources[0]) -Path $grow | Where-Object { [bool]$_.Exact }).Count -eq 0) '追記された改ざん行は差分で取り込んでも候補に出ない'
+
+    # すでに候補に出ているunitへ改ざんしたupsertを追記する。差分で進めるときに
+    # 前の候補を残したままにすると、撤回できない偽の候補ができる。
+    $shadowSource = [string]$growSources2[0]
+    Chk (@(Find-YakuTranslationMemory -Text $shadowSource -Path $grow | Where-Object { [bool]$_.Exact }).Count -eq 1) '上書きする前の行は候補に出ている'
+    $shadowRecord = @([IO.File]::ReadAllLines($grow))[0] | ConvertFrom-Json
+    $shadowRecord.review_revision = 2
+    $shadowRecord.target = 'Shadowed by a forged upsert'
+    [IO.File]::AppendAllLines($grow, [string[]]@(($shadowRecord | ConvertTo-Json -Compress -Depth 4)), [Text.UTF8Encoding]::new($false))
+    Chk (@(Find-YakuTranslationMemory -Text $shadowSource -Path $grow | Where-Object { [bool]$_.Exact }).Count -eq 0) '同じunitへ改ざんを追記されたら前の候補も残さない'
+
+    Write-Host '行の途中で終わっているファイルは前へ進めない' -ForegroundColor Cyan
+    # 追記は既存の最終行の続きとして連結される。憶えた分が改行で終わって
+    # いなければ、憶えている「1行」と食い違うので作り直すしかない。
+    $partial = Join-Path $tmp 'partial.jsonl'
+    $partialSources = @(New-TestTranslationMemorySeedFile -Path (Join-Path $tmp 'partial-src.jsonl') -Count 1 -Prefix 'partial')
+    $partialLine = @([IO.File]::ReadAllLines((Join-Path $tmp 'partial-src.jsonl')))[0]
+    [IO.File]::WriteAllText($partial, $partialLine, [Text.UTF8Encoding]::new($false))
+    Clear-YakuTranslationMemoryCache
+    Chk ((Read-YakuTranslationMemory -Path $partial).Count -eq 1) '改行で終わらないファイルも読める'
+    [IO.File]::AppendAllText($partial, "のつづき`r`n", [Text.UTF8Encoding]::new($false))
+    Chk ((Read-YakuTranslationMemory -Path $partial).Count -eq 0) '行の途中に足された分は前の行の続きとして読み直す'
+
+    Write-Host '撤回してから確認し直す' -ForegroundColor Cyan
+    # tombstoneで候補から外したunitを、あとで確認し直すと戻る。差分で前へ
+    # 進めた姿と、全部作り直した姿が、同じ候補を同じ順で出すことを固定する。
+    $revive = Join-Path $tmp 'revive.jsonl'
+    $reviveSources = @(New-TestTranslationMemorySeedFile -Path $revive -Count 3 -Prefix 'revive')
+    Clear-YakuTranslationMemoryCache
+    $reviveTargetSource = [string]$reviveSources[1]
+    $reviveProject = (Get-YakuTranslationMemoryHash -Text 'revive-project-1').Substring(0, 32)
+    $reviveSegment = (Get-YakuTranslationMemoryHash -Text 'revive-segment-1').Substring(0, 32)
+    Chk (@(Find-YakuTranslationMemory -Text $reviveTargetSource -Path $revive | Where-Object { [bool]$_.Exact }).Count -eq 1) '撤回する前は候補に出る'
+    $r = Add-YakuTranslationMemoryTombstone -Path $revive -OriginProjectId $reviveProject -OriginSegmentId $reviveSegment `
+        -ReviewRevision 2 -Reason 'gate-withdrawn'
+    Chk ([bool]$r.Added) '記憶化に載せたあとでも撤回できる'
+    Chk (@(Find-YakuTranslationMemory -Text $reviveTargetSource -Path $revive | Where-Object { [bool]$_.Exact }).Count -eq 0) '撤回した行は候補から消える'
+    $r = Add-YakuTranslationMemoryEntry -Path $revive -Source $reviveTargetSource -Target 'Revived translation.' `
+        -OriginProjectId $reviveProject -OriginFileName 'seed.xlsx' -OriginSegmentId $reviveSegment `
+        -OriginLocation 'Sheet1, A2' -OriginPage 1 -ReviewRevision 3
+    Chk ([bool]$r.Added -and $r.Reason -eq 'revived') '撤回したunitを確認し直すと戻る'
+    $reviveWarm = @(Find-YakuTranslationMemory -Text $reviveTargetSource -Path $revive)
+    Clear-YakuTranslationMemoryCache
+    $reviveCold = @(Find-YakuTranslationMemory -Text $reviveTargetSource -Path $revive)
+    Chk ((Get-TranslationMemoryShape -Hits $reviveWarm) -eq (Get-TranslationMemoryShape -Hits $reviveCold) -and
+         $reviveWarm.Count -eq 1 -and [string]$reviveWarm[0].Target -eq 'Revived translation.') '差分で進めた姿と作り直した姿が一致する'
+
+    Write-Host '一致率の対称性と、文の長さから独立していること' -ForegroundColor Cyan
+    # 2026-08-16 に文字trigramのDice係数から編集距離へ替えた。Diceは文の長さで
+    # 答えが変わる。n文字の文で隣り合う2字を書き換えると trigram は n-2 個のうち
+    # 4個が壊れるので 1 - 4/(n-2) になり、**16字未満の文は1語違うだけで必ず
+    # 0.70 を割って隠れていた**（実測 n=12 で 0.600、n=45 で 0.905）。
+    # 勘定科目名・表の見出し・短い注記はほぼ全部この長さである。
+    # 出典 `_docs/測定_一致率_2026-08-16.md`
+    $makeDistinct = {
+        param([int]$Length)
+        $sb = New-Object System.Text.StringBuilder
+        for ($i = 0; $i -lt $Length; $i++) { [void]$sb.Append([char](0x4E00 + ($i * 7))) }
+        return $sb.ToString()
+    }
+    foreach ($len in @(6, 12, 25, 45)) {
+        $base = & $makeDistinct $len
+        $edited = $base.Substring(0, [int][Math]::Floor($len / 2)) + [char]0x9F98 + $base.Substring([int][Math]::Floor($len / 2) + 1)
+        $ratio = [double](Get-YakuTranslationMemorySimilarity -Left $base -Right $edited)
+        Chk ($base.Length -eq $edited.Length -and $base -ne $edited) ('治具が1字だけ違う: ' + $len + '字')
+        Chk ([Math]::Abs($ratio - (1.0 - (1.0 / $len))) -lt 0.000000001) ('1字違いが 1-1/n になる: ' + $len + '字 → ' + $ratio.ToString('N3'))
+        Chk ($ratio -ge 0.70) ('1字違いは長さによらず表に出る: ' + $len + '字')
+    }
+    foreach ($pair in @(@('発行', '発行元'), @('AB', 'ABC'), @('abc', 'abcdef'), @('ABCD', 'ABCDE'))) {
+        $fwd = [double](Get-YakuTranslationMemorySimilarity -Left $pair[0] -Right $pair[1])
+        $rev = [double](Get-YakuTranslationMemorySimilarity -Left $pair[1] -Right $pair[0])
+        Chk ([Math]::Abs($fwd - $rev) -lt 0.000000001) ('一致率が左右で同じ: ' + $pair[0] + ' / ' + $pair[1])
+    }
+    Chk ([double](Get-YakuTranslationMemorySimilarity -Left '発行' -Right '発行元') -lt 1.0) '短い語の包含を完全一致として扱わない'
+    Chk ([Math]::Abs([double](Get-YakuTranslationMemorySimilarity -Left 'ABCD' -Right 'ABCDE') - 0.8) -lt 0.000000001) '1字足しただけなら 1-1/5 を返す'
+    # 控え（Add-Type が使えない環境）が同じ値を返すこと。片方だけ直す事故を止める。
+    $scorerType = Get-YakuTranslationMemoryScorer
+    Chk ($null -ne $scorerType) 'Add-Type で一致率の型を用意できる'
+    foreach ($pair in @(@('ABCD', 'ABCDE'), @('発行', '発行元'), @((& $makeDistinct 25), (& $makeDistinct 20)))) {
+        $viaNet = [double]$scorerType::Score($pair[0], $pair[1])
+        $viaPs = [double](Get-YakuTranslationMemoryEditRatioManaged -Left $pair[0] -Right $pair[1])
+        Chk ([Math]::Abs($viaNet - $viaPs) -lt 0.000000001) ('控えと本体が同じ値: ' + $pair[0].Length + '字/' + $pair[1].Length + '字')
+    }
+
     Write-Host '確定と結びついているか' -ForegroundColor Cyan
     $cat = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'CatProject.ps1') -Raw -Encoding UTF8
     $server = Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'Server.ps1') -Raw -Encoding UTF8

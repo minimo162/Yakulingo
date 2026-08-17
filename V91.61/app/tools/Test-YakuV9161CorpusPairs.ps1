@@ -23,6 +23,10 @@ $toolsRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $toolsRoot
 $script:fail = 0
 
+# 対の一致率は、翻訳メモリと同じ尺度・同じ閾値を使う（2026-08-17）。
+# 尺度を写して二重に持つと、片方だけ直したときに黙って食い違う
+# （src/TranslationMemory.ps1:519 と同じ戒め）。だから写さず、そちらを読む。
+. (Join-Path (Join-Path $root 'src') 'TranslationMemory.ps1')
 . (Join-Path (Join-Path $root 'src') 'CorpusPairs.ps1')
 function Chk { param([bool]$c, [string]$m) if ($c) { Write-Host ('  ok   ' + $m) -ForegroundColor Green } else { Write-Host ('  FAIL ' + $m) -ForegroundColor Red; $script:fail++ } }
 

@@ -136,9 +136,20 @@ foreach ($file in @($targets.ToArray())) {
 if ($UpdateEolBaseline) {
     $lines = New-Object System.Collections.Generic.List[string]
     foreach ($rel in @($eolActual.Keys | Sort-Object)) { $lines.Add($rel + "`t" + [string]$eolActual[$rel]) | Out-Null }
-    $text = (($lines.ToArray()) -join "`n") + "`n"
+    # **基準値そのものの改行を、書き直すたびに変えない（2026-08-16）。**
+    # ここは長らく LF 決め打ちで書いていた。基準値は CRLF なので、1行足すだけの
+    # つもりで実行すると**全行が差分になり**、中身の変化が読めなくなる。
+    # 「改行の一括変換をレビュー不能な差分で通す」ことこそ、この基準値が
+    # 止めるためにある事故である。基準値ファイル自身は検査の対象に入っていない
+    # （`tools/*.txt` は対象外）ので、反転しても誰も気づかなかった。
+    $newline = "`r`n"
+    if (Test-Path -LiteralPath $eolBaselinePath -PathType Leaf) {
+        $existingStyle = Get-YakuFileEolStyle -Path $eolBaselinePath
+        if ($existingStyle -eq 'lf') { $newline = "`n" }
+    }
+    $text = (($lines.ToArray()) -join $newline) + $newline
     [System.IO.File]::WriteAllText($eolBaselinePath, $text, (New-Object System.Text.UTF8Encoding($true)))
-    Write-Host ("EOL baseline updated: {0} entry(ies)." -f $lines.Count) -ForegroundColor Yellow
+    Write-Host ("EOL baseline updated: {0} entry(ies). newline={1}" -f $lines.Count, $(if ($newline -eq "`r`n") { 'crlf' } else { 'lf' })) -ForegroundColor Yellow
     return
 }
 
@@ -248,6 +259,67 @@ if ($null -ne $parserType) {
         $where = (@($invokedCommands[$key] | Sort-Object -Unique) -join ', ')
         $violations.Add("Undefined command: $key called from $where") | Out-Null
     }
+}
+
+# --- 共有フォルダ側の製品ファイル -----------------------------------------
+# $rootPath は <版>/app。配布では bootstrap.ps1 と起動用 .cmd が版フォルダの
+# さらに親（共有フォルダの直下）にある。**そこは長らく検査の外だった。**
+# 壊れてはいなかったが、壊しても誰も気づかない状態で、守っていたのは
+# 仕組みではなく規律だった（2026-08-16 に広げた）。
+#
+# 在処は bootstrap.ps1 を探して決める。`..\..` の直書きは階層が変われば
+# 静かに外れる。**見つからなければ赤にする。** 黙って飛ばすと、検査が
+# 通っているのに何も見ていない状態になる。
+$shareRoot = ''
+$probe = $rootPath
+for ($depth = 0; $depth -lt 6; $depth++) {
+    $parent = Split-Path -Parent $probe
+    if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $probe) { break }
+    $probe = $parent
+    if (Test-Path -LiteralPath (Join-Path $probe 'bootstrap.ps1') -PathType Leaf) { $shareRoot = $probe; break }
+}
+if ([string]::IsNullOrWhiteSpace($shareRoot)) {
+    $violations.Add('Share-folder root not found: no bootstrap.ps1 above ' + $rootPath) | Out-Null
+}
+else {
+    # 直下の .ps1。BOM 無しだと 5.1 が ANSI として読み、日本語が壊れて構文エラーになる。
+    $shareScripts = @(Get-ChildItem -LiteralPath $shareRoot -Filter '*.ps1' -File -ErrorAction SilentlyContinue | Sort-Object Name)
+    if ($shareScripts.Count -eq 0) {
+        $violations.Add('Share-folder root has no .ps1 to check: ' + $shareRoot) | Out-Null
+    }
+    foreach ($file in $shareScripts) {
+        $name = 'share/' + $file.Name
+        if (-not (Test-YakuUtf8BomBytes -Path $file.FullName)) { $violations.Add('Missing UTF-8 BOM: ' + $name) | Out-Null }
+        $eol = Get-YakuFileEolStyle -Path $file.FullName
+        if ($eol -eq 'mixed') { $violations.Add('Mixed line endings: ' + $name) | Out-Null }
+        $shareTokens = $null; $shareErrors = $null
+        $null = [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$shareTokens, [ref]$shareErrors)
+        if (@($shareErrors).Count -gt 0) { $violations.Add(('Parse error: ' + $name + ' (' + @($shareErrors).Count + ')')) | Out-Null }
+    }
+
+    # 起動用の .cmd。**中身は ASCII だけにする。**
+    # cmd.exe は OEM コードページで読むので、日本語を入れると環境によって化ける。
+    # ファイル名に日本語があるのは構わない（利用者が読むのは名前のほうである）。
+    # node_modules は第三者の配布物なので見ない。
+    $cmdFiles = New-Object System.Collections.Generic.List[object]
+    foreach ($file in @(Get-ChildItem -LiteralPath $shareRoot -Recurse -Filter '*.cmd' -File -ErrorAction SilentlyContinue | Sort-Object FullName)) {
+        if ($file.FullName -match '(?i)[\\/]node_modules[\\/]') { continue }
+        $cmdFiles.Add($file) | Out-Null
+    }
+    if ($cmdFiles.Count -eq 0) {
+        # 1本も見つからないなら、探し方のほうが壊れている。
+        $violations.Add('No .cmd found under ' + $shareRoot + ' (the launcher check would be vacuous)') | Out-Null
+    }
+    foreach ($file in @($cmdFiles.ToArray())) {
+        $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+        $nonAscii = 0
+        foreach ($byte in $bytes) { if ($byte -ge 0x80) { $nonAscii++ } }
+        if ($nonAscii -gt 0) {
+            $rel = $file.FullName.Substring($shareRoot.Length).TrimStart([char[]]@('\','/'))
+            $violations.Add(('Non-ASCII bytes in .cmd: ' + $rel.Replace('\', '/') + ' (' + $nonAscii + ' byte(s))')) | Out-Null
+        }
+    }
+    Write-Host ("Share-folder check: {0} script(s), {1} launcher(s) under {2}" -f $shareScripts.Count, $cmdFiles.Count, $shareRoot) -ForegroundColor DarkGray
 }
 
 if ($violations.Count -gt 0) {
