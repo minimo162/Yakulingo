@@ -252,7 +252,7 @@ Check-YakuUse ($catHtml -match 'id="quick-amount-setting"[^>]*hidden') '金額�
 Check-YakuUse ($quickJs -match "amountSetting\.hidden = direction !== 'to_en'") '英訳するときだけ金額表記を出す'
 
 # 貼り付けはCATへ一本化し、保存有無を開始前に選ばせない。
-Check-YakuUse ($catHtml -match 'id="quick-submit-note"[^>]*>確認画面へ進みます') '貼り付けた文章の行き先を主操作のそばで示す'
+Check-YakuUse ($catHtml -match 'id="quick-submit-reason"[^>]*class="quick-submit-reason"[^>]*role="status"' -and $catHtml -notmatch 'quick-submit-note|確認画面へ進みます') '貼り付けの状態説明を主操作の直下へ動的に出す'
 Check-YakuUse ($catHtml -match 'ファイル全体を取り込み、1文ずつ確認する画面へ進みます。原本は触らず、訳文はコピーに書きます') 'ファイルの行き先と原本を触らないことを示す'
 Check-YakuUse ($catHtml -notmatch 'あとで続けるため、確認作業として保存する') '内部的な作業名だけの説明へ戻さない'
 Check-YakuUse ($catHtml -notmatch 'class="quick-save-choice"' -and $catHtml -notmatch 'id="quick-save-submit"') '主操作の意味をチェックボックスや二つ目のボタンで切り替えない'
@@ -277,7 +277,8 @@ Check-YakuUse ($catCss -match '(?s)\.entry-rail\s*\{[^}]*flex:\s*0 0 var\(--yk-r
 Check-YakuUse ($catJs -match "el\('cat-open-file-entry'\)\.addEventListener\('click'[\s\S]{0,160}?cat-file-input'\)\.click\(\)") '取り込みボタンはファイル選択をそのまま開く'
 Check-YakuUse ($catJs -match "(?s)cat-file-input'\)\.addEventListener\('change'[\s\S]{0,220}?openSource\('file', 'auto'\)") '選んだ時点で取り込みが始まる'
 Check-YakuUse ($catHtml -notmatch 'Word・Excelを選ぶ' -and $catHtml -notmatch 'ここにファイルをドロップ') '同じことを言う欄を下に置かない'
-Check-YakuUse ($catJs -match "(?s)function showStart\(mode\)[\s\S]{0,600}?if \(mode === 'file'\) \{ el\('cat-file-input'\)\.value = ''") '保存場所から取り込むときは、選び済みのファイルを忘れる'
+Check-YakuUse ($catJs -match "(?s)function showStart\(mode\)[\s\S]{0,260}?if \(mode !== 'align'\) return" -and
+    $catJs -notmatch "showStart\('file'\)|showStart\('text'\)|showStart\('prior'\)|data-cat-source-show|cat-prior-open|data-cat-open") '開始画面の廃止した手動・旧版パネルを開く処理を残さない'
 Check-YakuUse ($catJs -match "bindFileDrop\(el\('quick-area'\), el\('cat-file-input'\)\)" -and ([regex]::Matches($catJs, 'bindFileDrop\(')).Count -eq 2) 'ドロップ処理は関数定義と外枠への結線1回だけにする'
 
 # 1文ずつ依頼する道と、1文だけコピーする道が無かった（2026-08-13、利用者の指摘）。
@@ -308,9 +309,12 @@ Check-YakuUse ($catJs -match 'OCRでテキスト付きのPDFにしてから') '�
 # 押す前に、往復回数と見込み時間を出す（実測 2026-08-13: 144ページで128回）。
 Check-YakuUse ($catJs -match 'function updateAlignEstimate') '送る前に見込みを出す関数がある'
 Check-YakuUse ($catJs -match 'Copilotへ約') '往復回数を押す前に出す'
-Check-YakuUse ($catHtml -match '過去の訳を登録する') '過去訳の入口が何をする場所か見出しで分かる'
-Check-YakuUse ($catHtml -match '過去の日本語版・英語版PDFを読み込む' -and $catHtml -match 'accept="\.pdf"') '過去訳の入口でPDF形式を示す'
-Check-YakuUse ($catHtml -match '確認済みにした訳だけ') '確認前の対訳を次の資料へ混ぜると誤解させない'
+Check-YakuUse ($catHtml -match '(?s)<section id="cat-align-entry"[\s\S]{0,500}?<h2 id="cat-align-entry-title">過去の訳を登録</h2>[\s\S]{0,500}?日本語版と英語版のPDF' -and
+    $catHtml -match 'id="cat-open-align-entry"') '過去訳の入口が開始画面で何をする場所か分かる'
+Check-YakuUse ($catHtml -match 'id="cat-source-align"[\s\S]{0,1800}?accept="\.pdf"') '過去訳の対訳フォームでPDF形式を示す'
+Check-YakuUse ($catHtml -match '確認済みにしただけでは候補にならず' -and $catHtml -match '翻訳メモリへ登録した(?:訳|行)だけ') '確認だけでは候補にせず、翻訳メモリへ登録した訳だけを次資料へ出すと明示する'
+Check-YakuUse ($catJs -match 'function confirmRow' -and $catJs -match "mutate\('confirm'" -and
+    $catJs -match 'function registerTranslationMemory' -and $catJs -match "mutate\('tm-register'") '対訳の確認と翻訳メモリ登録は別操作として実装されている'
 Check-YakuUse ($catHtml -match '取り出した日本語と英語の文をCopilotへ送って') 'PDF突き合わせで送る内容を押す前に明示する'
 Check-YakuUse ($catHtml -match 'id="cat-align-open" disabled') '日英の片方だけでは対応づけを始められない'
 Check-YakuUse ($catJs -match "var en = String\(el\('cat-align-target'\)" -and $catJs -match 'var ready = ja > 0 && en > 0') '日英双方の読取結果で開始可否を決める'
@@ -331,7 +335,7 @@ Check-YakuUse ($catJs -match "\['input', 'change'\]\.forEach") 'ページ範囲�
 Check-YakuUse ($serverForView -match 'source = \[string\]\$_.Source') '保存一覧にも作業の種類を返す'
 Check-YakuUse ($catJs -match "source === 'align' \? '過去訳の対応確認'") '対訳作業を新規翻訳と呼ばない'
 Check-YakuUse ($catHtml -match 'id="cat-align-review-guide"' -and $catHtml -match '自動で作った対応は推測です') '自動対応は人が確認すると表の前で伝える'
-Check-YakuUse ($catHtml -match 'id="cat-align-next-document"' -and $catHtml -match '今回のWord・Excelを取り込む' -and $catJs -match "cat-align-next-document'.*showPicker\(\); showStart\('file'\)") '過去訳の確認後に今回の資料へ進む導線がある'
+Check-YakuUse ($catHtml -match 'id="cat-align-next-document"' -and $catHtml -match '今回のWord・Excelを取り込む' -and $catJs -match "cat-align-next-document'.*showPicker\(\); YakuCommon\.focus\(el\('cat-open-file-entry'\)\)") '過去訳の確認後に今回の資料へ進む導線がある'
 Check-YakuUse ($catJs -match "el\('cat-source-heading'\)\.textContent = isAlignment \? '日本語'" -and $catJs -match "el\('cat-target-heading'\)\.textContent = isAlignment \? '英語'") '対訳画面の左右を言語名で示す'
 Check-YakuUse ($catJs -match "el\('cat-translate'\)\.hidden = isAlignment") '対訳確認では新規翻訳の操作を隠す'
 Check-YakuUse ($catJs -match "el\('cat-page-title'\)\.textContent = isAlignment \? '過去訳の対応確認' : '翻訳'") 'ページ全体も対訳確認として名乗る'

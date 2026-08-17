@@ -75,7 +75,7 @@ Check-YakuDual (-not (Test-Path -LiteralPath (Join-Path $wwwRoot 'index.html')))
 Check-YakuDual ($catPage.Contains('id="quick-input"')) 'the screen the launcher opens contains the paste box itself'
 # 2026-08-11 に利用者判断で画面を一つにした（「画面を一つにするのでokです」）。
 # 分かれているのは DOM ではなく状態になったので、検査もそちらへ移す。守るべき
-# ものは変わらない: その場で訳す状態は保存しない、確認作業と同時には出ない、
+# ものは変わらない: 貼付も確認作業として保存され、確認作業と同時には出ない、
 # /quick から来ても同じ画面が出る。
 Check-YakuDual (-not (Test-Path -LiteralPath (Join-Path $wwwRoot 'quick.html'))) 'the separate Quick page is gone'
 Check-YakuDual (Test-Path -LiteralPath $catPagePath -PathType Leaf) 'the single translation page exists'
@@ -97,7 +97,11 @@ Check-YakuDual ($catClient -notmatch 'hideInstant' -and $catClient -notmatch 'ya
 Check-YakuDual ($catClient -match "setView\('start'\)" -and $catClient -match "setView\('workspace'\)") 'the screen names only the two states it still has'
 # 貼り付けは入力形式であり、別の保存しない翻訳エンジンではない。
 Check-YakuDual ($quickClient -notmatch '/api/quick/jobs' -and $quickClient -match '/api/cat/open') '貼り付けはCAT経路へ一本化する'
-Check-YakuDual ($catPage -notmatch 'id="quick-save-work"' -and $catPage -notmatch 'id="quick-save-submit"' -and $catPage -match 'id="quick-submit-note"[^>]*>確認画面へ進みます') '貼り付けは二重の保存選択を置かず確認画面へ進むと読める'
+Check-YakuDual ($catPage -notmatch 'id="quick-save-work"' -and $catPage -notmatch 'id="quick-save-submit"' -and
+    $catPage -match 'id="quick-submit-reason"[^>]*class="quick-submit-reason"[^>]*role="status"' -and
+    $catPage -notmatch 'quick-submit-note|確認画面へ進みます' -and
+    $quickClient -match "post\('/api/cat/open'" -and
+    $catProjectSource -match "Lifecycle\s*=\s*'saved'[\s\S]{0,120}?RetentionUntil\s*=\s*''") '貼り付けは保存選択を置かず、作成時点から期限なしの単一CAT作業へ進む'
 Check-YakuDual ($catClient -notmatch '/api/quick/') '確認画面は貼り付け側のAPIを呼ばない'
 
 Write-Host 'Load production helpers for dynamic contracts' -ForegroundColor Cyan

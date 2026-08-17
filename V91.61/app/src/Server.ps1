@@ -26,9 +26,6 @@ $script:YakuWarmupLastGood = $null
 $script:YakuUploadHandles = [hashtable]::Synchronized(@{})
 $script:YakuUiClients = [hashtable]::Synchronized(@{})
 $script:YakuProjectLeases = [hashtable]::Synchronized(@{})
-# Lease はプロセス内情報なので、再起動直後は開いていたタブが再接続するまで
-# cleanup を待つ。これより前に期限切れ作業を消すと、編集中タブを保護できない。
-$script:YakuTransientCleanupNotBeforeUtc = [datetime]::UtcNow.AddSeconds(90)
 $script:YakuSessionToken = New-YakuSecureToken -ByteLength 32
 $script:YakuInstanceId = [guid]::NewGuid().ToString('N')
 $script:YakuProcessStartedAt = Get-YakuProcessStartTimeIso -Id $PID
@@ -819,7 +816,7 @@ function Test-YakuProjectJobActive {
 }
 
 function Remove-YakuCatProjectWithPolicy {
-    param([Parameter(Mandatory=$true)]$Project,[ValidateSet('retain_tm','revoke_tm')][string]$MemoryPolicy,[string]$ClientId='', [switch]$RequireExpired)
+    param([Parameter(Mandatory=$true)]$Project,[ValidateSet('retain_tm','revoke_tm')][string]$MemoryPolicy,[string]$ClientId='')
     $id=[string]$Project.Id
     if(-not [string]::IsNullOrWhiteSpace($ClientId)){$script:YakuProjectLeases.Remove($id+'|'+$ClientId)}
     if(Test-YakuProjectLeaseActive -ProjectId $id){throw 'CAT_PROJECT_ACTIVE_LEASE: 別の画面で編集中のため削除できません。'}
@@ -827,27 +824,13 @@ function Remove-YakuCatProjectWithPolicy {
     $pending=Sync-YakuCatTranslationMemoryOutbox -Project $Project
     if($pending -gt 0){throw 'CAT_PROJECT_TM_OUTBOX_PENDING: 翻訳メモリへの反映が終わっていないため削除できません。'}
     if([string]$Project.Lifecycle -ne 'deleting'){
-        $transition=Start-YakuCatProjectDeletion -ProjectId $id -ExpectedRevision ([int]$Project.Revision) -ExpectedGenerationId ([string]$Project.ActiveGenerationId) -ExpectedLifecycle ([string]$Project.Lifecycle) -MemoryPolicy $MemoryPolicy -RequireExpired:$RequireExpired
+        $transition=Start-YakuCatProjectDeletion -ProjectId $id -ExpectedRevision ([int]$Project.Revision) -ExpectedGenerationId ([string]$Project.ActiveGenerationId) -ExpectedLifecycle ([string]$Project.Lifecycle) -MemoryPolicy $MemoryPolicy
         $Project=$transition.Project
     }elseif(-not [string]::IsNullOrWhiteSpace([string]$Project.DeletionMemoryPolicy)){$MemoryPolicy=[string]$Project.DeletionMemoryPolicy}
     if($MemoryPolicy -eq 'revoke_tm'){
         $null=Revoke-YakuCatTranslationMemoryRegistrations -Project $Project -Reason 'project-deleted-by-user'
     }
     Remove-YakuCatProject -Id $id -DeleteStored
-}
-
-function Invoke-YakuExpiredTransientProjectCleanup {
-    if([datetime]::UtcNow -lt $script:YakuTransientCleanupNotBeforeUtc){return 0}
-    $store=Get-YakuCatProjectStoreDir;if(-not(Test-Path -LiteralPath $store -PathType Container)){return 0}
-    $removed=0;$now=[datetime]::UtcNow
-    foreach($dir in @(Get-ChildItem -LiteralPath $store -Directory -ErrorAction SilentlyContinue)){
-        if([string]$dir.Name -notmatch '^[a-fA-F0-9]{32}$'){continue};$manifestPath=Join-Path $dir.FullName 'project.json';if(-not(Test-Path -LiteralPath $manifestPath -PathType Leaf)){continue}
-        try{$manifest=Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8|ConvertFrom-Json}catch{continue}
-        if([string]$manifest.lifecycle -notin @('transient','deleting')){continue};$expiry=try{[datetime]$manifest.retention_until}catch{continue};if([string]$manifest.lifecycle -eq 'transient' -and $expiry.ToUniversalTime() -gt $now){continue}
-        $id=[string]$dir.Name;if((Test-YakuProjectLeaseActive -ProjectId $id) -or (Test-YakuProjectJobActive -ProjectId $id)){continue}
-        try{$project=Restore-YakuCatProject -Id $id;if($null -eq $project){continue};$policy=$(if([string]$project.DeletionMemoryPolicy -eq 'revoke_tm'){'revoke_tm'}else{'retain_tm'});Remove-YakuCatProjectWithPolicy -Project $project -MemoryPolicy $policy -RequireExpired:([string]$project.Lifecycle -eq 'transient');$removed++}catch{try{Write-YakuLog ('Transient cleanup skipped. project='+$id+' error='+$_.Exception.Message) 'WARN'}catch{}}
-    }
-    return $removed
 }
 
 function Stop-YakuTranslationJob {
@@ -2043,6 +2026,48 @@ function ConvertTo-YakuCatMutationResponseJson {
     return ($body | ConvertTo-Json -Depth 20 -Compress)
 }
 
+function Get-YakuCatRecentProjectRows {
+    <# recent は読み取り口だが、旧 transient だけは revision を進める移行が必要。
+       先に移行してから行を返さないと、一覧の古い revision で最初の明示削除を
+       送ることになり、Server 側の CAS が正しく競合として止めてしまう。
+       通常の saved は復元せず、一覧の manifest に残る lifecycle だけを見る。 #>
+    param(
+        [int]$Limit = 10,
+        [hashtable]$RestoreState = $null
+    )
+    $rows = New-Object System.Collections.Generic.List[object]
+    foreach ($item in @(Get-YakuCatSavedProjects -Limit $Limit)) {
+        if ([string]$item.Lifecycle -eq 'transient') {
+            if ($null -ne $RestoreState) { $RestoreState['project_id'] = [string]$item.Id }
+            $migrated = Restore-YakuCatProject -Id ([string]$item.Id)
+            if ($null -ne $RestoreState) { $RestoreState['project_id'] = '' }
+            if ($null -eq $migrated) { continue }
+            $item.FileName = [string]$migrated.FileName
+            $item.Direction = [string]$migrated.Direction
+            $item.Source = [string]$migrated.Source
+            $item.Revision = [int]$migrated.Revision
+            $item.Total = @($migrated.Segments).Count
+            $item.Confirmed = @($migrated.Segments | Where-Object { [bool]$_.Confirmed }).Count
+            $item.Lifecycle = [string]$migrated.Lifecycle
+            $item.ExportBlocked = ([string]$migrated.Source -eq 'file' -and
+                ([string]::IsNullOrWhiteSpace([string]$migrated.Path) -or
+                 -not (Test-Path -LiteralPath ([string]$migrated.Path) -PathType Leaf)))
+        }
+        [void]$rows.Add([ordered]@{
+            id = [string]$item.Id
+            file_name = [string]$item.FileName
+            direction = [string]$item.Direction
+            source = [string]$item.Source
+            revision = [int]$item.Revision
+            total = [int]$item.Total
+            confirmed = [int]$item.Confirmed
+            saved = [string]$item.Saved
+            export_blocked = [bool]$item.ExportBlocked
+        })
+    }
+    return @($rows.ToArray())
+}
+
 function Invoke-YakuRoute {
     param([Parameter(Mandatory=$true)]$Context)
     $req = $Context.Request
@@ -2440,6 +2465,9 @@ function Invoke-YakuRoute {
     # 段階ごとに口を分けているのは、途中を画面へ出すためである。
     if ($method -eq 'POST' -and $path.StartsWith('/api/cat/')) {
         $settings = Read-YakuSettings -Root $script:YakuRoot
+        $project = $null
+        $projectId = ''
+        $restoreState = @{ project_id = '' }
         try {
             $payload = Read-YakuRequestJson -Request $req
             $action = $path.Substring('/api/cat/'.Length)
@@ -2523,14 +2551,7 @@ function Invoke-YakuRoute {
 
             if ($action -eq 'recent') {
                 # 前回までの作業一覧。取り込む前に「続きから」を選べるようにする。
-                $null=Invoke-YakuExpiredTransientProjectCleanup
-                $rows = @(Get-YakuCatSavedProjects -Limit 10 | ForEach-Object {
-                        [ordered]@{ id = [string]$_.Id; file_name = [string]$_.FileName; direction = [string]$_.Direction
-                            source = [string]$_.Source
-                            revision = [int]$_.Revision
-                            total = [int]$_.Total; confirmed = [int]$_.Confirmed; saved = [string]$_.Saved
-                            export_blocked = [bool]$_.ExportBlocked }
-                    })
+                $rows = @(Get-YakuCatRecentProjectRows -Limit 10 -RestoreState $restoreState)
                 Send-YakuTextResponse -Context $Context -Text (([ordered]@{ projects = @($rows) } | ConvertTo-Json -Depth 4 -Compress)) -ContentType 'application/json; charset=utf-8'
                 return
             }
@@ -2540,6 +2561,7 @@ function Invoke-YakuRoute {
                 try { $wanted = [string]$payload['project_id'] } catch {}
                 $restored = $null
                 if (-not [string]::IsNullOrWhiteSpace($wanted)) {
+                    $restoreState['project_id'] = $wanted
                     $restored = Get-YakuCatProject -Id $wanted
                     if ($null -eq $restored) { $restored = Restore-YakuCatProject -Id $wanted }
                     elseif ($null -ne $restored) {
@@ -2621,11 +2643,12 @@ function Invoke-YakuRoute {
             # メモリに無ければ、保存してあるものから戻す。アプリを再起動しても
             # 続きから作業できるようにするため。
             if ($null -eq $project -and -not [string]::IsNullOrWhiteSpace($projectId)) {
-                try { $project = Restore-YakuCatProject -Id $projectId } catch { $project = $null }
+                $restoreState['project_id'] = $projectId
+                $project = Restore-YakuCatProject -Id $projectId
             }
             if ($null -eq $project) { throw '取り込んだファイルが見つかりません。もう一度「取り込んで確認を始める」を押してください。' }
 
-            $revisionActions = @('delete','project-close-delete','project-retain','glossary','merge','split','split-at','structure-undo','placement','publication-candidates','publication-apply','publication-revert','abbreviation-register','glossary-add','term-add','term-deactivate','term-insert','term-exception','tm-delete','tm-register','confirm','confirm-bulk','replace','replace-undo','tm-pretranslate','project-save','render-start','review-start','copilot-review-start','copilot-review-apply','finding-decision','pdf-review-apply','coverage-decision','final-review-decision','source-update-preview','source-update-decision','source-update-apply','save-corpus','segment','translate','apply','preflight','export','export-reviewed','personal-glossary-list','personal-glossary-remove')
+            $revisionActions = @('delete','glossary','merge','split','split-at','structure-undo','placement','publication-candidates','publication-apply','publication-revert','abbreviation-register','glossary-add','term-add','term-deactivate','term-insert','term-exception','tm-delete','tm-register','confirm','confirm-bulk','replace','replace-undo','tm-pretranslate','render-start','review-start','copilot-review-start','copilot-review-apply','finding-decision','pdf-review-apply','coverage-decision','final-review-decision','source-update-preview','source-update-decision','source-update-apply','save-corpus','segment','translate','apply','preflight','export','export-reviewed','personal-glossary-list','personal-glossary-remove')
             $receiptActions = @('placement','publication-apply','publication-revert','abbreviation-register','source-update-apply')
             if ($receiptActions -contains $action -and [string]::IsNullOrWhiteSpace([string]$payload['idempotency_key'])) {
                 throw 'CAT_IDEMPOTENCY_KEY_REQUIRED: この更新には操作識別子が必要です。'
@@ -2885,17 +2908,6 @@ function Invoke-YakuRoute {
                     $policy=[string]$payload['memory_policy'];$clientId=[string]$payload['client_id']
                     Remove-YakuCatProjectWithPolicy -Project $project -MemoryPolicy $policy -ClientId $clientId
                     Send-YakuTextResponse -Context $Context -Text '{"deleted":true}' -ContentType 'application/json; charset=utf-8'
-                }
-                'project-close-delete' {
-                    if([string]$project.Lifecycle -ne 'transient'){throw 'CAT_PROJECT_CLOSE_DELETE_NOT_TRANSIENT'}
-                    $policy=[string]$payload['memory_policy'];$clientId=[string]$payload['client_id']
-                    Remove-YakuCatProjectWithPolicy -Project $project -MemoryPolicy $policy -ClientId $clientId
-                    Send-YakuTextResponse -Context $Context -Text '{"deleted":true,"lifecycle":"deleted"}' -ContentType 'application/json; charset=utf-8'
-                }
-                'project-retain' {
-                    $mutation={param($candidate);if([string]$candidate.Lifecycle -ne 'transient'){throw 'CAT_PROJECT_RETAIN_NOT_TRANSIENT'};$candidate.RetentionUntil=(Get-Date).AddDays(7).ToString('o');return [string]$candidate.RetentionUntil}
-                    $commit=Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation
-                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $commit.Project) -ContentType 'application/json; charset=utf-8'
                 }
                 'glossary' {
                     $mutation = {
@@ -3218,8 +3230,8 @@ function Invoke-YakuRoute {
                         $propagated = 0
                         if ($innerFlag -and -not $blocked) {
                             # 確認、TM登録、project保存は独立した状態である。
-                            # transientでもgenerationへ監査記録は保存できるため、
-                            # 確認を理由に再開一覧へ黙って昇格させない。
+                            # generationへ監査記録は保存できる。確認済みかどうかと、
+                            # 再開一覧に出る通常の保存状態は別の契約である。
                             # 同じ原文の行へ配る。空の行にだけ入れ、確認済みにはしない。
                             $propagated = [int](Copy-YakuCatTranslationToRepetitions -Project $candidate -Index $innerIndex)
                         }
@@ -3403,15 +3415,6 @@ function Invoke-YakuRoute {
                     $body = (ConvertTo-YakuCatProjectJson -Project $project) | ConvertFrom-Json
                     $body | Add-Member -NotePropertyName tm_registered_index -NotePropertyValue $index -Force
                     Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 8 -Compress) -ContentType 'application/json; charset=utf-8'
-                }
-                'project-save' {
-                    $mutation = {
-                        param($candidate)
-                        return Set-YakuCatProjectSaved -Project $candidate -Reason 'user-requested'
-                    }
-                    $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation
-                    $project = $commit.Project
-                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
                 }
                 'save-corpus' {
                     # グリッドで確かめた対訳をコーパスへ入れる。人が一度見てから
@@ -3698,7 +3701,20 @@ function Invoke-YakuRoute {
             $conflictCodes=@('CAT_PROJECT_REVISION_CONFLICT','CAT_PUBLICATION_CANDIDATE_TARGET_CONFLICT','CAT_PUBLICATION_VARIANT_TARGET_CONFLICT','CAT_ABBREVIATION_REGISTRY_CONFLICT','CAT_IDEMPOTENCY_KEY_REUSED','CAT_REBASE_APPLY_CAS_MISMATCH','CAT_REBASE_APPLY_TARGET_MISMATCH','CAT_COMMIT_MANIFEST_CONFLICT','CAT_PROJECT_DELETE_CAS_MISMATCH','CAT_PROJECT_DELETE_NOT_EXPIRED','CAT_PROJECT_DELETING','CAT_PROJECT_ACTIVE_LEASE','CAT_PROJECT_ACTIVE_JOB')
             $statusCode=$(if($conflictCodes -contains $code){409}else{400})
             $body = [ordered]@{ code=$code; error = (Convert-YakuExceptionToUserMessage $_) }
-            if($statusCode -eq 409 -and $null -ne $project){$body['current_revision']=[int]$project.Revision}
+            if($statusCode -eq 409){
+                if($null -ne $project){
+                    $body['current_revision']=[int]$project.Revision
+                } else {
+                    $failedProjectId = [string]$projectId
+                    if([string]::IsNullOrWhiteSpace($failedProjectId) -and $null -ne $restoreState){$failedProjectId=[string]$restoreState['project_id']}
+                    if(-not [string]::IsNullOrWhiteSpace($failedProjectId)){
+                        try {
+                            $diskRevision = Get-YakuCatProjectDiskRevision -Id $failedProjectId
+                            if($null -ne $diskRevision){$body['current_revision']=[int]$diskRevision}
+                        } catch {}
+                    }
+                }
+            }
             Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode $statusCode
         }
         return
@@ -3795,8 +3811,6 @@ $startupSettings = Read-YakuSettings -Root $script:YakuRoot
 Invoke-YakuDiagnosticLogRotation -RetentionDays ([int]$startupSettings.diagnostic_retention_days) -MainLogRetentionDays ([int]$startupSettings.log_retention_days)
 Clear-YakuExpiredUploads
 Recover-YakuInterruptedJobs
-$expiredTransientCount=Invoke-YakuExpiredTransientProjectCleanup
-if($expiredTransientCount -gt 0){Write-YakuLog ("Expired transient projects removed. count=$expiredTransientCount") 'INFO'}
 $maintenanceSw.Stop()
 Write-YakuLog "Server startup timing. phase=maintenance elapsedMs=$($maintenanceSw.ElapsedMilliseconds) sinceServerStartedMs=$($serverInitializationSw.ElapsedMilliseconds)" 'INFO'
 Start-YakuWarmTranslationRunspaceBuild -Root $script:YakuRoot

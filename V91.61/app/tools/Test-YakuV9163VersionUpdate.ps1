@@ -63,7 +63,10 @@ try {
     $server=[IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Server.ps1'))
     $ui=[IO.File]::ReadAllText((Join-Path (Join-Path $root 'www') 'cat.html'))
     $client=[IO.File]::ReadAllText((Join-Path (Join-Path (Join-Path $root 'www') 'assets') 'cat.js'))
-    Check-YakuVersionUpdate ($server -match "from-prior-version" -and $ui -match '前回の資料をもとに、今回の分だけ訳す' -and $client -match '/api/cat/') 'API and user entry are connected'
+    Check-YakuVersionUpdate ($server -match "from-prior-version" -and $server -match 'New-YakuCatProjectFromPriorVersion' -and
+        $ui -notmatch '前回の資料をもとに、今回の分だけ訳す|cat-prior' -and
+        $client -notmatch "post\('from-prior-version'" -and $client -match '/api/cat/') `
+        'backend prior-version compatibility remains while its start-screen entry is absent'
 
     Write-Host 'HTTP paste cannot self-assert approval evidence' -ForegroundColor Cyan
     $routeStart=$server.IndexOf("if (`$action -eq 'from-prior-version')",[StringComparison]::Ordinal)

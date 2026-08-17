@@ -149,6 +149,15 @@
 .app-cat .cat-resume-drop:hover { color: var(--danger, #a11); }
 .app-cat #cat-resume-more { display: block; width: 100%; margin-top: 12px; text-align: left; }
 
+.app-cat .cat-align-entry {
+  margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line);
+}
+.app-cat .cat-align-entry h2 {
+  margin: 0; color: var(--text); font-size: var(--font-meta); font-weight: 700;
+}
+.app-cat .cat-align-entry-note {
+  margin: 6px 0 0; color: var(--muted); font-size: var(--font-meta); line-height: 1.55;
+}
 .app-cat .entry-rail .entry-more-pdf-card {
   display: flex; width: var(--yk-rail); margin-top: 18px; min-height: 72px;
   justify-content: flex-start; padding: 14px 16px; border: 1px solid var(--line-strong);
@@ -1137,8 +1146,6 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 .cat-review-lens > div { display: flex; justify-content: space-between; gap: var(--space-1); }
 .cat-review-lens > div span { color: var(--muted); text-align: right; }
 .cat-review-lens p { margin: .25rem 0; }
-.cat-transient-actions { flex-basis: 100%; padding: var(--space-1); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-subtle); }
-.cat-transient-actions p { margin: 0 0 .35rem; }
 .cat-document-finding { margin-top: var(--space-1); padding: var(--space-1); border: 1px solid var(--line); border-left: 4px solid var(--warning); border-radius: var(--radius-control); background: var(--surface-subtle, #fafafa); }
 .cat-document-finding > div:first-child { display: flex; justify-content: space-between; gap: var(--space-1); }
 .cat-document-finding p { margin: var(--space-1) 0; }

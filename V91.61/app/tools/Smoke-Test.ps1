@@ -245,6 +245,7 @@ $stylesSource = @(
     Get-Content -LiteralPath (Join-Path $root 'www\assets\styles.css') -Raw -Encoding UTF8
     Get-Content -LiteralPath (Join-Path $root 'www\assets\cat-workspace.css') -Raw -Encoding UTF8
 ) -join "`n"
+$catProjectSource = Get-Content -LiteralPath (Join-Path $root 'src\CatProject.ps1') -Raw -Encoding UTF8
 $server = Get-Content -LiteralPath (Join-Path $root 'src\Server.ps1') -Raw -Encoding UTF8
 $settingsSource = Get-Content -LiteralPath (Join-Path $root 'src\Settings.ps1') -Raw -Encoding UTF8
 $fileWorkerPresent = Test-Path -LiteralPath (Join-Path $root 'src\FileWorker.ps1') -PathType Leaf
@@ -281,18 +282,21 @@ Assert-Yaku -Condition ($catIndex.Contains('Word・Excelはここへドラッグ
 Assert-Yaku -Condition ((([regex]::Matches($catIndex, 'id="cat-open-file-entry"')).Count -eq 1) -and (([regex]::Matches($catIndex, 'id="quick-input"')).Count -eq 1)) -Message 'the front door must keep exactly one file entry and one text entry'
 # 長さの境目は画面が決めない。確認作業が分割に使っている設定値をそのまま使う。
 Assert-Yaku -Condition ($catIndex.Contains('__YAKU_MAX_BATCH_CHARS__') -and $quickClient.Contains('yaku-max-batch-chars') -and $quickClient -notmatch 'length > 3000|length > 2000') -Message 'the long-text threshold must come from the server batch budget, not a number chosen in the page'
-# 2026-08-17: PDF取り込みだけを目立つカードとして残し、「そのほかの始め方」という
-# 見出しや旧入口を増やさない。
-Assert-Yaku -Condition (([regex]::Matches($catIndex, '過去の日本語版・英語版PDFを読み込む').Count -eq 1) -and ([regex]::Matches($catIndex, 'id="cat-open-align-entry"').Count -eq 1) -and $catIndex.Contains('entry-more-pdf-card') -and -not $catIndex.Contains('そのほかの始め方')) -Message 'the PDF import must be the only prominent alternative entry and must have no heading'
+# 2026-08-17: PDF取り込みは、過去訳を登録する理由が分かる二次入口として見せる。
+# PR #55 のカード class と既存IDはそのまま使い、実装を二重に持たない。
+Assert-Yaku -Condition (([regex]::Matches($catIndex, '過去の日本語版・英語版PDFを読み込む').Count -eq 1) -and ([regex]::Matches($catIndex, 'id="cat-open-align-entry"').Count -eq 1) -and $catIndex.Contains('entry-more-pdf-card') -and $catIndex -match '(?s)<section id="cat-align-entry"[\s\S]*?<h2 id="cat-align-entry-title">過去の訳を登録</h2>[\s\S]*?日本語版と英語版のPDF[\s\S]*?id="cat-open-align-entry"' -and -not $catIndex.Contains('そのほかの始め方')) -Message 'the visible PDF entry must explain past-translation registration and keep the existing card action'
 Assert-Yaku -Condition (-not $catIndex.Contains('id="cat-source-prior"') -and -not $catIndex.Contains('id="cat-prior-open"') -and -not $catIndex.Contains('data-cat-source-show="file"') -and -not $catClient.Contains('cat-prior-open') -and -not $catClient.Contains('data-cat-source-show')) -Message 'retired prior and source-show entries must be absent'
 Assert-Yaku -Condition (-not (($indexSource + "`n" + $quickClient) -match '確認画面へ進みます|文章を入力してください')) -Message 'removed start-screen guidance phrases must stay absent'
+Assert-Yaku -Condition ($catProjectSource -match "Source\s*=\s*'text'[\s\S]{0,500}?Lifecycle\s*=\s*'saved'[\s\S]{0,120}?RetentionUntil\s*=\s*''" -and
+    -not $server.Contains('Invoke-YakuExpiredTransientProjectCleanup') -and -not $server.Contains('YakuTransientCleanupNotBeforeUtc')) -Message 'new pasted CAT work is saved without a retention deadline and production has no timed cleanup path'
 # 訳案カードを外したので「訳案」の見出しは無い。呼び名で守っていたのは
 # 「未確認のものを完成訳と呼ばない」ことなので、そちらを直接見る（2026-08-13）。
 Assert-Yaku -Condition (-not $indexSource.Contains('すぐ訳した完成訳') -and -not $indexSource.Contains('完成訳')) -Message 'unreviewed output must never be called a finished translation'
 # 2026-08-13、利用者の指摘「余計な文章が多い」。機能の否定を2文重ねていた
 # （「3つのWordを体裁付きで更新する機能ではありません」等）。守るのは
 # 「前回の英語を自動で採らない」ことなので、そこだけを見る。
-Assert-Yaku -Condition ($catIndex.Contains('前回の英語は「前回版」として参考に出します。自動では反映しません') -and -not $catIndex.Contains('cat-prior-evidence') -and -not $catClient.Contains('prior_evidence:')) -Message 'prior English must stay reference-only without a self-attested approval selector or evidence payload'
+Assert-Yaku -Condition ($server.Contains('from-prior-version') -and -not $catIndex.Contains('前回の資料をもとに、今回の分だけ訳す') -and
+    -not $catIndex.Contains('cat-prior-evidence') -and -not $catClient.Contains('prior_evidence:')) -Message 'backend prior-version compatibility remains while its retired start entry stays unreachable'
 # 昇格は 2026-08-13 に廃止（移るもとが無くなった）。守るものは変わらない＝
 # ブラウザーから訳文を送り返さない。原文だけは、もともと「長い文章を貼り付ける」が
 # 通っていた経路と同じで、/api/cat/open が受ける。

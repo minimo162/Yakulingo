@@ -257,6 +257,7 @@ $clickChar = 12
 try {
     Write-Host '(0) 題材を、実装が作る応答そのものから用意する' -ForegroundColor Cyan
     $project = New-YakuCatTextProject -Root $root -Text ($source + "`n" + '営業利益は増えました。' + "`n" + '設備投資も進めました。') -Settings $settings -Direction 'to_en'
+    Chk ([string]$project.Lifecycle -eq 'saved' -and [string]::IsNullOrWhiteSpace([string]$project.RetentionUntil)) '開始画面の貼り付け題材も期限なしの保存作業になる'
     Chk (@($project.Segments).Count -eq 3) ('貼り付け本文は3行に切り分けられる（実際 ' + @($project.Segments).Count + '）')
     # 2行目と3行目を繋いで「割れない行」を作る。can_split_at=false を人が書かない。
     $null = Merge-YakuCatSegments -Project $project -Index 1
@@ -661,11 +662,12 @@ try {
     Write-Host '(開始画面) 統合した入口の状態と操作を実ブラウザーで守る' -ForegroundColor Cyan
     Chk ([string]$o.startScreen.buttonText -eq '英語に訳す') '空の主ボタンも行為の名前を名乗る'
     Chk ([bool]$o.startScreen.disabled) '準備完了後も文章が空なら主ボタンは押せない'
-    Chk ([string]$o.startScreen.reason -eq '文章を入力してください') '押せない理由をボタンの外に出す'
+    Chk ([string]$o.startScreen.reason -eq '') '空欄では古い固定の理由文を表示しない'
     Chk ([bool]$o.startScreen.guideVisible) '空の入力欄には貼り付け案内が見える'
     Chk ([bool]$o.startScreen.unified) 'ファイルの入口は文章と同じ外枠の中にある'
+    Chk ([bool]$o.startScreen.alignmentVisible -and [bool]$o.startScreen.alignmentCard) '過去訳PDFの可視カードが既存入口として出る'
     Chk ([int]$o.startScreen.fileClicksFromTextareaEnter -eq 0) '文章欄のEnterでファイル選択を開かない'
-    Chk ([int]$o.startScreen.changesFromNestedDrop -eq 1) '子要素へ落としてもファイル変更は1回だけ起きる'
+    Chk ([int]$o.startScreen.uploadsFromNestedDrop -eq 1 -and [int]$o.startScreen.changesFromNestedDrop -eq 0) '子要素へ落としても直接File経路でアップロードは1回だけ起きる'
 
     # ---------------------------------------------------------------- (幅)
     # **畳んだ帯が、窓の中に収まって開くか。ここだけ2つの幅で測る。**

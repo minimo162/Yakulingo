@@ -5,8 +5,9 @@
  *
  * The browser code is deliberately evaluated from cat.js rather than copied
  * into this test: a tiny DOM/event harness supplies only the dependencies of
- * bindFileDrop, source, and openSource. This keeps the test runnable with the
- * stock Node.js installation and still exercises the production functions.
+ * bindFileDrop, source, openSource, and the existing desktop handoff event.
+ * This keeps the test runnable with the stock Node.js installation and still
+ * exercises the production functions.
  */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -30,6 +31,7 @@ const openSourceFunction = functionSlice('openSource', 'function resume').replac
   '$1    __openSourceCalls += 1;\n'
 );
 const bindFileDropFunction = functionSlice('bindFileDrop', 'var filterSeq');
+const bindInstantFunction = functionSlice('bindInstant', 'function start');
 
 class FakeNode {
   constructor() {
@@ -116,6 +118,47 @@ vm.runInContext(`
   this.openSource = openSource;
 `, sandbox, { filename: catPath });
 
+/* DesktopIntegration has historically dispatched yaku-instant-handoff with
+ * detail.filePath.  Keep this as a real event dispatch: the assertion below
+ * must observe the normalized path at the single openSource('file') route,
+ * rather than merely finding the event name in source text. */
+const handoffInput = new FakeNode();
+const handoffWindow = {
+  listeners: new Map(),
+  addEventListener(name, handler) {
+    const handlers = this.listeners.get(name) || [];
+    handlers.push(handler);
+    this.listeners.set(name, handlers);
+  },
+  dispatch(name, event) {
+    const handlers = this.listeners.get(name) || [];
+    for (const handler of handlers) handler(event);
+  }
+};
+const handoffSandbox = {
+  console,
+  window: handoffWindow,
+  __handoffInput: handoffInput
+};
+vm.createContext(handoffSandbox);
+vm.runInContext(`
+  var directFilePath = '';
+  var __handoffCalls = [];
+  var __pickerCalls = 0;
+  var __status = {};
+  function el(id) {
+    if (id === 'cat-file-input') return __handoffInput;
+    if (id === 'cat-workspace') return { hidden: true };
+    throw new Error('unexpected element: ' + id);
+  }
+  function showPicker() { directFilePath = ''; __pickerCalls += 1; }
+  function status(message, isError) { __status = { message: message, error: !!isError }; }
+  function openSource(mode, intent) { __handoffCalls.push({ mode: mode, intent: intent, path: directFilePath }); }
+  ${bindInstantFunction}
+  this.bindInstant = bindInstant;
+`, handoffSandbox, { filename: catPath });
+handoffSandbox.bindInstant();
+
 const file = { name: 'sample.docx', size: 42, lastModified: 1234 };
 sandbox.bindFileDrop(drop, input);
 let prevented = 0;
@@ -131,6 +174,23 @@ function tick() {
 }
 
 (async () => {
+  handoffWindow.dispatch('yaku-instant-handoff', {
+    detail: { filePath: '  "C:\\Users\\yuuki\\Desktop\\desktop.docx"  ' }
+  });
+  await tick();
+  assert.equal(handoffSandbox.__pickerCalls, 1, 'desktop file handoff returns to the single picker once');
+  assert.equal(handoffSandbox.__handoffCalls.length, 1, 'desktop filePath reaches openSource file route once');
+  assert.equal(handoffSandbox.__handoffCalls[0].mode, 'file', 'desktop filePath selects the file route');
+  assert.equal(handoffSandbox.__handoffCalls[0].intent, 'auto', 'desktop filePath keeps automatic direction intent');
+  assert.equal(handoffSandbox.__handoffCalls[0].path, 'C:\\Users\\yuuki\\Desktop\\desktop.docx', 'desktop filePath is normalized before the route');
+  assert.equal(handoffInput.value, '', 'desktop file handoff clears the browser file input');
+  handoffWindow.dispatch('yaku-instant-handoff', {
+    detail: { filePath: 'C:\\bad' + String.fromCharCode(0) + '\\path.docx' }
+  });
+  await tick();
+  assert.equal(handoffSandbox.__handoffCalls.length, 1, 'invalid desktop path does not open a second route');
+  assert.equal(handoffSandbox.__status.error, true, 'invalid desktop path is rejected before transport');
+
   await tick();
   await tick();
   assert.equal(prevented, 1, 'one drop must be handled once');
