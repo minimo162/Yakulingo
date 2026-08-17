@@ -1273,6 +1273,26 @@
     } else if (undoButton) {
       undoButton.remove();
     }
+    var structuralUndo = project && project.structural_undo;
+    var structuralUndoButton = el('cat-structure-undo');
+    if (structuralUndo && structuralUndo.available) {
+      if (!structuralUndoButton) {
+        structuralUndoButton = document.createElement('button');
+        structuralUndoButton.type = 'button'; structuralUndoButton.id = 'cat-structure-undo';
+        structuralUndoButton.className = 'secondary-button compact';
+      }
+      /* Ctrl+H の中に置かない。構造を変えた直後も常に見える、直前1回だけの
+         専用の復元口であり、一般のUndoや Ctrl+Z を約束するものではない。 */
+      var structureNames = { merge: '行の結合', split: '行の分割解除', 'split-at': '原文の途中での分割' };
+      var structureName = structureNames[String(structuralUndo.operation || '')] || '構造編集';
+      var structureRows = Number(structuralUndo.affected_count || 0);
+      var structuralAnchor = el('cat-search-menu');
+      if (structuralAnchor && structuralUndoButton.parentNode !== structuralAnchor.parentNode) structuralAnchor.parentNode.insertBefore(structuralUndoButton, structuralAnchor.nextSibling);
+      structuralUndoButton.disabled = !!busy;
+      structuralUndoButton.textContent = '直前の' + structureName + 'を元に戻す（' + structureRows + '行）';
+    } else if (structuralUndoButton) {
+      structuralUndoButton.remove();
+    }
     var matcher = searchMatcher();
     if (matcher.empty) {
       runButton.disabled = true; runButton.textContent = '訳文を置き換える';
@@ -1369,6 +1389,26 @@
     return mutate('replace-undo', {}, '直前の一括置換を元に戻しています…').then(function (result) {
       if (!result) return null;
       status(Number(result.replace_undo_restored || rows) + '行を置換前の状態へ戻しました。');
+      return result;
+    });
+  }
+
+  function undoStructuralEdit() {
+    if (!project || !project.structural_undo || !project.structural_undo.available) {
+      status('元に戻せる構造編集はありません。'); return null;
+    }
+    var operation = String(project.structural_undo.operation || '');
+    var names = { merge: '行の結合', split: '行の分割解除', 'split-at': '原文の途中での分割' };
+    var name = names[operation] || '構造編集';
+    var rows = Number(project.structural_undo.affected_count || 0);
+    if (!window.confirm('直前の' + name + 'を元に戻します。\n\n'
+      + '・' + rows + '行を編集前の状態へ戻します\n'
+      + '・戻せるのは直前の構造編集だけです\n'
+      + '・その後に行った変更は元に戻せません\n\n'
+      + '進めますか？')) return null;
+    return mutate('structure-undo', {}, '直前の構造編集を元に戻しています…').then(function (result) {
+      if (!result) return null;
+      status('直前の' + name + 'を元に戻しました。');
       return result;
     });
   }
@@ -3370,7 +3410,7 @@
     });
     document.addEventListener('click', function (event) {
       var button = event.target.closest('button'); if (!button) return;
-      if (busy && (button.id === 'cat-confirm-bulk' || button.id === 'cat-replace-run' || button.id === 'cat-replace-undo' || button.id === 'cat-tm-pretranslate' || button.hasAttribute('data-cat-translate-row') || button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-tm-register') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-split-at') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
+      if (busy && (button.id === 'cat-confirm-bulk' || button.id === 'cat-replace-run' || button.id === 'cat-replace-undo' || button.id === 'cat-structure-undo' || button.id === 'cat-tm-pretranslate' || button.hasAttribute('data-cat-translate-row') || button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-tm-register') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-split-at') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
       if (button.hasAttribute('data-cat-preview-mode')) { setPreviewMode(button.getAttribute('data-cat-preview-mode')); return; }
       if (button.hasAttribute('data-cat-preview-side')) { previewSide = button.getAttribute('data-cat-preview-side') || 'target'; renderPreview(); return; }
       if (button.hasAttribute('data-cat-dock-side')) { dockSide = button.getAttribute('data-cat-dock-side') || 'target'; renderDockPreview(); return; }
@@ -3404,6 +3444,7 @@
       if (button.id === 'cat-confirm-bulk') return confirmBulk(button);
       if (button.id === 'cat-replace-run') return runReplace();
       if (button.id === 'cat-replace-undo') return undoReplace();
+      if (button.id === 'cat-structure-undo') return undoStructuralEdit();
       if (button.id === 'cat-tm-pretranslate') return tmPretranslate();
       if (button.hasAttribute('data-cat-confirm')) return confirmRow(Number(button.getAttribute('data-cat-confirm')));
       if (button.hasAttribute('data-cat-tm-register')) return registerTranslationMemory(Number(button.getAttribute('data-cat-tm-register')));
@@ -3428,15 +3469,15 @@
       if (button.hasAttribute('data-cat-copy-source')) { return copySourceToTarget(Number(button.getAttribute('data-cat-copy-source'))); }
       if (button.hasAttribute('data-cat-copy-target')) { return copyRowTarget(Number(button.getAttribute('data-cat-copy-target'))); }
       if (button.hasAttribute('data-cat-translate-row')) { return translateRow(Number(button.getAttribute('data-cat-translate-row'))); }
-      if (button.hasAttribute('data-cat-merge')) { if (button.getAttribute('data-cat-loss') === '1' && !window.confirm('この行と次の行をつなげて1文にします。\n\n両方の行に入っている訳文は消えます。消えた訳文は元に戻せません。\n\nつなげますか？')) return; return mutate('merge', { index: Number(button.getAttribute('data-cat-merge')) }, '行をつなげています…'); }
-      if (button.hasAttribute('data-cat-split')) { if (button.getAttribute('data-cat-loss') === '1' && !window.confirm('つなげた行を元の2行に戻します。\n\nこの行に入っている訳文は消えます。消えた訳文は元に戻せません。\n\n戻しますか？')) return; return mutate('split', { index: Number(button.getAttribute('data-cat-split')) }, 'つなげた行を元に戻しています…'); }
+      if (button.hasAttribute('data-cat-merge')) { if (button.getAttribute('data-cat-loss') === '1' && !window.confirm('この行と次の行をつなげて1文にします。\n\n両方の行に入っている訳文は消えます。完了後、直前のこの結合だけを元に戻せます。\n\nつなげますか？')) return; return mutate('merge', { index: Number(button.getAttribute('data-cat-merge')) }, '行をつなげています…'); }
+      if (button.hasAttribute('data-cat-split')) { if (button.getAttribute('data-cat-loss') === '1' && !window.confirm('つなげた行を元の2行に戻します。\n\nこの行に入っている訳文は消えます。完了後、直前のこの分割解除だけを元に戻せます。\n\n戻しますか？')) return; return mutate('split', { index: Number(button.getAttribute('data-cat-split')) }, 'つなげた行を元に戻しています…'); }
       if (button.hasAttribute('data-cat-split-at')) {
         var splitIndex = Number(button.getAttribute('data-cat-split-at'));
         var splitRow = ((project && project.segments) || []).find(function (item) { return Number(item.index) === splitIndex; });
         var splitSource = String((splitRow && splitRow.source) || '');
         var splitPosition = (Number(sourceCaret.index) === splitIndex) ? Number(sourceCaret.position) : -1;
         if (!(splitPosition > 0 && splitPosition < splitSource.length)) { status('分けたい位置を、まず原文の中でクリックしてください。行の先頭と末尾では分けられません。'); return; }
-        if (button.getAttribute('data-cat-loss') === '1' && !window.confirm('この行を、原文の選んだ位置で2つに分けます。\n\n分けたあと：\n' + splitSource.slice(0, splitPosition) + '\n---\n' + splitSource.slice(splitPosition) + '\n\nこの行に入っている訳文は消えます。消えた訳文は元に戻せません。\n\n分けますか？')) return;
+        if (button.getAttribute('data-cat-loss') === '1' && !window.confirm('この行を、原文の選んだ位置で2つに分けます。\n\n分けたあと：\n' + splitSource.slice(0, splitPosition) + '\n---\n' + splitSource.slice(splitPosition) + '\n\nこの行に入っている訳文は消えます。完了後、直前のこの分割だけを元に戻せます。\n\n分けますか？')) return;
         sourceCaret = { index: -1, position: -1 };
         return mutate('split-at', { index: splitIndex, position: splitPosition }, '原文を分けています…');
       }

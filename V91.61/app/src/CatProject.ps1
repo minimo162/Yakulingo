@@ -278,6 +278,9 @@ function Initialize-YakuCatProjectState {
     # 履歴ではない。通常の mutation は Invoke-YakuCatProjectMutation が候補内で
     # これを空にするので、保存に失敗したときにだけ古い券が残ることもない。
     if (-not ($Project.PSObject.Properties.Name -contains 'PendingBulkReplaceUndo')) { $Project | Add-Member -NotePropertyName PendingBulkReplaceUndo -NotePropertyValue $null -Force }
+    # 構造編集（結合/分割/任意位置分割）は行IDそのものを作り替える。これは一般的な
+    # 履歴ではなく、保存世代と同時に残す「直前1回だけ」の復元券である。
+    if (-not ($Project.PSObject.Properties.Name -contains 'PendingStructuralUndo')) { $Project | Add-Member -NotePropertyName PendingStructuralUndo -NotePropertyValue $null -Force }
     if (-not ($Project.PSObject.Properties.Name -contains 'LastOutputRecord')) { $Project | Add-Member -NotePropertyName LastOutputRecord -NotePropertyValue $null -Force }
     if (-not ($Project.PSObject.Properties.Name -contains 'DirectionBasis')) { $Project | Add-Member -NotePropertyName DirectionBasis -NotePropertyValue 'fixed' -Force }
     if (-not ($Project.PSObject.Properties.Name -contains 'DirectionConfidence')) { $Project | Add-Member -NotePropertyName DirectionConfidence -NotePropertyValue 'not_applicable' -Force }
@@ -503,10 +506,18 @@ function Invoke-YakuCatProjectMutation {
             throw 'CAT_PROJECT_REVISION_CONFLICT: 別の操作で作業内容が更新されました。最新状態を読み込んでからやり直してください。'
         }
         $candidate = Copy-YakuCatProjectForMutation -Project $committed
-        # undo は直前の**一括置換**だけの券である。replace は新しい券で上書きし、
-        # replace-undo は復元の最後に消す。それ以外の成功 mutation は候補内で先に
-        # 消すため、下流が throw / 保存失敗なら committed の券はそのまま残る。
-        if ([string]$innerState.Action -notin @('replace','replace-undo')) { $candidate.PendingBulkReplaceUndo = $null }
+        # undo はどちらも直前1回だけ。候補内で先に失効させるので、下流が throw /
+        # 保存失敗なら committed の券は残る。構造編集はbulk券を、Ctrl+H は構造券を
+        # 互いに失効させる。一般の更新は両方を失効させる。
+        $mutationAction = [string]$innerState.Action
+        if ($mutationAction -in @('merge','split','split-at','structure-undo')) {
+            $candidate.PendingBulkReplaceUndo = $null
+        } elseif ($mutationAction -in @('replace','replace-undo')) {
+            $candidate.PendingStructuralUndo = $null
+        } else {
+            $candidate.PendingBulkReplaceUndo = $null
+            $candidate.PendingStructuralUndo = $null
+        }
         $mutationArguments = @($innerState.Arguments)
         $mutationResult = & $innerState.Mutation $candidate @mutationArguments
         if ([bool]$innerState.NoCommitWhenNoMutation -and $null -ne $mutationResult -and [bool]$(try { $mutationResult.NoMutation } catch { $false })) {
@@ -2621,6 +2632,7 @@ function Save-YakuCatProject {
                     split_group_id = [string]$(try { $_.SplitGroupId } catch { '' })
                     split_ordinal = [int]$(try { $_.SplitOrdinal } catch { 0 })
                     split_origin_segment_id = [string]$(try { $_.SplitOriginSegmentId } catch { '' })
+                    pieces = @($(try { $_.Pieces } catch { @() }))
                 }
             })
         $blocks = @($Project.Blocks | ForEach-Object {
@@ -2700,7 +2712,12 @@ function Save-YakuCatProject {
             $null = Assert-YakuCatBulkReplaceUndoSnapshot -Project $Project -Snapshot $Project.PendingBulkReplaceUndo -RequireCurrent
             $Project.PendingBulkReplaceUndo | ConvertTo-Json -Depth 28 -Compress
         } else { 'null' }
+        $structuralUndoJson = if ($null -ne $Project.PendingStructuralUndo) {
+            $null = Assert-YakuCatStructuralUndoSnapshot -Project $Project -Snapshot $Project.PendingStructuralUndo -RequireCurrent
+            $Project.PendingStructuralUndo | ConvertTo-Json -Depth 40 -Compress
+        } else { 'null' }
         if ([Text.Encoding]::UTF8.GetByteCount($bulkReplaceUndoJson) -gt 1048576) { throw 'CAT_REPLACE_UNDO_SNAPSHOT_TOO_LARGE: 元に戻すための記録が1 MiBを超えています。' }
+        if ([Text.Encoding]::UTF8.GetByteCount($structuralUndoJson) -gt 1048576) { throw 'CAT_STRUCTURAL_UNDO_SNAPSHOT_TOO_LARGE: 元に戻すための記録が1 MiBを超えています。' }
         # 1 revision を構成する全ファイルを新しい世代へ先に書く。project.json は
         # コミットmanifestであり、全書込みが成功した最後にだけ差し替える。
         Write-YakuTextAtomic -Path (Join-Path $generationDir 'segments.jsonl') -Text $segmentLines
@@ -2717,6 +2734,7 @@ function Save-YakuCatProject {
         Write-YakuTextAtomic -Path (Join-Path $generationDir 'abbreviation-uses.jsonl') -Text $abbreviationUseLines
         Write-YakuTextAtomic -Path (Join-Path $generationDir 'mutation-receipts.jsonl') -Text $mutationReceiptLines
         Write-YakuTextAtomic -Path (Join-Path $generationDir 'bulk-replace-undo.json') -Text $bulkReplaceUndoJson
+        Write-YakuTextAtomic -Path (Join-Path $generationDir 'structural-undo.json') -Text $structuralUndoJson
         $record['generation_id'] = $generationId
         # project.json 自体がcommit manifest。source・project generation・rebase・
         # revisionの組をこの一度のatomic replaceで可視化する。
@@ -2747,6 +2765,8 @@ function Save-YakuCatProject {
         $record['mutation_receipt_count'] = @($Project.MutationReceipts).Count
         $record['bulk_replace_undo_sha256'] = Get-YakuCatSourceIntegrityHash -Text $bulkReplaceUndoJson
         $record['bulk_replace_undo_count'] = $(if ($null -ne $Project.PendingBulkReplaceUndo) { [int]$Project.PendingBulkReplaceUndo.affected_count } else { 0 })
+        $record['structural_undo_sha256'] = Get-YakuCatSourceIntegrityHash -Text $structuralUndoJson
+        $record['structural_undo_count'] = $(if ($null -ne $Project.PendingStructuralUndo) { [int]$Project.PendingStructuralUndo.affected_count } else { 0 })
         Write-YakuCatCommitManifestCas -Path (Join-Path $projectDir 'project.json') -Value $record -ExpectedRevision $oldRevision -ExpectedGenerationId ([string]$Project.ActiveGenerationId)
         $Project.Revision = $nextRevision
         $Project.ActiveGenerationId = $generationId
@@ -2892,8 +2912,10 @@ function Restore-YakuCatProject {
     $savedAbbreviationUses = @()
     $savedMutationReceipts = @()
     $savedBulkReplaceUndo = $null
+    $savedStructuralUndo = $null
     if ($isV2) {
         $hasBulkReplaceUndoContract = ($o.PSObject.Properties.Name -contains 'bulk_replace_undo_sha256') -or ($o.PSObject.Properties.Name -contains 'bulk_replace_undo_count')
+        $hasStructuralUndoContract = ($o.PSObject.Properties.Name -contains 'structural_undo_sha256') -or ($o.PSObject.Properties.Name -contains 'structural_undo_count')
         if (-not [string]::IsNullOrWhiteSpace([string]$o.active_generation_id) -and [string]$o.active_generation_id -ne [string]$o.generation_id) {
             throw 'CAT_PROJECT_COMMIT_MANIFEST_INCONSISTENT: active generationが一致しません。'
         }
@@ -2918,6 +2940,7 @@ function Restore-YakuCatProject {
             $abbreviationUsePath = Join-Path $generationDir 'abbreviation-uses.jsonl'
             $mutationReceiptPath = Join-Path $generationDir 'mutation-receipts.jsonl'
             $bulkReplaceUndoPath = Join-Path $generationDir 'bulk-replace-undo.json'
+            $structuralUndoPath = Join-Path $generationDir 'structural-undo.json'
             $requiredPaths = @($segPath,$blockPath,$qcPath)
             if ([int]$o.schema_version -ge 3) { $requiredPaths += @($decisionPath,$textSourcePath) }
             if ([int]$o.schema_version -ge 4) { $requiredPaths += @($placementPath) }
@@ -2926,6 +2949,7 @@ function Restore-YakuCatProject {
             if ([int]$o.schema_version -ge 7) { $requiredPaths += @($publicationVariantPath,$abbreviationEntryPath,$abbreviationUsePath) }
             if ([int]$o.schema_version -ge 8) { $requiredPaths += @($mutationReceiptPath) }
             if ($hasBulkReplaceUndoContract) { $requiredPaths += @($bulkReplaceUndoPath) }
+            if ($hasStructuralUndoContract) { $requiredPaths += @($structuralUndoPath) }
             foreach ($requiredPath in $requiredPaths) {
                 if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) { throw 'CAT_PROJECT_SNAPSHOT_INCOMPLETE: 保存世代を構成するファイルが不足しています。' }
             }
@@ -2943,6 +2967,7 @@ function Restore-YakuCatProject {
             $abbreviationUseRaw = if (Test-Path -LiteralPath $abbreviationUsePath -PathType Leaf) { Get-Content -LiteralPath $abbreviationUsePath -Raw -Encoding UTF8 } else { '' }
             $mutationReceiptRaw = if (Test-Path -LiteralPath $mutationReceiptPath -PathType Leaf) { Get-Content -LiteralPath $mutationReceiptPath -Raw -Encoding UTF8 } else { '' }
             $bulkReplaceUndoRaw = if (Test-Path -LiteralPath $bulkReplaceUndoPath -PathType Leaf) { Get-Content -LiteralPath $bulkReplaceUndoPath -Raw -Encoding UTF8 } else { 'null' }
+            $structuralUndoRaw = if (Test-Path -LiteralPath $structuralUndoPath -PathType Leaf) { Get-Content -LiteralPath $structuralUndoPath -Raw -Encoding UTF8 } else { 'null' }
             if ((Get-YakuCatSourceIntegrityHash -Text $segmentRaw) -ne [string]$o.segments_sha256 -or
                 (Get-YakuCatSourceIntegrityHash -Text $blockRaw) -ne [string]$o.blocks_sha256 -or
                 (Get-YakuCatSourceIntegrityHash -Text $qcRaw) -ne [string]$o.qc_sha256 -or
@@ -2956,7 +2981,8 @@ function Restore-YakuCatProject {
                 ([int]$o.schema_version -ge 7 -and (Get-YakuCatSourceIntegrityHash -Text $abbreviationEntryRaw) -ne [string]$o.abbreviation_entries_sha256) -or
                 ([int]$o.schema_version -ge 7 -and (Get-YakuCatSourceIntegrityHash -Text $abbreviationUseRaw) -ne [string]$o.abbreviation_uses_sha256) -or
                 ([int]$o.schema_version -ge 8 -and (Get-YakuCatSourceIntegrityHash -Text $mutationReceiptRaw) -ne [string]$o.mutation_receipts_sha256) -or
-                ($hasBulkReplaceUndoContract -and ((Get-YakuCatSourceIntegrityHash -Text $bulkReplaceUndoRaw) -ne [string]$o.bulk_replace_undo_sha256))) {
+                ($hasBulkReplaceUndoContract -and ((Get-YakuCatSourceIntegrityHash -Text $bulkReplaceUndoRaw) -ne [string]$o.bulk_replace_undo_sha256)) -or
+                ($hasStructuralUndoContract -and ((Get-YakuCatSourceIntegrityHash -Text $structuralUndoRaw) -ne [string]$o.structural_undo_sha256))) {
                 throw 'CAT_PROJECT_SNAPSHOT_INCOMPLETE: 保存世代の整合性検査に失敗しました。'
             }
             $savedSegmentRows = @($segmentRaw -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_ | ConvertFrom-Json })
@@ -2974,6 +3000,9 @@ function Restore-YakuCatProject {
             if ($hasBulkReplaceUndoContract -and $bulkReplaceUndoRaw -ne 'null') {
                 try { $savedBulkReplaceUndo = $bulkReplaceUndoRaw | ConvertFrom-Json } catch { throw 'CAT_REPLACE_UNDO_SNAPSHOT_INVALID: 直前の一括置換の復元記録を読めません。' }
             }
+            if ($hasStructuralUndoContract -and $structuralUndoRaw -ne 'null') {
+                try { $savedStructuralUndo = $structuralUndoRaw | ConvertFrom-Json } catch { throw 'CAT_STRUCTURAL_UNDO_SNAPSHOT_INVALID: 直前の構造編集の復元記録を読めません。' }
+            }
             if ($savedSegmentRows.Count -ne [int]$o.segment_count -or $savedBlockRows.Count -ne [int]$o.block_count) { throw 'CAT_PROJECT_SNAPSHOT_INCOMPLETE: 保存世代の件数がmanifestと一致しません。' }
             if ([int]$o.schema_version -ge 4 -and $savedPlacementPlans.Count -ne [int]$o.placement_count) { throw 'CAT_PROJECT_SNAPSHOT_INCOMPLETE: 配置計画の件数がmanifestと一致しません。' }
             if ([int]$o.schema_version -ge 5 -and ($savedDocumentFindings.Count -ne [int]$o.document_finding_count -or $savedReviewRuns.Count -ne [int]$o.review_run_count)) { throw 'CAT_PROJECT_SNAPSHOT_INCOMPLETE: 文書校正の件数がmanifestと一致しません。' }
@@ -2981,6 +3010,7 @@ function Restore-YakuCatProject {
             if ([int]$o.schema_version -ge 7 -and ($savedPublicationVariants.Count -ne [int]$o.publication_variant_count -or $savedAbbreviationEntries.Count -ne [int]$o.abbreviation_entry_count -or $savedAbbreviationUses.Count -ne [int]$o.abbreviation_use_count)) { throw 'CAT_PROJECT_SNAPSHOT_INCOMPLETE: 掲載訳・略語の件数がmanifestと一致しません。' }
             if ([int]$o.schema_version -ge 8 -and $savedMutationReceipts.Count -ne [int]$o.mutation_receipt_count) { throw 'CAT_PROJECT_SNAPSHOT_INCOMPLETE: 更新receiptの件数がmanifestと一致しません。' }
             if ($hasBulkReplaceUndoContract -and [int]$o.bulk_replace_undo_count -ne $(if ($null -ne $savedBulkReplaceUndo) { [int]$savedBulkReplaceUndo.affected_count } else { 0 })) { throw 'CAT_PROJECT_SNAPSHOT_INCOMPLETE: 一括置換の復元記録件数がmanifestと一致しません。' }
+            if ($hasStructuralUndoContract -and [int]$o.structural_undo_count -ne $(if ($null -ne $savedStructuralUndo) { [int]$savedStructuralUndo.affected_count } else { 0 })) { throw 'CAT_PROJECT_SNAPSHOT_INCOMPLETE: 構造編集の復元記録件数がmanifestと一致しません。' }
         } else {
             # schema v2初期版との後方互換。新しい保存は必ず generation_id を持つ。
             $segPath = Join-Path $projectDir 'segments.jsonl'
@@ -3030,6 +3060,7 @@ function Restore-YakuCatProject {
                 SplitGroupId = [string]$s.split_group_id
                 SplitOrdinal = [int]$(if ($null -ne $s.split_ordinal) { $s.split_ordinal } else { 0 })
                 SplitOriginSegmentId = [string]$s.split_origin_segment_id
+                Pieces = @($(try { $s.pieces } catch { @() }))
             })
     }
     $savedBlocks = New-Object System.Collections.Generic.List[object]
@@ -3094,6 +3125,7 @@ function Restore-YakuCatProject {
         AbbreviationUses = @($savedAbbreviationUses)
         MutationReceipts = @($savedMutationReceipts)
         PendingBulkReplaceUndo = $savedBulkReplaceUndo
+        PendingStructuralUndo = $savedStructuralUndo
         PriorVersion = $o.prior_version
         VersionUpdateSummary = $o.version_update_summary
     }
@@ -3104,6 +3136,9 @@ function Restore-YakuCatProject {
     $null = Initialize-YakuCatProjectState -Project $project
     if ($null -ne $project.PendingBulkReplaceUndo) {
         $null = Assert-YakuCatBulkReplaceUndoSnapshot -Project $project -Snapshot $project.PendingBulkReplaceUndo -RequireCurrent
+    }
+    if ($null -ne $project.PendingStructuralUndo) {
+        $null = Assert-YakuCatStructuralUndoSnapshot -Project $project -Snapshot $project.PendingStructuralUndo -RequireCurrent
     }
     $null = Assert-YakuCatActiveSourceSnapshotFingerprints -Project $project
     if ([string]$project.Source -eq 'file' -and
@@ -3491,6 +3526,9 @@ function ConvertTo-YakuCatProjectJson {
         bulk_replace_undo = $(if ($null -ne $Project.PendingBulkReplaceUndo) {
             [ordered]@{ available=$true; affected_count=[int]$Project.PendingBulkReplaceUndo.affected_count }
         } else { [ordered]@{ available=$false; affected_count=0 } })
+        structural_undo = $(if ($null -ne $Project.PendingStructuralUndo) {
+            [ordered]@{ available=$true; operation=[string]$Project.PendingStructuralUndo.operation; affected_count=[int]$Project.PendingStructuralUndo.affected_count }
+        } else { [ordered]@{ available=$false; operation=''; affected_count=0 } })
         total      = [int]$summary.Total
         translated = [int]$summary.Translated
         remaining  = [int]$summary.Remaining
@@ -4335,6 +4373,208 @@ function Split-YakuCatSegment {
     }
     Set-YakuCatSegments -Project $Project -Segments @($out.ToArray())
     return $Project
+}
+
+function Copy-YakuCatStructuralUndoValue {
+    # serializer ではなく JSON を境界にする。generation artifact と同じ表現にして、
+    # candidate の可変な入れ子（QC/出典/用語）を snapshot と共有しない。
+    param([Parameter(Mandatory=$true)]$Value)
+    return (($Value | ConvertTo-Json -Depth 40 -Compress) | ConvertFrom-Json)
+}
+
+function Get-YakuCatStructuralUndoSegmentState {
+    param([Parameter(Mandatory=$true)]$Segment)
+    # 順序も訳文付随状態も含める。PlacementPlans は Save 直前に Segments から再生成
+    # される派生物なので、この hash には含めない（保存だけで変わる値を stale と誤認
+    # しないため）。
+    return [ordered]@{
+        segment_id=[string]$Segment.SegmentId;text=[string]$Segment.Text;source_revision=[int]$Segment.SourceRevision;source_integrity_hash=[string]$Segment.SourceIntegrityHash
+        translation=[string]$Segment.Translation;masked_translation=[string]$Segment.MaskedTranslation;origin=[string]$Segment.Origin;state=[string]$Segment.State
+        qc_status=[string]$Segment.QcStatus;qc_source_revision=[int]$Segment.QcSourceRevision;qc_source_hash=[string]$Segment.QcSourceHash;qc_target_hash=[string]$Segment.QcTargetHash
+        qc_contract_version=[string]$Segment.QcContractVersion;qc_terminology_hash=[string]$Segment.QcTerminologyHash;qc_findings=@($Segment.QcFindings);confirmed=[bool]$Segment.Confirmed
+        joined=[bool]$Segment.Joined;kind=[string]$Segment.Kind;sheet=[string]$Segment.Sheet;location=[string]$Segment.Location;block_ids=@($Segment.BlockIds);cells=@($Segment.Cells)
+        change_kind=$(try{[string]$Segment.ChangeKind}catch{''});prior_source_text=$(try{[string]$Segment.PriorSourceText}catch{''});prior_translation=$(try{[string]$Segment.PriorTranslation}catch{''});reuse_evidence=$(try{[string]$Segment.ReuseEvidence}catch{''});prior_index=$(try{[int]$Segment.PriorIndex}catch{-1})
+        reference_usage=$(try{$Segment.ReferenceUsage}catch{$null});reference_events=@($(try{$Segment.ReferenceEvents}catch{@()}));terminology_usages=@($(try{$Segment.TerminologyUsages}catch{@()}));terminology_exceptions=@($(try{$Segment.TerminologyExceptions}catch{@()}));terminology_generation=@($(try{$Segment.TerminologyGeneration}catch{@()}))
+        tm_registered=[bool]$(try{$Segment.TmRegistered}catch{$false});tm_registration_event_id=[string]$(try{$Segment.TmRegistrationEventId}catch{''});split_group_id=[string]$(try{$Segment.SplitGroupId}catch{''});split_ordinal=[int]$(try{$Segment.SplitOrdinal}catch{0});split_origin_segment_id=[string]$(try{$Segment.SplitOriginSegmentId}catch{''});pieces=@($(try{$Segment.Pieces}catch{@()}))
+    }
+}
+
+function Get-YakuCatStructuralUndoSegmentsHash {
+    param([Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Segments)
+    $canonical=@($Segments | ForEach-Object { Get-YakuCatStructuralUndoSegmentState -Segment $_ })
+    return (Get-YakuCatSourceIntegrityHash -Text ($canonical | ConvertTo-Json -Depth 40 -Compress))
+}
+
+function Get-YakuCatStructuralUndoPlacementPlanIds {
+    param([Parameter(Mandatory=$true)]$Project,[Parameter(Mandatory=$true)][int]$Index,[Parameter(Mandatory=$true)][int]$Count)
+    $wanted=New-Object 'System.Collections.Generic.HashSet[int]'
+    for($i=$Index;$i -lt ($Index+$Count);$i++){[void]$wanted.Add($i)}
+    $ids=New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach($unit in @(Get-YakuCatPlacementUnits -Project $Project)){
+        $hit=$false;foreach($unitIndex in @($unit.Indices)){if($wanted.Contains([int]$unitIndex)){$hit=$true;break}}
+        if($hit){[void]$ids.Add([string]$unit.Segment.SegmentId)}
+    }
+    # HashSet[T] に LINQ の ToArray は生えていない。PowerShell 5.1 では文字列が
+    # 1件のときにそのまま $ids へ落ちるので、配列キャストで返す。
+    return [string[]]$ids
+}
+
+function Get-YakuCatStructuralUndoPlacementPlansHash {
+    param([AllowEmptyCollection()][object[]]$Plans)
+    return (Get-YakuCatSourceIntegrityHash -Text ((@($Plans)|ConvertTo-Json -Depth 24 -Compress)))
+}
+
+function New-YakuCatStructuralUndoSnapshot {
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [ValidateSet('merge','split','split-at')][string]$Operation,
+        [ValidateRange(1,2)][int]$AffectedCount,
+        [Parameter(Mandatory=$true)][int]$Index
+    )
+    $segs=@($Project.Segments)
+    if($Index -lt 0 -or ($Index+$AffectedCount) -gt $segs.Count){throw 'CAT_STRUCTURAL_UNDO_SNAPSHOT_INVALID: 構造編集の対象行を確認できません。'}
+    # 資料全体を複写すると513行目から結合すらできなくなる。保存するのは破棄される
+    # 1～2行だけ、資料全体は正規化hashで照合する。これなら大きなCAT案件にも効く。
+    $beforeRows=@($segs[$Index..($Index+$AffectedCount-1)])
+    $beforePlacementIds=@(Get-YakuCatStructuralUndoPlacementPlanIds -Project $Project -Index $Index -Count $AffectedCount)
+    $beforePlacementPlans=@($Project.PlacementPlans|Where-Object{$beforePlacementIds -contains ([string]$_.segment_id)}|ForEach-Object{Copy-YakuCatStructuralUndoValue -Value $_})
+    # PlacementSetHash は JSON の順序も含む。対象外の human_confirmed を触らず、
+    # 対象だけ差し戻しても末尾へ append すると元の hash には戻らないので、ID の
+    # 順序だけも記録する（計画本文は対象行分だけ）。
+    $beforePlacementOrder=@($Project.PlacementPlans|ForEach-Object{[string]$_.segment_id})
+    $snapshot=[ordered]@{
+        version=1;project_id=[string]$Project.Id;operation=$Operation;affected_count=$AffectedCount;created_at=(Get-Date).ToString('o')
+        before_segment_count=$segs.Count;before_state_hash=(Get-YakuCatStructuralUndoSegmentsHash -Segments $segs);before_index=$Index
+        before_rows_hash=(Get-YakuCatStructuralUndoSegmentsHash -Segments $beforeRows)
+        before_segments=@($beforeRows|ForEach-Object{Copy-YakuCatStructuralUndoValue -Value $_})
+        # auto計画と違い human_confirmed は人が調整した境界そのもの。復元では
+        # 同じ SegmentId にだけ差し戻し、別の新行へ横流ししない。
+        before_placement_plan_ids=@($beforePlacementIds);before_placement_plans=@($beforePlacementPlans);before_placement_plan_order=@($beforePlacementOrder)
+        before_placement_plans_hash=(Get-YakuCatStructuralUndoPlacementPlansHash -Plans $beforePlacementPlans);before_placement_set_hash=[string]$Project.PlacementSetHash
+        before_publication_variants=@();before_active_publication_variants=[pscustomobject]@{}
+        post_segment_count=0;post_state_hash='';post_replace_count=0;post_window_hash='';post_segment_ids=@();removed_segment_ids=@()
+    }
+    $json=$snapshot|ConvertTo-Json -Depth 40 -Compress
+    if([Text.Encoding]::UTF8.GetByteCount($json)-gt 1048576){throw 'CAT_STRUCTURAL_UNDO_SNAPSHOT_TOO_LARGE: 元に戻すための記録が1 MiBを超えるため、構造編集は実行しません。'}
+    return $snapshot
+}
+
+function Complete-YakuCatStructuralUndoSnapshot {
+    param([Parameter(Mandatory=$true)]$Project,[Parameter(Mandatory=$true)]$Snapshot)
+    $beforeIds=@($Snapshot.before_segments|ForEach-Object{[string]$_.SegmentId})
+    $afterIds=@($Project.Segments|ForEach-Object{[string]$_.SegmentId})
+    $removed=@($beforeIds|Where-Object{$afterIds -notcontains $_})
+    if($removed.Count -lt 1){throw 'CAT_STRUCTURAL_UNDO_SNAPSHOT_INVALID: 構造編集後の行IDを確認できません。'}
+    $Snapshot.removed_segment_ids=@($removed)
+    $publicationCopies=New-Object System.Collections.Generic.List[object]
+    foreach($variant in @($Project.PublicationVariants)){
+        if($removed -contains ([string]$variant.segment_id)){[void]$publicationCopies.Add((Copy-YakuCatStructuralUndoValue -Value $variant))}
+    }
+    $Snapshot.before_publication_variants=@($publicationCopies.ToArray())
+    $Snapshot.before_publication_variants_hash=Get-YakuCatStructuralUndoPlacementPlansHash -Plans @($Snapshot.before_publication_variants)
+    $Snapshot.before_publication_variant_ids=@($Snapshot.before_publication_variants|ForEach-Object{[string]$_.variant_id})
+    $active=[ordered]@{}
+    foreach($id in $removed){try{$value=$Project.ActivePublicationVariantBySegment.$id;if($null -ne $value){$active[$id]=[string]$value}}catch{}}
+    $Snapshot.before_active_publication_variants=[pscustomobject]$active
+    # 消えた行へ結び付いた掲載訳を、新しい行へ流用しない。undo が戻す時だけ復帰する。
+    foreach($variant in @($Project.PublicationVariants)){if($removed -contains ([string]$variant.segment_id)){if([string]$variant.status -eq 'active'){$variant.status='stale'}}}
+    foreach($id in $removed){try{$Project.ActivePublicationVariantBySegment.PSObject.Properties.Remove($id)}catch{}}
+    $Snapshot.post_segment_count=@($Project.Segments).Count
+    $Snapshot.post_state_hash=Get-YakuCatStructuralUndoSegmentsHash -Segments @($Project.Segments)
+    $Snapshot.post_replace_count=[int]$Snapshot.post_segment_count - ([int]$Snapshot.before_segment_count - [int]$Snapshot.affected_count)
+    if([int]$Snapshot.post_replace_count -lt 1 -or ([int]$Snapshot.before_index + [int]$Snapshot.post_replace_count) -gt @($Project.Segments).Count){throw 'CAT_STRUCTURAL_UNDO_SNAPSHOT_INVALID: 構造編集後の行範囲を確認できません。'}
+    $postRows=@($Project.Segments)[[int]$Snapshot.before_index..([int]$Snapshot.before_index+[int]$Snapshot.post_replace_count-1)]
+    $Snapshot.post_window_hash=Get-YakuCatStructuralUndoSegmentsHash -Segments $postRows
+    $Snapshot.post_segment_ids=@($postRows|ForEach-Object{[string]$_.SegmentId})
+    $json=$Snapshot|ConvertTo-Json -Depth 40 -Compress
+    if([Text.Encoding]::UTF8.GetByteCount($json)-gt 1048576){throw 'CAT_STRUCTURAL_UNDO_SNAPSHOT_TOO_LARGE: 元に戻すための記録が1 MiBを超えるため、構造編集は実行しません。'}
+    $Project.PendingStructuralUndo=$Snapshot
+    return $Snapshot
+}
+
+function Assert-YakuCatStructuralUndoSnapshot {
+    param([Parameter(Mandatory=$true)]$Project,[Parameter(Mandatory=$true)]$Snapshot,[switch]$RequireCurrent)
+    if([int]$Snapshot.version -ne 1 -or [string]$Snapshot.project_id -cne [string]$Project.Id -or [string]$Snapshot.operation -notin @('merge','split','split-at') -or [int]$Snapshot.affected_count -lt 1 -or [int]$Snapshot.affected_count -gt 2){throw 'CAT_STRUCTURAL_UNDO_SNAPSHOT_INVALID: 直前の構造編集の復元記録が不正です。'}
+    $before=@($Snapshot.before_segments);$removed=@($Snapshot.removed_segment_ids)
+    if($before.Count -ne [int]$Snapshot.affected_count -or [int]$Snapshot.before_index -lt 0 -or $removed.Count -lt 1 -or [int]$Snapshot.post_segment_count -ne @($Project.Segments).Count -or [int]$Snapshot.post_replace_count -lt 1 -or ([int]$Snapshot.before_index+[int]$Snapshot.post_replace_count) -gt @($Project.Segments).Count -or [string]::IsNullOrWhiteSpace([string]$Snapshot.before_rows_hash) -or [string]::IsNullOrWhiteSpace([string]$Snapshot.before_placement_plans_hash) -or [string]::IsNullOrWhiteSpace([string]$Snapshot.before_publication_variants_hash) -or [string]::IsNullOrWhiteSpace([string]$Snapshot.post_state_hash)){throw 'CAT_STRUCTURAL_UNDO_SNAPSHOT_INVALID: 直前の構造編集の復元記録を確認できません。'}
+    $ids=New-Object 'System.Collections.Generic.HashSet[string]';foreach($s in $before){if(-not $ids.Add([string]$s.SegmentId)){throw 'CAT_STRUCTURAL_UNDO_SNAPSHOT_INVALID: 復元記録の行IDが重複しています。'}}
+    if([string]$Snapshot.before_rows_hash -cne (Get-YakuCatStructuralUndoSegmentsHash -Segments $before)){throw 'CAT_STRUCTURAL_UNDO_SNAPSHOT_INVALID: 復元前の行記録が改変されています。'}
+    if([string]$Snapshot.before_placement_plans_hash -cne (Get-YakuCatStructuralUndoPlacementPlansHash -Plans @($Snapshot.before_placement_plans))){throw 'CAT_STRUCTURAL_UNDO_SNAPSHOT_INVALID: 復元前の配置計画記録が改変されています。'}
+    $planIds=New-Object 'System.Collections.Generic.HashSet[string]';foreach($plan in @($Snapshot.before_placement_plans)){if(-not $planIds.Add([string]$plan.segment_id) -or (@($Snapshot.before_placement_plan_ids) -notcontains [string]$plan.segment_id)){throw 'CAT_STRUCTURAL_UNDO_SNAPSHOT_INVALID: 復元前の配置計画IDが不正です。'}}
+    $orderIds=New-Object 'System.Collections.Generic.HashSet[string]';foreach($planId in @($Snapshot.before_placement_plan_order)){if(-not $orderIds.Add([string]$planId)){throw 'CAT_STRUCTURAL_UNDO_SNAPSHOT_INVALID: 復元前の配置計画順序が不正です。'}}
+    if([string]$Snapshot.before_publication_variants_hash -cne (Get-YakuCatStructuralUndoPlacementPlansHash -Plans @($Snapshot.before_publication_variants)) -or ((@($Snapshot.before_publication_variant_ids) -join '|') -cne (@($Snapshot.before_publication_variants|ForEach-Object{[string]$_.variant_id}) -join '|'))){throw 'CAT_STRUCTURAL_UNDO_SNAPSHOT_INVALID: 復元前の掲載訳記録が改変されています。'}
+    $currentWindow=@($Project.Segments)[[int]$Snapshot.before_index..([int]$Snapshot.before_index+[int]$Snapshot.post_replace_count-1)]
+    $currentWindowIds=@($currentWindow|ForEach-Object{[string]$_.SegmentId})
+    if($RequireCurrent -and ([string]$Snapshot.post_state_hash -cne (Get-YakuCatStructuralUndoSegmentsHash -Segments @($Project.Segments)) -or [string]$Snapshot.post_window_hash -cne (Get-YakuCatStructuralUndoSegmentsHash -Segments $currentWindow) -or (($currentWindowIds -join '|') -cne (@($Snapshot.post_segment_ids) -join '|')))){throw 'CAT_STRUCTURAL_UNDO_SNAPSHOT_STALE: 構造編集後の行が変わったため、安全に元へ戻せません。'}
+    return $true
+}
+
+function Invoke-YakuCatStructuralEdit {
+    param([Parameter(Mandatory=$true)]$Project,[ValidateSet('merge','split','split-at')][string]$Operation,[Parameter(Mandatory=$true)][int]$Index,[int]$Position=-1)
+    $affected=$(if($Operation -eq 'merge'){2}else{1})
+    # validation が先。失敗した操作で既存券を消さず、snapshot を作る費用も払わない。
+    $segs=@($Project.Segments);if($Index -lt 0 -or $Index -ge $segs.Count){throw 'セグメントが見つかりません。'}
+    if($Operation -eq 'merge' -and $Index -ge ($segs.Count-1)){throw '次のセグメントがありません。'}
+    $snapshot=New-YakuCatStructuralUndoSnapshot -Project $Project -Operation $Operation -AffectedCount $affected -Index $Index
+    if($Operation -eq 'merge'){$null=Merge-YakuCatSegments -Project $Project -Index $Index}elseif($Operation -eq 'split'){$null=Split-YakuCatSegment -Project $Project -Index $Index}else{$null=Split-YakuCatSegmentAt -Project $Project -Index $Index -Position $Position}
+    # Merge の text行などは legacy helper が最低限のプロパティだけで作る。ここで
+    # 正規化してから post hash を打たないと、保存時の正規化で別物になってしまう。
+    $null=Initialize-YakuCatProjectState -Project $Project
+    $null=Complete-YakuCatStructuralUndoSnapshot -Project $Project -Snapshot $snapshot
+    $anchor=@($Project.Segments)[[int]$Index]
+    $null=Add-YakuCatHumanDecisionEvent -Project $Project -Scope 'translation' -Action ('structure_'+$Operation) -Segment $anchor -ReasonCode 'structural-edit'
+    return [pscustomobject]@{Operation=$Operation;Affected=[int]$affected}
+}
+
+function Undo-YakuCatStructuralEdit {
+    param([Parameter(Mandatory=$true)]$Project)
+    $snapshot=$Project.PendingStructuralUndo;if($null -eq $snapshot){throw 'CAT_STRUCTURAL_UNDO_NOT_AVAILABLE: 元に戻せる構造編集はありません。'}
+    $null=Assert-YakuCatStructuralUndoSnapshot -Project $Project -Snapshot $snapshot -RequireCurrent
+    # post操作の新しい行へ属する計画だけを外す。資料の別行で人が調整した計画は
+    # そのまま残す。SplitGroup も PlacementUnits で1単位として照合する。
+    $postPlacementIds=@(Get-YakuCatStructuralUndoPlacementPlanIds -Project $Project -Index ([int]$snapshot.before_index) -Count ([int]$snapshot.post_replace_count))
+    $restored=@($snapshot.before_segments|ForEach-Object{Copy-YakuCatStructuralUndoValue -Value $_})
+    $current=@($Project.Segments);$out=New-Object System.Collections.Generic.List[object]
+    for($i=0;$i -lt $current.Count;$i++){
+        if($i -eq [int]$snapshot.before_index){foreach($row in $restored){[void]$out.Add($row)}}
+        if($i -ge [int]$snapshot.before_index -and $i -lt ([int]$snapshot.before_index+[int]$snapshot.post_replace_count)){continue}
+        [void]$out.Add($current[$i])
+    }
+    $Project.Segments=@($out.ToArray())
+    if([string]$snapshot.before_state_hash -cne (Get-YakuCatStructuralUndoSegmentsHash -Segments @($Project.Segments))){throw 'CAT_STRUCTURAL_UNDO_SNAPSHOT_INVALID: 復元後の行構成が編集前の記録と一致しません。'}
+    $plansById=@{}
+    foreach($plan in @($Project.PlacementPlans)){if($postPlacementIds -contains ([string]$plan.segment_id)){continue};$key=[string]$plan.segment_id;if($plansById.ContainsKey($key)){throw 'CAT_STRUCTURAL_UNDO_SNAPSHOT_INVALID: 復元中の配置計画IDが重複しています。'};$plansById[$key]=$plan}
+    foreach($plan in @($snapshot.before_placement_plans|ForEach-Object{Copy-YakuCatStructuralUndoValue -Value $_})){ $key=[string]$plan.segment_id;if($plansById.ContainsKey($key)){throw 'CAT_STRUCTURAL_UNDO_SNAPSHOT_INVALID: 復元対象の配置計画が重複しています。'};$plansById[$key]=$plan }
+    $placementPlans=New-Object System.Collections.Generic.List[object]
+    foreach($planId in @($snapshot.before_placement_plan_order)){if($plansById.ContainsKey([string]$planId)){[void]$placementPlans.Add($plansById[[string]$planId]);$plansById.Remove([string]$planId)}}
+    foreach($plan in @($plansById.Values|Sort-Object {[string]$_.segment_id})){[void]$placementPlans.Add($plan)}
+    $Project.PlacementPlans=@($placementPlans.ToArray())
+    $restoredPlacementPlans=@($Project.PlacementPlans|Where-Object{$snapshot.before_placement_plan_ids -contains ([string]$_.segment_id)})
+    if([string]$snapshot.before_placement_plans_hash -cne (Get-YakuCatStructuralUndoPlacementPlansHash -Plans $restoredPlacementPlans)){throw 'CAT_STRUCTURAL_UNDO_SNAPSHOT_INVALID: 復元後の配置計画が編集前の記録と一致しません。'}
+    $null=Update-YakuCatPlacementSetHash -Project $Project
+    if([string]$Project.PlacementSetHash -cne [string]$snapshot.before_placement_set_hash){throw 'CAT_STRUCTURAL_UNDO_SNAPSHOT_INVALID: 復元後の配置計画集合が編集前の記録と一致しません。'}
+    $removed=@($snapshot.removed_segment_ids)
+    # 歴史は表示・監査の順序を持つ。対象を除外して末尾へ戻すと、他行と交互の
+    # variant history が並び替わる。post 操作で stale にした同じ variant_id を同じ
+    # 添字で置換する。欠落/重複は安全側で止める。
+    $variantsById=@{};foreach($variant in @($snapshot.before_publication_variants)){ $key=[string]$variant.variant_id;if([string]::IsNullOrWhiteSpace($key) -or $variantsById.ContainsKey($key)){throw 'CAT_STRUCTURAL_UNDO_SNAPSHOT_INVALID: 復元前の掲載訳IDが不正です。'};$variantsById[$key]=$variant }
+    $variants=New-Object System.Collections.Generic.List[object];$seenVariantIds=New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach($variant in @($Project.PublicationVariants)){
+        $key=[string]$variant.variant_id
+        if($removed -contains ([string]$variant.segment_id)){
+            if(-not $variantsById.ContainsKey($key) -or -not $seenVariantIds.Add($key)){throw 'CAT_STRUCTURAL_UNDO_SNAPSHOT_INVALID: 復元対象の掲載訳履歴が一致しません。'}
+            [void]$variants.Add((Copy-YakuCatStructuralUndoValue -Value $variantsById[$key]))
+        }else{[void]$variants.Add($variant)}
+    }
+    if($seenVariantIds.Count -ne $variantsById.Count){throw 'CAT_STRUCTURAL_UNDO_SNAPSHOT_INVALID: 復元対象の掲載訳履歴が不足しています。'}
+    $Project.PublicationVariants=@($variants.ToArray())
+    # active map は既存のIDを保持し、失われていたIDだけを snapshot の値へ戻す。
+    foreach($id in $removed){try{$Project.ActivePublicationVariantBySegment.PSObject.Properties.Remove($id)}catch{}}
+    foreach($property in @($snapshot.before_active_publication_variants.PSObject.Properties)){ $Project.ActivePublicationVariantBySegment | Add-Member -NotePropertyName $property.Name -NotePropertyValue ([string]$property.Value) -Force }
+    $anchor=@($Project.Segments)[[int]$snapshot.before_index]
+    $null=Add-YakuCatHumanDecisionEvent -Project $Project -Scope 'translation' -Action 'structure_undone' -Segment $anchor -ReasonCode ('structural-undo-'+[string]$snapshot.operation)
+    $Project.PendingStructuralUndo=$null
+    return [pscustomobject]@{Restored=[int]$snapshot.affected_count;Operation=[string]$snapshot.operation}
 }
 
 function Get-YakuCatSegmentOriginPage {
