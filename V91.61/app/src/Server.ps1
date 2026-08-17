@@ -2625,7 +2625,7 @@ function Invoke-YakuRoute {
             }
             if ($null -eq $project) { throw '取り込んだファイルが見つかりません。もう一度「取り込んで確認を始める」を押してください。' }
 
-            $revisionActions = @('delete','project-close-delete','project-retain','glossary','merge','split','split-at','placement','publication-candidates','publication-apply','publication-revert','abbreviation-register','glossary-add','term-add','term-deactivate','term-insert','term-exception','tm-delete','tm-register','confirm','confirm-bulk','replace','tm-pretranslate','project-save','render-start','review-start','copilot-review-start','copilot-review-apply','finding-decision','pdf-review-apply','coverage-decision','final-review-decision','source-update-preview','source-update-decision','source-update-apply','save-corpus','segment','translate','apply','preflight','export','export-reviewed','personal-glossary-list','personal-glossary-remove')
+            $revisionActions = @('delete','project-close-delete','project-retain','glossary','merge','split','split-at','placement','publication-candidates','publication-apply','publication-revert','abbreviation-register','glossary-add','term-add','term-deactivate','term-insert','term-exception','tm-delete','tm-register','confirm','confirm-bulk','replace','replace-undo','tm-pretranslate','project-save','render-start','review-start','copilot-review-start','copilot-review-apply','finding-decision','pdf-review-apply','coverage-decision','final-review-decision','source-update-preview','source-update-decision','source-update-apply','save-corpus','segment','translate','apply','preflight','export','export-reviewed','personal-glossary-list','personal-glossary-remove')
             $receiptActions = @('placement','publication-apply','publication-revert','abbreviation-register','source-update-apply')
             if ($receiptActions -contains $action -and [string]::IsNullOrWhiteSpace([string]$payload['idempotency_key'])) {
                 throw 'CAT_IDEMPOTENCY_KEY_REQUIRED: この更新には操作識別子が必要です。'
@@ -3306,12 +3306,22 @@ function Invoke-YakuRoute {
                         return $result
                     }
                     $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation `
-                        -Arguments @($indexes,[string]$payload['find'],[string]$payload['replace'],[bool]$payload['use_regex'],[bool]$payload['match_case'],$script:YakuRoot,$settings)
+                        -Arguments @($indexes,[string]$payload['find'],[string]$payload['replace'],[bool]$payload['use_regex'],[bool]$payload['match_case'],$script:YakuRoot,$settings) -Action replace -NoCommitWhenNoMutation
                     $project = $commit.Project
                     $body = (ConvertTo-YakuCatProjectJson -Project $project) | ConvertFrom-Json
                     $body | Add-Member -NotePropertyName replace_rows -NotePropertyValue ([int]$commit.Result.Replaced) -Force
                     $body | Add-Member -NotePropertyName replace_occurrences -NotePropertyValue ([int]$commit.Result.Occurrences) -Force
                     $body | Add-Member -NotePropertyName replace_unconfirmed -NotePropertyValue ([int]$commit.Result.Unconfirmed) -Force
+                    Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 8 -Compress) -ContentType 'application/json; charset=utf-8'
+                }
+                'replace-undo' {
+                    # クライアントの古い訳文は受け取らない。保存世代に同時 commit した
+                    # 直前1回ぶんの snapshot を、CAS と project lock の中でだけ戻す。
+                    $mutation = { param($candidate) return (Undo-YakuCatSearchReplace -Project $candidate) }
+                    $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Action replace-undo
+                    $project = $commit.Project
+                    $body = (ConvertTo-YakuCatProjectJson -Project $project) | ConvertFrom-Json
+                    $body | Add-Member -NotePropertyName replace_undo_restored -NotePropertyValue ([int]$commit.Result.Restored) -Force
                     Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 8 -Compress) -ContentType 'application/json; charset=utf-8'
                 }
                 'tm-pretranslate-estimate' {

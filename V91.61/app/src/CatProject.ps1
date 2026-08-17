@@ -274,6 +274,10 @@ function Initialize-YakuCatProjectState {
     if (-not ($Project.PSObject.Properties.Name -contains 'AbbreviationEntries')) { $Project | Add-Member -NotePropertyName AbbreviationEntries -NotePropertyValue @() -Force }
     if (-not ($Project.PSObject.Properties.Name -contains 'AbbreviationUses')) { $Project | Add-Member -NotePropertyName AbbreviationUses -NotePropertyValue @() -Force }
     if (-not ($Project.PSObject.Properties.Name -contains 'MutationReceipts')) { $Project | Add-Member -NotePropertyName MutationReceipts -NotePropertyValue @() -Force }
+    # Ctrl+H の直近1回だけを戻す、世代と一緒に保存する小さな復元券。一般の
+    # 履歴ではない。通常の mutation は Invoke-YakuCatProjectMutation が候補内で
+    # これを空にするので、保存に失敗したときにだけ古い券が残ることもない。
+    if (-not ($Project.PSObject.Properties.Name -contains 'PendingBulkReplaceUndo')) { $Project | Add-Member -NotePropertyName PendingBulkReplaceUndo -NotePropertyValue $null -Force }
     if (-not ($Project.PSObject.Properties.Name -contains 'LastOutputRecord')) { $Project | Add-Member -NotePropertyName LastOutputRecord -NotePropertyValue $null -Force }
     if (-not ($Project.PSObject.Properties.Name -contains 'DirectionBasis')) { $Project | Add-Member -NotePropertyName DirectionBasis -NotePropertyValue 'fixed' -Force }
     if (-not ($Project.PSObject.Properties.Name -contains 'DirectionConfidence')) { $Project | Add-Member -NotePropertyName DirectionConfidence -NotePropertyValue 'not_applicable' -Force }
@@ -456,7 +460,8 @@ function Invoke-YakuCatProjectMutation {
         [object[]]$Arguments = @(),
         [string]$IdempotencyKey = '',
         [string]$Action = '',
-        [string]$RequestHash = ''
+        [string]$RequestHash = '',
+        [switch]$NoCommitWhenNoMutation
     )
     if (-not [string]::IsNullOrWhiteSpace($IdempotencyKey)) {
         Assert-YakuCatMutationReceiptContract -IdempotencyKey $IdempotencyKey -Action $Action -RequestHash $RequestHash
@@ -469,6 +474,7 @@ function Invoke-YakuCatProjectMutation {
         IdempotencyKey = $IdempotencyKey
         Action = $Action
         RequestHash = $RequestHash
+        NoCommitWhenNoMutation = [bool]$NoCommitWhenNoMutation
     }
     $operation = {
         param($innerState)
@@ -497,8 +503,15 @@ function Invoke-YakuCatProjectMutation {
             throw 'CAT_PROJECT_REVISION_CONFLICT: 別の操作で作業内容が更新されました。最新状態を読み込んでからやり直してください。'
         }
         $candidate = Copy-YakuCatProjectForMutation -Project $committed
+        # undo は直前の**一括置換**だけの券である。replace は新しい券で上書きし、
+        # replace-undo は復元の最後に消す。それ以外の成功 mutation は候補内で先に
+        # 消すため、下流が throw / 保存失敗なら committed の券はそのまま残る。
+        if ([string]$innerState.Action -notin @('replace','replace-undo')) { $candidate.PendingBulkReplaceUndo = $null }
         $mutationArguments = @($innerState.Arguments)
         $mutationResult = & $innerState.Mutation $candidate @mutationArguments
+        if ([bool]$innerState.NoCommitWhenNoMutation -and $null -ne $mutationResult -and [bool]$(try { $mutationResult.NoMutation } catch { $false })) {
+            return [pscustomobject]@{ Project=$committed; Result=$mutationResult; Replayed=$false; Receipt=$null }
+        }
         $receipt = $null
         if (-not [string]::IsNullOrWhiteSpace($key)) {
             $resultJson = if ($null -eq $mutationResult) { 'null' } else { $mutationResult | ConvertTo-Json -Depth 20 -Compress }
@@ -2683,6 +2696,11 @@ function Save-YakuCatProject {
         $abbreviationEntryLines = @($Project.AbbreviationEntries | ForEach-Object { $_ | ConvertTo-Json -Depth 12 -Compress }) -join "`n"
         $abbreviationUseLines = @($Project.AbbreviationUses | ForEach-Object { $_ | ConvertTo-Json -Depth 12 -Compress }) -join "`n"
         $mutationReceiptLines = @($Project.MutationReceipts | ForEach-Object { $_ | ConvertTo-Json -Depth 10 -Compress }) -join "`n"
+        $bulkReplaceUndoJson = if ($null -ne $Project.PendingBulkReplaceUndo) {
+            $null = Assert-YakuCatBulkReplaceUndoSnapshot -Project $Project -Snapshot $Project.PendingBulkReplaceUndo -RequireCurrent
+            $Project.PendingBulkReplaceUndo | ConvertTo-Json -Depth 28 -Compress
+        } else { 'null' }
+        if ([Text.Encoding]::UTF8.GetByteCount($bulkReplaceUndoJson) -gt 1048576) { throw 'CAT_REPLACE_UNDO_SNAPSHOT_TOO_LARGE: 元に戻すための記録が1 MiBを超えています。' }
         # 1 revision を構成する全ファイルを新しい世代へ先に書く。project.json は
         # コミットmanifestであり、全書込みが成功した最後にだけ差し替える。
         Write-YakuTextAtomic -Path (Join-Path $generationDir 'segments.jsonl') -Text $segmentLines
@@ -2698,6 +2716,7 @@ function Save-YakuCatProject {
         Write-YakuTextAtomic -Path (Join-Path $generationDir 'abbreviation-entries.jsonl') -Text $abbreviationEntryLines
         Write-YakuTextAtomic -Path (Join-Path $generationDir 'abbreviation-uses.jsonl') -Text $abbreviationUseLines
         Write-YakuTextAtomic -Path (Join-Path $generationDir 'mutation-receipts.jsonl') -Text $mutationReceiptLines
+        Write-YakuTextAtomic -Path (Join-Path $generationDir 'bulk-replace-undo.json') -Text $bulkReplaceUndoJson
         $record['generation_id'] = $generationId
         # project.json 自体がcommit manifest。source・project generation・rebase・
         # revisionの組をこの一度のatomic replaceで可視化する。
@@ -2726,6 +2745,8 @@ function Save-YakuCatProject {
         $record['abbreviation_use_count'] = @($Project.AbbreviationUses).Count
         $record['mutation_receipts_sha256'] = Get-YakuCatSourceIntegrityHash -Text $mutationReceiptLines
         $record['mutation_receipt_count'] = @($Project.MutationReceipts).Count
+        $record['bulk_replace_undo_sha256'] = Get-YakuCatSourceIntegrityHash -Text $bulkReplaceUndoJson
+        $record['bulk_replace_undo_count'] = $(if ($null -ne $Project.PendingBulkReplaceUndo) { [int]$Project.PendingBulkReplaceUndo.affected_count } else { 0 })
         Write-YakuCatCommitManifestCas -Path (Join-Path $projectDir 'project.json') -Value $record -ExpectedRevision $oldRevision -ExpectedGenerationId ([string]$Project.ActiveGenerationId)
         $Project.Revision = $nextRevision
         $Project.ActiveGenerationId = $generationId
@@ -2870,7 +2891,9 @@ function Restore-YakuCatProject {
     $savedAbbreviationEntries = @()
     $savedAbbreviationUses = @()
     $savedMutationReceipts = @()
+    $savedBulkReplaceUndo = $null
     if ($isV2) {
+        $hasBulkReplaceUndoContract = ($o.PSObject.Properties.Name -contains 'bulk_replace_undo_sha256') -or ($o.PSObject.Properties.Name -contains 'bulk_replace_undo_count')
         if (-not [string]::IsNullOrWhiteSpace([string]$o.active_generation_id) -and [string]$o.active_generation_id -ne [string]$o.generation_id) {
             throw 'CAT_PROJECT_COMMIT_MANIFEST_INCONSISTENT: active generationが一致しません。'
         }
@@ -2894,6 +2917,7 @@ function Restore-YakuCatProject {
             $abbreviationEntryPath = Join-Path $generationDir 'abbreviation-entries.jsonl'
             $abbreviationUsePath = Join-Path $generationDir 'abbreviation-uses.jsonl'
             $mutationReceiptPath = Join-Path $generationDir 'mutation-receipts.jsonl'
+            $bulkReplaceUndoPath = Join-Path $generationDir 'bulk-replace-undo.json'
             $requiredPaths = @($segPath,$blockPath,$qcPath)
             if ([int]$o.schema_version -ge 3) { $requiredPaths += @($decisionPath,$textSourcePath) }
             if ([int]$o.schema_version -ge 4) { $requiredPaths += @($placementPath) }
@@ -2901,6 +2925,7 @@ function Restore-YakuCatProject {
             if ([int]$o.schema_version -ge 6) { $requiredPaths += @($finalReviewDecisionPath) }
             if ([int]$o.schema_version -ge 7) { $requiredPaths += @($publicationVariantPath,$abbreviationEntryPath,$abbreviationUsePath) }
             if ([int]$o.schema_version -ge 8) { $requiredPaths += @($mutationReceiptPath) }
+            if ($hasBulkReplaceUndoContract) { $requiredPaths += @($bulkReplaceUndoPath) }
             foreach ($requiredPath in $requiredPaths) {
                 if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) { throw 'CAT_PROJECT_SNAPSHOT_INCOMPLETE: 保存世代を構成するファイルが不足しています。' }
             }
@@ -2917,6 +2942,7 @@ function Restore-YakuCatProject {
             $abbreviationEntryRaw = if (Test-Path -LiteralPath $abbreviationEntryPath -PathType Leaf) { Get-Content -LiteralPath $abbreviationEntryPath -Raw -Encoding UTF8 } else { '' }
             $abbreviationUseRaw = if (Test-Path -LiteralPath $abbreviationUsePath -PathType Leaf) { Get-Content -LiteralPath $abbreviationUsePath -Raw -Encoding UTF8 } else { '' }
             $mutationReceiptRaw = if (Test-Path -LiteralPath $mutationReceiptPath -PathType Leaf) { Get-Content -LiteralPath $mutationReceiptPath -Raw -Encoding UTF8 } else { '' }
+            $bulkReplaceUndoRaw = if (Test-Path -LiteralPath $bulkReplaceUndoPath -PathType Leaf) { Get-Content -LiteralPath $bulkReplaceUndoPath -Raw -Encoding UTF8 } else { 'null' }
             if ((Get-YakuCatSourceIntegrityHash -Text $segmentRaw) -ne [string]$o.segments_sha256 -or
                 (Get-YakuCatSourceIntegrityHash -Text $blockRaw) -ne [string]$o.blocks_sha256 -or
                 (Get-YakuCatSourceIntegrityHash -Text $qcRaw) -ne [string]$o.qc_sha256 -or
@@ -2929,7 +2955,8 @@ function Restore-YakuCatProject {
                 ([int]$o.schema_version -ge 7 -and (Get-YakuCatSourceIntegrityHash -Text $publicationVariantRaw) -ne [string]$o.publication_variants_sha256) -or
                 ([int]$o.schema_version -ge 7 -and (Get-YakuCatSourceIntegrityHash -Text $abbreviationEntryRaw) -ne [string]$o.abbreviation_entries_sha256) -or
                 ([int]$o.schema_version -ge 7 -and (Get-YakuCatSourceIntegrityHash -Text $abbreviationUseRaw) -ne [string]$o.abbreviation_uses_sha256) -or
-                ([int]$o.schema_version -ge 8 -and (Get-YakuCatSourceIntegrityHash -Text $mutationReceiptRaw) -ne [string]$o.mutation_receipts_sha256)) {
+                ([int]$o.schema_version -ge 8 -and (Get-YakuCatSourceIntegrityHash -Text $mutationReceiptRaw) -ne [string]$o.mutation_receipts_sha256) -or
+                ($hasBulkReplaceUndoContract -and ((Get-YakuCatSourceIntegrityHash -Text $bulkReplaceUndoRaw) -ne [string]$o.bulk_replace_undo_sha256))) {
                 throw 'CAT_PROJECT_SNAPSHOT_INCOMPLETE: 保存世代の整合性検査に失敗しました。'
             }
             $savedSegmentRows = @($segmentRaw -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_ | ConvertFrom-Json })
@@ -2944,12 +2971,16 @@ function Restore-YakuCatProject {
             $savedAbbreviationEntries = @($abbreviationEntryRaw -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_ | ConvertFrom-Json })
             $savedAbbreviationUses = @($abbreviationUseRaw -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_ | ConvertFrom-Json })
             $savedMutationReceipts = @($mutationReceiptRaw -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_ | ConvertFrom-Json })
+            if ($hasBulkReplaceUndoContract -and $bulkReplaceUndoRaw -ne 'null') {
+                try { $savedBulkReplaceUndo = $bulkReplaceUndoRaw | ConvertFrom-Json } catch { throw 'CAT_REPLACE_UNDO_SNAPSHOT_INVALID: 直前の一括置換の復元記録を読めません。' }
+            }
             if ($savedSegmentRows.Count -ne [int]$o.segment_count -or $savedBlockRows.Count -ne [int]$o.block_count) { throw 'CAT_PROJECT_SNAPSHOT_INCOMPLETE: 保存世代の件数がmanifestと一致しません。' }
             if ([int]$o.schema_version -ge 4 -and $savedPlacementPlans.Count -ne [int]$o.placement_count) { throw 'CAT_PROJECT_SNAPSHOT_INCOMPLETE: 配置計画の件数がmanifestと一致しません。' }
             if ([int]$o.schema_version -ge 5 -and ($savedDocumentFindings.Count -ne [int]$o.document_finding_count -or $savedReviewRuns.Count -ne [int]$o.review_run_count)) { throw 'CAT_PROJECT_SNAPSHOT_INCOMPLETE: 文書校正の件数がmanifestと一致しません。' }
             if ([int]$o.schema_version -ge 6 -and $savedFinalReviewDecisions.Count -ne [int]$o.final_review_decision_count) { throw 'CAT_PROJECT_SNAPSHOT_INCOMPLETE: 最終確認判断の件数がmanifestと一致しません。' }
             if ([int]$o.schema_version -ge 7 -and ($savedPublicationVariants.Count -ne [int]$o.publication_variant_count -or $savedAbbreviationEntries.Count -ne [int]$o.abbreviation_entry_count -or $savedAbbreviationUses.Count -ne [int]$o.abbreviation_use_count)) { throw 'CAT_PROJECT_SNAPSHOT_INCOMPLETE: 掲載訳・略語の件数がmanifestと一致しません。' }
             if ([int]$o.schema_version -ge 8 -and $savedMutationReceipts.Count -ne [int]$o.mutation_receipt_count) { throw 'CAT_PROJECT_SNAPSHOT_INCOMPLETE: 更新receiptの件数がmanifestと一致しません。' }
+            if ($hasBulkReplaceUndoContract -and [int]$o.bulk_replace_undo_count -ne $(if ($null -ne $savedBulkReplaceUndo) { [int]$savedBulkReplaceUndo.affected_count } else { 0 })) { throw 'CAT_PROJECT_SNAPSHOT_INCOMPLETE: 一括置換の復元記録件数がmanifestと一致しません。' }
         } else {
             # schema v2初期版との後方互換。新しい保存は必ず generation_id を持つ。
             $segPath = Join-Path $projectDir 'segments.jsonl'
@@ -3062,6 +3093,7 @@ function Restore-YakuCatProject {
         AbbreviationEntries = @($savedAbbreviationEntries)
         AbbreviationUses = @($savedAbbreviationUses)
         MutationReceipts = @($savedMutationReceipts)
+        PendingBulkReplaceUndo = $savedBulkReplaceUndo
         PriorVersion = $o.prior_version
         VersionUpdateSummary = $o.version_update_summary
     }
@@ -3070,6 +3102,9 @@ function Restore-YakuCatProject {
         $project | Add-Member -NotePropertyName 'CorpusExamples' -NotePropertyValue @($o.corpus_examples) -Force
     }
     $null = Initialize-YakuCatProjectState -Project $project
+    if ($null -ne $project.PendingBulkReplaceUndo) {
+        $null = Assert-YakuCatBulkReplaceUndoSnapshot -Project $project -Snapshot $project.PendingBulkReplaceUndo -RequireCurrent
+    }
     $null = Assert-YakuCatActiveSourceSnapshotFingerprints -Project $project
     if ([string]$project.Source -eq 'file' -and
         ([string]::IsNullOrWhiteSpace([string]$project.SourceArtifactRelativePath) -or [string]$project.SourceArtifactContractVersion -ne 'cat-source-v2') -and
@@ -3453,6 +3488,9 @@ function ConvertTo-YakuCatProjectJson {
         terminology_snapshot_hash = [string]$Project.TerminologySnapshotHash
         abbreviation_registry_hash = $(if(Get-Command Get-YakuCatAbbreviationRegistryHash -ErrorAction SilentlyContinue){Get-YakuCatAbbreviationRegistryHash -Project $Project}else{''})
         tm_pending = $(try { [int]$Project.TmPendingCount } catch { 0 })
+        bulk_replace_undo = $(if ($null -ne $Project.PendingBulkReplaceUndo) {
+            [ordered]@{ available=$true; affected_count=[int]$Project.PendingBulkReplaceUndo.affected_count }
+        } else { [ordered]@{ available=$false; affected_count=0 } })
         total      = [int]$summary.Total
         translated = [int]$summary.Translated
         remaining  = [int]$summary.Remaining
@@ -4583,6 +4621,164 @@ function ConvertTo-YakuCatSearchReplacement {
     return $text.Replace('$', '$$')
 }
 
+function Get-YakuCatBulkReplaceUndoSegmentState {
+    <# source 側は照合だけに使い、undo で書き戻さない。訳文に付随する状態を
+       まとめて持つので、文字列だけを逆置換して QC や出典を嘘にしない。 #>
+    param([Parameter(Mandatory=$true)]$Segment)
+    return [ordered]@{
+        segment_id = [string]$Segment.SegmentId
+        source_revision = [int]$Segment.SourceRevision
+        source_integrity_hash = [string]$Segment.SourceIntegrityHash
+        translation = [string]$Segment.Translation
+        masked_translation = [string]$Segment.MaskedTranslation
+        origin = [string]$Segment.Origin
+        state = [string]$Segment.State
+        qc_status = [string]$Segment.QcStatus
+        qc_source_revision = [int]$Segment.QcSourceRevision
+        qc_source_hash = [string]$Segment.QcSourceHash
+        qc_target_hash = [string]$Segment.QcTargetHash
+        qc_contract_version = [string]$Segment.QcContractVersion
+        qc_terminology_hash = [string]$Segment.QcTerminologyHash
+        qc_findings = @($Segment.QcFindings)
+        confirmed = [bool]$Segment.Confirmed
+        tm_registered = [bool]$Segment.TmRegistered
+        tm_registration_event_id = [string]$Segment.TmRegistrationEventId
+        reference_usage = $(try { $Segment.ReferenceUsage } catch { $null })
+        reference_events = @($(try { $Segment.ReferenceEvents } catch { @() }))
+        terminology_usages = @($(try { $Segment.TerminologyUsages } catch { @() }))
+        terminology_exceptions = @($(try { $Segment.TerminologyExceptions } catch { @() }))
+        terminology_generation = @($(try { $Segment.TerminologyGeneration } catch { @() }))
+    }
+}
+
+function Get-YakuCatBulkReplaceUndoStateHash {
+    param([Parameter(Mandatory=$true)]$State)
+    # PSSerializer/ConvertFrom-Json はプロパティ順を契約にしない。永続化前後でも
+    # 同じ状態なら同じ hash になるよう、ここで列の順を固定する。
+    $canonical = [ordered]@{
+        segment_id=[string]$State.segment_id;source_revision=[int]$State.source_revision;source_integrity_hash=[string]$State.source_integrity_hash
+        translation=[string]$State.translation;masked_translation=[string]$State.masked_translation;origin=[string]$State.origin;state=[string]$State.state
+        qc_status=[string]$State.qc_status;qc_source_revision=[int]$State.qc_source_revision;qc_source_hash=[string]$State.qc_source_hash;qc_target_hash=[string]$State.qc_target_hash
+        qc_contract_version=[string]$State.qc_contract_version;qc_terminology_hash=[string]$State.qc_terminology_hash;qc_findings=@($State.qc_findings);confirmed=[bool]$State.confirmed
+        tm_registered=[bool]$State.tm_registered;tm_registration_event_id=[string]$State.tm_registration_event_id;reference_usage=$State.reference_usage;reference_events=@($State.reference_events)
+        terminology_usages=@($State.terminology_usages);terminology_exceptions=@($State.terminology_exceptions);terminology_generation=@($State.terminology_generation)
+    }
+    return (Get-YakuCatSourceIntegrityHash -Text ($canonical | ConvertTo-Json -Depth 24 -Compress))
+}
+
+function Get-YakuCatBulkReplaceUndoProjectIdentityHash {
+    param([Parameter(Mandatory=$true)]$Project)
+    $rows = New-Object System.Collections.Generic.List[string]
+    foreach ($segment in @($Project.Segments)) {
+        [void]$rows.Add(([string]$segment.SegmentId + '|' + [int]$segment.SourceRevision + '|' + [string]$segment.SourceIntegrityHash))
+    }
+    return (Get-YakuCatSourceIntegrityHash -Text (($rows.ToArray() | Sort-Object) -join "`n"))
+}
+
+function New-YakuCatBulkReplaceUndoSnapshot {
+    <# HTTP 更新本文の上限 2 MiB の半分（1 MiB）かつ 512 行までにする。generation
+       は直近1世代しか残さないが、巨大な全行複製で保存・復元を増幅させない。 #>
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [Parameter(Mandatory=$true)]$Plan
+    )
+    $rows = @($Plan.Rows)
+    if ($rows.Count -lt 1) { throw 'CAT_REPLACE_NO_TARGET: 対象の行がありません。絞り込みを見直してください。' }
+    if ($rows.Count -gt 512) { throw 'CAT_REPLACE_UNDO_SNAPSHOT_TOO_LARGE: 512行を超える一括置換は安全に元へ戻せないため実行しません。絞り込みを分けてください。' }
+    $segs = @($Project.Segments)
+    $copies = New-Object System.Collections.Generic.List[object]
+    foreach ($row in $rows) {
+        $index = [int]$row.Index
+        if ($index -lt 0 -or $index -ge $segs.Count -or [string]$segs[$index].SegmentId -cne [string]$row.SegmentId) {
+            throw 'CAT_REPLACE_UNDO_TARGET_CONFLICT: 置換対象の行を安全に確認できません。'
+        }
+        # ReferenceUsage/QcFindings などは入れ子で可変。浅い property コピーでは
+        # Set-YakuCatSegmentTranslationRecord が snapshot の中まで edited にしてしまう。
+        $beforeState = [pscustomobject](Get-YakuCatBulkReplaceUndoSegmentState -Segment $segs[$index])
+        $before = [System.Management.Automation.PSSerializer]::Deserialize([System.Management.Automation.PSSerializer]::Serialize($beforeState, 30))
+        [void]$copies.Add([ordered]@{
+            segment_id = [string]$before.segment_id
+            before = $before
+            before_state_hash = Get-YakuCatBulkReplaceUndoStateHash -State $before
+            after_state_hash = ''
+        })
+    }
+    $snapshot = [ordered]@{
+        version = 1
+        project_id = [string]$Project.Id
+        created_at = (Get-Date).ToString('o')
+        replace_revision = [int]$Project.Revision + 1
+        affected_count = [int]$copies.Count
+        project_segment_count = [int]$segs.Count
+        project_segment_identity_hash = Get-YakuCatBulkReplaceUndoProjectIdentityHash -Project $Project
+        rows = @($copies.ToArray())
+    }
+    $json = $snapshot | ConvertTo-Json -Depth 28 -Compress
+    if ([Text.Encoding]::UTF8.GetByteCount($json) -gt 1048576) { throw 'CAT_REPLACE_UNDO_SNAPSHOT_TOO_LARGE: 元に戻すための記録が1 MiBを超えるため、一括置換は実行しません。絞り込みを分けてください。' }
+    return $snapshot
+}
+
+function Assert-YakuCatBulkReplaceUndoSnapshot {
+    param([Parameter(Mandatory=$true)]$Project,[Parameter(Mandatory=$true)]$Snapshot,[switch]$RequireCurrent)
+    if ([int]$Snapshot.version -ne 1 -or [string]$Snapshot.project_id -cne [string]$Project.Id -or [int]$Snapshot.affected_count -lt 1 -or [int]$Snapshot.affected_count -gt 512) {
+        throw 'CAT_REPLACE_UNDO_SNAPSHOT_INVALID: 直前の一括置換の復元記録が不正です。'
+    }
+    $rows = @($Snapshot.rows)
+    if ($rows.Count -ne [int]$Snapshot.affected_count -or [int]$Snapshot.project_segment_count -ne @($Project.Segments).Count -or [string]$Snapshot.project_segment_identity_hash -cne (Get-YakuCatBulkReplaceUndoProjectIdentityHash -Project $Project)) {
+        throw 'CAT_REPLACE_UNDO_SNAPSHOT_STALE: 作業の行構成が変わったため、直前の一括置換を安全に元へ戻せません。'
+    }
+    $byId = @{}
+    foreach ($segment in @($Project.Segments)) { $byId[[string]$segment.SegmentId] = $segment }
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach ($row in $rows) {
+        $id = [string]$row.segment_id
+        if (-not $seen.Add($id) -or -not $byId.ContainsKey($id) -or $null -eq $row.before -or
+            [string]$row.before.segment_id -cne $id -or [string]$row.before.source_integrity_hash -cne [string]$byId[$id].SourceIntegrityHash -or
+            [int]$row.before.source_revision -ne [int]$byId[$id].SourceRevision) {
+            throw 'CAT_REPLACE_UNDO_SNAPSHOT_INVALID: 直前の一括置換の復元記録を確認できません。'
+        }
+        if ($RequireCurrent -and [string]$row.after_state_hash -cne (Get-YakuCatBulkReplaceUndoStateHash -State (Get-YakuCatBulkReplaceUndoSegmentState -Segment $byId[$id]))) {
+            throw 'CAT_REPLACE_UNDO_SNAPSHOT_STALE: 置換後の行が変わったため、直前の一括置換を安全に元へ戻せません。'
+        }
+    }
+    return $true
+}
+
+function Restore-YakuCatBulkReplaceUndoSegmentState {
+    param([Parameter(Mandatory=$true)]$Segment,[Parameter(Mandatory=$true)]$Before)
+    # source/revision/hash は Assert が同一性を確認するだけで、この関数では触らない。
+    $map = @{
+        Translation='translation'; MaskedTranslation='masked_translation'; Origin='origin'; State='state'
+        QcStatus='qc_status'; QcSourceRevision='qc_source_revision'; QcSourceHash='qc_source_hash'; QcTargetHash='qc_target_hash'
+        QcContractVersion='qc_contract_version'; QcTerminologyHash='qc_terminology_hash'; QcFindings='qc_findings'; Confirmed='confirmed'
+        TmRegistered='tm_registered'; TmRegistrationEventId='tm_registration_event_id'; ReferenceUsage='reference_usage'; ReferenceEvents='reference_events'
+        TerminologyUsages='terminology_usages'; TerminologyExceptions='terminology_exceptions'; TerminologyGeneration='terminology_generation'
+    }
+    foreach ($property in @($map.Keys)) {
+        $value = $Before.($map[$property])
+        if ($property -in @('QcFindings','ReferenceEvents','TerminologyUsages','TerminologyExceptions','TerminologyGeneration')) { $value = @($value) }
+        $Segment | Add-Member -NotePropertyName $property -NotePropertyValue $value -Force
+    }
+    return $Segment
+}
+
+function Undo-YakuCatSearchReplace {
+    param([Parameter(Mandatory=$true)]$Project)
+    $snapshot = $Project.PendingBulkReplaceUndo
+    if ($null -eq $snapshot) { throw 'CAT_REPLACE_UNDO_NOT_AVAILABLE: 元に戻せる一括置換はありません。' }
+    $null = Assert-YakuCatBulkReplaceUndoSnapshot -Project $Project -Snapshot $snapshot -RequireCurrent
+    $byId = @{}; foreach ($segment in @($Project.Segments)) { $byId[[string]$segment.SegmentId] = $segment }
+    $batch = New-YakuCatHumanDecisionEventBatch -Project $Project
+    foreach ($row in @($snapshot.rows)) {
+        $segment = $byId[[string]$row.segment_id]
+        $null = Restore-YakuCatBulkReplaceUndoSegmentState -Segment $segment -Before $row.before
+        $null = Add-YakuCatHumanDecisionEvent -Project $Project -Scope 'translation' -Action 'search_replace_undone' -Segment $segment -ReasonCode 'bulk-replace-undo' -Batch $batch
+    }
+    $null = Complete-YakuCatHumanDecisionEventBatch -Project $Project -Batch $batch
+    $Project.PendingBulkReplaceUndo = $null
+    return [pscustomobject]@{ Restored = [int]$snapshot.affected_count }
+}
+
 function Get-YakuCatSearchReplacePlan {
     <#
       一括置換の計画。**何も書き換えない。** 押す前に対象行数を告げるためと、
@@ -4681,7 +4877,22 @@ function Invoke-YakuCatSearchReplace {
     # 行ごとに Project 全体を初期化し直さない（資料の大きさの2乗になる）。
     $plan = Get-YakuCatSearchReplacePlan -Project $Project -Indexes $Indexes -Find $Find `
         -Replace $Replace -UseRegex $UseRegex -MatchCase $MatchCase
+    # 一致が無い replace は以前から成功扱いの no-op である。ここで復元券を
+    # 作ると「戻すものが無い」要求が既存の券を上書きしてしまうため、snapshot・
+    # event・segment のいずれにも触れず、従来の集計だけを返す。
+    if ([int]$plan.RowCount -eq 0) {
+        return [pscustomobject]@{
+            Replaced = 0
+            Occurrences = 0
+            Unconfirmed = 0
+            ScannedRows = [int]$plan.ScannedRows
+            NoMutation = $true
+        }
+    }
     $segs = @($Project.Segments)
+    # 成功した置換だけに復元券を発行する。計画・全行の復元前状態・上限を、訳文を
+    # 1文字も変える前に確認するので、復元できない大きな置換を成功扱いにしない。
+    $undoSnapshot = New-YakuCatBulkReplaceUndoSnapshot -Project $Project -Plan $plan
     $replaced = 0
     # 記録の追記も行ごとに全走査させない。Initialize を外へ出したのと同じ理由で、
     # ここに残っていたもう1つの2乗である（実測は New-YakuCatHumanDecisionEventBatch の注記）。
@@ -4694,6 +4905,14 @@ function Invoke-YakuCatSearchReplace {
         $replaced++
     }
     $null = Complete-YakuCatHumanDecisionEventBatch -Project $Project -Batch $batch
+    foreach ($row in @($undoSnapshot.rows)) {
+        $segment = $segs | Where-Object { [string]$_.SegmentId -ceq [string]$row.segment_id } | Select-Object -First 1
+        if ($null -eq $segment) { throw 'CAT_REPLACE_UNDO_TARGET_CONFLICT: 置換対象の行を安全に確認できません。' }
+        $row.after_state_hash = Get-YakuCatBulkReplaceUndoStateHash -State (Get-YakuCatBulkReplaceUndoSegmentState -Segment $segment)
+    }
+    $undoJson = $undoSnapshot | ConvertTo-Json -Depth 28 -Compress
+    if ([Text.Encoding]::UTF8.GetByteCount($undoJson) -gt 1048576) { throw 'CAT_REPLACE_UNDO_SNAPSHOT_TOO_LARGE: 元に戻すための記録が1 MiBを超えるため、一括置換は実行しません。絞り込みを分けてください。' }
+    $Project.PendingBulkReplaceUndo = $undoSnapshot
     return [pscustomobject]@{
         Replaced = [int]$replaced
         Occurrences = [int]$plan.Occurrences

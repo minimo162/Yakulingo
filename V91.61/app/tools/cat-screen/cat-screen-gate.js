@@ -68,6 +68,101 @@ const http = require('http');
 const path = require('path');
 const { chromium } = require('playwright');
 
+/* 9185 は同じ本物の CAT 画面を、幅の消費だけに絞って開く。既存の総合門へ
+   題材を足すと、関係ない操作の失敗で幅の回帰が読めなくなるため、運転席だけを
+   共用する。 */
+if (process.argv[2] === '--width-preview') {
+  const widthWwwDir = process.argv[3];
+  const widthProjectJson = fs.readFileSync(process.argv[4], 'utf8');
+  const widthOutputPath = process.argv[5];
+  const widthProject = JSON.parse(widthProjectJson);
+  const widthTypes = { '.js': 'application/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8' };
+  const widthServer = http.createServer(async function (req, res) {
+    const url = new URL(req.url, 'http://127.0.0.1');
+    if (url.pathname === '/cat' || url.pathname === '/') {
+      let html = fs.readFileSync(path.join(widthWwwDir, 'cat.html'), 'utf8');
+      html = html.replace(/__YAKU_SESSION_TOKEN__/g, 'width-test-token')
+        .replace(/__YAKU_MAX_UPLOAD_BYTES__/g, '52428800')
+        .replace(/__YAKU_MAX_BATCH_CHARS__/g, '4000')
+        .replace(/__YAKU_AMOUNT_NOTATION__/g, 'oku')
+        .replace(/__YAKU_TOUR__/g, '0')
+        .replace(/__YAKU_IMPORT__/g, '0')
+        .replace(/__YAKU_VIEW__/g, '')
+        .replace(/__YAKU_OUTPUT_FONT__/g, 'Arial')
+        .replace(/__YAKU_OUTPUT_FONT_JP__/g, 'MS Pゴシック');
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(html); return;
+    }
+    if (url.pathname.startsWith('/assets/')) {
+      const asset = path.join(widthWwwDir, url.pathname.replace(/^\//, ''));
+      if (fs.existsSync(asset)) { res.writeHead(200, { 'Content-Type': widthTypes[path.extname(asset)] || 'application/octet-stream' }); res.end(fs.readFileSync(asset)); return; }
+      res.writeHead(404); res.end('not found'); return;
+    }
+    let body = '';
+    req.on('data', function (chunk) { body += chunk; });
+    req.on('end', function () {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      if (url.pathname === '/api/ready-state') { res.end(JSON.stringify({ canTranslate: true, label: 'ready', class: 'ok' })); return; }
+      if (url.pathname === '/api/cat/recent') { res.end(JSON.stringify({ projects: [] })); return; }
+      if (url.pathname === '/api/cat/resume') { res.end(widthProjectJson); return; }
+      res.end('{}');
+    });
+  });
+  (async function () {
+    const out = { errors: [], console: [], cells: [], editorLanguage: null };
+    let browser = null;
+    try {
+      await new Promise(function (resolve) { widthServer.listen(0, '127.0.0.1', resolve); });
+      browser = await chromium.launch();
+      const page = await browser.newPage({ viewport: { width: 1912, height: 987 } });
+      page.on('pageerror', function (error) { out.errors.push(String((error && error.message) || error)); });
+      page.on('console', function (message) { if (message.type() === 'error') out.console.push(message.text()); });
+      await page.goto('http://127.0.0.1:' + widthServer.address().port + '/cat?project=' + encodeURIComponent(widthProject.id), { waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('#cat-grid-body tr[data-cat-row]', { timeout: 20000 });
+      out.editorLanguage = await page.evaluate(function () {
+        var sources = Array.from(document.querySelectorAll('.cat-source-text'));
+        var targets = Array.from(document.querySelectorAll('textarea[data-cat-input]'));
+        var sourceLanguages = sources.map(function (source) { return source.getAttribute('lang') || ''; });
+        var targetLanguages = targets.map(function (target) { return target.getAttribute('lang') || ''; });
+        var spellcheckAttributes = targets.map(function (target) { return target.getAttribute('spellcheck') || ''; });
+        var accessibleLabels = targets.map(function (target) { return target.getAttribute('aria-label') || ''; });
+        return {
+          rootLanguage: document.documentElement.getAttribute('lang') || '',
+          sourceLanguage: sourceLanguages[0] || '',
+          targetLanguage: targetLanguages[0] || '',
+          sourceLanguages: sourceLanguages,
+          targetLanguages: targetLanguages,
+          spellcheck: targets.length > 0 && targets.every(function (target) { return !!target.spellcheck; }),
+          spellcheckAttributes: spellcheckAttributes,
+          accessibleLabel: accessibleLabels[0] || '',
+          accessibleLabels: accessibleLabels
+        };
+      });
+      await page.click('details.cat-more-actions > summary');
+      await page.click('#cat-preview-open');
+      await page.waitForSelector('#cat-preview-dialog[open]', { timeout: 10000 });
+      await page.waitForSelector('#cat-preview-body .cat-preview-cell[data-cat-preview-index="2"]', { timeout: 20000 });
+      out.cells = await page.evaluate(function () {
+        return Array.from(document.querySelectorAll('#cat-preview-body .cat-preview-cell')).map(function (cell) {
+          return {
+            index: Number(cell.getAttribute('data-cat-preview-index')),
+            text: cell.textContent,
+            overflowRisk: cell.classList.contains('is-overflow-risk'),
+            ariaLabel: cell.getAttribute('aria-label') || ''
+          };
+        });
+      });
+    } catch (error) {
+      out.errors.push(String((error && error.stack) || error));
+    } finally {
+      if (browser) await browser.close().catch(function () {});
+      await new Promise(function (resolve) { widthServer.close(resolve); });
+      fs.writeFileSync(widthOutputPath, JSON.stringify(out, null, 2), 'utf8');
+    }
+    if (out.errors.length || out.console.length) process.exitCode = 1;
+  })();
+  return;
+}
+
 const wwwDir = process.argv[2];
 const projectJson = fs.readFileSync(process.argv[3], 'utf8');
 const candidatesJson = fs.readFileSync(process.argv[4], 'utf8');

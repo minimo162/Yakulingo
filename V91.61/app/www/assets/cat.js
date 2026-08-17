@@ -486,6 +486,9 @@
   }
   function segmentState(segment) { return segment.status || segment.state || (segment.translation ? 'machine_draft' : 'untranslated'); }
   function segmentHasQc(segment) { return qcMessages(segment).length > 0; }
+  function editorLanguages() {
+    return project && project.direction === 'to_jp' ? { source: 'en', target: 'ja' } : { source: 'ja', target: 'en' };
+  }
   /* 「要対応」に数えるのは、出力を止める指摘だけである。止めない警告
      （用語集に無いラベル）でここを立てると、確認し終えた資料が永久に
      「まだ残っている」と言い続ける。用語集へ足すかどうかは利用者が決めることで、
@@ -715,6 +718,7 @@
 
   function renderRows() {
     var all = project.segments || [], body = el('cat-grid-body');
+    var languages = editorLanguages();
     /* 行を作り直すと、一覧が指していた訳文欄は消える。浮いたままにしない。 */
     closePlaceablePicker();
     candidateSeq++;
@@ -775,7 +779,7 @@
          memoQ の表は訳文セルをその場で直す作り（"type or edit the translation in
          the cell on the right"／未確認でも自動保存）で、押して開く段は無い。
          開いている行だけは、下に操作と点検結果を出す。 */
-      var editor = '<textarea rows="1" data-cat-input="' + index + '" data-cat-project-id="' + esc(project.id) + '" data-original="' + esc(segment.translation || '') + '" aria-label="' + row + '行目の訳文" aria-invalid="' + (findings.length ? 'true' : 'false') + '"' + (findings.length ? ' aria-describedby="' + findingId + '"' : '') + '>' + esc(segment.translation || '') + '</textarea>';
+      var editor = '<textarea rows="1" data-cat-input="' + index + '" data-cat-project-id="' + esc(project.id) + '" data-original="' + esc(segment.translation || '') + '" lang="' + languages.target + '" spellcheck="true" aria-label="' + row + '行目の訳文" aria-invalid="' + (findings.length ? 'true' : 'false') + '"' + (findings.length ? ' aria-describedby="' + findingId + '"' : '') + '>' + esc(segment.translation || '') + '</textarea>';
       var extras = !isActive ? '' : prior + referenceTrace + generatedTerms + '<div class="cat-row-primary">' + (segment.confirmed ? '<button type="button" class="cat-op secondary-button" data-cat-unconfirm="' + index + '">' + icon('i-undo') + '確認を取り消す</button>' + (segment.tm_registered ? '<span class="cat-memory-status">翻訳メモリ登録済み</span>' : '<button type="button" class="cat-op secondary-button" data-cat-tm-register="' + index + '">この訳を翻訳メモリに登録</button>') : /* 押しどころでキーの名前も言う。一覧は「そのほか」→「キーボード操作」の
    2段の折りたたみの中にあり、開くまで見えなかった（実測 2026-08-13）。
    1行ずつ確定していく作業なので、いちばん押す操作のそばに置く。 */
@@ -793,7 +797,7 @@
            見失う。市販の CAT（memoQ・Trados・Phrase）はどれも表の形を保ったまま
            その場で直す。上下2段は memoQ でも「横表示」という別の表示であって既定では
            ない（Läubli et al. arXiv:2011.05978 が速いとしたのもこの表示のこと）。 */
-        '<td class="cat-source"><span class="cat-card-label">原文</span><span class="cat-source-text">' + esc(segment.source) + '</span></td>' +
+        '<td class="cat-source"><span class="cat-card-label">原文</span><span class="cat-source-text" lang="' + languages.source + '">' + esc(segment.source) + '</span></td>' +
         '<td class="cat-target"><span class="cat-card-label">訳文</span>' + editor + '<span class="cat-row-flag"></span>' + extras + '</td></tr>';
     }).join('');
     /* 翻訳中に絞り込みを変えると行が作り直される。編集不可の状態を引き継ぐ。 */
@@ -1252,6 +1256,23 @@
     if (el('cat-search-regex')) el('cat-search-regex').checked = searchRegex;
     var runButton = el('cat-replace-run'), summary = el('cat-replace-summary');
     if (!runButton || !summary) return;
+    var undo = project && project.bulk_replace_undo;
+    var undoButton = el('cat-replace-undo');
+    if (undo && undo.available) {
+      if (!undoButton) {
+        undoButton = document.createElement('button');
+        undoButton.type = 'button'; undoButton.id = 'cat-replace-undo';
+        undoButton.className = 'secondary-button compact';
+      }
+      /* Ctrl+H の詳細を閉じても、戻せることは画面に残す。詳細の中だけだと
+         置換直後にメニューが畳まれた場合、利用者には undo が無いように見える。 */
+      var searchMenu = el('cat-search-menu');
+      if (searchMenu && undoButton.parentNode !== searchMenu.parentNode) searchMenu.parentNode.insertBefore(undoButton, searchMenu.nextSibling);
+      undoButton.disabled = !!busy;
+      undoButton.textContent = '直前の一括置換を元に戻す（' + Number(undo.affected_count || 0) + '行）';
+    } else if (undoButton) {
+      undoButton.remove();
+    }
     var matcher = searchMatcher();
     if (matcher.empty) {
       runButton.disabled = true; runButton.textContent = '訳文を置き換える';
@@ -1322,7 +1343,7 @@
         + '・「' + find + '」→「' + into + '」に置き換えます\n'
         + '・原文は変わりません\n'
         + (losing ? '・確認済みの' + losing + '行は、確認済みが外れます。数字の点検は、確認済みにするときに走ります\n' : '')
-        + '・元に戻す操作はありません\n\n'
+        + '・完了後は、直前のこの一括置換だけを元に戻せます\n\n'
         + '進めますか？')) return null;
       return mutate('replace', { indexes: indexes, find: find, replace: into, use_regex: searchRegex, match_case: searchCase, scope: searchScope }, '訳文を置き換えています…').then(function (result) {
         if (!result) return null;
@@ -1333,6 +1354,23 @@
         return result;
       });
     }).catch(function (error) { setBusy(false); status(error.message, true); return null; });
+  }
+
+  function undoReplace() {
+    if (!project || !project.bulk_replace_undo || !project.bulk_replace_undo.available) {
+      status('元に戻せる一括置換はありません。'); return null;
+    }
+    var rows = Number(project.bulk_replace_undo.affected_count || 0);
+    if (!window.confirm('直前の一括置換を元に戻します。\n\n'
+      + '・' + rows + '行を置換前の状態へ戻します\n'
+      + '・戻せるのは直前の一括置換だけです\n'
+      + '・その後に行った変更は元に戻せません\n\n'
+      + '進めますか？')) return null;
+    return mutate('replace-undo', {}, '直前の一括置換を元に戻しています…').then(function (result) {
+      if (!result) return null;
+      status(Number(result.replace_undo_restored || rows) + '行を置換前の状態へ戻しました。');
+      return result;
+    });
   }
 
   /* 事前翻訳（pre-translate）。翻訳メモリに完全一致がある行を、Copilot へ
@@ -2132,7 +2170,7 @@
     sheets.forEach(function (sheet) { if (String(sheet.name) === String(sheetName)) found = sheet; });
     if (!found) return null;
     if (found.__prepared) return found.__prepared;
-    var widths = {}, heights = {}, wrap = {}, align = {}, bold = {}, spans = {}, covered = {};
+    var widths = {}, heights = {}, wrap = {}, shrink = {}, align = {}, bold = {}, spans = {}, covered = {};
     (found.columns || []).forEach(function (col) {
       for (var c = Number(col.min); c <= Number(col.max); c++) widths[c] = col.hidden ? 0 : Number(col.width);
     });
@@ -2142,6 +2180,7 @@
       var ref = previewCellRef('x, ' + cell.address);
       if (!ref) return;
       if (cell.wrap) wrap[ref.row + ':' + ref.column] = true;
+      if (cell.shrink) shrink[ref.row + ':' + ref.column] = true;
       if (cell.align) align[ref.row + ':' + ref.column] = String(cell.align);
       if (cell.bold) bold[ref.row + ':' + ref.column] = true;
     });
@@ -2162,7 +2201,10 @@
     found.__prepared = {
       defaultWidth: Number(found.default_width) || 8.43,
       defaultHeight: Number(found.default_height) || 18.75,
-      widths: widths, heights: heights, wrap: wrap, align: align, bold: bold, spans: spans, covered: covered
+      widths: widths, heights: heights, wrap: wrap, shrink: shrink, align: align, bold: bold, spans: spans, covered: covered,
+      unknownWidthColumns: (found.unknown_width_columns || []).map(function (range) {
+        return { min: Number(range.min), max: Number(range.max) };
+      })
     };
     return found.__prepared;
   }
@@ -2177,6 +2219,18 @@
       total += Number(width) * 7 + 5;
     }
     return Math.max(24, Math.round(total));
+  }
+  /* 既定幅は格子を描くためだけに使う。width 属性の無い列を跨ぐときは、
+     実際の幅が不明なので overflow の根拠にしてはいけない。 */
+  function previewColumnsHaveKnownWidth(layout, column, count) {
+    if (!layout) return false;
+    for (var offset = 0; offset < count; offset++) {
+      var current = column + offset;
+      if ((layout.unknownWidthColumns || []).some(function (range) {
+        return current >= range.min && current <= range.max;
+      })) return false;
+    }
+    return true;
   }
   /* 行の高さは「ポイント」。96dpi の px に直す（1pt = 4/3 px）。
      tr の height は最低の高さとして効くので、折り返して伸びた行は伸びたまま出る。
@@ -2217,16 +2271,22 @@
     var value = previewText(segment);
     var key = row + ':' + column;
     var wrap = layout ? !!layout.wrap[key] : false;
+    var shrink = layout ? !!layout.shrink[key] : false;
     var align = layout ? (layout.align[key] || '') : '';
     var style = '';
     var displayWidth = layout ? previewColumnPx(layout, column, span) : 0;
+    var measurementKnown = !!layout && previewColumnsHaveKnownWidth(layout, column, (span && span.columns) || 1);
     var spillRegion = segment.placement && (segment.placement.display_regions || []).find(function (region) {
       return region.mode === 'spill_right_display_only' && String(region.anchor_address || '').toUpperCase() === String(segment.location || '').split(',').pop().trim().toUpperCase();
     });
     if (layout && spillRegion) {
-      (spillRegion.cells || []).forEach(function (_, offset) { displayWidth += previewColumnPx(layout, column + offset + 1, null); });
+      (spillRegion.cells || []).forEach(function (_, offset) {
+        var spillColumn = column + offset + 1;
+        displayWidth += previewColumnPx(layout, spillColumn, null);
+        if (!previewColumnsHaveKnownWidth(layout, spillColumn, 1)) measurementKnown = false;
+      });
     }
-    var overflowRisk = !!(layout && !wrap && previewTextWidthPx(value.text, !!layout.bold[key]) > Math.max(0, displayWidth - 8));
+    var overflowRisk = !!(layout && measurementKnown && !wrap && !shrink && previewTextWidthPx(value.text, !!layout.bold[key]) > Math.max(0, displayWidth - 8));
     if (layout) {
       style = ' style="width:' + previewColumnPx(layout, column, span) + 'px' +
         (align === 'center' ? ';text-align:center' : align === 'right' ? ';text-align:right' : '') + '"';
@@ -3310,7 +3370,7 @@
     });
     document.addEventListener('click', function (event) {
       var button = event.target.closest('button'); if (!button) return;
-      if (busy && (button.id === 'cat-confirm-bulk' || button.id === 'cat-replace-run' || button.id === 'cat-tm-pretranslate' || button.hasAttribute('data-cat-translate-row') || button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-tm-register') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-split-at') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
+      if (busy && (button.id === 'cat-confirm-bulk' || button.id === 'cat-replace-run' || button.id === 'cat-replace-undo' || button.id === 'cat-tm-pretranslate' || button.hasAttribute('data-cat-translate-row') || button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-tm-register') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-split-at') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
       if (button.hasAttribute('data-cat-preview-mode')) { setPreviewMode(button.getAttribute('data-cat-preview-mode')); return; }
       if (button.hasAttribute('data-cat-preview-side')) { previewSide = button.getAttribute('data-cat-preview-side') || 'target'; renderPreview(); return; }
       if (button.hasAttribute('data-cat-dock-side')) { dockSide = button.getAttribute('data-cat-dock-side') || 'target'; renderDockPreview(); return; }
@@ -3343,6 +3403,7 @@
       if (button.hasAttribute('data-cat-resume')) return resume(button.getAttribute('data-cat-resume'));
       if (button.id === 'cat-confirm-bulk') return confirmBulk(button);
       if (button.id === 'cat-replace-run') return runReplace();
+      if (button.id === 'cat-replace-undo') return undoReplace();
       if (button.id === 'cat-tm-pretranslate') return tmPretranslate();
       if (button.hasAttribute('data-cat-confirm')) return confirmRow(Number(button.getAttribute('data-cat-confirm')));
       if (button.hasAttribute('data-cat-tm-register')) return registerTranslationMemory(Number(button.getAttribute('data-cat-tm-register')));

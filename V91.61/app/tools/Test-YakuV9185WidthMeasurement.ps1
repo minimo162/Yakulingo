@@ -21,7 +21,8 @@
 
   この試験は Excel を使わない。ZIP と XML だけで .xlsx を組み、
   Get-YakuSheetLayoutFromXlsx の**返り値**で確かめる。
-  書体の配線は3ファイルにまたがるので、文字列で押さえる。
+  さらに本物の cat.html / cat.js を headless Chromium で開き、消費側が
+  shrink と未知幅を overflow 印へ誤用しないことを DOM で確かめる。
 #>
 [CmdletBinding()]
 param()
@@ -40,6 +41,27 @@ function Assert-T9185 {
 }
 
 Write-Host 'Test-YakuV9185WidthMeasurement'
+
+$YAKU_WIDTH_UNMEASURED = 3
+$YakuT9185Driver = Join-Path $PSScriptRoot 'cat-screen\cat-screen-gate.js'
+$YakuT9185Node = Get-Command node -ErrorAction SilentlyContinue
+if ($null -eq $YakuT9185Node -or -not (Test-Path -LiteralPath $YakuT9185Driver -PathType Leaf)) {
+    Write-Host 'UNMEASURED: node または Chromium 運転席が無いため CAT 消費側を測れません。' -ForegroundColor Red
+    exit $YAKU_WIDTH_UNMEASURED
+}
+$YakuT9185NodeExe = [string]$YakuT9185Node.Source
+$YakuT9185ProbeDir = (Split-Path -Parent $YakuT9185Driver).Replace('\', '/')
+$null = & $YakuT9185NodeExe -e ("try{require.resolve('playwright',{paths:['" + $YakuT9185ProbeDir + "']});process.exit(0)}catch(e){process.exit(9)}") 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host 'UNMEASURED: playwright が無いため CAT 消費側を測れません。' -ForegroundColor Red
+    exit $YAKU_WIDTH_UNMEASURED
+}
+$YakuT9185ChromiumPath = & $YakuT9185NodeExe -e ("try{const fs=require('fs');const api=require(require.resolve('playwright',{paths:['" + $YakuT9185ProbeDir + "']}));const executable=api.chromium.executablePath();if(!executable||!fs.existsSync(executable)){process.exit(9)}process.stdout.write(executable);process.exit(0)}catch(e){process.exit(9)}") 2>$null
+$YakuT9185ChromiumExit = $LASTEXITCODE
+if ($YakuT9185ChromiumExit -ne 0 -or [string]::IsNullOrWhiteSpace([string]$YakuT9185ChromiumPath) -or -not (Test-Path -LiteralPath ([string]$YakuT9185ChromiumPath) -PathType Leaf)) {
+    Write-Host 'UNMEASURED: Playwright Chromium 実行ファイルが無いため CAT 消費側を測れません。' -ForegroundColor Red
+    exit $YAKU_WIDTH_UNMEASURED
+}
 
 # --- .xlsx を組む -------------------------------------------------------------
 Add-Type -AssemblyName System.IO.Compression
@@ -132,6 +154,63 @@ Assert-T9185 -Condition ($YakuT9185Server.Contains('__YAKU_OUTPUT_FONT_JP__') -a
 $YakuT9185Fp = [IO.File]::ReadAllText((Join-Path $YakuT9185Src 'FileProcessors.ps1'), [Text.Encoding]::UTF8)
 Assert-T9185 -Condition ($YakuT9185Fp.Contains('$cell.Font.Name = [string]$OutputFontName')) `
     -Message 'the write-back really sets that font on the cell (the other end of the wire)'
+
+# --- CAT 消費側（実際の Chromium） -------------------------------------------
+# A1 は既知の細い列で、B1 は同じ細さだが原本の shrink、C1 は未知幅の列である。
+# どの文字列も細い既知列なら明らかに溢れる長さにして、抑制だけが緑になる空振りを防ぐ。
+$YakuT9185Long = (('W' * 80) -join '')
+$YakuT9185KnownText = 'KNOWN-' + $YakuT9185Long
+$YakuT9185ShrinkText = 'SHRINK-' + $YakuT9185Long
+$YakuT9185UnknownText = 'UNKNOWN-' + $YakuT9185Long
+Assert-T9185 -Condition ($YakuT9185KnownText.Length -gt 80 -and $YakuT9185ShrinkText.Length -gt 80 -and $YakuT9185UnknownText.Length -gt 80) `
+    -Message 'all three Chromium controls contain text that exceeds a narrow known column'
+$YakuT9185PreviewProject = [ordered]@{
+    id = 'width-preview-9185'; revision = 1; file_name = 'width-preview.xlsx'; document_format = 'xlsx'; direction = 'to_en'
+    segments = @(
+        [ordered]@{ index = 0; segment_id = 'width-a'; source = 'source-a'; translation = $YakuT9185KnownText; kind = 'cell'; location = 'S1, A1' },
+        [ordered]@{ index = 1; segment_id = 'width-b'; source = 'source-b'; translation = $YakuT9185ShrinkText; kind = 'cell'; location = 'S1, B1' },
+        [ordered]@{ index = 2; segment_id = 'width-c'; source = 'source-c'; translation = $YakuT9185UnknownText; kind = 'cell'; location = 'S1, C1' }
+    )
+    sheet_layout = @([ordered]@{
+        name = 'S1'; default_width = 1; default_height = 18.75
+        columns = @([ordered]@{ min = 1; max = 1; width = 1; hidden = $false }, [ordered]@{ min = 2; max = 2; width = 1; hidden = $false })
+        unknown_width_columns = @([ordered]@{ min = 3; max = 3; hidden = $true })
+        rows = @(); merges = @(); cells = @([ordered]@{ address = 'B1'; shrink = $true })
+    })
+}
+$YakuT9185PreviewJson = Join-Path $YakuT9185Work 'preview-project.json'
+$YakuT9185PreviewOut = Join-Path $YakuT9185Work 'preview-result.json'
+[IO.File]::WriteAllText($YakuT9185PreviewJson, ($YakuT9185PreviewProject | ConvertTo-Json -Depth 12 -Compress), [Text.UTF8Encoding]::new($false))
+& $YakuT9185NodeExe $YakuT9185Driver '--width-preview' (Join-Path $YakuT9185Root 'www') $YakuT9185PreviewJson $YakuT9185PreviewOut
+$YakuT9185DriverExit = $LASTEXITCODE
+Assert-T9185 -Condition ($YakuT9185DriverExit -eq 0 -and (Test-Path -LiteralPath $YakuT9185PreviewOut -PathType Leaf)) `
+    -Message 'headless Chromium opened the actual CAT preview consumer'
+$YakuT9185PreviewResult = $null
+if (Test-Path -LiteralPath $YakuT9185PreviewOut -PathType Leaf) { $YakuT9185PreviewResult = [IO.File]::ReadAllText($YakuT9185PreviewOut, [Text.Encoding]::UTF8) | ConvertFrom-Json }
+if ($null -ne $YakuT9185PreviewResult) {
+    foreach ($YakuT9185Error in @($YakuT9185PreviewResult.errors)) { Write-Host ('  Chromium error: ' + [string]$YakuT9185Error) -ForegroundColor Red }
+    foreach ($YakuT9185Console in @($YakuT9185PreviewResult.console)) { Write-Host ('  Chromium console: ' + [string]$YakuT9185Console) -ForegroundColor Red }
+}
+Assert-T9185 -Condition ($null -ne $YakuT9185PreviewResult -and @($YakuT9185PreviewResult.errors).Count -eq 0 -and @($YakuT9185PreviewResult.console).Count -eq 0) `
+    -Message 'the CAT preview had no page or console errors'
+$YakuT9185PreviewCells = @($(if ($null -ne $YakuT9185PreviewResult) { $YakuT9185PreviewResult.cells } else { @() }))
+$YakuT9185KnownCell = @($YakuT9185PreviewCells | Where-Object { [int]$_.index -eq 0 })
+$YakuT9185ShrinkCell = @($YakuT9185PreviewCells | Where-Object { [int]$_.index -eq 1 })
+$YakuT9185UnknownCell = @($YakuT9185PreviewCells | Where-Object { [int]$_.index -eq 2 })
+Assert-T9185 -Condition ($YakuT9185KnownCell.Count -eq 1 -and $YakuT9185ShrinkCell.Count -eq 1 -and $YakuT9185UnknownCell.Count -eq 1) `
+    -Message 'all three width controls were rendered by the CAT preview'
+if ($YakuT9185KnownCell.Count -eq 1) {
+    Assert-T9185 -Condition ([bool]$YakuT9185KnownCell[0].overflowRisk -and [string]$YakuT9185KnownCell[0].ariaLabel -match '収まり要確認') `
+        -Message 'a known-width non-wrap non-shrink overflow receives the risk class and aria label'
+}
+if ($YakuT9185ShrinkCell.Count -eq 1) {
+    Assert-T9185 -Condition (-not [bool]$YakuT9185ShrinkCell[0].overflowRisk -and [string]::IsNullOrEmpty([string]$YakuT9185ShrinkCell[0].ariaLabel)) `
+        -Message 'a shrink-to-fit cell does not receive an overflow risk marker'
+}
+if ($YakuT9185UnknownCell.Count -eq 1) {
+    Assert-T9185 -Condition (-not [bool]$YakuT9185UnknownCell[0].overflowRisk -and [string]::IsNullOrEmpty([string]$YakuT9185UnknownCell[0].ariaLabel)) `
+        -Message 'an unknown-width cell does not receive an overflow risk marker'
+}
 
 try { Remove-Item -LiteralPath $YakuT9185Work -Recurse -Force -ErrorAction SilentlyContinue } catch {}
 
