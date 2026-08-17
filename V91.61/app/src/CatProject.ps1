@@ -125,7 +125,11 @@ function Get-YakuCanonicalNumericFacts {
         $after = $masked.Substring($afterStart, [Math]::Min(40,$masked.Length-$afterStart))
         $context = ($before + '|' + $after)
         $descriptor=Get-YakuNumericContextDescriptor -Text $masked -Token ([string]$token) -Start $at
-        [decimal]$scale = $(if([bool]$scalar.IncludesScale){[decimal]1}else{[decimal]$descriptor.Scale})
+        # A scale outside the number phrase is still applied when the phrase
+        # contains hundred/thousand (for example "five hundred k units").
+        # Internal scales are already part of the parsed English/Japanese value;
+        # the descriptor only represents the unit immediately outside the token.
+        [decimal]$scale = [decimal]$descriptor.Scale
         [decimal]$value = [decimal]$scalar.Value * $scale
         $category = 'number'
         if ([string]$descriptor.Currency -eq 'yen') { $category='currency:yen' }
@@ -135,14 +139,15 @@ function Get-YakuCanonicalNumericFacts {
         elseif ($after -match '^\s*\)?\s*(?:%|％|percent\b|percentage\b)') { $category='ratio:percent' }
         # units? も同じ理由で \b が使えない。「186 k unitsでした」のように
         # 日本語が続くと境界ができないため、英数字が続かないことで判定する。
-        elseif ($after -match '(?i)^\s*\)?\s*(?:k\s+)?units?(?![A-Za-z0-9])|^\s*\)?\s*(?:台|件|人|名|株|個|本|回|ポイント)') { $category='count' }
-        $negative = ($before -match '(?:[-−△▲]\s*|\(\s*)$')
+        elseif ($after -match '(?i)^\s*\)?\s*(?:k\s+)?(?:units?|vehicles?|cars?|cases?|shares?)(?![A-Za-z0-9])|^\s*\)?\s*(?:台|件|人|名|株|個|本|回|ポイント)') { $category='count' }
+        $negative = ($before -match '(?i)(?:[-−△▲]\s*|\(\s*|minus\s+|negative\s+)$')
         if ($negative -and $value -gt 0) { $value = -$value }
         $canonical = $value.ToString('0.############################', [Globalization.CultureInfo]::InvariantCulture)
         $magnitude=[Math]::Abs($value).ToString('0.############################', [Globalization.CultureInfo]::InvariantCulture)
+        $scalarMagnitude=[Math]::Abs([decimal]$scalar.Value).ToString('0.############################', [Globalization.CultureInfo]::InvariantCulture)
         # 金額の絶対量と、△・括弧・minus/decrease等で表す方向は別に検査する。
         # Keyへ符号を混ぜると「△100」→"decreased by 100"を誤って拒否する。
-        $facts.Add([pscustomobject]@{ Token=[string]$token; Raw=$raw; Category=$category; Value=$canonical; Magnitude=$magnitude; ExplicitNegative=[bool]$negative; Key=($category + '|' + $magnitude) }) | Out-Null
+        $facts.Add([pscustomobject]@{ Token=[string]$token; Raw=$raw; Category=$category; Value=$canonical; Magnitude=$magnitude; ScalarMagnitude=$scalarMagnitude; ExternalScale=[decimal]$scale; ExternalScaleName=[string]$descriptor.ScaleName; ExplicitNegative=[bool]$negative; Key=($category + '|' + $magnitude) }) | Out-Null
     }
     return @($facts.ToArray())
 }
@@ -308,6 +313,176 @@ function Get-YakuCatAuditableNumericValueCount {
     return $count
 }
 
+function Get-YakuCatReviewNoteField {
+    param(
+        [AllowNull()]$Note,
+        [Parameter(Mandatory=$true)][string[]]$Names
+    )
+    if ($null -eq $Note) { return $null }
+    foreach ($name in $Names) {
+        if ($Note.PSObject.Properties.Name -contains $name) { return $Note.$name }
+    }
+    return $null
+}
+
+function ConvertTo-YakuCatReviewNoteTimestamp {
+    param(
+        [AllowNull()]$Value,
+        [Parameter(Mandatory=$true)][string]$Code
+    )
+    $text = [string]$Value
+    if ([string]::IsNullOrWhiteSpace($text) -or $text -notmatch '(?:Z|[+]00:00)$') {
+        throw ($Code + ': 日時はUTCで指定してください。')
+    }
+    try {
+        $parsed = [DateTimeOffset]::Parse($text, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind)
+        if ($parsed.Offset -ne [TimeSpan]::Zero) { throw 'not-utc' }
+        return $parsed.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", [Globalization.CultureInfo]::InvariantCulture)
+    } catch {
+        throw ($Code + ': 日時の形式が不正です。')
+    }
+}
+
+function New-YakuCatReviewNoteTimestamp {
+    return [DateTimeOffset]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", [Globalization.CultureInfo]::InvariantCulture)
+}
+
+function ConvertTo-YakuCatReviewNote {
+    <#
+       ReviewNotes の正本。外から来たJSON、旧保存、構造編集の複写をここで
+       同じ形へ揃える。作業メモは共同チャットではなくローカルの記録なので、
+       作者やネットワークIDは持たない。
+    #>
+    param([AllowNull()]$Note)
+    if ($null -eq $Note) { throw 'CAT_REVIEW_NOTE_INVALID: メモの形を確認できません。' }
+    $noteId = [string](Get-YakuCatReviewNoteField -Note $Note -Names @('note_id','NoteId'))
+    if ($noteId -notmatch '^[a-f0-9]{32}$') { throw 'CAT_REVIEW_NOTE_ID_INVALID: メモの識別子が不正です。' }
+    $text = [string](Get-YakuCatReviewNoteField -Note $Note -Names @('text','Text'))
+    $text = $text.Trim()
+    if ([string]::IsNullOrWhiteSpace($text)) { throw 'CAT_REVIEW_NOTE_TEXT_REQUIRED: メモを入力してください。' }
+    if ($text.Length -gt 1000) { throw 'CAT_REVIEW_NOTE_TEXT_TOO_LONG: メモは1000文字以内で入力してください。' }
+    if ($text -match '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]') { throw 'CAT_REVIEW_NOTE_TEXT_INVALID: メモに使用できない制御文字が含まれています。' }
+    $state = [string](Get-YakuCatReviewNoteField -Note $Note -Names @('state','State'))
+    if ($state -notin @('open','resolved')) { throw 'CAT_REVIEW_NOTE_STATE_INVALID: メモの状態が不正です。' }
+    $createdAt = ConvertTo-YakuCatReviewNoteTimestamp -Value (Get-YakuCatReviewNoteField -Note $Note -Names @('created_at','CreatedAt')) -Code 'CAT_REVIEW_NOTE_CREATED_AT_INVALID'
+    $resolvedAt = [string](Get-YakuCatReviewNoteField -Note $Note -Names @('resolved_at','ResolvedAt'))
+    if ($state -eq 'open') {
+        $resolvedAt = ''
+    } else {
+        $resolvedAt = ConvertTo-YakuCatReviewNoteTimestamp -Value $resolvedAt -Code 'CAT_REVIEW_NOTE_RESOLVED_AT_INVALID'
+    }
+    return [pscustomobject]@{
+        NoteId = $noteId.ToLowerInvariant()
+        Text = $text
+        State = $state
+        CreatedAt = $createdAt
+        ResolvedAt = $resolvedAt
+    }
+}
+
+function ConvertTo-YakuCatReviewNoteJsonValue {
+    param([Parameter(Mandatory=$true)]$Note)
+    $normalized = ConvertTo-YakuCatReviewNote -Note $Note
+    return [ordered]@{
+        note_id = [string]$normalized.NoteId
+        text = [string]$normalized.Text
+        state = [string]$normalized.State
+        created_at = [string]$normalized.CreatedAt
+        resolved_at = [string]$normalized.ResolvedAt
+    }
+}
+
+function Copy-YakuCatReviewNote {
+    param([Parameter(Mandatory=$true)]$Note)
+    return (ConvertTo-YakuCatReviewNote -Note (([System.Management.Automation.PSSerializer]::Deserialize(
+        [System.Management.Automation.PSSerializer]::Serialize($Note, 10)))))
+}
+
+function Normalize-YakuCatSegmentReviewNotes {
+    param([Parameter(Mandatory=$true)]$Segment)
+    $raw = @()
+    if ($Segment.PSObject.Properties.Name -contains 'ReviewNotes' -and $null -ne $Segment.ReviewNotes) {
+        $raw = @($Segment.ReviewNotes | Where-Object { $null -ne $_ })
+    }
+    if ($raw.Count -gt 200) { throw 'CAT_REVIEW_NOTE_CAP_EXCEEDED: 1行に保存できるメモは200件までです。' }
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+    $notes = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($item in $raw) {
+        $normalized = ConvertTo-YakuCatReviewNote -Note $item
+        if (-not $seen.Add([string]$normalized.NoteId)) { throw 'CAT_REVIEW_NOTE_DUPLICATE_ID: 同じメモの識別子が重複しています。' }
+        [void]$notes.Add($normalized)
+    }
+    $Segment | Add-Member -NotePropertyName ReviewNotes -NotePropertyValue @($notes.ToArray()) -Force
+    return @($notes.ToArray())
+}
+
+function Get-YakuCatReviewNotesForSegment {
+    param([Parameter(Mandatory=$true)]$Segment)
+    return @(Normalize-YakuCatSegmentReviewNotes -Segment $Segment)
+}
+
+function Merge-YakuCatReviewNotes {
+    param(
+        [AllowEmptyCollection()][object[]]$First,
+        [AllowEmptyCollection()][object[]]$Second
+    )
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+    $notes = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($item in @($First) + @($Second)) {
+        if ($null -eq $item) { continue }
+        $normalized = ConvertTo-YakuCatReviewNote -Note $item
+        if (-not $seen.Add([string]$normalized.NoteId)) { throw 'CAT_REVIEW_NOTE_DUPLICATE_ID: 結合する行に同じメモの識別子があります。' }
+        [void]$notes.Add($normalized)
+    }
+    return @($notes.ToArray())
+}
+
+function Add-YakuCatSegmentReviewNote {
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [Parameter(Mandatory=$true)][int]$Index,
+        [AllowNull()][string]$Text
+    )
+    $null = Initialize-YakuCatProjectState -Project $Project
+    $segments = @($Project.Segments)
+    if ($Index -lt 0 -or $Index -ge $segments.Count) { throw 'CAT_REVIEW_NOTE_SEGMENT_NOT_FOUND: メモを付ける行が見つかりません。' }
+    $segment = $segments[$Index]
+    $notes = @(Get-YakuCatReviewNotesForSegment -Segment $segment)
+    if ($notes.Count -ge 200) { throw 'CAT_REVIEW_NOTE_CAP_EXCEEDED: 1行に保存できるメモは200件までです。' }
+    $note = ConvertTo-YakuCatReviewNote -Note ([pscustomobject]@{
+        NoteId = [guid]::NewGuid().ToString('N').ToLowerInvariant()
+        Text = [string]$Text
+        State = 'open'
+        CreatedAt = (New-YakuCatReviewNoteTimestamp)
+        ResolvedAt = ''
+    })
+    $segment.ReviewNotes = @($notes + @($note))
+    return $note
+}
+
+function Set-YakuCatSegmentReviewNoteState {
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [Parameter(Mandatory=$true)][int]$Index,
+        [AllowNull()][string]$NoteId,
+        [AllowNull()][string]$State
+    )
+    $null = Initialize-YakuCatProjectState -Project $Project
+    $segments = @($Project.Segments)
+    if ($Index -lt 0 -or $Index -ge $segments.Count) { throw 'CAT_REVIEW_NOTE_SEGMENT_NOT_FOUND: メモを変更する行が見つかりません。' }
+    if ([string]$NoteId -notmatch '^[a-f0-9]{32}$') { throw 'CAT_REVIEW_NOTE_ID_INVALID: メモの識別子が不正です。' }
+    if ([string]$State -notin @('open','resolved')) { throw 'CAT_REVIEW_NOTE_STATE_INVALID: メモの状態が不正です。' }
+    $segment = $segments[$Index]
+    $notes = @(Get-YakuCatReviewNotesForSegment -Segment $segment)
+    $found = $null
+    foreach ($note in $notes) { if ([string]$note.NoteId -ceq [string]$NoteId) { $found = $note; break } }
+    if ($null -eq $found) { throw 'CAT_REVIEW_NOTE_NOT_FOUND: メモが見つかりません。' }
+    $found.State = [string]$State
+    $found.ResolvedAt = if ([string]$State -eq 'resolved') { New-YakuCatReviewNoteTimestamp } else { '' }
+    $segment.ReviewNotes = @($notes)
+    return $found
+}
+
 function Initialize-YakuCatProjectState {
     param([Parameter(Mandatory=$true)]$Project)
     if (-not ($Project.PSObject.Properties.Name -contains 'Revision')) { $Project | Add-Member -NotePropertyName Revision -NotePropertyValue 0 -Force }
@@ -361,6 +536,7 @@ function Initialize-YakuCatProjectState {
         if (-not ($segment.PSObject.Properties.Name -contains 'SegmentId') -or [string]::IsNullOrWhiteSpace([string]$segment.SegmentId)) {
             $segment | Add-Member -NotePropertyName SegmentId -NotePropertyValue ([guid]::NewGuid().ToString('N')) -Force
         }
+        $null = Normalize-YakuCatSegmentReviewNotes -Segment $segment
         if (-not ($segment.PSObject.Properties.Name -contains 'SourceRevision')) { $segment | Add-Member -NotePropertyName SourceRevision -NotePropertyValue 1 -Force }
         $hash = Get-YakuCatSourceIntegrityHash -Text ([string]$segment.Text)
         if (-not ($segment.PSObject.Properties.Name -contains 'SourceIntegrityHash') -or [string]::IsNullOrWhiteSpace([string]$segment.SourceIntegrityHash)) { $segment | Add-Member -NotePropertyName SourceIntegrityHash -NotePropertyValue $hash -Force }
@@ -588,8 +764,31 @@ function Invoke-YakuCatProjectMutation {
             $candidate.PendingBulkReplaceUndo = $null
             $candidate.PendingStructuralUndo = $null
         }
+        $reviewNotesBySegmentId = @{}
+        foreach ($beforeSegment in @($candidate.Segments)) {
+            $beforeId = [string]$beforeSegment.SegmentId
+            if ([string]::IsNullOrWhiteSpace($beforeId)) { continue }
+            $reviewNotesBySegmentId[$beforeId] = @(Get-YakuCatReviewNotesForSegment -Segment $beforeSegment)
+        }
         $mutationArguments = @($innerState.Arguments)
         $mutationResult = & $innerState.Mutation $candidate @mutationArguments
+        if ($mutationAction -eq 'source-update-apply') {
+            # SourceRebase.ps1 builds the new target rows and then carries the old
+            # SegmentId onto matched rows. Keep local review notes at this shared
+            # mutation boundary so the rebase module need not know the UI-only field.
+            foreach ($afterSegment in @($candidate.Segments)) {
+                $afterId = [string]$afterSegment.SegmentId
+                if (-not $reviewNotesBySegmentId.ContainsKey($afterId)) { continue }
+                $oldNotes = @($reviewNotesBySegmentId[$afterId])
+                $newNotes = @(Get-YakuCatReviewNotesForSegment -Segment $afterSegment)
+                if ($oldNotes.Count -eq 0) { continue }
+                if ($newNotes.Count -eq 0) {
+                    $afterSegment.ReviewNotes = @($oldNotes | ForEach-Object { Copy-YakuCatReviewNote -Note $_ })
+                } else {
+                    $afterSegment.ReviewNotes = @(Merge-YakuCatReviewNotes -First $oldNotes -Second $newNotes)
+                }
+            }
+        }
         if ([bool]$innerState.NoCommitWhenNoMutation -and $null -ne $mutationResult -and [bool]$(try { $mutationResult.NoMutation } catch { $false })) {
             return [pscustomobject]@{ Project=$committed; Result=$mutationResult; Replayed=$false; Receipt=$null }
         }
@@ -792,20 +991,46 @@ function Invoke-YakuCatSegmentValidation {
         try {
             $normalizedSource = Get-YakuCatSegmentNormalizedSource -Project $Project -Segment $Segment
             $targetForNumericQc = ConvertTo-YakuCatQcEquivalentTimeText -Source $source -Target $target -Direction ([string]$Project.Direction)
-            $audit = Test-YakuNumericIntegrity -SourceText $normalizedSource -TranslatedText $targetForNumericQc -Location ('cat-review-' + [string]$Segment.SegmentId)
-            if (-not [bool]$audit.Ok) { $findings.Add([pscustomobject]@{ Code='numeric-integrity'; Severity='error'; Detail=[string]$audit.Detail }) | Out-Null }
-            # 突き合わせにも単位変換後の原文を使う。443行の $audit だけが変換を通っていて、
-            # ここが生の原文のままだった。そのため「1兆3,150億円」が 1 と 3,150 に割れ、
-            # アプリ自身が正しく換算した「13,150 oku」を、アプリ自身が
-            # numeric-value-mismatch と numeric-value-extra で拒否していた。
-            # 兆を含む金額は有報・短信で頻出し、その行は確認済みにできなかった。
+            # ここからは canonical fact の値・単位・符号だけを CAT の正本として
+            # 比較する。外部送受信の token/mask 監査（Translation.ps1）は別契約で
+            # あり、ここへ戻して二重に判定しない。
             $targetDirection = if ([string]$Project.Direction -eq 'to_en') { 'to_jp' } else { 'to_en' }
             # 原文側の数値は Get-YakuCatSegmentSourceNumericFacts が唯一の出どころ。
             # 訳文欄への挿入（placeables）も同じ関数を通す。分類の理由はその関数の註を見る。
             $sourceFacts = @(Get-YakuCatSegmentSourceNumericFacts -Project $Project -Segment $Segment -NormalizedSource $normalizedSource)
-            $sourceValues = @($sourceFacts | ForEach-Object { [string]$_.Key })
             $targetFacts = @(Get-YakuCanonicalNumericFacts -Text $targetForNumericQc -Direction $targetDirection -Location ('cat-review-target-' + [string]$Segment.SegmentId))
-            $targetValues = @($targetFacts | ForEach-Object { [string]$_.Key })
+            # Same scalar written with different external units (for example
+            # `500 k units` versus `five hundred units`) is a scale finding,
+            # not an opaque value mismatch. Pair those facts before the normal
+            # missing/extra comparison so the dedicated warning is visible.
+            $scaleSourceIndices = New-Object System.Collections.Generic.List[int]
+            $scaleTargetIndices = New-Object System.Collections.Generic.List[int]
+            for ($sourceIndex = 0; $sourceIndex -lt $sourceFacts.Count; $sourceIndex++) {
+                $sourceFact = $sourceFacts[$sourceIndex]
+                for ($targetIndex = 0; $targetIndex -lt $targetFacts.Count; $targetIndex++) {
+                    if ($scaleTargetIndices.Contains([int]$targetIndex)) { continue }
+                    $targetFact = $targetFacts[$targetIndex]
+                    if ([string]$sourceFact.Category -ne [string]$targetFact.Category) { continue }
+                    if ([string]$sourceFact.ScalarMagnitude -ne [string]$targetFact.ScalarMagnitude) { continue }
+                    if ([decimal]$sourceFact.ExternalScale -eq [decimal]$targetFact.ExternalScale) { continue }
+                    $scaleSourceIndices.Add([int]$sourceIndex) | Out-Null
+                    $scaleTargetIndices.Add([int]$targetIndex) | Out-Null
+                    break
+                }
+            }
+            if ($scaleSourceIndices.Count -gt 0) {
+                $findings.Add([pscustomobject]@{ Code='numeric-scale-mismatch'; Severity='warning'; Detail='同じ数値に掛かる桁・単位が原文と訳文で異なります。' }) | Out-Null
+            }
+            $comparableSourceFacts = New-Object System.Collections.Generic.List[object]
+            for ($sourceIndex = 0; $sourceIndex -lt $sourceFacts.Count; $sourceIndex++) {
+                if (-not $scaleSourceIndices.Contains([int]$sourceIndex)) { $comparableSourceFacts.Add($sourceFacts[$sourceIndex]) | Out-Null }
+            }
+            $comparableTargetFacts = New-Object System.Collections.Generic.List[object]
+            for ($targetIndex = 0; $targetIndex -lt $targetFacts.Count; $targetIndex++) {
+                if (-not $scaleTargetIndices.Contains([int]$targetIndex)) { $comparableTargetFacts.Add($targetFacts[$targetIndex]) | Out-Null }
+            }
+            $sourceValues = @($comparableSourceFacts.ToArray() | ForEach-Object { [string]$_.Key })
+            $targetValues = @($comparableTargetFacts.ToArray() | ForEach-Object { [string]$_.Key })
             $remaining = New-Object System.Collections.Generic.List[string]
             foreach ($v in $targetValues) { $remaining.Add([string]$v) | Out-Null }
             $missing = New-Object System.Collections.Generic.List[string]
@@ -813,8 +1038,8 @@ function Invoke-YakuCatSegmentValidation {
                 $pos = $remaining.IndexOf([string]$v)
                 if ($pos -ge 0) { $remaining.RemoveAt($pos) } else { $missing.Add([string]$v) | Out-Null }
             }
-            if ($missing.Count -gt 0) { $findings.Add([pscustomobject]@{ Code='numeric-value-mismatch'; Severity='error'; Detail=('missing=' + ($missing.ToArray() -join ',')) }) | Out-Null }
-            if ($remaining.Count -gt 0) { $findings.Add([pscustomobject]@{ Code='numeric-value-extra'; Severity='error'; Detail=('extra=' + ($remaining.ToArray() -join ',')) }) | Out-Null }
+            if ($missing.Count -gt 0) { $findings.Add([pscustomobject]@{ Code='numeric-value-mismatch'; Severity='warning'; Detail=('missing=' + ($missing.ToArray() -join ',')) }) | Out-Null }
+            if ($remaining.Count -gt 0) { $findings.Add([pscustomobject]@{ Code='numeric-value-extra'; Severity='warning'; Detail=('extra=' + ($remaining.ToArray() -join ',')) }) | Out-Null }
             # 英語では「2027年度第1四半期」を FY2027 Q1 / Q1 of FY2027 の
             # どちらにも自然に並べられる。期間値は存在・個数を上で厳密に検査し、
             # 順序検査からだけ除外する。金額など残りの数値順序は維持する。
@@ -848,9 +1073,9 @@ function Invoke-YakuCatSegmentValidation {
                 for($i=0;$i -lt $orderSource.Count;$i++){
                     if([string]$orderSource[$i] -ne [string]$orderTarget[$i]){$sameOrder=$false;break}
                 }
-                if(-not $sameOrder){$findings.Add([pscustomobject]@{Code='numeric-value-order-mismatch';Severity='error';Detail='数値の順序が原文と一致しません。'})|Out-Null}
+                if(-not $sameOrder){$findings.Add([pscustomobject]@{Code='numeric-value-order-mismatch';Severity='warning';Detail='数値の順序が原文と一致しません。'})|Out-Null}
             }
-        } catch { $findings.Add([pscustomobject]@{ Code='numeric-validation-error'; Severity='error' }) | Out-Null }
+        } catch { $findings.Add([pscustomobject]@{ Code='numeric-validation-error'; Severity='warning'; Detail=[string]$_.Exception.Message }) | Out-Null }
     }
     # 負であることの印は、マイナス記号・損失を表す語のほかに「括弧」がある。
     # このアプリ自身が Copilot へ「▲やマイナスは数値を括弧でくくれ」と指示しており
@@ -859,32 +1084,16 @@ function Invoke-YakuCatSegmentValidation {
     # (152) oku を自分の点検が「マイナスが無い」と弾き、確認済みにできなかった
     # （2026-08-11、実機のExcel取り込みで判明）。負の金額を含む資料は、この規約の
     # とおりに訳すかぎり必ず出力できなくなる。
-    $targetHasNegativeMark = $target -match '(?i)(?:^|[\s(])[-−]|loss|decrease|decline|deficit|negative|損失|減少|赤字|マイナス|△|▲' -or $target -match '\(\s*\d[\d,.]*\s*\)'
+    $targetHasNegativeMark = $target -match '(?i)(?:^|[\s(])[-−]|minus\s+|loss|decrease|decline|deficit|negative|損失|減少|赤字|マイナス|△|▲' -or $target -match '\(\s*\d[\d,.]*\s*\)'
     if (-not $isVerbatimRegisteredTerm -and ($source -match '[△▲]' -or $source -match '\(\s*[-+]?\d[\d,.]*\s*\)') -and -not $targetHasNegativeMark) {
-        $findings.Add([pscustomobject]@{ Code='numeric-sign-missing'; Severity='error' }) | Out-Null
-    }
-    if (-not $isVerbatimRegisteredTerm -and [string]$Project.Direction -eq 'to_jp') {
-        foreach ($match in [regex]::Matches($source, '(?i)(?<num>\d[\d,]*(?:\.\d+)?)\s+(?<unit>million|billion)\b')) {
-            $n = [decimal]0
-            if (-not [decimal]::TryParse(([string]$match.Groups['num'].Value).Replace(',',''), [Globalization.NumberStyles]::Number, [Globalization.CultureInfo]::InvariantCulture, [ref]$n)) { continue }
-            $expectedMillion = if ([string]$match.Groups['unit'].Value -ieq 'billion') { $n * 1000 } else { $n }
-            $magnitudeMatches = @([regex]::Matches($target, '(?<num>\d[\d,]*(?:\.\d+)?)\s*(?<unit>億|百万)'))
-            $hasExpected = $false
-            foreach ($magnitude in $magnitudeMatches) {
-                $actual = [decimal]0
-                if (-not [decimal]::TryParse(([string]$magnitude.Groups['num'].Value).Replace(',',''), [Globalization.NumberStyles]::Number, [Globalization.CultureInfo]::InvariantCulture, [ref]$actual)) { continue }
-                $actualMillion = if ([string]$magnitude.Groups['unit'].Value -eq '億') { $actual * 100 } else { $actual }
-                if ($actualMillion -eq $expectedMillion) { $hasExpected = $true; break }
-            }
-            if (-not $hasExpected) { $findings.Add([pscustomobject]@{ Code='numeric-scale-mismatch'; Severity='error'; Detail=('expected_million=' + $expectedMillion) }) | Out-Null }
-        }
+        $findings.Add([pscustomobject]@{ Code='numeric-sign-missing'; Severity='warning' }) | Out-Null
     }
     $sourceNegative = $source -match '(?i)\b(?:loss|deficit|decrease|decline|decreased|declined|fell)\b|損失|赤字|減少|減益|下落'
     $sourcePositive = $source -match '(?i)\b(?:profit|surplus|increase|increased|gain|gained|rose)\b|利益|黒字|増加|増益|上昇'
     $targetNegative = $target -match '(?i)\b(?:loss|deficit|decrease|decline|decreased|declined|fell)\b|損失|赤字|減少|減益|下落'
     $targetPositive = $target -match '(?i)\b(?:profit|surplus|increase|increased|gain|gained|rose)\b|利益|黒字|増加|増益|上昇'
     if (($sourceNegative -and $targetPositive -and -not $targetNegative) -or ($sourcePositive -and $targetNegative -and -not $targetPositive)) {
-        $findings.Add([pscustomobject]@{ Code='accounting-polarity-mismatch'; Severity='error' }) | Out-Null
+        $findings.Add([pscustomobject]@{ Code='accounting-polarity-mismatch'; Severity='warning' }) | Out-Null
     }
     # `oku` は本アプリの英訳で 1億円を表す単位であり、数値fact抽出でも
     # yen として扱う。ここだけ単純な文字列検査で落とすと、正しい
@@ -893,8 +1102,8 @@ function Invoke-YakuCatSegmentValidation {
     # 指示している（PromptBuilder.ps1 の amount 規約）。¥ を通貨として数えないと、
     # 規約どおりの訳文を自分の点検が currency-mismatch で拒否する。
     $yenMark = '(?i)(?:円|\byen\b|\boku\b|¥|\bJPY\b)'
-    if (-not $isVerbatimRegisteredTerm -and $source -match $yenMark -and $target -notmatch $yenMark) { $findings.Add([pscustomobject]@{ Code='currency-mismatch'; Severity='error'; Detail='yen' }) | Out-Null }
-    if (-not $isVerbatimRegisteredTerm -and $source -match '(?i)(?:ドル|\bdollars?\b|\$)' -and $target -notmatch '(?i)(?:ドル|\bdollars?\b|\$)') { $findings.Add([pscustomobject]@{ Code='currency-mismatch'; Severity='error'; Detail='dollar' }) | Out-Null }
+    if (-not $isVerbatimRegisteredTerm -and $source -match $yenMark -and $target -notmatch $yenMark) { $findings.Add([pscustomobject]@{ Code='currency-mismatch'; Severity='warning'; Detail='yen' }) | Out-Null }
+    if (-not $isVerbatimRegisteredTerm -and $source -match '(?i)(?:ドル|\bdollars?\b|\$)' -and $target -notmatch '(?i)(?:ドル|\bdollars?\b|\$)') { $findings.Add([pscustomobject]@{ Code='currency-mismatch'; Severity='warning'; Detail='dollar' }) | Out-Null }
     try {
         $structure = Test-YakuTextStructureIntegrity -SourceText $source -FullText $target -BriefText $target
         if (-not [bool]$structure.Ok) { $findings.Add([pscustomobject]@{ Code='structure-integrity'; Severity='error'; Detail=[string]$structure.Detail }) | Out-Null }
@@ -1178,10 +1387,9 @@ function Get-YakuCatQcToolTroubleCodes {
 
 function Get-YakuCatQcWarningCodes {
     <#
-      「書き出しを止めないが、利用者が対処できる」種別の正本。
+      「書き出しを止めないが、利用者が見て判断できる」種別の正本。
 
-      道具の不調（Get-YakuCatQcToolTroubleCodes）とは別である。あちらは
-      直しようが無いもの、こちらは**直せるが直さなくても出せる**ものである。
+       道具の不調（Get-YakuCatQcToolTroubleCodes）とは別である。
       色を error と同じにすると、押せるのに押せないように見える。逆に
       道具の不調と同じにすると、自分で対処できることが伝わらない。
 
@@ -1189,10 +1397,17 @@ function Get-YakuCatQcWarningCodes {
       画面側の写しは www/assets/cat.js の QC_WARNING_CODES で、両者が集合として
       一致することを tools/Test-YakuV9171CatQcLabelCoverage.ps1 の CASE 5 が見る。
 
-      ここは**表示の分類だけ**を決める。Get-YakuCatOutputEligibility は
-      この一覧を読まない。止める条件は Severity='error' だけで決まる。
+       ここは**表示の分類だけ**を決める。Get-YakuCatOutputEligibility は
+       この一覧を読まない。止める条件は Severity='error' だけで決まる。
     #>
     return @(
+        'numeric-value-mismatch',
+        'numeric-value-extra',
+        'numeric-value-order-mismatch',
+        'numeric-sign-missing',
+        'numeric-scale-mismatch',
+        'currency-mismatch',
+        'accounting-polarity-mismatch',
         'label-not-in-glossary',
         'paired-delimiter-mismatch'
     )
@@ -1228,13 +1443,13 @@ function Get-YakuCatQcBlockerMessages {
         'invalid-or-source-fallback' = '訳文が原文のままか、訳文として成立していない行が #ROWS# 行あります。左の「点検の指摘」を押すと、その行だけ表示できます。'
         'placeholder-residue' = '「[[N1]]」のような差し込み記号が残っている行が #ROWS# 行あります。左の「点検の指摘」を押して、原文の同じ位置にある数字へ手で置き換えてください。'
         'numeric-integrity' = '原文と数字または単位が合っていない行が #ROWS# 行あります。左の「点検の指摘」を押すと、その行だけ表示できます。'
-        'numeric-value-mismatch' = '原文にある数字が、訳文で違う値になっているか抜けている行が #ROWS# 行あります。左の「点検の指摘」を押すと、その行だけ表示できます。'
-        'numeric-value-extra' = '原文に無い数字が訳文に入っている行が #ROWS# 行あります。左の「点検の指摘」を押して、余分な数字を消してください。'
-        'numeric-value-order-mismatch' = '数字の並ぶ順番が原文と違う行が #ROWS# 行あります。左の「点検の指摘」を押して、原文と同じ順番に直してください。'
-        'numeric-scale-mismatch' = '数字の桁（億・百万など）が原文と合っていない行が #ROWS# 行あります。左の「点検の指摘」を押して、原文の単位をご確認ください。'
-        'numeric-sign-missing' = '損失や減少を示すマイナスが訳文に入っていない行が #ROWS# 行あります。左の「点検の指摘」を押すと、その行だけ表示できます。'
-        'accounting-polarity-mismatch' = '利益と損失、または増加と減少が原文と逆になっている行が #ROWS# 行あります。左の「点検の指摘」を押して、原文と見比べてください。'
-        'currency-mismatch' = '通貨（円・ドルなど）が原文と合っていない行が #ROWS# 行あります。左の「点検の指摘」を押して、原文の通貨をご確認ください。'
+        'numeric-value-mismatch' = '原文と訳文の数字の意味が一致しない行が #ROWS# 行あります。左の「点検の指摘」を押して原文と見比べてください。書き出しは止まりません。'
+        'numeric-value-extra' = '原文に無い数字が訳文に入っている行が #ROWS# 行あります。左の「点検の指摘」を押して確認してください。書き出しは止まりません。'
+        'numeric-value-order-mismatch' = '数字の並ぶ順番が原文と違う行が #ROWS# 行あります。どの数字がどこに掛かるか確認してください。書き出しは止まりません。'
+        'numeric-scale-mismatch' = '数字の桁（億・百万など）が原文と合っていない行が #ROWS# 行あります。原文の単位をご確認ください。書き出しは止まりません。'
+        'numeric-sign-missing' = '損失や減少を示すマイナスが訳文に入っていない行が #ROWS# 行あります。原文と見比べてください。書き出しは止まりません。'
+        'accounting-polarity-mismatch' = '利益と損失、または増加と減少が原文と逆になっている行が #ROWS# 行あります。原文と見比べてください。書き出しは止まりません。'
+        'currency-mismatch' = '通貨（円・ドルなど）が原文と合っていない行が #ROWS# 行あります。原文の通貨をご確認ください。書き出しは止まりません。'
         'structure-integrity' = '見出しや箇条書きの形が原文と違う行が #ROWS# 行あります。左の「点検の指摘」を押して、原文と見比べてください。'
         'terminology-missing' = '登録した訳語が使われていない行が #ROWS# 行あります。左の「点検の指摘」を押して、右の「用語・参考訳」に出ている訳語へ直してください。その行だけ別の言い方にしたい場合は、行の設定から外せます。'
         'terminology-forbidden' = '「使わない」と登録した表現が訳文に入っている行が #ROWS# 行あります。左の「点検の指摘」を押して、右の「用語・参考訳」に出ている訳語へ置き換えてください。'
@@ -1249,7 +1464,7 @@ function Get-YakuCatQcBlockerMessages {
     # 登録し忘れた種別は、下の「知らない種別」の枝へ落ちて汎用文になり、
     # tools/Test-YakuV9176ExportBlockerReasons.ps1 の文言の網が赤になる。
     $toolTroubleText = @{
-        'numeric-validation-error' = '数字の点検が最後まで終わらなかった行が #ROWS# 行あります。その行を開いて「確認済みにする」をもう一度押してください。それでも直らない場合は、この画面のまま管理者へご連絡ください。'
+        'numeric-validation-error' = '数字の点検を最後まで完了できなかった行が #ROWS# 行あります。確認と書き出しは続けられます。必要なら原文と訳文をご確認ください。'
         'structure-validation-error' = '見出しや箇条書きの形の点検が最後まで終わらなかった行が #ROWS# 行あります。その行を開いて「確認済みにする」をもう一度押してください。それでも直らない場合は、この画面のまま管理者へご連絡ください。'
         'terminology-check-unavailable' = '登録した用語を読み込めなかった行が #ROWS# 行あります。いったんアプリを閉じて開き直してください。それでも直らない場合は、この画面のまま管理者へご連絡ください。'
         'validation-unavailable' = '自動点検が最後まで終わらなかった行が #ROWS# 行あります。その行を開いて「確認済みにする」をもう一度押してください。それでも直らない場合は、この画面のまま管理者へご連絡ください。'
@@ -2729,8 +2944,9 @@ function Save-YakuCatProject {
                     terminology_exceptions = @($(try { $_.TerminologyExceptions } catch { @() }))
                     terminology_generation = @($(try { $_.TerminologyGeneration } catch { @() }))
                     tm_registered = [bool]$(try { $_.TmRegistered } catch { $false })
-                    tm_registration_event_id = [string]$(try { $_.TmRegistrationEventId } catch { '' })
-                    # 任意位置で割った行の組。保存しないと、読み直したときに同じセルを
+                     tm_registration_event_id = [string]$(try { $_.TmRegistrationEventId } catch { '' })
+                     review_notes = @($(try { $_.ReviewNotes | ForEach-Object { ConvertTo-YakuCatReviewNoteJsonValue -Note $_ } } catch { @() }))
+                     # 任意位置で割った行の組。保存しないと、読み直したときに同じセルを
                     # 指す2行が別々の配置先として扱われ、前半の訳が消える。
                     split_group_id = [string]$(try { $_.SplitGroupId } catch { '' })
                     split_ordinal = [int]$(try { $_.SplitOrdinal } catch { 0 })
@@ -3160,9 +3376,10 @@ function Restore-YakuCatProject {
                 TerminologyUsages = @($s.terminology_usages)
                 TerminologyExceptions = @($s.terminology_exceptions)
                 TerminologyGeneration = @($s.terminology_generation)
-                TmRegistered = [bool]$s.tm_registered
-                TmRegistrationEventId = [string]$s.tm_registration_event_id
-                SplitGroupId = [string]$s.split_group_id
+                 TmRegistered = [bool]$s.tm_registered
+                 TmRegistrationEventId = [string]$s.tm_registration_event_id
+                 ReviewNotes = @($(try { $s.review_notes } catch { @() }))
+                 SplitGroupId = [string]$s.split_group_id
                 SplitOrdinal = [int]$(if ($null -ne $s.split_ordinal) { $s.split_ordinal } else { 0 })
                 SplitOriginSegmentId = [string]$s.split_origin_segment_id
                 Pieces = @($(try { $s.pieces } catch { @() }))
@@ -3310,6 +3527,8 @@ function Get-YakuCatProjectSummary {
     $null = Initialize-YakuCatProjectState -Project $Project
     $segs = @($Project.Segments)
     $done = @($segs | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.Translation) }).Count
+    $reviewNotesOpen = @($segs | ForEach-Object { @($_.ReviewNotes) | Where-Object { [string]$_.State -eq 'open' } }).Count
+    $reviewNotesTotal = @($segs | ForEach-Object { @($_.ReviewNotes) }).Count
     # 進捗は「人が確認した数」で数える。機械が埋めた数だと、翻訳ボタンを
     # 押した瞬間に 100% になり、以後どれだけ確認しても動かない。
     # 数百行を何時間もかけて見る作業では、それは進捗表示として役に立たない。
@@ -3339,8 +3558,10 @@ function Get-YakuCatProjectSummary {
         Unconfirmed = ($segs.Count - $confirmed)
         SourceChars = [int]$sourceChars
         ConfirmedChars = [int]$confirmedChars
-        RemainingChars = [int]($sourceChars - $confirmedChars)
-        Revision = [int]$Project.Revision
+         RemainingChars = [int]($sourceChars - $confirmedChars)
+         ReviewNotesOpen = [int]$reviewNotesOpen
+         ReviewNotesTotal = [int]$reviewNotesTotal
+         Revision = [int]$Project.Revision
         TranslationListEligible = [bool]$Eligibility.TranslationListEligible
         ExcelDraftEligible = [bool]$Eligibility.ExcelDraftEligible
         WordDraftEligible = [bool]$Eligibility.WordDraftEligible
@@ -3409,6 +3630,7 @@ function ConvertTo-YakuCatProjectJson {
       元の塊やセルの座標は画面に用が無いので載せない。
     #>
     param([Parameter(Mandatory=$true)]$Project)
+    $null = Initialize-YakuCatProjectState -Project $Project
     $segs = @($Project.Segments)
     # 元ファイルが無ければ再抽出できない。存在する場合は、出力時に原文を
     # 再対応付けし、曖昧・欠落があればコピーを作る前に安全停止する。
@@ -3535,10 +3757,11 @@ function ConvertTo-YakuCatProjectJson {
             location    = [string]$segs[$i].Location
             confirmed   = [bool]$segs[$i].Confirmed
             tm_registered = [bool]$(try { $segs[$i].TmRegistered } catch { $false })
-            state       = [string]$segs[$i].State
-            qc_status   = [string]$segs[$i].QcStatus
-            qc_findings = @($segs[$i].QcFindings)
-            # 未確定行を写しに掛けた結果、または保存済みの確認行へ advisory として
+             state       = [string]$segs[$i].State
+             qc_status   = [string]$segs[$i].QcStatus
+             qc_findings = @($segs[$i].QcFindings)
+             review_notes = @($(try { $segs[$i].ReviewNotes | ForEach-Object { ConvertTo-YakuCatReviewNoteJsonValue -Note $_ } } catch { @() }))
+             # 未確定行を写しに掛けた結果、または保存済みの確認行へ advisory として
             # 足した種別。実セグメントには残らない（残すと点検の履歴が嘘になる）ので、
             # 画面へはこちらで渡す。
             # 種別だけを持ち、用語の免除に使う TermId は載せない。
@@ -3659,8 +3882,10 @@ function ConvertTo-YakuCatProjectJson {
         unconfirmed = [int]$summary.Unconfirmed
         source_chars = [int]$summary.SourceChars
         remaining_chars = [int]$summary.RemainingChars
-        untranslated = @($segs | Where-Object { (Get-YakuCatSegmentStatus -Segment $_) -eq 'untranslated' }).Count
-        glossary_candidates = $(try { [int]$Project.GlossaryCandidates } catch { 0 })
+         untranslated = @($segs | Where-Object { (Get-YakuCatSegmentStatus -Segment $_) -eq 'untranslated' }).Count
+         review_notes_open = [int]$summary.ReviewNotesOpen
+         review_notes_total = [int]$summary.ReviewNotesTotal
+         glossary_candidates = $(try { [int]$Project.GlossaryCandidates } catch { 0 })
         draft        = @($segs | Where-Object { @('machine_draft','human_edited') -contains (Get-YakuCatSegmentStatus -Segment $_) }).Count
         segments   = @($rows.ToArray())
     } | ConvertTo-Json -Depth 6 -Compress)
@@ -4260,9 +4485,10 @@ function New-YakuCatSplitPart {
         Location = [string]$Source.Location
         BlockIds = @($Source.BlockIds)
         Cells = @($Source.Cells)
-        TmRegistered = $false
-        TmRegistrationEventId = ''
-        SplitGroupId = [string]$GroupId
+         TmRegistered = $false
+         TmRegistrationEventId = ''
+         ReviewNotes = @()
+         SplitGroupId = [string]$GroupId
         SplitOrdinal = 0
         SplitOriginSegmentId = [string]$OriginSegmentId
     }
@@ -4352,11 +4578,18 @@ function Split-YakuCatSegmentAt {
     if ($groupId -eq '') { $groupId = [guid]::NewGuid().ToString('N') }
     $originId = [string]$(try { $target.SplitOriginSegmentId } catch { '' })
     if ([string]::IsNullOrWhiteSpace($originId)) { $originId = [string]$target.SegmentId }
+    $existingNotes = @(Get-YakuCatReviewNotesForSegment -Segment $target)
     $out = New-Object System.Collections.Generic.List[object]
     for ($i = 0; $i -lt $segs.Count; $i++) {
         if ($i -ne $Index) { [void]$out.Add($segs[$i]); continue }
+        $partOrdinal = 0
         foreach ($piece in @($left, $right)) {
-            [void]$out.Add((New-YakuCatSplitPart -Source $target -Text $piece -GroupId $groupId -OriginSegmentId $originId))
+            $part = New-YakuCatSplitPart -Source $target -Text $piece -GroupId $groupId -OriginSegmentId $originId
+            # A split creates new rows; an existing note belongs to exactly the
+            # first child so it is neither lost nor shown twice.
+            if ($partOrdinal -eq 0) { $part.ReviewNotes = @($existingNotes | ForEach-Object { Copy-YakuCatReviewNote -Note $_ }) }
+            [void]$out.Add($part)
+            $partOrdinal++
         }
     }
     Set-YakuCatSegments -Project $Project -Segments @($out.ToArray())
@@ -4399,12 +4632,14 @@ function Merge-YakuCatSegments {
         if ([string]$a.Kind -ne 'cell') { throw 'セル以外は結合できません。' }
         throw 'シートが違うため結合できません。'
     }
+    $mergedNotes = Merge-YakuCatReviewNotes -First (Get-YakuCatReviewNotesForSegment -Segment $a) -Second (Get-YakuCatReviewNotesForSegment -Segment $b)
     $splitGroupId = Get-YakuCatSegmentSplitGroupId -Segment $a
     if ($splitGroupId -ne '') {
         # 途中で分けた行を元へ戻す。原文はそのままの部分文字列なので、
         # 何も挟まずに繋ぐと、割る前の原文へ一字一句そのまま戻る。
         $restored = New-YakuCatSplitPart -Source $a -Text ((([string]$a.Text)) + ([string]$b.Text)) `
             -GroupId $splitGroupId -OriginSegmentId ([string]$(try { $a.SplitOriginSegmentId } catch { '' }))
+        $restored.ReviewNotes = @($mergedNotes | ForEach-Object { Copy-YakuCatReviewNote -Note $_ })
         $out = New-Object System.Collections.Generic.List[object]
         for ($i = 0; $i -lt $segs.Count; $i++) {
             if ($i -eq $Index) { [void]$out.Add($restored); continue }
@@ -4420,11 +4655,11 @@ function Merge-YakuCatSegments {
         # 元の文は覚えておく。解除して1文ずつへ戻せるようにするため。
         $pieces = @(@(Get-YakuCatTextPieces -Segment $a) + @(Get-YakuCatTextPieces -Segment $b))
         $joiner = if ((@($pieces) -join '') -match '[぀-ヿ一-鿿]') { '' } else { ' ' }
-        $merged = [pscustomobject]@{
-            Text = (@($pieces) -join $joiner); BlockIds = @(); Cells = @(); Joined = $true
-            Kind = 'text'; Sheet = ''; Location = '本文'; Pieces = @($pieces)
-            Translation = ''; Origin = ''
-        }
+         $merged = [pscustomobject]@{
+             Text = (@($pieces) -join $joiner); BlockIds = @(); Cells = @(); Joined = $true
+             Kind = 'text'; Sheet = ''; Location = '本文'; Pieces = @($pieces)
+             Translation = ''; Origin = ''; ReviewNotes = @($mergedNotes | ForEach-Object { Copy-YakuCatReviewNote -Note $_ })
+         }
         $out = New-Object System.Collections.Generic.List[object]
         for ($i = 0; $i -lt $segs.Count; $i++) {
             if ($i -eq $Index) { [void]$out.Add($merged); continue }
@@ -4439,6 +4674,7 @@ function Merge-YakuCatSegments {
     $merged = New-YakuCellSegment -Sheet ([string]$a.Sheet) -Cells (@($a.Cells) + @($b.Cells)) -Joined $true
     $merged | Add-Member -NotePropertyName 'Translation' -NotePropertyValue '' -Force
     $merged | Add-Member -NotePropertyName 'Origin' -NotePropertyValue '' -Force
+    $merged | Add-Member -NotePropertyName 'ReviewNotes' -NotePropertyValue @($mergedNotes | ForEach-Object { Copy-YakuCatReviewNote -Note $_ }) -Force
     $out = New-Object System.Collections.Generic.List[object]
     for ($i = 0; $i -lt $segs.Count; $i++) {
         if ($i -eq $Index) { [void]$out.Add($merged); continue }
@@ -4463,18 +4699,23 @@ function Split-YakuCatSegment {
     $segs = @($Project.Segments)
     if ($Index -lt 0 -or $Index -ge $segs.Count) { throw 'セグメントが見つかりません。' }
     $target = $segs[$Index]
+    $existingNotes = @(Get-YakuCatReviewNotesForSegment -Segment $target)
     if ([string]$target.Kind -eq 'text') {
         $pieces = @(Get-YakuCatTextPieces -Segment $target)
         if ($pieces.Count -le 1) { throw 'このセグメントは繋がっていません。' }
         $out = New-Object System.Collections.Generic.List[object]
         for ($i = 0; $i -lt $segs.Count; $i++) {
             if ($i -ne $Index) { [void]$out.Add($segs[$i]); continue }
+            $partOrdinal = 0
             foreach ($p in $pieces) {
-                [void]$out.Add([pscustomobject]@{
+                $part = [pscustomobject]@{
                     Text = [string]$p; BlockIds = @(); Cells = @(); Joined = $false
                     Kind = 'text'; Sheet = ''; Location = '本文'
-                    Translation = ''; Origin = ''
-                })
+                    Translation = ''; Origin = ''; ReviewNotes = @()
+                }
+                if ($partOrdinal -eq 0) { $part.ReviewNotes = @($existingNotes | ForEach-Object { Copy-YakuCatReviewNote -Note $_ }) }
+                [void]$out.Add($part)
+                $partOrdinal++
             }
         }
         Set-YakuCatSegments -Project $Project -Segments @($out.ToArray())
@@ -4486,11 +4727,14 @@ function Split-YakuCatSegment {
     $out = New-Object System.Collections.Generic.List[object]
     for ($i = 0; $i -lt $segs.Count; $i++) {
         if ($i -ne $Index) { [void]$out.Add($segs[$i]); continue }
+        $partOrdinal = 0
         foreach ($c in $cells) {
             $one = New-YakuCellSegment -Sheet ([string]$target.Sheet) -Cells @($c) -Joined $false
             $one | Add-Member -NotePropertyName 'Translation' -NotePropertyValue '' -Force
             $one | Add-Member -NotePropertyName 'Origin' -NotePropertyValue '' -Force
+            $one | Add-Member -NotePropertyName 'ReviewNotes' -NotePropertyValue $(if ($partOrdinal -eq 0) { @($existingNotes | ForEach-Object { Copy-YakuCatReviewNote -Note $_ }) } else { @() }) -Force
             [void]$out.Add($one)
+            $partOrdinal++
         }
     }
     Set-YakuCatSegments -Project $Project -Segments @($out.ToArray())
@@ -4517,6 +4761,7 @@ function Get-YakuCatStructuralUndoSegmentState {
         joined=[bool]$Segment.Joined;kind=[string]$Segment.Kind;sheet=[string]$Segment.Sheet;location=[string]$Segment.Location;block_ids=@($Segment.BlockIds);cells=@($Segment.Cells)
         change_kind=$(try{[string]$Segment.ChangeKind}catch{''});prior_source_text=$(try{[string]$Segment.PriorSourceText}catch{''});prior_translation=$(try{[string]$Segment.PriorTranslation}catch{''});reuse_evidence=$(try{[string]$Segment.ReuseEvidence}catch{''});prior_index=$(try{[int]$Segment.PriorIndex}catch{-1})
         reference_usage=$(try{$Segment.ReferenceUsage}catch{$null});reference_events=@($(try{$Segment.ReferenceEvents}catch{@()}));terminology_usages=@($(try{$Segment.TerminologyUsages}catch{@()}));terminology_exceptions=@($(try{$Segment.TerminologyExceptions}catch{@()}));terminology_generation=@($(try{$Segment.TerminologyGeneration}catch{@()}))
+        review_notes=@($(try{$Segment.ReviewNotes | ForEach-Object { ConvertTo-YakuCatReviewNoteJsonValue -Note $_ }}catch{@()}))
         tm_registered=[bool]$(try{$Segment.TmRegistered}catch{$false});tm_registration_event_id=[string]$(try{$Segment.TmRegistrationEventId}catch{''});split_group_id=[string]$(try{$Segment.SplitGroupId}catch{''});split_ordinal=[int]$(try{$Segment.SplitOrdinal}catch{0});split_origin_segment_id=[string]$(try{$Segment.SplitOriginSegmentId}catch{''});pieces=@($(try{$Segment.Pieces}catch{@()}))
     }
 }

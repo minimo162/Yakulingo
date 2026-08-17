@@ -253,7 +253,8 @@
                    未翻訳か未確認かは行の記号で分かる。ここは「残り」で足りる。
                    点検の指摘は例外なので、指摘が1件も無いときは出さない。 -->
               <button type="button" data-cat-filter="actionable" aria-pressed="true">残り <span data-cat-count="actionable">0</span></button>
-              <button type="button" data-cat-filter="qc" aria-pressed="false" title="自動点検で気になる点が見つかった行だけを表示します（数字・通貨・見出しの形・用語）" hidden>点検の指摘 <span data-cat-count="qc">0</span></button>
+               <button type="button" data-cat-filter="qc" aria-pressed="false" title="自動点検で気になる点が見つかった行だけを表示します（数字・通貨・見出しの形・用語）" hidden>点検の指摘 <span data-cat-count="qc">0</span></button>
+               <button type="button" data-cat-filter="review_notes" aria-pressed="false" title="未解決の作業メモがある行だけを表示します" hidden>作業メモ <span data-cat-count="review_notes">0</span></button>
               <!-- 同じ原文の行だけを見る。まとめて片づけると、確定1回で残りへ配れる。 -->
               <button type="button" data-cat-filter="repetition" aria-pressed="false" title="資料の中で同じ原文が2行以上ある行だけを表示します" hidden>同じ原文 <span data-cat-count="repetition">0</span></button>
               <button type="button" data-cat-filter="reviewed" aria-pressed="false">確認済み <span data-cat-count="reviewed">0</span></button>
@@ -376,6 +377,7 @@
               <button id="cat-tab-candidates" type="button" role="tab" aria-selected="true" aria-controls="cat-panel-candidates" data-cat-inspector="candidates" title="この行で使う登録用語と、似ている過去の訳">用語・参考訳 <span id="cat-candidate-count">0</span></button>
               <button id="cat-tab-qc" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-qc" data-cat-inspector="qc" title="原文と訳文で、数字・単位・符号が食い違っていないかを自動で点検した結果">数字の点検 <span id="cat-qc-count">0</span></button>
               <button id="cat-tab-context" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-context" data-cat-inspector="context">文脈</button>
+              <button id="cat-tab-review-notes" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-review-notes" data-cat-inspector="review_notes">作業メモ <span id="cat-review-notes-count">0</span></button>
             </div>
             <section id="cat-panel-candidates" role="tabpanel" aria-labelledby="cat-tab-candidates"><div id="cat-candidates" class="cat-candidates">
               <section aria-labelledby="cat-terms-title"><div class="cat-candidates-title" id="cat-terms-title">この行で使う用語</div><div id="cat-terms-list"><p class="muted">行を選ぶと用語を探します。</p></div></section>
@@ -395,6 +397,14 @@
             </div></section>
             <section id="cat-panel-qc" role="tabpanel" aria-labelledby="cat-tab-qc" hidden><div id="cat-qc-list"></div><button id="cat-next-qc" type="button" class="secondary-button">点検の必要な次の行へ移る</button></section>
             <section id="cat-panel-context" role="tabpanel" aria-labelledby="cat-tab-context" hidden><div id="cat-context"></div></section>
+            <section id="cat-panel-review-notes" role="tabpanel" aria-labelledby="cat-tab-review-notes" hidden>
+              <div id="cat-review-notes-list"></div>
+              <form id="cat-review-notes-form" class="cat-review-notes-form">
+                <label for="cat-review-notes-input">この行への作業メモ</label>
+                <textarea id="cat-review-notes-input" rows="4" maxlength="1000" placeholder="確認したい点や引き継ぎ内容を入力"></textarea>
+                <button id="cat-review-notes-submit" type="submit">メモを追加</button>
+              </form>
+            </section>
           </aside>
         </div>
 

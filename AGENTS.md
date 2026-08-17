@@ -29,7 +29,14 @@
   （行は動くので関数名で探すこと）。事前翻訳が効く理由は上限ではなく、
   **同じ原文へ同じ訳を返すこと**（何ページ訳しても去年と同じ注記に同じ英文が入る。
   Copilot は呼ぶたびに言い回しが揺れる）と、**往復が1回減って速いこと**の2つ）
-- **数値が抜けた訳は警告ではなく欠陥。** 意図した省略かを利用者に判断させない
+- **CATの数値意味系findingは必ず見えるwarningにする。**
+  `numeric-value-mismatch` `numeric-value-extra` `numeric-value-order-mismatch`
+  `numeric-sign-missing` `numeric-scale-mismatch` `currency-mismatch`
+  `accounting-polarity-mismatch` `numeric-validation-error` は確認・書き出しを
+  止めない。`numeric-validation-error` は点検不能という道具の不調分類を保つが、
+  数値・単位の警告として利用者へ示す。日本語の数値を意味の等しい英語数詞へした
+  表記はwarningを出さない。placeholder residue・structure・terminology等の
+  欠陥は従来どおりerrorとして扱う。外部送信前の数値token監査と数値マスクは維持する。
 - **用語集の完全一致（cell-exact）は外さない。** 用語の一貫性ではなくレイアウトの保証
 - **書き戻しDRAFTを止める理由は3つ。** ~~全行確認要件は緩めない~~ ~~止めるのは2つだけ~~
   （2026-08-12 に全行確認要件を外した。市販ツールを調べたところ memoQ・Phrase・Trados の
@@ -38,8 +45,9 @@
   実装は最初から3つを積んでいた。出典 `_docs/決定_実装優先と固有名詞マスク_2026-08-14.md`）
   - `segment-untranslated` — 訳文が空の行がある → 出さない
   - `segment-qc-failed` — `Invoke-YakuCatSegmentValidation` の error が1件以上 → 出さない。
-    **数値だけではない。** `currency-mismatch` `structure-integrity` `structure-validation-error`
-    `terminology-conflict` `terminology-forbidden` `terminology-missing` も error である
+    数値意味系findingはwarningなのでここでは止めない。`placeholder-residue`
+    `structure-integrity` `structure-validation-error` `terminology-conflict`
+    `terminology-forbidden` `terminology-missing` など、errorの欠陥は従来どおり対象である
   - `segment-qc-not-current` — 確定済みだが用語スナップショットが変わり、点検が古い → 出さない
   - **未確認は止めない。** 代わりに何行未確認かを、押す前の画面とファイルの中の
     両方に必ず書く。点検は確定時にしか走らないので、未確認の行は出力時に写しへ
@@ -102,7 +110,9 @@
 2026-08-11 に、当時あった `_docs/ロードマップ.md` §8 を根拠に「一括確定は採らない」と決めた。
 §8 は実在し、引いた行も実在した。**しかしその行は、私が述べたことを述べていなかった。**
 
-- 引いた行は「数値が抜けた訳は警告ではなく欠陥」＝数値QCをブロッカーにする決定
+- 引いた行は「数値が抜けた訳は警告ではなく欠陥」＝当時の数値QCをブロッカーにする決定
+  だったが、現在の利用者判断ではCATの数値意味系findingは必ず見えるwarningとし、
+  確認・書き出しを止めない。外部送信token監査と数値マスクは別契約として残る
 - 私はそれを「確認の粒度」の決定として使った。無関係だった
 - しかも「1文ずつ確認するのが値打ち」という前提の唯一の出典は、**同じ日に私自身が
   実機テスト記録へ書いた1行**だった。決定事項ではない
@@ -259,3 +269,7 @@ CAT 側の部品の上書き（いずれも (0,3,1)）を**全部踏み潰した
   レビュー後の局所修正ごとに全件を回し直さない
 - コミット前に `tools/Check-Encoding.ps1` と、影響範囲に対応する重点試験を通す
 - `Test-YakuPackage.ps1` は `-PackagePath` が要る手動ツール。回帰テストではない
+- 毎回まず、今回失敗すると困る挙動を本当に必要な3点へ絞る。ローカル検証は
+  その3点を直接測るものだけにする。広い影響は Sol high のレビューと CI で補う。
+  これは単にテスト本数を3本にするという意味ではなく、守る挙動を3点に絞るという意味である。
+  レビューが追加検証を求める場合も、最大3点へ優先順位を付ける。
