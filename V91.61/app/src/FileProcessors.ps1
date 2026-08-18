@@ -4747,7 +4747,10 @@ function Get-YakuOpenXmlIntegritySnapshot {
     )
     Add-Type -AssemblyName System.IO.Compression -ErrorAction SilentlyContinue | Out-Null
     Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue | Out-Null
-    $archive = [System.IO.Compression.ZipFile]::OpenRead($Path)
+    $archive = $null
+    try { $archive = [System.IO.Compression.ZipFile]::OpenRead($Path) }
+    catch { throw ('FILE_PACKAGE_OPEN_FAILED: ' + $_.Exception.Message) }
+    if ($null -eq $archive) { throw 'FILE_PACKAGE_OPEN_FAILED: OpenXML package returned no archive.' }
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try {
         # V65: ワークシートXML全体へ跨る正規表現は、数式が少なくセル数が多い
@@ -4878,7 +4881,7 @@ function Get-YakuOpenXmlIntegritySnapshot {
     } finally {
         if ($null -ne $sha) { $sha.Dispose() }
         if ($null -ne $normalizedSha) { $normalizedSha.Dispose() }
-        $archive.Dispose()
+        if ($null -ne $archive) { try { $archive.Dispose() } catch {} }
     }
 }
 
@@ -4888,6 +4891,8 @@ function Get-YakuOpenXmlFileInfo {
     if ($extension -eq '.docx') {
         if (-not (Get-Command Get-YakuWordDocumentInventory -ErrorAction SilentlyContinue)) { throw 'WORD_ADAPTER_NOT_AVAILABLE' }
         $inventory = Get-YakuWordDocumentInventory -Path $Path
+        if ($null -eq $inventory) { throw 'WORD_CONTENT_READ_FAILED: Word inventory was empty.' }
+        if ($null -eq $inventory.Blocks) { throw 'WORD_CONTENT_READ_FAILED: Word inventory had no blocks.' }
         $sample = (@($inventory.Blocks | Select-Object -First 200 | ForEach-Object { [string]$_.Text }) -join "`n")
         $analysis = if (Get-Command Get-YakuDirectionAnalysis -ErrorAction SilentlyContinue) { Get-YakuDirectionAnalysis -Text $sample } else { [pscustomobject]@{ Direction='to_en'; Confidence='low'; Reason='detector-unavailable' } }
         return [pscustomobject]@{
@@ -4899,8 +4904,12 @@ function Get-YakuOpenXmlFileInfo {
         }
     }
     $snapshot = Get-YakuOpenXmlIntegritySnapshot -Path $Path
+    if ($null -eq $snapshot) { throw 'FILE_PACKAGE_SNAPSHOT_FAILED: OpenXML integrity snapshot was empty.' }
     Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue | Out-Null
-    $archive = [System.IO.Compression.ZipFile]::OpenRead($Path)
+    $archive = $null
+    try { $archive = [System.IO.Compression.ZipFile]::OpenRead($Path) }
+    catch { throw ('FILE_PACKAGE_OPEN_FAILED: ' + $_.Exception.Message) }
+    if ($null -eq $archive) { throw 'FILE_PACKAGE_OPEN_FAILED: OpenXML package returned no archive.' }
     try {
         $sample = ''
         $texts = New-Object System.Collections.Generic.List[string]
@@ -4943,7 +4952,7 @@ function Get-YakuOpenXmlFileInfo {
             DirectionConfidence=[string]$analysis.Confidence; DirectionReason=[string]$analysis.Reason
             Sheets=$sheets; SafeMetadataOnly=$true
         }
-    } finally { $archive.Dispose() }
+    } finally { if ($null -ne $archive) { try { $archive.Dispose() } catch {} } }
 }
 
 function Test-YakuOpenXmlCellLooksTranslatedConstant {
@@ -5191,6 +5200,8 @@ function Get-YakuFileInfo {
     if (([System.IO.Path]::GetExtension($Path)).ToLowerInvariant() -eq '.docx') {
         $wordName = [System.IO.Path]::GetFileName($Path)
         $inventory = Get-YakuWordDocumentInventory -Path $Path
+        if ($null -eq $inventory) { throw 'WORD_CONTENT_READ_FAILED: Word inventory was empty.' }
+        if ($null -eq $inventory.Blocks) { throw 'WORD_CONTENT_READ_FAILED: Word inventory had no blocks.' }
         $wordSample = New-Object System.Text.StringBuilder
         foreach ($block in @($inventory.Blocks)) {
             if ($wordSample.Length -ge 8000) { break }
