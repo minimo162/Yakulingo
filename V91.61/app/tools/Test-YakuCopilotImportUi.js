@@ -56,6 +56,7 @@ vm.createContext(sandbox);
 vm.runInContext(`
   var viewEpoch = 0;
   var pendingDirection = null;
+  var fileLoadingOwner = 0;
   ${loadingHelpers}
   ${openSource}
   this.openSource = openSource;
