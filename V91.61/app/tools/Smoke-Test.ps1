@@ -285,7 +285,10 @@ Assert-Yaku -Condition ((([regex]::Matches($catIndex, 'id="cat-open-file-entry"'
 Assert-Yaku -Condition ($catIndex.Contains('__YAKU_MAX_BATCH_CHARS__') -and $quickClient.Contains('yaku-max-batch-chars') -and $quickClient -notmatch 'length > 3000|length > 2000') -Message 'the long-text threshold must come from the server batch budget, not a number chosen in the page'
 # 2026-08-17: PDF取り込みは、過去訳を登録する理由が分かる二次入口として見せる。
 # PR #55 のカード class と既存IDはそのまま使い、実装を二重に持たない。
-Assert-Yaku -Condition (([regex]::Matches($catIndex, '過去の日本語版・英語版PDFを読み込む').Count -eq 1) -and ([regex]::Matches($catIndex, 'id="cat-open-align-entry"').Count -eq 1) -and $catIndex.Contains('entry-more-pdf-card') -and $catIndex -match '(?s)<section id="cat-align-entry"[\s\S]*?<h2 id="cat-align-entry-title">過去の訳を登録</h2>[\s\S]*?日本語版と英語版のPDF[\s\S]*?id="cat-open-align-entry"' -and -not $catIndex.Contains('そのほかの始め方')) -Message 'the visible PDF entry must explain past-translation registration and keep the existing card action'
+# 2026-08-18: 右レール最下段のボタン文言が「む」だけで折り返していた
+# （実測 1912x987）。「過去の日本語版・英語版PDFを読み込む」→「過去のPDFを
+# 読み込む」に詰めた。何を読み込むかは直前の見出しと本文が既に言っている。
+Assert-Yaku -Condition (([regex]::Matches($catIndex, '過去のPDFを読み込む').Count -eq 1) -and ([regex]::Matches($catIndex, 'id="cat-open-align-entry"').Count -eq 1) -and $catIndex.Contains('entry-more-pdf-card') -and $catIndex -match '(?s)<section id="cat-align-entry"[\s\S]*?<h2 id="cat-align-entry-title">過去の訳を登録</h2>[\s\S]*?日本語版と英語版のPDF[\s\S]*?id="cat-open-align-entry"' -and -not $catIndex.Contains('そのほかの始め方')) -Message 'the visible PDF entry must explain past-translation registration and keep the existing card action'
 Assert-Yaku -Condition (-not $catIndex.Contains('id="cat-source-prior"') -and -not $catIndex.Contains('id="cat-prior-open"') -and -not $catIndex.Contains('data-cat-source-show="file"') -and -not $catClient.Contains('cat-prior-open') -and -not $catClient.Contains('data-cat-source-show')) -Message 'retired prior and source-show entries must be absent'
 Assert-Yaku -Condition (-not (($indexSource + "`n" + $quickClient) -match '確認画面へ進みます|文章を入力してください')) -Message 'removed start-screen guidance phrases must stay absent'
 Assert-Yaku -Condition ($catProjectSource -match "Source\s*=\s*'text'[\s\S]{0,500}?Lifecycle\s*=\s*'saved'[\s\S]{0,120}?RetentionUntil\s*=\s*''" -and

@@ -166,7 +166,11 @@ Check-YakuUse ($tourJsUse -match "target: '#cat-open-file-entry'[\s\S]{0,500}?pr
 Check-YakuUse ($tourJsUse -match "target: '#cat-open-file-entry'[\s\S]{0,700}?nextAtTop: true" -and $tourJsUse.Contains('target.blur();') -and $tourJsUse.Contains('window.scrollTo(0, 0);')) '資料選択の次は入力欄へ戻す'
 Check-YakuUse ($tourJsUse.Contains("document.getElementById('quick-form')") -and $tourJsUse.Contains('new MutationObserver') -and $tourJsUse.Contains('mutationObserver.disconnect()')) '入力で動いた送信ボタンを案内が追いかける'
 # 中央へ寄せると押しただけで大きく飛ぶ。開いた欄はいちばん少ない移動で見せる。
-Check-YakuUse ($catJs -match "(?s)function showStart\(mode\)[\s\S]{0,1200}?block: 'nearest'") '開いた欄は最小の移動で見せる'
+# 2026-08-18: 最初の入力欄の bounding box で出し入れを決める2段目の条件が
+# 実機で偽のまま外れず、見出しが画面外で開いた。見出しへの scrollIntoView を
+# 無条件の1回にまとめた（block:'nearest' の入力欄側は、見出しのすぐ下という
+# 短いパネルの中身では常に不要だったので削った）。
+Check-YakuUse ($catJs -match "(?s)function showStart\(mode\)[\s\S]{0,1200}?block: 'start'") '開いた欄は見出しへ合わせて見せる'
 Check-YakuUse ($catJs -notmatch "(?s)function showStart\(mode\) \{ closeStartPanels\(\); var panel[\s\S]{0,120}?YakuCommon\.focus\(") '中央へ寄せる作りに戻さない'
 
 # 押せるボタンに「してください」と書かない。未確認が残っていても取り出せる決まりに

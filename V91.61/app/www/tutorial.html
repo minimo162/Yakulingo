@@ -62,17 +62,20 @@
           <ul>
             <li>ショートカットを、ご自身のユーザーフォルダの中に作ります。Windowsへのサインイン時には自動起動しません。</li>
             <li>スタートメニューには、チェックに関係なく作ります。</li>
-            <li>あとから開始画面の「使い方と設定」で変えられます。</li>
           </ul>
         </details>
         <p class="tutorial-preferences-hint">チェックを外したまま押しても<strong>かまいません</strong>。</p>
         <div id="tutorial-setting-response" class="tutorial-response" role="status" aria-live="polite" tabindex="-1" hidden></div>
-        <button id="tutorial-confirm" type="submit" class="tutorial-confirm">この設定で始める</button>
       </form>
     </section>
 
+    <!-- 2026-08-18: 確認ボタンと「開始画面へ」を1つの帯にまとめた。別々に
+         sticky で画面下へ張り付けると、両方が同じ位置（bottom:0）へ重なり、
+         あとから描画される側（このnav）が確認ボタンを覆って押せなくした
+         （実機 1912x987 で確認）。ボタンは form 属性で元のフォームへつなぐ。 -->
     <nav class="tutorial-navigation" aria-label="移動">
       <a id="tutorial-home" class="button secondary-button" href="/" hidden>開始画面へ</a>
+      <button id="tutorial-confirm" type="submit" form="tutorial-preferences" class="tutorial-confirm">この設定で始める</button>
     </nav>
   </main>
 </body>
