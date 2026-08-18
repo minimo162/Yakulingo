@@ -96,9 +96,44 @@ try {
     [string]$node.Member.Value -eq 'Dispose' -and [string]$node.Expression.Extent.Text -eq '$archive'
   }, $true))
   $archiveDisposeTextCount = ([regex]::Matches($processorsSource, '\$archive\.Dispose\(\)')).Count
-  $archiveGuardCount = ([regex]::Matches($processorsSource, '\$null\s*-ne\s*\$archive')).Count
   Assert-YakuRegression ($null -eq $parseErrors -or @($parseErrors).Count -eq 0) 'FileProcessors parses before cleanup inspection'
-  Assert-YakuRegression ($archiveDisposeCalls.Count -eq $archiveDisposeTextCount -and $archiveDisposeCalls.Count -gt 0 -and $archiveGuardCount -ge $archiveDisposeCalls.Count) ('all FileProcessors archive Dispose calls are enumerated and guarded (calls=' + $archiveDisposeCalls.Count + ', guards=' + $archiveGuardCount + ')')
+
+  function Test-YakuArchiveDisposeHasNullGuard {
+    param([Parameter(Mandatory=$true)][System.Management.Automation.Language.InvokeMemberExpressionAst]$Call)
+
+    $parent = $Call.Parent
+    while ($null -ne $parent) {
+      if ($parent -is [System.Management.Automation.Language.IfStatementAst]) {
+        foreach ($clause in @($parent.Clauses)) {
+          $condition = $clause.Item1
+          $conditionText = ''
+          if ($null -ne $condition) { $conditionText = [string]$condition.Extent.Text }
+          if ($conditionText -match '(?i)\$null\s*-ne\s*\$archive' -or
+              $conditionText -match '(?i)\$archive\s*-ne\s*\$null' -or
+              $conditionText -match '(?i)^\s*\$archive\s*(?:-and|$)') {
+            return $true
+          }
+        }
+      }
+      $parent = $parent.Parent
+    }
+    return $false
+  }
+
+  $archiveDisposeGuardResults = @($archiveDisposeCalls | ForEach-Object {
+    $call = $_
+    [pscustomobject]@{
+      Extent = [string]$call.Extent.Text
+      Guarded = [bool](Test-YakuArchiveDisposeHasNullGuard -Call $call)
+    }
+  })
+  $unguardedArchiveDisposeCalls = @($archiveDisposeGuardResults | Where-Object { -not $_.Guarded })
+  $unguardedArchiveDisposeText = (($unguardedArchiveDisposeCalls | ForEach-Object { $_.Extent }) -join ', ')
+  Assert-YakuRegression (
+    $archiveDisposeCalls.Count -eq $archiveDisposeTextCount -and
+    $archiveDisposeCalls.Count -gt 0 -and
+    $unguardedArchiveDisposeCalls.Count -eq 0
+  ) ('each FileProcessors archive Dispose call is individually inside a null guard (calls=' + $archiveDisposeCalls.Count + ', unguarded=' + $unguardedArchiveDisposeText + ')')
   Assert-YakuRegression ($processorsSource -match 'FILE_PACKAGE_OPEN_FAILED') 'OpenXML open failures retain a specific error code'
 
   $badPath = Join-Path $tempRoot 'invalid.xlsx'
