@@ -852,6 +852,21 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
   font-size: var(--font-meta);
 }
 
+/* 収まらない見込み（収まりの見える化）。プレビューの is-overflow-risk と
+   同じ琥珀色で揃える（同じ判定なので同じ色にする）。閉じている行でも出す
+   （未確認行数と同じ流儀で、押す前の画面に必ず出す）。 */
+.cat-fit-risk-badge {
+  display: inline-block;
+  margin-top: 3px;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(201,121,0,.16);
+  color: #7a4a00;
+  font-size: var(--font-meta);
+  white-space: nowrap;
+}
+
 /* 同じ原文が資料の中に何行あるか。閉じている行でも出す。確定すると他の行にも
    訳が入るので、押す前に見えている必要がある（市販CATの反復表示に相当）。 */
 .cat-repetition {
@@ -873,7 +888,8 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
    開いている行はこれまでどおり縦積みのまま（主役なので情報量を優先）。 */
 .cat-grid tbody tr:not(.is-active) .cat-location-main,
 .cat-grid tbody tr:not(.is-active) .cat-location-kind,
-.cat-grid tbody tr:not(.is-active) .cat-repetition {
+.cat-grid tbody tr:not(.is-active) .cat-repetition,
+.cat-grid tbody tr:not(.is-active) .cat-fit-risk-badge {
   display: inline;
   margin-top: 0;
 }

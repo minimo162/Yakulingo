@@ -782,6 +782,8 @@
     qc: function (segment) { return segmentHasQc(segment); },
     review_notes: function (segment) { return segmentHasReviewNotes(segment); },
     repetition: function (segment) { return Number(segment.repetition_count || 1) > 1; },
+    /* 収まらない見込み（収まりの見える化）。書き出しは止めない。知らせるだけ。 */
+    fit: function (segment) { return segmentFitRiskInfo(segment).risk; },
     reviewed: function (segment) { return !!segment.confirmed; },
     all: function () { return true; }
   };
@@ -905,7 +907,7 @@
     }).join('');
   }
   function syncOptionalStateFilters(counts) {
-    ['qc','repetition','review_notes'].forEach(function (name) {
+    ['qc','repetition','review_notes','fit'].forEach(function (name) {
       var button = document.querySelector('[data-cat-filter="' + name + '"]');
       if (!button) return;
       button.hidden = Number(counts[name] || 0) < 1;
@@ -1040,6 +1042,13 @@
     if (segment.can_revise) html += '<details class="cat-segment-revise"><summary>基準訳を直す</summary><form class="revise-form" data-cat-revise="' + index + '"><label class="revise-label">直す指示</label><div class="revise-row"><input class="revise-input" type="text" placeholder="例：「increase」を「rise」に変える"><button class="secondary-button" type="submit">修正案を作る</button></div></form></details>';
     if (segment.prior_source || segment.prior_translation) html += '<button type="button" class="cat-segment-button secondary-button" data-cat-inspector="context" title="前回資料との差を表示" aria-label="前回資料との差を表示">' + segmentActionIcon('i-eye', '前回との差') + '</button>';
     if (qcMessages(segment).length) html += '<button type="button" class="cat-segment-button secondary-button" data-cat-inspector="qc" title="この行の点検結果を表示" aria-label="この行の点検結果を表示">' + segmentActionIcon('i-check', '点検結果') + '</button>';
+    /* 収まらない見込みの行から、配置ダイアログを経由せず「収める候補」へ1クリックで
+       進む導線（既存の配置ダイアログ＋既存の cat-publication-open を自動で発火する。
+       新しいAPIは作らない）。調整できるセル配置（placement.destinations）が無い行は
+       openPlacementEditor 自体が断るので、ここでも同じ条件で先に隠す。 */
+    if (segment.kind === 'cell' && segment.placement && (segment.placement.destinations || []).length && segmentFitRiskInfo(segment).risk) {
+      html += '<button type="button" class="cat-segment-button secondary-button" data-cat-fit-candidates="' + index + '" title="収める候補を開く（情報を保って短くする）" aria-label="収める候補を開く">' + segmentActionIcon('i-fit', '収める候補') + '</button>';
+    }
     dynamic.innerHTML = html;
     appendStaticSegmentActions(host);
   }
@@ -1051,7 +1060,7 @@
        fallbackへ戻す。後から切り替えると、ボタンだけ「残り」なのに一覧が
        0件のまま次の操作まで残る。 */
     var optionalFilterCounts = {};
-    ['qc','repetition','review_notes'].forEach(function (name) { optionalFilterCounts[name] = all.filter(stateFilters[name]).length; });
+    ['qc','repetition','review_notes','fit'].forEach(function (name) { optionalFilterCounts[name] = all.filter(stateFilters[name]).length; });
     syncOptionalStateFilters(optionalFilterCounts);
     /* 行を作り直すと、一覧が指していた訳文欄は消える。浮いたままにしない。 */
     closePlaceablePicker();
@@ -1126,6 +1135,9 @@
         ((usage.source || usage.translation) ? '<details><summary>使った参考訳を確認</summary>' + (usage.source ? '<div><strong>原文</strong><br>' + esc(usage.source) + '</div>' : '') + (usage.translation ? '<div><strong>訳文</strong><br>' + esc(usage.translation) + '</div>' : '') + '</details>' : '') + '</div>' : '';
       var generatedTerms = (segment.terminology_generation || []).filter(Boolean).length ? '<details class="cat-term-trace"><summary>訳案作成時に指定した用語 ' + segment.terminology_generation.filter(Boolean).length + '件</summary>' + segment.terminology_generation.filter(Boolean).map(function (term) { return '<div><strong>' + esc(term.source || '') + '</strong> → ' + esc(term.preferred || '') + '</div>'; }).join('') + '</details>' : '';
       var kind = segment.kind === 'cell' ? 'セル' : /^word_/.test(segment.kind || '') ? 'Word' : '文';
+      /* 収まらない見込み（収まりの見える化）。判定は segmentFitRiskInfo（プレビューの
+         印・絞り込みと同じ判定）。書き出しは止めない、知らせるだけ。 */
+      var fitInfo = segmentFitRiskInfo(segment);
       /* 訳文欄は全行に置く。押して「開く」段を挟むと、1行直すのに2動作かかる。
          memoQ の表は訳文セルをその場で直す作り（"type or edit the translation in
          the cell on the right"／未確認でも自動保存）で、押して開く段は無い。
@@ -1145,7 +1157,11 @@
            窓 1760px: 「2026年3月期 連結決算サマリー, AB123」は 366px 必要なのに
            89px しか無く、番地が1文字も出ない）。どのセルかは Excel の作業では
            いちばん要る情報なので、全文を title に持たせて指せば読めるようにする。 */
-        '<td class="cat-col-loc"><span class="cat-card-label">場所</span><span class="cat-location-main" title="' + esc(segment.location || '本文') + '">' + esc(segment.location || '本文') + '</span><span class="cat-location-kind">' + esc(kind) + '</span>' + (Number(segment.split_parts || 0) > 1 ? '<span class="cat-repetition" title="この行は1つのセル（段落）を手で分けたものです。書き出すときは、同じ組の行を繋いで元の1つへ戻します。Alt+M でも元へ戻せます。">分けた行 ' + Number(segment.split_part) + '/' + Number(segment.split_parts) + '</span>' : '') + (Number(segment.repetition_count || 1) > 1 ? '<span class="cat-repetition" title="この原文は資料の中に ' + segment.repetition_count + ' 行あります。確認済みにすると、まだ訳が入っていない同じ原文の行へ同じ訳を入れます。">同じ原文×' + segment.repetition_count + '</span>' : '') + (origin ? '<span class="cat-origin">' + esc(origin) + '</span>' : '') + '</td>' +
+        '<td class="cat-col-loc"><span class="cat-card-label">場所</span><span class="cat-location-main" title="' + esc(segment.location || '本文') + '">' + esc(segment.location || '本文') + '</span><span class="cat-location-kind">' + esc(kind) + '</span>' + (Number(segment.split_parts || 0) > 1 ? '<span class="cat-repetition" title="この行は1つのセル（段落）を手で分けたものです。書き出すときは、同じ組の行を繋いで元の1つへ戻します。Alt+M でも元へ戻せます。">分けた行 ' + Number(segment.split_part) + '/' + Number(segment.split_parts) + '</span>' : '') + (Number(segment.repetition_count || 1) > 1 ? '<span class="cat-repetition" title="この原文は資料の中に ' + segment.repetition_count + ' 行あります。確認済みにすると、まだ訳が入っていない同じ原文の行へ同じ訳を入れます。">同じ原文×' + segment.repetition_count + '</span>' : '') +
+        /* 判定の物差し（何pxで測ったか）はここにも出す（利用者判断）。押す前の
+           画面に必ず出す、という決まり（未確認行数と同じ流儀）に合わせる。 */
+        (fitInfo.risk ? '<span class="cat-fit-risk-badge" title="使える幅 ' + Math.round(fitInfo.displayWidthPx) + 'px' + (fitInfo.spillColumnCount > 0 ? '（右の空きセル' + fitInfo.spillColumnCount + '個を含む）' : '') + '。PDFで文字が切れていないか確認してください。">収まらない見込み</span>' : '') +
+        (origin ? '<span class="cat-origin">' + esc(origin) + '</span>' : '') + '</td>' +
         /* 行の作りは、開いていても閉じていても同じ（原文｜訳文）。以前は開いた行だけ
            上下2段のカードに化けていたが、行を移るたびに表がずれて、いま何行目かを
            見失う。市販の CAT（memoQ・Trados・Phrase）はどれも表の形を保ったまま
@@ -2611,9 +2627,14 @@
     sheets.forEach(function (sheet) { if (String(sheet.name) === String(sheetName)) found = sheet; });
     if (!found) return null;
     if (found.__prepared) return found.__prepared;
-    var widths = {}, heights = {}, wrap = {}, shrink = {}, align = {}, bold = {}, spans = {}, covered = {};
+    var widths = {}, heights = {}, wrap = {}, shrink = {}, align = {}, bold = {}, spans = {}, covered = {}, hidden = {};
     (found.columns || []).forEach(function (col) {
-      for (var c = Number(col.min); c <= Number(col.max); c++) widths[c] = col.hidden ? 0 : Number(col.width);
+      for (var c = Number(col.min); c <= Number(col.max); c++) {
+        widths[c] = col.hidden ? 0 : Number(col.width);
+        /* 幅を0にするだけでは「幅0の列」と区別が付かない。右への自動はみ出し
+           （収まりの見える化）は非表示列で止める必要があり、幅とは別に持つ。 */
+        if (col.hidden) hidden[c] = true;
+      }
     });
     /* 行の高さは、既定と違う行だけ来る。来ない行は既定で埋める。 */
     (found.rows || []).forEach(function (row) { heights[Number(row.row)] = Number(row.height); });
@@ -2639,10 +2660,37 @@
         }
       }
     });
+    /* 右への自動はみ出しは、値・数式のどちらが入っていても止める必要がある
+       （src/CatProject.ps1 の Get-YakuCatRightSpillDisplayRegion と同じ条件）。
+       番地の並びは previewCellRef（既存のA1解析）で行:列へ直す。新しい解析は書かない。
+       同じ歩きで、シート全体の「最終内容列」（占有セル・数式セル・結合範囲の
+       終端のうち最も右）も一度だけ求める。印刷範囲は通常、使用範囲（その資料に
+       実際に中身がある最も右・最も下）で閉じる。そこから先は Excel 上は
+       ただの空白の海であり、収まりの根拠にしてよい「使える幅」ではない
+       （甘い側に外さない）。求めるのは1シートにつき1回で、行ごとには求めない
+       （CoD審査 2026-08-18 REWORK-1: 求めないと、右に何も無い行の自動歩きが
+       列16384まで走り、300行の資料で初回描画が441ms→11241msへ25倍に落ちた。
+       さらに、実際の最終内容列そのもののセルは「右へ無限の余白」を得て
+       絶対に収まり判定に引っかからなくなっていた）。 */
+    var occupied = {};
+    var lastContentColumn = 0;
+    (found.occupied_cells || []).concat(found.formula_cells || []).forEach(function (address) {
+      var ref = previewCellRef('x, ' + address);
+      if (!ref) return;
+      occupied[ref.row + ':' + ref.column] = true;
+      if (ref.column > lastContentColumn) lastContentColumn = ref.column;
+    });
+    (found.merges || []).forEach(function (range) {
+      var parts = String(range).split(':');
+      if (parts.length !== 2) return;
+      var to = previewCellRef('x, ' + parts[1]);
+      if (to && to.column > lastContentColumn) lastContentColumn = to.column;
+    });
     found.__prepared = {
       defaultWidth: Number(found.default_width) || 8.43,
       defaultHeight: Number(found.default_height) || 18.75,
       widths: widths, heights: heights, wrap: wrap, shrink: shrink, align: align, bold: bold, spans: spans, covered: covered,
+      hidden: hidden, occupied: occupied, lastContentColumn: lastContentColumn,
       unknownWidthColumns: (found.unknown_width_columns || []).map(function (range) {
         return { min: Number(range.min), max: Number(range.max) };
       })
@@ -2672,6 +2720,31 @@
       })) return false;
     }
     return true;
+  }
+  /* 使える幅（収まりの見える化）。自セルの右へ、中身の無い列を歩いて数える。
+     止めるのは次のいずれか。
+       - 占有セル・数式セル・非表示列・結合・未知幅列（src/CatProject.ps1 の
+         Get-YakuCatRightSpillDisplayRegion が宣言スピルを検証する条件と同じ）
+       - シートの最終内容列（layout.lastContentColumn、previewLayout が1回だけ
+         求める）を超えたとき。最終内容列より右は「右へ無限の余白」であって、
+         収まりの根拠にする使える幅ではない（上のコメントと同じ理由）
+     Excel 自身の列数上限（XFD＝16384）は、その最終内容列の値そのものが壊れて
+     いた場合の物理的な歯止めとして残す（2枚目の網）。 */
+  var YAKU_PREVIEW_MAX_COLUMN = 16384;
+  function autoSpillColumns(layout, row, column, span) {
+    if (!layout) return [];
+    var count = (span && span.columns) || 1;
+    var next = column + count, result = [];
+    var bound = Math.min(YAKU_PREVIEW_MAX_COLUMN, Number(layout.lastContentColumn) || 0);
+    while (next <= bound) {
+      if (!previewColumnsHaveKnownWidth(layout, next, 1)) break;
+      if (layout.hidden[next]) break;
+      var key = row + ':' + next;
+      if (layout.covered[key] || layout.spans[key] || layout.occupied[key]) break;
+      result.push(next);
+      next++;
+    }
+    return result;
   }
   /* 行の高さは「ポイント」。96dpi の px に直す（1pt = 4/3 px）。
      tr の height は最低の高さとして効くので、折り返して伸びた行は伸びたまま出る。
@@ -2708,40 +2781,136 @@
     context.font = (bold ? '700 ' : '') + '14.7px ' + previewOutputFont();
     return context.measureText(String(text || '')).width;
   }
-  function previewCellHtml(segment, layout, row, column, span) {
-    var value = previewText(segment);
+  /* 収まりの判定に使う文字列。プレビューの表示切替（原文／訳文）とは独立に、
+     「実際にセルへ入る文字」＝訳文（無ければ原文）で見る。絞り込みや行の印は
+     プレビューの表示側と連動させない（表示は見る側の都合、収まりは書く内容の
+     都合で、別のもの）。 */
+  function segmentFitText(segment) {
+    var target = String(segment.translation || '');
+    return target.trim() ? target : String(segment.source || '');
+  }
+  /* 収まりの判定そのもの。プレビューの印（previewCellHtml）と、絞り込み・行の
+     印（segmentFitRiskInfo 経由）の両方がこの1つを使う。呼び出し側が層・行・列・
+     結合幅・測る文字列・太字を渡す点は元の previewCellHtml のインライン計算と
+     同じにし、判定式も変えない（純粋な抽出）。変えたのは使える幅の出し方だけで、
+     自動計算した右への空きセル（autoSpillColumns）を優先し、それが0列のときだけ
+     利用者が宣言した表示領域（従来の spill_right_display_only）を使う。
+     宣言セルは検証済みの空セルなので、自動計算に必ず含まれるはずである
+     （届いていれば自動計算のほうが必ず勝つ）。自動が届かない例外だけ、
+     従来の経路（元の計算そのまま）へ落ちる。 */
+  function segmentFitRisk(segment, layout, row, column, span, text, bold) {
     var key = row + ':' + column;
     var wrap = layout ? !!layout.wrap[key] : false;
     var shrink = layout ? !!layout.shrink[key] : false;
     var align = layout ? (layout.align[key] || '') : '';
-    var style = '';
+    var spanColumns = (span && span.columns) || 1;
     var displayWidth = layout ? previewColumnPx(layout, column, span) : 0;
-    var measurementKnown = !!layout && previewColumnsHaveKnownWidth(layout, column, (span && span.columns) || 1);
-    var spillRegion = segment.placement && (segment.placement.display_regions || []).find(function (region) {
-      return region.mode === 'spill_right_display_only' && String(region.anchor_address || '').toUpperCase() === String(segment.location || '').split(',').pop().trim().toUpperCase();
-    });
-    if (layout && spillRegion) {
-      (spillRegion.cells || []).forEach(function (_, offset) {
-        var spillColumn = column + offset + 1;
-        displayWidth += previewColumnPx(layout, spillColumn, null);
-        if (!previewColumnsHaveKnownWidth(layout, spillColumn, 1)) measurementKnown = false;
-      });
+    var measurementKnown = !!layout && previewColumnsHaveKnownWidth(layout, column, spanColumns);
+    var spillColumnCount = 0, spillSource = 'none';
+    if (layout && measurementKnown && !wrap && !shrink) {
+      /* 中央寄せ・右寄せは左右にはみ出すため、自動の右スピルは対象にしない
+         （空か左寄せのセルだけ）。 */
+      var autoColumns = (align === '' || align === 'left') ? autoSpillColumns(layout, row, column, span) : [];
+      if (autoColumns.length) {
+        autoColumns.forEach(function (col) { displayWidth += previewColumnPx(layout, col, null); });
+        spillColumnCount = autoColumns.length; spillSource = 'auto';
+      } else {
+        var spillRegion = segment.placement && (segment.placement.display_regions || []).find(function (region) {
+          return region.mode === 'spill_right_display_only' && String(region.anchor_address || '').toUpperCase() === String(segment.location || '').split(',').pop().trim().toUpperCase();
+        });
+        if (spillRegion) {
+          (spillRegion.cells || []).forEach(function (_, offset) {
+            var spillColumn = column + offset + 1;
+            displayWidth += previewColumnPx(layout, spillColumn, null);
+            if (!previewColumnsHaveKnownWidth(layout, spillColumn, 1)) measurementKnown = false;
+          });
+          spillColumnCount = (spillRegion.cells || []).length; spillSource = 'declared';
+        }
+      }
     }
-    var overflowRisk = !!(layout && measurementKnown && !wrap && !shrink && previewTextWidthPx(value.text, !!layout.bold[key]) > Math.max(0, displayWidth - 8));
+    var textWidth = previewTextWidthPx(text, bold);
+    var risk = !!(layout && measurementKnown && !wrap && !shrink && textWidth > Math.max(0, displayWidth - 8));
+    return { risk: risk, measurementKnown: measurementKnown, displayWidthPx: displayWidth, textWidthPx: textWidth, spillColumnCount: spillColumnCount, spillSource: spillSource };
+  }
+  /* 絞り込み・行の印・文字目標の3つが、生の segment（プレビューの destination
+     展開を経ていないもの）から判定を引くための入口。番地の解析は既存の
+     previewCellRef を使う（新しいA1解析は書かない）。Excel以外・層が引けない
+     資料では常に false。
+     訳がまだ空の行も常に false（CoD審査 2026-08-18 REWORK-1）。配置計画は
+     掲載訳が空でないことを前提にしており（src/CatProject.ps1:1877）、
+     「収める候補」は空の行には作れない。未翻訳の資料を開いた瞬間に
+     「収まらない見込み」を名乗るのは、原文の長さで判定してしまっているだけで、
+     実際には1行も候補を出せない誤検知だった。
+     プレビューの印（previewCellHtml）はここを経由しない別経路（プレビューの
+     表示切替＝原文／訳文にそのまま追随する、従来どおりの仕様）なので、この
+     ゲートの影響を受けない。 */
+  function segmentFitRiskInfo(segment) {
+    if (!segment || segment.kind !== 'cell') return { risk: false };
+    if (!String(segment.translation || '').trim()) return { risk: false };
+    var ref = previewCellRef(segment.location);
+    if (!ref) return { risk: false };
+    var layout = previewLayout(ref.sheet);
+    if (!layout) return { risk: false };
+    var key = ref.row + ':' + ref.column;
+    return segmentFitRisk(segment, layout, ref.row, ref.column, layout.spans[key] || null, segmentFitText(segment), !!layout.bold[key]);
+  }
+  /* 短縮候補へ渡す文字目標。現訳の実測幅から、使える幅に収まる文字数を比例で
+     出す。層が引けない・訳が無いなど実幅が出せないときは null を返し、
+     呼び出し側が従来の「現訳の長さ×0.8」へフォールバックする（そちらは
+     20字下限を今までどおり残す）。
+
+     実測できたときは、20字下限を掛けない（CoD審査 2026-08-18 REWORK-1）。
+     実際の容量が8〜11字しかない行に「文字目標 20字」と出すのは、根拠を
+     言うはずの文言が自分自身を裏切っていた。代わりに、サーバの使える窓
+     [8,99]（src/Publication.ps1 のクランプ）へここでクランプしてから送る。
+     生の値が99を超えるとき、送らなければ src/CopilotClient.ps1:5673-5675 が
+     文字数の指示を1行も出さないのに、画面は「実測した使える幅から算出」と
+     言い続けていた（クランプせずに送っていたのが原因）。raw（生の値）と
+     basis（measured／below-min／above-max）を返し、状態行がどちらを言って
+     いるかを正直に出せるようにする。 */
+  function segmentFitCapacity(segment) {
+    if (!segment || segment.kind !== 'cell') return null;
+    var text = String(segment.translation || '');
+    if (!text) return null;
+    var ref = previewCellRef(segment.location);
+    if (!ref) return null;
+    var layout = previewLayout(ref.sheet);
+    if (!layout) return null;
+    var key = ref.row + ':' + ref.column;
+    var fit = segmentFitRisk(segment, layout, ref.row, ref.column, layout.spans[key] || null, text, !!layout.bold[key]);
+    if (!fit.measurementKnown || !(fit.displayWidthPx > 0) || !(fit.textWidthPx > 0)) return null;
+    var raw = Math.floor(text.length * Math.max(0, fit.displayWidthPx - 8) / fit.textWidthPx);
+    var basis = raw < 8 ? 'below-min' : (raw > 99 ? 'above-max' : 'measured');
+    return { raw: raw, maxChars: Math.min(99, Math.max(8, raw)), basis: basis };
+  }
+  function previewCellHtml(segment, layout, row, column, span) {
+    var value = previewText(segment);
+    var key = row + ':' + column;
+    var wrap = layout ? !!layout.wrap[key] : false;
+    var align = layout ? (layout.align[key] || '') : '';
+    var style = '';
+    var fit = segmentFitRisk(segment, layout, row, column, span, value.text, !!(layout && layout.bold[key]));
+    var overflowRisk = fit.risk;
     if (layout) {
       style = ' style="width:' + previewColumnPx(layout, column, span) + 'px' +
         (align === 'center' ? ';text-align:center' : align === 'right' ? ';text-align:right' : '') + '"';
     }
+    var placementTitle = previewSide === 'target' && segment.placement_root_index !== undefined ? 'セルごとの区切りを調整' : '';
     var placementAction = previewSide === 'target' && segment.placement_root_index !== undefined
-      ? ' data-cat-placement-edit="' + Number(segment.placement_root_index) + '" title="セルごとの区切りを調整"'
+      ? ' data-cat-placement-edit="' + Number(segment.placement_root_index) + '"'
       : ' data-cat-qa-jump="' + Number(segment.index) + '"';
+    /* 判定の物差し（何pxで測ったか）は行側に必ず出す（利用者判断）。既存の
+       title（セルごとの区切りを調整）とは1つの title へ両方書く。 */
+    var fitTitle = overflowRisk ? ('使える幅 ' + Math.round(fit.displayWidthPx) + 'px' + (fit.spillColumnCount > 0 ? '（右の空きセル' + fit.spillColumnCount + '個を含む）' : '')) : '';
+    var combinedTitle = [placementTitle, fitTitle].filter(Boolean).join(' / ');
+    var titleAttr = combinedTitle ? ' title="' + esc(combinedTitle) + '"' : '';
     return '<button type="button" class="cat-preview-cell' + (value.missing ? ' is-missing' : '') +
       (wrap ? ' is-wrap' : '') + (layout && layout.bold[key] ? ' is-bold' : '') +
       (overflowRisk ? ' is-overflow-risk' : '') +
       (Number(segment.index) === Number(activeIndex) ? ' is-active' : '') +
       /* 常設の体裁が選択に追随するとき、印を付け替える相手をここで名指しできる
          ようにする。data-cat-qa-jump は配置つきのセルには付かないので当てにできない。 */
-      '" data-cat-preview-index="' + Number(segment.index) + '"' + style + placementAction +
+      '" data-cat-preview-index="' + Number(segment.index) + '"' + style + placementAction + titleAttr +
       (overflowRisk ? ' aria-label="収まり要確認: PDFで切れを確認してください"' : '') + '>' +
       esc(value.text) + '</button>';
   }
@@ -3140,7 +3309,7 @@
   function openPlacementEditor(index) {
     var segment = (project && project.segments || []).find(function (item) { return Number(item.index) === Number(index); });
     var placement = segment && segment.placement;
-    if (!placement || !(placement.destinations || []).length) { status('この行には調整できるセル配置がありません。', true); return; }
+    if (!placement || !(placement.destinations || []).length) { status('この行には調整できるセル配置がありません。', true); return false; }
     el('cat-placement-index').value = String(index);
     placementEditorDestinations = (placement.destinations || []).slice();
     var downDestinations = placementEditorDestinations.filter(function (destination) { return String(destination.mode || '') === 'use_confirmed_empty'; });
@@ -3157,6 +3326,16 @@
     el('cat-placement-message').textContent = '現在の掲載訳: ' + String(segment.publication_translation || segment.translation || '');
     el('cat-placement-dialog').showModal();
     var first = el('cat-placement-slices').querySelector('textarea'); if (first) YakuCommon.focus(first);
+    return true;
+  }
+  /* 収まらない見込みの行から1クリックで「収める候補」へ。既存の配置ダイアログ
+     （調整できるセル配置の読み込み・cat-placement-index の設定）を経てから、
+     既存の cat-publication-open の流れをそのまま自動で発火する。開けなかった
+     ときは openPlacementEditor 側の案内（ステータス）で止める。新しいAPIは
+     作らない（既存の openPlacementEditor / openPublicationCandidates を呼ぶだけ）。 */
+  function openFitPublicationFlow(index) {
+    if (openPlacementEditor(index) === false) return;
+    openPublicationCandidates();
   }
   function savePlacement(event) {
     event.preventDefault();
@@ -3186,6 +3365,7 @@
     el('cat-publication-canonical').textContent = String(segment.translation || '');
     el('cat-publication-status').textContent = '候補を作っても、まだExcelや基準訳は変わりません。';
     el('cat-publication-candidates').innerHTML = '';
+    var maxCharsNote = el('cat-publication-maxchars-note'); if (maxCharsNote) maxCharsNote.textContent = '';
     el('cat-publication-dialog').showModal();
   }
   function showPublicationCandidateSet(set) {
@@ -3227,7 +3407,29 @@
     if (!segment) return;
     el('cat-publication-generate').disabled = true; el('cat-publication-status').textContent = '候補を作っています…';
     var destinationCount = segment.placement && segment.placement.destinations ? segment.placement.destinations.length : 1;
-    var maxChars = Math.max(20, Math.floor(String(segment.translation || '').length * 0.8));
+    /* 文字目標は、実測できるときは使える幅から出す（収まりの見える化）。
+       実幅が取れないセル（層が引けない・Excel以外）は、従来どおり
+       「現訳の長さ×0.8」へフォールバックする（20字下限はそちらだけに残す。
+       実測できた側では外す。理由は segmentFitCapacity の註）。
+       サーバの使える窓 [8,99] へは、送る前にここでクランプする（クランプせずに
+       99超をそのまま送ると、src/CopilotClient.ps1 が文字数の指示を1行も
+       出さない一方で、画面だけが「実測した使える幅から算出」と言い続ける
+       食い違いになる。CoD審査 2026-08-18 REWORK-1）。状態行は、クランプが
+       効いたかどうかまで正直に言う。 */
+    var measuredCapacity = segmentFitCapacity(segment);
+    var maxChars = measuredCapacity ? measuredCapacity.maxChars : Math.max(20, Math.floor(String(segment.translation || '').length * 0.8));
+    var maxCharsNote = el('cat-publication-maxchars-note');
+    if (maxCharsNote) {
+      if (measuredCapacity) {
+        maxCharsNote.textContent = measuredCapacity.basis === 'below-min'
+          ? '文字目標 8字（下限。実測の容量は ' + measuredCapacity.raw + '字）'
+          : measuredCapacity.basis === 'above-max'
+          ? '文字目標 99字（上限。実測の容量は ' + measuredCapacity.raw + '字）'
+          : '文字目標 ' + measuredCapacity.maxChars + '字（実測した使える幅から算出）';
+      } else {
+        maxCharsNote.textContent = '文字目標 ' + maxChars + '字（実幅を測れないため、現訳の長さの目安から算出）';
+      }
+    }
     return flush().then(function () { return post('publication-candidates', { index: index, max_chars: maxChars, destination_count: destinationCount }, true); }).then(function (data) {
       publicationJobId = String(data.job_id || ''); if (!publicationJobId) throw new Error('候補作成を開始できませんでした。'); return pollPublicationCandidates(publicationJobId);
     }).catch(function (error) { el('cat-publication-status').textContent = error.message; el('cat-publication-generate').disabled = false; });
@@ -3981,7 +4183,7 @@
     });
     document.addEventListener('click', function (event) {
       var button = event.target.closest('button'); if (!button) return;
-      if (busy && (button.id === 'cat-confirm-bulk' || button.id === 'cat-replace-run' || button.id === 'cat-replace-undo' || button.id === 'cat-structure-undo' || button.id === 'cat-tm-pretranslate' || button.hasAttribute('data-cat-translate-row') || button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-tm-register') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-split-at') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision') || button.hasAttribute('data-cat-review-note-state'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
+      if (busy && (button.id === 'cat-confirm-bulk' || button.id === 'cat-replace-run' || button.id === 'cat-replace-undo' || button.id === 'cat-structure-undo' || button.id === 'cat-tm-pretranslate' || button.hasAttribute('data-cat-translate-row') || button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-tm-register') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-split-at') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision') || button.hasAttribute('data-cat-review-note-state') || button.hasAttribute('data-cat-fit-candidates'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
       if (button.hasAttribute('data-cat-preview-mode')) { setPreviewMode(button.getAttribute('data-cat-preview-mode')); return; }
       if (button.hasAttribute('data-cat-preview-side')) { previewSide = button.getAttribute('data-cat-preview-side') || 'target'; renderPreview(); return; }
       if (button.hasAttribute('data-cat-dock-side')) { dockSide = button.getAttribute('data-cat-dock-side') || 'target'; renderDockPreview(); return; }
@@ -3992,6 +4194,7 @@
         return;
       }
       if (button.hasAttribute('data-cat-placement-edit')) { return openPlacementEditor(button.getAttribute('data-cat-placement-edit')); }
+      if (button.hasAttribute('data-cat-fit-candidates')) { return openFitPublicationFlow(button.getAttribute('data-cat-fit-candidates')); }
       if (button.hasAttribute('data-cat-qa-jump')) return jumpFromQa(button.getAttribute('data-cat-qa-jump'));
       if (button.hasAttribute('data-cat-doc-finding-jump')) return jumpFromQa(button.getAttribute('data-cat-doc-finding-jump'));
       if (button.hasAttribute('data-cat-doc-finding-decision')) return decideDocumentFinding(button);
