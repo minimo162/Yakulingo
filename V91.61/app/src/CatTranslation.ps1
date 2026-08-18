@@ -125,7 +125,9 @@ function ConvertTo-YakuCatDedupedItems {
       一覧）・Terminology（最初の複製のものだけ。従来どおり複製間で
       混ぜない）・MaxChars を持つ pscustomobject の配列。
     #>
-    param([Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$RawItems)
+    # AllowNull が無いと、要素に $null を1つでも含む配列は束縛の時点で throw し、
+    # 下の $null ガードへ到達できない(旧インラインループは $null を飛ばして続行していた)。
+    param([Parameter(Mandatory=$true)][AllowNull()][AllowEmptyCollection()][object[]]$RawItems)
     $byText = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([System.StringComparer]::Ordinal)
     $items = New-Object System.Collections.Generic.List[object]
     foreach ($it in @($RawItems)) {
