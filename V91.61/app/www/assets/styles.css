@@ -72,20 +72,20 @@ button, input, textarea, select { font: inherit; }
 button, a.button { cursor: pointer; }
 a { color: inherit; }
 .shell { width: min(920px, calc(100% - 40px)); max-width: 920px; margin: 0 auto; padding: 0 0 var(--space-6); }
-.hero { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: 16px 0; border-bottom: 1px solid var(--line); }
-.header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }
+.hero { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); min-width: 0; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; min-width: 0; max-width: 100%; }
 .brand-block { display: flex; align-items: baseline; gap: 10px; }
 .brand { margin: 0; font-size: var(--font-ui); font-weight: 700; }
 .version-label { color: var(--faint); font-size: var(--font-meta); }
-.status { display: inline-flex; align-items: center; gap: 8px; min-height: 24px; color: var(--text); font-size: var(--font-meta); line-height: 1.4; }
+.status { display: inline-flex; align-items: center; gap: 8px; min-height: 24px; min-width: 0; max-width: 100%; color: var(--text); font-size: var(--font-meta); line-height: 1.4; overflow-wrap: anywhere; }
 .status-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--faint); display: inline-block; flex: 0 0 auto; }
 .status-dot.ok { background: var(--success); }
 .status-dot.warn { background: var(--warning); }
 .status-dot.idle { background: var(--faint); }
-.status-block { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; min-width: 0; }
+.status-block { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; min-width: 0; max-width: 100%; }
 /* 「EdgeのCopilot画面でログインが済んでいるかご確認ください」のように、
    利用者が実際にやることが入る行。準備が終われば消える。 */
-.status-detail { max-width: 34em; margin: 0; color: var(--text); font-size: var(--font-meta); line-height: 1.6; text-align: right; }
+.status-detail { max-width: 34em; margin: 0; color: var(--text); font-size: var(--font-meta); line-height: 1.6; text-align: right; white-space: normal; overflow-wrap: anywhere; word-break: break-word; max-height: 8em; overflow: auto; }
 
 .tab-panel { margin-top: var(--space-5); opacity: 1; transition: opacity var(--motion) var(--ease); }
 .tab-panel[hidden] { opacity: 0; }
@@ -235,6 +235,8 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .cat-source-row { display: grid; gap: var(--space-2); margin-bottom: var(--space-2); }
 .cat-direction { display: flex; gap: 16px; align-items: center; }
 .cat-status { margin: var(--space-2) 0; font-size: var(--font-meta); }
+.file-loading { display: flex; align-items: center; gap: 10px; margin: var(--space-2) 0; border: 1px solid var(--line-strong); border-left: 4px solid var(--accent); border-radius: var(--radius-control); background: var(--accent-soft); padding: 10px 12px; color: var(--text); font-size: var(--font-meta); font-weight: 700; overflow-wrap: anywhere; }
+.file-loading[hidden] { display: none; }
 .cat-save-status { display: none; margin: -4px 0 var(--space-2); font-size: var(--font-meta); }
 .cat-save-status.is-error { color: var(--danger, #b42318); font-weight: 700; }
 .cat-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: var(--space-2); }
@@ -484,6 +486,7 @@ summary { cursor: pointer; color: var(--text); font-size: var(--font-meta); min-
   .hero { align-items: stretch; flex-direction: column; }
   .header-actions { width: 100%; align-items: stretch; flex-direction: column; }
   .status { justify-content: flex-end; }
+  .status-detail { max-width: 100%; text-align: left; }
   .direction-row { align-items: stretch; flex-direction: column; gap: 8px; }
   .direction-row label span { width: 100%; border-radius: var(--radius-control) !important; margin-left: 0 !important; }
   .direction-summary { align-items: stretch; flex-direction: column; }

@@ -86,6 +86,7 @@ const sandbox = {
     return input;
   },
   setBusy() {},
+  setFileLoading() {},
   status() {},
   render(data) { rendered.push(data); },
   post(action, body) {
@@ -112,6 +113,9 @@ vm.runInContext(`
   var pendingDirection = null;
   var __openSourceCalls = 0;
   ${sourceFunction}
+  function beginFileLoading() {}
+  function finishFileLoading() {}
+  function cancelFileLoading() {}
   ${openSourceFunction}
   ${bindFileDropFunction}
   this.bindFileDrop = bindFileDrop;

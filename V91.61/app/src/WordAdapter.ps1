@@ -8,7 +8,7 @@
         $zipMode = if ($Mode -eq 'Update') { [IO.Compression.ZipArchiveMode]::Update } else { [IO.Compression.ZipArchiveMode]::Read }
         $archive = New-Object IO.Compression.ZipArchive($stream, $zipMode, $false)
         return [pscustomobject]@{ Stream=$stream; Archive=$archive }
-    } catch { $stream.Dispose(); throw }
+    } catch { if ($null -ne $stream) { try { $stream.Dispose() } catch {} }; throw }
 }
 
 # Windows PowerShell 5.1 resolves enum types before entering a function body.
@@ -19,7 +19,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyCon
 function Close-YakuWordPackage {
     param([AllowNull()]$Package)
     if ($null -eq $Package) { return }
-    try { $Package.Archive.Dispose() } finally { $Package.Stream.Dispose() }
+    try { if ($null -ne $Package.Archive) { $Package.Archive.Dispose() } } finally { if ($null -ne $Package.Stream) { $Package.Stream.Dispose() } }
 }
 
 function Read-YakuWordXmlEntry {
