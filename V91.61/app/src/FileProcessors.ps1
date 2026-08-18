@@ -5016,7 +5016,7 @@ function Test-YakuCandidateOutput {
     if (-not $ContentModified) {
         Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue | Out-Null
         $archive = [System.IO.Compression.ZipFile]::OpenRead($CandidatePath)
-        try { $null = $archive.Entries.Count } finally { $archive.Dispose() }
+        try { $null = $archive.Entries.Count } finally { if ($null -ne $archive) { try { $archive.Dispose() } catch {} } }
         try { Write-YakuLog "Output light validation completed. contentModified=false fileSize=$size" 'INFO' } catch {}
         return [pscustomobject]@{ Reopenable=$true; PackageReadable=$true; FormulaCount=0; MacroPreserved=$true; SheetCount=0; FileSize=$size; LightValidation=$true }
     }
