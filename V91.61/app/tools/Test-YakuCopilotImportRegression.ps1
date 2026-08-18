@@ -70,11 +70,21 @@ try {
 
   Write-Host 'CASE 3: diagnose the old null-method expression and keep real failures explicit' -ForegroundColor Cyan
   $nullDisposeError = $null
+  $nullDisposeRecord = $null
   try {
     $archive = $null
     try { } finally { $archive.Dispose() }
-  } catch { $nullDisposeError = [string]$_.Exception.Message }
-  Assert-YakuRegression ($nullDisposeError -match 'null' -and $nullDisposeError -match 'Dispose|メソッド') 'old unguarded archive.Dispose expression reproduces the null-method diagnostic'
+  } catch {
+    $nullDisposeRecord = $_
+    $nullDisposeError = [string]$_.Exception.Message
+  }
+  $nullMethodId = if ($null -ne $nullDisposeRecord) { [string]$nullDisposeRecord.FullyQualifiedErrorId } else { '' }
+  $nullMethodCategory = if ($null -ne $nullDisposeRecord) { [string]$nullDisposeRecord.CategoryInfo.Category } else { '' }
+  $nullMethodType = if ($null -ne $nullDisposeRecord -and $null -ne $nullDisposeRecord.Exception) { [string]$nullDisposeRecord.Exception.GetType().FullName } else { '' }
+  $nullMethodDetected = ($nullMethodId -match '(?i)InvokeMethodOnNull|MethodInvocation') -or
+    ($nullMethodCategory -eq 'InvalidOperation' -and $nullMethodType -match '(?i)RuntimeException') -or
+    ($nullDisposeError -match '(?i)null-valued|メソッドを呼び出せません')
+  Assert-YakuRegression $nullMethodDetected ('old unguarded archive.Dispose expression reproduces the locale-independent null-method diagnostic (FQID=' + $nullMethodId + ', Category=' + $nullMethodCategory + ', Type=' + $nullMethodType + ')')
   $clientSource = [IO.File]::ReadAllText((Join-Path $root 'src/CopilotClient.ps1'))
   Assert-YakuRegression ($clientSource -match 'COPILOT_TARGET_LOCK_UNAVAILABLE' -and $clientSource -match 'Copilot target mutex unavailable') 'mutex creation failures are logged and rethrown'
   Assert-YakuRegression ($clientSource -notmatch '(?s)Get-YakuCopilotTargetMutex\s*\{.*catch\s*\{\s*return\s+\$null') 'Copilot target creation cannot fail open without a mutex'
