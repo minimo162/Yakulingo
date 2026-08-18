@@ -89,8 +89,16 @@ try {
   Assert-YakuRegression ($clientSource -match 'COPILOT_TARGET_LOCK_UNAVAILABLE' -and $clientSource -match 'Copilot target mutex unavailable') 'mutex creation failures are logged and rethrown'
   Assert-YakuRegression ($clientSource -notmatch '(?s)Get-YakuCopilotTargetMutex\s*\{.*catch\s*\{\s*return\s+\$null') 'Copilot target creation cannot fail open without a mutex'
   $processorsSource = [IO.File]::ReadAllText((Join-Path $root 'src/FileProcessors.ps1'))
-  $unguardedArchiveDisposes = @($processorsSource -split "`r?`n" | Where-Object { $_ -match '^\s*\$archive\.Dispose\(\)' })
-  Assert-YakuRegression ($unguardedArchiveDisposes.Count -eq 0) 'all FileProcessors archive cleanup expressions are guarded'
+  $tokens = $null; $parseErrors = $null
+  $processorsAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'src/FileProcessors.ps1'), [ref]$tokens, [ref]$parseErrors)
+  $archiveDisposeCalls = @($processorsAst.FindAll({ param($node)
+    $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+    [string]$node.Member.Value -eq 'Dispose' -and [string]$node.Expression.Extent.Text -eq '$archive'
+  }, $true))
+  $archiveDisposeTextCount = ([regex]::Matches($processorsSource, '\$archive\.Dispose\(\)')).Count
+  $archiveGuardCount = ([regex]::Matches($processorsSource, '\$null\s*-ne\s*\$archive')).Count
+  Assert-YakuRegression ($null -eq $parseErrors -or @($parseErrors).Count -eq 0) 'FileProcessors parses before cleanup inspection'
+  Assert-YakuRegression ($archiveDisposeCalls.Count -eq $archiveDisposeTextCount -and $archiveDisposeCalls.Count -gt 0 -and $archiveGuardCount -ge $archiveDisposeCalls.Count) ('all FileProcessors archive Dispose calls are enumerated and guarded (calls=' + $archiveDisposeCalls.Count + ', guards=' + $archiveGuardCount + ')')
   Assert-YakuRegression ($processorsSource -match 'FILE_PACKAGE_OPEN_FAILED') 'OpenXML open failures retain a specific error code'
 
   $badPath = Join-Path $tempRoot 'invalid.xlsx'
