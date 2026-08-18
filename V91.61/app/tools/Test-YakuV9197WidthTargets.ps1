@@ -9,17 +9,23 @@
   Chromium で開いて確かめる（node/Playwright/Chromium が無い環境では
   UNMEASURED＝exit 3 にする。「測れなかった」を赤に畳まない）。
 
-  見るのは4つ。
+  見るのは5つ。
     (a) ConvertTo-YakuCatValidFitTargets: サーバが受け取る fit_targets の
-        検証（8..99の整数のみ・実在index・上限件数）。
+        検証（8..99の整数のみ・実在index・indexの欠落/nullを拒む・上限件数は
+        受理した件数で数える＝水増しされた不正な行に締め出されない）。
     (b) Resolve-YakuCatFitTargetForDuplicates: 同じ原文の複製へ複数の目標が
         付いたときの畳み方（全複製に目標があるときだけ最小値、1つでも
         無指定なら目標そのものを付けない）。
-    (c) New-YakuCatCharacterTargets / New-YakuCatPrompt: 目標を持つitemだけを
-        列挙する・前置文が「省略・要約せず、収まらなければ超えてよい」と
+    (c) ConvertTo-YakuCatDedupedItems: 生のpending items（重複あり）を渡し、
+        重複排除→(b)の畳み→**実物の New-YakuCatPrompt** へ通し、畳んだ結果が
+        正しいitem番号でプロンプトへ出ることを端から端まで確かめる
+        （CoD審査 2026-08-18 REWORK-1: worker本体はジョブの別ランスペースに
+        あり試験から届かないため、この関数を切り出して直接検証する）。
+    (d) New-YakuCatCharacterTargets / New-YakuCatPrompt: 目標を持つitemだけを
+        列挙する・前置文が「省略・要約・圧縮せず、収まらなければ超えてよい」と
         言っている・無指定時は固定文・雛形のプレースホルダ展開・マスク済み
         プロンプトに生の資料数値が混ざらないこと。
-    (d) 実機Chromium: previewOutputAvgCharPx・segmentSourceFitTarget・
+    (e) 実機Chromium: previewOutputAvgCharPx・segmentSourceFitTarget・
         buildFitTargets が、translate()/translateRow() の POST body へ
         正しい fit_targets を積むこと（既知幅・非wrap・非shrink・寄せの
         ゲート、8..99の外は送らない、訳済み行は対象にしない、1件も無ければ
@@ -61,7 +67,11 @@ $T9197RawFitTargets = @(
     (New-T9197FitTarget -Index 5 -MaxChars 'not-a-number'),
     $null
 ) | ConvertTo-Json -Depth 4 | ConvertFrom-Json
-$T9197Validated = ConvertTo-YakuCatValidFitTargets -RawFitTargets $T9197RawFitTargets -SegmentCount 6
+# SegmentCount は7（配列内の実在index0..5すべてが有効範囲に収まる数）にする。
+# 6のままだと「受理した2件」で上限に達し、7番目（'not-a-number'の行）が
+# 検証されないまま素通りする空振りの表明になっていた（CoD審査 2026-08-18
+# REWORK-1 の指摘。LOW-2）。
+$T9197Validated = ConvertTo-YakuCatValidFitTargets -RawFitTargets $T9197RawFitTargets -SegmentCount 7
 Assert-T9197 -Condition ($T9197Validated.Count -eq 2) ('境界内の2件だけが残る（実測 ' + $T9197Validated.Count + ' 件）')
 Assert-T9197 -Condition ($T9197Validated.ContainsKey(0) -and [int]$T9197Validated[0] -eq 8) '8は最初に許される目標'
 Assert-T9197 -Condition ($T9197Validated.ContainsKey(1) -and [int]$T9197Validated[1] -eq 99) '99は最後に許される目標'
@@ -69,9 +79,33 @@ Assert-T9197 -Condition (-not $T9197Validated.ContainsKey(2)) '7は境界の外�
 Assert-T9197 -Condition (-not $T9197Validated.ContainsKey(3)) '100は境界の外（捨てる）'
 Assert-T9197 -Condition (-not $T9197Validated.ContainsKey(4)) '12.5は非整数（捨てる）'
 Assert-T9197 -Condition (-not $T9197Validated.ContainsKey(99)) '実在しないindex（SegmentCountの外）は捨てる'
-Assert-T9197 -Condition (-not $T9197Validated.ContainsKey(5)) '数値に変換できない値は捨てる'
+Assert-T9197 -Condition (-not $T9197Validated.ContainsKey(5)) '数値に変換できない値は捨てる（このassertは実際に7件目まで検証されて初めて意味を持つ）'
 
-# 上限件数はSegmentCountで打ち切る（際限のない配列を受け付けない）。
+# indexの欠落・nullは、[int]キャストが例外を投げず0になることを悪用して
+# 暗黙にセグメント0を狙わせてはいけない（CatTranslation.ps1のindex検証。
+# CoD審査 2026-08-18 REWORK-1 の指摘。LOW-2）。
+$T9197MissingIndexRaw = @([pscustomobject]@{ max_chars = 20 }) | ConvertTo-Json -Depth 4 | ConvertFrom-Json
+$T9197MissingIndexValidated = ConvertTo-YakuCatValidFitTargets -RawFitTargets @($T9197MissingIndexRaw) -SegmentCount 6
+Assert-T9197 -Condition ($T9197MissingIndexValidated.Count -eq 0) 'indexが欠落した行は、暗黙にセグメント0を狙わず捨てられる'
+$T9197NullIndexJson = @'
+[{"index":null,"max_chars":20}]
+'@
+$T9197NullIndexRaw = $T9197NullIndexJson | ConvertFrom-Json
+$T9197NullIndexValidated = ConvertTo-YakuCatValidFitTargets -RawFitTargets $T9197NullIndexRaw -SegmentCount 6
+Assert-T9197 -Condition ($T9197NullIndexValidated.Count -eq 0) 'indexが明示的にnullの行も同様に捨てられる'
+
+# 上限件数は「受理した件数」で数える（examined countではない）。捨てた行の
+# 数で打ち切ると、水増しされた不正な行の後ろに続く正しい行が締め出される
+# （CoD審査 2026-08-18 REWORK-1 の指摘。LOW-2）。ここでは不正な行（index=-1、
+# 範囲外で必ず捨てられる）を10件並べたあとに正しい行を1件置く。
+$T9197PaddedRaw = @(
+    @(1..10 | ForEach-Object { New-T9197FitTarget -Index -1 -MaxChars 10 }) +
+    (New-T9197FitTarget -Index 2 -MaxChars 15)
+) | ConvertTo-Json -Depth 4 | ConvertFrom-Json
+$T9197PaddedValidated = ConvertTo-YakuCatValidFitTargets -RawFitTargets $T9197PaddedRaw -SegmentCount 3
+Assert-T9197 -Condition ($T9197PaddedValidated.ContainsKey(2) -and [int]$T9197PaddedValidated[2] -eq 15) '水増しされた不正な行の後ろに来る正しい行も、上限に締め出されず受理される'
+
+# 上限件数そのものはSegmentCountで頭打ちになる（際限のない配列を受け付けない）。
 $T9197ManyRaw = @(0..49 | ForEach-Object { New-T9197FitTarget -Index ($_ % 3) -MaxChars 10 }) | ConvertTo-Json -Depth 4 | ConvertFrom-Json
 $T9197ManyValidated = ConvertTo-YakuCatValidFitTargets -RawFitTargets $T9197ManyRaw -SegmentCount 3
 Assert-T9197 -Condition ($T9197ManyValidated.Count -le 3) ('件数の上限がSegmentCountで打ち切られる（実測 ' + $T9197ManyValidated.Count + ' 件）')
@@ -89,7 +123,51 @@ Assert-T9197 -Condition ($null -eq (Resolve-YakuCatFitTargetForDuplicates -MaxCh
 Assert-T9197 -Condition ((Resolve-YakuCatFitTargetForDuplicates -MaxCharsValues @(42)) -eq 42) '単独なら自分の値がそのまま採られる'
 Assert-T9197 -Condition ($null -eq (Resolve-YakuCatFitTargetForDuplicates -MaxCharsValues @($null))) '唯一の複製が無指定なら目標は無い'
 
-# ============================================================ (c) プロンプトへの描画
+# ============================================================ (c) 重複排除→畳み→実プロンプトの通し試験
+Write-Host '-- ConvertTo-YakuCatDedupedItems（端から端まで） --'
+
+# CoD審査 2026-08-18 REWORK-1: worker本体（Server.ps1のジョブscriptblock）は
+# 別ランスペースにあり、試験からは直接届かない。手作りのitemsだけを
+# New-YakuCatPrompt / New-YakuCatCharacterTargets へ渡す試験では、
+# dedupe→MaxChars代入→prompt という配線そのもの（Resolve-
+# YakuCatFitTargetForDuplicates の戻り値を .MaxChars へ代入するその1行）を
+# 一度も実行しない。ここでは生のpending items（Server.ps1の'translate'
+# アクションが作る素の形: index/text/terminology/max_chars）を渡し、
+# 重複排除→畳み→実物の New-YakuCatPrompt で、正しいitem番号に正しい目標が
+# 出ることまで確かめる。
+#
+# index0とindex2は同じ原文（複製）。index0だけに目標があり、index2には無い
+# ので、規則（全複製に目標があるときだけ採用）により畳んだ後は目標が消える
+# はず。index1は単独の原文で、自分の目標がそのまま残るはず。
+$T9197DupedSourceText = [string]::Concat([char]0x58F2, [char]0x4E0A, [char]0x9AD8, [char]0x306F, [char]0x5897, [char]0x52A0, [char]0x3057, [char]0x305F, [char]0x3002)
+$T9197SoloSourceText = [string]::Concat([char]0x8CBB, [char]0x7528, [char]0x306F, [char]0x6E1B, [char]0x5C11, [char]0x3057, [char]0x305F, [char]0x3002)
+$T9197RawPendingItems = @(
+    [pscustomobject]@{ index = 0; text = $T9197DupedSourceText; terminology = @(); max_chars = 30 },
+    [pscustomobject]@{ index = 1; text = $T9197SoloSourceText; terminology = @(); max_chars = 18 },
+    [pscustomobject]@{ index = 2; text = $T9197DupedSourceText; terminology = @() }
+) | ConvertTo-Json -Depth 4 | ConvertFrom-Json
+$T9197Deduped = @(ConvertTo-YakuCatDedupedItems -RawItems @($T9197RawPendingItems))
+Assert-T9197 -Condition ($T9197Deduped.Count -eq 2) ('同じ原文は1つに畳まれる（実測 ' + $T9197Deduped.Count + ' 件）')
+$T9197DupEntry = $T9197Deduped | Where-Object { [string]$_.Text -eq $T9197DupedSourceText } | Select-Object -First 1
+$T9197SoloEntry = $T9197Deduped | Where-Object { [string]$_.Text -eq $T9197SoloSourceText } | Select-Object -First 1
+Assert-T9197 -Condition ($null -ne $T9197DupEntry -and ((@($T9197DupEntry.Targets) | Sort-Object) -join ',') -eq '0,2') '複製した行の両方のindexがTargetsへ残る'
+Assert-T9197 -Condition ($null -ne $T9197DupEntry -and $null -eq $T9197DupEntry.MaxChars) '複製の片方に目標が無ければ、畳んだ後も目標が付かない'
+Assert-T9197 -Condition ($null -ne $T9197SoloEntry -and [int]$T9197SoloEntry.MaxChars -eq 18) '単独の行は自分の目標がそのまま残る'
+
+# 畳んだ結果を実物の New-YakuCatPrompt へそのまま通す。ここが緑であることは
+# 「dedupe→畳み→prompt」の配線全体が実際に動いていることの証明であり、
+# Resolve-YakuCatFitTargetForDuplicates の戻り値を .MaxChars へ代入し損なう
+# 変異（レビュアが実証した変異）が入っていれば、単独行の目標が消えて
+# 下のassertが赤くなる。
+$T9197WiredItems = @($T9197Deduped | ForEach-Object {
+    [pscustomobject]@{ Index = [int]$_.Index; Text = [string]$_.Text; MaskedText = [string]$_.Text; Terminology = @($_.Terminology); MaxChars = $_.MaxChars }
+})
+$T9197DedupeSettings = Read-YakuSettings -Root $YakuT9197Root
+$T9197WiredPrompt = New-YakuCatPrompt -Root $YakuT9197Root -Items $T9197WiredItems -Settings $T9197DedupeSettings -Direction 'to_en' -RequestId 'b2c3d4e5f60718293a4b5c6d7e8f90a1'
+Assert-T9197 -Condition ($T9197WiredPrompt -match ('"item":' + [int]$T9197SoloEntry.Index + ',"approximate_max_chars":18')) '畳んだ結果が実プロンプトのCHARACTER_TARGETSへ正しいitem番号・正しい目標で出る（dedupe→MaxChars代入→promptの配線そのものを実行して確かめる）'
+Assert-T9197 -Condition ($T9197WiredPrompt -notmatch ('"item":' + [int]$T9197DupEntry.Index + ',')) '目標を失った複製の行はプロンプトへ出ない'
+
+# ============================================================ (d) プロンプトへの描画
 Write-Host '-- New-YakuCatCharacterTargets / New-YakuCatPrompt --'
 
 $T9197Items = @(
@@ -106,7 +184,11 @@ Assert-T9197 -Condition ($T9197Targets -notmatch '"item":2,') '目標の無いit
 Assert-T9197 -Condition ($T9197Targets -notmatch '"item":4,') '7（境界の外）は列挙されない'
 Assert-T9197 -Condition ($T9197Targets -notmatch '"item":5,') '100（境界の外）は列挙されない'
 Assert-T9197 -Condition ($T9197Targets -match '(?i)layout-derived targets, not measured cell capacities') '前置文: 実測ではないと明示する'
-Assert-T9197 -Condition ($T9197Targets -match '(?i)never omit, abbreviate, or drop information') '前置文: 情報を削って収めることは指示しない'
+# 雛形自身の情報保持の指示（Do not abbreviate, summarize, compress, merge,
+# omit, or add information）と同じ動詞を並べる。summarize/compress を
+# 省くと「省いた分は免除される」と読めてしまうため、雛形と揃える
+# （CoD審査 2026-08-18 REWORK-1 の指摘。LOW-4）。
+Assert-T9197 -Condition ($T9197Targets -match '(?i)never omit, abbreviate, summarize, compress, or drop information') '前置文: 省略・要約・圧縮せずに削って収めることは指示しない（雛形の動詞と揃える）'
 Assert-T9197 -Condition ($T9197Targets -match '(?i)accuracy and completeness always win') '前置文: 正確さ・網羅性が最優先だと明示する'
 Assert-T9197 -Condition ($T9197Targets -match '(?i)exceed it') '前置文: 収まらなければ超えてよいと明示する'
 
@@ -143,8 +225,22 @@ Write-Host '-- Server.ps1 配線 --'
 
 $T9197ServerText = [System.IO.File]::ReadAllText((Join-Path $YakuT9197Src 'Server.ps1'))
 Assert-T9197 -Condition ($T9197ServerText.Contains('ConvertTo-YakuCatValidFitTargets')) 'translateアクションがfit_targetsを検証関数へ通す'
-Assert-T9197 -Condition ($T9197ServerText.Contains('Resolve-YakuCatFitTargetForDuplicates')) 'workerの重複排除が複製の畳み方を共通関数へ委ねる'
+# 単なる文字列一致は「実際に呼ばれているか」を証明しない（コメントに名前を
+# 書くだけでも通ってしまう。CoD審査 2026-08-18 REWORK-1 の指摘。MEDIUM-1）。
+# ここでは実際の呼び出し形（-RawItems 引数付き）を固定し、この関数が確かに
+# 呼ばれていることの根拠にする。配線が本当に効くかどうかは、この関数自体を
+# 上の (c) 節で end-to-end に検証している（呼ばれているかはここ、正しく
+# 動くかはそちら、で役割を分ける）。
+Assert-T9197 -Condition ($T9197ServerText -match 'ConvertTo-YakuCatDedupedItems\s+-RawItems\b') 'workerが重複排除・複製の畳み方を共通関数（ConvertTo-YakuCatDedupedItems）へ実際に渡している'
 Assert-T9197 -Condition ($T9197ServerText -match "幅の目標を \`$fitTargetRowCount 行に添えています") '翻訳開始時の進捗detailに1行添える文言がある'
+# 進捗detailの件数は「畳んだ後」でなければならない（畳んだ前の生の件数で
+# 数えると、複製で目標が消えた行まで「添えた」と言ってしまう。CoD審査
+# 2026-08-18 REWORK-1 の指摘。LOW-3）。畳んだ結果（$items）から数えている
+# ことをソースの並び順で確かめる: 件数計算が dedupe 呼び出しより後にある。
+$T9197DedupeCallAt = $T9197ServerText.IndexOf('ConvertTo-YakuCatDedupedItems -RawItems')
+$T9197CountAt = $T9197ServerText.IndexOf('$fitTargetRowCount = 0')
+Assert-T9197 -Condition ($T9197DedupeCallAt -ge 0 -and $T9197CountAt -gt $T9197DedupeCallAt) '幅の目標の行数は、重複排除で畳んだ後に数えている（畳む前の生の件数ではない）'
+Assert-T9197 -Condition ($T9197ServerText -match '\$countedEntry\.MaxChars') '行数の数え方が畳んだ後のitemのMaxChars（$null=目標消滅）を見ている'
 Assert-T9197 -Condition ($T9197ServerText.Contains("mode = `$catMode; amount_notation = (Get-YakuCatProjectAmountNotation -Project `$project)")) 'catJson構築のピン（Smoke-Test.ps1:388-390）を壊していない'
 
 # CatBatch.ps1のCATプロンプト生成経路は増やしていない
@@ -168,7 +264,7 @@ if ($script:T9197Failures.Count -gt 0) {
     exit 1
 }
 
-# ============================================================ (d) 実機Chromium部
+# ============================================================ (e) 実機Chromium部
 Write-Host '-- chromium --'
 
 $YAKU_WIDTH_UNMEASURED = 3
