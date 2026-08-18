@@ -75,6 +75,9 @@ try {
     try { } finally { $archive.Dispose() }
   } catch { $nullDisposeError = [string]$_.Exception.Message }
   Assert-YakuRegression ($nullDisposeError -match 'null' -and $nullDisposeError -match 'Dispose|メソッド') 'old unguarded archive.Dispose expression reproduces the null-method diagnostic'
+  $clientSource = [IO.File]::ReadAllText((Join-Path $root 'src/CopilotClient.ps1'))
+  Assert-YakuRegression ($clientSource -match 'COPILOT_TARGET_LOCK_UNAVAILABLE' -and $clientSource -match 'Copilot target mutex unavailable') 'mutex creation failures are logged and rethrown'
+  Assert-YakuRegression ($clientSource -notmatch '(?s)Get-YakuCopilotTargetMutex\s*\{.*catch\s*\{\s*return\s+\$null') 'Copilot target creation cannot fail open without a mutex'
   $processorsSource = [IO.File]::ReadAllText((Join-Path $root 'src/FileProcessors.ps1'))
   $unguardedArchiveDisposes = @($processorsSource -split "`r?`n" | Where-Object { $_ -match '^\s*\$archive\.Dispose\(\)' })
   Assert-YakuRegression ($unguardedArchiveDisposes.Count -eq 0) 'all FileProcessors archive cleanup expressions are guarded'
