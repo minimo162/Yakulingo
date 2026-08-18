@@ -128,12 +128,41 @@
   var readyAnnounced = false;
   var startedAt = Date.now();
 
+  /* 「Copilotの準備をやり直す」は、放っておいても直らないと分かっている
+     状態でだけ出す。timeout=15分待っても終わらない、error=起動に失敗、
+     stale=心拍が60秒止まった、not-started=まだ一度も準備が始まっていない、
+     not-ready=Watch-YakuCopilotReadinessがCDP連続失敗で降格した状態
+     （D2-2）。not-ready の detail は「『Copilotの準備をやり直す』を押して
+     ください」と明示に案内するのに、以前はボタン表示条件に入っておらず、
+     しかも心拍自体は生きているので updated_at が新鮮で stale にも落ちず、
+     ボタンが永久に出なかった（R3-1）。
+     login・loading・busy・working はいずれ自然に進むか、別の案内（サインイン等）
+     が既に detail に出ているので、ここには含めない。 */
+  var RETRY_MODES = { timeout: true, error: true, stale: true, 'not-started': true, 'not-ready': true };
+
+  function updatePrepareRetryButton(data) {
+    var button = document.getElementById('copilot-prepare-retry');
+    if (!button) return;
+    var mode = data && data.mode ? String(data.mode) : '';
+    var show = !!RETRY_MODES[mode];
+    button.hidden = !show;
+    /* R2-2: 以前はここで「Copilot画面を開く」を隠していた（排他表示）。詰まって
+       いる場面ほど利用者に残る操作が0になっていたため、押せる操作が消える
+       排他表示はやめる。折り返し対策はラベルを短くする側で行う
+       （「Copilotの準備をやり直す」→「準備し直す」）。 */
+    if (!show) return;
+    if (button.dataset.busy === '1') return;
+    button.disabled = false;
+    button.textContent = '準備し直す';
+  }
+
   function announceReady(data) {
     ready = !!(data && data.canTranslate);
     if (ready && !readyAnnounced) {
       readyAnnounced = true;
     }
     setStatus(data && data.label ? data.label : (ready ? 'Copilot：準備完了' : '準備しています'), data && data.class ? data.class : (ready ? 'ok' : 'warn'), readableDetail(data));
+    updatePrepareRetryButton(data);
     readyListeners.forEach(function (listener) { try { listener(ready, data || {}); } catch (_) {} });
   }
 
@@ -196,6 +225,27 @@
     });
   }
 
+  function bindCopilotPrepareRetryButton() {
+    var button = document.getElementById('copilot-prepare-retry');
+    if (!button) return;
+    button.addEventListener('click', function () {
+      if (button.disabled) return;
+      button.disabled = true;
+      button.dataset.busy = '1';
+      button.textContent = 'やり直し中…';
+      post('/api/copilot/prepare', {}).catch(function (error) {
+        setStatus('準備をやり直せませんでした', 'warn', plainError(error && error.message ? error.message : error));
+      }).then(function () {
+        button.dataset.busy = '0';
+        button.disabled = false;
+        button.textContent = '準備し直す';
+        /* すぐにポーリングを1回走らせる。次の /api/ready-state で mode が
+           変われば updatePrepareRetryButton が自動でボタンを隠す。 */
+        pollReady();
+      });
+    });
+  }
+
   function reportUiPresence(state, keepalive) {
     if (!uiClientId) return Promise.resolve();
     return request('/api/ui/presence', {
@@ -241,6 +291,7 @@
   });
 
   bindCopilotWindowButton();
+  bindCopilotPrepareRetryButton();
   startUiPresence();
 
   window.YakuCommon = {

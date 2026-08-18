@@ -899,6 +899,7 @@
       el('cat-review-notes-count').textContent = '0'; el('cat-review-notes-list').innerHTML = '<p class="muted">行を選ぶと、その行の作業メモが出ます。</p>'; syncReviewNoteFormState(false);
       el('cat-revisions-list').innerHTML = '<p class="muted">行を選ぶと、その行の変更を確認できます。</p>';
       var emptyNoteInput = el('cat-review-notes-input'); if (emptyNoteInput) emptyNoteInput.value = '';
+      syncDockHeightForContent();
       return;
     }
     var reviewNotes = reviewNotesOf(segment), openReviewNotes = unresolvedReviewNotes(segment);
@@ -943,6 +944,7 @@
       (segment.prior_source && changeGroup(segment) === 'changed' ? '<div class="cat-context-card"><span class="cat-context-label">前回からの変更</span><p class="cat-context-text"><strong>前回</strong><br>' + esc(segment.prior_source) + '</p><p class="cat-context-text"><strong>今回</strong><br>' + esc(segment.source) + '</p></div>' : '') +
       (previous ? '<div class="cat-context-card"><span class="cat-context-label">前の原文</span><p class="cat-context-text">' + esc(previous.source) + '</p></div>' : '') +
       (next ? '<div class="cat-context-card"><span class="cat-context-label">次の原文</span><p class="cat-context-text">' + esc(next.source) + '</p></div>' : '');
+    syncDockHeightForContent();
   }
   /* 訳文欄は、開いている行の主役。中身が入りきらないと下が切れて読めなくなるので、
      行数に合わせて伸ばす。利用者が手で広げたあとは、その高さを縮めない。 */
@@ -1491,14 +1493,14 @@
     var list = el('cat-concordance-list');
     if (!input || !list) return;
     var query = String(input.value || '').trim();
-    if (query.length < 2) { list.innerHTML = '<p class="muted">2文字以上で探せます。</p>'; return; }
+    if (query.length < 2) { list.innerHTML = '<p class="muted">2文字以上で探せます。</p>'; syncDockHeightForContent(); return; }
     if (!project) return;
     list.innerHTML = '<p class="muted">探しています…</p>';
     var scope = currentScope();
     post('concordance', { query: query }, false, scope).then(function (data) {
       if (!scopeIsCurrent(scope, true)) return;
       var hits = (data && data.hits) || [];
-      if (!hits.length) { list.innerHTML = '<p class="muted">' + esc(query) + ' を含む過去の訳は見つかりませんでした。確認済みにした訳から探しています。</p>'; return; }
+      if (!hits.length) { list.innerHTML = '<p class="muted">' + esc(query) + ' を含む過去の訳は見つかりませんでした。確認済みにした訳から探しています。</p>'; syncDockHeightForContent(); return; }
       list.innerHTML = hits.map(function (hit) {
         var where = hit.file_name ? esc(hit.file_name) + (hit.location ? '・' + esc(hit.location) : '') : '';
         return '<div class="cat-candidate-card">' +
@@ -1507,8 +1509,10 @@
           (where ? '<p class="cat-candidate-meta">' + where + '</p>' : '') +
           '</div>';
       }).join('');
+      syncDockHeightForContent();
     }).catch(function (error) {
       list.innerHTML = '<p class="muted">' + esc(error.message || '探せませんでした。') + '</p>';
+      syncDockHeightForContent();
     });
   }
 
@@ -2025,9 +2029,12 @@
              読む人はそれを分かっている（2026-08-12、利用者の指摘）。 */
           '<p class="muted">' + esc([match, saved, diffHint].filter(Boolean).join('・')) + '</p>' +
           '<div class="cat-row-actions"><button type="button" class="secondary-button" data-cat-insert="' + esc(translation) + '" data-cat-reference-id="' + esc(item.reference_id || '') + '" data-cat-project-id="' + esc(requestScope.id) + '" data-cat-index="' + index + '">' + number + ' この訳を挿入</button>' + deleteButton + '</div></article>';
-      }).join('') : '<p class="muted">確認済みにした訳が、次の資料から候補に出ます。</p>';
+      /* 2026-08-18: 待機文を短くした（「確認済みにした訳が」→「確認済みの訳は」）。
+         180pxへ縮めたドックでも、この行だけなら折り返さず収まる。 */
+      }).join('') : '<p class="muted">確認済みの訳は、次の資料で候補になります。</p>';
       renderCandidateDetail(items[0] || null, 0);
-    }).catch(function () { if (seq === candidateSeq && scopeIsCurrent(requestScope, true) && Number(activeIndex) === Number(index)) { el('cat-candidate-count').textContent = '0'; el('cat-terms-list').innerHTML = '<p class="muted">用語を読み込めませんでした。行を選び直すと、もう一度探します。</p>'; el('cat-candidates-list').innerHTML = '<p class="muted">似た訳を読み込めませんでした。行を選び直すと、もう一度探します。</p>'; } });
+      syncDockHeightForContent();
+    }).catch(function () { if (seq === candidateSeq && scopeIsCurrent(requestScope, true) && Number(activeIndex) === Number(index)) { el('cat-candidate-count').textContent = '0'; el('cat-terms-list').innerHTML = '<p class="muted">用語を読み込めませんでした。行を選び直すと、もう一度探します。</p>'; el('cat-candidates-list').innerHTML = '<p class="muted">似た訳を読み込めませんでした。行を選び直すと、もう一度探します。</p>'; syncDockHeightForContent(); } });
   }
 
   /* 原文のどこが登録済みの用語かを、その場で示す。市販CATはほぼ全社がこれを持つ
@@ -2870,6 +2877,14 @@
      行を1つ移るたびに走らせると、行数に比例した費用を毎回払うことになる。
      中身が変わったとき（render）だけ組み直し、選択の追随は印の付け替えだけにする。 */
   var dockSide = 'target', dockOpen = false, dockHeight = 280;
+  /* 2026-08-18（利用者判断）: 開いている行の参考情報が待機文だけ（候補も
+     指摘も無い）のときは、ドックを180px程度へ縮めて余りを表へ渡す。実内容
+     が入ったら元の高さへ戻す。dockAutoManaged は、利用者がドラッグ／矢印
+     キーで実際に高さを変えた時点で false にし、以後は自動で縮めない
+     （利用者が決めた高さを尊重する）。dockExpandedHeight は縮める直前の
+     高さで、戻すときに使う。 */
+  var dockAutoManaged = true, dockAutoCollapsed = false, dockExpandedHeight = null;
+  var DOCK_WAITING_HEIGHT = 180;
 
   function buildPreviewFor(side) {
     /* buildPreview() とその下請けは previewSide を見る。引数で引き回すと
@@ -2885,7 +2900,75 @@
     if (dock) dock.style.setProperty('--cat-dock-height', dockHeight + 'px');
     var splitter = el('cat-preview-dock-splitter');
     if (splitter) splitter.setAttribute('aria-valuenow', String(dockHeight));
-    if (fromUser) { try { window.localStorage.setItem('yaku-cat-dock-height', String(dockHeight)); } catch (_) {} }
+    if (fromUser) {
+      /* 利用者が実際に高さを決めた。以後、待機文だけを理由に自動で縮めない。 */
+      dockAutoManaged = false;
+      dockAutoCollapsed = false;
+      try { window.localStorage.setItem('yaku-cat-dock-height', String(dockHeight)); } catch (_) {}
+    }
+  }
+
+  /* 開いているタブの中身が「待機文だけ」かどうか。タブごとに、実際に埋まる
+     場所（件数の札やリストの文字）で判定する。件数がまだ「…」（取得中）の
+     ときは、直前の状態を保って揺らさない。文脈・体裁は行を選べば必ず何か
+     出るので待機文とはしない。 */
+  function dockContentIsWaiting() {
+    if (inspectorTab === 'candidates') {
+      var candidateCount = el('cat-candidate-count') ? el('cat-candidate-count').textContent : '';
+      if (candidateCount === '…') return dockAutoCollapsed;
+      return candidateCount === '0';
+    }
+    if (inspectorTab === 'qc') {
+      return (el('cat-qc-count') ? el('cat-qc-count').textContent : '') === '0';
+    }
+    if (inspectorTab === 'review_notes') {
+      /* cat-review-notes-count は未解決だけの数なので、解決済みメモしか
+         無い行だと0のまま実内容を見落とし、リストが縮んで隠れていた
+         （2026-08-18実測: バッジ0でも .cat-review-note が3件）。concordance
+         と同じく、DOMそのものを見る。 */
+      var notesList = el('cat-review-notes-list');
+      return !notesList || !notesList.querySelector('.cat-review-note');
+    }
+    if (inspectorTab === 'revisions') {
+      var revisionsList = el('cat-revisions-list');
+      return !revisionsList || /この行には変更履歴がありません/.test(revisionsList.textContent || '');
+    }
+    if (inspectorTab === 'concordance') {
+      var concordanceList = el('cat-concordance-list');
+      return !concordanceList || !concordanceList.querySelector('.cat-candidate-card');
+    }
+    return false;
+  }
+  /* 待機文だけのときは180px程度へ縮め、余りを表（#cat-grid-wrap）へ渡す。
+     実内容が入ったら、縮める直前の高さへ戻す。利用者が手で決めた高さ
+     （dockAutoManaged=false）には触らない。
+
+     Alt+↓ の連打など、候補の有無が行ごとに交互の題材で1行ごとに呼ばれると
+     180↔280 で表の下端が毎回跳ねる（2026-08-18実測: 5回連続振動）。呼び出し
+     そのものは全箇所そのままで、実際の高さ変更だけを約200ms 遅らせて束ねる。
+     連打中は呼ぶたびにタイマーを引き直すので、最後の呼び出しから200ms
+     経つまで一度も動かない。そのときにはもう掃引先の行の描画が終わっている
+     ので、最終的な高さは移動先の内容に追従する。 */
+  var dockHeightSyncTimer = null;
+  function syncDockHeightForContent() {
+    if (dockHeightSyncTimer) { window.clearTimeout(dockHeightSyncTimer); }
+    dockHeightSyncTimer = window.setTimeout(function () {
+      dockHeightSyncTimer = null;
+      applyDockHeightForContent();
+    }, 200);
+  }
+  function applyDockHeightForContent() {
+    if (!dockOpen || !dockAutoManaged) return;
+    var waiting = dockContentIsWaiting();
+    if (waiting && !dockAutoCollapsed) {
+      dockExpandedHeight = dockHeight;
+      dockAutoCollapsed = true;
+      setDockHeight(DOCK_WAITING_HEIGHT, false);
+    } else if (!waiting && dockAutoCollapsed) {
+      dockAutoCollapsed = false;
+      setDockHeight(dockExpandedHeight || 280, false);
+      dockExpandedHeight = null;
+    }
   }
 
   function renderDockPreview() {
@@ -2942,7 +3025,7 @@
         window.localStorage.removeItem('yaku-cat-inspector-hidden');
       } catch (_) {}
     }
-    if (dockOpen) renderDockPreview();
+    if (dockOpen) { renderDockPreview(); syncDockHeightForContent(); }
   }
 
   function restoreDockState() {
@@ -2953,7 +3036,13 @@
     height = storedHeight ? Number(storedHeight) : 280;
     /* Existing releases could leave a tall inspector value (for example 388px)
        in localStorage. Migrate that one time to the compact bottom dock; after
-       the marker is present a deliberate resize, including a tall one, is kept. */
+       the marker is present a deliberate resize, including a tall one, is kept.
+
+       2026-08-18（利用者判断）: height はここでは「実内容があるときの高さ」
+       （既定280px）を表す。実際に開いた直後、待機文しか無ければ
+       syncDockHeightForContent()（setDockOpen 経由）がこれを180pxへ縮め、
+       実内容が入り次第この値へ戻す。localStorage に保存されるのは、利用者が
+       手でドラッグ／矢印キーで決めた高さだけで、自動で縮めた180pxは保存しない。 */
     if (layoutVersion !== '1') {
       if (!storedHeight || !Number.isFinite(height) || height > 320) height = 280;
       try { window.localStorage.setItem('yaku-cat-dock-layout-v2', '1'); } catch (_) {}

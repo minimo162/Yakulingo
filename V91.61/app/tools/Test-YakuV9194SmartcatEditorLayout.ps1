@@ -712,6 +712,30 @@ const server = http.createServer(async function (req, res) {
         docsOpenByDefault: document.getElementById('cat-editor-layout').classList.contains('is-docs-open')
       };
     });
+    // 2026-08-18（利用者判断）: 参考情報が待機文だけのときはドックが180pxへ
+    // 縮む。この題材の「候補」タブは常に実データを返すので待機にならない
+    // （candidatePayload が index を問わず1件・2件を返す）。この題材で
+    // 唯一いつでも空になるのは「作業メモ」（review_notes を1件も持たない）
+    // なので、そこへ切り替えて測り、候補タブへ戻して元の高さへ戻ることも見る。
+    await page.locator('[data-cat-inspector="review_notes"]').click();
+    await page.waitForFunction(function () { return document.getElementById('cat-tab-review-notes').getAttribute('aria-selected') === 'true'; }, null, { timeout: 10000 });
+    // 2026-08-18: syncDockHeightForContent に約200msのデバウンスを足した
+    // （Alt+↓ 連打での高さの振動対策）ので、実際の高さ変更を読む待ちは
+    // デバウンス分より長く取る。150msのままだと変更前を読んで赤くなる。
+    await page.waitForTimeout(320);
+    observed.dockWaitingState = await page.evaluate(function () {
+      const dock = document.getElementById('cat-preview-dock').getBoundingClientRect();
+      const grid = document.getElementById('cat-grid-wrap').getBoundingClientRect();
+      return { dockHeight: dock.height, gridHeight: grid.height };
+    });
+    await page.locator('[data-cat-inspector="candidates"]').click();
+    await page.waitForFunction(function () { return document.getElementById('cat-tab-candidates').getAttribute('aria-selected') === 'true'; }, null, { timeout: 10000 });
+    await page.waitForTimeout(320);
+    observed.dockContentState = await page.evaluate(function () {
+      const dock = document.getElementById('cat-preview-dock').getBoundingClientRect();
+      const grid = document.getElementById('cat-grid-wrap').getBoundingClientRect();
+      return { dockHeight: dock.height, gridHeight: grid.height };
+    });
     const beforeDocsWidth = observed.canvas.gridWidth;
     const resumeBeforeDocs = resumeRequests;
     await page.locator('#cat-docs-toggle').click();
@@ -1567,7 +1591,17 @@ try {
     $YakuT9194Canvas = $YakuT9194Observed.canvas
     Assert-T9194 -Condition ([double]$YakuT9194Canvas.canvasRatio -ge 0.9) -Message ('the default bilingual canvas uses at least 90 percent of workspace width (ratio ' + [math]::Round([double]$YakuT9194Canvas.canvasRatio, 3) + ')')
     Assert-T9194 -Condition ([double]$YakuT9194Canvas.gridTop -le 170) -Message ('the wide editor grid begins within the compact chrome budget (' + [math]::Round([double]$YakuT9194Canvas.gridTop, 1) + 'px)')
-    Assert-T9194 -Condition ([double]$YakuT9194Canvas.dockHeight -ge 220 -and [double]$YakuT9194Canvas.dockHeight -le 320 -and [double]$YakuT9194Canvas.gridHeight -ge 500) -Message ('the default dock is about 280px while the editor keeps at least 500px (' + [math]::Round([double]$YakuT9194Canvas.dockHeight, 1) + 'px dock, ' + [math]::Round([double]$YakuT9194Canvas.gridHeight, 1) + 'px grid)')
+    # 2026-08-18（利用者判断）: ドックの高さは二値になった。開いている行の
+    # 参考情報に実内容があるとき（この題材の既定タブ「候補」は常に用語1件・
+    # 一致2件を返す）は従来どおり約280px。参考情報が待機文だけのときは
+    # 180pxへ縮めて、余りを表（#cat-grid-wrap）へ渡す（cat.js の
+    # syncDockHeightForContent）。ここは前者（実内容あり）を見る。後者は
+    # 直後の2本（dockWaitingState / dockContentState、作業メモタブへ切替え
+    # →候補タブへ戻す）で見る。範囲そのものは280px契約の値のままで正しい
+    # （この題材の候補タブは待機状態にならないため）。
+    Assert-T9194 -Condition ([double]$YakuT9194Canvas.dockHeight -ge 220 -and [double]$YakuT9194Canvas.dockHeight -le 320 -and [double]$YakuT9194Canvas.gridHeight -ge 500) -Message ('the dock is about 280px when the open row has real reference content, while the editor keeps at least 500px (' + [math]::Round([double]$YakuT9194Canvas.dockHeight, 1) + 'px dock, ' + [math]::Round([double]$YakuT9194Canvas.gridHeight, 1) + 'px grid)')
+    Assert-T9194 -Condition ([double]$YakuT9194Observed.dockWaitingState.dockHeight -ge 160 -and [double]$YakuT9194Observed.dockWaitingState.dockHeight -le 200 -and [double]$YakuT9194Observed.dockWaitingState.gridHeight -ge 500) -Message ('a tab with no real content for this row (作業メモ, which this fixture never populates) collapses the dock to about 180px and hands the freed height to the grid (' + [math]::Round([double]$YakuT9194Observed.dockWaitingState.dockHeight, 1) + 'px dock, ' + [math]::Round([double]$YakuT9194Observed.dockWaitingState.gridHeight, 1) + 'px grid)')
+    Assert-T9194 -Condition ([double]$YakuT9194Observed.dockContentState.dockHeight -ge 220 -and [double]$YakuT9194Observed.dockContentState.dockHeight -le 320) -Message ('switching back to a tab with real content (候補) restores the dock to its previous height rather than staying collapsed (' + [math]::Round([double]$YakuT9194Observed.dockContentState.dockHeight, 1) + 'px)')
     Assert-T9194 -Condition ([double]$YakuT9194Canvas.toolbarHeight -le 120 -and [double]$YakuT9194Canvas.rowBHeight -le 36 -and [double]$YakuT9194Canvas.rowCHeight -le 42 -and [double]$YakuT9194Canvas.filtersHeight -le 36 -and [double]$YakuT9194Canvas.searchHeight -le 36) -Message ('the top chrome is three compact strips (toolbar ' + [math]::Round([double]$YakuT9194Canvas.toolbarHeight, 1) + 'px, row B ' + [math]::Round([double]$YakuT9194Canvas.rowBHeight, 1) + 'px, row C ' + [math]::Round([double]$YakuT9194Canvas.rowCHeight, 1) + 'px)')
      $YakuT9194ActionIds = @($YakuT9194Canvas.actionVisibleIds)
      Assert-T9194 -Condition ([double]$YakuT9194Canvas.translateWidth -ge 150 -and $YakuT9194ActionIds -contains 'cat-translate' -and $YakuT9194ActionIds -contains 'cat-export' -and $YakuT9194ActionIds -contains 'cat-export-reviewed' -and $YakuT9194ActionIds -contains 'cat-qa-open' -and $YakuT9194ActionIds -notcontains 'cat-preview-open' -and $YakuT9194ActionIds -notcontains 'cat-preview-dock-toggle' -and [bool]$YakuT9194Canvas.noGenericMoreActions) -Message ('top action row keeps readable translation/output/QA controls without the generic menu (translate ' + [math]::Round([double]$YakuT9194Canvas.translateWidth, 1) + 'px; ' + ($YakuT9194ActionIds -join ',') + ')')
