@@ -46,11 +46,16 @@ function ConvertTo-YakuCatValidFitTargets {
       出した概算文字目標）を検証する。不正値・範囲外・実在しない index・
       非整数は黙って捨てる（翻訳そのものは止めない。従来どおり訳す）。
 
-        index      : 0..SegmentCount-1 の整数
+        index      : 0..SegmentCount-1 の整数。欠落・null は明示的に拒む
+                     （[int]$null は例外を投げず 0 になるため、指定していない
+                     のにセグメント0を黙って狙ってしまう。CoD審査
+                     2026-08-18 REWORK-1 の指摘で直した）
         max_chars  : 8..99 の整数（非整数は不可。[int]キャストは丸めるため、
                      元値と比べて小数部が無いことを別途確かめる）
 
-      件数は SegmentCount を上限にする（際限のない配列を受け付けない）。
+      上限件数は SegmentCount。**「受理した件数」で数える（examined countでは
+      ない）。** 捨てた行の数で打ち切ると、水増しされた不正な行の後ろに続く
+      正しい行が締め出される（CoD審査 2026-08-18 REWORK-1 の指摘）。
       戻り値は index -> max_chars の Hashtable。
     #>
     param(
@@ -59,13 +64,14 @@ function ConvertTo-YakuCatValidFitTargets {
     )
     $result = @{}
     $cap = [Math]::Max(0, $SegmentCount)
-    $seen = 0
     foreach ($ft in @($RawFitTargets)) {
         if ($null -eq $ft) { continue }
-        if ($seen -ge $cap) { break }
-        $seen++
+        if ($result.Count -ge $cap) { break }
+        $ftIndexRaw = $null
+        try { $ftIndexRaw = $ft.index } catch { $ftIndexRaw = $null }
+        if ($null -eq $ftIndexRaw) { continue }
         $ftIndex = -1
-        try { $ftIndex = [int]$ft.index } catch { continue }
+        try { $ftIndex = [int]$ftIndexRaw } catch { continue }
         if ($ftIndex -lt 0 -or $ftIndex -ge $SegmentCount) { continue }
         $ftRawMaxChars = $ft.max_chars
         $ftMaxChars = -1
@@ -100,6 +106,48 @@ function Resolve-YakuCatFitTargetForDuplicates {
     return $resolved
 }
 
+function ConvertTo-YakuCatDedupedItems {
+    <#
+      幅を知って最初から訳す。同じ原文は1回だけ送る（割り戻しは呼び出し側）。
+      ここでは重複排除と、複製ごとの幅の目標の畳み（Resolve-
+      YakuCatFitTargetForDuplicates）だけを行う。
+
+      なぜ切り出したか（CoD審査 2026-08-18 REWORK-1）: この本体は
+      Server.ps1 のジョブ用 scriptblock の中にだけあり、ジョブは別の
+      ランスペースで走るため試験から直接届かない。畳んだ結果
+      （.MaxChars）を代入し損なう変異を入れても、V9197 は items を
+      あらかじめ MaxChars 済みで手作りしていたため、dedupe→MaxChars→
+      prompt の経路を一度も実行せずに緑のままだった。ロジックをここへ
+      出し、生の pending items（.index/.text/.terminology/.max_chars）を
+      渡すだけで端から端まで検証できるようにする。
+
+      戻り値は Index・Text・BlockIds・Targets（元のセグメントindexの
+      一覧）・Terminology（最初の複製のものだけ。従来どおり複製間で
+      混ぜない）・MaxChars を持つ pscustomobject の配列。
+    #>
+    param([Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$RawItems)
+    $byText = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([System.StringComparer]::Ordinal)
+    $items = New-Object System.Collections.Generic.List[object]
+    foreach ($it in @($RawItems)) {
+        if ($null -eq $it) { continue }
+        $text = [string]$it.text
+        if ([string]::IsNullOrWhiteSpace($text)) { continue }
+        if (-not $byText.ContainsKey($text)) {
+            $entry = [pscustomobject]@{ Index = ($items.Count + 1); Text = $text; BlockIds = (New-Object System.Collections.Generic.List[string]); Targets = (New-Object System.Collections.Generic.List[int]); Terminology=@($it.terminology); MaxChars = $null; FitTargetValues = (New-Object System.Collections.Generic.List[object]) }
+            $byText[$text] = $entry
+            [void]$items.Add($entry)
+        }
+        [void]$byText[$text].Targets.Add([int]$it.index)
+        $itMaxChars = $null
+        if ($it.PSObject.Properties.Name -contains 'max_chars') { try { $itMaxChars = [int]$it.max_chars } catch { $itMaxChars = $null } }
+        [void]$byText[$text].FitTargetValues.Add($itMaxChars)
+    }
+    foreach ($dedupedEntry in @($items.ToArray())) {
+        $dedupedEntry.MaxChars = Resolve-YakuCatFitTargetForDuplicates -MaxCharsValues @($dedupedEntry.FitTargetValues.ToArray())
+    }
+    return @($items.ToArray())
+}
+
 function New-YakuCatCharacterTargets {
     <#
       幅を知って最初から訳す。
@@ -110,8 +158,11 @@ function New-YakuCatCharacterTargets {
 
       soft target であり、情報を削って収めることは指示しない。CLAUDE.md の
       決定どおり情報保持が最優先で、収まらなければ超えてよい。cat雛形の
-      「Do not abbreviate/omit」と矛盾しない文言にする（圧縮は既存の
-      publication-candidates の仕事で、ここでは求めない）。
+      「Do not abbreviate/summarize/compress/merge/omit」と矛盾しない文言に
+      する（圧縮は既存の publication-candidates の仕事で、ここでは求めない。
+      当初 summarize/compress を前置文から省いていたところ、CoD審査
+      2026-08-18 REWORK-1 で「省いたことが免除と読める」と指摘され、
+      雛形と同じ動詞を並べる形へ直した）。
     #>
     param(
         [Parameter(Mandatory=$true)][object[]]$Items
@@ -124,7 +175,7 @@ function New-YakuCatCharacterTargets {
         $records.Add([ordered]@{ item=[int]$item.Index; approximate_max_chars=$maxChars }) | Out-Null
     }
     if ($records.Count -eq 0) { return 'No character targets apply.' }
-    $preamble = 'The following approximate character targets are layout-derived targets, not measured cell capacities. Prefer phrasing that stays at or below the target for the matching item. Never omit, abbreviate, or drop information to meet a target — accuracy and completeness always win; if the target cannot be met without loss, exceed it.'
+    $preamble = 'The following approximate character targets are layout-derived targets, not measured cell capacities. Prefer phrasing that stays at or below the target for the matching item. Never omit, abbreviate, summarize, compress, or drop information to meet a target — accuracy and completeness always win; if the target cannot be met without loss, exceed it.'
     return ($preamble + "`n" + (@($records.ToArray()) | ConvertTo-Json -Compress -Depth 3))
 }
 

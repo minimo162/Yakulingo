@@ -1175,37 +1175,28 @@ function Start-YakuTranslationJob {
                         $result = [pscustomobject]@{ Kind = 'cat'; Mode = 'revise'; Error = $_.Exception.Message }
                     }
                 } else {
-                # 幅を知って最初から訳す。目標が1件以上あるときだけ、翻訳開始時の
-                # 進捗detailへ1行添える（利用者の判断で設定・ボタンは増やさない）。
-                $fitTargetRowCount = 0
-                try { $fitTargetRowCount = @($cat.items | Where-Object { $null -ne $_ -and $_.PSObject.Properties.Name -contains 'max_chars' }).Count } catch { $fitTargetRowCount = 0 }
-                $initialTranslateDetail = if ($fitTargetRowCount -gt 0) { "幅の目標を $fitTargetRowCount 行に添えています" } else { '' }
-                Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label '翻訳中' -Progress 10 -Detail $initialTranslateDetail -Phase 'translating'
                 $items = $null
                 $catContext = $null
                 try {
-                    # 同じ原文は1回だけ送る。割り戻しはこの中で行う。
-                    $byText = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([System.StringComparer]::Ordinal)
+                    # 同じ原文は1回だけ送る。割り戻しはこの中で行う。重複排除と
+                    # 複製ごとの幅の目標の畳みは共通関数へ委ねる（ジョブの
+                    # scriptblockからは試験が届かないため。CoD審査 2026-08-18
+                    # REWORK-1 の指摘で切り出した。ConvertTo-YakuCatDedupedItems
+                    # の註を参照）。
                     $items = New-Object System.Collections.Generic.List[object]
-                    foreach ($it in @($cat.items)) {
-                        $text = [string]$it.text
-                        if ([string]::IsNullOrWhiteSpace($text)) { continue }
-                        if (-not $byText.ContainsKey($text)) {
-                            $entry = [pscustomobject]@{ Index = ($items.Count + 1); Text = $text; BlockIds = (New-Object System.Collections.Generic.List[string]); Targets = (New-Object System.Collections.Generic.List[int]); Terminology=@($it.terminology); MaxChars = $null; FitTargetValues = (New-Object System.Collections.Generic.List[object]) }
-                            $byText[$text] = $entry
-                            [void]$items.Add($entry)
-                        }
-                        [void]$byText[$text].Targets.Add([int]$it.index)
-                        $itMaxChars = $null
-                        if ($null -ne $it -and $it.PSObject.Properties.Name -contains 'max_chars') { try { $itMaxChars = [int]$it.max_chars } catch { $itMaxChars = $null } }
-                        [void]$byText[$text].FitTargetValues.Add($itMaxChars)
+                    foreach ($dedupedEntry in @(ConvertTo-YakuCatDedupedItems -RawItems @($cat.items))) { [void]$items.Add($dedupedEntry) }
+                    # 幅を知って最初から訳す。目標が1件以上あるときだけ、翻訳開始時の
+                    # 進捗detailへ1行添える（利用者の判断で設定・ボタンは増やさない）。
+                    # **畳んだ後**の行数を数える。複製の1つでも無指定なら
+                    # Resolve-YakuCatFitTargetForDuplicates が目標そのものを外すため、
+                    # 畳む前の件数で数えると「0件届いたのに添えたと言う」誤りになる
+                    # （CoD審査 2026-08-18 REWORK-1 の指摘）。
+                    $fitTargetRowCount = 0
+                    foreach ($countedEntry in @($items.ToArray())) {
+                        if ($null -ne $countedEntry.MaxChars) { $fitTargetRowCount += @($countedEntry.Targets).Count }
                     }
-                    # 幅を知って最初から訳す。複製ごとの目標を、規則
-                    # （Resolve-YakuCatFitTargetForDuplicates のコメント参照）に沿って
-                    # 1つの MaxChars へ畳む。
-                    foreach ($dedupedEntry in @($items.ToArray())) {
-                        $dedupedEntry.MaxChars = Resolve-YakuCatFitTargetForDuplicates -MaxCharsValues @($dedupedEntry.FitTargetValues.ToArray())
-                    }
+                    $initialTranslateDetail = if ($fitTargetRowCount -gt 0) { "幅の目標を $fitTargetRowCount 行に添えています" } else { '' }
+                    Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label '翻訳中' -Progress 10 -Detail $initialTranslateDetail -Phase 'translating'
                     $maxChars = Get-YakuMaxCharsPerFileBatch -Settings $settings
                     $checkpointProjectId = [string]$cat.project_id
                     $checkpointProjectRevision = [int]$cat.expected_project_revision
