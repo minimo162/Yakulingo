@@ -20,9 +20,17 @@ function sliceFunction(name, nextName) {
   assert.notEqual(end, -1, nextName + ' must remain after ' + name);
   return catSource.slice(start, end).trim();
 }
+const loadingHelpers = sliceFunction('setFileLoading', 'function setBusy');
 const openSource = sliceFunction('openSource', 'function resume');
 
 const events = [];
+const loadingNode = {
+  hidden: true,
+  setAttribute(name, value) {
+    if (name === 'aria-busy') events.push(value === 'true' ? 'loading:true' : 'loading:false');
+  }
+};
+const loadingLabel = { textContent: '' };
 const sandbox = {
   Promise,
   setTimeout,
@@ -32,7 +40,11 @@ const sandbox = {
     return Promise.resolve({ file_handle: 'test-handle' });
   },
   setBusy(value) { events.push('busy:' + value); },
-  setFileLoading(value) { events.push('loading:' + value); },
+  el(id) {
+    if (id === 'cat-file-loading') return loadingNode;
+    if (id === 'cat-file-loading-label') return loadingLabel;
+    throw new Error('unexpected element: ' + id);
+  },
   status(value) { events.push('status:' + value); },
   post() { events.push('post'); return Promise.resolve({ id: 'project-1' }); },
   render() { events.push('render'); },
@@ -44,10 +56,7 @@ vm.createContext(sandbox);
 vm.runInContext(`
   var viewEpoch = 0;
   var pendingDirection = null;
-  var fileLoadingOwner = 0;
-  function beginFileLoading(owner) { fileLoadingOwner = owner; setFileLoading(true, 'ファイルを読み込んでいます…'); }
-  function finishFileLoading(owner) { if (fileLoadingOwner !== owner) return; fileLoadingOwner = 0; setFileLoading(false); }
-  function cancelFileLoading() { if (!fileLoadingOwner) return; fileLoadingOwner = 0; setFileLoading(false); }
+  ${loadingHelpers}
   ${openSource}
   this.openSource = openSource;
 `, sandbox, { filename: catPath });
