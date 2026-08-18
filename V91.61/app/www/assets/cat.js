@@ -354,7 +354,6 @@
 
   function cancelFileLoading() {
     if (!fileLoadingOwner) return;
-    var owner = fileLoadingOwner;
     fileLoadingOwner = 0;
     setFileLoading(false);
   }
