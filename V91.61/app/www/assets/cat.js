@@ -18,6 +18,7 @@
   var ready = false, busy = false, project = null, pendingDirection = null, uploaded = null, directFilePath = '';
   var dirty = new Map(), saveChain = Promise.resolve(), jobTimer = null, jobContext = null, candidateSeq = 0;
   var deleteTarget = null, preflightScope = null, jobSerial = 0, viewEpoch = 0, outputScope = null;
+  var fileLoadingOwner = 0;
   var activeSegmentId = '', activeIndex = -1, currentFilter = 'actionable', currentLocation = 'all', currentChange = 'all', inspectorTab = 'candidates';
   /* 作業メモの入力途中はサーバへ送らない。行や資料を切り替えても、別の行へ
      誤登録しないよう、保存先の資料IDとsegment_idをキーにして画面内だけで保持する。 */
@@ -338,6 +339,24 @@
     node.setAttribute('aria-busy', value ? 'true' : 'false');
     var label = el('cat-file-loading-label');
     if (label && detail) label.textContent = detail;
+  }
+
+  function beginFileLoading(owner) {
+    fileLoadingOwner = owner;
+    setFileLoading(true, 'ファイルを読み込んでいます…');
+  }
+
+  function finishFileLoading(owner) {
+    if (fileLoadingOwner !== owner) return;
+    fileLoadingOwner = 0;
+    setFileLoading(false);
+  }
+
+  function cancelFileLoading() {
+    if (!fileLoadingOwner) return;
+    var owner = fileLoadingOwner;
+    fileLoadingOwner = 0;
+    setFileLoading(false);
   }
 
   function setBusy(value) {
@@ -1283,9 +1302,13 @@
   }
   function openSource(mode, intent, fileOverride) {
     var epoch = ++viewEpoch;
-    if (mode === 'file') setFileLoading(true, 'ファイルを読み込んでいます…');
+    /* A newer source operation owns the screen. Clear an older file spinner
+       before its promise can settle, otherwise a stale file response may leave
+       the indicator visible forever when the user switches to pasted text. */
+    cancelFileLoading();
+    if (mode === 'file') beginFileLoading(epoch);
     setBusy(true); status('取り込んでいます…');
-    return source(mode, fileOverride).then(function (payload) { payload.direction_intent = intent || 'auto'; return post('open', payload, false, null); }).then(function (data) { if (epoch !== viewEpoch) return; if (mode === 'file') setFileLoading(false); pendingDirection = null; render(data, true); }).catch(function (error) { if (epoch !== viewEpoch) return; if (mode === 'file') setFileLoading(false); setBusy(false); if (!handleDirection(error, function (dir) { return openSource(mode, dir, fileOverride); })) status(error.message, true); });
+    return Promise.resolve().then(function () { return source(mode, fileOverride); }).then(function (payload) { payload.direction_intent = intent || 'auto'; return post('open', payload, false, null); }).then(function (data) { if (epoch !== viewEpoch) return; finishFileLoading(epoch); pendingDirection = null; render(data, true); }).catch(function (error) { if (epoch !== viewEpoch) return; finishFileLoading(epoch); setBusy(false); if (!handleDirection(error, function (dir) { return openSource(mode, dir, fileOverride); })) status(error.message, true); });
   }
   function resume(id) { var epoch = ++viewEpoch; setBusy(true); status('続きの作業を開いています…'); return post('resume', { project_id: id }, false, null).then(function (data) { if (epoch === viewEpoch) render(data, true); }).catch(function (error) { if (epoch !== viewEpoch) return; setBusy(false); status(error.message, true); }); }
 
