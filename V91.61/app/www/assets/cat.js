@@ -2662,17 +2662,35 @@
     });
     /* 右への自動はみ出しは、値・数式のどちらが入っていても止める必要がある
        （src/CatProject.ps1 の Get-YakuCatRightSpillDisplayRegion と同じ条件）。
-       番地の並びは previewCellRef（既存のA1解析）で行:列へ直す。新しい解析は書かない。 */
+       番地の並びは previewCellRef（既存のA1解析）で行:列へ直す。新しい解析は書かない。
+       同じ歩きで、シート全体の「最終内容列」（占有セル・数式セル・結合範囲の
+       終端のうち最も右）も一度だけ求める。印刷範囲は通常、使用範囲（その資料に
+       実際に中身がある最も右・最も下）で閉じる。そこから先は Excel 上は
+       ただの空白の海であり、収まりの根拠にしてよい「使える幅」ではない
+       （甘い側に外さない）。求めるのは1シートにつき1回で、行ごとには求めない
+       （CoD審査 2026-08-18 REWORK-1: 求めないと、右に何も無い行の自動歩きが
+       列16384まで走り、300行の資料で初回描画が441ms→11241msへ25倍に落ちた。
+       さらに、実際の最終内容列そのもののセルは「右へ無限の余白」を得て
+       絶対に収まり判定に引っかからなくなっていた）。 */
     var occupied = {};
+    var lastContentColumn = 0;
     (found.occupied_cells || []).concat(found.formula_cells || []).forEach(function (address) {
       var ref = previewCellRef('x, ' + address);
-      if (ref) occupied[ref.row + ':' + ref.column] = true;
+      if (!ref) return;
+      occupied[ref.row + ':' + ref.column] = true;
+      if (ref.column > lastContentColumn) lastContentColumn = ref.column;
+    });
+    (found.merges || []).forEach(function (range) {
+      var parts = String(range).split(':');
+      if (parts.length !== 2) return;
+      var to = previewCellRef('x, ' + parts[1]);
+      if (to && to.column > lastContentColumn) lastContentColumn = to.column;
     });
     found.__prepared = {
       defaultWidth: Number(found.default_width) || 8.43,
       defaultHeight: Number(found.default_height) || 18.75,
       widths: widths, heights: heights, wrap: wrap, shrink: shrink, align: align, bold: bold, spans: spans, covered: covered,
-      hidden: hidden, occupied: occupied,
+      hidden: hidden, occupied: occupied, lastContentColumn: lastContentColumn,
       unknownWidthColumns: (found.unknown_width_columns || []).map(function (range) {
         return { min: Number(range.min), max: Number(range.max) };
       })
@@ -2704,18 +2722,21 @@
     return true;
   }
   /* 使える幅（収まりの見える化）。自セルの右へ、中身の無い列を歩いて数える。
-     止めるのは「占有セル・数式セル・非表示列・結合・未知幅列」のいずれかに
-     当たったとき（src/CatProject.ps1 の Get-YakuCatRightSpillDisplayRegion が
-     宣言スピルを検証する条件と同じ）。上限は設けない（判定専用で書込みはしない
-     ため、実態に合わせる）。ただし列の並びが尽きることは無いという前提を置くと
-     壊れた入力で歩き続けるので、Excel 自身の列数上限（XFD＝16384）だけは
-     物理的な歯止めとして残す。 */
+     止めるのは次のいずれか。
+       - 占有セル・数式セル・非表示列・結合・未知幅列（src/CatProject.ps1 の
+         Get-YakuCatRightSpillDisplayRegion が宣言スピルを検証する条件と同じ）
+       - シートの最終内容列（layout.lastContentColumn、previewLayout が1回だけ
+         求める）を超えたとき。最終内容列より右は「右へ無限の余白」であって、
+         収まりの根拠にする使える幅ではない（上のコメントと同じ理由）
+     Excel 自身の列数上限（XFD＝16384）は、その最終内容列の値そのものが壊れて
+     いた場合の物理的な歯止めとして残す（2枚目の網）。 */
   var YAKU_PREVIEW_MAX_COLUMN = 16384;
   function autoSpillColumns(layout, row, column, span) {
     if (!layout) return [];
     var count = (span && span.columns) || 1;
     var next = column + count, result = [];
-    while (next <= YAKU_PREVIEW_MAX_COLUMN) {
+    var bound = Math.min(YAKU_PREVIEW_MAX_COLUMN, Number(layout.lastContentColumn) || 0);
+    while (next <= bound) {
       if (!previewColumnsHaveKnownWidth(layout, next, 1)) break;
       if (layout.hidden[next]) break;
       var key = row + ':' + next;
@@ -2814,9 +2835,18 @@
   /* 絞り込み・行の印・文字目標の3つが、生の segment（プレビューの destination
      展開を経ていないもの）から判定を引くための入口。番地の解析は既存の
      previewCellRef を使う（新しいA1解析は書かない）。Excel以外・層が引けない
-     資料では常に false。 */
+     資料では常に false。
+     訳がまだ空の行も常に false（CoD審査 2026-08-18 REWORK-1）。配置計画は
+     掲載訳が空でないことを前提にしており（src/CatProject.ps1:1877）、
+     「収める候補」は空の行には作れない。未翻訳の資料を開いた瞬間に
+     「収まらない見込み」を名乗るのは、原文の長さで判定してしまっているだけで、
+     実際には1行も候補を出せない誤検知だった。
+     プレビューの印（previewCellHtml）はここを経由しない別経路（プレビューの
+     表示切替＝原文／訳文にそのまま追随する、従来どおりの仕様）なので、この
+     ゲートの影響を受けない。 */
   function segmentFitRiskInfo(segment) {
     if (!segment || segment.kind !== 'cell') return { risk: false };
+    if (!String(segment.translation || '').trim()) return { risk: false };
     var ref = previewCellRef(segment.location);
     if (!ref) return { risk: false };
     var layout = previewLayout(ref.sheet);
@@ -2825,9 +2855,19 @@
     return segmentFitRisk(segment, layout, ref.row, ref.column, layout.spans[key] || null, segmentFitText(segment), !!layout.bold[key]);
   }
   /* 短縮候補へ渡す文字目標。現訳の実測幅から、使える幅に収まる文字数を比例で
-     出す（8..99へのクランプはサーバが行う契約のまま変えない）。層が引けない・
-     訳が無いなど実幅が出せないときは null を返し、呼び出し側が従来の
-     「現訳の長さ×0.8」へフォールバックする。 */
+     出す。層が引けない・訳が無いなど実幅が出せないときは null を返し、
+     呼び出し側が従来の「現訳の長さ×0.8」へフォールバックする（そちらは
+     20字下限を今までどおり残す）。
+
+     実測できたときは、20字下限を掛けない（CoD審査 2026-08-18 REWORK-1）。
+     実際の容量が8〜11字しかない行に「文字目標 20字」と出すのは、根拠を
+     言うはずの文言が自分自身を裏切っていた。代わりに、サーバの使える窓
+     [8,99]（src/Publication.ps1 のクランプ）へここでクランプしてから送る。
+     生の値が99を超えるとき、送らなければ src/CopilotClient.ps1:5673-5675 が
+     文字数の指示を1行も出さないのに、画面は「実測した使える幅から算出」と
+     言い続けていた（クランプせずに送っていたのが原因）。raw（生の値）と
+     basis（measured／below-min／above-max）を返し、状態行がどちらを言って
+     いるかを正直に出せるようにする。 */
   function segmentFitCapacity(segment) {
     if (!segment || segment.kind !== 'cell') return null;
     var text = String(segment.translation || '');
@@ -2839,7 +2879,9 @@
     var key = ref.row + ':' + ref.column;
     var fit = segmentFitRisk(segment, layout, ref.row, ref.column, layout.spans[key] || null, text, !!layout.bold[key]);
     if (!fit.measurementKnown || !(fit.displayWidthPx > 0) || !(fit.textWidthPx > 0)) return null;
-    return Math.max(20, Math.floor(text.length * Math.max(0, fit.displayWidthPx - 8) / fit.textWidthPx));
+    var raw = Math.floor(text.length * Math.max(0, fit.displayWidthPx - 8) / fit.textWidthPx);
+    var basis = raw < 8 ? 'below-min' : (raw > 99 ? 'above-max' : 'measured');
+    return { raw: raw, maxChars: Math.min(99, Math.max(8, raw)), basis: basis };
   }
   function previewCellHtml(segment, layout, row, column, span) {
     var value = previewText(segment);
@@ -3367,15 +3409,26 @@
     var destinationCount = segment.placement && segment.placement.destinations ? segment.placement.destinations.length : 1;
     /* 文字目標は、実測できるときは使える幅から出す（収まりの見える化）。
        実幅が取れないセル（層が引けない・Excel以外）は、従来どおり
-       「現訳の長さ×0.8」へフォールバックする。8..99へのクランプはサーバの
-       契約のまま変えない。出所は候補作成の状態行に一言出す（利用者判断）。 */
-    var measuredMaxChars = segmentFitCapacity(segment);
-    var maxChars = measuredMaxChars !== null ? measuredMaxChars : Math.max(20, Math.floor(String(segment.translation || '').length * 0.8));
+       「現訳の長さ×0.8」へフォールバックする（20字下限はそちらだけに残す。
+       実測できた側では外す。理由は segmentFitCapacity の註）。
+       サーバの使える窓 [8,99] へは、送る前にここでクランプする（クランプせずに
+       99超をそのまま送ると、src/CopilotClient.ps1 が文字数の指示を1行も
+       出さない一方で、画面だけが「実測した使える幅から算出」と言い続ける
+       食い違いになる。CoD審査 2026-08-18 REWORK-1）。状態行は、クランプが
+       効いたかどうかまで正直に言う。 */
+    var measuredCapacity = segmentFitCapacity(segment);
+    var maxChars = measuredCapacity ? measuredCapacity.maxChars : Math.max(20, Math.floor(String(segment.translation || '').length * 0.8));
     var maxCharsNote = el('cat-publication-maxchars-note');
     if (maxCharsNote) {
-      maxCharsNote.textContent = measuredMaxChars !== null
-        ? '文字目標 ' + maxChars + '字（実測した使える幅から算出）'
-        : '文字目標 ' + maxChars + '字（実幅を測れないため、現訳の長さの目安から算出）';
+      if (measuredCapacity) {
+        maxCharsNote.textContent = measuredCapacity.basis === 'below-min'
+          ? '文字目標 8字（下限。実測の容量は ' + measuredCapacity.raw + '字）'
+          : measuredCapacity.basis === 'above-max'
+          ? '文字目標 99字（上限。実測の容量は ' + measuredCapacity.raw + '字）'
+          : '文字目標 ' + measuredCapacity.maxChars + '字（実測した使える幅から算出）';
+      } else {
+        maxCharsNote.textContent = '文字目標 ' + maxChars + '字（実幅を測れないため、現訳の長さの目安から算出）';
+      }
     }
     return flush().then(function () { return post('publication-candidates', { index: index, max_chars: maxChars, destination_count: destinationCount }, true); }).then(function (data) {
       publicationJobId = String(data.job_id || ''); if (!publicationJobId) throw new Error('候補作成を開始できませんでした。'); return pollPublicationCandidates(publicationJobId);
