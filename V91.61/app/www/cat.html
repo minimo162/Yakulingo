@@ -155,7 +155,7 @@
             <section id="cat-align-entry" class="cat-align-entry" aria-labelledby="cat-align-entry-title">
               <h2 id="cat-align-entry-title">過去の訳を登録</h2>
               <p class="cat-align-entry-note">日本語版と英語版のPDFから、再利用する訳を登録します。登録した訳は、次の資料で候補に出ます。</p>
-              <button type="button" id="cat-open-align-entry" class="secondary-button entry-more-pdf-card">過去の日本語版・英語版PDFを読み込む</button>
+              <button type="button" id="cat-open-align-entry" class="secondary-button entry-more-pdf-card">過去のPDFを読み込む</button>
             </section>
           </div>
         </div>
@@ -170,8 +170,8 @@
           <p class="muted">同じ資料の日本語版と英語版を読み込み、対応する文を確認します。確認済みにしただけでは候補にならず、翻訳メモリへ登録した訳だけが次の資料から候補として出ます。</p>
           <p class="muted">PDFファイル自体は送らず、選んだページから取り出した日本語と英語の文をCopilotへ送って対応を探します。</p>
           <div class="align-file-row">
-            <label class="field-label" for="cat-align-source-file">日本語版のPDF<input id="cat-align-source-file" type="file" accept=".pdf"></label>
-            <label class="field-label" for="cat-align-target-file">英語版のPDF<input id="cat-align-target-file" type="file" accept=".pdf"></label>
+            <div class="field-label">日本語版のPDF<button type="button" id="cat-align-source-file-open" class="secondary-button" aria-label="日本語版のPDFを選ぶ">ファイルを選ぶ<input id="cat-align-source-file" type="file" accept=".pdf" hidden></button><span id="cat-align-source-file-name" class="align-file-name muted"></span></div>
+            <div class="field-label">英語版のPDF<button type="button" id="cat-align-target-file-open" class="secondary-button" aria-label="英語版のPDFを選ぶ">ファイルを選ぶ<input id="cat-align-target-file" type="file" accept=".pdf" hidden></button><span id="cat-align-target-file-name" class="align-file-name muted"></span></div>
           </div>
           <p id="cat-align-file-status" class="muted" role="status" aria-live="polite"></p>
           <!-- 範囲を選べるようにする。資料まるごとは Copilot への往復が3桁になり
@@ -207,7 +207,10 @@
            資料側のパネルの中に入れていたため、起動して最初に出る「その場で訳す」
            からは一つも見えず（実測: 可視のリンク0本）、初めての人が案内へ
            たどり着けなかった。資料を開いているあいだは道具の帯が主役なので出さない。 -->
-      <!-- 使い方と設定は #cat-entry-body の左の柱へ移した（2026-08-16）。 -->
+      <!-- 「左の柱へ移した」と書いていたが、移した先は実装されていない
+           （2026-08-18 実測: 起動画面に使い方への可視リンクは0本。/tutorial は
+           /cat へ302で、リンク禁止の表明が Smoke-Test ほかに複数ある）。
+           古い註を「実装どおり」へ訂正: 使い方への出口は現在この画面に無い。 -->
 
       <section id="cat-workspace" class="cat-workspace" hidden>
         <header id="cat-editor-toolbar" class="cat-editor-toolbar">
@@ -230,7 +233,7 @@
             <span id="cat-save-status" class="cat-save-status" role="status" aria-live="polite">保存済み</span>
           </div>
           <label class="cat-toolbar-search" for="cat-search"><span>検索</span><input id="cat-search" type="search" placeholder="原文・訳文を検索"></label>
-         <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">Copilotで未訳を翻訳</button><button id="cat-tm-pretranslate" type="button" class="secondary-button" title="翻訳メモリの完全一致を未訳の行へ先に入れます">翻訳メモリから未訳を入力</button><button id="cat-export" type="button" class="secondary-button">訳文をコピー</button><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みだけコピー</button><button id="cat-qa-open" type="button" class="secondary-button" title="数字・単位・用語などの自動比較結果を表示します（F8）">点検結果</button><button id="cat-preview-dock-toggle" type="button" class="secondary-button" aria-pressed="false" title="下部のプレビュータブを開きます">プレビュー</button><button id="cat-preview-open" type="button" class="secondary-button">体裁で見る</button><button id="cat-switch-project" type="button" class="link-button">資料を切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>候補を訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>D</kbd></dt><dd>原文の数字を一覧に出す</dd></div><div><dt><kbd>1～9</kbd></dt><dd>数字をカーソル位置へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></dt><dd>原文を訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd></dt><dd>確認を取り消す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>M</kbd> / <kbd>Alt</kbd>+<kbd>K</kbd></dt><dd>前後の行をつなぐ・戻す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>S</kbd></dt><dd>原文の途中で行を分ける</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>H</kbd></dt><dd>検索と置換</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>K</kbd></dt><dd>過去訳を探す</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>[</kbd></dt><dd>資料一覧を開く・畳む</dd></div><div><dt><kbd>F7</kbd></dt><dd>資料を切り替える</dd></div><div><dt><kbd>F8</kbd></dt><dd>点検結果</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や参考情報から訳文欄へ戻す</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
+         <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">Copilotで未訳を翻訳</button><button id="cat-tm-pretranslate" type="button" class="secondary-button" title="翻訳メモリの完全一致を未訳の行へ先に入れます">翻訳メモリから未訳を入力</button><button id="cat-export" type="button" class="secondary-button">訳文をコピー</button><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みだけコピー</button><button id="cat-qa-open" type="button" class="secondary-button" title="数字・単位・用語などの自動点検の結果です。押すと一覧を表示します（F8）">点検結果</button><button id="cat-preview-dock-toggle" type="button" class="secondary-button" aria-pressed="false" title="下部のプレビュータブを開きます">プレビュー</button><button id="cat-preview-open" type="button" class="secondary-button">体裁で見る</button><button id="cat-switch-project" type="button" class="link-button">資料を切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>候補を訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>D</kbd></dt><dd>原文の数字を一覧に出す</dd></div><div><dt><kbd>1～9</kbd></dt><dd>数字をカーソル位置へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></dt><dd>原文を訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd></dt><dd>確認を取り消す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>M</kbd> / <kbd>Alt</kbd>+<kbd>K</kbd></dt><dd>前後の行をつなぐ・戻す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>S</kbd></dt><dd>原文の途中で行を分ける</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>H</kbd></dt><dd>検索と置換</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>K</kbd></dt><dd>過去訳を探す</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>[</kbd></dt><dd>資料一覧を開く・畳む</dd></div><div><dt><kbd>F7</kbd></dt><dd>資料を切り替える</dd></div><div><dt><kbd>F8</kbd></dt><dd>点検</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や参考情報から訳文欄へ戻す</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
           <section aria-labelledby="cat-personal-glossary-title">
             <h3 id="cat-personal-glossary-title">今後も使う訳</h3>
             <p class="muted">取り消しても、訳した文章は残ります。</p>
@@ -342,7 +345,7 @@
               <button id="cat-align-next-document" type="button" class="secondary-button">次に、今回のWord・Excelを取り込む</button>
             </section>
             <div id="cat-complete-state" class="cat-complete-state" hidden><strong>すべての行を確認し終えました</strong></div>
-            <details id="cat-promotion-reference" class="cat-promotion-reference" hidden><summary>行に割り当てできなかった訳案</summary><p class="muted">原文の文の数と、訳案の文の数が合わなかったため、行ごとには入れていません。ここから必要な部分を選んで、各行の訳文へ手で写してください。</p><p id="cat-promotion-reference-text" class="cat-promotion-reference-text"></p></details><div id="cat-empty-state" class="cat-empty-state" hidden>この絞り込みに当てはまる行はありません。左の「すべて」を押すと、全部の行が表示されます。</div>
+            <details id="cat-promotion-reference" class="cat-promotion-reference" hidden><summary>行に割り当てできなかった訳案</summary><p class="muted">原文の文の数と、訳案の文の数が合わなかったため、行ごとには入れていません。ここから必要な部分を選んで、各行の訳文へ手で写してください。</p><p id="cat-promotion-reference-text" class="cat-promotion-reference-text"></p></details><div id="cat-hidden-confirmed-notice" class="cat-hidden-confirmed-notice" hidden></div><div id="cat-empty-state" class="cat-empty-state" hidden>この絞り込みに当てはまる行はありません。左の「すべて」を押すと、全部の行が表示されます。</div>
             <div id="cat-grid-wrap" class="cat-grid-wrap"><table class="cat-grid"><caption class="sr-only">原文と訳案を1行ずつ確認する一覧</caption><colgroup><col class="cat-col-no"><col class="cat-col-loc"><col class="cat-col-source"><col class="cat-col-target"><col class="cat-col-confirm"></colgroup><thead><tr><th class="cat-col-no">#</th><th class="cat-col-loc">場所</th><th id="cat-source-heading">原文</th><th id="cat-target-heading">訳文</th><th id="cat-confirm-heading" class="cat-col-confirm">状態</th></tr></thead><tbody id="cat-grid-body"></tbody></table></div>
           </section>
         </div>
@@ -360,7 +363,7 @@
               <button id="cat-tab-concordance" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-concordance" data-cat-inspector="concordance" title="過去に使った訳を言葉で探します">過去訳検索</button>
               <button id="cat-tab-revisions" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-revisions" data-cat-inspector="revisions" title="この行の修正案と変更を確認します">変更履歴</button>
               <button id="cat-tab-context" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-context" data-cat-inspector="context">文脈</button>
-              <button id="cat-tab-qc" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-qc" data-cat-inspector="qc" title="数字・単位・用語などの自動比較結果を表示します">点検結果 <span id="cat-qc-count">0</span></button>
+              <button id="cat-tab-qc" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-qc" data-cat-inspector="qc" title="数字・単位・用語などの自動比較結果を表示します">この行の点検 <span id="cat-qc-count">0</span></button>
               <button id="cat-tab-review-notes" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-review-notes" data-cat-inspector="review_notes">作業メモ <span id="cat-review-notes-count">0</span></button>
               <button id="cat-tab-preview" type="button" role="tab" aria-selected="false" aria-controls="cat-panel-preview" data-cat-inspector="preview">プレビュー</button>
             </div>

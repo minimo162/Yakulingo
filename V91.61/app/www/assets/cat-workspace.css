@@ -335,14 +335,28 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
    箱が並ぶ。罫線で区切った行にして、触れたときだけ面を出す。 */
 .cat-resume-row { border-bottom: 1px solid var(--line); }
 .cat-resume-row:last-child { border-bottom: 0; }
+/* R1-7: the card itself carries the affordance now (a border, a hover
+   surface, and a trailing chevron), so the "消す" link no longer reads as
+   the only pressable thing in the row. */
 .cat-resume-row .cat-resume-card {
-  border: 0;
-  border-radius: 0;
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: var(--yk-r-lane);
   background: transparent;
+  padding-right: 28px;
+}
+.cat-resume-row .cat-resume-card::after {
+  content: "\203A";
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
 }
 .cat-resume-row .cat-resume-card:hover,
-.cat-resume-row .cat-resume-card:focus-visible { background: var(--accent-soft); }
-.cat-resume-row .cat-resume-drop { border: 0; }
+.cat-resume-row .cat-resume-card:focus-visible { background: var(--accent-soft); border-color: var(--accent); }
+.cat-resume-row .cat-resume-drop { border: 0; text-decoration: none; }
+.cat-resume-row .cat-resume-drop:hover { text-decoration: underline; }
 /* 同じ資料を2回取り込むと、名前も残り行数も同じ行が並ぶ。見分けるのは時刻なので、
    主たる文言のあとに、弱い字で添える（読む順序は名前が先のまま）。 */
 .cat-resume-row .cat-resume-time { margin-left: var(--space-2); color: var(--muted); font-size: var(--font-meta); }
@@ -895,7 +909,8 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 /* 訳が空の行は、欄が空であることで分かる。「未翻訳」の札は左端の状態と重なる。 */
 
 .cat-complete-state,
-.cat-empty-state {
+.cat-empty-state,
+.cat-hidden-confirmed-notice {
   display: grid;
   gap: 3px;
   margin-bottom: 10px;
@@ -904,7 +919,8 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
   background: var(--accent-soft);
 }
 
-.cat-empty-state {
+.cat-empty-state,
+.cat-hidden-confirmed-notice {
   background: var(--soft);
   color: var(--muted);
 }
@@ -1887,46 +1903,39 @@ body.app-cat[data-cat-view="workspace"] .cat-bottom-dock-bar .cat-inspector-tabs
   font-weight: 600;
 }
 
-/* The confirmation rail is deliberately a small square state control.  The
-   Japanese state text stays in the accessible name and visually-hidden span. */
+/* The confirmation rail shows the state label ("未確認" / "確認済み") next to
+   the check glyph, not just the glyph alone — a bare "–" read as a blank
+   control in first-look testing. Column width sizes to fit the longer
+   label ("確認済み") in one line without wrapping. */
 body.app-cat[data-cat-view="workspace"] .cat-grid .cat-col-confirm {
-  width: 3.25rem;
+  width: 7.25rem;
 }
 body.app-cat[data-cat-view="workspace"] .cat-grid tbody .cat-col-confirm {
   padding-inline: 4px;
   text-align: center;
 }
 body.app-cat[data-cat-view="workspace"] .cat-confirm-control {
-  width: 34px;
-  min-width: 34px;
-  max-width: 34px;
-  height: 34px;
-  min-height: 34px;
-  max-height: 34px;
-  justify-content: center;
-  padding: 0;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  height: auto;
+  min-height: 30px;
+  max-height: none;
+  justify-content: flex-start;
+  gap: 4px;
+  padding: 3px 8px;
   border: 1px solid var(--line-strong);
   border-radius: 4px;
   background: var(--surface);
   color: var(--muted);
-  font-size: 0;
-  font-weight: 400;
-  text-align: center;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
 }
 body.app-cat[data-cat-view="workspace"] .cat-confirm-control .cat-confirm-mark {
   width: auto;
-  font-size: 18px;
+  font-size: 1.05em;
   line-height: 1;
-}
-body.app-cat[data-cat-view="workspace"] .cat-confirm-control > span:last-child {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  clip-path: inset(50%);
-  white-space: nowrap;
 }
 body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed {
   border-color: color-mix(in srgb, var(--success) 55%, var(--line-strong));
@@ -1989,10 +1998,10 @@ body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar #cat-inspector-toggl
   }
   body.app-cat[data-cat-view="workspace"] .cat-grid col.cat-col-source,
   body.app-cat[data-cat-view="workspace"] .cat-grid col.cat-col-target {
-    width: calc((100% - 8.75rem - 1px) / 2);
+    width: calc((100% - 12.75rem - 1px) / 2);
   }
   body.app-cat[data-cat-view="workspace"] .cat-grid col.cat-col-confirm {
-    width: 3.25rem;
+    width: 7.25rem;
   }
   body.app-cat[data-cat-view="workspace"] .cat-grid .cat-col-no {
     width: 5.5rem;
@@ -2020,7 +2029,7 @@ body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar #cat-inspector-toggl
     display: none;
   }
   body.app-cat[data-cat-view="workspace"] .cat-grid .cat-col-confirm {
-    width: 3.25rem;
+    width: 7.25rem;
   }
   body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr > td {
     border-bottom: 1px solid #eceaf0;
@@ -2276,7 +2285,7 @@ body.app-cat[data-cat-view="workspace"] .cat-bottom-dock .cat-term-card {
   body.app-cat[data-cat-view="workspace"] .cat-grid col.cat-col-no,
   body.app-cat[data-cat-view="workspace"] .cat-grid .cat-col-no { width: 3.5rem; }
   body.app-cat[data-cat-view="workspace"] .cat-grid col.cat-col-source { width: 44%; }
-  body.app-cat[data-cat-view="workspace"] .cat-grid col.cat-col-target { width: calc(100% - 3.5rem - 1px - 3.25rem - 44%); }
+  body.app-cat[data-cat-view="workspace"] .cat-grid col.cat-col-target { width: calc(100% - 3.5rem - 1px - 7.25rem - 44%); }
   body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-more-row > summary {
     width: 28px;
     min-width: 28px;
@@ -2415,7 +2424,7 @@ body.app-cat[data-cat-view="workspace"] .cat-bottom-dock .cat-term-card {
 
 /* Final confirmation token override. */
 body.app-cat[data-cat-view="workspace"] .cat-confirm-control { border-color: #dedbe5; background: #fff; color: #9a94a8; }
-body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { border-color: #00a98f; background: #eefaf7; color: #008f7a; }
+body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { border-color: #00a98f; background: #eefaf7; color: #007a68; }
 
 @media (min-width: 1320px) {
   body.app-cat[data-cat-view="workspace"] #cat-search-menu > div { min-width: 360px; width: min(380px, 38vw); }
@@ -2684,6 +2693,39 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
     clip-path: inset(50%);
     white-space: nowrap;
   }
+  /* The three static row-bar tools (TM pretranslate, preview toggle, full
+     preview) keep their label visible instead of icon-only — the ribbon has
+     1846px of room and used only 272px of it (measured), and their glyphs
+     otherwise repeat other icon-only row controls. The per-segment dynamic
+     tools (copy/confirm/term) stay icon-only; their accessible names remain
+     in title/aria-label. */
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-tm-pretranslate,
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-dock-toggle,
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-open {
+    /* The shared rule's flex-basis (30px, fixed) wins over width regardless
+       of what width is set to, so the basis itself has to change too — a
+       width-only override left the label text rendered inside a still-30px
+       box (measured: overlapping glyphs). flex-shrink stays 0 so these three
+       never get squeezed by their icon-only neighbors. */
+    flex: 0 0 auto;
+    width: auto;
+    max-width: none;
+    padding-inline: 8px;
+    gap: 6px;
+  }
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-tm-pretranslate .cat-segment-button-label,
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-dock-toggle .cat-segment-button-label,
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-open .cat-segment-button-label {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    clip-path: none;
+    white-space: nowrap;
+    font-size: var(--font-meta);
+  }
   body.app-cat[data-cat-view="workspace"] .cat-segment-actions .cat-segment-status {
     flex: 0 0 auto;
     font-size: var(--font-meta);
@@ -2724,6 +2766,9 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
     height: 30px;
     min-height: 30px;
     max-height: 30px;
+    margin: 0;
+    border-top: 0;
+    padding-top: 0;
   }
   body.app-cat[data-cat-view="workspace"] .cat-segment-actions .cat-key-help > dl {
     position: absolute;
@@ -2826,10 +2871,11 @@ body.app-cat[data-cat-view="start"] .version-label { font-size: var(--font-meta)
 body.app-cat[data-cat-view="start"] .header-actions { gap: 8px; }
 body.app-cat[data-cat-view="start"] .status-block {
   display: flex;
+  flex-direction: row;
   align-items: center;
   gap: 8px;
 }
-body.app-cat[data-cat-view="start"] #copilot-status { min-height: 28px; }
+body.app-cat[data-cat-view="start"] #copilot-status { min-height: 28px; flex: 0 0 auto; white-space: nowrap; }
 body.app-cat[data-cat-view="start"] #copilot-window-open { min-height: 28px; padding-block: 0; }
 body.app-cat[data-cat-view="start"] .tab-panel { margin-top: 4px; }
 body.app-cat[data-cat-view="start"] #cat-picker { width: 100%; }
@@ -2970,7 +3016,9 @@ body.app-cat[data-cat-view="start"] .entry-rail .cat-resume-card {
   width: auto;
   min-width: 0;
   margin-inline: 0;
-  padding-inline: 0;
+  /* Leave room on the left for the card's own border (R1-7) and on the
+     right for the trailing chevron. */
+  padding-inline: 10px 28px;
 }
 body.app-cat[data-cat-view="start"] .entry-rail .cat-resume-row {
   display: grid;
@@ -3115,7 +3163,12 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed {
   border-style: solid;
   border-color: #00a98f;
   background: #eefaf7;
-  color: #008f7a;
+  /* #008f7a on #eefaf7 measured 3.77:1 (below AA 4.5:1 for normal text).
+     #007a68 measures 4.93:1. This selector duplicates the one above (same
+     specificity) and, being later in the file, is the one that actually
+     wins the cascade — fixing only the earlier rule would have left the
+     old color rendered. */
+  color: #007a68;
 }
 body.app-cat[data-cat-view="workspace"] .cat-confirm-control:focus,
 body.app-cat[data-cat-view="workspace"] .cat-confirm-control:focus-visible {

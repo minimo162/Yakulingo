@@ -269,11 +269,18 @@
     panel.hidden = false;
     if (mode === 'align') updateAlignEstimate();
     var first = panel.querySelector('input,textarea,[role="button"],button');
-    if (!first) return;
-    try { first.focus({ preventScroll: true }); } catch (_) { first.focus(); }
-    var box = first.getBoundingClientRect();
-    if (box.top < 0 || box.bottom > window.innerHeight) {
-      try { first.scrollIntoView({ behavior: 'auto', block: 'nearest' }); } catch (_) { first.scrollIntoView(); }
+    if (first) { try { first.focus({ preventScroll: true }); } catch (_) { first.focus(); } }
+    /* パネルは entry-body の下に続けて出るので、開いた時点で見出しが画面の
+       外にあることが多い。旧実装は最初の入力欄の bounding box で出し入れを
+       決めていたが、その条件が偽になり、見出しが画面外のまま開いた
+       （2026-08-18 実機で再現）。見出しは無条件で scrollIntoView する。
+       パネルの中身は見出しのすぐ下に続くだけの短い量なので、これで
+       中の入力欄・ボタンも一緒に画面内へ入る（1912x987・入れ子の scroll 実測で
+       確認済み。ページの残り丈が足りず block:'start' の0pxまでは着かないが、
+       見出しも以降の内容も画面内に収まる）。 */
+    var heading = panel.querySelector('h3');
+    if (heading) {
+      try { heading.scrollIntoView({ behavior: 'auto', block: 'start' }); } catch (_) { heading.scrollIntoView(); }
     }
   }
   /* 翻訳中に画面ごと凍らせない。数十分かかるあいだ、できた訳を読む・探す・コピーする、
@@ -1040,6 +1047,19 @@
     bulkButton.setAttribute('data-cat-bulk-indexes', bulkTargets.map(function (segment) { return Number(segment.index); }).join(','));
     el('cat-complete-state').hidden = !(all.length && !all.some(segmentActionable));
     el('cat-empty-state').hidden = shown.length > 0;
+    /* 既定の絞り込み（actionable）は確認済みの行を隠す。初めて開いた資料で
+       確認済みが先頭に並んでいると、表が3行目から始まって見え、何行目から
+       見ているのか分からない（2026-08-18、初見レビューの指摘）。表の直上に
+       件数だけ添える。全行確認済み（cat-complete-state の枝）とは別に出す。 */
+    var hiddenConfirmedNotice = el('cat-hidden-confirmed-notice');
+    if (hiddenConfirmedNotice) {
+      var hiddenConfirmedCount = currentFilter === 'actionable'
+        ? all.filter(function (segment) { return !!segment.confirmed && !segmentActionable(segment); }).length
+        : 0;
+      var showHiddenConfirmedNotice = hiddenConfirmedCount > 0 && shown.length > 0;
+      hiddenConfirmedNotice.hidden = !showHiddenConfirmedNotice;
+      if (showHiddenConfirmedNotice) hiddenConfirmedNotice.textContent = '確認済みの' + hiddenConfirmedCount + '行を隠しています。左の「すべて」を押すと表示されます。';
+    }
     /* ちょっと翻訳から移したとき、原文と訳案の文の数が合わないと、行には割り当てず
        サーバが全文を保持する（CatProject.ps1 の PromotionReferenceTranslation）。
        画面がそれを読んでいなかったので、利用者からは「移したら訳が消えた」に
@@ -3267,17 +3287,32 @@
     var dialog = el('cat-preview-dialog'); dialog.returnValue = 'cancel'; dialog.showModal();
   }
 
+  /* ラベルが変わるので、title も一緒に変える。「未訳 3」なのに title が
+     「自動比較結果を表示します」のままだと、数字が何の数かラベルと title で
+     食い違って読める（2026-08-18）。既定（資料が無い・止める指摘が無い）の
+     文言は cat.html の静的 title（#cat-qa-open）と揃えてある。 */
+  var QA_BUTTON_TITLE_DEFAULT = '数字・単位・用語などの自動点検の結果です。押すと一覧を表示します（F8）';
+  var QA_BUTTON_TITLE_EMPTY = '訳文が空の行の数です。押すと一覧を表示します（F8）';
+  var QA_BUTTON_TITLE_BLOCKING = '書き出しを止める指摘のある行の数です。押すと一覧を表示します（F8）';
   function updateQaButton() {
     var button = el('cat-qa-open');
     if (!button) return;
     button.disabled = !project;
-    if (!project) { button.textContent = '点検結果'; return; }
+    if (!project) { button.textContent = '点検結果'; button.title = QA_BUTTON_TITLE_DEFAULT; return; }
     var groups = qaFindings();
     /* 群を添字で足さない。止めない群を足したときに、道具の帯の数字だけが
        「ファイルを作れない指摘」を水増しする（2026-08-16）。blocking の印は
        群そのものが持っているので、そこから数える。いまの3群では同じ数になる。 */
-    var blocking = groups.filter(function (group) { return group.blocking; }).reduce(function (sum, group) { return sum + group.items.length; }, 0);
-    button.textContent = blocking ? ('点検結果 ' + blocking) : '点検結果';
+    var blockingGroups = groups.filter(function (group) { return group.blocking; });
+    var blocking = blockingGroups.reduce(function (sum, group) { return sum + group.items.length; }, 0);
+    /* ツールバーは資料全体で書き出しを止めている行の数。内訳が「訳文が空」
+       （key 'empty'）だけなら、止めている理由は未訳そのものなので「未訳」と
+       言う。ほかの理由（用語・数値など）が1件でも混じれば「書き出しを止める行」
+       と言う。下部タブ（この行の点検）は選択中1行の指摘数で、こちらとは別物。 */
+    var onlyEmpty = blocking > 0 && blockingGroups.every(function (group) { return group.key === 'empty' || !group.items.length; });
+    var label = onlyEmpty ? '未訳' : '書き出しを止める行';
+    button.textContent = blocking ? (label + ' ' + blocking) : '点検結果';
+    button.title = !blocking ? QA_BUTTON_TITLE_DEFAULT : (onlyEmpty ? QA_BUTTON_TITLE_EMPTY : QA_BUTTON_TITLE_BLOCKING);
     button.classList.toggle('cat-qa-has-blockers', blocking > 0);
   }
   function openQaList() {
@@ -3528,7 +3563,7 @@
       tmButton.textContent = '';
       tmButton.setAttribute('aria-label', '翻訳メモリから未訳を入力');
       tmButton.title = '翻訳メモリの完全一致を未訳の行へ先に入れます';
-      tmButton.innerHTML = icon('i-book') + '<span class="cat-segment-button-label">TMで下訳</span>';
+      tmButton.innerHTML = icon('i-translate') + '<span class="cat-segment-button-label">TMで下訳</span>';
       tmButton.classList.add('cat-segment-button');
     }
     var dockPreview = el('cat-preview-dock-toggle');
@@ -3626,6 +3661,11 @@
     function readPdfInto(input, side, label) {
       var file = input.files && input.files[0];
       if (!file) return;
+      /* 選んだファイル名は、押した直後にボタンの下へ日本語で出す。素の
+         <input type="file"> は既定のボタン文言が英語（Choose File）のことが
+         あり、選んだあとの状態も画面のどこにも出ていなかった（2026-08-18）。 */
+      var nameLabel = el('cat-align-' + side + '-file-name');
+      if (nameLabel) nameLabel.textContent = file.name;
       var status = el('cat-align-file-status');
       status.textContent = label + 'を読んでいます…';
       import('/assets/pdf-extract.js').then(function (mod) {
@@ -3649,6 +3689,10 @@
     }
     el('cat-align-source-file').addEventListener('change', function () { readPdfInto(this, 'source', '日本語版'); });
     el('cat-align-target-file').addEventListener('change', function () { readPdfInto(this, 'target', '英語版'); });
+    /* ボタンは既定の見た目を持たない素の file input を隠して押す
+       （cat-open-file-entry と同じ配線）。 */
+    el('cat-align-source-file-open').addEventListener('click', function () { el('cat-align-source-file').click(); });
+    el('cat-align-target-file-open').addEventListener('click', function () { el('cat-align-target-file').click(); });
     ['source', 'target'].forEach(function (side) {
       ['from', 'to'].forEach(function (end) {
         ['input', 'change'].forEach(function (eventName) {

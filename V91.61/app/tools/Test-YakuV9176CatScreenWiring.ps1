@@ -866,7 +866,10 @@ try {
     Chk (-not [bool]$qcScreen.filterHidden) '「点検の指摘」の絞り込みが隠れていない'
     Chk ([bool]$qcScreen.filterVisible) '「点検の指摘」の絞り込みが画面上で面積を持っている（CSSで消しても緑にならない）'
     Chk ([string]$qcScreen.filterCount -eq '1') ('件数は 1（実際 ' + [string]$qcScreen.filterCount + '）')
-    Chk ([string]$qcScreen.qaButtonLabel -match '^点検結果\s*1$') ('直接表示される「点検結果」も件数を出す（実際: ' + [string]$qcScreen.qaButtonLabel + '）')
+    # 2026-08-18: 道具の帯の文言を「点検結果 N」から、内訳に応じて「未訳 N」／
+    # 「書き出しを止める行 N」へ分けた。この題材は用語（qc群）で止まっており
+    # 「訳文が空」ではないので、後者になる。
+    Chk ([string]$qcScreen.qaButtonLabel -match '^書き出しを止める行\s*1$') ('直接表示される道具の帯も件数を出す（実際: ' + [string]$qcScreen.qaButtonLabel + '）')
     Chk ([bool]$qcScreen.qaButtonHasBlockers) '「点検」が、止めている指摘があると分かる見た目になる'
     # 止める条件は変えていない。押せないままであること。
     Chk ([bool]$qcScreen.exportDisabled) '取り出しボタンは従来どおり押せない（止める条件を緩めていない）'
