@@ -331,6 +331,15 @@
      押す前に読んでも判断が変わらない数字で、ツールバーの2段目を1行ぶん占めていた。
      上限に当たったときは、そのときに出る文言で足りる。 */
 
+  function setFileLoading(value, detail) {
+    var node = el('cat-file-loading');
+    if (!node) return;
+    node.hidden = !value;
+    node.setAttribute('aria-busy', value ? 'true' : 'false');
+    var label = el('cat-file-loading-label');
+    if (label && detail) label.textContent = detail;
+  }
+
   function setBusy(value) {
     busy = value;
     updateActionLabels();
@@ -1274,8 +1283,9 @@
   }
   function openSource(mode, intent, fileOverride) {
     var epoch = ++viewEpoch;
+    if (mode === 'file') setFileLoading(true, 'ファイルを読み込んでいます…');
     setBusy(true); status('取り込んでいます…');
-    return source(mode, fileOverride).then(function (payload) { payload.direction_intent = intent || 'auto'; return post('open', payload, false, null); }).then(function (data) { if (epoch !== viewEpoch) return; pendingDirection = null; render(data, true); }).catch(function (error) { if (epoch !== viewEpoch) return; setBusy(false); if (!handleDirection(error, function (dir) { return openSource(mode, dir, fileOverride); })) status(error.message, true); });
+    return source(mode, fileOverride).then(function (payload) { payload.direction_intent = intent || 'auto'; return post('open', payload, false, null); }).then(function (data) { if (epoch !== viewEpoch) return; if (mode === 'file') setFileLoading(false); pendingDirection = null; render(data, true); }).catch(function (error) { if (epoch !== viewEpoch) return; if (mode === 'file') setFileLoading(false); setBusy(false); if (!handleDirection(error, function (dir) { return openSource(mode, dir, fileOverride); })) status(error.message, true); });
   }
   function resume(id) { var epoch = ++viewEpoch; setBusy(true); status('続きの作業を開いています…'); return post('resume', { project_id: id }, false, null).then(function (data) { if (epoch === viewEpoch) render(data, true); }).catch(function (error) { if (epoch !== viewEpoch) return; setBusy(false); status(error.message, true); }); }
 
