@@ -1445,7 +1445,14 @@
     var glossaryScope = null, jobScope = null;
     return flush().then(function () { glossaryScope = currentScope(); if (!glossaryScope) throw new Error('資料が開かれていません。「ほかの資料に切り替える」から選び直してください。'); setBusy(true); status('用語集を適用しています…'); return post('glossary', {}, true, glossaryScope); }).then(function (data) {
       if (!scopeIsCurrent(glossaryScope, true) || !data || String(data.id || '') !== glossaryScope.id) throw new Error('表示している資料が切り替わったため、翻訳をやめました。もう一度「Copilotで未訳を翻訳」を押してください。');
-      project = data; jobScope = currentScope(); status('訳していない行を訳しています…'); return YakuCommon.postText('/api/cat/translate', { id: jobScope.id, expected_revision: jobScope.revision, mode: 'translate' });
+      project = data; jobScope = currentScope(); status('訳していない行を訳しています…');
+      /* 幅を知って最初から訳す。訳す行（訳文が空の行）の index だけを渡す。
+         目標が出せない行は buildFitTargets が自分で除くので、ここでは
+         絞り込みだけ行う。1件も無ければ body に fit_targets を付けない。 */
+      var translateFitTargets = buildFitTargets((project.segments || []).filter(function (s) { return !String(s.translation || '').trim(); }).map(function (s) { return Number(s.index); }));
+      var translateBody = { id: jobScope.id, expected_revision: jobScope.revision, mode: 'translate' };
+      if (translateFitTargets.length) translateBody.fit_targets = translateFitTargets;
+      return YakuCommon.postText('/api/cat/translate', translateBody);
     }).then(function (html) { startJobHtml(html, { type: 'translate', scope: jobScope }); }).catch(function (error) { setBusy(false); status(error.message, true); });
   }
   /* 貼り付けから来たときだけ、そのまま訳しにいく。Copilot の準備は起動直後だと
@@ -1474,7 +1481,11 @@
     }).then(function (data) {
       if (!scopeIsCurrent(glossaryScope, true) || !data || String(data.id || '') !== glossaryScope.id) throw new Error('表示している資料が切り替わったため、翻訳をやめました。');
       project = data; jobScope = currentScope(); status((index + 1) + '行目を訳しています…');
-      return YakuCommon.postText('/api/cat/translate', { id: jobScope.id, expected_revision: jobScope.revision, mode: 'translate', index: index });
+      /* まとめて訳すのと同じ考えで、この1行だけの fit_targets を渡す。 */
+      var rowFitTargets = buildFitTargets([index]);
+      var translateRowBody = { id: jobScope.id, expected_revision: jobScope.revision, mode: 'translate', index: index };
+      if (rowFitTargets.length) translateRowBody.fit_targets = rowFitTargets;
+      return YakuCommon.postText('/api/cat/translate', translateRowBody);
     }).then(function (html) { startJobHtml(html, { type: 'translate', scope: jobScope }); })
       .catch(function (error) { setBusy(false); status(error.message, true); });
   }
@@ -2781,6 +2792,22 @@
     context.font = (bold ? '700 ' : '') + '14.7px ' + previewOutputFont();
     return context.measureText(String(text || '')).width;
   }
+  /* 幅を知って最初から訳す。翻訳前は訳文が無いので segmentFitCapacity のように
+     実測できない。代わりに出力書体の参照文字幅（平均px/字）を代表文字列で
+     1回だけ測り、書体（太字・方向）ごとにキャッシュする。方向で出力される
+     文字種が変わる（to_en はラテン文字、to_jp は和文）ため、代表文字列も
+     方向で分ける。 */
+  var previewOutputAvgCharPxCache = {};
+  function previewOutputAvgCharPx(bold) {
+    var font = previewOutputFont();
+    var jp = !!(project && project.direction === 'to_jp');
+    var cacheKey = (jp ? 'jp|' : 'en|') + (bold ? '1|' : '0|') + font;
+    if (previewOutputAvgCharPxCache[cacheKey] !== undefined) return previewOutputAvgCharPxCache[cacheKey];
+    var sample = jp ? '日本語で書かれた代表的な文章の一例であり幅の目安にする' : 'The quick brown fox jumps over the lazy dog 0123456789';
+    var width = previewTextWidthPx(sample, bold) / sample.length;
+    previewOutputAvgCharPxCache[cacheKey] = width;
+    return width;
+  }
   /* 収まりの判定に使う文字列。プレビューの表示切替（原文／訳文）とは独立に、
      「実際にセルへ入る文字」＝訳文（無ければ原文）で見る。絞り込みや行の印は
      プレビューの表示側と連動させない（表示は見る側の都合、収まりは書く内容の
@@ -2882,6 +2909,50 @@
     var raw = Math.floor(text.length * Math.max(0, fit.displayWidthPx - 8) / fit.textWidthPx);
     var basis = raw < 8 ? 'below-min' : (raw > 99 ? 'above-max' : 'measured');
     return { raw: raw, maxChars: Math.min(99, Math.max(8, raw)), basis: basis };
+  }
+  /* 幅を知って最初から訳す（翻訳前）。訳文がまだ無いので segmentFitCapacity の
+     実測は使えない。代わりに参照文字幅（平均px/字、previewOutputAvgCharPx）で
+     概算する。ゲート（既知幅・非wrap・非shrink・寄せ）は segmentFitRisk が
+     見ている層（layout）をここでも直接読み、判定を2つに増やさない
+     autoSpillColumns もそのまま呼ぶ。宣言spill（declared fallback）は使わない
+     ―― 翻訳前は segment.placement（配置計画）がまだ無く、対象にできないため。
+     8..99の範囲外・層が引けない行は null（従来どおり何も送らない）。 */
+  function segmentSourceFitTarget(segment) {
+    if (!segment || segment.kind !== 'cell') return null;
+    var ref = previewCellRef(segment.location);
+    if (!ref) return null;
+    var layout = previewLayout(ref.sheet);
+    if (!layout) return null;
+    var key = ref.row + ':' + ref.column;
+    if (layout.wrap[key] || layout.shrink[key]) return null;
+    var span = layout.spans[key] || null;
+    var spanColumns = (span && span.columns) || 1;
+    if (!previewColumnsHaveKnownWidth(layout, ref.column, spanColumns)) return null;
+    var align = layout.align[key] || '';
+    var displayWidth = previewColumnPx(layout, ref.column, span);
+    if (align === '' || align === 'left') {
+      autoSpillColumns(layout, ref.row, ref.column, span).forEach(function (col) {
+        displayWidth += previewColumnPx(layout, col, null);
+      });
+    }
+    var avgCharPx = previewOutputAvgCharPx(!!layout.bold[key]);
+    if (!(avgCharPx > 0)) return null;
+    var raw = Math.floor((displayWidth - 8) / avgCharPx);
+    if (raw < 8 || raw > 99) return null;
+    return raw;
+  }
+  /* index の並びから fit_targets（幅の目標）配列を作る。目標が出せない行は
+     配列に入れない（8..99の範囲外・層が引けない・訳がまだ無い行はそもそも
+     対象にしない）。1件も無ければ呼び出し側が body に fit_targets 自体を
+     付けない（従来どおり、送信内容は変わらない）。 */
+  function buildFitTargets(indexes) {
+    var targets = [];
+    (indexes || []).forEach(function (idx) {
+      var segment = project && (project.segments || []).find(function (item) { return Number(item.index) === Number(idx); });
+      var maxChars = segment ? segmentSourceFitTarget(segment) : null;
+      if (maxChars !== null) targets.push({ index: Number(idx), max_chars: maxChars });
+    });
+    return targets;
   }
   function previewCellHtml(segment, layout, row, column, span) {
     var value = previewText(segment);

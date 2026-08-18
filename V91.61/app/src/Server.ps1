@@ -1175,7 +1175,12 @@ function Start-YakuTranslationJob {
                         $result = [pscustomobject]@{ Kind = 'cat'; Mode = 'revise'; Error = $_.Exception.Message }
                     }
                 } else {
-                Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label '翻訳中' -Progress 10 -Detail '' -Phase 'translating'
+                # 幅を知って最初から訳す。目標が1件以上あるときだけ、翻訳開始時の
+                # 進捗detailへ1行添える（利用者の判断で設定・ボタンは増やさない）。
+                $fitTargetRowCount = 0
+                try { $fitTargetRowCount = @($cat.items | Where-Object { $null -ne $_ -and $_.PSObject.Properties.Name -contains 'max_chars' }).Count } catch { $fitTargetRowCount = 0 }
+                $initialTranslateDetail = if ($fitTargetRowCount -gt 0) { "幅の目標を $fitTargetRowCount 行に添えています" } else { '' }
+                Set-YakuTranslationProgress -ProgressState $JobState -Mode 'working' -Label '翻訳中' -Progress 10 -Detail $initialTranslateDetail -Phase 'translating'
                 $items = $null
                 $catContext = $null
                 try {
@@ -1186,11 +1191,20 @@ function Start-YakuTranslationJob {
                         $text = [string]$it.text
                         if ([string]::IsNullOrWhiteSpace($text)) { continue }
                         if (-not $byText.ContainsKey($text)) {
-                            $entry = [pscustomobject]@{ Index = ($items.Count + 1); Text = $text; BlockIds = (New-Object System.Collections.Generic.List[string]); Targets = (New-Object System.Collections.Generic.List[int]); Terminology=@($it.terminology) }
+                            $entry = [pscustomobject]@{ Index = ($items.Count + 1); Text = $text; BlockIds = (New-Object System.Collections.Generic.List[string]); Targets = (New-Object System.Collections.Generic.List[int]); Terminology=@($it.terminology); MaxChars = $null; FitTargetValues = (New-Object System.Collections.Generic.List[object]) }
                             $byText[$text] = $entry
                             [void]$items.Add($entry)
                         }
                         [void]$byText[$text].Targets.Add([int]$it.index)
+                        $itMaxChars = $null
+                        if ($null -ne $it -and $it.PSObject.Properties.Name -contains 'max_chars') { try { $itMaxChars = [int]$it.max_chars } catch { $itMaxChars = $null } }
+                        [void]$byText[$text].FitTargetValues.Add($itMaxChars)
+                    }
+                    # 幅を知って最初から訳す。複製ごとの目標を、規則
+                    # （Resolve-YakuCatFitTargetForDuplicates のコメント参照）に沿って
+                    # 1つの MaxChars へ畳む。
+                    foreach ($dedupedEntry in @($items.ToArray())) {
+                        $dedupedEntry.MaxChars = Resolve-YakuCatFitTargetForDuplicates -MaxCharsValues @($dedupedEntry.FitTargetValues.ToArray())
                     }
                     $maxChars = Get-YakuMaxCharsPerFileBatch -Settings $settings
                     $checkpointProjectId = [string]$cat.project_id
@@ -3853,6 +3867,11 @@ function Invoke-YakuRoute {
                         $onlyIndex = -1
                         try { if ($null -ne $payload['index']) { $onlyIndex = [int]$payload['index'] } } catch { $onlyIndex = -1 }
                         if ($onlyIndex -ge 0 -and $onlyIndex -ge $segs.Count) { throw '訳す行が見つかりません。' }
+                        # 幅を知って最初から訳す。クライアントが列幅から出した概算文字目標を
+                        # 検証してから積む（検証の規則は ConvertTo-YakuCatValidFitTargets の
+                        # 註を参照）。不正値は黙って捨てる（翻訳そのものは止めない）。
+                        $fitTargetsByIndex = @{}
+                        try { $fitTargetsByIndex = ConvertTo-YakuCatValidFitTargets -RawFitTargets $payload['fit_targets'] -SegmentCount $segs.Count } catch { $fitTargetsByIndex = @{} }
                         for ($i = 0; $i -lt $segs.Count; $i++) {
                             if ($onlyIndex -ge 0 -and $i -ne $onlyIndex) { continue }
                             if (-not [string]::IsNullOrWhiteSpace([string]$segs[$i].Translation)) { continue }
@@ -3864,7 +3883,9 @@ function Invoke-YakuRoute {
                                         if (Test-YakuCatPromptTerminologyEligible -Term ([pscustomobject]$row) -Direction ([string]$project.Direction)) { $row }
                                     } | Where-Object { $null -ne $_ })
                             } catch { throw ('CAT_TERMINOLOGY_UNAVAILABLE: ' + $_.Exception.Message) }
-                            $pending += ,([ordered]@{ index = $i; text = [string]$segs[$i].Text; terminology=@($termRows) })
+                            $pendingItem = [ordered]@{ index = $i; text = [string]$segs[$i].Text; terminology=@($termRows) }
+                            if ($fitTargetsByIndex.ContainsKey($i)) { $pendingItem['max_chars'] = [int]$fitTargetsByIndex[$i] }
+                            $pending += ,$pendingItem
                         }
                     }
                     if (@($pending).Count -eq 0) {
