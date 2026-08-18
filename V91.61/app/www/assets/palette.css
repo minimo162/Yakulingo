@@ -1,0 +1,87 @@
+﻿/* お手軽翻訳（/palette）専用の見た目。
+
+   小窓（例 480x640）で開かれる前提で、cat.html の .shell（min 920px）は
+   使わない。ここだけ独立した、幅に合わせて縮む器を持つ。
+   色・角丸・影の値は styles.css のトークンをそのまま使い、ここで新しい
+   色を作らない（画面が増えても指紋が増えないようにする）。 */
+
+body.app-palette {
+  min-height: 100vh;
+  background: var(--bg);
+}
+
+.palette-shell {
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 14px 16px 40px;
+  display: grid;
+  gap: 14px;
+}
+
+.palette-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.palette-header .brand { font-size: var(--font-ui); }
+.palette-status-block { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+.palette-main { display: grid; gap: 12px; }
+
+.palette-label { display: block; margin-bottom: 6px; color: var(--muted); font-size: var(--font-meta); }
+.palette-input { min-height: 132px; }
+.palette-input-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.palette-count { color: var(--muted); font-size: var(--font-meta); font-variant-numeric: tabular-nums; }
+.palette-long-notice { color: var(--warning); font-size: var(--font-meta); }
+.palette-fineprint { margin: 0; color: var(--muted); font-size: var(--font-meta); }
+.palette-direction-note { margin: 0; color: var(--muted); font-size: var(--font-meta); }
+
+/* 即答（TM完全一致・用語集）。Copilotの訳より先に、体感即時で出る場所。 */
+.palette-instant { display: grid; gap: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); }
+.palette-instant-title { margin: 0; color: var(--muted); font-size: var(--font-meta); font-weight: 600; }
+#palette-tm-candidate { padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--soft); }
+#palette-tm-candidate .translation { margin: 0; padding: 0; background: transparent; max-width: none; }
+#palette-tm-candidate .result-actions { margin-top: 8px; }
+
+.palette-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.palette-result { display: grid; gap: 10px; }
+.palette-hint { margin: 4px 0 0; color: var(--faint); font-size: var(--font-meta); }
+.palette-hint kbd { margin: 0 1px; }
+.palette-copy-status { min-height: 1.4em; margin: 0; color: var(--success); font-size: var(--font-meta); }
+
+/* IME風の候補番号。データ属性はJS側が候補を並べ直すたびに振り直す。
+   要素の形はTM候補（自前）とCopilotの結果カード（Html.ps1が作る既存の形）で
+   異なるので、番号だけを ::before で共通に載せる（マークアップ自体は変えない）。
+   カードの外側へはみ出させると、小窓（480px）で見切れる。常に内側左上へ
+   収め、本文は番号ぶんだけ右へ避ける。 */
+[data-yaku-candidate-index] { position: relative; }
+.result-alt[data-yaku-candidate-index],
+[data-yaku-main-card][data-yaku-candidate-index],
+#palette-tm-candidate[data-yaku-candidate-index] { padding-left: 34px; }
+[data-yaku-candidate-index]::before {
+  content: attr(data-yaku-candidate-index);
+  position: absolute;
+  top: 10px;
+  left: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: .78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 380px) {
+  .palette-shell { padding: 10px 10px 32px; }
+}

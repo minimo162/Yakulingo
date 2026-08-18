@@ -147,6 +147,7 @@ tools/Test-YakuV9191PairedDelimiterQa.ps1	crlf
 tools/Test-YakuV9192SegmentReviewNotes.ps1	lf
 tools/Test-YakuV9193NumericWordQa.ps1	crlf
 tools/Test-YakuV9194SmartcatEditorLayout.ps1	crlf
+tools/Test-YakuV9195Palette.ps1	crlf
 tools/V64-HTTP-Boundary-Test.ps1	crlf
 tools/V65-Saving-Validation-Test.ps1	crlf
 tools/Wait-YakuCopilotResponse-Watcher-Test.ps1	crlf
@@ -156,6 +157,8 @@ www/assets/cat.js	lf
 www/assets/cat-workspace.css	lf
 www/assets/common.js	lf
 www/assets/htmx.min.js	none
+www/assets/palette.css	lf
+www/assets/palette.js	lf
 www/assets/pdf-extract.js	lf
 www/assets/pdf-review.js	lf
 www/assets/quick.js	lf
@@ -164,4 +167,5 @@ www/assets/tour.js	lf
 www/assets/tutorial.css	lf
 www/assets/tutorial.js	lf
 www/cat.html	lf
+www/palette.html	lf
 www/tutorial.html	lf

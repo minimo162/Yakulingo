@@ -1,0 +1,57 @@
+﻿<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="yaku-session" content="__YAKU_SESSION_TOKEN__">
+  <!-- 1回で送れる文字数。/cat の確認作業と同じ上限を使う（画面側で別の数字を決めない）。 -->
+  <meta name="yaku-max-batch-chars" content="__YAKU_MAX_BATCH_CHARS__">
+  <title>お手軽翻訳 - YakuLingo</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/palette.css">
+  <script src="/assets/common.js" defer></script>
+  <script src="/assets/palette.js" defer></script>
+</head>
+<body class="app-palette">
+  <div class="palette-shell">
+    <header class="palette-header">
+      <a class="brand home-link" href="/cat">YakuLingo</a>
+      <div class="palette-status-block">
+        <div id="copilot-status" class="status" aria-live="polite"><span class="status-dot warn"></span><span>準備しています</span></div>
+        <button id="copilot-prepare-retry" type="button" class="link-button" hidden>準備し直す</button>
+      </div>
+    </header>
+    <p id="copilot-status-detail" class="status-detail" role="status" aria-live="polite" hidden></p>
+
+    <main class="palette-main">
+      <!-- 貼ったら即訳す。ボタンは押させない（明示のボタンは補助として置く）。 -->
+      <form id="palette-form" class="palette-form">
+        <label for="palette-input" class="palette-label">原文（貼り付けると自動で翻訳します）</label>
+        <textarea id="palette-input" class="palette-input" rows="6" placeholder="ここに貼り付けてください。" spellcheck="false" autocomplete="off"></textarea>
+        <div class="palette-input-row">
+          <span id="palette-count" class="palette-count">0字</span>
+          <span id="palette-long-notice" class="palette-long-notice" role="status" hidden></span>
+          <button id="palette-submit" type="submit" class="secondary-button compact">今すぐ訳す</button>
+        </div>
+      </form>
+
+      <p class="palette-fineprint">数値は伏せて送ります。社名・人名と文章はそのまま送ります。</p>
+      <p id="palette-direction" class="palette-direction-note" hidden></p>
+
+      <!-- TM完全一致・個人用語集の即答。Copilotより先に、体感即時で出る。 -->
+      <div id="palette-instant" class="palette-instant" aria-live="polite" hidden></div>
+
+      <!-- 注文チップ。標準訳が出てから使う（原文とマスク後の現訳が要る）。 -->
+      <div id="palette-chips" class="palette-chips" hidden>
+        <button type="button" class="secondary-button compact" data-yaku-chip="shorten">短く</button>
+        <button type="button" class="secondary-button compact" data-yaku-chip="revise">丁寧に</button>
+      </div>
+
+      <div id="palette-result" class="palette-result" aria-live="polite"></div>
+
+      <p id="palette-copy-status" class="palette-copy-status" role="status" aria-live="polite"></p>
+      <p class="palette-hint">候補は<kbd>1</kbd>〜<kbd>9</kbd>で選んでコピー。<kbd>Enter</kbd>で既定候補をコピー。<kbd>Esc</kbd>で消去。</p>
+    </main>
+  </div>
+</body>
+</html>
