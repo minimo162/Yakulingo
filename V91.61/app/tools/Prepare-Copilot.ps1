@@ -5,7 +5,9 @@ param(
     [int]$TimeoutSeconds = 900,
     [int]$ParentProcessId = 0,
     [string]$ParentStartedUtc = '',
-    [int]$MonitorIntervalSeconds = 20
+    # R2-5: 60秒のstale閾値に対し、Get-YakuCopilotPage は最悪14秒近くかかることが
+    # ある。20秒周期だと1回詰まっただけで閾値に迫るため、10秒へ縮める。
+    [int]$MonitorIntervalSeconds = 10
 )
 
 $ErrorActionPreference = 'Stop'
@@ -110,6 +112,19 @@ function Watch-YakuCopilotReadiness {
 
     $interval = [Math]::Max(10, $MonitorIntervalSeconds)
     $lastMode = 'ready'
+    # R2-5: continue する経路（翻訳中でCDPを避ける／サーバー応答なし等）でも
+    # 直前の状態を同内容で書き直し、updated_at だけ進める。CDPの実チェックを
+    # 省く枝で心拍まで止めると、60秒超の翻訳ジョブが続いただけで stale へ
+    # 落ちて「Copilotの状態を確認できません」になり、翻訳が押せなくなる
+    # （R2-2で直した「準備をやり直す」との連鎖詰み）。
+    $lastLabel = 'Copilot：準備完了'
+    $lastClass = 'ok'
+    $lastDetail = ''
+    $lastReady = $true
+    # D2-2: CDPに連続で届かなくなったら、緑のまま放置せず「準備が終わりません」へ
+    # 降格する。専用Edgeが落ちた後もバッジが緑のままだった不具合の修正。
+    $cdpFailureStreak = 0
+    $cdpFailureThreshold = 3
     Write-YakuLog "Copilot readiness monitor started. parentPid=$ParentProcessId intervalSeconds=$interval" 'INFO'
     while (Test-YakuProcessIdentity -Id $ParentProcessId -StartTimeUtc $ParentStartedUtc) {
         Start-Sleep -Seconds $interval
@@ -120,39 +135,71 @@ function Watch-YakuCopilotReadiness {
         try {
             $runtimePath = Join-Path (Get-YakuSubDir 'runtime') 'server.json'
             $runtime = Read-YakuJsonFile -Path $runtimePath
-            if (-not $runtime -or -not $runtime.url) { continue }
+            if (-not $runtime -or -not $runtime.url) {
+                $null = Write-YakuWarmupStatus -Mode $lastMode -Label $lastLabel -Class $lastClass -Detail $lastDetail -Ready $lastReady
+                continue
+            }
             $instance = Invoke-RestMethod -UseBasicParsing -Uri (([string]$runtime.url).TrimEnd('/') + '/api/instance') -TimeoutSec 3
             if ([int]$instance.pid -ne $ParentProcessId -or
                 -not [string]::Equals([string]$instance.process_started_at, $ParentStartedUtc, [System.StringComparison]::OrdinalIgnoreCase)) {
                 break
             }
-            if ([bool]$instance.active_job_running) { continue }
+            if ([bool]$instance.active_job_running) {
+                $null = Write-YakuWarmupStatus -Mode $lastMode -Label $lastLabel -Class $lastClass -Detail $lastDetail -Ready $lastReady
+                continue
+            }
         } catch {
+            $null = Write-YakuWarmupStatus -Mode $lastMode -Label $lastLabel -Class $lastClass -Detail $lastDetail -Ready $lastReady
             continue
         }
 
         try {
             $page = Get-YakuCopilotPage -Port $Port -Url $Url
             $state = Get-YakuCopilotState -Page $page -TimeoutSeconds 6
+            $cdpFailureStreak = 0
             if ($state.loginDetected -eq $true) {
+                # 心拍：遷移時だけでなく毎周期書く。updated_at が動き続けることで、
+                # サーバー側の Get-YakuCopilotBadgeState が「60秒応答なし」を
+                # stale として検出できる（D2-2）。
+                $lastLabel = 'Copilot：サインインが必要'
+                $lastClass = 'warn'
+                $lastDetail = 'YakuLingo画面の「Copilot画面を開く」を押し、Microsoft 365 Copilotにサインインしてください。サインインが済むとEdge画面は自動で隠れます。'
+                $lastReady = $false
+                $null = Write-YakuWarmupStatus -Mode 'login' -Label $lastLabel -Class $lastClass -Detail $lastDetail -Ready $lastReady
                 if ($lastMode -ne 'login') {
-                    $null = Write-YakuWarmupStatus -Mode 'login' -Label 'Copilot：サインインが必要' -Class 'warn' -Detail 'YakuLingo画面の「Copilot画面を開く」を押し、Microsoft 365 Copilotにサインインしてください。サインインが済むとEdge画面は自動で隠れます。' -Ready $false
                     Write-YakuLog 'Copilot readiness monitor detected that sign-in is required.' 'WARN'
-                    $lastMode = 'login'
                 }
+                $lastMode = 'login'
                 continue
             }
             if ($state.inputReady -eq $true) {
+                $currentUrl = ConvertTo-YakuSafeString -Value $state.url
+                $lastLabel = 'Copilot：準備完了'
+                $lastClass = 'ok'
+                $lastDetail = $currentUrl
+                $lastReady = $true
+                $null = Write-YakuWarmupStatus -Mode 'ready' -Label $lastLabel -Class $lastClass -Detail $lastDetail -Ready $lastReady
                 if ($lastMode -ne 'ready') {
-                    $currentUrl = ConvertTo-YakuSafeString -Value $state.url
-                    $null = Write-YakuWarmupStatus -Mode 'ready' -Label 'Copilot：準備完了' -Class 'ok' -Detail $currentUrl -Ready $true
                     $null = Show-YakuEdgeWindow -Mode hidden
                     Write-YakuLog 'Copilot sign-in completed; the dedicated Edge window was hidden again.' 'INFO'
-                    $lastMode = 'ready'
                 }
+                $lastMode = 'ready'
             }
         } catch {
-            Write-YakuLog "Copilot readiness monitor check skipped. reason=$($_.Exception.Message)" 'DEBUG'
+            $cdpFailureStreak++
+            Write-YakuLog "Copilot readiness monitor check skipped. reason=$($_.Exception.Message) consecutiveFailures=$cdpFailureStreak" 'DEBUG'
+            if ($cdpFailureStreak -ge $cdpFailureThreshold -and $lastMode -ne 'not-ready') {
+                $lastLabel = '準備が終わりません'
+                $lastClass = 'warn'
+                $lastDetail = 'Copilotの画面に接続できなくなりました。YakuLingo画面の「Copilotの準備をやり直す」を押してください。'
+                $lastReady = $false
+                $null = Write-YakuWarmupStatus -Mode 'not-ready' -Label $lastLabel -Class $lastClass -Detail $lastDetail -Ready $lastReady
+                Write-YakuLog "Copilot readiness monitor downgraded to not-ready after $cdpFailureStreak consecutive CDP failures." 'WARN'
+                $lastMode = 'not-ready'
+            } else {
+                # 表明未達でも心拍だけは進める。閾値未満の一時失敗で stale化しない。
+                $null = Write-YakuWarmupStatus -Mode $lastMode -Label $lastLabel -Class $lastClass -Detail $lastDetail -Ready $lastReady
+            }
         }
     }
     Write-YakuLog 'Copilot readiness monitor stopped with its parent server.' 'INFO'
@@ -229,11 +276,63 @@ try {
     $port = Start-YakuCopilotEdge -Port $earlyPort -DisplayMode ([string]$settings.browser_display_mode) -Url $copilotUrl -WindowSize ([string]$settings.edge_window_size)
     $null = Write-YakuWarmupStatus -Mode 'loading' -Label 'Copilotを準備しています' -Class 'warn' -Detail 'Copilotの入力欄が開くのを待っています。ふつうは数秒〜十数秒です。' -Ready $false
 
-    while ((Get-Date) -lt $deadline) {
+    # D2-2 (4): $TimeoutSeconds（既定900秒）を過ぎても、ここで諦めてワーカーごと
+    # 終了しない。以前はexitしていたため、その後にサインインが済んでも誰も
+    # 気づかず、バッジは「準備が終わりません」のまま永久だった。ここからは
+    # 低頻度（20秒間隔）のポーリングへ切り替えて様子を見続け、親サーバーが
+    # 無くなったときだけ一緒に終わる（Watch-YakuCopilotReadinessと同じ寿命の
+    # 決め方）。利用者は「Copilotの準備をやり直す」で新しいワーカーをいつでも
+    # 起こせるので、無期限に居座っても実害は無い。
+    $timedOut = $false
+    $cdpFailureStreak = 0
+    $edgeRelaunchAttempted = $false
+    while ($true) {
+        if (-not $timedOut -and (Get-Date) -ge $deadline) {
+            $timedOut = $true
+            $null = Write-YakuWarmupStatus -Mode 'timeout' -Label '準備が終わりません' -Class 'warn' -Detail "Copilotの準備が $([int]($timeout/60)) 分たっても終わりませんでした。EdgeのCopilot画面が開いていれば、ログインが済んでいるかご確認ください。「Copilotの準備をやり直す」を押すか、このままお待ちいただいても定期的に確認します。" -Ready $false
+            Write-YakuLog "Copilot warmup exceeded ${timeout}s; continuing at low frequency instead of exiting." 'WARN'
+            # すぐ下のポーリングが同じ周回でこのステータスを上書きしてしまうと、
+            # 「準備が終わりません」の表示が一瞬も画面に出ない。低頻度の間隔ぶん
+            # 見せてから次の確認へ進む。
+            Start-Sleep -Milliseconds 20000
+            continue
+        }
+        if ($timedOut -and $ParentProcessId -gt 0 -and -not [string]::IsNullOrWhiteSpace($ParentStartedUtc) -and
+            -not (Test-YakuProcessIdentity -Id $ParentProcessId -StartTimeUtc $ParentStartedUtc)) {
+            Write-YakuLog 'Copilot warmup low-frequency retry stopped because the parent server is gone.' 'INFO'
+            exit 2
+        }
+        $pollIntervalMs = if ($timedOut) { 20000 } else { 1200 }
+        # R3-2: 15分打ち切り後、次の1周でこの下の枝が無条件に 'loading' を書き、
+        # 「準備が終わりません」の表示（と、それにひもづく「準備をやり直す」
+        # ボタンの表示条件）が最短20秒で消えていた。timedOut のあいだは、
+        # 状態が確定的に読めない/前進しない限り 'timeout' のラベル・detailを
+        # 書き続ける。
+        $notReadyMode = if ($timedOut) { 'timeout' } else { 'loading' }
+        $notReadyLabel = if ($timedOut) { '準備が終わりません' } else { 'Copilotを準備しています' }
+        $notReadyDetail = if ($timedOut) { "Copilotの準備が $([int]($timeout/60)) 分たっても終わりませんでした。EdgeのCopilot画面が開いていれば、ログインが済んでいるかご確認ください。「Copilotの準備をやり直す」を押すか、このままお待ちいただいても定期的に確認します。" } else { 'Copilotの入力欄が開くのを待っています。ふつうは数秒〜十数秒です。' }
+        # D2-2/R3-2: 準備完了前に専用Edgeが消える（利用者が誤って閉じた、
+        # クラッシュ等）と、以前はCDP例外が出続けるだけで誰もEdgeを起こし直さず、
+        # ワーカーが自力では二度と戻れない袋小路になっていた。連続3回CDP例外が
+        # 続いたら、このワーカー自身が Start-YakuCopilotEdge を1回だけ呼び直す。
+        if ($cdpFailureStreak -ge 3 -and -not $edgeRelaunchAttempted) {
+            $edgeRelaunchAttempted = $true
+            Write-YakuLog "Copilot warmup relaunching the dedicated Edge after $cdpFailureStreak consecutive CDP failures." 'WARN'
+            try {
+                $port = Start-YakuCopilotEdge -Port $port -DisplayMode ([string]$settings.browser_display_mode) -Url $copilotUrl -WindowSize ([string]$settings.edge_window_size)
+                $cdpFailureStreak = 0
+                $edgeRelaunchAttempted = $false
+                Write-YakuLog "Copilot warmup Edge relaunch succeeded. port=$port" 'INFO'
+            } catch {
+                Write-YakuLog "Copilot warmup Edge relaunch failed: $($_.Exception.Message)" 'WARN'
+            }
+        }
         try {
             $page = Get-YakuCopilotPage -Port $port -Url $copilotUrl
             $page = Restore-YakuCopilotTabVisibility -Page $page
             $state = Get-YakuCopilotState -Page $page -TimeoutSeconds 6
+            $cdpFailureStreak = 0
+            $edgeRelaunchAttempted = $false
             $url = ConvertTo-YakuSafeString -Value $state.url
             $title = ConvertTo-YakuSafeString -Value $state.title
 
@@ -271,11 +370,11 @@ try {
                             exit 0
                         }
                         Write-YakuLog 'Ready status write failed; staying in polling loop to retry.' 'WARN'
-                        Start-Sleep -Milliseconds 1200
+                        Start-Sleep -Milliseconds $pollIntervalMs
                         continue
                     }
                     Write-YakuLog 'Copilot warmup fresh-chat after state was insufficient; using polling fallback.' 'DEBUG'
-                    Start-Sleep -Milliseconds 1200
+                    Start-Sleep -Milliseconds $pollIntervalMs
                     continue
                 }
 
@@ -290,7 +389,7 @@ try {
                     exit 0
                 }
                 Write-YakuLog 'Ready status write failed; staying in polling loop to retry.' 'WARN'
-                Start-Sleep -Milliseconds 1200
+                Start-Sleep -Milliseconds $pollIntervalMs
                 continue
             }
 
@@ -299,7 +398,9 @@ try {
             } elseif ($state.generating -eq $true) {
                 $null = Write-YakuWarmupStatus -Mode 'busy' -Label 'Copilotの返事を待っています' -Class 'warn' -Detail 'Copilotが前の回答を書き終えるのを待っています。そのままお待ちください。' -Ready $false
             } else {
-                $null = Write-YakuWarmupStatus -Mode 'loading' -Label 'Copilotを準備しています' -Class 'warn' -Detail 'Copilotの入力欄が開くのを待っています。ふつうは数秒〜十数秒です。' -Ready $false
+                # R3-2: timedOut のあいだは 'loading' で上書きせず、'timeout' の
+                # ラベル・detailを保つ（$notReadyMode/$notReadyLabel/$notReadyDetail）。
+                $null = Write-YakuWarmupStatus -Mode $notReadyMode -Label $notReadyLabel -Class 'warn' -Detail $notReadyDetail -Ready $false
             }
 
             if (((Get-Date) - $lastLog).TotalSeconds -ge 8) {
@@ -307,18 +408,19 @@ try {
                 $lastLog = Get-Date
             }
         } catch {
-            $null = Write-YakuWarmupStatus -Mode 'loading' -Label 'Copilotを準備しています' -Class 'warn' -Detail 'Copilotの画面を読み込んでいます。そのままお待ちください。' -Ready $false
+            $cdpFailureStreak++
+            # R3-2: 同上。timedOut中はここも 'timeout' を保つ。timedOut前は
+            # 従来どおり「画面を読み込んでいます」を出す（CDP例外そのものの
+            # 案内なので、timeout文言で上書きしない）。
+            $catchDetail = if ($timedOut) { $notReadyDetail } else { 'Copilotの画面を読み込んでいます。そのままお待ちください。' }
+            $null = Write-YakuWarmupStatus -Mode $notReadyMode -Label $notReadyLabel -Class 'warn' -Detail $catchDetail -Ready $false
             if (((Get-Date) - $lastLog).TotalSeconds -ge 8) {
-                Write-YakuLog "Copilot warmup polling error: $($_.Exception.Message)" 'DEBUG'
+                Write-YakuLog "Copilot warmup polling error: $($_.Exception.Message) consecutiveCdpFailures=$cdpFailureStreak" 'DEBUG'
                 $lastLog = Get-Date
             }
         }
-        Start-Sleep -Milliseconds 1200
+        Start-Sleep -Milliseconds $pollIntervalMs
     }
-
-    $null = Write-YakuWarmupStatus -Mode 'timeout' -Label '準備が終わりません' -Class 'warn' -Detail "Copilotの準備が $([int]($timeout/60)) 分たっても終わりませんでした。EdgeのCopilot画面が開いていれば、ログインが済んでいるかご確認ください。ログイン済みなら、いったんアプリを終了して開き直してください。" -Ready $false
-    Write-YakuLog "Copilot warmup timeout after $timeout seconds." 'WARN'
-    exit 2
 } catch {
     $null = Write-YakuWarmupStatus -Mode 'error' -Label 'Copilotを準備できませんでした' -Class 'warn' -Detail ("アプリを終了して開き直してください。それでも直らない場合は、記録をご確認ください。（内部の記録: " + $_.Exception.Message + "）") -Ready $false
     try { Write-YakuLog "Copilot warmup exception: $($_.Exception.ToString())" 'ERROR' } catch {}

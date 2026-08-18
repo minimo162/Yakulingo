@@ -1587,8 +1587,12 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
    Smartcat はプレビューを下部に常設し、細い仕切りで広げられ、選択に追随する
    （実測。出典 _docs/対比_Smartcat_2026-08-16.md）。
 
-   高さは JS が --cat-dock-height に入れる。既定は 180px と狭くしてある。
-   Smartcat も既定は狭く、必要なときだけ大きくする作りだった。 */
+   高さは JS が --cat-dock-height に入れる。実内容（候補・点検の指摘など）が
+   入っているときは 280px、開いている行の参考情報が待機文だけのときは
+   180px（cat.js の syncDockHeightForContent、2026-08-18 利用者判断）。
+   ここの 180px はその値を静的な既定として合わせただけで、JS が万一走らな
+   かったときのフォールバックである。Smartcat も既定は狭く、必要なときだけ
+   大きくする作りだった。 */
 .cat-preview-dock {
   flex: 0 0 auto;
   display: flex;
@@ -1721,6 +1725,14 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
   min-height: 0;
   overflow: auto;
   padding: var(--space-1) var(--space-2);
+  /* 2026-08-18（利用者指示）: 中身が枠より高いとき、いちばん下の行が
+     文字の途中で唐突に切れて見えていた（実測 #cat-panel-candidates で
+     scrollHeight 271 / clientHeight 232）。スクロールで続きへ行けること
+     自体は変えず、切れ目を背景色へのフェードにして「まだ続きがある」と
+     分かる形にする。中身が枠に収まっているときは、空白のまま薄くなる
+     だけで見た目に影響しない。 */
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent 100%);
 }
 
 .cat-preview-dock > .cat-inspector-pane > #cat-panel-preview {
@@ -2485,6 +2497,7 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
   body.app-cat[data-cat-view="workspace"] .header-actions { gap: 8px; }
   body.app-cat[data-cat-view="workspace"] .status-block { flex-direction: row; align-items: center; gap: 8px; }
   body.app-cat[data-cat-view="workspace"] #copilot-window-open { min-height: 28px; padding-block: 0; }
+  body.app-cat[data-cat-view="workspace"] #copilot-prepare-retry { min-height: 28px; padding-block: 0; white-space: nowrap; }
 
   body.app-cat[data-cat-view="workspace"] .tab-panel { margin-top: 4px; }
   body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar {
@@ -2877,6 +2890,7 @@ body.app-cat[data-cat-view="start"] .status-block {
 }
 body.app-cat[data-cat-view="start"] #copilot-status { min-height: 28px; flex: 0 0 auto; white-space: nowrap; }
 body.app-cat[data-cat-view="start"] #copilot-window-open { min-height: 28px; padding-block: 0; }
+body.app-cat[data-cat-view="start"] #copilot-prepare-retry { min-height: 28px; padding-block: 0; white-space: nowrap; }
 body.app-cat[data-cat-view="start"] .tab-panel { margin-top: 4px; }
 body.app-cat[data-cat-view="start"] #cat-picker { width: 100%; }
 

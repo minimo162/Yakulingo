@@ -24,6 +24,7 @@ $script:YakuWarmRunspace = $null
 $script:YakuWarmRunspaceBuild = $null
 $script:YakuWarmupLastGood = $null
 $script:YakuUploadHandles = [hashtable]::Synchronized(@{})
+$script:YakuLastUploadSweep = [datetime]::MinValue
 $script:YakuUiClients = [hashtable]::Synchronized(@{})
 $script:YakuProjectLeases = [hashtable]::Synchronized(@{})
 $script:YakuSessionToken = New-YakuSecureToken -ByteLength 32
@@ -126,6 +127,24 @@ function Get-YakuCopilotWarmupStatusPath {
     catch { return (Join-Path ([System.IO.Path]::GetTempPath()) 'yakulingo-copilot-warmup.json') }
 }
 
+function Get-YakuCopilotWarmupWorkerPath {
+    try { return (Join-Path (Get-YakuSubDir 'runtime') 'copilot-warmup-worker.json') }
+    catch { return (Join-Path ([System.IO.Path]::GetTempPath()) 'yakulingo-copilot-warmup-worker.json') }
+}
+
+function Test-YakuCopilotWarmupWorkerRunning {
+    # 準備ワーカー（tools\Prepare-Copilot.ps1）が既に動いているかを見る。
+    # 「やり直す」ボタンやAPIから何度押されても、Edge起動が重複しないようにする
+    # （D2-2）。実体はPIDと開始時刻の一致で確かめる（Test-YakuProcessIdentity と
+    # 同じ考え方）。
+    try {
+        $path = Get-YakuCopilotWarmupWorkerPath
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
+        $info = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        return (Test-YakuProcessIdentity -Id ([int]$info.pid) -StartTimeUtc ([string]$info.started_at))
+    } catch { return $false }
+}
+
 function Write-YakuCopilotWarmupStatus {
     param(
         [Parameter(Mandatory=$true)][string]$Mode,
@@ -191,8 +210,17 @@ function Read-YakuCopilotWarmupStatus {
 }
 
 function Start-YakuCopilotWarmup {
+    # -Force無しでは、前回のワーカーがまだ生きていれば何もしない。「準備をやり直す」
+    # ボタンを連打しても、Edge起動やCDPの奪い合いが二重に走らないようにする
+    # （D2-2）。実際の多重起動排除は EdgeLaunch.ps1 の名前付き Mutex が担うが、
+    # ここで先に弾けば無駄な子プロセスの生成そのものを避けられる。
+    param([switch]$Force)
     if ($env:YAKULINGO_MOCK -eq '1') {
         $null = Write-YakuCopilotWarmupStatus -Mode 'mock' -Label '試験用モード（Copilotへは送りません）' -Class 'warn' -Detail 'Copilotへは送信しない設定になっています。' -Ready $true
+        return
+    }
+    if (-not $Force -and (Test-YakuCopilotWarmupWorkerRunning)) {
+        Write-YakuLog 'Copilot warmup worker already running; skipped duplicate start.' 'DEBUG'
         return
     }
     $statusPath = Get-YakuCopilotWarmupStatusPath
@@ -207,8 +235,15 @@ function Start-YakuCopilotWarmup {
         if (!(Test-Path -LiteralPath $psExe)) { $psExe = 'powershell.exe' }
         $quote = { param([string]$v) '"' + ($v -replace '"','\"') + '"' }
         $argLine = '-NoProfile -ExecutionPolicy Bypass -File {0} -Root {1} -StatusPath {2} -TimeoutSeconds 900 -ParentProcessId {3} -ParentStartedUtc {4}' -f (& $quote $worker), (& $quote $script:YakuRoot), (& $quote $statusPath), $PID, (& $quote $script:YakuProcessStartedAt)
-        Start-Process -FilePath $psExe -ArgumentList $argLine -WindowStyle Hidden | Out-Null
-        Write-YakuLog "Copilot warmup worker started. status=$statusPath worker=$worker" 'INFO'
+        $process = Start-Process -FilePath $psExe -ArgumentList $argLine -WindowStyle Hidden -PassThru
+        # -PassThru は Handle を読まないと StartTime 等が安定して読めないことがある
+        # （CLAUDE.md: Start-Process -PassThru の落とし穴）。
+        try { $null = $process.Handle } catch {}
+        try {
+            $workerInfo = [ordered]@{ pid = [int]$process.Id; started_at = (Get-YakuProcessStartTimeIso -Id ([int]$process.Id)) }
+            [System.IO.File]::WriteAllText((Get-YakuCopilotWarmupWorkerPath), ($workerInfo | ConvertTo-Json -Compress), (New-Object System.Text.UTF8Encoding($true)))
+        } catch { Write-YakuLog "Failed to record Copilot warmup worker pid: $($_.Exception.Message)" 'DEBUG' }
+        Write-YakuLog "Copilot warmup worker started. status=$statusPath worker=$worker pid=$($process.Id)" 'INFO'
     } catch {
         $null = Write-YakuCopilotWarmupStatus -Mode 'error' -Label 'Copilotを準備できませんでした' -Class 'warn' -Detail 'アプリを閉じて開き直してください。それでも直らない場合は管理者へご連絡ください。' -Ready $false
         Write-YakuLog "Failed to start Copilot warmup worker: $($_.Exception.Message)" 'ERROR'
@@ -223,7 +258,30 @@ function Get-YakuCopilotBadgeState {
     $class = if ($ready) { 'ok' } elseif ($warmup.class) { [string]$warmup.class } else { 'idle' }
     $mode = if ($warmup.mode) { [string]$warmup.mode } else { 'not-started' }
     $detail = if ($warmup.detail) { [string]$warmup.detail } else { '' }
-    return [pscustomobject]@{ ready=$ready; mode=$mode; label=$label; class=$class; detail=$detail; updated_at=($warmup.updated_at) }
+    $updatedAt = $warmup.updated_at
+
+    # 心拍が止まっていたら、記録が緑のままでも実際には見ていない。
+    # Watch-YakuCopilotReadiness（tools\Prepare-Copilot.ps1）は毎周期この記録を
+    # 書き直す作りに直した（D2-2）。周期は最短10秒なので、60秒動いていなければ
+    # 監視そのものが死んでいる（専用Edgeが落ちた等）とみなし、緑を取り下げる。
+    # CLAUDE.md「測れなかったを赤に畳まない」に合わせて、ここは緑でも赤でもない
+    # 'stale' として扱い、利用者へやり直す手段（/api/copilot/prepare）を渡す。
+    # まだ心拍が一度も来ていない起動直後の状態（mock/not-started/starting）は
+    # 対象外にする。誤って「古い」と報じないため。
+    if ($mode -notin @('mock', 'not-started', 'starting') -and -not [string]::IsNullOrWhiteSpace([string]$updatedAt)) {
+        try {
+            $updatedTime = [datetime]::Parse([string]$updatedAt, [System.Globalization.CultureInfo]::InvariantCulture)
+            $ageSeconds = ((Get-Date) - $updatedTime).TotalSeconds
+            if ($ageSeconds -ge 60) {
+                $ready = $false
+                $mode = 'stale'
+                $label = 'Copilotの状態を確認できません'
+                $class = 'warn'
+                $detail = 'しばらく応答が確認できていません。「Copilotの準備をやり直す」を押してください。'
+            }
+        } catch {}
+    }
+    return [pscustomobject]@{ ready=$ready; mode=$mode; label=$label; class=$class; detail=$detail; updated_at=$updatedAt }
 }
 
 function Get-YakuTranslateReadinessState {
@@ -544,6 +602,10 @@ function Start-YakuWarmTranslationRunspaceBuild {
         $builderScript = {
             param($Root, $ExpectedBuildId)
             $ErrorActionPreference = 'Stop'
+            # 起動直後の1秒は、Edge起動やCopilot準備など体感に直結する処理と
+            # CPU/ディスクI/Oを奪い合わない（D2-10）。この待ちは非同期実行
+            # （BeginInvoke）の中でだけ効く。呼び出し元は待たない。
+            Start-Sleep -Milliseconds 1000
             $runspace = [runspacefactory]::CreateRunspace()
             try { $runspace.ApartmentState = [System.Threading.ApartmentState]::STA } catch {}
             try {
@@ -2092,7 +2154,19 @@ function Invoke-YakuRoute {
         Send-YakuTextResponse -Context $Context -Text 'Forbidden' -StatusCode 403 -ContentType 'text/plain; charset=utf-8'
         return
     }
-    Clear-YakuExpiredUploads
+    # 全リクエストの先頭で毎回フルスキャン（Get-ChildItem -Recurse + 全manifestの
+    # JSON解析）していた。静的ファイルや1.5秒おきの /api/ready-state にもかかり、
+    # 実測で温い状態でも数十msかかる（D2-8）。掃除は60秒に1回で足りるので間引き、
+    # 対象外パス（/assets/ と ready-state/instance）はそもそも呼ばない。
+    $skipUploadSweep = $path.StartsWith('/assets/') -or $path -eq '/api/ready-state' -or $path -eq '/api/instance'
+    # R2-3: Invoke-YakuRoute だけをAST抽出して呼ぶ試験（Test-YakuV9165/V9170/V9172等）は
+    # ファイル先頭の script-scope 初期化（27行目）を経由しないため、
+    # $script:YakuLastUploadSweep が $null のまま呼ばれることがある。
+    # (Get-Date) - $null は例外になるので、$null を先に弾く。
+    if (-not $skipUploadSweep -and ($null -eq $script:YakuLastUploadSweep -or ((Get-Date) - $script:YakuLastUploadSweep).TotalSeconds -ge 60)) {
+        $script:YakuLastUploadSweep = Get-Date
+        Clear-YakuExpiredUploads
+    }
 
     if ($method -eq 'GET' -and $path -eq '/') {
         # 起動したら、選ばせずに貼り付け欄へ着地させる（2026-08-12、利用者の指摘
@@ -2158,14 +2232,77 @@ function Invoke-YakuRoute {
             if ([string]$payload['action'] -ne 'show') { throw 'COPILOT_WINDOW_ACTION_INVALID: この操作は利用できません。' }
             $settings = Read-YakuSettings -Root $script:YakuRoot
             $port = Get-YakuCdpPort -Settings $settings
-            $url = Get-YakuCopilotUrl -Settings $settings
-            $port = Start-YakuCopilotEdge -Port $port -DisplayMode foreground -Url $url -WindowSize ([string]$settings.edge_window_size) -ForceForeground
-            $page = Get-YakuCopilotPage -Port $port -Url $url
-            Invoke-YakuCdpBringToFront -Page $page
-            Start-Sleep -Milliseconds 150
-            $count = Show-YakuEdgeWindow -Mode foreground
-            Write-YakuLog "Dedicated Copilot window requested in app. windows=$count" 'INFO'
-            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$true; windows=[int]$count } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+            # サーバーは1スレッド逐次でリクエストを処理する。CDPが既につながって
+            # いるかを短時間（1秒）だけ見て、つながっていなければEdgeの起動から
+            # ここで始めない。冷えた状態からの起動は候補ポートぶん30秒待つことが
+            # あり、その間サーバー全体（/api/ready-state のポーリングを含む）が
+            # 詰まる（D2-1）。つながっていない場合は準備ワーカーへ投げ、進み具合は
+            # /api/ready-state 側のポーリングに任せる。
+            $alreadyUp = $false
+            try { $null = Get-YakuDevToolsVersion -Port $port -TimeoutSec 1; $alreadyUp = $true } catch { $alreadyUp = $false }
+            if (-not $alreadyUp) {
+                if (-not (Test-YakuCopilotWarmupWorkerRunning)) { Start-YakuCopilotWarmup }
+                Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$true; windows=0; starting=$true } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+                return
+            }
+            # R2-1: 「つながっている」側も無制限には待たない。Get-YakuCopilotPage は
+            # 既定で新規タブ猶予8秒（グレース）を待つうえ、内部の New-YakuCdpPage が
+            # さらに数秒×2回かかることがあり、最悪ここだけで30秒近くサーバー全体
+            # （1スレッド逐次）を詰まらせていた。ここは新規タブを待たせず
+            # （-CreateGraceSeconds 0）、既存タブが無ければ即座に諦めて、未接続側と
+            # 同じ「準備ワーカーへ投げて即応答」へ合流する。
+            try {
+                $url = Get-YakuCopilotUrl -Settings $settings
+                $port = Start-YakuCopilotEdge -Port $port -DisplayMode foreground -Url $url -WindowSize ([string]$settings.edge_window_size) -ForceForeground
+                $page = Get-YakuCopilotPage -Port $port -Url $url -CreateGraceSeconds 0
+                Invoke-YakuCdpBringToFront -Page $page
+                Start-Sleep -Milliseconds 150
+                $count = Show-YakuEdgeWindow -Mode foreground
+                Write-YakuLog "Dedicated Copilot window requested in app. windows=$count" 'INFO'
+                Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$true; windows=[int]$count } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+            } catch {
+                Write-YakuLog "Copilot window foreground attempt failed; falling back to the prepare worker. reason=$($_.Exception.Message)" 'WARN'
+                if (-not (Test-YakuCopilotWarmupWorkerRunning)) { Start-YakuCopilotWarmup }
+                Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$true; windows=0; starting=$true } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+            }
+        } catch {
+            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ error=(Convert-YakuExceptionToUserMessage $_) } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
+        }
+        return
+    }
+    if ($method -eq 'POST' -and $path -eq '/api/copilot/prepare') {
+        # 画面の「Copilotの準備をやり直す」用。timeout/error/stale/not-started の
+        # ときに押せる（D2-2）。
+        #
+        # R2-2: ワーカーはもう自分から終了しない設計（900秒後は20秒間隔の
+        # ポーリングへ切り替えて居座り続ける）にした。そのため mode=timeout や
+        # not-ready のとき、ワーカーは「生きているが役に立っていない」状態で
+        # 動き続けている。以前はここで Test-YakuCopilotWarmupWorkerRunning が
+        # 真なら何もしなかったため、利用者が一番押したい場面（詰まっている時）
+        # に限って必ず空振りしていた。生存ワーカーがいれば止めてから、
+        # 必ず新しいワーカーを起こす。
+        try {
+            if ($env:YAKULINGO_MOCK -eq '1') {
+                Send-YakuTextResponse -Context $Context -Text '{"ok":true,"started":false}' -ContentType 'application/json; charset=utf-8'
+                return
+            }
+            $alreadyRunning = Test-YakuCopilotWarmupWorkerRunning
+            if ($alreadyRunning) {
+                try {
+                    $info = Get-Content -LiteralPath (Get-YakuCopilotWarmupWorkerPath) -Raw -Encoding UTF8 | ConvertFrom-Json
+                    if (Test-YakuProcessIdentity -Id ([int]$info.pid) -StartTimeUtc ([string]$info.started_at)) {
+                        Stop-Process -Id ([int]$info.pid) -Force -ErrorAction Stop
+                        Write-YakuLog "Copilot prepare stopped the stuck warmup worker. pid=$($info.pid)" 'INFO'
+                    }
+                } catch {
+                    Write-YakuLog "Copilot prepare failed to stop the previous warmup worker; starting a new one anyway. reason=$($_.Exception.Message)" 'WARN'
+                }
+            }
+            # Edge起動の競合は Local\YakuLingo-EdgeLaunch Mutex が押さえるので、
+            # ここは常に -Force で新しいワーカーを起こしてよい。
+            Start-YakuCopilotWarmup -Force
+            Write-YakuLog "Copilot prepare requested from app. hadStuckWorker=$alreadyRunning" 'INFO'
+            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$true; started=$true } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
         } catch {
             Send-YakuTextResponse -Context $Context -Text ([ordered]@{ error=(Convert-YakuExceptionToUserMessage $_) } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
         }

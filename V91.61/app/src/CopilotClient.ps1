@@ -550,8 +550,21 @@ function Invoke-YakuEdgeWindowNormalizationOnce {
         $setResult = Invoke-YakuCdpMethod -WebSocketUrl $ws -Method 'Browser.setWindowBounds' -Params @{ windowId=$windowId; bounds=$bounds } -TimeoutSeconds 10
         if ($setResult.error) { throw ($setResult.error | ConvertTo-Json -Compress) }
         if ($background) {
-            $null = Set-YakuEdgeWindowVisibility -Mode hidden
-            Write-YakuLog 'New dedicated Edge window hidden after Copilot became ready.' 'INFO'
+            # サインインが済んでいるかを見てから隠す。ここは新規ウィンドウの作成直後に
+            # 必ず一度だけ通る場所で、以前は「準備ができたら隠す」を装いつつ実際には
+            # ログイン待ちのままでも無条件に隠していた（D2-7）。SW_HIDEはタスクバーの
+            # ボタンごと消すため、隠れた瞬間に利用者はサインイン画面を見失う。
+            $loginPending = $false
+            try {
+                $normalizeState = Get-YakuCopilotState -Page $Page -TimeoutSeconds 4
+                $loginPending = [bool](Get-YakuObjectPropertyValue -Object $normalizeState -Name 'loginDetected' -Default $false)
+            } catch { $loginPending = $false }
+            if ($loginPending) {
+                Write-YakuLog 'New dedicated Edge window left visible; sign-in appears to be required.' 'INFO'
+            } else {
+                $null = Set-YakuEdgeWindowVisibility -Mode hidden
+                Write-YakuLog 'New dedicated Edge window hidden after Copilot became ready.' 'INFO'
+            }
         }
         else { Write-YakuLog "New Edge window normalized once. width=$($size.Width) height=$($size.Height)" 'INFO' }
     } catch {
@@ -852,7 +865,11 @@ function Get-YakuCdpPortCandidates {
         try { Remove-Item -LiteralPath (Get-YakuCdpPortRuntimeCachePath) -Force -ErrorAction SilentlyContinue } catch {}
     }
     $ports.Add($ConfiguredPort) | Out-Null
-    for ($i=1; $i -le 10; $i++) { if (($ConfiguredPort + $i) -le 65535) { $ports.Add($ConfiguredPort + $i) | Out-Null } }
+    # D2-3: 11候補（キャッシュ+設定値+設定値近傍10個）だと、1候補の失敗が最悪
+    # 30秒×2（起動待ち＋再試行）まで伸び、候補が尽きるまでに数分かかっていた。
+    # 実運用でぶつかるのは「同じ利用者の前回プロセスが残っている」程度で、
+    # 近傍の3つ試せば十分に空きが見つかる。
+    for ($i=1; $i -le 2; $i++) { if (($ConfiguredPort + $i) -le 65535) { $ports.Add($ConfiguredPort + $i) | Out-Null } }
     return @($ports | Select-Object -Unique)
 }
 
@@ -889,9 +906,24 @@ function Start-YakuCopilotEdge {
             $launch = Start-YakuEdgeLaunch -Port ([int]$candidatePort) -DisplayMode $effectiveDisplayMode -Url $Url -WindowSize $WindowSize -WaitForReadySeconds 30
             $userData = [string]$launch.Spec.UserDataDir
             if (-not [bool]$launch.Ready) { throw "Edge DevTools Protocol が起動しませんでした。Port=$candidatePort" }
-            if (-not (Test-YakuCdpPortOwnedByProfile -Port ([int]$candidatePort) -UserDataDir $userData)) {
+            $ownership = Test-YakuCdpPortOwnedByProfile -Port ([int]$candidatePort) -UserDataDir $userData
+            if ([string]$ownership.Status -eq 'foreign') {
                 $owner = Get-YakuCdpPortOwnerDescription -Port ([int]$candidatePort)
                 throw "CDPポート $candidatePort は自プロファイル所有ではありません。owner=$owner"
+            }
+            if ([string]$ownership.Status -eq 'unknown') {
+                # D2-4: 「確認できない」を「他人のもの」に畳まない。ただし
+                # 「確認できない」の中にも証拠の有無で2種ある（R2-6）。
+                # Evidence=true（自プロファイル＋当該ポートのmsedgeプロセスが実在
+                # したうえで、その先の照合だけができなかった）は採用する。
+                # Evidence=false（プロセス列挙そのものが落ち、実在の証拠が一切無い）
+                # は「他人のもの」と同様に拒否し、次の候補へ回す。証拠が無いのに
+                # 「matching profile process exists」と事実でないWARNを書いていた
+                # のが元の不具合。文面は $ownership.Detail をそのまま出す。
+                if (-not [bool]$ownership.Evidence) {
+                    throw "CDPポート $candidatePort の所有プロセスを確認できませんでした（証拠なし）。detail=$($ownership.Detail)"
+                }
+                Write-YakuLog "CDP port ownership could not be fully confirmed; proceeding on partial evidence. port=$candidatePort detail=$($ownership.Detail)" 'WARN'
             }
             $script:YakuLastEdgeStarted = (-not [bool]$launch.AlreadyReachable)
             $env:YAKULINGO_CDP_PORT = [string]$candidatePort
@@ -912,18 +944,70 @@ function Start-YakuCopilotEdge {
             }
             return [int]$candidatePort
         } catch {
+            # 補足(D2-3): EDGE_PROFILE_LOCKED はポート非依存の失敗（専用プロファイルを
+            # 使っているプロセスを終了できなかった）。次の候補ポートを試しても
+            # 同じプロファイルへの Stop が同じ理由で失敗するだけなので、候補ループを
+            # 続けず、原文のまま即座に投げる。
+            if ([string]$_.Exception.Message -match '^EDGE_PROFILE_LOCKED:') { throw }
             $errors.Add("port=$candidatePort $($_.Exception.Message)") | Out-Null
             Write-YakuLog "CDP port candidate rejected. port=$candidatePort reason=$($_.Exception.Message)" 'WARN'
-            try { if ($launch -and -not [bool]$launch.AlreadyReachable) { $null = Stop-YakuCopilotEdgeProfile -UserDataDir $userData } } catch {}
+            # 補足(D2-6): この失敗した候補の後始末（Stop-YakuCopilotEdgeProfile）は
+            # Start-YakuEdgeLaunch の Mutex 区間の外で行われていた。他プロセス/
+            # ランスペースの起動処理と時間的に重なると、殺す・起こすが競合する。
+            # ここも Local\YakuLingo-EdgeLaunch で排他する。
+            try {
+                if ($launch -and -not [bool]$launch.AlreadyReachable) {
+                    $cleanupMutex = New-Object System.Threading.Mutex($false, 'Local\YakuLingo-EdgeLaunch')
+                    $cleanupLocked = $false
+                    try {
+                        try { $cleanupLocked = $cleanupMutex.WaitOne(15000) }
+                        catch [System.Threading.AbandonedMutexException] { $cleanupLocked = $true }
+                        $null = Stop-YakuCopilotEdgeProfile -UserDataDir $userData
+                    } finally {
+                        if ($cleanupLocked) { try { $cleanupMutex.ReleaseMutex() } catch {} }
+                        try { $cleanupMutex.Dispose() } catch {}
+                    }
+                }
+            } catch {}
         }
     }
     $detail = ($errors.ToArray() -join ' / ')
+    # R3-3 (2): 全候補が「証拠なし unknown」（Win32_Process 列挙そのものが
+    # 落ちた）で尽きたときに「ポートを変更してください」と言うのは誤誘導。
+    # 実際の原因はポートの奪い合いではなく、WMI/プロセス列挙が使えないこと
+    # なので、そちらへ案内する。
+    $allNoEvidence = ($errors.Count -gt 0 -and @($errors.ToArray() | Where-Object { $_ -notmatch '証拠なし' }).Count -eq 0)
+    if ($allNoEvidence) {
+        throw "Edge CDPポートの所有プロセスを確認できませんでした。この環境ではプロセス一覧（WMI）を取得できていない可能性があります。管理者へご連絡いただくか、しばらくしてから再度お試しください。$detail"
+    }
     throw "Edge CDPポートの自動回避に失敗しました。YakuLingo(M365 Copilot版)が同じポートを使用している場合は、どちらかを終了するか設定のEdge CDPポートを変更してください。$detail"
 }
 
+function New-YakuCdpPortOwnershipResult {
+    # R2-6: unknown には2種ある。(1) 自プロファイル＋当該ポートの msedge
+    # プロセスは実在が確認できた（$matches.Count -gt 0）が、その先の照合
+    # （TCPリスナー所有PIDの突合）だけができなかったもの＝弱いが実在の証拠が
+    # ある。(2) プロセス列挙そのものが落ち、$matches が一度も埋まらなかった
+    # もの＝自プロファイルである証拠が一切無い。この2つを Evidence で区別する。
+    param(
+        [Parameter(Mandatory=$true)][ValidateSet('owned','foreign','unknown')][string]$Status,
+        [string]$Detail = '',
+        [bool]$Evidence = $false
+    )
+    return [pscustomobject]@{ Status = $Status; Detail = $Detail; Evidence = $Evidence }
+}
+
 function Test-YakuCdpPortOwnedByProfile {
+    <#
+      戻り値は Status ('owned'|'foreign'|'unknown') と Detail を持つオブジェクト。
+      D2-4: 以前は列挙に失敗すると catch で $false（=他人のもの）に畳んでいた。
+      これだと候補ポートすべてで同じ失敗を繰り返し、「開き直してください」を
+      繰り返すだけの、実質的な永久ブリックになる。「確認できない」と「他人の
+      もの」は別の事実なので、別の値として返す（CLAUDE.md「測れなかったを
+      赤に畳まない」と同じ原則）。判定は呼び出し側（Start-YakuCopilotEdge）で行う。
+    #>
     param([int]$Port, [Parameter(Mandatory=$true)][string]$UserDataDir)
-    if ($env:YAKULINGO_MOCK -eq '1') { return $true }
+    if ($env:YAKULINGO_MOCK -eq '1') { return New-YakuCdpPortOwnershipResult -Status 'owned' -Detail 'mock' -Evidence $true }
     # V77 fast path: a full Win32_Process scan is expensive on managed PCs.
     # Reuse a previously verified listener only while DevTools is reachable and
     # PID + process start time still identify exactly the same Edge process.
@@ -936,7 +1020,7 @@ function Test-YakuCdpPortOwnedByProfile {
             $cachedStartUtc = $cachedProcess.StartTime.ToUniversalTime().Ticks
             if ($cachedStartUtc -eq [int64]$cache.StartTimeUtcTicks) {
                 Write-YakuLog "CDP ownership cache hit. port=$Port pid=$($cache.ProcessId)" 'DEBUG'
-                return $true
+                return New-YakuCdpPortOwnershipResult -Status 'owned' -Detail "cache pid=$($cache.ProcessId)" -Evidence $true
             }
         }
     } catch {
@@ -964,7 +1048,7 @@ function Test-YakuCdpPortOwnedByProfile {
                     StartTimeUtcTicks = [int64]$fileCache.startTimeUtcTicks; VerifiedAt = [string]$fileCache.verifiedAt
                 }
                 Write-YakuLog "CDP ownership file cache hit. port=$Port pid=$($fileCache.processId)" 'DEBUG'
-                return $true
+                return New-YakuCdpPortOwnershipResult -Status 'owned' -Detail "file cache pid=$($fileCache.processId)" -Evidence $true
             }
         }
         if ($fileCache) { Remove-YakuCdpOwnershipFileCache }
@@ -972,14 +1056,28 @@ function Test-YakuCdpPortOwnedByProfile {
         Remove-YakuCdpOwnershipFileCache
         Write-YakuLog "CDP ownership file cache invalid; falling back to full verification. port=$Port reason=$($_.Exception.Message)" 'DEBUG'
     }
+    # ここから先はキャッシュに頼らないフル照合。1段目（自プロファイル＋当該ポートの
+    # msedge プロセスが実在するか）が失敗すると、以降の判定材料が無いので unknown。
+    $matches = @()
     try {
         $needlePort = "--remote-debugging-port=$Port"
         $matches = @(Get-CimInstance Win32_Process -Filter "Name = 'msedge.exe'" -ErrorAction Stop | Where-Object {
             $_.CommandLine -and $_.CommandLine.IndexOf($needlePort, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -and
             $_.CommandLine.IndexOf($UserDataDir, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
         })
-        if ($matches.Count -eq 0) { return $false }
-        $profilePids = @($matches | ForEach-Object { [int]$_.ProcessId })
+    } catch {
+        Write-YakuLog "CDP ownership process enumeration failed. port=$Port reason=$($_.Exception.Message)" 'WARN'
+        # R2-6: $matches が一度も埋まっていない＝自プロファイルである証拠が
+        # 一切無い。Evidence=false（既定値）のまま返す。呼び出し側はこれを
+        # 「証拠なし」として採用しない。
+        return New-YakuCdpPortOwnershipResult -Status 'unknown' -Detail "process enumeration failed: $($_.Exception.Message)" -Evidence $false
+    }
+    if ($matches.Count -eq 0) {
+        Remove-YakuCdpOwnershipFileCache
+        return New-YakuCdpPortOwnershipResult -Status 'foreign' -Detail 'no msedge process for this profile+port was found'
+    }
+    $profilePids = @($matches | ForEach-Object { [int]$_.ProcessId })
+    try {
         $listeners = @()
         if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
             $listeners = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction Stop | Where-Object { [string]$_.LocalAddress -in @('127.0.0.1','::1') })
@@ -1014,14 +1112,23 @@ function Test-YakuCdpPortOwnedByProfile {
                     Write-YakuLog "CDP ownership file cache write failed; verified in-memory result remains valid. port=$Port reason=$($_.Exception.Message)" 'DEBUG'
                 }
                 Write-YakuLog "CDP ownership fully verified and cached. port=$Port pid=$ownerPid" 'DEBUG'
-                return $true
+                return New-YakuCdpPortOwnershipResult -Status 'owned' -Detail "pid=$ownerPid" -Evidence $true
             }
         }
+        # 対象プロファイル＋ポートの msedge プロセスは実在するが、TCPリスナーの
+        # 所有PIDとは一致しなかった。無関係の別プロセスがこのポートを奪っている
+        # 可能性はあるが、コマンドラインに当プロファイルのパスが含まれる同一の
+        # プロセスが実在する以上、大半は列挙の取りこぼしである。unknown とする。
+        # $matches.Count -gt 0（実在確認済み）なので Evidence=true。
         Remove-YakuCdpOwnershipFileCache
-        return $false
+        return New-YakuCdpPortOwnershipResult -Status 'unknown' -Detail ('profile process exists (pid candidates: ' + ($profilePids -join ',') + ') but no matching TCP listener owner was found') -Evidence $true
     } catch {
         Remove-YakuCdpOwnershipFileCache
-        return $false
+        Write-YakuLog "CDP listener enumeration failed. port=$Port reason=$($_.Exception.Message)" 'WARN'
+        # ここに来た時点で $matches.Count -gt 0 は確立済み（このtryブロックへ
+        # 入る前に return 済みでなければ matches.Count -eq 0 の分岐で foreign に
+        # なっている）。Evidence=true。
+        return New-YakuCdpPortOwnershipResult -Status 'unknown' -Detail ('listener enumeration failed: ' + $_.Exception.Message + ' (profile process exists: pid candidates ' + ($profilePids -join ',') + ')') -Evidence $true
     }
 }
 

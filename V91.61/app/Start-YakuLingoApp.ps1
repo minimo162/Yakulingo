@@ -66,6 +66,13 @@ function Remove-YakuLegacyStartupShortcut {
 }
 
 function Read-YakuRunningServer {
+    # -RequireHttpProbe を付けない呼び出しは、server.json とプロセス身元だけを見る
+    # （HTTPは投げない）。listener.Start() の直後から GetContext() を回し始める
+    # までに、サーバー起動の他の下ごしらえ（Copilot準備の起動指示・古いジョブの
+    # 復元など）が挟まる区間があり、そこへ250ms刻みでHTTPを投げ続けると、
+    # 接続はできてもGetContext()に届くまで応答が来ず、ポーリングのたびに
+    # 待たされていた（D2-10）。ここを待つあいだはプロセスの実在だけで足りる。
+    param([switch]$RequireHttpProbe)
     $runtimePath = Join-Path (Get-YakuSubDir 'runtime') 'server.json'
     if (-not (Test-Path -LiteralPath $runtimePath -PathType Leaf)) { return $null }
     try {
@@ -73,7 +80,8 @@ function Read-YakuRunningServer {
         if (-not (Test-YakuProcessIdentity -Id ([int]$runtime.pid) -StartTimeUtc ([string]$runtime.process_started_at))) { return $null }
         $uri = [uri]([string]$runtime.url)
         if ($uri.Scheme -ne 'http' -or $uri.Host -ne '127.0.0.1') { return $null }
-        $probe = Invoke-RestMethod -UseBasicParsing -Uri ([string]$runtime.url + 'api/instance') -TimeoutSec 2
+        if (-not $RequireHttpProbe) { return $runtime }
+        $probe = Invoke-RestMethod -UseBasicParsing -Uri ([string]$runtime.url + 'api/instance') -TimeoutSec 10
         if ([string]$probe.instance_id -ne [string]$runtime.instance_id) { return $null }
         return $runtime
     } catch { return $null }
@@ -82,10 +90,20 @@ function Read-YakuRunningServer {
 function Wait-YakuRunningServer {
     param([int]$TimeoutSeconds = 90)
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $runtime = $null
     do {
         $runtime = Read-YakuRunningServer
-        if ($runtime) { return $runtime }
+        if ($runtime) { break }
         Start-Sleep -Milliseconds 250
+    } while ((Get-Date) -lt $deadline)
+    if (-not $runtime) { throw 'SERVER_START_TIMEOUT: YakuLingoの準備が時間内に終わりませんでした。ログを確認してください。' }
+    # プロセスは立っている。ここから先だけ、実際にHTTPで答えることを確かめる。
+    # 起動直後の下ごしらえがまだ終わっていない場合があるので、残り時間の中で
+    # 何度か待つ（1回で諦めない）。
+    do {
+        $confirmed = Read-YakuRunningServer -RequireHttpProbe
+        if ($confirmed) { return $confirmed }
+        Start-Sleep -Milliseconds 500
     } while ((Get-Date) -lt $deadline)
     throw 'SERVER_START_TIMEOUT: YakuLingoの準備が時間内に終わりませんでした。ログを確認してください。'
 }
@@ -96,7 +114,7 @@ $launcherMutex = New-Object System.Threading.Mutex($false, 'Local\YakuLingo-Brow
 $ownsLauncher = $false
 try { $ownsLauncher = $launcherMutex.WaitOne(0, $false) }
 catch [System.Threading.AbandonedMutexException] { $ownsLauncher = $true }
-$runtime = Read-YakuRunningServer
+$runtime = Read-YakuRunningServer -RequireHttpProbe
 try {
     Remove-YakuLegacyStartupShortcut
     # Only the launcher that owns the lifecycle mutex may start the server or
@@ -124,10 +142,33 @@ try {
     $deadline = (Get-Date).AddSeconds(30)
     $sawUiClient = $false
     $allClosingSince = $null
+    $firstPoll = $true
     do {
-        Start-Sleep -Milliseconds 500
+        # 1回目は待たずに確かめる（D2-10）。以降は500msずつ空ける。
+        if (-not $firstPoll) { Start-Sleep -Milliseconds 500 }
+        $firstPoll = $false
         $instance = $null
-        try { $instance = Invoke-RestMethod -UseBasicParsing -Uri ($baseUrl + 'api/instance') -TimeoutSec 2 } catch { break }
+        try {
+            $instance = Invoke-RestMethod -UseBasicParsing -Uri ($baseUrl + 'api/instance') -TimeoutSec 10
+        } catch {
+            # サーバーの応答が一時的に遅れているだけなら、プロセスが生きている限り
+            # 待ち続ける。ここで即座に打ち切ってサーバーごと止めていたのが
+            # D2-1 の不具合（1リクエストの遅れで監視役がアプリごと殺していた）。
+            # プロセスが本当に落ちているときだけ止める。
+            #
+            # R2-1: $deadline（Edge起動から30秒、延長しない）を、タブが出たあとの
+            # 失敗にまで適用していたため、起動から30秒過ぎてから10秒超かかる
+            # ハンドラ（/api/cat/export の初回Excel COM起動、/api/copilot/window の
+            # 「つながっている」側の待ち等）に一度でも当たると、利用中の監視役が
+            # アプリごと落としていた。deadline はタブ初出まで（$sawUiClient が
+            # まだ立っていない間）だけに効かせる。タブが一度でも出たあとは、
+            # プロセスが生きている限り何度失敗しても待つ。
+            if (-not (Test-YakuProcessIdentity -Id ([int]$runtime.pid) -StartTimeUtc ([string]$runtime.process_started_at))) {
+                throw 'SERVER_LOST: YakuLingoのサーバーが応答しなくなりました。'
+            }
+            if (-not $sawUiClient -and (Get-Date) -ge $deadline) { throw 'EDGE_TAB_START_TIMEOUT: YakuLingoのEdgeタブを確認できませんでした。' }
+            continue
+        }
         $clientCount = [int]$instance.ui_client_count
         if ($clientCount -gt 0) { $sawUiClient = $true }
         if (-not $sawUiClient) {

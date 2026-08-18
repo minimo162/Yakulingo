@@ -405,15 +405,55 @@ Assert-Yaku -Condition ($pathsSource.Contains('function Get-YakuUserSettingsPath
 Assert-Yaku -Condition (-not $fileWorkerPresent -and -not $server.Contains('Start-YakuFileProcessJob')) -Message 'legacy file worker must remain removed and unreachable'
 Assert-Yaku -Condition ($copilot -notmatch '--remote-allow-origins=\*') -Message 'CDP wildcard origin switch must be absent'
 Assert-Yaku -Condition ($copilot -match 'Get-NetTCPConnection' -and $copilot -match 'OwningProcess') -Message 'CDP port owner PID must be verified'
-Assert-Yaku -Condition ($edgeLaunch.Contains('Get-Process -Name') -and $edgeLaunch.Contains("if (`$hasAnyEdge)") -and $edgeLaunch.Contains("if (`$stopped -gt 0) { Start-Sleep -Milliseconds 700 }")) -Message 'cold Edge startup must skip WMI and the fixed sleep when no Edge process exists'
+Assert-Yaku -Condition ($copilot.Contains('[bool]$Evidence') -and $copilot.Contains('if (-not [bool]$ownership.Evidence)') -and $copilot.Contains('証拠なし')) -Message 'an unknown CDP ownership result with zero process-enumeration evidence must not be adopted (R2-6)'
+# R3-1: RETRY_MODES（common.js）に並べたmode文字列は、必ずbackendが実際に
+# 書き得るmodeでなければならない。存在しないmode文字列を並べても、ボタンは
+# 永遠に出ない（'not-ready' がまさにこれで踏んだ：D2-2の降格が書くmodeなのに
+# RETRY_MODESに無く、心拍で updated_at が新鮮なのでstaleにも落ちず、
+# 「準備をやり直す」を押してくださいという案内だけがdetailに残ってボタンが
+# 無い、という詰みになっていた）。
+$retryModesMatch = [regex]::Match($commonClient, 'var RETRY_MODES = \{([^}]*)\};')
+Assert-Yaku -Condition $retryModesMatch.Success -Message 'common.js must define RETRY_MODES as a single-line object literal (required for this static consistency check)'
+if ($retryModesMatch.Success) {
+    $retryModeKeys = New-Object System.Collections.Generic.List[string]
+    foreach ($entry in ($retryModesMatch.Groups[1].Value -split ',')) {
+        $key = ($entry -split ':')[0].Trim().Trim("'")
+        if (-not [string]::IsNullOrWhiteSpace($key)) { $retryModeKeys.Add($key) | Out-Null }
+    }
+    # -Mode 'xxx' というcmdletパラメータの形（Write-YakuWarmupStatus等）と、
+    # $mode = 'xxx' / mode='xxx' という素の代入・オブジェクトリテラルの形
+    # （'stale'・'not-started' はこちら側でしか書かれない）の両方を拾う。
+    $backendModeLiteralMatches = [regex]::Matches($server + $warmupWorker, "(?i)mode\s*[=:]\s*'([a-z][a-z-]*)'|Mode\s+'([a-z][a-z-]*)'")
+    $backendModeLiterals = @($backendModeLiteralMatches | ForEach-Object { if ($_.Groups[1].Success) { $_.Groups[1].Value } else { $_.Groups[2].Value } } | Sort-Object -Unique)
+    $missingFromBackend = @($retryModeKeys.ToArray() | Where-Object { $backendModeLiterals -notcontains $_ })
+    Assert-Yaku -Condition ($retryModeKeys.Count -gt 0 -and $missingFromBackend.Count -eq 0) ('every RETRY_MODES key in common.js must be a mode literal the backend actually writes via Write-YakuWarmupStatus/Write-YakuCopilotWarmupStatus (backend mode set must be a superset of RETRY_MODES; missing: ' + ($missingFromBackend -join ',') + ')')
+}
+Assert-Yaku -Condition ($edgeLaunch.Contains('Get-Process -Name') -and $edgeLaunch.Contains("if (`$hasAnyEdge)") -and $edgeLaunch.Contains("if ([int]`$stopResult.Stopped -gt 0) { Start-Sleep -Milliseconds 700 }")) -Message 'cold Edge startup must skip WMI and the fixed sleep when no Edge process exists'
+# R2-4残り: $hasAnyEdge（ふだんのEdgeも数える）だけで3秒粘りに入ると、Windows
+# 通常状態ではほぼ常に真になり、専用プロファイルと無関係な起動でも毎回3秒
+# ブロックする。粘り（Wait-YakuDevTools）とWMI Stopの両方が、専用プロファイル
+# の実際の保持者（$holders）が実在するときだけに絞られていることを見る。
+Assert-Yaku -Condition ($edgeLaunch.Contains('$holders = @(Get-YakuCopilotEdgeProfileProcesses -UserDataDir $spec.UserDataDir)') -and $edgeLaunch.Contains('if ($holders.Count -gt 0)') -and ($edgeLaunch.IndexOf('if ($hasAnyEdge)') -lt $edgeLaunch.IndexOf('if ($holders.Count -gt 0)')) -and ($edgeLaunch.IndexOf('if ($holders.Count -gt 0)') -lt $edgeLaunch.IndexOf('Wait-YakuDevTools -Port $Port -TimeoutSeconds 3'))) -Message 'the pre-kill 3-second Wait-YakuDevTools retry (and the WMI Stop it guards) must be scoped to actual dedicated-profile holders, not to "any msedge process exists" (R2-4)'
 Assert-Yaku -Condition ($edgeLaunch.Contains('--remote-debugging-port=') -and $edgeLaunch.Contains('--user-data-dir=') -and $copilot.Contains('Start-YakuEdgeLaunch')) -Message 'early warmup and normal translation must share one Edge launch argument definition'
 Assert-Yaku -Condition ($edgeLaunch.Contains('--window-size=') -and $copilot.Contains('Browser.getWindowForTarget') -and $copilot.Contains('Browser.setWindowBounds') -and $copilot.Contains('YakuEdgeNeedsWindowNormalization')) -Message 'new Edge windows must be normalized once through launch arguments and CDP'
-Assert-Yaku -Condition ($edgeLaunch.Contains('--start-minimized') -and $edgeLaunch.Contains("-WindowStyle `$startWindowStyle") -and $warmupWorker.Contains("-DisplayMode 'background'")) -Message 'normal Copilot warmup must start the dedicated Edge window minimized'
-Assert-Yaku -Condition ($copilot.Contains("if (`$ForceForeground) { 'foreground' } else { 'background' }") -and $copilot.Contains("windowState='minimized'") -and $edgeLaunch.Contains("`$startWindowStyle -eq 'Minimized' -or `$spec.WindowSize.Enabled")) -Message 'normal startup must minimize the dedicated Edge after readiness while explicit login may foreground it'
+Assert-Yaku -Condition ($edgeLaunch.Contains('--start-minimized') -and $edgeLaunch.Contains("-WindowStyle `$StartWindowStyle") -and $warmupWorker.Contains("-DisplayMode 'background'")) -Message 'normal Copilot warmup must start the dedicated Edge window minimized'
+Assert-Yaku -Condition ($copilot.Contains("if (`$ForceForeground) { 'foreground' } else { 'background' }") -and $copilot.Contains("windowState='minimized'") -and $edgeLaunch.Contains("`$StartWindowStyle -eq 'Minimized' -or `$Spec.WindowSize.Enabled")) -Message 'normal startup must minimize the dedicated Edge after readiness while explicit login may foreground it'
 Assert-Yaku -Condition ($edgeLaunch.Contains('FindTopLevelWindows') -and $edgeLaunch.Contains('ShowWindowAsync($window, 0)') -and $edgeLaunch.Contains("ValidateSet('hidden','foreground')")) -Message 'only dedicated-profile Edge windows must be hidden natively so their taskbar buttons disappear'
 Assert-Yaku -Condition ($warmupWorker.Contains("Show-YakuEdgeWindow -Mode hidden") -and $warmupWorker.Contains('Copilot：準備完了') -and $warmupWorker.Contains('Copilot：サインインが必要')) -Message 'warmup must hide Edge after login and publish explicit readiness and login labels'
 Assert-Yaku -Condition ($warmupWorker.Contains('function Watch-YakuCopilotReadiness') -and $warmupWorker.Contains('active_job_running') -and $warmupWorker.Contains('Test-YakuProcessIdentity')) -Message 'the readiness monitor must stop with its server and skip CDP checks during active translations'
 Assert-Yaku -Condition ($server.Contains('-ParentProcessId') -and $server.Contains('-ParentStartedUtc')) -Message 'the server must bind the Copilot readiness monitor to its exact process identity'
+# R3-2: 15分打ち切り後の 'timeout' 表示が、次の1周で無条件に 'loading' へ
+# 上書きされ、「準備をやり直す」ボタンの表示条件が最短20秒で消えていた。
+# 上書きしない側の枝が $notReadyMode（$timedOut を見る三項）を使っている
+# ことと、CDP例外が3回連続したら専用Edgeを1回だけ呼び直す設計が
+# 入っていることを見る。
+Assert-Yaku -Condition (
+    $warmupWorker.Contains("`$notReadyMode = if (`$timedOut) { 'timeout' } else { 'loading' }") -and
+    $warmupWorker.Contains('-Mode $notReadyMode -Label $notReadyLabel') -and
+    ($warmupWorker.IndexOf('-Mode $notReadyMode -Label $notReadyLabel') -gt 0) -and
+    (@([regex]::Matches($warmupWorker, [regex]::Escape('-Mode $notReadyMode -Label $notReadyLabel'))).Count -ge 2)
+) -Message 'the timeout status must not be silently overwritten by the next loading/catch poll cycle while timed out (R3-2)'
+Assert-Yaku -Condition ($warmupWorker.Contains('$cdpFailureStreak -ge 3 -and -not $edgeRelaunchAttempted') -and $warmupWorker.Contains('Start-YakuCopilotEdge -Port $port')) -Message 'the warmup worker must relaunch the dedicated Edge itself once after 3 consecutive CDP failures, before Copilot ever reaches ready (R3-2)'
 Assert-Yaku -Condition ($edgeLaunch.Contains("Canonical='none'") -and $settingsSource.Contains('edge_window_size')) -Message 'Edge window normalization must be configurable and disableable'
 Assert-Yaku -Condition ($edgeLaunch.IndexOf('if ($alreadyReachable)') -lt $edgeLaunch.IndexOf('$script:YakuEdgeNeedsWindowNormalization =') -and $edgeLaunch.Contains('DisplayMode=$DisplayMode')) -Message 'already-running Edge must return before startup-only foreground or minimized normalization is scheduled'
 Assert-Yaku -Condition ($warmupWorker.IndexOf('Start-YakuEdgeLaunch') -lt $warmupWorker.IndexOf("src\CopilotClient.ps1") -and $warmupWorker.Contains('-NoWait')) -Message 'warmup must launch Edge before loading the large Copilot module'
