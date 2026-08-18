@@ -1491,6 +1491,15 @@ function Convert-YakuTranslationJobResultJson {
     $detail = [string]$State['detail']
     $html = ''
     $resultKind = ''; $resultId = ''; $applicationStatus = ''; $startedDependency = ''; $completedDependency = ''; $printConformance = ''; $writebackCompleteness = ''; $pdfTextCompleteness = ''; $pdfSha256 = ''; $candidateSet = $null
+    # パレットの注文チップ（短く／丁寧に）が、直す依頼(Invoke-YakuTextRevision /
+    # Invoke-YakuTextShorten)を組み立てるのに要る値。html は実値へ戻した訳文しか
+    # 持たないため、マスク後の現訳はここでしか渡せない（実値を渡すと外部送信前の
+    # マスクが外れる）。Kind が text/revise/shorten 以外の結果には SourceText が
+    # 無いので、既定の空のまま返る。
+    $paletteSourceText = ''
+    $paletteDirection = ''
+    $paletteMaskedTranslation = ''
+    $paletteStyle = ''
     if ($mode -eq 'cancelled') {
         $html = New-YakuAlertHtml -Kind warning -Message '翻訳をキャンセルしました。'
     } elseif ($mode -in @('done','completed_with_warnings','error','failed','interrupted')) {
@@ -1520,6 +1529,17 @@ function Convert-YakuTranslationJobResultJson {
                 $pdfTextCompleteness = [string]$typedResult.PdfTextCompletenessStatus
                 $pdfSha256 = [string]$typedResult.PdfSha256
                 if($resultKind -eq 'publication_candidates'){$candidateSet=$typedResult.CandidateSet}
+                try {
+                    if ($typedResult.PSObject.Properties.Name -contains 'SourceText') {
+                        $paletteSourceText = [string]$typedResult.SourceText
+                        $paletteDirection = [string]$typedResult.Direction
+                        $firstPaletteOption = @($typedResult.Options) | Select-Object -First 1
+                        if ($null -ne $firstPaletteOption) {
+                            $paletteMaskedTranslation = [string]$firstPaletteOption.MaskedTranslation
+                            $paletteStyle = [string]$firstPaletteOption.Style
+                        }
+                    }
+                } catch { $paletteSourceText = ''; $paletteDirection = ''; $paletteMaskedTranslation = ''; $paletteStyle = '' }
                 if ($resultKind -eq 'render') {
                     $currentRenderProject = Get-YakuCatProject -Id ([string]$typedResult.ProjectId)
                     if ($null -eq $currentRenderProject) { $applicationStatus = 'stale' }
@@ -1578,6 +1598,10 @@ function Convert-YakuTranslationJobResultJson {
         pdf_text_completeness_status = $pdfTextCompleteness
         pdf_sha256 = $pdfSha256
         candidate_set = $candidateSet
+        source_text = $paletteSourceText
+        direction = $paletteDirection
+        masked_translation = $paletteMaskedTranslation
+        style = $paletteStyle
     } | ConvertTo-Json -Depth 40 -Compress)
 }
 
@@ -2033,7 +2057,7 @@ function Serve-YakuStaticFile {
 function Serve-YakuAppPage {
     param(
         [Parameter(Mandatory=$true)]$Context,
-        [Parameter(Mandatory=$true)][ValidateSet('cat.html','tutorial.html')][string]$PageName,
+        [Parameter(Mandatory=$true)][ValidateSet('cat.html','tutorial.html','palette.html')][string]$PageName,
         # 開いた瞬間の状態。?project= で来たと分かっているなら、始める画面を
         # 一度も描かずに確認作業として開く。付けないと、貼り付け欄が一瞬出てから
         # 入れ替わり、画面が点滅して見える（2026-08-13、利用者の指摘）。
@@ -2190,6 +2214,12 @@ function Invoke-YakuRoute {
         $wantsImport = $false
         try { $wantsImport = ([string](Get-YakuQueryValue -Request $req -Name 'import') -eq '1') } catch {}
         Serve-YakuAppPage -Context $Context -PageName 'cat.html' -InitialView $initialView -AllowWasm:$wantsImport
+        return
+    }
+    # 「お手軽翻訳」の小窓。貼ったら即訳が出るだけの別画面で、/cat・/quick の
+    # 挙動には触れない。確認作業(CAT)を作らないので、開いた瞬間の状態分岐も無い。
+    if ($method -eq 'GET' -and $path -eq '/palette') {
+        Serve-YakuAppPage -Context $Context -PageName 'palette.html'
         return
     }
     if ($method -eq 'GET' -and $path -eq '/tutorial') {
@@ -2468,6 +2498,143 @@ function Invoke-YakuRoute {
         } catch {
             $payload = [ordered]@{ error=(Convert-YakuExceptionToUserMessage $_) }
             Send-YakuTextResponse -Context $Context -Text ($payload | ConvertTo-Json -Depth 10 -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
+        }
+        return
+    }
+    # ---------------------------------------------------------------------
+    # パレット（お手軽翻訳）。貼ったら即訳が出る小窓画面 /palette 専用の口。
+    # 既存の /api/cat/* ・ /api/jobs/* とは独立させる。CAT作業(project)を
+    # 一切作らないので、そちら側の状態機械には触れない。
+    # ---------------------------------------------------------------------
+    if ($method -eq 'POST' -and $path -eq '/api/palette/instant') {
+        # Copilot を呼ばない即答。手元(TM完全一致・個人用語集)だけを引く。
+        # 引けなくても翻訳は成立する（コーパス/TMは足しであって前提ではない）。
+        try {
+            $payload = Read-YakuRequestJson -Request $req -MaxBytes 65536
+            $text = [string]$payload['text']
+            if ([string]::IsNullOrWhiteSpace($text)) {
+                Send-YakuTextResponse -Context $Context -Text '{"direction":"","tm":null,"terms":[]}' -ContentType 'application/json; charset=utf-8'
+                return
+            }
+            $directionIntent = 'auto'
+            try { if (@('auto','to_en','to_jp') -contains [string]$payload['direction_intent']) { $directionIntent = [string]$payload['direction_intent'] } } catch {}
+            $decision = Resolve-YakuDirectionDecision -Text $text -Intent $directionIntent
+            # 即答は参考情報であって関門ではない。曖昧でも 409 にはせず、
+            # 見込みの方向 (suggested_direction) のまま TM・用語を引く。
+            $direction = $(if ([bool]$decision.RequiresConfirmation) { [string]$decision.SuggestedDirection } else { [string]$decision.Resolved })
+            if ($direction -ne 'to_en' -and $direction -ne 'to_jp') { $direction = 'to_en' }
+
+            $tmBody = $null
+            try {
+                # 完全一致のみ。あいまい照合(Find-YakuTranslationMemory)は
+                # 3,000件規模で~25秒かかり、この経路で呼ぶとサーバー全体が
+                # 詰まる(TranslationMemory.ps1 実測)。ここでは絶対に呼ばない。
+                $tmHits = @(Find-YakuTranslationMemoryExact -Text $text -Direction $direction)
+                if ($tmHits.Count -gt 0) { $tmBody = [ordered]@{ source=[string]$tmHits[0].Source; target=[string]$tmHits[0].Target; exact=$true } }
+            } catch { $tmBody = $null }
+
+            $termRows = New-Object System.Collections.Generic.List[object]
+            try {
+                $termEntries = @(Read-YakuPersonalTerminologyEntries)
+                foreach ($hit in @(Find-YakuTerminologyMatches -Text $text -Direction $direction -Entries $termEntries -ProjectId '')) {
+                    $preferred = [string]$hit.PreferredTarget
+                    if ([string]::IsNullOrWhiteSpace($preferred)) { continue }
+                    [void]$termRows.Add([ordered]@{ source=[string]$hit.SourceTerm; target=$preferred })
+                }
+            } catch { $termRows.Clear() }
+
+            $response = [ordered]@{ direction=$direction; tm=$tmBody; terms=@($termRows.ToArray()) }
+            Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Depth 6 -Compress) -ContentType 'application/json; charset=utf-8'
+        } catch {
+            # 即答は無くても翻訳自体は続けられる。ここで止めない。
+            Send-YakuTextResponse -Context $Context -Text '{"direction":"","tm":null,"terms":[]}' -ContentType 'application/json; charset=utf-8'
+        }
+        return
+    }
+    if ($method -eq 'POST' -and $path -eq '/api/palette/translate') {
+        try {
+            $settings = Read-YakuSettings -Root $script:YakuRoot
+            $payload = Read-YakuRequestJson -Request $req -MaxBytes 262144
+            $text = ([string]$payload['text']).Trim()
+            if ([string]::IsNullOrWhiteSpace($text)) { throw 'PALETTE_TEXT_EMPTY: 翻訳する原文を入力してください。' }
+            # 確認作業(CAT)の1回の依頼と同じ上限を使う。ここを超える文章は、
+            # その場で訳す経路では分けて送れない(上限超過での再依頼もしない)ので、
+            # 断って1文ずつ確認する側を案内する。
+            $maxChars = Get-YakuMaxCharsPerFileBatch -Settings $settings
+            if ($text.Length -gt $maxChars) {
+                throw ('PALETTE_TEXT_TOO_LONG: 1回で送れるのは ' + $maxChars + ' 字までです。この文章は ' + $text.Length + ' 字あります。分けて貼り付けてください。')
+            }
+            $directionIntent = 'auto'
+            try { if (@('auto','to_en','to_jp') -contains [string]$payload['direction_intent']) { $directionIntent = [string]$payload['direction_intent'] } } catch {}
+            # 方向の判定は Resolve-YakuDirectionDecision 1か所しか持たない決まり
+            # （/api/cat/open 2784-2789 と同じ形）。ここは Copilot へ実際に送る前の
+            # 最後の関門なので、即答(/api/palette/instant)と違って曖昧なら止める。
+            $directionDecision = Resolve-YakuDirectionDecision -Text $text -Intent $directionIntent
+            if ([bool]$directionDecision.RequiresConfirmation) {
+                $response = [ordered]@{ code='DIRECTION_CONFIRMATION_REQUIRED'; error='翻訳先を選んでください。'; suggested_direction=[string]$directionDecision.SuggestedDirection; confidence=[string]$directionDecision.Confidence }
+                Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 409
+                return
+            }
+            $overrideDirection = $(if (@('to_en','to_jp') -contains $directionIntent) { $directionIntent } else { [string]$directionDecision.Resolved })
+            $state = Start-YakuTranslationJob -InputText $text -Settings $settings -Kind 'text' -TextDirectionOverride $overrideDirection
+            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ job_id=[string]$state['id'] } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+        } catch {
+            $message = [string]$_.Exception.Message
+            if ($message -match '別の翻訳が実行中です') {
+                # Start-YakuTranslationJob は実行中ジョブがあると即 throw する
+                # (直列に1本しか走らせない作り)。ここで穏やかな409にする。
+                Send-YakuTextResponse -Context $Context -Text ([ordered]@{ code='JOB_RUNNING'; error=$message } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 409
+            } else {
+                Send-YakuTextResponse -Context $Context -Text ([ordered]@{ error=(Convert-YakuExceptionToUserMessage $_) } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
+            }
+        }
+        return
+    }
+    if ($method -eq 'POST' -and $path -eq '/api/palette/chip') {
+        # 注文チップ(丁寧に)。既存のジョブ機構(Kind revise)へそのまま乗せる。
+        # Translation.ps1 側は一切変更しない。
+        #
+        # 「短く」(Kind shorten)は配線しない(2026-08-18、実機検証で判明)。
+        # Invoke-YakuTextTranslation は単位換算(Convert-YakuNumericUnits)を
+        # 先に済ませてからマスクするのに対し、Invoke-YakuTextShorten は
+        # 換算前の生の原文をマスクする(Translation.ps1:2258)。同じ原文でも
+        # 2つの関数が異なるトークン対応表を作るため、短くする側が現訳の
+        # [[N#]]を取り違える。実測: 「売上高は1兆3,150億円です。」→短くした
+        # 結果が ¥1 billion(誤り)。「1,234億円」→10倍ずれ。エンジン側
+        # (Translation.ps1)の変更はスコープ外なので、仕様の逃げ道どおり
+        # 「短く」を落とす。「丁寧に」(revise)はマスク表の作り方が翻訳時と
+        # 同一なので問題ない。
+        try {
+            $settings = Read-YakuSettings -Root $script:YakuRoot
+            $payload = Read-YakuRequestJson -Request $req -MaxBytes 262144
+            $chip = [string]$payload['chip']
+            if ($chip -eq 'shorten') { throw 'PALETTE_CHIP_SHORTEN_REMOVED: 短くする機能はマスクの対応がずれるため、この画面では使えません。' }
+            if ($chip -ne 'revise') { throw 'PALETTE_CHIP_INVALID: この操作は利用できません。' }
+            $sourceText = [string]$payload['source_text']
+            # マスク後の現訳。呼び出し元(palette.js)は、直前のジョブ結果 JSON の
+            # masked_translation をそのまま送り返す決まりで、実値入りの表示文字列を
+            # 送ってはならない(外部送信前のマスクを外さないため)。
+            $currentText = [string]$payload['current_text']
+            if ([string]::IsNullOrWhiteSpace($sourceText) -or [string]::IsNullOrWhiteSpace($currentText)) {
+                throw 'PALETTE_CHIP_MISSING_CONTEXT: 直す元の訳文が見つかりません。もう一度貼り付けて訳し直してください。'
+            }
+            $direction = 'to_en'
+            try { if (@('to_en','to_jp') -contains [string]$payload['direction']) { $direction = [string]$payload['direction'] } } catch {}
+            $style = 'full'
+            try { if ([string]$payload['style'] -eq 'brief') { $style = 'brief' } } catch {}
+            # 「丁寧に」は固定の指示で直す。パレットは見比べて直す画面ではなく
+            # 貼って即使う画面なので、自由記述の指示欄は置かない。
+            $instruction = 'もう少し丁寧な言い回しにしてください。事実や数値は変えないでください。'
+            $reviseBody = [ordered]@{ source_text=$sourceText; current_text=$currentText; instruction=$instruction; direction=$direction; style=$style }
+            $state = Start-YakuTranslationJob -InputText '' -Settings $settings -Kind 'revise' -ReviseJson ($reviseBody | ConvertTo-Json -Compress)
+            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ job_id=[string]$state['id'] } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+        } catch {
+            $message = [string]$_.Exception.Message
+            if ($message -match '別の翻訳が実行中です') {
+                Send-YakuTextResponse -Context $Context -Text ([ordered]@{ code='JOB_RUNNING'; error=$message } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 409
+            } else {
+                Send-YakuTextResponse -Context $Context -Text ([ordered]@{ error=(Convert-YakuExceptionToUserMessage $_) } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
+            }
         }
         return
     }
