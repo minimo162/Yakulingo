@@ -4238,7 +4238,23 @@ function Get-YakuCatSegmentStatus {
 }
 
 function Get-YakuCatCacheStyle {
-    return 'canonical-v1|reference:none|mask:numeric-v1|validation:cat-v2'
+    <#
+      調査結果（幅を知って最初から訳す, 2026-08-18）: この契約文字列は
+      Save-YakuCatBatchCheckpoint / Apply-YakuCatBatchCheckpoint のどちらからも
+      読まれていない。CATの途中保存は index+source_text をキーにし、
+      project_id・project_revision が一致する間だけ、成功済み1件を1回だけ
+      適用して消す（Apply後は必ず削除）。project_revisionはセグメントを
+      動かす変更（訳の適用・結合・分割・確定など）で必ず進み、その変更は
+      幅の根拠（右への空きセル判定）も変え得るため、目標が変わり得る窓は
+      「そのrevisionが有効な間」と一致していて、既に閉じている。
+      別projectの意味的cacheへ機械下訳を回さないことは
+      Test-YakuV9161CatProject.ps1:391 が別途固定している。
+
+      それでも本関数は「この訳文がどの契約で作られたか」を表す唯一の
+      version文字列であり（用語は reference:none で明示済み）、文字目標が
+      契約に加わった事実を版で示さないのは片手落ちである。実際の再利用可否を
+      左右する動作は上の理由により変えない。 #>
+    return 'canonical-v1|reference:none|mask:numeric-v1|validation:cat-v2|fit-target:v1'
 }
 
 function ConvertTo-YakuCatCheckpointRows {

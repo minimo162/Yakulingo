@@ -23,6 +23,9 @@ Rules:
 ===TERMINOLOGY_DATA:{request_id}===
 {terminology_rules}
 ===END_TERMINOLOGY_DATA:{request_id}===
+===CHARACTER_TARGETS:{request_id}===
+{character_targets}
+===END_CHARACTER_TARGETS:{request_id}===
 ===INPUT_TEXT:{request_id}===
 {source_list}
 ===END_INPUT_TEXT:{request_id}===
