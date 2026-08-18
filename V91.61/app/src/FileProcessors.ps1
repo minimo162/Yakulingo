@@ -4736,7 +4736,7 @@ function Get-YakuZipEntryBytes {
     $stream = $entry.Open()
     $memory = New-Object System.IO.MemoryStream
     try { $stream.CopyTo($memory); return ,$memory.ToArray() }
-    finally { $memory.Dispose(); $stream.Dispose() }
+    finally { if ($null -ne $memory) { $memory.Dispose() }; if ($null -ne $stream) { $stream.Dispose() } }
 }
 
 function Get-YakuOpenXmlIntegritySnapshot {
