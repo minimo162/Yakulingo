@@ -13,10 +13,13 @@
   function el(id) { return document.getElementById(id); }
 
   var input = null;
+  var directionSelect = null;
   var candidates = [];
   var translateSeq = 0;
   var jobTimer = null;
   var pendingTranslate = null;
+  var jobRunning = false;
+  var explicitDirection = '';
   var lastSourceText = '';
   var lastMaskedTranslation = '';
   var lastDirection = '';
@@ -29,15 +32,35 @@
     return value > 0 ? value : 3000;
   }
 
+  /* 数え方をサーバと揃える。/api/palette/translate は Trim してから
+     .Length（UTF-16単位）で見る。ここが Array.from の見た目上の文字数と
+     ずれると、画面では送れると出たのにサーバでは断られる、が起きる。 */
+  function countChars(text) {
+    return String(text || '').trim().length;
+  }
+
   function directionLabel(direction) {
     if (direction === 'to_en') return '日本語 → 英語';
     if (direction === 'to_jp') return '英語 → 日本語';
     return '';
   }
 
+  /* select の値（''=自動 / to_en / to_jp）を、サーバへ渡す direction_intent
+     （'auto' / 'to_en' / 'to_jp'）へ揃える。quick.js の explicitDirection と
+     同じ考え方：選んだらそれを使い、選んでいなければ自動判定に任せる。 */
+  function currentDirectionIntent() {
+    return (explicitDirection === 'to_en' || explicitDirection === 'to_jp') ? explicitDirection : 'auto';
+  }
+
+  function utf8ToBase64(text) {
+    var bytes = new TextEncoder().encode(String(text || ''));
+    var binary = '';
+    for (var i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary);
+  }
+
   function updateCount() {
-    var text = input.value;
-    var length = Array.from(text).length;
+    var length = countChars(input.value);
     el('palette-count').textContent = length.toLocaleString('ja-JP') + '字';
     var limit = maxBatchChars();
     var notice = el('palette-long-notice');
@@ -65,7 +88,7 @@
     var pre = node.querySelector('[data-yaku-main-text]');
     return pre ? pre.textContent : '';
   }
-  function altText(node) {
+  function decodeAltText(node) {
     var raw = node.getAttribute('data-yaku-swap') || '';
     try { return YakuCommon.decodeBase64(raw); } catch (error) { return ''; }
   }
@@ -82,12 +105,39 @@
     var main = document.querySelector('#palette-result [data-yaku-main-card]');
     if (main) found.push({ node: main, text: mainCardText(main) });
     var alts = document.querySelectorAll('#palette-result .result-alt[data-yaku-swap]');
-    for (var i = 0; i < alts.length; i++) found.push({ node: alts[i], text: altText(alts[i]) });
+    for (var i = 0; i < alts.length; i++) found.push({ node: alts[i], text: decodeAltText(alts[i]) });
     found = found.slice(0, 9);
     var stale = document.querySelectorAll('[data-yaku-candidate-index]');
     for (var j = 0; j < stale.length; j++) stale[j].removeAttribute('data-yaku-candidate-index');
     found.forEach(function (candidate, index) { candidate.node.setAttribute('data-yaku-candidate-index', String(index + 1)); });
     candidates = found;
+  }
+
+  /* 対象ノードを画面内へ寄せる。小窓(480x640)では結果がそのまま流し込まれると
+     枠の外に出て、二度と見えないままだった（実測: 主訳カード bottom=844、
+     TM込みで top=880、いずれも innerHeight=640 の外）。reduced-motion は
+     YakuCommon.focus が見てくれる。対象がフォーカス不可のノード
+     （<article>等）でも .focus() は何もしない（フォーカスは奪わない）ので、
+     スクロールだけが起きる。 */
+  function revealNode(node) {
+    if (!node) return;
+    YakuCommon.focus(node);
+  }
+
+  /* 先頭候補（TMがあればTM、無ければ主訳）を画面内へ寄せる。貼り付け直後、
+     まだCopilotの訳が届いていない段階で使う。 */
+  function revealFirstCandidate() {
+    if (candidates.length === 0) return;
+    revealNode(candidates[0].node);
+  }
+
+  /* Copilotの主訳を画面内へ寄せる。TMの即答が先に出ていても、ジョブが
+     届いたらそちらへ視線を戻す——「先頭候補」で寄せると、TMが残っている間は
+     常にTMへ引き戻され、今しがた届いた主訳が視界に入らないままになる。 */
+  function revealMainResult() {
+    var main = document.querySelector('#palette-result [data-yaku-main-card]');
+    if (main) { revealNode(main); return; }
+    revealFirstCandidate();
   }
 
   function candidateForNode(node) {
@@ -105,6 +155,56 @@
         ? ('候補' + displayIndex + 'をコピーしました。')
         : 'コピーできませんでした。もう一度お試しください。';
     });
+  }
+
+  /* Html.ps1 は添え札の下に「押すと上と入れ替わります」と案内している
+     （data-yaku-swap の由来）。ここは実際に入れ替える：添え札を押すと、
+     主札（コピー対象の既定=候補1）とその添え札の中身をそっくり交換する。
+     数字キー(1〜9)でのコピーは変えない——マウスの押下だけが「入れ替え」で、
+     キーは常に「その場でコピー」のまま（丁寧にチップは、入れ替えとは
+     別に、ジョブが作った標準訳(masked_translation)を直し続ける）。 */
+  function buildAltFragment(text, kindLabel) {
+    var head = document.createElement('span');
+    head.className = 'result-alt-head';
+    head.appendChild(document.createTextNode(kindLabel));
+    var chars = document.createElement('span');
+    chars.className = 'result-alt-chars';
+    chars.textContent = text.length + ' 字';
+    head.appendChild(chars);
+    var body = document.createElement('span');
+    body.className = 'result-alt-body';
+    var preview = text.length > 90 ? text.substring(0, 90) + '…' : text;
+    body.textContent = preview;
+    return { head: head, body: body };
+  }
+
+  function swapAltIntoMain(altButton) {
+    var mainCard = document.querySelector('#palette-result [data-yaku-main-card]');
+    if (!mainCard || !altButton) return;
+    var mainPre = mainCard.querySelector('[data-yaku-main-text]');
+    var mainCopyBtn = mainCard.querySelector('[data-yaku-copy-b64]');
+    var mainKindEl = mainCard.querySelector('[data-yaku-main-kind]');
+    if (!mainPre || !mainCopyBtn || !mainKindEl) return;
+
+    var mainText = mainPre.textContent;
+    var mainKindText = mainKindEl.textContent;
+    var incomingText = decodeAltText(altButton);
+    var incomingKindText = altButton.getAttribute('data-yaku-swap-kind') || mainKindText;
+
+    mainPre.textContent = incomingText;
+    mainCopyBtn.setAttribute('data-yaku-copy-b64', utf8ToBase64(incomingText));
+    mainKindEl.textContent = incomingKindText;
+
+    altButton.setAttribute('data-yaku-swap', utf8ToBase64(mainText));
+    altButton.setAttribute('data-yaku-swap-kind', mainKindText);
+    var oldHead = altButton.querySelector('.result-alt-head');
+    var oldBody = altButton.querySelector('.result-alt-body');
+    var rebuilt = buildAltFragment(mainText, mainKindText);
+    if (oldHead && oldHead.parentNode) oldHead.parentNode.replaceChild(rebuilt.head, oldHead); else altButton.appendChild(rebuilt.head);
+    if (oldBody && oldBody.parentNode) oldBody.parentNode.replaceChild(rebuilt.body, oldBody); else altButton.appendChild(rebuilt.body);
+
+    refreshCandidates();
+    revealMainResult();
   }
 
   /* --- 即答（TM完全一致・個人用語集）------------------------------------ */
@@ -155,6 +255,7 @@
       box.appendChild(list);
     }
     refreshCandidates();
+    revealFirstCandidate();
   }
 
   function fireInstant(text, directionIntent, seq) {
@@ -180,22 +281,17 @@
   }
 
   function finishJob(data) {
+    jobRunning = false;
     el('palette-result').innerHTML = data.html || '';
     lastSourceText = String(data.source_text || '');
     lastMaskedTranslation = String(data.masked_translation || '');
     lastDirection = String(data.direction || '');
     lastStyle = String(data.style || 'full');
     refreshCandidates();
+    revealMainResult();
     setChipsBusy(false);
     var chipsBox = el('palette-chips');
-    if (lastSourceText && lastMaskedTranslation) {
-      chipsBox.hidden = false;
-      // 短くするのは英訳専用（Invoke-YakuTextShorten が to_en 決め打ち）。
-      var shortenBtn = chipsBox.querySelector('[data-yaku-chip="shorten"]');
-      if (shortenBtn) shortenBtn.hidden = (lastDirection !== 'to_en');
-    } else {
-      chipsBox.hidden = true;
-    }
+    chipsBox.hidden = !(lastSourceText && lastMaskedTranslation);
     if (lastDirection) {
       var label = directionLabel(lastDirection);
       if (label) { el('palette-direction').textContent = '検出した方向: ' + label; el('palette-direction').hidden = false; }
@@ -209,13 +305,20 @@
       if (seq !== translateSeq) return;
       if (['done', 'completed_with_warnings'].indexOf(data.mode) >= 0) { finishJob(data); return; }
       if (data.mode === 'cancelled') {
+        jobRunning = false;
         setChipsBusy(false);
         el('palette-result').innerHTML = '<div class="alert alert-warning">翻訳をやめました。</div>';
         return;
       }
       if (['error', 'failed'].indexOf(data.mode) >= 0) {
+        jobRunning = false;
         setChipsBusy(false);
-        el('palette-result').innerHTML = '<div class="alert alert-error">' + YakuCommon.escape(data.detail || '翻訳が途中で止まりました。') + '</div>';
+        /* data.html は Convert-YakuTextResultToHtml が
+           ConvertTo-YakuUserFacingError を通した後の安全な文言（例:
+           SHORTEN_UNMASKED_CURRENT・EXTERNAL_SEND_*・PROTECTED_PROMPT_* を
+           送信中止の定型文へ写す）。data.detail は生のメッセージなので、
+           html が無いときだけ最後の手段として使う。 */
+        el('palette-result').innerHTML = data.html || ('<div class="alert alert-error">' + YakuCommon.escape(data.detail || '翻訳が途中で止まりました。') + '</div>');
         return;
       }
       el('palette-result').innerHTML = jobLoadingHtml(data.label || data.phase, data.progress, data.detail);
@@ -230,6 +333,7 @@
   }
 
   function reportJobStartError(error) {
+    jobRunning = false;
     if (error && error.status === 409 && error.data && error.data.code === 'JOB_RUNNING') {
       el('palette-result').innerHTML = '<div class="alert alert-warning">' + YakuCommon.escape('別の翻訳が進行中です。終わってからもう一度お試しください。') + '</div>';
       return;
@@ -237,12 +341,35 @@
     el('palette-result').innerHTML = '<div class="alert alert-error">' + YakuCommon.escape((error && error.message) || '翻訳できませんでした。') + '</div>';
   }
 
+  /* 方向がはっきりしないと /api/palette/translate は409で止める
+     （Resolve-YakuDirectionDecision 1か所しか判定を持たない決まり。
+     即答(/api/palette/instant)は参考情報なので止めないが、Copilotへ実際に
+     送るここは止める）。見込みの方向を1つだけ提示し、押す/Enterの1回で
+     その方向のまま送り直す。 */
+  function showDirectionConfirm(text, suggested, seq) {
+    if (seq !== translateSeq) return;
+    jobRunning = false;
+    var label = directionLabel(suggested) || suggested;
+    el('palette-result').innerHTML =
+      '<div class="alert alert-warning">' +
+      '<p class="palette-direction-confirm-text">翻訳先をはっきり決められませんでした。</p>' +
+      '<button type="button" class="secondary-button compact" data-yaku-direction-confirm="' + YakuCommon.escape(suggested) + '">' + YakuCommon.escape(label) + 'で訳す</button>' +
+      '</div>';
+    var button = document.querySelector('[data-yaku-direction-confirm]');
+    if (button) button.focus();
+  }
+
   function sendTranslate(text, directionIntent, seq) {
     YakuCommon.post('/api/palette/translate', { text: text, direction_intent: directionIntent }).then(function (data) {
       if (seq !== translateSeq) return;
+      jobRunning = true;
       pollJob(data.job_id, seq, 0);
     }).catch(function (error) {
       if (seq !== translateSeq) return;
+      if (error && error.status === 409 && error.data && error.data.code === 'DIRECTION_CONFIRMATION_REQUIRED') {
+        showDirectionConfirm(text, String(error.data.suggested_direction || ''), seq);
+        return;
+      }
       reportJobStartError(error);
     });
   }
@@ -259,7 +386,7 @@
   function startTranslation(rawText, directionIntent) {
     var text = String(rawText || '');
     if (!text.trim()) return;
-    var length = Array.from(text).length;
+    var length = countChars(text);
     var limit = maxBatchChars();
     if (length > limit) {
       var notice = el('palette-long-notice');
@@ -271,6 +398,7 @@
     pendingTranslate = null;
     var mySeq = ++translateSeq;
     window.clearTimeout(jobTimer);
+    jobRunning = false;
     candidates = [];
     el('palette-chips').hidden = true;
     el('palette-copy-status').textContent = '';
@@ -284,7 +412,7 @@
     fireTranslate(text, directionIntent, mySeq);
   }
 
-  /* --- 注文チップ（短く／丁寧に）------------------------------------------ */
+  /* --- 注文チップ（丁寧に）------------------------------------------------ */
 
   function onChipClick(button) {
     if (button.disabled || button.hidden) return;
@@ -292,13 +420,17 @@
     var chip = button.getAttribute('data-yaku-chip');
     var mySeq = ++translateSeq;
     window.clearTimeout(jobTimer);
+    // startTranslation と同じく、直前の結果ノードを指したままの候補を捨てる。
+    // 捨てないと、ジョブ中に1〜9を押すと消えたノードのテキストをコピーする。
+    candidates = [];
     setChipsBusy(true);
-    el('palette-result').innerHTML = jobLoadingHtml(chip === 'shorten' ? '短くしています' : '丁寧にしています', 0, '');
+    el('palette-result').innerHTML = jobLoadingHtml('丁寧にしています', 0, '');
     YakuCommon.post('/api/palette/chip', {
       chip: chip, source_text: lastSourceText, current_text: lastMaskedTranslation,
       direction: lastDirection, style: lastStyle
     }).then(function (data) {
       if (mySeq !== translateSeq) return;
+      jobRunning = true;
       pollJob(data.job_id, mySeq, 0);
     }).catch(function (error) {
       if (mySeq !== translateSeq) return;
@@ -312,6 +444,7 @@
   function clearAll() {
     translateSeq++;
     pendingTranslate = null;
+    jobRunning = false;
     window.clearTimeout(jobTimer);
     input.value = '';
     updateCount();
@@ -323,6 +456,8 @@
     el('palette-long-notice').hidden = true;
     candidates = [];
     lastSourceText = ''; lastMaskedTranslation = ''; lastDirection = ''; lastStyle = 'full';
+    explicitDirection = '';
+    if (directionSelect) directionSelect.value = '';
     input.focus();
   }
 
@@ -333,28 +468,49 @@
     if (tmCopy) { var hitTm = candidateForNode(tmCopy); if (hitTm) copyCandidate(hitTm.candidate, hitTm.index); return; }
     var mainCopy = event.target.closest('[data-yaku-main-card] [data-yaku-copy-b64]');
     if (mainCopy) { var hitMain = candidateForNode(mainCopy); if (hitMain) copyCandidate(hitMain.candidate, hitMain.index); return; }
+    // 添え札は「押すと上と入れ替わる」（Html.ps1の案内文どおり）。コピーは
+    // 数字キー/主札の方のボタンに残す。
     var alt = event.target.closest('.result-alt[data-yaku-swap]');
-    if (alt) { var hitAlt = candidateForNode(alt); if (hitAlt) copyCandidate(hitAlt.candidate, hitAlt.index); return; }
+    if (alt) { swapAltIntoMain(alt); return; }
+    var directionConfirm = event.target.closest('[data-yaku-direction-confirm]');
+    if (directionConfirm) {
+      var suggested = directionConfirm.getAttribute('data-yaku-direction-confirm');
+      if (suggested === 'to_en' || suggested === 'to_jp') {
+        explicitDirection = suggested;
+        if (directionSelect) directionSelect.value = suggested;
+        startTranslation(input.value, suggested);
+      }
+      return;
+    }
     var chip = event.target.closest('[data-yaku-chip]');
     if (chip) { onChipClick(chip); return; }
   }
 
+  function isInteractiveTarget(node) {
+    if (!node || !node.tagName) return false;
+    var tag = node.tagName;
+    return tag === 'BUTTON' || tag === 'A' || tag === 'SELECT' || tag === 'INPUT' || !!node.isContentEditable;
+  }
+
   /* 数字1〜9・Enter・Escはキーボード完結の要。ただし入力欄で打っている
      最中は素通りさせる（でないと貼った直後に数字が打てない、では済まず、
-     普通に文章を打つことさえできなくなる）。Ctrl+Enterは入力欄からでも
-     翻訳を起こす（他画面の作法に合わせる）。 */
+     普通に文章を打つことさえできなくなる）。方向確認ボタンやコピー釦に
+     フォーカスがあるときも素通りさせる——そこでのEnterは「そのボタンを押す」
+     が正しい動作で、候補1のコピーへ奪ってはならない。Ctrl+Enterは
+     入力欄からでも翻訳を起こす（他画面の作法に合わせる）。 */
   function onDocumentKeydown(event) {
     if (event.isComposing) return;
     if (event.key === 'Escape') { event.preventDefault(); clearAll(); return; }
     var typingInInput = (document.activeElement === input);
     if (typingInInput && (event.ctrlKey || event.metaKey) && event.key === 'Enter') {
       event.preventDefault();
-      startTranslation(input.value, 'auto');
+      startTranslation(input.value, currentDirectionIntent());
       input.blur();
       return;
     }
     if (typingInInput) return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (isInteractiveTarget(event.target)) return;
     if (event.key === 'Enter') {
       if (candidates.length === 0) return;
       event.preventDefault();
@@ -369,8 +525,18 @@
     }
   }
 
+  /* 翻訳の往復中に閉じられると、その場のCopilot呼び出しが宙に浮く。
+     common.jsは触らない（quick.js/cat.jsの離脱確認と混ぜない）ので、
+     ここだけの離脱確認を持つ。ジョブが動いている間だけ有効。 */
+  function onBeforeUnload(event) {
+    if (!jobRunning) return;
+    event.preventDefault();
+    event.returnValue = '';
+  }
+
   function start() {
     input = el('palette-input');
+    directionSelect = el('palette-direction-select');
     if (!input || !el('palette-form')) return;
     YakuCommon.start();
     input.addEventListener('input', function (event) {
@@ -380,16 +546,23 @@
       if (event.inputType === 'insertFromPaste') {
         var text = input.value;
         window.setTimeout(function () { input.blur(); }, 0);
-        startTranslation(text, 'auto');
+        startTranslation(text, currentDirectionIntent());
       }
     });
     el('palette-form').addEventListener('submit', function (event) {
       event.preventDefault();
-      startTranslation(input.value, 'auto');
+      startTranslation(input.value, currentDirectionIntent());
       input.blur();
     });
+    if (directionSelect) {
+      directionSelect.addEventListener('change', function () {
+        var value = directionSelect.value;
+        explicitDirection = (value === 'to_en' || value === 'to_jp') ? value : '';
+      });
+    }
     document.addEventListener('click', onDocumentClick);
     document.addEventListener('keydown', onDocumentKeydown);
+    window.addEventListener('beforeunload', onBeforeUnload);
     YakuCommon.onReady(function (ready) {
       if (!ready || !pendingTranslate) return;
       var p = pendingTranslate;

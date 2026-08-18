@@ -31,6 +31,14 @@
         <div class="palette-input-row">
           <span id="palette-count" class="palette-count">0字</span>
           <span id="palette-long-notice" class="palette-long-notice" role="status" hidden></span>
+          <!-- 自動判定できないときは /api/palette/translate が409で止め、
+               画面は結果欄に見込みの方向を選び直す口を出す（曖昧なまま送らない）。 -->
+          <label for="palette-direction-select" class="palette-direction-select-label">翻訳先</label>
+          <select id="palette-direction-select" aria-label="翻訳先">
+            <option value="">自動</option>
+            <option value="to_en">日本語 → 英語</option>
+            <option value="to_jp">英語 → 日本語</option>
+          </select>
           <button id="palette-submit" type="submit" class="secondary-button compact">今すぐ訳す</button>
         </div>
       </form>
@@ -41,16 +49,21 @@
       <!-- TM完全一致・個人用語集の即答。Copilotより先に、体感即時で出る。 -->
       <div id="palette-instant" class="palette-instant" aria-live="polite" hidden></div>
 
-      <!-- 注文チップ。標準訳が出てから使う（原文とマスク後の現訳が要る）。 -->
+      <!-- 注文チップ。標準訳が出てから使う（原文とマスク後の現訳が要る）。
+           「短く」は無い。Invoke-YakuTextShorten が翻訳時と別のマスク表を
+           作るため数値がずれる（実装地図・2026-08-18）。エンジン変更なしで
+           直せないので、チップごと落とす。 -->
       <div id="palette-chips" class="palette-chips" hidden>
-        <button type="button" class="secondary-button compact" data-yaku-chip="shorten">短く</button>
         <button type="button" class="secondary-button compact" data-yaku-chip="revise">丁寧に</button>
       </div>
 
       <div id="palette-result" class="palette-result" aria-live="polite"></div>
 
-      <p id="palette-copy-status" class="palette-copy-status" role="status" aria-live="polite"></p>
-      <p class="palette-hint">候補は<kbd>1</kbd>〜<kbd>9</kbd>で選んでコピー。<kbd>Enter</kbd>で既定候補をコピー。<kbd>Esc</kbd>で消去。</p>
+      <!-- 小窓（480px高）でも常に見える帯。結果が伸びて隠れないよう固定する。 -->
+      <div class="palette-footer">
+        <p id="palette-copy-status" class="palette-copy-status" role="status" aria-live="polite"></p>
+        <p class="palette-hint">候補は<kbd>1</kbd>〜<kbd>9</kbd>で選んでコピー。<kbd>Enter</kbd>で既定候補をコピー。<kbd>Esc</kbd>で消去。</p>
+      </div>
     </main>
   </div>
 </body>

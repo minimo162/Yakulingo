@@ -2566,7 +2566,16 @@ function Invoke-YakuRoute {
             }
             $directionIntent = 'auto'
             try { if (@('auto','to_en','to_jp') -contains [string]$payload['direction_intent']) { $directionIntent = [string]$payload['direction_intent'] } } catch {}
-            $overrideDirection = $(if (@('to_en','to_jp') -contains $directionIntent) { $directionIntent } else { '' })
+            # 方向の判定は Resolve-YakuDirectionDecision 1か所しか持たない決まり
+            # （/api/cat/open 2784-2789 と同じ形）。ここは Copilot へ実際に送る前の
+            # 最後の関門なので、即答(/api/palette/instant)と違って曖昧なら止める。
+            $directionDecision = Resolve-YakuDirectionDecision -Text $text -Intent $directionIntent
+            if ([bool]$directionDecision.RequiresConfirmation) {
+                $response = [ordered]@{ code='DIRECTION_CONFIRMATION_REQUIRED'; error='翻訳先を選んでください。'; suggested_direction=[string]$directionDecision.SuggestedDirection; confidence=[string]$directionDecision.Confidence }
+                Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 409
+                return
+            }
+            $overrideDirection = $(if (@('to_en','to_jp') -contains $directionIntent) { $directionIntent } else { [string]$directionDecision.Resolved })
             $state = Start-YakuTranslationJob -InputText $text -Settings $settings -Kind 'text' -TextDirectionOverride $overrideDirection
             Send-YakuTextResponse -Context $Context -Text ([ordered]@{ job_id=[string]$state['id'] } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
         } catch {
@@ -2582,13 +2591,25 @@ function Invoke-YakuRoute {
         return
     }
     if ($method -eq 'POST' -and $path -eq '/api/palette/chip') {
-        # 注文チップ(短く／丁寧に)。既存のジョブ機構(Kind revise/shorten)へ
-        # そのまま乗せる。Translation.ps1 側は一切変更しない。
+        # 注文チップ(丁寧に)。既存のジョブ機構(Kind revise)へそのまま乗せる。
+        # Translation.ps1 側は一切変更しない。
+        #
+        # 「短く」(Kind shorten)は配線しない(2026-08-18、実機検証で判明)。
+        # Invoke-YakuTextTranslation は単位換算(Convert-YakuNumericUnits)を
+        # 先に済ませてからマスクするのに対し、Invoke-YakuTextShorten は
+        # 換算前の生の原文をマスクする(Translation.ps1:2258)。同じ原文でも
+        # 2つの関数が異なるトークン対応表を作るため、短くする側が現訳の
+        # [[N#]]を取り違える。実測: 「売上高は1兆3,150億円です。」→短くした
+        # 結果が ¥1 billion(誤り)。「1,234億円」→10倍ずれ。エンジン側
+        # (Translation.ps1)の変更はスコープ外なので、仕様の逃げ道どおり
+        # 「短く」を落とす。「丁寧に」(revise)はマスク表の作り方が翻訳時と
+        # 同一なので問題ない。
         try {
             $settings = Read-YakuSettings -Root $script:YakuRoot
             $payload = Read-YakuRequestJson -Request $req -MaxBytes 262144
             $chip = [string]$payload['chip']
-            if ($chip -ne 'shorten' -and $chip -ne 'revise') { throw 'PALETTE_CHIP_INVALID: この操作は利用できません。' }
+            if ($chip -eq 'shorten') { throw 'PALETTE_CHIP_SHORTEN_REMOVED: 短くする機能はマスクの対応がずれるため、この画面では使えません。' }
+            if ($chip -ne 'revise') { throw 'PALETTE_CHIP_INVALID: この操作は利用できません。' }
             $sourceText = [string]$payload['source_text']
             # マスク後の現訳。呼び出し元(palette.js)は、直前のジョブ結果 JSON の
             # masked_translation をそのまま送り返す決まりで、実値入りの表示文字列を
@@ -2601,18 +2622,11 @@ function Invoke-YakuRoute {
             try { if (@('to_en','to_jp') -contains [string]$payload['direction']) { $direction = [string]$payload['direction'] } } catch {}
             $style = 'full'
             try { if ([string]$payload['style'] -eq 'brief') { $style = 'brief' } } catch {}
-            if ($chip -eq 'shorten') {
-                # Invoke-YakuTextShorten は英訳の圧縮専用(to_en決め打ち)。
-                if ($direction -ne 'to_en') { throw 'PALETTE_CHIP_SHORTEN_UNSUPPORTED: 短くする機能は英訳にだけ使えます。' }
-                $reviseBody = [ordered]@{ source_text=$sourceText; current_text=$currentText }
-                $state = Start-YakuTranslationJob -InputText '' -Settings $settings -Kind 'shorten' -ReviseJson ($reviseBody | ConvertTo-Json -Compress)
-            } else {
-                # 「丁寧に」は固定の指示で直す。パレットは見比べて直す画面ではなく
-                # 貼って即使う画面なので、自由記述の指示欄は置かない。
-                $instruction = 'もう少し丁寧な言い回しにしてください。事実や数値は変えないでください。'
-                $reviseBody = [ordered]@{ source_text=$sourceText; current_text=$currentText; instruction=$instruction; direction=$direction; style=$style }
-                $state = Start-YakuTranslationJob -InputText '' -Settings $settings -Kind 'revise' -ReviseJson ($reviseBody | ConvertTo-Json -Compress)
-            }
+            # 「丁寧に」は固定の指示で直す。パレットは見比べて直す画面ではなく
+            # 貼って即使う画面なので、自由記述の指示欄は置かない。
+            $instruction = 'もう少し丁寧な言い回しにしてください。事実や数値は変えないでください。'
+            $reviseBody = [ordered]@{ source_text=$sourceText; current_text=$currentText; instruction=$instruction; direction=$direction; style=$style }
+            $state = Start-YakuTranslationJob -InputText '' -Settings $settings -Kind 'revise' -ReviseJson ($reviseBody | ConvertTo-Json -Compress)
             Send-YakuTextResponse -Context $Context -Text ([ordered]@{ job_id=[string]$state['id'] } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
         } catch {
             $message = [string]$_.Exception.Message

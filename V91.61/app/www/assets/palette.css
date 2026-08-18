@@ -37,7 +37,9 @@ body.app-palette {
 .palette-input { min-height: 132px; }
 .palette-input-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
 .palette-count { color: var(--muted); font-size: var(--font-meta); font-variant-numeric: tabular-nums; }
-.palette-long-notice { color: var(--warning); font-size: var(--font-meta); }
+.palette-long-notice { color: var(--warning); font-size: var(--font-meta); flex-basis: 100%; }
+.palette-direction-select-label { color: var(--muted); font-size: var(--font-meta); }
+#palette-direction-select { min-height: 36px; padding: 2px 8px; font-size: var(--font-meta); }
 .palette-fineprint { margin: 0; color: var(--muted); font-size: var(--font-meta); }
 .palette-direction-note { margin: 0; color: var(--muted); font-size: var(--font-meta); }
 
@@ -51,9 +53,31 @@ body.app-palette {
 .palette-chips { display: flex; gap: 8px; flex-wrap: wrap; }
 
 .palette-result { display: grid; gap: 10px; }
+
+/* 小窓（480x640）では結果が伸びるとキー案内が下へ押し出され、二度と見えない
+   ままスクロールも促されなかった（実測: 主訳カード bottom=844 / TM込みで
+   top=880、どちらも innerHeight=640 の外）。帯を画面下へ固定し、
+   結果がどれだけ伸びても必ず見えるようにする。 */
+.palette-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin: 0 -16px;
+  padding: 8px 16px calc(8px + env(safe-area-inset-bottom, 0px));
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
 .palette-hint { margin: 4px 0 0; color: var(--faint); font-size: var(--font-meta); }
 .palette-hint kbd { margin: 0 1px; }
 .palette-copy-status { min-height: 1.4em; margin: 0; color: var(--success); font-size: var(--font-meta); }
+
+/* 帯の下に隠れて読めなくなるぶんを常に確保する。scrollIntoView の着地点も
+   この分だけ余裕を持たせる（scroll-margin-bottom）。 */
+.palette-result { padding-bottom: 4px; }
+.palette-result [data-yaku-main-card],
+#palette-tm-candidate { scroll-margin-bottom: 76px; scroll-margin-top: 12px; }
+
+.palette-direction-confirm-text { margin: 0 0 10px; }
 
 /* IME風の候補番号。データ属性はJS側が候補を並べ直すたびに振り直す。
    要素の形はTM候補（自前）とCopilotの結果カード（Html.ps1が作る既存の形）で
