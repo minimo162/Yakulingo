@@ -1184,7 +1184,7 @@ function Select-YakuSingleCdpTarget {
         ([string]$_.url) -notmatch '^chrome-extension:' -and
         ([string]$_.url) -notmatch '^devtools:' -and
         ([string]$_.url) -notmatch '^edge:' -and
-        (-not $RequireCopilotUrl -or (Test-YakuCopilotUrl ([string]$_.url)))
+        (-not $RequireCopilotUrl -or (Test-YakuCopilotUrl ([string]$_.url) -or Test-YakuCopilotNavigationUrl ([string]$_.url)))
     })
     if ($candidates.Count -eq 0) { return $null }
     $ranked = @($candidates | Sort-Object `
@@ -1229,6 +1229,19 @@ function Test-YakuCopilotUrl {
     return ($path -eq '/chat' -or $path -eq '/chat/' -or $path.StartsWith('/chat/', [System.StringComparison]::Ordinal))
 }
 
+function Test-YakuCopilotNavigationUrl {
+    param([AllowNull()][string]$Url)
+    # During startup Edge may append a redirect query/fragment before the final
+    # trusted URL is visible. This predicate is only for target acquisition;
+    # Assert-YakuCopilotPageTrusted still requires Test-YakuCopilotUrl.
+    if ([string]::IsNullOrWhiteSpace($Url)) { return $false }
+    $uri = $null
+    if (-not [System.Uri]::TryCreate($Url, [System.UriKind]::Absolute, [ref]$uri)) { return $false }
+    if ($uri.Scheme -ne 'https' -or $uri.Host -ne 'm365.cloud.microsoft') { return $false }
+    if (-not $uri.IsDefaultPort -and $uri.Port -ne 443) { return $false }
+    $path = $uri.AbsolutePath
+    return ($path -eq '/chat' -or $path -eq '/chat/' -or $path.StartsWith('/chat/', [System.StringComparison]::Ordinal))
+}
 function Assert-YakuCopilotPageTrusted {
     param([Parameter(Mandatory=$true)]$Page, [string]$Stage = 'operation')
     $state = Get-YakuCopilotState -Page $Page -TimeoutSeconds 8
