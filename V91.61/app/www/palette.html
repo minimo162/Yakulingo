@@ -31,8 +31,12 @@
         <div class="palette-input-row">
           <span id="palette-count" class="palette-count">0字</span>
           <span id="palette-long-notice" class="palette-long-notice" role="status" hidden></span>
-          <!-- 自動判定できないときは /api/palette/translate が409で止め、
-               画面は結果欄に見込みの方向を選び直す口を出す（曖昧なまま送らない）。 -->
+        </div>
+        <!-- 自動判定できないときは /api/palette/translate が409で止め、
+             画面は結果欄に見込みの方向を選び直す口を出す（曖昧なまま送らない）。
+             文字数の行とは別の行にする——1行に詰めると小窓(480px)で折り返し、
+             3行ぶんの高さを食って原文欄を画面外へ押し出していた(MAJOR-B)。 -->
+        <div class="palette-direction-row">
           <label for="palette-direction-select" class="palette-direction-select-label">翻訳先</label>
           <select id="palette-direction-select" aria-label="翻訳先">
             <option value="">自動</option>
@@ -62,7 +66,11 @@
       <!-- 小窓（480px高）でも常に見える帯。結果が伸びて隠れないよう固定する。 -->
       <div class="palette-footer">
         <p id="palette-copy-status" class="palette-copy-status" role="status" aria-live="polite"></p>
-        <p class="palette-hint">候補は<kbd>1</kbd>〜<kbd>9</kbd>で選んでコピー。<kbd>Enter</kbd>で既定候補をコピー。<kbd>Esc</kbd>で消去。</p>
+        <!-- 小窓では既定候補(候補1)が画面外に隠れうる（TM完全一致だけ先に
+             出て、視線は主訳へ寄せるため）。見えないまま「既定候補」とだけ
+             言うと不誠実なので、Enterで実際に何がコピーされるかを名指しする
+             （palette.js の updateHintTarget が候補を並べ替えるたびに書き換える）。 -->
+        <p class="palette-hint">候補は<kbd>1</kbd>〜<kbd>9</kbd>で選んでコピー。<kbd>Enter</kbd>で<span id="palette-hint-target">既定候補</span>をコピー。<kbd>Esc</kbd>で消去。</p>
       </div>
     </main>
   </div>

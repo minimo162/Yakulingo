@@ -20,6 +20,10 @@
   var pendingTranslate = null;
   var jobRunning = false;
   var explicitDirection = '';
+  // 方向確認(409)の対象になった、まさにそのときの原文。ボタンを押した時点の
+  // input.value を当てにすると、待っている間に原文を書き換えた利用者が
+  // 「判定していない文章」へ確定方向を適用してしまう(NIT-D)。
+  var directionConfirmContext = null;
   var lastSourceText = '';
   var lastMaskedTranslation = '';
   var lastDirection = '';
@@ -111,17 +115,92 @@
     for (var j = 0; j < stale.length; j++) stale[j].removeAttribute('data-yaku-candidate-index');
     found.forEach(function (candidate, index) { candidate.node.setAttribute('data-yaku-candidate-index', String(index + 1)); });
     candidates = found;
+    updateHintTarget();
+  }
+
+  /* 「Enterで既定候補をコピー」の“既定候補”が何かを、帯（常に見える場所）へ
+     名指しする。小窓では候補1（TM完全一致のことが多い）が画面外に隠れうる
+     ——主訳のほうへ視線を寄せるため（revealMainResult）。見えていないものを
+     「既定候補」とだけ言うのは不誠実なので、実際に何がコピーされるかを書く。 */
+  function updateHintTarget() {
+    var span = el('palette-hint-target');
+    if (!span) return;
+    if (candidates.length === 0) { span.textContent = '既定候補'; return; }
+    var node = candidates[0].node;
+    if (node.id === 'palette-tm-candidate') { span.textContent = '訳文メモリの候補'; return; }
+    if (node.hasAttribute && node.hasAttribute('data-yaku-main-card')) { span.textContent = '標準訳'; return; }
+    span.textContent = '既定候補';
+  }
+
+  // 上端の余白。0にすると角がぴったり画面端に付き、窮屈に見える。
+  var VISIBLE_TOP_LIMIT = 4;
+
+  /* 帯（.palette-footer）に隠れない、実際に見える範囲の下端。position:sticky
+     で下に貼り付くぶんだけ、innerHeight より狭い。 */
+  function visibleBottomLimit() {
+    var footer = document.querySelector('.palette-footer');
+    var footerHeight = footer ? footer.getBoundingClientRect().height : 0;
+    return window.innerHeight - footerHeight;
+  }
+
+  function isFullyVisible(node) {
+    if (!node) return false;
+    var rect = node.getBoundingClientRect();
+    return rect.top >= VISIBLE_TOP_LIMIT && rect.bottom <= visibleBottomLimit();
   }
 
   /* 対象ノードを画面内へ寄せる。小窓(480x640)では結果がそのまま流し込まれると
      枠の外に出て、二度と見えないままだった（実測: 主訳カード bottom=844、
-     TM込みで top=880、いずれも innerHeight=640 の外）。reduced-motion は
-     YakuCommon.focus が見てくれる。対象がフォーカス不可のノード
-     （<article>等）でも .focus() は何もしない（フォーカスは奪わない）ので、
-     スクロールだけが起きる。 */
+     TM込みで top=880、いずれも innerHeight=640 の外）。
+
+     block:'center' で寄せると、今度は逆に原文欄が画面の外へ押し出された
+     （実測: 結果を挿し込んだ直後、#palette-input の bottom が
+     1912x987で-101、480x640で-467——原文併記(仕様item 3)が崩れる）。
+
+     ブラウザ標準の scrollIntoView({block:'nearest'}) にも乗り換えたが、
+     これも実測で当てにならなかった：帯(.palette-footer)は position:sticky
+     で見た目だけ最下部に貼り付くレンダリングの効果であり、ブラウザの
+     scrollIntoView はスクロール領域の実サイズ(=innerHeight)しか知らない。
+     scroll-margin を主札へ足しても、実測では主札の下端が帯の下まで
+     入り込んだまま(bottom=619, 帯の上端=550)で、しかも原文欄は
+     大きく上へ追いやられた(top=-234)。「最小移動」のはずが最小になって
+     いなかった。
+
+     ここでは自前で移動量を計算する。帯を差し引いた実際に見える範囲
+     （visibleBottomLimit）に対して、対象の下端が出ていれば「出ている分」
+     だけ、上端が出ていれば「出ている分」だけ動かす——これが本当の意味の
+     最小移動で、対象の高さが見える範囲に収まる限り必ずぴったり収まる。 */
   function revealNode(node) {
     if (!node) return;
-    YakuCommon.focus(node);
+    if (isFullyVisible(node)) return;
+    var rect = node.getBoundingClientRect();
+    var bottomLimit = visibleBottomLimit();
+    var deltaY = 0;
+    if (rect.bottom > bottomLimit) { deltaY = rect.bottom - bottomLimit; }
+    else if (rect.top < VISIBLE_TOP_LIMIT) { deltaY = rect.top - VISIBLE_TOP_LIMIT; }
+    if (deltaY === 0) return;
+    var reduced = false;
+    try { reduced = !!(YakuCommon.reducedMotion && YakuCommon.reducedMotion()); } catch (error) { reduced = false; }
+    window.scrollBy({ top: deltaY, left: 0, behavior: reduced ? 'auto' : 'smooth' });
+  }
+
+  /* 結果が出ている間は入力欄を縮める（6行→2行）。'nearest' 単独では、
+     480x640では主訳カードが帯の裏に隠れたままになる（実測）。全文は
+     見えなくなっても、原文の一部・訳・キー案内が同時に画面へ収まる方を
+     優先する（原文併記は"一部でも"見せれば足りる、との仕様側の言葉どおり）。 */
+  function setCompactInput(compact) {
+    if (!input) return;
+    input.rows = compact ? 2 : 6;
+    input.classList.toggle('is-compact', compact);
+  }
+
+  /* Copilotの訳が届いたら、即答(TM/用語)は参照でしかない。全文を見せ続ける
+     ぶんの高さが、原文欄を画面外へ押し出す主因だった（MAJOR-B）。中身は
+     変えず(1キーでのコピーは全文のまま)、見た目だけ畳む。 */
+  function setCompactInstant(compact) {
+    var box = el('palette-instant');
+    if (!box) return;
+    box.classList.toggle('is-compact', compact);
   }
 
   /* 先頭候補（TMがあればTM、無ければ主訳）を画面内へ寄せる。貼り付け直後、
@@ -259,13 +338,12 @@
   }
 
   function fireInstant(text, directionIntent, seq) {
+    // 「見込みの方向」は出さない(MAJOR-B)。ジョブ完了時に finishJob が
+    // 「検出した方向」を出すのでいずれ分かるし、小窓(480x640)では、
+    // ここで24px+間隔を使うと原文欄が画面外へ押し出される主因の一つだった。
     YakuCommon.post('/api/palette/instant', { text: text, direction_intent: directionIntent }).then(function (data) {
       if (seq !== translateSeq) return;
       renderInstant(data);
-      if (data && data.direction) {
-        var label = directionLabel(data.direction);
-        if (label) { el('palette-direction').textContent = '見込みの方向: ' + label; el('palette-direction').hidden = false; }
-      }
     }).catch(function () {
       // 即答が引けなくても翻訳は続く。コーパス/TMは足しであって前提ではない。
       if (seq !== translateSeq) return;
@@ -287,8 +365,11 @@
     lastMaskedTranslation = String(data.masked_translation || '');
     lastDirection = String(data.direction || '');
     lastStyle = String(data.style || 'full');
-    refreshCandidates();
-    revealMainResult();
+    // レイアウトに効く変更(チップ欄の表示・方向メモの表示)は、必ず
+    // revealMainResult() より先に済ませる。チップ欄は結果欄より上にあるので、
+    // 後から出すと主札を押し下げ、スクロール量の計算が古い高さのままずれる
+    // （実測: 主札を挿し込んだ直後に計算した移動量どおりへ動いたのに、
+    // 直後にチップ欄が現れた分(約56px)だけ主札が帯の下へ再びはみ出した）。
     setChipsBusy(false);
     var chipsBox = el('palette-chips');
     chipsBox.hidden = !(lastSourceText && lastMaskedTranslation);
@@ -296,6 +377,9 @@
       var label = directionLabel(lastDirection);
       if (label) { el('palette-direction').textContent = '検出した方向: ' + label; el('palette-direction').hidden = false; }
     }
+    setCompactInstant(true);
+    refreshCandidates();
+    revealMainResult();
   }
 
   function pollJob(jobId, seq, failureCount) {
@@ -349,6 +433,7 @@
   function showDirectionConfirm(text, suggested, seq) {
     if (seq !== translateSeq) return;
     jobRunning = false;
+    directionConfirmContext = { text: text, suggested: suggested };
     var label = directionLabel(suggested) || suggested;
     el('palette-result').innerHTML =
       '<div class="alert alert-warning">' +
@@ -405,6 +490,9 @@
     el('palette-instant').hidden = true;
     el('palette-instant').innerHTML = '';
     el('palette-direction').hidden = true;
+    // 結果欄がこれから伸びる。原文欄を縮めて、原文・訳・キー案内が
+    // 480x640でも同時に収まる余地を作る（MAJOR-B）。
+    setCompactInput(true);
     /* 体感即時：ネットワークの応答を待たず、最初の描画をここで作る。
        スピナー単独ではなく、字数と状態が読める形にする。 */
     el('palette-result').innerHTML = jobLoadingHtml('取り込んでいます', 0, length.toLocaleString('ja-JP') + '字を確認しています。');
@@ -447,6 +535,8 @@
     jobRunning = false;
     window.clearTimeout(jobTimer);
     input.value = '';
+    setCompactInput(false);
+    setCompactInstant(false);
     updateCount();
     el('palette-instant').hidden = true; el('palette-instant').innerHTML = '';
     el('palette-result').innerHTML = '';
@@ -455,8 +545,10 @@
     el('palette-direction').hidden = true;
     el('palette-long-notice').hidden = true;
     candidates = [];
+    updateHintTarget();
     lastSourceText = ''; lastMaskedTranslation = ''; lastDirection = ''; lastStyle = 'full';
     explicitDirection = '';
+    directionConfirmContext = null;
     if (directionSelect) directionSelect.value = '';
     input.focus();
   }
@@ -464,7 +556,9 @@
   /* --- 配線 ----------------------------------------------------------------- */
 
   function onDocumentClick(event) {
-    var tmCopy = event.target.closest('#palette-tm-candidate [data-yaku-tm-copy]');
+    // コピー釦(data-yaku-tm-copy)は圧縮時(is-compact)に隠すので、カードの
+    // どこを押しても拾えるようにする(圧縮していないときは釦を押しても同じ)。
+    var tmCopy = event.target.closest('#palette-tm-candidate');
     if (tmCopy) { var hitTm = candidateForNode(tmCopy); if (hitTm) copyCandidate(hitTm.candidate, hitTm.index); return; }
     var mainCopy = event.target.closest('[data-yaku-main-card] [data-yaku-copy-b64]');
     if (mainCopy) { var hitMain = candidateForNode(mainCopy); if (hitMain) copyCandidate(hitMain.candidate, hitMain.index); return; }
@@ -475,10 +569,20 @@
     var directionConfirm = event.target.closest('[data-yaku-direction-confirm]');
     if (directionConfirm) {
       var suggested = directionConfirm.getAttribute('data-yaku-direction-confirm');
+      var context = directionConfirmContext;
+      directionConfirmContext = null;
       if (suggested === 'to_en' || suggested === 'to_jp') {
-        explicitDirection = suggested;
-        if (directionSelect) directionSelect.value = suggested;
-        startTranslation(input.value, suggested);
+        if (context && input.value === context.text) {
+          // 待っている間に原文が変わっていない。判定した原文そのものを、
+          // 確定した方向で送り直す(NIT-D: input.value を当てにしない)。
+          explicitDirection = suggested;
+          if (directionSelect) directionSelect.value = suggested;
+          startTranslation(context.text, suggested);
+        } else {
+          // 原文が変わっていた。古い判定を新しい原文へ当てはめない
+          // ——通常の自動フローへ戻し、今の原文をあらためて判定させる。
+          startTranslation(input.value, currentDirectionIntent());
+        }
       }
       return;
     }
@@ -510,8 +614,14 @@
     }
     if (typingInInput) return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
-    if (isInteractiveTarget(event.target)) return;
+    /* isInteractiveTarget はEnterだけに掛ける。数字キーには掛けない——
+       添え札(スワップ)やコピー釦をクリックした直後は activeElement がその
+       <button> のままになるが、そこで1〜9が無反応になってはならない
+       （実測: スワップ後に2/3を押してもクリップボードへ一切書かれなかった）。
+       Enterだけは「フォーカス中のボタンを押す」が正しい既定動作なので、
+       そちらに限って譲る。 */
     if (event.key === 'Enter') {
+      if (isInteractiveTarget(event.target)) return;
       if (candidates.length === 0) return;
       event.preventDefault();
       copyCandidate(candidates[0], 1);

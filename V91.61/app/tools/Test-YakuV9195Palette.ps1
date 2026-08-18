@@ -104,12 +104,39 @@ if (Test-Path -LiteralPath $N9195PaletteJsPath -PathType Leaf) {
     Assert-N9195 ($N9195Js -match "/api/palette/chip") 'palette.js がチップAPIを呼ぶ'
     Assert-N9195 ($N9195Js -notmatch "'shorten'") 'palette.js に「短く」の配線が残っていない(BLOCKER-1)'
     Assert-N9195 ($N9195Js -match 'DIRECTION_CONFIRMATION_REQUIRED') 'palette.js が方向確認(409)を扱う(MAJOR-2)'
-    Assert-N9195 ($N9195Js -match 'YakuCommon\.focus\(') 'palette.js が結果を画面内へ寄せる(scrollIntoView、MAJOR-4)'
+    Assert-N9195 ($N9195Js -match 'window\.scrollBy\(') 'palette.js が結果を画面内へ寄せる(自前の最小移動計算、MAJOR-4/B)'
+    Assert-N9195 ($N9195Js -match 'reducedMotion') 'palette.js がprefers-reduced-motionを見る'
+    Assert-N9195 ($N9195Js -match 'setCompactInput') 'palette.js が結果表示中は原文欄を縮める(原文併記を保つ、MAJOR-B)'
+    Assert-N9195 ($N9195Js -match 'setCompactInstant') 'palette.js が結果到着後は即答欄も縮める(MAJOR-B)'
     Assert-N9195 ($N9195Js -match 'swapAltIntoMain') 'palette.js が添え札クリックで入れ替える(MINOR-5)'
     Assert-N9195 ($N9195Js -match 'beforeunload') 'palette.js がジョブ中の離脱確認を持つ(MINOR-6、common.jsは変更しない)'
     Assert-N9195 ($N9195Js -match 'data\.html \|\|') 'palette.js のエラー表示は data.html を優先する(MINOR-7)'
     Assert-N9195 ($N9195Js -match 'isInteractiveTarget') 'palette.js はボタン等にフォーカスがあるときEnterを奪わない(NIT-10)'
     Assert-N9195 ($N9195Js -match '\.trim\(\)\.length') 'palette.js の文字数はTrim後の.lengthでサーバと揃える(NIT-11)'
+    Assert-N9195 ($N9195Js -match 'directionConfirmContext') 'palette.js が方向確認の対象原文を保持する(input.valueを当てにしない、NIT-D)'
+    Assert-N9195 ($N9195Js -match 'updateHintTarget') 'palette.js がEnterでコピーする候補を帯へ名指しする(MINOR-C)'
+
+    # MAJOR-A: isInteractiveTarget の判定はEnter分岐だけに掛かり、数字キー分岐には
+    # 掛からないこと。字面で「かかっていない」ことまでは保証しにくいので、ここは
+    # 「Enterの直前で判定している」「数字キーのifからEnterのブロックより後ろで
+    # isInteractiveTargetを呼ぶ行が無い」の2点を弱く見て、実効性はChromium部の
+    # 実測（クリック直後に数字キーで実際にコピーされるか）で確かめる。
+    $N9195KeydownBody = ''
+    if ($N9195Js -match "(?s)function onDocumentKeydown\(event\) \{(.*?)\n  \}") { $N9195KeydownBody = $Matches[1] }
+    Assert-N9195 (-not [string]::IsNullOrWhiteSpace($N9195KeydownBody)) 'onDocumentKeydown の本体を取り出せる(前提条件)'
+    if (-not [string]::IsNullOrWhiteSpace($N9195KeydownBody)) {
+        # 「key === 'Enter'」は Ctrl+Enter 送信ぶん（typingInInput 分岐、"&&
+        # event.key === 'Enter')" という字面）にも現れ、IndexOf が最初の出現を
+        # 拾うと Enter コピー分岐そのものより手前に当たってしまい、判定が
+        # 空振りで通ってしまう（実際に MAJOR-A の変異でこの穴を踏んだ）。
+        # 実コピー分岐は「if (event.key === 'Enter')」という字面でしか
+        # 現れないので、こちらで狙い撃ちする。
+        $N9195EnterIdx = $N9195KeydownBody.IndexOf("if (event.key === 'Enter')")
+        $N9195DigitIdx = $N9195KeydownBody.IndexOf("key >= '1'")
+        $N9195GuardIdx = $N9195KeydownBody.IndexOf('isInteractiveTarget(event.target)')
+        Assert-N9195 ($N9195EnterIdx -ge 0 -and $N9195DigitIdx -ge 0 -and $N9195GuardIdx -ge 0) 'Enter分岐・数字キー分岐・isInteractiveTarget判定のいずれも見つかる(前提条件)'
+        Assert-N9195 ($N9195GuardIdx -gt $N9195EnterIdx -and $N9195GuardIdx -lt $N9195DigitIdx) 'isInteractiveTarget判定はEnter分岐の中にあり、数字キー分岐より前で終わる(MAJOR-A、数字キーには掛からない)'
+    }
 }
 
 if (Test-Path -LiteralPath $N9195CatHtmlPath -PathType Leaf) {
@@ -477,9 +504,21 @@ if (Test-Path -LiteralPath $N9195OutJson -PathType Leaf) {
     $N9195AfterThree = @($N9195Observed.copiedAfterDigitThree)
     Assert-N9195 ($N9195AfterThree.Count -eq 3 -and [string]$N9195AfterThree[2] -eq 'Sales reached 1,234 million yen.') '3キーでCopilotの添え(alt)候補がコピーされる(まだ入れ替えていない)'
 
+    # MAJOR-A: 主札のコピー釦をマウスでクリックした直後(activeElementがその
+    # <button>のまま)でも、数字キーは生きている。壊れていた時は、ここで
+    # 一切クリップボードへ書かれなかった(0回増加)。
+    Assert-N9195 ([int]$N9195Observed.copiedCountAfterMainCopyClickThenDigit -eq [int]$N9195Observed.copiedCountBeforeMainCopyClick + 2) 'コピー釦クリック(+1)の直後に数字キー(+1)が効く(MAJOR-A)'
+    Assert-N9195 ([string]$N9195Observed.copiedLastAfterMainCopyClickThenDigit -eq 'TM exact translation.') 'コピー釦クリック後の1キーは候補1(TM)をコピーする'
+
     # MINOR-5: 添え札をクリックすると主札と入れ替わる。
     Assert-N9195 ([string]$N9195Observed.mainTextAfterSwap -eq 'Sales reached 1,234 million yen.') '添え札クリックで主札の中身が入れ替わる(MINOR-5)'
     Assert-N9195 ([string]$N9195Observed.altBodyAfterSwap -eq 'Revenue was 1,234 million yen.') '添え札クリックで、元の主訳が添え札側へ入れ替わる(双方向)'
+
+    # MAJOR-A続き: 添え札クリック(スワップ)の直後も、数字キーは生きている
+    # (実測: 修正前は2/3キーを押してもクリップボードへ一切書かれなかった)。
+    Assert-N9195 ([int]$N9195Observed.copiedCountAfterSwapDigit -eq [int]$N9195Observed.copiedCountBeforeSwapDigit + 1) 'スワップ(クリック)の直後に数字キーが効く(MAJOR-A)'
+    Assert-N9195 ([string]$N9195Observed.copiedLastAfterSwapDigit -eq 'Sales reached 1,234 million yen.') 'スワップ後の2キーは、入れ替わった新しい候補2をコピーする'
+    Assert-N9195 ([string]$N9195Observed.copyStatusAfterSwapDigit -match '候補2') 'スワップ後の数字キーコピーで状態表示も更新される(固まっていない)'
 
     $N9195ChipReq = @($N9195Observed.chipRequests)
     Assert-N9195 ($N9195ChipReq.Count -eq 1) '「丁寧に」チップを押すと /api/palette/chip へ1回送られる'
@@ -505,25 +544,64 @@ if (Test-Path -LiteralPath $N9195OutJson -PathType Leaf) {
     }
     Assert-N9195 ($N9195Observed.afterDirectionConfirmHtml -match 'data-yaku-main-card') '方向確定後、翻訳結果が結果欄へ挿し込まれる'
 
-    # MAJOR-4: 小窓(480x640)・通常窓(1912x987)のどちらでも、主札は画面の中に収まる。
-    $N9195Geo480 = $N9195Observed.geometryAfterJob480
-    Assert-N9195 ($null -ne $N9195Geo480.main) '480x640: 主札の矩形を測れている(前提条件)'
-    if ($null -ne $N9195Geo480.main) {
-        Assert-N9195 ([double]$N9195Geo480.main.top -ge -2) ('480x640: 主札の上端が画面内(top=' + [string]$N9195Geo480.main.top + ')')
-        Assert-N9195 ([double]$N9195Geo480.main.bottom -le ([double]$N9195Geo480.innerHeight - 40)) ('480x640: 主札の下端が固定帯より上(bottom=' + [string]$N9195Geo480.main.bottom + ' innerHeight=' + [string]$N9195Geo480.innerHeight + ')、MAJOR-4')
+    # NIT-D: 確認ボタンを押す前に原文を書き換えたら、古い判定(to_en)を新しい
+    # 原文へ当てはめず、書き換え後の原文で自動判定(auto)へ戻す。
+    $N9195EditedReq = @($N9195Observed.translateRequestsAfterEdit)
+    Assert-N9195 ($N9195EditedReq.Count -eq 1) '書き換え後、確認ボタンを押すと書き換えた原文で1回送られる(NIT-D)'
+    if ($N9195EditedReq.Count -eq 1) {
+        Assert-N9195 ([string]$N9195EditedReq[0].text -match 'EDITEDAFTERCONFIRM') '送られた原文は書き換え後のもの(古い判定対象の原文ではない)'
+        Assert-N9195 ([string]$N9195EditedReq[0].direction_intent -eq 'auto') '書き換え後は自動判定(auto)へ戻す。古い確定方向(to_en)を使い回さない'
     }
-    $N9195Hint480 = $N9195Geo480.hint
-    Assert-N9195 ($null -ne $N9195Hint480) '480x640: キー案内(.palette-hint)の矩形を測れている'
-    if ($null -ne $N9195Hint480) {
-        Assert-N9195 ([double]$N9195Hint480.bottom -le ([double]$N9195Geo480.innerHeight + 2)) 'キー案内が画面の下端より上にある(見える)'
-        Assert-N9195 ([double]$N9195Hint480.top -ge 0) 'キー案内が画面の上端より下にある(見える)'
+    Assert-N9195 ($N9195Observed.afterEditConfirmHtml -match 'data-yaku-main-card') '書き換え後の原文でも翻訳結果が結果欄へ挿し込まれる'
+
+    # ============================================== MAJOR-B/MAJOR-4/MINOR-C/NIT-E: 幾何
+    # (a) 主札は画面内に完全に収まり、帯(footer)に隠れない。
+    # (b) 原文欄(#palette-input)は少なくとも一部が見える(原文併記、spec item 3)。
+    # (c) キー案内(.palette-hint)は見える。
+    function Test-N9195Geometry {
+        param([string]$Label, $Geo, [bool]$RequireInput = $true, [bool]$RequireMain = $true)
+        if ($RequireMain) {
+            Assert-N9195 ($null -ne $Geo.main) ($Label + ': 主札の矩形を測れている(前提条件)')
+        }
+        if ($null -ne $Geo.main) {
+            Assert-N9195 ([double]$Geo.main.top -ge -2) ($Label + ': 主札の上端が画面内(top=' + [string]$Geo.main.top + ')')
+            Assert-N9195 ([double]$Geo.main.bottom -le ([double]$Geo.innerHeight + 2)) ($Label + ': 主札の下端が画面内(bottom=' + [string]$Geo.main.bottom + ' innerHeight=' + [string]$Geo.innerHeight + ')、MAJOR-4')
+            if ($null -ne $Geo.footer) {
+                Assert-N9195 ([double]$Geo.main.bottom -le ([double]$Geo.footer.top + 2)) ($Label + ': 主札は帯(footer)に隠れていない(main.bottom=' + [string]$Geo.main.bottom + ' footer.top=' + [string]$Geo.footer.top + ')、MAJOR-B')
+            }
+        }
+        if ($RequireInput) {
+            Assert-N9195 ($null -ne $Geo.input) ($Label + ': 原文欄の矩形を測れている(前提条件)')
+            if ($null -ne $Geo.input) {
+                $inputBottomLimit = [double]$Geo.innerHeight
+                if ($null -ne $Geo.footer) { $inputBottomLimit = [double]$Geo.footer.top }
+                Assert-N9195 ([double]$Geo.input.top -lt $inputBottomLimit) ($Label + ': 原文欄の上端が帯より上(top=' + [string]$Geo.input.top + ')')
+                Assert-N9195 ([double]$Geo.input.bottom -gt 0) ($Label + ': 原文欄の下端が画面の上端より下——一部でも見えている(bottom=' + [string]$Geo.input.bottom + ')、原文併記(spec item 3)/MAJOR-B')
+            }
+        }
+        Assert-N9195 ($null -ne $Geo.hint) ($Label + ': キー案内(.palette-hint)の矩形を測れている')
+        if ($null -ne $Geo.hint) {
+            Assert-N9195 ([double]$Geo.hint.bottom -le ([double]$Geo.innerHeight + 2)) ($Label + ': キー案内が画面の下端より上にある(見える)')
+            Assert-N9195 ([double]$Geo.hint.top -ge 0) ($Label + ': キー案内が画面の上端より下にある(見える)')
+        }
     }
 
-    $N9195Geo1912 = $N9195Observed.geometryAfterJob1912
-    Assert-N9195 ($null -ne $N9195Geo1912.main) '1912x987: 主札の矩形を測れている(前提条件)'
-    if ($null -ne $N9195Geo1912.main) {
-        Assert-N9195 ([double]$N9195Geo1912.main.top -ge -2) ('1912x987: 主札の上端が画面内(top=' + [string]$N9195Geo1912.main.top + ')')
-        Assert-N9195 ([double]$N9195Geo1912.main.bottom -le ([double]$N9195Geo1912.innerHeight + 2)) ('1912x987: 主札の下端が画面内(bottom=' + [string]$N9195Geo1912.main.bottom + ' innerHeight=' + [string]$N9195Geo1912.innerHeight + ')')
+    # NIT-E: 即答(TM)だけが出ている段階の幾何も使う。原文欄はこの時点でも
+    # 見えているべき(まだ結果が無いので、そもそも押し出す圧力も小さい)。
+    Test-N9195Geometry -Label '480x640(即答のみ)' -Geo $N9195Observed.geometryAfterInstant480 -RequireInput $true -RequireMain $false
+
+    Test-N9195Geometry -Label '480x640(ジョブ完了後)' -Geo $N9195Observed.geometryAfterJob480 -RequireInput $true
+    Test-N9195Geometry -Label '1912x987(ジョブ完了後)' -Geo $N9195Observed.geometryAfterJob1912 -RequireInput $true
+
+    # MINOR-C: Enterでコピーされる「既定候補」が実際に何かを、帯が名指しする。
+    # 汎用の「既定候補」のままなら、見えていないものを誤魔化していることになる。
+    Assert-N9195 ([string]$N9195Observed.geometryAfterJob480.hintTargetText -ne '既定候補') '帯の案内文が、Enterで実際にコピーされる候補の種類を名指ししている(MINOR-C)'
+    Assert-N9195 ([string]$N9195Observed.geometryAfterJob480.hintTargetText -eq '訳文メモリの候補') 'この題材では候補1がTM完全一致なので、案内文もそう名指しする'
+    # 圧縮(MAJOR-B)によって候補1(TM)自体も画面内に収まっているかも実測する
+    # (収まらない場合の代替策が案内文の名指し=直前の表明)。
+    $N9195Cand1_480 = $N9195Observed.geometryAfterJob480.candidate1
+    if ($null -ne $N9195Cand1_480) {
+        Assert-N9195 ([double]$N9195Cand1_480.top -ge -2 -and [double]$N9195Cand1_480.bottom -le ([double]$N9195Observed.geometryAfterJob480.innerHeight + 2)) ('480x640: 候補1(TM)も画面内に収まっている(top=' + [string]$N9195Cand1_480.top + ' bottom=' + [string]$N9195Cand1_480.bottom + ')')
     }
 }
 

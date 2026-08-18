@@ -9,18 +9,16 @@
   判定はしない。判定は呼び出し側の PowerShell が行う（観察と判定を分ける、
   既存の流儀）。ここは観察した結果をJSONで書き出すだけ。
 
-  レビュー1周目からの追加分:
-    - 「短く」チップは無い（BLOCKER-1）。DOMに存在しないことを見る。
-    - 方向確認（MAJOR-2）: 曖昧な原文は /api/palette/translate が409を
-      返す決め打ちにしておき、確認ボタンが出ること・Enterでそのボタンが
-      押されること（数字/Enterへ奪われないこと=NIT-10）を見る。
-    - 添え札(alt)クリックは主札と入れ替わる（MINOR-5）。数字キーでの
-      コピーは変えない。
-    - beforeunload はジョブ実行中だけ有効（MINOR-6）。実ナビゲーションを
-      伴わず、合成イベントの defaultPrevented で見る。
-    - 480x640・1912x987 の両方で、結果カードの矩形が窓の中に収まること
-      （MAJOR-4）。scrollIntoView を無効化すると赤くなることを、
-      呼び出し側のPowerShellが「壊して赤・戻して緑」で確認する。
+  レビュー2周目からの追加分:
+    - MAJOR-A: ボタンをクリックした直後（activeElementがそのボタンのまま）
+      でも、数字キー(1〜9)は生きていること。添え札クリック(スワップ)の後・
+      コピー釦クリックの後の両方で確かめる。
+    - MAJOR-B: 結果を挿し込んだ後も、原文欄(#palette-input)の一部が画面内に
+      残ること（原文併記）。480x640・1912x987の両方で測る。
+    - MINOR-C: Enterでコピーされる「既定候補」が実際に何かを、帯の案内文
+      (#palette-hint-target)が名指ししていること。
+    - NIT-D: 方向確認ボタンを押す前に原文を書き換えたら、確定方向を古い
+      原文へ当てはめず、書き換え後の原文で自動判定へ戻ること。
 
   使い方: node palette-gate.js <wwwDir> <outJson>
 */
@@ -68,6 +66,14 @@ const confirmDoneHtml =
   "  <pre class='translation' data-yaku-main-text>Confirmed direction translation.</pre>" +
   "  <div class='result-actions'><span class='result-kind' data-yaku-main-kind>標準訳案（Copilot訳・未確認）</span>" +
   "  <button type='button' class='secondary-button copy-button' data-yaku-copy-b64='" + b64('Confirmed direction translation.') + "'>コピー</button></div>" +
+  "</article></section>";
+
+const editedDoneHtml =
+  "<section class='result-stack' data-yaku-state='done'>" +
+  "<article class='result-card result-card-translation' data-yaku-main-card>" +
+  "  <pre class='translation' data-yaku-main-text>Edited text translation.</pre>" +
+  "  <div class='result-actions'><span class='result-kind' data-yaku-main-kind>標準訳案（Copilot訳・未確認）</span>" +
+  "  <button type='button' class='secondary-button copy-button' data-yaku-copy-b64='" + b64('Edited text translation.') + "'>コピー</button></div>" +
   "</article></section>";
 
 let pollCount = 0;
@@ -122,6 +128,7 @@ const server = http.createServer(function (req, res) {
       }
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       if (text.indexOf('AMBIGUOUSXY') >= 0) { res.end(JSON.stringify({ job_id: CONFIRM_JOB_ID })); return; }
+      if (text.indexOf('EDITEDAFTERCONFIRM') >= 0) { res.end(JSON.stringify({ job_id: 'edited0000000000000000000000003' })); return; }
       res.end(JSON.stringify({ job_id: JOB_ID }));
       return;
     }
@@ -136,6 +143,11 @@ const server = http.createServer(function (req, res) {
     if (url.pathname === '/api/jobs/' + CONFIRM_JOB_ID) {
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ mode: 'done', progress: 100, label: 'Done', class: 'ok', html: confirmDoneHtml, source_text: 'AMBIGUOUSXY text', masked_translation: 'Confirmed direction translation.', direction: 'to_en', style: 'full' }));
+      return;
+    }
+    if (url.pathname === '/api/jobs/edited0000000000000000000000003') {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ mode: 'done', progress: 100, label: 'Done', class: 'ok', html: editedDoneHtml, source_text: 'EDITEDAFTERCONFIRM text', masked_translation: 'Edited text translation.', direction: 'to_en', style: 'full' }));
       return;
     }
     if (url.pathname === '/api/jobs/' + JOB_ID) {
@@ -155,17 +167,26 @@ const server = http.createServer(function (req, res) {
 
 function measureGeometry(page) {
   return page.evaluate(function () {
-    var innerWidth = window.innerWidth;
-    var innerHeight = window.innerHeight;
+    function rectOf(node) {
+      if (!node) return null;
+      var r = node.getBoundingClientRect();
+      return { top: r.top, bottom: r.bottom, left: r.left, right: r.right };
+    }
     var main = document.querySelector('#palette-result [data-yaku-main-card]');
     var hint = document.querySelector('.palette-hint');
-    var mainRect = main ? main.getBoundingClientRect() : null;
-    var hintRect = hint ? hint.getBoundingClientRect() : null;
+    var footer = document.querySelector('.palette-footer');
+    var input = document.getElementById('palette-input');
+    var candidate1 = document.querySelector('[data-yaku-candidate-index="1"]');
+    var hintTarget = document.getElementById('palette-hint-target');
     return {
-      innerWidth: innerWidth,
-      innerHeight: innerHeight,
-      main: mainRect ? { top: mainRect.top, bottom: mainRect.bottom, left: mainRect.left, right: mainRect.right } : null,
-      hint: hintRect ? { top: hintRect.top, bottom: hintRect.bottom } : null
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      main: rectOf(main),
+      hint: rectOf(hint),
+      footer: rectOf(footer),
+      input: rectOf(input),
+      candidate1: rectOf(candidate1),
+      hintTargetText: hintTarget ? hintTarget.textContent : ''
     };
   });
 }
@@ -176,7 +197,7 @@ function measureGeometry(page) {
   try {
     await new Promise(function (resolve) { server.listen(0, '127.0.0.1', resolve); });
     browser = await chromium.launch();
-    const page = await browser.newPage({ viewport: { width: 480, height: 640 } });
+    const page = await browser.newPage({ viewport: { width: 480, height: 640 }, reducedMotion: 'reduce' });
     page.on('pageerror', function (error) { out.errors.push(String((error && error.message) || error)); });
     // MAJOR-2 の題材(AMBIGUOUSXY)はわざと409を1回起こす。Chromiumはfetchの
     // 非2xxを「Failed to load resource: ... 409」としてconsoleへ流すので、
@@ -222,6 +243,10 @@ function measureGeometry(page) {
       });
     }
 
+    async function copiedSnapshot() {
+      return page.evaluate(function () { return window.__yakuCopied.slice(); });
+    }
+
     await pasteText('TMHIT 御社の今期の売上高は増加しました。');
     await page.waitForTimeout(80);
 
@@ -236,6 +261,8 @@ function measureGeometry(page) {
     await page.waitForSelector('#palette-instant:not([hidden])', { timeout: 5000 });
     await page.waitForTimeout(400);
     out.instantHtml = await page.$eval('#palette-instant', function (node) { return node.innerHTML; });
+    // NIT-E: 即答が出た段階の幾何も使う。原文欄はまだこの時点でも
+    // (MAJOR-Bの圧縮が効いた後も)見えているべき。
     out.geometryAfterInstant480 = await measureGeometry(page);
 
     await page.waitForSelector('#palette-result [data-yaku-main-card]', { timeout: 10000 });
@@ -249,6 +276,7 @@ function measureGeometry(page) {
       return nodes.map(function (node) { return node.getAttribute('data-yaku-candidate-index'); });
     });
     out.chipsHidden = await page.$eval('#palette-chips', function (node) { return node.hidden; });
+    out.inputRowsAfterJob = await page.$eval('#palette-input', function (node) { return node.rows; });
 
     // MINOR-6続き: ジョブ完了後は止めない。
     out.beforeUnloadAfterDone = await dispatchBeforeUnloadProbe();
@@ -256,23 +284,48 @@ function measureGeometry(page) {
     // 1キー: 先頭候補(TM完全一致)をコピー。
     await page.keyboard.press('1');
     await page.waitForTimeout(120);
-    out.copiedAfterDigitOne = await page.evaluate(function () { return window.__yakuCopied.slice(); });
+    out.copiedAfterDigitOne = await copiedSnapshot();
 
     // Enter: 既定候補(先頭=TM)をコピー。
     await page.keyboard.press('Enter');
     await page.waitForTimeout(120);
-    out.copiedAfterEnter = await page.evaluate(function () { return window.__yakuCopied.slice(); });
+    out.copiedAfterEnter = await copiedSnapshot();
 
     // 3キー: Copilotの添え(alt, TM=1 main=2 alt=3)をコピー。まだ入れ替えていない。
     await page.keyboard.press('3');
     await page.waitForTimeout(120);
-    out.copiedAfterDigitThree = await page.evaluate(function () { return window.__yakuCopied.slice(); });
+    out.copiedAfterDigitThree = await copiedSnapshot();
+
+    // --- MAJOR-A: ボタンをクリックした直後でも数字キーが生きている ----------
+    // まず主札のコピー釦をクリック(マウス)する。クリック後、activeElement は
+    // その<button>のまま——ここで数字キーが死ぬのが今回の欠陥だった。
+    const beforeMainCopyClick = await copiedSnapshot();
+    await page.click('[data-yaku-main-card] [data-yaku-copy-b64]');
+    await page.waitForTimeout(80);
+    await page.keyboard.press('1');
+    await page.waitForTimeout(120);
+    const afterMainCopyClickDigit = await copiedSnapshot();
+    out.copiedCountBeforeMainCopyClick = beforeMainCopyClick.length;
+    out.copiedCountAfterMainCopyClickThenDigit = afterMainCopyClickDigit.length;
+    out.copiedLastAfterMainCopyClickThenDigit = afterMainCopyClickDigit[afterMainCopyClickDigit.length - 1] || '';
 
     // MINOR-5: 添え札(alt)をクリックすると、主札と中身が入れ替わる。
     await page.click('.result-alt[data-yaku-swap]');
     await page.waitForTimeout(80);
     out.mainTextAfterSwap = await page.$eval('[data-yaku-main-text]', function (node) { return node.textContent; });
     out.altBodyAfterSwap = await page.$eval('.result-alt-body', function (node) { return node.textContent; });
+
+    // MAJOR-A続き: スワップ(クリック)の直後、activeElementはその添え札の
+    // <button>のまま。ここでも数字キーが生きていること(実測: 修正前は
+    // 2/3を押してもクリップボードへ一切書かれなかった)。
+    const beforeSwapDigit = await copiedSnapshot();
+    await page.keyboard.press('2');
+    await page.waitForTimeout(120);
+    const afterSwapDigit = await copiedSnapshot();
+    out.copiedCountBeforeSwapDigit = beforeSwapDigit.length;
+    out.copiedCountAfterSwapDigit = afterSwapDigit.length;
+    out.copiedLastAfterSwapDigit = afterSwapDigit[afterSwapDigit.length - 1] || '';
+    out.copyStatusAfterSwapDigit = await page.$eval('#palette-copy-status', function (node) { return node.textContent; });
 
     // チップ「丁寧に」。current_text が masked_translation と一致することを見る
     // (画面の表示文字列=DISPLAY_TRANSLATIONを送っていたら不一致になる)。
@@ -281,7 +334,7 @@ function measureGeometry(page) {
     await page.waitForTimeout(400);
     out.chipRequests = chipRequests.slice();
 
-    // Esc: 入力と結果をクリア。
+    // Esc: 入力と結果をクリア。原文欄の圧縮(is-compact)も元へ戻ること。
     await page.evaluate(function () { document.getElementById('palette-input').focus(); });
     await page.keyboard.press('Escape');
     await page.waitForTimeout(100);
@@ -290,8 +343,9 @@ function measureGeometry(page) {
     out.chipsHiddenAfterEscape = await page.$eval('#palette-chips', function (node) { return node.hidden; });
     out.candidateCountAfterEscape = (await page.$$('[data-yaku-candidate-index]')).length;
     out.beforeUnloadAfterEscape = await dispatchBeforeUnloadProbe();
+    out.inputRowsAfterEscape = await page.$eval('#palette-input', function (node) { return node.rows; });
 
-    // --- MAJOR-2: 方向確認 -------------------------------------------------
+    // --- MAJOR-2 + NIT-10: 方向確認、Enterでそのボタンを押す ----------------
     await pasteText('AMBIGUOUSXY これは方向が曖昧な短い原文です。');
     await page.waitForSelector('[data-yaku-direction-confirm]', { timeout: 5000 });
     out.directionConfirmVisible = true;
@@ -308,7 +362,23 @@ function measureGeometry(page) {
     await page.keyboard.press('Escape');
     await page.waitForTimeout(80);
 
-    // --- MAJOR-4: 通常窓(1912x987)でも崩れない ------------------------------
+    // --- NIT-D: 確認ボタンを押す前に原文を書き換えたら、古い判定を当てない ---
+    await pasteText('AMBIGUOUSXY 書き換え前の原文です。');
+    await page.waitForSelector('[data-yaku-direction-confirm]', { timeout: 5000 });
+    // ボタンへは触れず、原文だけ書き換える(貼り付けではなく直接編集を模す。
+    // 自動翻訳の再始動はここでは要らないので input イベントは送らない)。
+    await page.evaluate(function () {
+      document.getElementById('palette-input').value = 'EDITEDAFTERCONFIRM 書き換え後の原文です。';
+    });
+    await page.click('[data-yaku-direction-confirm]');
+    await page.waitForSelector('#palette-result [data-yaku-main-card]', { timeout: 5000 });
+    out.translateRequestsAfterEdit = translateRequests.filter(function (row) { return String(row.text || '').indexOf('EDITEDAFTERCONFIRM') >= 0; });
+    out.afterEditConfirmHtml = await page.$eval('#palette-result', function (node) { return node.innerHTML; });
+
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(80);
+
+    // --- MAJOR-4/MAJOR-B: 通常窓(1912x987)でも崩れない ------------------------
     await page.setViewportSize({ width: 1912, height: 987 });
     await pasteText('TMHIT 御社の今期の売上高は増加しました。');
     await page.waitForSelector('#palette-result [data-yaku-main-card]', { timeout: 10000 });
