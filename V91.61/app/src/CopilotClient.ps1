@@ -793,7 +793,8 @@ function Save-YakuCopilotTargetRuntimeCache {
 function Get-YakuCopilotCachedTarget {
     param(
         [Parameter(Mandatory=$true)][int]$Port,
-        [AllowNull()]$Targets
+        [AllowNull()]$Targets,
+        [switch]$AllowTransition
     )
     $targetId = ''
     try {
@@ -821,12 +822,12 @@ function Get-YakuCopilotCachedTarget {
         if ($null -eq $target) { continue }
         if ($target -is [System.Array]) {
             foreach ($inner in $target) {
-                if ($inner -and [string]$inner.id -eq $targetId -and $inner.type -eq 'page' -and (Test-YakuCopilotUrl -Url ([string]$inner.url))) {
+                if ($inner -and [string]$inner.id -eq $targetId -and $inner.type -eq 'page' -and ($AllowTransition -or (Test-YakuCopilotUrl -Url ([string]$inner.url)))) {
                     $script:YakuCopilotTargetCache = [pscustomobject]@{ Port=$Port; TargetId=$targetId }
                     return $inner
                 }
             }
-        } elseif ([string]$target.id -eq $targetId -and $target.type -eq 'page' -and (Test-YakuCopilotUrl -Url ([string]$target.url))) {
+        } elseif ([string]$target.id -eq $targetId -and $target.type -eq 'page' -and ($AllowTransition -or (Test-YakuCopilotUrl -Url ([string]$target.url)))) {
             $script:YakuCopilotTargetCache = [pscustomobject]@{ Port=$Port; TargetId=$targetId }
             return $target
         }
@@ -834,6 +835,22 @@ function Get-YakuCopilotCachedTarget {
     return $null
 }
 
+function Get-YakuCopilotKnownTarget {
+    param(
+        [Parameter(Mandatory=$true)][int]$Port,
+        [AllowNull()]$Targets
+    )
+    # A cached target can briefly report about:blank/login/redirect while Edge is
+    # navigating. The target id remains owned by YakuLingo; trusted-state checks
+    # below still validate the final Copilot origin before any request is sent.
+    return (Get-YakuCopilotCachedTarget -Port $Port -Targets $Targets -AllowTransition)
+}
+
+function Get-YakuCopilotTargetMutex {
+    param([Parameter(Mandatory=$true)][int]$Port)
+    try { return (New-Object System.Threading.Mutex($false, ('Local\YakuLingo-CopilotTarget-' + $Port))) }
+    catch { return $null }
+}
 function Save-YakuCopilotPageTarget {
     param([Parameter(Mandatory=$true)][int]$Port, [AllowNull()]$Page)
     if ($null -eq $Page) { return $Page }
@@ -1241,15 +1258,16 @@ function Get-YakuCopilotPage {
         [int]$CreateGraceSeconds = 8
     )
     # スロットを使う場合は、先にこのスロットのタブを対象キャッシュへ載せる。
-    # 以降の解決経路は従来のまま（キャッシュ済みの対象を拾う道を通る）。
     if ((Get-YakuCopilotSlot) -gt 0) { $null = Initialize-YakuCopilotSlotTarget -Port $Port -Url $Url }
 
     $pages = @(Get-YakuCdpPages -Port $Port)
     Write-YakuLog "CDP targets found: $($pages.Count)." 'DEBUG'
 
-    $page = Get-YakuCopilotCachedTarget -Port $Port -Targets $pages
+    # The cached target id remains authoritative while Edge is navigating. Do
+    # this before URL filtering so startup cannot mistake a redirect for no tab.
+    $page = Get-YakuCopilotKnownTarget -Port $Port -Targets $pages
     if ($page) {
-        Write-YakuLog "Using cached Copilot target. targetId=$($page.id) url=$($page.url)" 'DEBUG'
+        Write-YakuLog "Using known Copilot target during navigation. targetId=$($page.id) url=$($page.url)" 'DEBUG'
         return (Save-YakuCopilotPageTarget -Port $Port -Page $page)
     }
 
@@ -1260,7 +1278,7 @@ function Get-YakuCopilotPage {
     }
 
     $eligiblePages = @($pages | Where-Object {
-        $_ -and $_.type -eq 'page' -and
+        $_ -and $_.type -eq 'page' -and $_.webSocketDebuggerUrl -and
         ([string]$_.url) -notmatch '^chrome-extension:' -and
         ([string]$_.url) -notmatch '^devtools:' -and
         ([string]$_.url) -notmatch '^edge:'
@@ -1272,7 +1290,7 @@ function Get-YakuCopilotPage {
         while ((Get-Date) -lt $deadline) {
             Start-Sleep -Milliseconds 500
             $pages = @(Get-YakuCdpPages -Port $Port)
-            $page = Get-YakuCopilotCachedTarget -Port $Port -Targets $pages
+            $page = Get-YakuCopilotKnownTarget -Port $Port -Targets $pages
             if (-not $page) { $page = Select-YakuSingleCdpTarget -Targets $pages -RequireCopilotUrl }
             if ($page) {
                 $graceSw.Stop()
@@ -1281,18 +1299,58 @@ function Get-YakuCopilotPage {
             }
         }
         $graceSw.Stop()
-        Write-YakuLog 'Copilot tab grace wait timed out; creating a new tab.' 'INFO'
+        Write-YakuLog 'Copilot tab grace wait timed out; resolving an existing target before creating a tab.' 'INFO'
     }
 
-    $created = New-YakuCdpPage -Port $Port -Url $Url
-    if ($created) {
-        $createdId = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $created -Name 'id' -Default '')
-        if (-not [string]::IsNullOrWhiteSpace($createdId)) { Save-YakuCopilotTargetRuntimeCache -Port $Port -TargetId $createdId }
+    # Multiple startup callers can reach the create branch at the same time.
+    # Recheck while holding a named mutex and reuse a single existing page (even
+    # if it is still on about:blank/login). The trusted-state check later keeps
+    # this reuse from weakening the Copilot origin boundary.
+    $created = $null
+    $targetMutex = Get-YakuCopilotTargetMutex -Port $Port
+    $targetLockTaken = $false
+    try {
+        if ($null -ne $targetMutex) {
+            try { $targetLockTaken = $targetMutex.WaitOne(30000) }
+            catch [System.Threading.AbandonedMutexException] { $targetLockTaken = $true }
+            if (-not $targetLockTaken) { throw 'COPILOT_TARGET_LOCK_TIMEOUT' }
+        }
+        $pages = @(Get-YakuCdpPages -Port $Port)
+        $page = Get-YakuCopilotKnownTarget -Port $Port -Targets $pages
+        if (-not $page) { $page = Select-YakuSingleCdpTarget -Targets $pages -RequireCopilotUrl }
+        if ($page) { return (Save-YakuCopilotPageTarget -Port $Port -Page $page) }
+
+        $eligiblePages = @($pages | Where-Object {
+            $_ -and $_.type -eq 'page' -and $_.webSocketDebuggerUrl -and
+            ([string]$_.url) -notmatch '^chrome-extension:' -and
+            ([string]$_.url) -notmatch '^devtools:' -and
+            ([string]$_.url) -notmatch '^edge:'
+        })
+        if ($eligiblePages.Count -eq 1) {
+            $existing = $eligiblePages[0]
+            try {
+                $existingWs = Get-YakuCdpWebSocketUrl -Page $existing
+                $null = Invoke-YakuCdpMethod -WebSocketUrl $existingWs -Method 'Page.navigate' -Params @{ url = $Url } -TimeoutSeconds 10
+                try { $null = Remove-YakuCdpCachedSocket -WebSocketUrl $existingWs } catch {}
+                Write-YakuLog "Reused existing Edge page for Copilot navigation. targetId=$($existing.id) previousUrl=$($existing.url)" 'INFO'
+                return (Save-YakuCopilotPageTarget -Port $Port -Page $existing)
+            } catch { Write-YakuLog "Existing Edge page navigation failed; creating Copilot page. targetId=$($existing.id) reason=$($_.Exception.Message)" 'WARN' }
+        }
+
+        $created = New-YakuCdpPage -Port $Port -Url $Url
+        if ($created) {
+            $createdId = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $created -Name 'id' -Default '')
+            if (-not [string]::IsNullOrWhiteSpace($createdId)) { Save-YakuCopilotTargetRuntimeCache -Port $Port -TargetId $createdId }
+        }
+    } finally {
+        if ($targetLockTaken) { try { $targetMutex.ReleaseMutex() } catch {} }
+        if ($null -ne $targetMutex) { try { $targetMutex.Dispose() } catch {} }
     }
+
     Start-Sleep -Seconds 3
     $pages = @(Get-YakuCdpPages -Port $Port)
     Write-YakuLog "CDP targets after new page: $($pages.Count)." 'DEBUG'
-    $page = Get-YakuCopilotCachedTarget -Port $Port -Targets $pages
+    $page = Get-YakuCopilotKnownTarget -Port $Port -Targets $pages
     if (-not $page) { $page = Select-YakuSingleCdpTarget -Targets $pages -RequireCopilotUrl }
     if ($page) {
         Write-YakuLog "Using newly created Copilot CDP page. type=$($page.type) url=$($page.url) title=$($page.title) ws=$([bool]$page.webSocketDebuggerUrl)" 'DEBUG'
@@ -1313,7 +1371,7 @@ function Get-YakuCopilotPage {
             try { $null = Remove-YakuCdpCachedSocket -WebSocketUrl $fallbackWsUrl } catch {}
             Start-Sleep -Seconds 3
             $pages = @(Get-YakuCdpPages -Port $Port)
-            $page = Get-YakuCopilotCachedTarget -Port $Port -Targets $pages
+            $page = Get-YakuCopilotKnownTarget -Port $Port -Targets $pages
             if (-not $page) { $page = Select-YakuSingleCdpTarget -Targets $pages -RequireCopilotUrl }
             if ($page) {
                 Write-YakuLog "Using fallback CDP page after navigation. type=$($page.type) url=$($page.url) title=$($page.title)" 'WARN'
@@ -1325,7 +1383,6 @@ function Get-YakuCopilotPage {
     if ($created -and $created.webSocketDebuggerUrl) { return (Save-YakuCopilotPageTarget -Port $Port -Page $created) }
     throw 'Copilot のCDPページを取得できませんでした。'
 }
-
 function Close-YakuSurplusCopilotTargets {
     param(
         [int]$Port = (Get-YakuCdpPort),
