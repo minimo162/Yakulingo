@@ -16,6 +16,15 @@ function Assert-YakuRegression {
 $client = [IO.File]::ReadAllText((Join-Path $root 'src/CopilotClient.ps1'))
 $processors = [IO.File]::ReadAllText((Join-Path $root 'src/FileProcessors.ps1'))
 $cat = [IO.File]::ReadAllText((Join-Path $root 'www/assets/cat.js'))
+Write-Host 'CASE 2a: malformed OpenXML input reports a package error without a null-method exception' -ForegroundColor Cyan
+. (Join-Path $root 'src/FileProcessors.ps1')
+$badPackage = Join-Path ([IO.Path]::GetTempPath()) ('yaku-invalid-' + [guid]::NewGuid().ToString('N') + '.xlsx')
+$packageError = $null
+try {
+  [IO.File]::WriteAllBytes($badPackage, [Text.Encoding]::ASCII.GetBytes('not an OpenXML package'))
+  try { $null = Get-YakuOpenXmlFileInfo -Path $badPackage } catch { $packageError = [string]$_.Exception.Message }
+} finally { Remove-Item -LiteralPath $badPackage -Force -ErrorAction SilentlyContinue }
+Assert-YakuRegression ($packageError -match 'FILE_PACKAGE_OPEN_FAILED' -and $packageError -notmatch 'null-valued') 'malformed package fails with a meaningful error'
 $page = [IO.File]::ReadAllText((Join-Path $root 'www/cat.html'))
 $styles = [IO.File]::ReadAllText((Join-Path $root 'www/assets/styles.css'))
 Write-Host 'CASE 1: startup Copilot target reuse is serialized and recognizes a transitioning existing page' -ForegroundColor Cyan
