@@ -86,6 +86,7 @@ const sandbox = {
     return input;
   },
   setBusy() {},
+  setFileLoading() {},
   status() {},
   render(data) { rendered.push(data); },
   post(action, body) {
