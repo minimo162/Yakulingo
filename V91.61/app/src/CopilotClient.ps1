@@ -848,8 +848,14 @@ function Get-YakuCopilotKnownTarget {
 
 function Get-YakuCopilotTargetMutex {
     param([Parameter(Mandatory=$true)][int]$Port)
-    try { return (New-Object System.Threading.Mutex($false, ('Local\YakuLingo-CopilotTarget-' + $Port))) }
-    catch { return $null }
+    try {
+        $mutex = New-Object System.Threading.Mutex($false, ('Local\YakuLingo-CopilotTarget-' + $Port))
+        if ($null -eq $mutex) { throw 'constructor returned null' }
+        return $mutex
+    } catch {
+        try { Write-YakuLog "Copilot target mutex unavailable. port=$Port reason=$($_.Exception.Message)" 'ERROR' } catch {}
+        throw ('COPILOT_TARGET_LOCK_UNAVAILABLE: ' + $_.Exception.Message)
+    }
 }
 function Save-YakuCopilotPageTarget {
     param([Parameter(Mandatory=$true)][int]$Port, [AllowNull()]$Page)
@@ -1323,11 +1329,9 @@ function Get-YakuCopilotPage {
     $targetMutex = Get-YakuCopilotTargetMutex -Port $Port
     $targetLockTaken = $false
     try {
-        if ($null -ne $targetMutex) {
-            try { $targetLockTaken = $targetMutex.WaitOne(30000) }
-            catch [System.Threading.AbandonedMutexException] { $targetLockTaken = $true }
-            if (-not $targetLockTaken) { throw 'COPILOT_TARGET_LOCK_TIMEOUT' }
-        }
+        try { $targetLockTaken = $targetMutex.WaitOne(30000) }
+        catch [System.Threading.AbandonedMutexException] { $targetLockTaken = $true }
+        if (-not $targetLockTaken) { throw 'COPILOT_TARGET_LOCK_TIMEOUT' }
         $pages = @(Get-YakuCdpPages -Port $Port)
         $page = Get-YakuCopilotKnownTarget -Port $Port -Targets $pages
         if (-not $page) { $page = Select-YakuSingleCdpTarget -Targets $pages -RequireCopilotUrl }
@@ -1357,7 +1361,7 @@ function Get-YakuCopilotPage {
         }
     } finally {
         if ($targetLockTaken) { try { $targetMutex.ReleaseMutex() } catch {} }
-        if ($null -ne $targetMutex) { try { $targetMutex.Dispose() } catch {} }
+        try { $targetMutex.Dispose() } catch {}
     }
 
     Start-Sleep -Seconds 3
