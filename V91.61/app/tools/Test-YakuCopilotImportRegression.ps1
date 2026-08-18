@@ -106,6 +106,18 @@ try {
       if ($parent -is [System.Management.Automation.Language.IfStatementAst]) {
         foreach ($clause in @($parent.Clauses)) {
           $condition = $clause.Item1
+          $clauseBlock = $clause.Item2
+          $callAncestor = $Call.Parent
+          $callInClause = $false
+          while ($null -ne $callAncestor -and $callAncestor -ne $parent) {
+            if ($callAncestor -eq $clauseBlock) {
+              $callInClause = $true
+              break
+            }
+            $callAncestor = $callAncestor.Parent
+          }
+          if (-not $callInClause) { continue }
+
           $conditionText = ''
           if ($null -ne $condition) { $conditionText = [string]$condition.Extent.Text }
           if ($conditionText -match '(?i)\$null\s*-ne\s*\$archive' -or
