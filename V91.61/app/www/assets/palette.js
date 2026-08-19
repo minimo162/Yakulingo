@@ -1217,7 +1217,10 @@
       contextSelect.addEventListener('change', function () {
         var id = contextSelect.value;
         var row = contextRows.filter(function (r) { return String(r.id) === id; })[0];
-        saveContextSelection(id, row ? String(row.file_name || '') : '');
+        // recent 圏外の保存文脈(appendStoredContextOption の選択肢)は contextRows に
+        // 居ないため、選択肢自身から表示名を拾う。空で保存すると次回の表示が id の裸になる。
+        var opt = contextSelect.options[contextSelect.selectedIndex];
+        saveContextSelection(id, row ? String(row.file_name || '') : (opt ? (opt.title || opt.textContent) : ''));
       });
       initContextPicker();
     }
