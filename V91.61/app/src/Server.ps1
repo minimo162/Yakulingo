@@ -2661,6 +2661,125 @@ function Invoke-YakuRoute {
         }
         return
     }
+    if ($method -eq 'POST' -and $path -eq '/api/palette/term-learn') {
+        # 学習（用語登録先行）。パレットで得た訳を1クリックで個人用語集へ足す。
+        # プロジェクト非依存の Add-YakuTerminologyEntry(personal scope)を直接
+        # 呼ぶ——CATのterm-add操作(/api/cat/のアクションswitchにある'term-add')は
+        # CATプロジェクト必須の経路にあり、中身はproject非依存でもパレットからは
+        # 呼べない。検証の値(80字・改行不可)は同アクションとそのまま揃える
+        # (独自の上限は作らない)。行番号では引かない——このファイル内の別関数の
+        # 行は、この塊への追記だけで簡単にずれる(CoD審査 REWORK-1 NIT-A の実測:
+        # この塊を足す前は3418/3425/3439行だったterm-add側の行が、追記後は
+        # 3485/3492/3506行になっていた)。
+        try {
+            $payload = Read-YakuRequestJson -Request $req -MaxBytes 8192
+            $sourceTerm = ([string]$payload['source']).Trim()
+            $targetTerm = ([string]$payload['target']).Trim()
+            if ([string]::IsNullOrWhiteSpace($sourceTerm) -or [string]::IsNullOrWhiteSpace($targetTerm)) {
+                throw 'PALETTE_TERM_EMPTY: 原文と訳文の両方がないと覚えられません。'
+            }
+            if ($sourceTerm.Length -gt 80 -or $targetTerm.Length -gt 80 -or $sourceTerm -match "[`r`n]" -or $targetTerm -match "[`r`n]") {
+                throw 'PALETTE_TERM_TOO_LONG: 用語は改行を含まない80文字以内で登録してください。'
+            }
+            $direction = ''
+            if (@('to_en','to_jp') -contains [string]$payload['direction']) { $direction = [string]$payload['direction'] }
+            if ($direction -ne 'to_en' -and $direction -ne 'to_jp') {
+                # クライアントが方向を送れなかった/壊れていたときだけ、ここで
+                # 判定し直す(/api/palette/instantと同じ関数・同じ非確認の流儀。
+                # 用語登録は間違えると逆方向に登録される実害があるが、それでも
+                # ここを409で止めるとワンクリックの体験が壊れるので、見込みの
+                # 方向のまま進める——押し直しは分かればすぐできる)。
+                $decision = Resolve-YakuDirectionDecision -Text $sourceTerm
+                $direction = $(if ([bool]$decision.RequiresConfirmation) { [string]$decision.SuggestedDirection } else { [string]$decision.Resolved })
+                if ($direction -ne 'to_en' -and $direction -ne 'to_jp') { $direction = 'to_en' }
+            }
+            # 出典(origin_*)はCATセルに紐づかないので、パレット専用の固定値で
+            # 埋める。New-YakuTerminologyEntry は project_id/segment_id に
+            # 32桁16進を要求する(TERMINOLOGY_PROJECT_ID_REQUIRED/
+            # TERMINOLOGY_PROVENANCE_REQUIREDを投げる検証)ので、実在プロジェクトを
+            # 装わない固定ハッシュへ逃がす——原文ハッシュをsegment_idに使うのは、
+            # TMの回帰試験(Add-YakuTranslationMemoryEntryを種に仕込むテスト、
+            # Test-YakuV9195Palette.ps1)が同じ手口でsegment_idを作っているのと
+            # 同じ考え方。
+            $originProjectId = (Get-YakuTerminologyHash -Text 'yaku-palette-term-learn').Substring(0, 32)
+            $originSegmentId = (Get-YakuTerminologyHash -Text $sourceTerm).Substring(0, 32)
+            # 事前チェック(重複の見える化、CoD審査 REWORK-1 MAJOR-2): 同じ原文に
+            # 既に別の訳が登録されているかを、足す前に見ておく。個人用語集は
+            # 同一source+targetでない限り「上書き」ではなく「共存」する
+            # (Add-YakuTerminologyEntryの契約どおり)。しかも即答(Find-Yaku
+            # TerminologyMatches)がどちらを先に返すかは登録順で決まらない——
+            # 全候補が同点のときは並べ替えの決着が term_id(GUID)の大小になり、
+            # 実測(12組の重複ペア)でfirstWins=4/secondWins=8と、新しく登録した
+            # 方が勝つとは限らなかった。だから「次から同じ訳が出ます」は嘘に
+            # なりうる。ここで検出し、その場合だけ文言を変える(消さない・
+            # 拒まない——足すのが安全、データを失わない)。
+            $sourceField = if ($direction -eq 'to_en') { 'ja' } else { 'en' }
+            $targetField = if ($direction -eq 'to_en') { 'en' } else { 'ja' }
+            $sourceCompare = if ($sourceField -eq 'ja') { [StringComparison]::Ordinal } else { [StringComparison]::OrdinalIgnoreCase }
+            $targetCompare = if ($targetField -eq 'ja') { [StringComparison]::Ordinal } else { [StringComparison]::OrdinalIgnoreCase }
+            $existingConflict = @(Read-YakuPersonalTerminologyEntries | Where-Object {
+                [string]$_.scope -eq 'personal' -and [string]$_.kind -eq 'occurrence' -and [bool]$_.active -and
+                [string]::Equals([string]$_.$sourceField.preferred, $sourceTerm, $sourceCompare) -and
+                -not [string]::Equals([string]$_.$targetField.preferred, $targetTerm, $targetCompare)
+            })
+            $termParams = @{
+                Scope='personal'; Kind='occurrence'
+                # advisory: これが避けるのは terminology-missing=error だけ
+                # ————CATのterm-addアクション(Kind=occurrence)はEnforcement=
+                # required固定で、personal scopeのoccurrenceをrequiredにすると、
+                # その語を含む行はTest-YakuTerminologyCompliance(Terminology.ps1)
+                # の判定でterminology-missingがerrorになり出力を止める。advisory
+                # はそこをwarningへ留める(REWORK-2 NEW-1で訂正: CATのglossary-add
+                # アクション(Kind=cell_exact)は同じrequired固定ではなく、既に
+                # personal scope+advisoryを使っている。この経路のadvisoryは発明
+                # ではなく、glossary-addにある既存の製品内の先例に倣った)。
+                #
+                # advisoryにしても効かない部分がある(既存の欠陥、ここでは直さ
+                # ない): personal用語集への書き込みは、advisory/requiredを問わず
+                # Get-YakuTerminologySnapshotHash(全エントリをscope/kind/
+                # enforcementで絞らずハッシュに混ぜる)を変える。Initialize-
+                # YakuCatProjectState はこのハッシュが変わると
+                # $Project.TerminologySnapshotHashを無条件に書き換えるため、
+                # 既に確認済みで点検が通っていた行のQcTerminologyHashが古い値の
+                # ままになり、Test-YakuCatSegmentQcCurrentが「点検が古い」と
+                # 判定して segment-qc-not-current が立つ——学習した語が実際に
+                # その資料へ現れるかどうかに関係なく、開いているだけの
+                # 無関係な別資料でも起きる(実測、下記の記録を参照)。CATの
+                # term-add/glossary-addも同じ書き込み経路を通るので、この変更が
+                # 新しく作った欠陥ではない。粒度を絞る修正はスコープ外
+                # (詳細: _docs/欠陥記録_用語スナップショットの粒度_2026-08-19.md)。
+                Enforcement='advisory'
+                Origin='palette-term-learn'
+                OriginProjectId=$originProjectId; OriginFileName='貼り付け資料'
+                OriginSegmentId=$originSegmentId; OriginLocation='パレット（お手軽翻訳）'
+                OriginRevision=0
+            }
+            if ($direction -eq 'to_en') {
+                $termParams.JapanesePreferred=$sourceTerm; $termParams.EnglishPreferred=$targetTerm
+            } else {
+                $termParams.EnglishPreferred=$sourceTerm; $termParams.JapanesePreferred=$targetTerm
+            }
+            $added = Add-YakuTerminologyEntry @termParams
+            # CoD審査 REWORK-2 NEW-4: 「すでに同じ内容で登録されています」だけを
+            # 返すと、$existingConflictが1件以上ある(別targetのエントリが今も
+            # activeのまま残っている)場合に、勝者が登録順で決まらない事実を
+            # 隠してしまう。$existingConflictはAddより前に、今回のtargetとは
+            # 一致しないエントリだけを集めているので、unchanged側でもそのまま
+            # 使える。
+            $status = if (-not [bool]$added.Added) { if ($existingConflict.Count -gt 0) { 'unchanged-conflict' } else { 'unchanged' } } elseif ($existingConflict.Count -gt 0) { 'conflict-added' } else { 'added' }
+            $message = switch ($status) {
+                'unchanged' { 'すでに同じ内容で登録されています。' }
+                'unchanged-conflict' { 'すでに同じ内容で登録されています。ただしこの語には別の訳も登録されており、どちらが即答に出るかは登録の順番では決まりません。古い方は用語一覧から削除してください。' }
+                'conflict-added' { '登録しました。ただしこの語には別の訳がすでに登録されており、どちらが即答に出るかは登録の順番では決まりません。古い方は用語一覧から削除してください。' }
+                default { '覚えました。次から同じ訳が出ます。' }
+            }
+            $response = [ordered]@{ ok=$true; status=$status; message=$message; term_id=[string]$added.Entry.term_id }
+            Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+        } catch {
+            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$false; error=(Convert-YakuExceptionToUserMessage $_) } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
+        }
+        return
+    }
     # ---------------------------------------------------------------------
     # V91.61 参考資料コーパス（管理者用）。
     # $script:YakuAdminMode が偽のときは、この塊ごと素通りする。

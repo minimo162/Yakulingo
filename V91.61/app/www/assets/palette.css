@@ -116,7 +116,20 @@ body.app-palette {
 }
 .palette-hint { margin: 2px 0 0; color: var(--faint); font-size: var(--font-meta); }
 .palette-hint kbd { margin: 0 1px; }
-.palette-copy-status { min-height: 1.2em; margin: 0; color: var(--success); font-size: var(--font-meta); }
+/* CoD審査 REWORK-2 NEW-2: min-heightは1行ぶんの実測(480x640、
+   font-size:.88rem相当で23.92px)まで広げる。空文字→1行の文言が入る遷移で
+   帯(.palette-footer)の高さが変わらなくなり、直前にrevealNode/reveal
+   MainResultで寄せた主札が帯の裏へ沈む(実測5.73px)分をこれだけで消す。
+   3行になる衝突文言(登録しました。ただし…)まで常設で確保すると、
+   使っていない状態でも主札の入る余地を54px以上削り、V9195の幾何ゲート
+   (実測24.5pxしかない帯より上の余白)を崩す——3行のケースは
+   palette.jsのsendTermLearnがsetCopyStatusLineの直後にrevealMainResult()を
+   再度呼び、伸びた後の帯の高さで寄せ直すことで対応する(NEW-2)。 */
+.palette-copy-status { min-height: 1.7em; margin: 0; color: var(--success); font-size: var(--font-meta); }
+/* CoD審査 REWORK-2 NEW-3: styles.cssの.cat-save-status.is-errorと同じ流儀。
+   既定(クラス無し)は成功色のまま、is-error/is-warningで上書きする。 */
+.palette-copy-status.is-error { color: var(--error); }
+.palette-copy-status.is-warning { color: var(--warning); }
 
 /* 帯の下に隠れて読めなくなるぶんを常に確保する。scrollIntoView の着地点も
    この分だけ余裕を持たせる（scroll-margin-bottom）。 */
@@ -152,6 +165,66 @@ body.app-palette {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
+
+/* 学習（用語登録先行）。各候補へ小さな「覚える」を1つ添える。
+   480x640では主札の下端と帯(.palette-footer)の間が実測24px前後しか無い
+   (CoD審査、Test-N9195Geometryの元になった値)ので、TM・主訳の釦は
+   既存の行の中か、高さに寄与しない絶対配置に収め、新しい行を増やさない。 */
+/* 釦の文言は状態を表す2〜4文字だけ（覚える/登録中/済み/エラー、palette.js
+   参照）。CoD審査 REWORK-1 MINOR-A の実測（480x640、圧縮時のTM候補
+   カード）: 旧文言「登録しています…」は候補本文へ56px、「覚えました」は
+   24pxはみ出していた。文言を短くした結果、reserve(下のpadding-right)との
+   重なりは実測0pxになった（textRight==btnLeftまで詰まる）。 */
+.term-learn-button {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font-size: .68rem;
+  line-height: 1.3;
+  padding: 3px 7px;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 108px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.term-learn-button:disabled { cursor: default; opacity: .65; }
+
+/* 主訳: .result-actions の右側にコピー釦と並べる小さな器（同じ右寄せの
+   見た目を保つため、コピー釦もここへ移す。既存の見た目の位置は動かさない）。 */
+.term-learn-group { display: flex; align-items: center; gap: 6px; }
+
+/* TM候補: is-compact になると .result-actions ごと隠れる(既存仕様)。
+   覚える釦だけは行に依存しない絶対配置にし、位置を占めても高さは
+   一切増やさない(候補1が画面内に収まる幾何ゲートを崩さないため)。
+   テキストは右側に padding-right ぶんの空きを確保して重ならないようにする
+   （複数行に折り返しても、padding は全行へ効くので重ならない）。 */
+#palette-tm-candidate { position: relative; padding-right: 58px; }
+.palette-instant.is-compact #palette-tm-candidate { padding-right: 58px; }
+#palette-tm-candidate .term-learn-corner {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  /* CoD審査 REWORK-1 MINOR-A の実測: 圧縮時カードの高さは43.3px
+     (V9195既存の計測値)。button の既定 min-height は44px
+     (styles.css:151、タッチ目標の最小寸法)で、これをそのまま使うと
+     top:4px を足しただけでカードの下端を7.7pxはみ出す(実測)。
+     styles.cssの流儀では「縮めずに隠す」(圧縮時のコピー釦がそう)だが、
+     ここで隠すと圧縮している間ずっと学習が押せなくなる——常時押せることを
+     優先し、この釦1つに限って34pxへ下げる例外にする（この語だけの
+     副次操作であり、一覧の主操作ではないため）。top:4px+34px=38pxで
+     43.3pxのカード内に収まる(実測、はみ出し0)。 */
+  min-height: 34px;
+}
+
+[data-yaku-main-card] { position: relative; }
+
+/* 添え候補: 候補1(主札)ではないため、画面内に収まる保証(幾何ゲート)の対象
+   外——ここだけ新しい行を増やしてよい。添え札(既存の<button>)を器で包み、
+   覚える釦を兄弟にする(button の中に button を作らない)。 */
+.result-alt-shell { display: grid; gap: 4px; }
+.result-alt-shell .term-learn-button { justify-self: start; }
 
 @media (max-width: 380px) {
   .palette-shell { padding: 10px 10px 32px; }
