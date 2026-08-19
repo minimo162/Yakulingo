@@ -34,6 +34,40 @@
   var searchScope = 'both', searchCase = false, searchRegex = false;
   var revisionComparison = null;
   var publicationJobId = '', publicationCandidateSet = null;
+  /* 「まとめて収める」の先回りキャッシュと、そのページ内寿命の根拠。
+     実装前調査（2026-08-19）: サーバ側に candidate_set を project／segment
+     単位で残す仕組みは無い。job テーブルは job_id だけの索引で in-memory
+     （src/Server.ps1:18 `[hashtable]::Synchronized(@{})`）、既定30分で失効し
+     （:21 `$script:YakuTranslateJobRetentionMinutes = 30`）、件数での保護も
+     無効（:22 `$script:YakuTranslateJobKeepCompleted = 0`）、起動時に
+     jobsディレクトリから復元する処理も無い（再起動で全消去）。
+     publication-apply（:3134-3151）も project にではなく、渡された job_id で
+     job テーブルから candidate_set を引く。CatProject.ps1・Publication.ps1にも
+     project 側に candidate_set を持たせるフィールドは無い。
+     つまりこのキャッシュは「サーバ側にある仕組みの二重持ち」ではなく、無い
+     ものをページ表示中だけ補う最小限のものである。キーは segment_id、値は
+     {jobId, candidateSet, revisionAtGeneration, translationAtGeneration}。
+     保存・再読み込み・タブを閉じる・再起動のどれでも消える（保存しない）。
+     読むときは訳文が生成時から変わっていないかだけ見る（fitBatchCacheEntry）。
+     最終権威はサーバ側 publication-apply の dependency_fingerprint／
+     candidate_text_hash であり、ここは表示を早めるだけ。
+
+     この訳文一致は鮮度の必要条件であって十分条件ではない（CoD審査 REWORK-1
+     MEDIUM-M2）。サーバの dependency_fingerprint（Publication.ps1:65）は
+     このセグメントの訳文だけでなく、前後の行の原文・訳文（:73-76の
+     surrounding_context）・用語スナップショット（Project.TerminologySnapshotHash）・
+     略語登録台帳のハッシュ（Get-YakuCatAbbreviationRegistryHash）も畳み込む。
+     つまり、この行自体を編集していなくても、隣の行（i±1）を編集した・
+     略語を承認した・用語が変わった、だけでキャッシュは古くなり得るが、
+     ここではそれを検知できない（隣接行やproject全体の変化まで見に行くのは
+     過剰な仕組みになる）。実害は無い: 古いキャッシュを適用しようとすると
+     publication-apply が dependency_fingerprint の不一致で
+     CAT_PUBLICATION_CANDIDATE_STALE を返し（Publication.ps1:215-221、
+     humanMessage が人向け文へ直す）、applyPublicationCandidate の失敗経路が
+     キャッシュを消して「作り直す」へ導く。**サーバの再検査が最終権威であり、
+     ここが見逃しても必ず回復できる。** */
+  var fitBatchCandidateCache = {};
+  var fitBatchQueue = null;
   var pendingMutationKeys = {};
   var projectLeaseSequence = 0, projectLeaseId = '', projectLeaseTimer = null;
   var termSelection = { index: -1, source: '', target: '' };
@@ -169,6 +203,21 @@
     if (/^(?:Type|Reference|Syntax|Range)Error\b|Cannot read propert|is not a function|is not defined|undefined is not/i.test(raw)) {
       try { console.error('YakuLingo internal error: ' + raw); } catch (_) {}
       return '画面を表示できませんでした。画面を読み込み直してください（Ctrl+R）。作業内容は保存されています。';
+    }
+    /* CAT_PUBLICATION_CANDIDATE_STALE はサーバの生コードがそのまま返る
+       （throw に本文が無く、Convert-YakuExceptionToUserMessage の
+       「コード: 本文」変換[src/Server.ps1:433]は本文の無いコードには効かない）。
+       「まとめて収める」のキャッシュ（fitBatchCandidateCache）はこの経路を
+       大幅に踏みやすくした（生成後に依存関係が変わっていれば必ずここへ来る）
+       ので、ここで人向け文へ直す（CoD審査 REWORK-1 MEDIUM-M2b）。 */
+    if (raw === 'CAT_PUBLICATION_CANDIDATE_STALE') {
+      return '内容が変わったため、この候補は使えません。作り直してください。';
+    }
+    /* ジョブは完了から30分でサーバが破棄する（メモリ内ジョブ表、restart でも消える）。
+       キャッシュした候補を30分後に適用しようとすると、この2コードが本文無しで
+       そのまま届く（CoD審査 ROUND-2 備考N1）。どちらも「作り直す」で復旧できる。 */
+    if (raw === 'CAT_PUBLICATION_JOB_NOT_FOUND' || raw === 'CAT_PUBLICATION_JOB_NOT_COMPLETE') {
+      return '候補の作成結果が残っていません（時間が経つと消えます）。作り直してください。';
     }
     return raw;
   }
@@ -1001,7 +1050,12 @@
     /* Row B owns the low-frequency tools. Moving the existing nodes keeps their
        IDs and delegated listeners intact while keeping Row C to translation,
        output, and QA. */
-    ['cat-tm-pretranslate', 'cat-preview-dock-toggle', 'cat-preview-open', 'cat-key-help', 'cat-confirm-bulk'].forEach(function (id) {
+    /* まとめて収めるボタンも同じ理由でここへ動かす（CoD審査 REWORK-1 BLOCKER-B1）。
+       .cat-toolbar-filters の帯は幅1320px以上で高さ32px・overflow:hiddenに
+       固定されており(cat-workspace.css:2594-2606)、30pxの丈上限(:2608-2616)の
+       セレクタにも乗っていない。cat-confirm-bulk と同じホストへ移すことで、
+       同じ丈の規約（.cat-segment-button）へ素直に乗る。 */
+    ['cat-tm-pretranslate', 'cat-preview-dock-toggle', 'cat-preview-open', 'cat-key-help', 'cat-confirm-bulk', 'cat-fit-batch-open'].forEach(function (id) {
       var node = el(id);
       if (node && node.parentNode !== host) host.appendChild(node);
     });
@@ -1051,7 +1105,7 @@
        進む導線（既存の配置ダイアログ＋既存の cat-publication-open を自動で発火する。
        新しいAPIは作らない）。調整できるセル配置（placement.destinations）が無い行は
        openPlacementEditor 自体が断るので、ここでも同じ条件で先に隠す。 */
-    if (segment.kind === 'cell' && segment.placement && (segment.placement.destinations || []).length && segmentFitRiskInfo(segment).risk) {
+    if (isFitBatchEligible(segment)) {
       html += '<button type="button" class="cat-segment-button secondary-button" data-cat-fit-candidates="' + index + '" title="収める候補を開く（情報を保って短くする）" aria-label="収める候補を開く">' + segmentActionIcon('i-fit', '収める候補') + '</button>';
     }
     dynamic.innerHTML = html;
@@ -1088,6 +1142,18 @@
     bulkButton.innerHTML = icon('i-check') + '<span class="cat-segment-button-label">' + esc(bulkLabel) + '</span>';
     bulkButton.classList.add('cat-segment-button');
     bulkButton.setAttribute('data-cat-bulk-indexes', bulkTargets.map(function (segment) { return Number(segment.index); }).join(','));
+    /* まとめて収める。数える式は isFitBatchEligible（行の1クリック導線と同じ、
+       fitリスクかつ配置計画がある行）で、0件なら隠す（点検の指摘などと同じ扱い）。 */
+    var fitBatchButton = el('cat-fit-batch-open');
+    if (fitBatchButton) {
+      var fitBatchList = fitBatchTargets();
+      fitBatchButton.hidden = fitBatchList.length < 1;
+      var fitBatchLabel = 'まとめて収める（' + fitBatchList.length + '行）';
+      fitBatchButton.title = '収まらない見込みで、配置を調整できる行をまとめて処理し、Copilotで短縮候補を先回りして作ります（適用は行ごとの比較確認のまま）。';
+      fitBatchButton.setAttribute('aria-label', fitBatchLabel);
+      fitBatchButton.innerHTML = icon('i-fit') + '<span class="cat-segment-button-label">' + esc(fitBatchLabel) + '</span>';
+      fitBatchButton.classList.add('cat-segment-button');
+    }
     el('cat-complete-state').hidden = !(all.length && !all.some(segmentActionable));
     el('cat-empty-state').hidden = shown.length > 0;
     /* 既定の絞り込み（actionable）は確認済みの行を隠す。初めて開いた資料で
@@ -2901,6 +2967,19 @@
     var key = ref.row + ':' + ref.column;
     return segmentFitRisk(segment, layout, ref.row, ref.column, layout.spans[key] || null, segmentFitText(segment), !!layout.bold[key]);
   }
+  /* 「収める候補」を作れる行の条件（1クリック導線の行ボタンと、「まとめて収める」の
+     対象選定の両方がここを呼ぶ。判定を2箇所に増やさない）。配置先（placement.
+     destinations）が無い行は openPlacementEditor 自体が断るので、ここでも同じ
+     条件で先に弾く。 */
+  function isFitBatchEligible(segment) {
+    return !!(segment && segment.kind === 'cell' && segment.placement && (segment.placement.destinations || []).length && segmentFitRiskInfo(segment).risk);
+  }
+  /* 「まとめて収める」の対象行。N はこの配列の件数（isFitBatchEligible と同じ
+     1つの条件から数える。トグルの表示・確認ダイアログの文言・キューの対象の
+     3箇所が同じ配列を使う）。 */
+  function fitBatchTargets() {
+    return (project && project.segments || []).filter(isFitBatchEligible);
+  }
   /* 短縮候補へ渡す文字目標。現訳の実測幅から、使える幅に収まる文字数を比例で
      出す。層が引けない・訳が無いなど実幅が出せないときは null を返し、
      呼び出し側が従来の「現訳の長さ×0.8」へフォールバックする（そちらは
@@ -3457,7 +3536,26 @@
     el('cat-publication-status').textContent = '候補を作っても、まだExcelや基準訳は変わりません。';
     el('cat-publication-candidates').innerHTML = '';
     var maxCharsNote = el('cat-publication-maxchars-note'); if (maxCharsNote) maxCharsNote.textContent = '';
+    var regenerateButton = el('cat-publication-regenerate');
+    if (regenerateButton) regenerateButton.hidden = true;
+    el('cat-publication-generate').hidden = false;
     el('cat-publication-dialog').showModal();
+    /* 「まとめて収める」が先回りで作った候補があり、訳文が生成時から変わって
+       いなければ、再生成せずにそのまま出す（実装前調査は fitBatchCandidateCache
+       の定義コメントを参照。表示を早めるだけで、適用時の最終判定はサーバ側の
+       dependency_fingerprint／candidate_text_hash が持つ）。 */
+    var cachedFitEntry = fitBatchCacheEntry(segment);
+    if (cachedFitEntry) {
+      publicationJobId = cachedFitEntry.jobId; publicationCandidateSet = cachedFitEntry.candidateSet;
+      el('cat-publication-generate').hidden = true;
+      if (regenerateButton) regenerateButton.hidden = false;
+      /* showPublicationCandidateSet は状態行を自分で決め打ちして書き換える
+         （候補あり／収まらずの2通り）。キャッシュ由来の注記はその後に前置きする
+         （先に書いても showPublicationCandidateSet に上書きされて消えるため）。 */
+      showPublicationCandidateSet(cachedFitEntry.candidateSet);
+      var cacheStatusNode = el('cat-publication-status');
+      cacheStatusNode.textContent = '「まとめて収める」で作成済みの候補です。' + cacheStatusNode.textContent;
+    }
   }
   function showPublicationCandidateSet(set) {
     publicationCandidateSet = set || null;
@@ -3493,35 +3591,47 @@
       window.setTimeout(function () { pollPublicationCandidates(jobId).catch(function (error) { el('cat-publication-status').textContent = error.message; el('cat-publication-generate').disabled = false; }); }, 900);
     });
   }
+  /* 「収める候補」の文字目標の算出。1行ダイアログの generatePublicationCandidates と
+     「まとめて収める」キューの両方がここを呼ぶ（生成部分の純粋な抽出。DOMは
+     一切触らない。呼び出し側がそれぞれの見せ方をする）。
+     実測できるときは使える幅から出す（収まりの見える化）。実幅が取れないセル
+     （層が引けない・Excel以外）は、従来どおり「現訳の長さ×0.8」へフォールバック
+     する（20字下限はそちらだけに残す。実測できた側では外す。理由は
+     segmentFitCapacity の註）。サーバの使える窓 [8,99] へは、送る前にここで
+     クランプする（クランプせずに99超をそのまま送ると、src/CopilotClient.ps1 が
+     文字数の指示を1行も出さない一方で、画面だけが「実測した使える幅から算出」と
+     言い続ける食い違いになる。CoD審査 2026-08-18 REWORK-1）。状態行は、
+     クランプが効いたかどうかまで正直に言う。 */
+  function computeFitBudget(segment) {
+    var measuredCapacity = segmentFitCapacity(segment);
+    var maxChars = measuredCapacity ? measuredCapacity.maxChars : Math.max(20, Math.floor(String(segment.translation || '').length * 0.8));
+    var note;
+    if (measuredCapacity) {
+      note = measuredCapacity.basis === 'below-min'
+        ? '文字目標 8字（下限。実測の容量は ' + measuredCapacity.raw + '字）'
+        : measuredCapacity.basis === 'above-max'
+        ? '文字目標 99字（上限。実測の容量は ' + measuredCapacity.raw + '字）'
+        : '文字目標 ' + measuredCapacity.maxChars + '字（実測した使える幅から算出）';
+    } else {
+      note = '文字目標 ' + maxChars + '字（実幅を測れないため、現訳の長さの目安から算出）';
+    }
+    return { maxChars: maxChars, measuredCapacity: measuredCapacity, note: note };
+  }
+  /* publication-candidates を投げてジョブを起こすだけの、状態を持たない口。
+     1行ダイアログとキューの両方がここを呼ぶ（純粋な抽出）。 */
+  function requestFitCandidateJobStart(index, maxChars, destinationCount) {
+    return flush().then(function () { return post('publication-candidates', { index: index, max_chars: maxChars, destination_count: destinationCount }, true); });
+  }
   function generatePublicationCandidates() {
     var index = Number(el('cat-publication-index').value), segment = (project && project.segments || []).find(function (item) { return Number(item.index) === index; });
     if (!segment) return;
     el('cat-publication-generate').disabled = true; el('cat-publication-status').textContent = '候補を作っています…';
     var destinationCount = segment.placement && segment.placement.destinations ? segment.placement.destinations.length : 1;
-    /* 文字目標は、実測できるときは使える幅から出す（収まりの見える化）。
-       実幅が取れないセル（層が引けない・Excel以外）は、従来どおり
-       「現訳の長さ×0.8」へフォールバックする（20字下限はそちらだけに残す。
-       実測できた側では外す。理由は segmentFitCapacity の註）。
-       サーバの使える窓 [8,99] へは、送る前にここでクランプする（クランプせずに
-       99超をそのまま送ると、src/CopilotClient.ps1 が文字数の指示を1行も
-       出さない一方で、画面だけが「実測した使える幅から算出」と言い続ける
-       食い違いになる。CoD審査 2026-08-18 REWORK-1）。状態行は、クランプが
-       効いたかどうかまで正直に言う。 */
-    var measuredCapacity = segmentFitCapacity(segment);
-    var maxChars = measuredCapacity ? measuredCapacity.maxChars : Math.max(20, Math.floor(String(segment.translation || '').length * 0.8));
+    var budget = computeFitBudget(segment);
+    var maxChars = budget.maxChars;
     var maxCharsNote = el('cat-publication-maxchars-note');
-    if (maxCharsNote) {
-      if (measuredCapacity) {
-        maxCharsNote.textContent = measuredCapacity.basis === 'below-min'
-          ? '文字目標 8字（下限。実測の容量は ' + measuredCapacity.raw + '字）'
-          : measuredCapacity.basis === 'above-max'
-          ? '文字目標 99字（上限。実測の容量は ' + measuredCapacity.raw + '字）'
-          : '文字目標 ' + measuredCapacity.maxChars + '字（実測した使える幅から算出）';
-      } else {
-        maxCharsNote.textContent = '文字目標 ' + maxChars + '字（実幅を測れないため、現訳の長さの目安から算出）';
-      }
-    }
-    return flush().then(function () { return post('publication-candidates', { index: index, max_chars: maxChars, destination_count: destinationCount }, true); }).then(function (data) {
+    if (maxCharsNote) maxCharsNote.textContent = budget.note;
+    return requestFitCandidateJobStart(index, maxChars, destinationCount).then(function (data) {
       publicationJobId = String(data.job_id || ''); if (!publicationJobId) throw new Error('候補作成を開始できませんでした。'); return pollPublicationCandidates(publicationJobId);
     }).catch(function (error) { el('cat-publication-status').textContent = error.message; el('cat-publication-generate').disabled = false; });
   }
@@ -3531,7 +3641,202 @@
     el('cat-publication-status').textContent = '掲載訳だけを保存しています…';
     return post('publication-apply', { job_id: publicationJobId, candidate_set_id: publicationCandidateSet.candidate_set_id, candidate_id: candidateId, candidate_text_hash: candidate.text_hash, dependency_fingerprint: publicationCandidateSet.dependency_fingerprint, meaning_preservation_confirmed: true, reason: '原文・基準訳・候補を比較し、情報の欠落がないことを人が確認' }, true).then(function (data) {
       el('cat-publication-dialog').close(); el('cat-placement-dialog').close(); render(data, false); renderPreview(); status('Excelに入れる訳を保存しました。基準訳と翻訳メモリは変更していません。PDFを更新して印刷結果を確認してください。');
-    }).catch(function (error) { el('cat-publication-status').textContent = error.message; });
+    }).catch(function (error) {
+      /* humanMessage を通す: CAT_PUBLICATION_CANDIDATE_STALE はサーバの生コード
+         がそのまま返ってくる（本文が無いコードなので Convert-YakuExceptionToUserMessage
+         は日本語化しない）。キャッシュ由来の候補はこのエラーへ特に来やすい
+         （CoD審査 REWORK-1 MEDIUM-M2b）。 */
+      el('cat-publication-status').textContent = humanMessage(error.message);
+      /* 適用が失敗した＝いま出ている候補はもう使えない可能性が高い（ジョブが
+         30分retention・再起動で消えた、または fingerprint／text_hash が食い違った。
+         CoD審査 2026-08-19 決定4）。キャッシュに残っていれば消し、「作り直す」で
+         この場から回復できるようにする。 */
+      var index = Number(el('cat-publication-index').value);
+      var segment = (project && project.segments || []).find(function (item) { return Number(item.index) === index; });
+      if (segment && segment.segment_id) delete fitBatchCandidateCache[String(segment.segment_id)];
+      var regenerateButton = el('cat-publication-regenerate');
+      if (regenerateButton) regenerateButton.hidden = false;
+      el('cat-publication-generate').hidden = true;
+    });
+  }
+  /* 「まとめて収める」で作った候補をこの場で作り直す（キャッシュを捨てて
+     既存の生成経路をそのまま再実行するだけ。新しいAPIは作らない）。 */
+  function regeneratePublicationCandidates() {
+    var index = Number(el('cat-publication-index').value);
+    var segment = (project && project.segments || []).find(function (item) { return Number(item.index) === index; });
+    if (segment && segment.segment_id) delete fitBatchCandidateCache[String(segment.segment_id)];
+    var regenerateButton = el('cat-publication-regenerate');
+    if (regenerateButton) regenerateButton.hidden = true;
+    el('cat-publication-generate').hidden = false;
+    el('cat-publication-candidates').innerHTML = '';
+    publicationJobId = ''; publicationCandidateSet = null;
+    generatePublicationCandidates();
+  }
+  /* まとめて収める: キャッシュの読み書き・キュー本体。 */
+  function fitBatchCacheEntry(segment) {
+    var id = String(segment && segment.segment_id || ''); if (!id) return null;
+    var entry = fitBatchCandidateCache[id];
+    if (!entry) return null;
+    /* 生成時から訳文が変わっていたら使わない（Ordinal一致）。サーバ側の最終
+       判定は publication-apply が持つが、ここで先に落として「作り直す」へ
+       誘導したほうが、押してから初めて食い違いに気づくより早い。 */
+    if (String(segment.translation || '') !== entry.translationAtGeneration) { delete fitBatchCandidateCache[id]; return null; }
+    return entry;
+  }
+  function cacheFitBatchResult(segment, jobId, candidateSet) {
+    var id = String(segment && segment.segment_id || ''); if (!id) return;
+    /* revisionAtGeneration は診断用の記録だけ（ログ・調査で「いつのproject
+       revisionで作ったか」を辿るためだけに持つ）。有効性の判定には使わない
+       ―― project.revision は行の編集以外（他行の確定・用語登録など）でも
+       進むため、鮮度の根拠にすると無関係な変化でキャッシュを毎回捨てる側へ
+       倒れる。有効性の唯一の根拠は translationAtGeneration（この行の訳文
+       そのもの、fitBatchCacheEntry が Ordinal 一致で見る）。 */
+    fitBatchCandidateCache[id] = { jobId: jobId, candidateSet: candidateSet || null, revisionAtGeneration: revision(), translationAtGeneration: String(segment.translation || '') };
+  }
+  /* サーバの直列契約（Start-YakuTranslationJob は同時1本しか許さず、超過は
+     throw する。src/Server.ps1:949）。/api/cat/publication-candidates はこれを
+     CAT_REQUEST_FAILED（400）として包み、専用の code は付けない（palette側の
+     JOB_RUNNING/409 とは違う経路。src/Server.ps1:2606-2609 と 4186-4189 を
+     比較して確認した）。よってここは応答本文の文言で拾う。 */
+  function isJobRunningConflict(error) {
+    return /別の翻訳が実行中です/.test(String((error && error.message) || ''));
+  }
+  /* キューだけが使う、DOMに触れない汎用ポーラー。1行ダイアログ側の
+     pollPublicationCandidates は publicationJobId の陳腐化ガードと、1tickごとに
+     独立した catch を持つ既存の作りに手を入れたくないため、あえて分けている
+     （挙動を変えない、が優先）。 */
+  function pollFitCandidateJob(jobId, onTick) {
+    return YakuCommon.json('/api/jobs/' + encodeURIComponent(jobId)).then(function (data) {
+      if (data.mode === 'done' || data.mode === 'completed_with_warnings') {
+        if (data.application_status !== 'current') throw new Error('候補作成中に基準訳が変わりました。もう一度作り直してください。');
+        return data;
+      }
+      if (['error', 'failed', 'interrupted', 'cancelled'].indexOf(data.mode) >= 0) throw new Error(data.detail || '候補を作れませんでした。');
+      if (onTick) onTick(data);
+      return new Promise(function (resolve) { window.setTimeout(resolve, 900); }).then(function () { return pollFitCandidateJob(jobId, onTick); });
+    });
+  }
+  function fitBatchProgressText(position, total, percent) {
+    return position + '/' + total + '行目を処理中…' + (percent > 0 ? '（' + percent + '%）' : '');
+  }
+  function fitBatchSummaryText(state, aborted) {
+    var remaining = state.ids.length - state.cursor;
+    var counts = '候補を作った行: ' + state.generated + '件 / 収まる候補が無かった行: ' + state.cannotFit + '件' + (state.errors ? ' / 作れなかった行: ' + state.errors + '件' : '') + '。';
+    return (aborted && remaining > 0 ? '中断しました（残り' + remaining + '行）。' : '完了しました。') + counts;
+  }
+  function openFitBatchDialog() {
+    if (busy) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
+    var targets = fitBatchTargets();
+    if (!targets.length) return;
+    fitBatchQueue = null;
+    el('cat-fit-batch-confirm').hidden = false;
+    el('cat-fit-batch-confirm').textContent = targets.length + '行の短縮候補を順番に作ります。Copilotを' + targets.length + '回呼びます。';
+    el('cat-fit-batch-progress').hidden = true; el('cat-fit-batch-progress').textContent = '';
+    el('cat-fit-batch-summary').hidden = true; el('cat-fit-batch-summary').textContent = '';
+    el('cat-fit-batch-filter').hidden = true;
+    el('cat-fit-batch-abort').hidden = true;
+    el('cat-fit-batch-start').hidden = false; el('cat-fit-batch-start').disabled = false;
+    el('cat-fit-batch-close').hidden = false; el('cat-fit-batch-close').textContent = '閉じる';
+    el('cat-fit-batch-dialog').showModal();
+  }
+  /* JOB_RUNNINGの再試行に上限を付ける（CoD審査 REWORK-1 MEDIUM-M3）。
+     サーバが直列契約違反を返し続ける病的な状況でも、この行を永遠に
+     待ち続けない（1回あたり1.5秒待ちなので、上限20回で最大約30秒）。
+     超えたらその行だけをエラーとして数え、キューは次の行へ進む
+     （「生成失敗した行があってもキューは続行」の一部として扱う）。 */
+  var YAKU_FIT_BATCH_JOB_RUNNING_RETRY_LIMIT = 20;
+  function beginFitBatchQueue() {
+    var targets = fitBatchTargets();
+    if (!targets.length) { el('cat-fit-batch-dialog').close(); return; }
+    fitBatchQueue = { ids: targets.map(function (segment) { return String(segment.segment_id || ''); }), cursor: 0, generated: 0, cannotFit: 0, errors: 0, abortRequested: false, running: true, currentJobId: '', currentAttempt: 0 };
+    setBusy(true);
+    el('cat-fit-batch-confirm').hidden = true;
+    el('cat-fit-batch-start').hidden = true;
+    el('cat-fit-batch-close').hidden = true;
+    el('cat-fit-batch-abort').hidden = false; el('cat-fit-batch-abort').disabled = false;
+    el('cat-fit-batch-progress').hidden = false;
+    el('cat-fit-batch-progress').textContent = fitBatchProgressText(1, fitBatchQueue.ids.length, 0);
+    runFitBatchStep();
+  }
+  function continueFitBatchQueue() {
+    if (!fitBatchQueue) return;
+    if (fitBatchQueue.abortRequested) { finishFitBatchQueue(); return; }
+    runFitBatchStep();
+  }
+  function runFitBatchStep() {
+    var state = fitBatchQueue;
+    if (!state || !state.running) return;
+    if (state.abortRequested || state.cursor >= state.ids.length) { finishFitBatchQueue(); return; }
+    var segment = (project && project.segments || []).find(function (item) { return String(item.segment_id || '') === state.ids[state.cursor]; });
+    /* 行そのものが消えた（結合・分割・削除など）場合も、黙って飛ばさず
+       エラーとして数える。数えないと 生成+収まらず+エラー の合計がNより
+       小さくなり、要約の件数が対象行数と合わなくなる（CoD審査 REWORK-1 LOW-2）。 */
+    if (!segment) { state.errors++; state.cursor++; state.currentAttempt = 0; runFitBatchStep(); return; }
+    var position = state.cursor + 1, total = state.ids.length;
+    el('cat-fit-batch-progress').textContent = fitBatchProgressText(position, total, 0);
+    var index = Number(segment.index);
+    var budget = computeFitBudget(segment);
+    var destinationCount = segment.placement && segment.placement.destinations ? segment.placement.destinations.length : 1;
+    requestFitCandidateJobStart(index, budget.maxChars, destinationCount).then(function (data) {
+      /* job_id は abort の有無に関係なく必ず先に読む。ここを
+         abortRequested のチェックより後に置くと、開始の往復中に押した
+         中止がジョブを取り消さないまま捨ててしまい、サーバの直列枠
+         （1ジョブしか同時に持てない）を握ったままになる。以降のあらゆる
+         翻訳が「別の翻訳が実行中です」で失敗し続ける（CoD審査 REWORK-1
+         BLOCKER-M1）。 */
+      var jobId = String(data.job_id || '');
+      if (state.abortRequested) {
+        if (jobId) { state.currentJobId = jobId; YakuCommon.post('/api/cancel-translation', { job_id: jobId }).catch(function () {}); }
+        finishFitBatchQueue();
+        return;
+      }
+      if (!jobId) throw new Error('候補作成を開始できませんでした。');
+      state.currentJobId = jobId;
+      return pollFitCandidateJob(jobId, function (tick) {
+        if (state.abortRequested) return;
+        el('cat-fit-batch-progress').textContent = fitBatchProgressText(position, total, Math.max(0, Math.round(Number(tick.progress || 0))));
+      }).then(function (result) {
+        state.currentJobId = '';
+        if (state.abortRequested) { finishFitBatchQueue(); return; }
+        cacheFitBatchResult(segment, jobId, result.candidate_set);
+        if (result.candidate_set && (result.candidate_set.candidates || []).length) state.generated++; else state.cannotFit++;
+        state.cursor++; state.currentAttempt = 0;
+        runFitBatchStep();
+      });
+    }).catch(function (error) {
+      state.currentJobId = '';
+      if (state.abortRequested) { finishFitBatchQueue(); return; }
+      if (isJobRunningConflict(error)) {
+        state.currentAttempt = (state.currentAttempt || 0) + 1;
+        if (state.currentAttempt < YAKU_FIT_BATCH_JOB_RUNNING_RETRY_LIMIT) { window.setTimeout(continueFitBatchQueue, 1500); return; }
+        /* 上限に達した。この行だけエラーとして数え、次の行へ進む
+           （中止しなくても、いつか必ず終わる）。 */
+      }
+      state.errors++; state.cursor++; state.currentAttempt = 0; runFitBatchStep();
+    });
+  }
+  function abortFitBatchQueue() {
+    var state = fitBatchQueue;
+    if (!state || !state.running || state.abortRequested) return;
+    state.abortRequested = true;
+    /* ここで disabled にしない（CoD審査 REWORK-1 MEDIUM-M3）。JOB_RUNNINGの
+       再試行が上限（20回・最大約30秒）まで続く間、押せる状態のまま見せて
+       いつでも出られることを示す。二重送信は abortRequested の早期returnで
+       既に防いでいるので、押せたままでも安全。 */
+    el('cat-fit-batch-progress').textContent = '中止しています…';
+    if (state.currentJobId) YakuCommon.post('/api/cancel-translation', { job_id: state.currentJobId }).catch(function () {});
+  }
+  function finishFitBatchQueue() {
+    var state = fitBatchQueue;
+    if (!state || !state.running) return;
+    state.running = false;
+    setBusy(false);
+    el('cat-fit-batch-progress').hidden = true;
+    el('cat-fit-batch-summary').hidden = false;
+    el('cat-fit-batch-summary').textContent = fitBatchSummaryText(state, state.abortRequested);
+    el('cat-fit-batch-abort').hidden = true;
+    el('cat-fit-batch-close').hidden = false;
+    el('cat-fit-batch-filter').hidden = state.generated < 1;
   }
   function sourceUpdateKindLabel(kind) {
     return ({ unchanged: 'そのまま再利用', moved_unchanged: '移動（訳を再利用）', numeric_changed: '数字だけ更新', changed: '修正が必要', added: '新規', removed: '削除', split: '分割を確認', merged: '結合を確認', ambiguous: '対応先を確認' })[kind] || kind;
@@ -4179,6 +4484,14 @@
     el('cat-publication-open').addEventListener('click', openPublicationCandidates);
     el('cat-publication-close').addEventListener('click', function () { el('cat-publication-dialog').close(); });
     el('cat-publication-generate').addEventListener('click', generatePublicationCandidates);
+    el('cat-publication-regenerate').addEventListener('click', regeneratePublicationCandidates);
+    el('cat-fit-batch-start').addEventListener('click', beginFitBatchQueue);
+    el('cat-fit-batch-abort').addEventListener('click', abortFitBatchQueue);
+    el('cat-fit-batch-close').addEventListener('click', function () { el('cat-fit-batch-dialog').close(); });
+    el('cat-fit-batch-filter').addEventListener('click', function () { el('cat-fit-batch-dialog').close(); currentFilter = 'fit'; redrawAfterFlush(); });
+    /* 実行中はESCでも閉じさせない。止めたいときは必ず「中止」を押させる
+       （閉じただけで裏へ回る、という曖昧な状態を作らない）。 */
+    el('cat-fit-batch-dialog').addEventListener('cancel', function (event) { if (fitBatchQueue && fitBatchQueue.running) event.preventDefault(); });
     el('cat-abbreviation-form').addEventListener('submit', function (event) {
       event.preventDefault();
       return post('abbreviation-register', { full_form: el('cat-abbreviation-full').value, abbreviation: el('cat-abbreviation-short').value, meaning: el('cat-abbreviation-meaning').value, scope: 'document', first_use_rule: el('cat-abbreviation-first').value, abbreviation_registry_hash: String(project.abbreviation_registry_hash || '') }, true).then(function (data) {
@@ -4274,7 +4587,7 @@
     });
     document.addEventListener('click', function (event) {
       var button = event.target.closest('button'); if (!button) return;
-      if (busy && (button.id === 'cat-confirm-bulk' || button.id === 'cat-replace-run' || button.id === 'cat-replace-undo' || button.id === 'cat-structure-undo' || button.id === 'cat-tm-pretranslate' || button.hasAttribute('data-cat-translate-row') || button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-tm-register') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-split-at') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision') || button.hasAttribute('data-cat-review-note-state') || button.hasAttribute('data-cat-fit-candidates'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
+      if (busy && (button.id === 'cat-confirm-bulk' || button.id === 'cat-fit-batch-open' || button.id === 'cat-replace-run' || button.id === 'cat-replace-undo' || button.id === 'cat-structure-undo' || button.id === 'cat-tm-pretranslate' || button.hasAttribute('data-cat-translate-row') || button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-tm-register') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-split-at') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision') || button.hasAttribute('data-cat-review-note-state') || button.hasAttribute('data-cat-fit-candidates'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
       if (button.hasAttribute('data-cat-preview-mode')) { setPreviewMode(button.getAttribute('data-cat-preview-mode')); return; }
       if (button.hasAttribute('data-cat-preview-side')) { previewSide = button.getAttribute('data-cat-preview-side') || 'target'; renderPreview(); return; }
       if (button.hasAttribute('data-cat-dock-side')) { dockSide = button.getAttribute('data-cat-dock-side') || 'target'; renderDockPreview(); return; }
@@ -4324,6 +4637,7 @@
       if (button.hasAttribute('data-cat-personal-remove')) return removePersonalGlossary(button);
       if (button.hasAttribute('data-cat-resume')) return resume(button.getAttribute('data-cat-resume'));
       if (button.id === 'cat-confirm-bulk') return confirmBulk(button);
+      if (button.id === 'cat-fit-batch-open') return openFitBatchDialog();
       if (button.id === 'cat-replace-run') return runReplace();
       if (button.id === 'cat-replace-undo') return undoReplace();
       if (button.id === 'cat-structure-undo') return undoStructuralEdit();
