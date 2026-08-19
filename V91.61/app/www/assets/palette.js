@@ -18,8 +18,16 @@
      読まれれば消える。 */
   var handoffStorageKey = 'yaku.palette.handoff';
 
+  /* パレットの文脈ポインタ。選んだ資料の id・表示名だけを保存する
+     （機密本文は保存しない、設計判断3）。選んだ資料が消えていたら
+     無言で「なし」へフォールバックする（initContextPickerが検出して
+     消す。壊れていても翻訳は続く、CLAUDE.md「コーパスは足し」）。 */
+  var paletteContextStorageKey = 'yaku.palette.context';
+
   var input = null;
   var directionSelect = null;
+  var contextSelect = null;
+  var contextRows = [];
   var handoffButton = null;
   var candidates = [];
   var translateSeq = 0;
@@ -61,6 +69,64 @@
      同じ考え方：選んだらそれを使い、選んでいなければ自動判定に任せる。 */
   function currentDirectionIntent() {
     return (explicitDirection === 'to_en' || explicitDirection === 'to_jp') ? explicitDirection : 'auto';
+  }
+
+  /* --- 文脈ポインタ ---------------------------------------------------------
+     「この資料の文脈で訳す」選択。選択肢は既存の /api/cat/ の recent
+     アクション（プロジェクト不要の事前アクション）から取る（設計判断2）。
+     保存はlocalStorageへid・表示名のみ（設計判断3）。効かせる先は
+     即答(instant)のみ——Copilotプロンプトへは注入しない（設計判断1）。 */
+
+  function currentContextProjectId() {
+    return contextSelect ? contextSelect.value : '';
+  }
+
+  function loadContextSelection() {
+    try {
+      var raw = window.localStorage.getItem(paletteContextStorageKey);
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed.id !== 'string' || !parsed.id) return null;
+      return parsed;
+    } catch (error) { return null; }
+  }
+
+  function saveContextSelection(id, name) {
+    try {
+      if (!id) { window.localStorage.removeItem(paletteContextStorageKey); return; }
+      window.localStorage.setItem(paletteContextStorageKey, JSON.stringify({ id: id, name: name }));
+    } catch (error) {}
+  }
+
+  function populateContextOptions(rows) {
+    if (!contextSelect) return;
+    contextRows = rows || [];
+    // 先頭の「文脈: なし」(value="")だけを残し、残りを作り直す。
+    while (contextSelect.options.length > 1) contextSelect.remove(1);
+    contextRows.forEach(function (row) {
+      var opt = document.createElement('option');
+      opt.value = String(row.id || '');
+      opt.textContent = '文脈: ' + String(row.file_name || '');
+      contextSelect.appendChild(opt);
+    });
+  }
+
+  /* 起動時に一度だけ、選べる資料の一覧を取り、保存済みの選択を復元する。
+     選んだ資料が一覧に無ければ(消えた・別環境)、無言で「なし」へ戻し、
+     古い保存も消す(次回また同じ検出をしなくて済むように)。 */
+  function initContextPicker() {
+    if (!contextSelect) return;
+    YakuCommon.post('/api/cat/recent', {}).then(function (data) {
+      var rows = (data && data.projects) || [];
+      populateContextOptions(rows);
+      var saved = loadContextSelection();
+      if (!saved) return;
+      var stillThere = rows.some(function (row) { return String(row.id) === saved.id; });
+      if (stillThere) { contextSelect.value = saved.id; }
+      else { saveContextSelection('', ''); contextSelect.value = ''; }
+    }).catch(function () {
+      // 引けなくても翻訳は続く。選択肢が0でも「なし」のまま使える。
+    });
   }
 
   function utf8ToBase64(text) {
@@ -285,7 +351,10 @@
     if (!span) return;
     if (candidates.length === 0) { span.textContent = '既定候補'; return; }
     var node = candidates[0].node;
-    if (node.id === 'palette-tm-candidate') { span.textContent = '訳文メモリの候補'; return; }
+    if (node.id === 'palette-tm-candidate') {
+      span.textContent = (node.hasAttribute && node.hasAttribute('data-yaku-context-hit')) ? 'この資料の確定訳' : '訳文メモリの候補';
+      return;
+    }
     if (node.hasAttribute && node.hasAttribute('data-yaku-main-card')) { span.textContent = '標準訳'; return; }
     span.textContent = '既定候補';
   }
@@ -670,23 +739,31 @@
     if (data && data.direction) { lastDirection = String(data.direction); }
     var box = el('palette-instant');
     box.innerHTML = '';
-    var hasTm = !!(data && data.tm && data.tm.target);
+    // 文脈ポインタ(project_hit)は、既存のTM欄より優先する候補として返る
+    // (設計判断4)。同じ器(#palette-tm-candidate)を奪い合う形にし、
+    // 両方を並べて新しい行を増やさない——project_hitがあればそちらだけを
+    // 見せる(既存の候補機構に乗せるだけ、新しいコピー配線を作らない)。
+    var projectHit = (data && data.project_hit) || null;
+    var hasProjectHit = !!(projectHit && projectHit.target);
+    var hasTm = !hasProjectHit && !!(data && data.tm && data.tm.target);
     var terms = (data && data.terms) || [];
-    if (!hasTm && terms.length === 0) { box.hidden = true; return; }
+    if (!hasProjectHit && !hasTm && terms.length === 0) { box.hidden = true; return; }
     box.hidden = false;
-    if (hasTm) {
+    if (hasProjectHit || hasTm) {
+      var cardText = hasProjectHit ? String(projectHit.target) : String(data.tm.target);
       var card = document.createElement('div');
       card.id = 'palette-tm-candidate';
-      card.setAttribute('data-yaku-candidate-text', data.tm.target);
+      card.setAttribute('data-yaku-candidate-text', cardText);
+      if (hasProjectHit) card.setAttribute('data-yaku-context-hit', '1');
       var pre = document.createElement('pre');
       pre.className = 'translation';
-      pre.textContent = data.tm.target;
+      pre.textContent = cardText;
       card.appendChild(pre);
       var actions = document.createElement('div');
       actions.className = 'result-actions';
       var kind = document.createElement('span');
       kind.className = 'result-kind';
-      kind.textContent = '訳文メモリの完全一致（未確認）';
+      kind.textContent = hasProjectHit ? 'この資料の確定訳' : '訳文メモリの完全一致（未確認）';
       var copyBtn = document.createElement('button');
       copyBtn.type = 'button';
       copyBtn.className = 'secondary-button copy-button';
@@ -720,7 +797,7 @@
     // 「見込みの方向」は出さない(MAJOR-B)。ジョブ完了時に finishJob が
     // 「検出した方向」を出すのでいずれ分かるし、小窓(480x640)では、
     // ここで24px+間隔を使うと原文欄が画面外へ押し出される主因の一つだった。
-    YakuCommon.post('/api/palette/instant', { text: text, direction_intent: directionIntent }).then(function (data) {
+    YakuCommon.post('/api/palette/instant', { text: text, direction_intent: directionIntent, context_project_id: currentContextProjectId() }).then(function (data) {
       if (seq !== translateSeq) return;
       renderInstant(data);
     }).catch(function () {
@@ -1084,6 +1161,7 @@
   function start() {
     input = el('palette-input');
     directionSelect = el('palette-direction-select');
+    contextSelect = el('palette-context-select');
     handoffButton = el('palette-handoff');
     if (!input || !el('palette-form')) return;
     YakuCommon.start();
@@ -1107,6 +1185,14 @@
         var value = directionSelect.value;
         explicitDirection = (value === 'to_en' || value === 'to_jp') ? value : '';
       });
+    }
+    if (contextSelect) {
+      contextSelect.addEventListener('change', function () {
+        var id = contextSelect.value;
+        var row = contextRows.filter(function (r) { return String(r.id) === id; })[0];
+        saveContextSelection(id, row ? String(row.file_name || '') : '');
+      });
+      initContextPicker();
     }
     if (handoffButton) handoffButton.addEventListener('click', startHandoff);
     document.addEventListener('click', onDocumentClick);

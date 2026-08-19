@@ -52,6 +52,17 @@
                link-buttonで小さく——type="button"なのでEnter/送信は奪わない。
                結果の有無に関わらず本文があれば押せる（訳す前でもよい）。 -->
           <button id="palette-handoff" type="button" class="link-button" disabled>CATで開く</button>
+          <!-- パレットの文脈ポインタ。/api/cat/recent(プロジェクト不要の
+               事前アクション)から選べる資料を並べる。選ぶとlocalStorageへ
+               id・表示名だけを覚え(本文は保存しない)、以後の貼り付けで
+               その資料の確定済みの訳を即答の候補1として優先する
+               （即答(instant)にのみ効く。Copilotプロンプトへは注入しない）。
+               新しい行を増やさず、direction-row(flex-wrap:wrap)の4要素目
+               として同居させる(#palette-handoffと同じ考え方)。 -->
+          <label for="palette-context-select" class="palette-context-select-label">文脈</label>
+          <select id="palette-context-select" aria-label="文脈(選ぶとその資料の確定訳を優先します)">
+            <option value="">文脈: なし</option>
+          </select>
         </div>
       </form>
 

@@ -2536,7 +2536,7 @@ function Invoke-YakuRoute {
             $payload = Read-YakuRequestJson -Request $req -MaxBytes 65536
             $text = [string]$payload['text']
             if ([string]::IsNullOrWhiteSpace($text)) {
-                Send-YakuTextResponse -Context $Context -Text '{"direction":"","tm":null,"terms":[]}' -ContentType 'application/json; charset=utf-8'
+                Send-YakuTextResponse -Context $Context -Text '{"direction":"","tm":null,"terms":[],"project_hit":null}' -ContentType 'application/json; charset=utf-8'
                 return
             }
             $directionIntent = 'auto'
@@ -2547,6 +2547,26 @@ function Invoke-YakuRoute {
             $direction = $(if ([bool]$decision.RequiresConfirmation) { [string]$decision.SuggestedDirection } else { [string]$decision.Resolved })
             if ($direction -ne 'to_en' -and $direction -ne 'to_jp') { $direction = 'to_en' }
 
+            # パレットの文脈ポインタ(v1)。選ばれていれば /api/cat/recent 由来の
+            # プロジェクトIDが乗る(localStorageに置くのはid・表示名のみ、
+            # 本文は保存しない)。32桁16進以外・実在しない・読み込めない、
+            # いずれも黙って「文脈なし」へフォールバックする(壊れていても
+            # 翻訳自体は止めない、コーパスは足しであって前提ではない)。
+            $contextProjectId = ''
+            try { $contextProjectId = [string]$payload['context_project_id'] } catch {}
+            $contextProject = $null
+            if ($contextProjectId -match '^[a-f0-9]{32}$') {
+                try {
+                    # まず稼働中(メモリ)を見る——CAT側で開いたままの資料が
+                    # 大半なので、貼り付けごとの通常経路はディスクへ触らない。
+                    # 無ければ保存済みを読み込む(Restore、/api/cat/resumeと
+                    # 同じ二段構え)。実測コスト(400行規模)は回帰試験の
+                    # コメントに記す。
+                    $contextProject = Get-YakuCatProject -Id $contextProjectId
+                    if ($null -eq $contextProject) { $contextProject = Restore-YakuCatProject -Id $contextProjectId }
+                } catch { $contextProject = $null }
+            }
+
             $tmBody = $null
             try {
                 # 完全一致のみ。あいまい照合(Find-YakuTranslationMemory)は
@@ -2556,21 +2576,49 @@ function Invoke-YakuRoute {
                 if ($tmHits.Count -gt 0) { $tmBody = [ordered]@{ source=[string]$tmHits[0].Source; target=[string]$tmHits[0].Target; exact=$true } }
             } catch { $tmBody = $null }
 
+            $projectHitBody = $null
+            if ($null -ne $contextProject) {
+                try {
+                    # 向きの違う訳を候補1に出さない(設計判断3)。文脈プロジェクトの
+                    # directionと、この貼り付けの判定方向が食い違えば出さない。
+                    if ([string]$contextProject.Direction -eq $direction) {
+                        $needle = $text.Trim()
+                        foreach ($seg in @($contextProject.Segments)) {
+                            if (-not [bool]$seg.Confirmed) { continue }
+                            if ([string]::IsNullOrWhiteSpace([string]$seg.Translation)) { continue }
+                            # 完全一致(原文Ordinal、trim後)。あいまい照合はしない
+                            # (即答経路のO(1)原則、#63の決定を踏襲)。
+                            if ([string]::Equals((([string]$seg.Text).Trim()), $needle, [StringComparison]::Ordinal)) {
+                                $projectHitBody = [ordered]@{ source=[string]$seg.Text; target=[string]$seg.Translation; project_name=[string]$contextProject.FileName }
+                                break
+                            }
+                        }
+                    }
+                } catch { $projectHitBody = $null }
+            }
+
             $termRows = New-Object System.Collections.Generic.List[object]
             try {
-                $termEntries = @(Read-YakuPersonalTerminologyEntries)
-                foreach ($hit in @(Find-YakuTerminologyMatches -Text $text -Direction $direction -Entries $termEntries -ProjectId '')) {
+                # 文脈があれば、その資料の用語集(project scope)も混ぜる。
+                # Read-YakuPersonalTerminologyEntries -ProjectId は個人スコープに
+                # project scopeを足して返す既存の関数(CatProject.ps1が/api/cat/open
+                # で使うのと同じ呼び方)。重複時にprojectが勝つ規則も
+                # Find-YakuTerminologyMatches のScopeWeightに既にあるので、
+                # ここで統合ロジックを新たに書かない。
+                $termProjectId = if ($null -ne $contextProject) { [string]$contextProject.Id } else { '' }
+                $termEntries = if ($null -ne $contextProject) { @(Read-YakuPersonalTerminologyEntries -ProjectId $termProjectId) } else { @(Read-YakuPersonalTerminologyEntries) }
+                foreach ($hit in @(Find-YakuTerminologyMatches -Text $text -Direction $direction -Entries $termEntries -ProjectId $termProjectId)) {
                     $preferred = [string]$hit.PreferredTarget
                     if ([string]::IsNullOrWhiteSpace($preferred)) { continue }
                     [void]$termRows.Add([ordered]@{ source=[string]$hit.SourceTerm; target=$preferred })
                 }
             } catch { $termRows.Clear() }
 
-            $response = [ordered]@{ direction=$direction; tm=$tmBody; terms=@($termRows.ToArray()) }
+            $response = [ordered]@{ direction=$direction; tm=$tmBody; terms=@($termRows.ToArray()); project_hit=$projectHitBody }
             Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Depth 6 -Compress) -ContentType 'application/json; charset=utf-8'
         } catch {
             # 即答は無くても翻訳自体は続けられる。ここで止めない。
-            Send-YakuTextResponse -Context $Context -Text '{"direction":"","tm":null,"terms":[]}' -ContentType 'application/json; charset=utf-8'
+            Send-YakuTextResponse -Context $Context -Text '{"direction":"","tm":null,"terms":[],"project_hit":null}' -ContentType 'application/json; charset=utf-8'
         }
         return
     }
