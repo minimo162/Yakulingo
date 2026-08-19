@@ -89,14 +89,44 @@ var projectB = {
   sheet_layout: [sheetLayoutB]
 };
 
+// ---- projectC: 中止を「開始のPOSTが返る前」に押した題材（BLOCKER-M1）。
+//      1行だけの資料。publication-candidates の応答をサーバ側で意図的に
+//      止め、driverが中止を押してから解放する。
+var columnsC = [].concat(columnBlock(1, 40));
+var sheetLayoutC = { name: 'S1', default_width: 8.43, default_height: 18.75, columns: columnsC, unknown_width_columns: [], merges: [], occupied_cells: ['C1'], formula_cells: [], rows: [], cells: [] };
+var projectC = {
+  id: 'batchfit-c', revision: 1, file_name: 'batchfit-c.xlsx', document_format: 'xlsx', direction: 'to_en',
+  segments: [makeSegment(0, 'c-row0', 'A1')],
+  sheet_layout: [sheetLayoutC]
+};
+
+// ---- projectD: JOB_RUNNINGの再試行待ちのあいだ「中止」が押せる状態のまま
+//      であることだけを見る題材（MEDIUM-M3）。1行だけの資料で、1回目は
+//      必ずJOB_RUNNING、2回目で成功する。
+var columnsD = [].concat(columnBlock(1, 40));
+var sheetLayoutD = { name: 'S1', default_width: 8.43, default_height: 18.75, columns: columnsD, unknown_width_columns: [], merges: [], occupied_cells: ['C1'], formula_cells: [], rows: [], cells: [] };
+var projectD = {
+  id: 'batchfit-d', revision: 1, file_name: 'batchfit-d.xlsx', document_format: 'xlsx', direction: 'to_en',
+  segments: [makeSegment(0, 'd-row0', 'A1')],
+  sheet_layout: [sheetLayoutD]
+};
+
 // ---- 可変のサーバ内状態 ----
 var stateA = JSON.parse(JSON.stringify(projectA));
 var stateB = JSON.parse(JSON.stringify(projectB));
-function projectFor(id) { if (id === projectA.id) return stateA; if (id === projectB.id) return stateB; return null; }
+var stateC = JSON.parse(JSON.stringify(projectC));
+var stateD = JSON.parse(JSON.stringify(projectD));
+function projectFor(id) { if (id === projectA.id) return stateA; if (id === projectB.id) return stateB; if (id === projectC.id) return stateC; if (id === projectD.id) return stateD; return null; }
 
 var events = [];              // {type:'start'|'terminal', projectId, index, attempt}
 var jobs = {};                 // job_id -> {projectId,index,ticksRemaining,cannotFit,stall,cancelled}
 var jobSeq = 0;
+// BLOCKER-M1題材: projectCのpublication-candidatesは、driverが解放する
+// までサーバ側で応答を止める（開始のPOSTがまだ返っていないあいだに
+// 中止を押す状況を確実に作る）。
+var projectCJobIds = [];
+var projectCReleaseResolvers = [];
+function releaseProjectCJob() { var resolvers = projectCReleaseResolvers.splice(0); resolvers.forEach(function (r) { r(); }); }
 var publicationCalls = [];     // {projectId,index,max_chars,attempt}
 var attemptCounts = {};        // "projectId:index" -> count
 var cancelCalls = [];
@@ -182,12 +212,23 @@ var server = http.createServer(async function (req, res) {
       sendJson(res, 400, { code: 'CAT_REQUEST_FAILED', error: '別の翻訳が実行中です。完了してから再実行してください。' });
       return;
     }
+    // MEDIUM-M3題材: projectDは1回目を必ずJOB_RUNNINGで落とす（2回目は成功）。
+    if (projectId === projectD.id && index === 0 && attempt === 1) {
+      sendJson(res, 400, { code: 'CAT_REQUEST_FAILED', error: '別の翻訳が実行中です。完了してから再実行してください。' });
+      return;
+    }
+    // BLOCKER-M1題材: projectCは、driverが releaseProjectCJob() を呼ぶまで
+    // ここで止まる（開始のPOSTがまだ返っていない状態を確実に作る）。
+    if (projectId === projectC.id) {
+      await new Promise(function (resolve) { projectCReleaseResolvers.push(resolve); });
+    }
     jobSeq++;
     var jobId = 'job-' + jobSeq;
     var ticksNeeded = (projectId === projectA.id && index === 0) ? 2 : 0; // 直列性の題材
     var cannotFit = (projectId === projectA.id && index === 2);
     var stall = (projectId === projectB.id && index === 0); // 中止の題材
     jobs[jobId] = { projectId: projectId, index: index, ticksRemaining: ticksNeeded, cannotFit: cannotFit, stall: stall, cancelled: false };
+    if (projectId === projectC.id) projectCJobIds.push(jobId);
     sendJson(res, 200, { job_id: jobId });
     return;
   }
@@ -239,6 +280,41 @@ function computeSerialOk(list) {
   return { ok: ok, problems: problems };
 }
 
+// BLOCKER-B1 幾何測定: #cat-fit-batch-open が #cat-segment-actions（行B）へ
+// 正しく移り、帯（.cat-toolbar-filters、旧・誤って置いていた場所）にはみ出し
+// が無いこと、丈が切れていないこと、カウントの文字（（N行））が実際に見える
+// こと、#cat-docs-toggle（資料一覧）が引き続き見えることを、両方の幅で測る。
+async function measureFitBatchGeometry(page) {
+  await page.waitForTimeout(200);
+  return await page.evaluate(function () {
+    function rect(node) { return node ? node.getBoundingClientRect() : null; }
+    function visible(r) { return !!(r && r.width > 0 && r.height > 0); }
+    var button = document.getElementById('cat-fit-batch-open');
+    var host = document.getElementById('cat-segment-actions');
+    var toolbar = document.querySelector('.cat-toolbar-filters');
+    var docsToggle = document.getElementById('cat-docs-toggle');
+    var label = button ? button.querySelector('.cat-segment-button-label') : null;
+    var buttonRect = rect(button);
+    var hostRect = rect(host);
+    var labelRect = rect(label);
+    var docsToggleRect = rect(docsToggle);
+    return {
+      buttonExists: !!button,
+      buttonInHost: !!(button && host && button.parentNode === host),
+      buttonHidden: !!(button && button.hidden),
+      buttonVisible: visible(buttonRect),
+      buttonHeight: buttonRect ? buttonRect.height : null,
+      buttonWithinHostViewport: !!(buttonRect && hostRect && buttonRect.left >= hostRect.left - 1 && buttonRect.right <= hostRect.right + 1),
+      hostScrollOverflow: host ? (host.scrollWidth - host.clientWidth) : null,
+      labelVisible: visible(labelRect),
+      labelText: label ? label.textContent : '',
+      toolbarOverflow: toolbar ? (toolbar.scrollWidth - toolbar.clientWidth) : null,
+      toolbarButtonStillInToolbar: !!(toolbar && document.getElementById('cat-fit-batch-open') && toolbar.contains(document.getElementById('cat-fit-batch-open'))),
+      docsToggleVisible: visible(docsToggleRect)
+    };
+  });
+}
+
 (async function () {
   var out = { errors: [], console: [] };
   var browser = null;
@@ -252,6 +328,16 @@ function computeSerialOk(list) {
     // ============================================================ projectA
     await page.goto('http://127.0.0.1:' + server.address().port + '/cat?project=' + encodeURIComponent(projectA.id), { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#cat-grid-body tr[data-cat-row]', { timeout: 20000 });
+    out.geometryWide = await measureFitBatchGeometry(page);
+
+    var narrowPage = await browser.newPage({ viewport: { width: 1380, height: 900 } });
+    var narrowErrors = [];
+    narrowPage.on('pageerror', function (error) { narrowErrors.push(String((error && error.message) || error)); });
+    await narrowPage.goto('http://127.0.0.1:' + server.address().port + '/cat?project=' + encodeURIComponent(projectA.id), { waitUntil: 'domcontentloaded' });
+    await narrowPage.waitForSelector('#cat-grid-body tr[data-cat-row]', { timeout: 20000 });
+    out.geometryNarrow = await measureFitBatchGeometry(narrowPage);
+    out.geometryNarrowErrors = narrowErrors;
+    await narrowPage.close();
 
     // --- 対象行の選定・N の表示 ---
     out.toolbarButton = await page.evaluate(function () {
@@ -343,7 +429,7 @@ function computeSerialOk(list) {
     await page.click('[data-cat-fit-candidates="3"]');
     await page.waitForSelector('#cat-publication-dialog[open]', { timeout: 10000 });
     await page.waitForTimeout(150);
-    out.idx3ServedFromCache = await page.evaluate(function () { return !document.getElementById('cat-publication-generate').hidden === false; });
+    out.idx3ServedFromCache = await page.evaluate(function () { return !!document.getElementById('cat-publication-generate').hidden; });
     var candidateId = 'cand-' + projectA.id + '-3';
     await page.click('[data-publication-reviewed="' + candidateId + '"]');
     await page.click('[data-publication-apply="' + candidateId + '"]');
@@ -393,6 +479,72 @@ function computeSerialOk(list) {
     out.abortFinished = abortFinished;
     out.abortSummaryText = await page.evaluate(function () { return document.getElementById('cat-fit-batch-summary').textContent; });
     out.projectBCalls = publicationCalls.filter(function (c) { return c.projectId === projectB.id; }).length;
+
+    // ============================================================ projectC
+    // BLOCKER-M1: 中止を「開始のPOSTがまだ返っていない」あいだに押す。
+    // job_id は abortRequested のチェックより先に読まれ、その job を
+    // 実際にキャンセルすることを確かめる（でなければサーバの直列枠が
+    // 握られたまま残る）。
+    await page.goto('http://127.0.0.1:' + server.address().port + '/cat?project=' + encodeURIComponent(projectC.id), { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#cat-grid-body tr[data-cat-row]', { timeout: 20000 });
+    await page.click('#cat-fit-batch-open');
+    await page.waitForSelector('#cat-fit-batch-dialog[open]', { timeout: 10000 });
+    var cancelCallsBeforeC = cancelCalls.length;
+    await page.click('#cat-fit-batch-start');
+    // 開始のPOSTがサーバへ「届いた」ことだけを待つ（応答は releaseProjectCJob()
+    // を呼ぶまでサーバ側で止めてある。まだ job_id はクライアントに無い）。
+    var landDeadline = Date.now() + 10000;
+    while (Date.now() < landDeadline && publicationCalls.filter(function (c) { return c.projectId === projectC.id; }).length < 1) { await page.waitForTimeout(30); }
+    out.projectCRequestLanded = publicationCalls.filter(function (c) { return c.projectId === projectC.id; }).length >= 1;
+    await page.waitForTimeout(100);
+    // POSTがまだ未解決のうちに中止を押す。
+    await page.click('#cat-fit-batch-abort');
+    await page.waitForTimeout(100);
+    // 押した後で初めて応答を解放する（開始の往復中に中止した状況を再現）。
+    releaseProjectCJob();
+    var cDeadline = Date.now() + 10000;
+    while (Date.now() < cDeadline && cancelCalls.length <= cancelCallsBeforeC) { await page.waitForTimeout(50); }
+    out.projectCCancelJobId = cancelCalls[cancelCalls.length - 1] || '';
+    out.projectCLeakedJobId = projectCJobIds[projectCJobIds.length - 1] || '';
+    out.projectCCancelMatchesJob = !!(out.projectCCancelJobId && out.projectCLeakedJobId && out.projectCCancelJobId === out.projectCLeakedJobId);
+    var cSummaryDeadline = Date.now() + 10000;
+    var cFinished = false;
+    while (Date.now() < cSummaryDeadline) {
+      cFinished = await page.evaluate(function () { return !document.getElementById('cat-fit-batch-summary').hidden; });
+      if (cFinished) break;
+      await page.waitForTimeout(100);
+    }
+    out.projectCFinished = cFinished;
+
+    // ============================================================ projectD
+    // MEDIUM-M3: JOB_RUNNINGの再試行待ち(1.5秒)のあいだ「中止」が押せる
+    // ままであること。押しても機能し、キューは必ず終わる。
+    await page.goto('http://127.0.0.1:' + server.address().port + '/cat?project=' + encodeURIComponent(projectD.id), { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#cat-grid-body tr[data-cat-row]', { timeout: 20000 });
+    await page.click('#cat-fit-batch-open');
+    await page.waitForSelector('#cat-fit-batch-dialog[open]', { timeout: 10000 });
+    await page.click('#cat-fit-batch-start');
+    var dAttemptDeadline = Date.now() + 10000;
+    while (Date.now() < dAttemptDeadline && (attemptCounts[projectD.id + ':0'] || 0) < 1) { await page.waitForTimeout(30); }
+    await page.waitForTimeout(150);
+    out.projectDAbortEnabledDuringRetryWait = await page.evaluate(function () {
+      var b = document.getElementById('cat-fit-batch-abort');
+      return !!b && !b.hidden && !b.disabled;
+    });
+    await page.click('#cat-fit-batch-abort');
+    await page.waitForTimeout(80);
+    out.projectDAbortStillEnabledAfterClick = await page.evaluate(function () {
+      var b = document.getElementById('cat-fit-batch-abort');
+      return !!b && !b.disabled;
+    });
+    var dSummaryDeadline = Date.now() + 10000;
+    var dFinished = false;
+    while (Date.now() < dSummaryDeadline) {
+      dFinished = await page.evaluate(function () { return !document.getElementById('cat-fit-batch-summary').hidden; });
+      if (dFinished) break;
+      await page.waitForTimeout(100);
+    }
+    out.projectDFinished = dFinished;
 
   } catch (error) {
     out.fatal = String((error && error.stack) || error);

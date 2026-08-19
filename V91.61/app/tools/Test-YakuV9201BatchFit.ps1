@@ -148,6 +148,37 @@ Assert-N9201 ($N9201CatHtml.Contains('id="cat-fit-batch-open"')) 'トグルボ�
 Assert-N9201 ($N9201CatHtml.Contains('id="cat-fit-batch-dialog"')) '確認・進捗ダイアログがcat.htmlにある'
 Assert-N9201 ($N9201CatHtml.Contains('id="cat-publication-regenerate"')) '作り直すボタンがcat.htmlにある'
 
+# ---------------------------------------------------- REWORK-1 BLOCKER-B1
+# トグルボタンは .cat-toolbar-filters（幅1320px以上で高さ32px・overflow:hidden
+# に固定され、丈の規約[cat-workspace.css:2661-]にも乗らない帯）へ置かない。
+# cat-confirm-bulk と同じ理由で #cat-segment-actions（行B）へ動かす。
+Assert-N9201 ($N9201CatJs.Contains("['cat-tm-pretranslate', 'cat-preview-dock-toggle', 'cat-preview-open', 'cat-key-help', 'cat-confirm-bulk', 'cat-fit-batch-open'].forEach")) 'まとめて収めるボタンが cat-confirm-bulk と同じ移動リストに入っている（同じ丈の規約に乗る）'
+Assert-N9201 ($N9201CatJs.Contains('fitBatchButton.innerHTML = icon(''i-fit'') + ''<span class="cat-segment-button-label">'' + esc(fitBatchLabel) + ''</span>'';')) 'アイコン+ラベルの形（cat-confirm-bulkと同じ）で描く'
+Assert-N9201 ($N9201CatJs.Contains("fitBatchButton.classList.add('cat-segment-button');")) '.cat-segment-button クラスを持つ（行Bの丈の規約が拾う）'
+$N9201Css = [IO.File]::ReadAllText((Join-Path $N9201Www 'assets\cat-workspace.css'), [Text.Encoding]::UTF8)
+Assert-N9201 ($N9201Css.Contains('body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-fit-batch-open {') -or $N9201Css -match '\.cat-segment-actions > #cat-tm-pretranslate,[\s\S]{0,400}#cat-fit-batch-open \{') 'カウント（（N行））を見せる4番目の帯としてCSSが明示的に対応している'
+Assert-N9201 ($N9201Css.Contains('.cat-segment-actions > #cat-fit-batch-open .cat-segment-button-label')) 'ラベル（カウント文字）を可視にするCSSが#cat-fit-batch-openにも効く'
+
+# ---------------------------------------------------- REWORK-1 BLOCKER-M1
+Assert-N9201 ($N9201CatJs -match "var jobId = String\(data\.job_id \|\| ''\);\s*\r?\n\s*if \(state\.abortRequested\)") 'job_id を abortRequested の判定より先に読む(捨てる前に必ず読む)'
+Assert-N9201 ($N9201CatJs -match "if \(state\.abortRequested\) \{\s*\r?\n\s*if \(jobId\) \{ state\.currentJobId = jobId; YakuCommon\.post\('/api/cancel-translation', \{ job_id: jobId \}\)") '開始の往復中に中止された場合、実際に作られたジョブを job_id で確実にキャンセルする(BLOCKER-M1)'
+
+# ---------------------------------------------------- REWORK-1 MEDIUM-M2/M2b
+Assert-N9201 ($N9201CatJs -match 'この訳文一致は鮮度の必要条件であって十分条件ではない') 'キャッシュの限界（隣接行・用語・略語台帳まで見ていないこと）がコメントに残っている'
+Assert-N9201 ($N9201CatJs -match "surrounding_context") 'サーバのfingerprintが前後行の内容も畳み込むことの根拠(Publication.ps1の行番号)がコメントにある'
+Assert-N9201 ($N9201CatJs.Contains("if (raw === 'CAT_PUBLICATION_CANDIDATE_STALE') {")) 'CAT_PUBLICATION_CANDIDATE_STALE を humanMessage が拾う'
+Assert-N9201 ($N9201CatJs.Contains("return '内容が変わったため、この候補は使えません。作り直してください。';")) 'STALEの人向け文言が入っている'
+Assert-N9201 ($N9201CatJs.Contains("el('cat-publication-status').textContent = humanMessage(error.message);")) '適用失敗の表示が humanMessage を経由する（STALEが生コードのまま出ない）'
+
+# ---------------------------------------------------- REWORK-1 MEDIUM-M3
+Assert-N9201 ($N9201CatJs.Contains('var YAKU_FIT_BATCH_JOB_RUNNING_RETRY_LIMIT = 20;')) 'JOB_RUNNINGリトライに上限がある(20回)'
+Assert-N9201 ($N9201CatJs -match 'state\.currentAttempt = \(state\.currentAttempt \|\| 0\) \+ 1;[\s\S]{0,200}YAKU_FIT_BATCH_JOB_RUNNING_RETRY_LIMIT') '上限判定が再試行カウンタを見ている'
+Assert-N9201 (-not ($N9201CatJs -match "function abortFitBatchQueue\(\) \{[\s\S]{0,400}el\('cat-fit-batch-abort'\)\.disabled = true;")) '中止ボタンは押しても自己無効化しない(いつでも押せる状態を保つ)'
+
+# ---------------------------------------------------- REWORK-1 LOW-1/LOW-2
+Assert-N9201 ($N9201CatJs -match 'revisionAtGeneration は診断用の記録だけ') 'revisionAtGenerationが診断用に過ぎないことがコメントに残っている(有効性の根拠はtranslationAtGenerationだけ)'
+Assert-N9201 ($N9201CatJs.Contains('if (!segment) { state.errors++; state.cursor++; state.currentAttempt = 0; runFitBatchStep(); return; }')) '行が消えた場合もエラーとして数える(合計がNと一致する)'
+
 # ============================================================ (b) 実機Chromium部
 Write-Host '-- chromium --'
 
@@ -202,6 +233,25 @@ if ($null -ne $N9201Result) {
     Assert-N9201 (-not [bool]$N9201Result.index4Called) '配置計画の無い行(index=4)はまとめて収めるの対象から外れる(1件も呼ばれない)'
     Assert-N9201 (-not [bool]$N9201Result.index5Called) 'fitリスクの無い行(index=5)は対象から外れる'
 
+    # --- REWORK-1 BLOCKER-B1: 幾何（1912x987・1380x900の両方） ---
+    foreach ($geomCase in @(
+        [pscustomobject]@{ Label = '1912x987'; Data = $N9201Result.geometryWide }
+        [pscustomobject]@{ Label = '1380x900'; Data = $N9201Result.geometryNarrow }
+    )) {
+        $g = $geomCase.Data
+        $label = $geomCase.Label
+        Assert-N9201 ($null -ne $g -and [bool]$g.buttonExists) ($label + ': ボタンが実在する')
+        Assert-N9201 ($null -ne $g -and [bool]$g.buttonInHost) ($label + ': ボタンは #cat-segment-actions（行B）に居る（.cat-toolbar-filters には無い）')
+        Assert-N9201 ($null -ne $g -and -not [bool]$g.toolbarButtonStillInToolbar) ($label + ': .cat-toolbar-filters の中にはもう無い（旧クリップの帯から退避済み）')
+        Assert-N9201 ($null -ne $g -and -not [bool]$g.buttonHidden -and [bool]$g.buttonVisible) ($label + ': ボタンが実際に見える（hiddenでも0サイズでもない）')
+        Assert-N9201 ($null -ne $g -and [int]$g.buttonHeight -ge 24 -and [int]$g.buttonHeight -le 34) ($label + ': ボタンの丈が切れていない（実測 ' + [string]$g.buttonHeight + 'px、規約は30px）')
+        Assert-N9201 ($null -ne $g -and [bool]$g.buttonWithinHostViewport) ($label + ': ボタンはスクロールなしで帯の中に収まっている')
+        Assert-N9201 ($null -ne $g -and [int]$g.hostScrollOverflow -le 0) ($label + ': ボタンを移した帯(#cat-segment-actions)自体は右へはみ出していない（実測差分 ' + [string]$g.hostScrollOverflow + 'px）')
+        Assert-N9201 ($null -ne $g -and [bool]$g.labelVisible) ($label + ': カウントの文字（（N行）ラベル）が実際に見える（アイコンだけではない）')
+        Assert-N9201 ($null -ne $g -and [string]$g.labelText -match '4行') ($label + ': 見えているラベルの件数が正しい（実測: ' + [string]$g.labelText + '）')
+        Assert-N9201 ($null -ne $g -and [bool]$g.docsToggleVisible) ($label + ': #cat-docs-toggle（資料一覧）が引き続き見える（既存コントロールを失っていない）')
+    }
+
     # --- 直列性 ---
     Assert-N9201 ([bool]$N9201Result.serialOk) ('同時に2ジョブ投げていない(直列)。問題: ' + (($N9201Result.serialProblems) -join ' / '))
 
@@ -249,6 +299,19 @@ if ($null -ne $N9201Result) {
     Assert-N9201 ([bool]$N9201Result.abortFinished) '中止後に要約表示へ落ち着く(画面が壊れない)'
     Assert-N9201 ([string]$N9201Result.abortSummaryText -match '中断しました') '要約が中断したことを言う'
     Assert-N9201 ([int]$N9201Result.projectBCalls -eq 1) ('中止後、残りの行へは1件も進まない(実測 呼ばれた行数=' + [string]$N9201Result.projectBCalls + ')')
+
+    # --- REWORK-1 BLOCKER-M1: 開始のPOSTが返る前に中止した場合、作られた
+    #     ジョブが漏れず、実際にキャンセルされる ---
+    Assert-N9201 ([bool]$N9201Result.projectCRequestLanded) 'projectC: 開始のPOSTがサーバへ届いている(この題材が空振りでないこと)'
+    Assert-N9201 (-not [string]::IsNullOrWhiteSpace([string]$N9201Result.projectCLeakedJobId)) ('projectC: 開始の往復中でもジョブは実際に作られる(job_id=' + [string]$N9201Result.projectCLeakedJobId + ')')
+    Assert-N9201 (-not [string]::IsNullOrWhiteSpace([string]$N9201Result.projectCCancelJobId)) 'projectC: /api/cancel-translation が呼ばれている'
+    Assert-N9201 ([bool]$N9201Result.projectCCancelMatchesJob) ('projectC: キャンセルした job_id が、実際に作られたジョブと一致する(漏らしていない。cancel=' + [string]$N9201Result.projectCCancelJobId + ' / job=' + [string]$N9201Result.projectCLeakedJobId + ')')
+    Assert-N9201 ([bool]$N9201Result.projectCFinished) 'projectC: 中止後、要約表示へ落ち着く(サーバの直列枠を握ったまま固まらない)'
+
+    # --- REWORK-1 MEDIUM-M3: JOB_RUNNINGの再試行待ちのあいだも中止は押せる ---
+    Assert-N9201 ([bool]$N9201Result.projectDAbortEnabledDuringRetryWait) 'projectD: JOB_RUNNINGの再試行待ちのあいだ、中止ボタンは押せる状態のまま'
+    Assert-N9201 ([bool]$N9201Result.projectDAbortStillEnabledAfterClick) 'projectD: 中止を押した直後も自己無効化しない(いつでも出られる)'
+    Assert-N9201 ([bool]$N9201Result.projectDFinished) 'projectD: 中止後、要約表示へ落ち着く(固まらない)'
 }
 
 try { Remove-Item -LiteralPath $N9201Work -Recurse -Force -ErrorAction SilentlyContinue } catch {}

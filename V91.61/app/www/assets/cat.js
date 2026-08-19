@@ -50,7 +50,22 @@
      保存・再読み込み・タブを閉じる・再起動のどれでも消える（保存しない）。
      読むときは訳文が生成時から変わっていないかだけ見る（fitBatchCacheEntry）。
      最終権威はサーバ側 publication-apply の dependency_fingerprint／
-     candidate_text_hash であり、ここは表示を早めるだけ。 */
+     candidate_text_hash であり、ここは表示を早めるだけ。
+
+     この訳文一致は鮮度の必要条件であって十分条件ではない（CoD審査 REWORK-1
+     MEDIUM-M2）。サーバの dependency_fingerprint（Publication.ps1:65）は
+     このセグメントの訳文だけでなく、前後の行の原文・訳文（:73-76の
+     surrounding_context）・用語スナップショット（Project.TerminologySnapshotHash）・
+     略語登録台帳のハッシュ（Get-YakuCatAbbreviationRegistryHash）も畳み込む。
+     つまり、この行自体を編集していなくても、隣の行（i±1）を編集した・
+     略語を承認した・用語が変わった、だけでキャッシュは古くなり得るが、
+     ここではそれを検知できない（隣接行やproject全体の変化まで見に行くのは
+     過剰な仕組みになる）。実害は無い: 古いキャッシュを適用しようとすると
+     publication-apply が dependency_fingerprint の不一致で
+     CAT_PUBLICATION_CANDIDATE_STALE を返し（Publication.ps1:215-221、
+     humanMessage が人向け文へ直す）、applyPublicationCandidate の失敗経路が
+     キャッシュを消して「作り直す」へ導く。**サーバの再検査が最終権威であり、
+     ここが見逃しても必ず回復できる。** */
   var fitBatchCandidateCache = {};
   var fitBatchQueue = null;
   var pendingMutationKeys = {};
@@ -188,6 +203,15 @@
     if (/^(?:Type|Reference|Syntax|Range)Error\b|Cannot read propert|is not a function|is not defined|undefined is not/i.test(raw)) {
       try { console.error('YakuLingo internal error: ' + raw); } catch (_) {}
       return '画面を表示できませんでした。画面を読み込み直してください（Ctrl+R）。作業内容は保存されています。';
+    }
+    /* CAT_PUBLICATION_CANDIDATE_STALE はサーバの生コードがそのまま返る
+       （throw に本文が無く、Convert-YakuExceptionToUserMessage の
+       「コード: 本文」変換[src/Server.ps1:433]は本文の無いコードには効かない）。
+       「まとめて収める」のキャッシュ（fitBatchCandidateCache）はこの経路を
+       大幅に踏みやすくした（生成後に依存関係が変わっていれば必ずここへ来る）
+       ので、ここで人向け文へ直す（CoD審査 REWORK-1 MEDIUM-M2b）。 */
+    if (raw === 'CAT_PUBLICATION_CANDIDATE_STALE') {
+      return '内容が変わったため、この候補は使えません。作り直してください。';
     }
     return raw;
   }
@@ -1020,7 +1044,12 @@
     /* Row B owns the low-frequency tools. Moving the existing nodes keeps their
        IDs and delegated listeners intact while keeping Row C to translation,
        output, and QA. */
-    ['cat-tm-pretranslate', 'cat-preview-dock-toggle', 'cat-preview-open', 'cat-key-help', 'cat-confirm-bulk'].forEach(function (id) {
+    /* まとめて収めるボタンも同じ理由でここへ動かす（CoD審査 REWORK-1 BLOCKER-B1）。
+       .cat-toolbar-filters の帯は幅1320px以上で高さ32px・overflow:hiddenに
+       固定されており(cat-workspace.css:2594-2606)、30pxの丈上限(:2608-2616)の
+       セレクタにも乗っていない。cat-confirm-bulk と同じホストへ移すことで、
+       同じ丈の規約（.cat-segment-button）へ素直に乗る。 */
+    ['cat-tm-pretranslate', 'cat-preview-dock-toggle', 'cat-preview-open', 'cat-key-help', 'cat-confirm-bulk', 'cat-fit-batch-open'].forEach(function (id) {
       var node = el(id);
       if (node && node.parentNode !== host) host.appendChild(node);
     });
@@ -1114,9 +1143,10 @@
       var fitBatchList = fitBatchTargets();
       fitBatchButton.hidden = fitBatchList.length < 1;
       var fitBatchLabel = 'まとめて収める（' + fitBatchList.length + '行）';
-      fitBatchButton.textContent = fitBatchLabel;
       fitBatchButton.title = '収まらない見込みで、配置を調整できる行をまとめて処理し、Copilotで短縮候補を先回りして作ります（適用は行ごとの比較確認のまま）。';
       fitBatchButton.setAttribute('aria-label', fitBatchLabel);
+      fitBatchButton.innerHTML = icon('i-fit') + '<span class="cat-segment-button-label">' + esc(fitBatchLabel) + '</span>';
+      fitBatchButton.classList.add('cat-segment-button');
     }
     el('cat-complete-state').hidden = !(all.length && !all.some(segmentActionable));
     el('cat-empty-state').hidden = shown.length > 0;
@@ -3606,7 +3636,11 @@
     return post('publication-apply', { job_id: publicationJobId, candidate_set_id: publicationCandidateSet.candidate_set_id, candidate_id: candidateId, candidate_text_hash: candidate.text_hash, dependency_fingerprint: publicationCandidateSet.dependency_fingerprint, meaning_preservation_confirmed: true, reason: '原文・基準訳・候補を比較し、情報の欠落がないことを人が確認' }, true).then(function (data) {
       el('cat-publication-dialog').close(); el('cat-placement-dialog').close(); render(data, false); renderPreview(); status('Excelに入れる訳を保存しました。基準訳と翻訳メモリは変更していません。PDFを更新して印刷結果を確認してください。');
     }).catch(function (error) {
-      el('cat-publication-status').textContent = error.message;
+      /* humanMessage を通す: CAT_PUBLICATION_CANDIDATE_STALE はサーバの生コード
+         がそのまま返ってくる（本文が無いコードなので Convert-YakuExceptionToUserMessage
+         は日本語化しない）。キャッシュ由来の候補はこのエラーへ特に来やすい
+         （CoD審査 REWORK-1 MEDIUM-M2b）。 */
+      el('cat-publication-status').textContent = humanMessage(error.message);
       /* 適用が失敗した＝いま出ている候補はもう使えない可能性が高い（ジョブが
          30分retention・再起動で消えた、または fingerprint／text_hash が食い違った。
          CoD審査 2026-08-19 決定4）。キャッシュに残っていれば消し、「作り直す」で
@@ -3645,6 +3679,12 @@
   }
   function cacheFitBatchResult(segment, jobId, candidateSet) {
     var id = String(segment && segment.segment_id || ''); if (!id) return;
+    /* revisionAtGeneration は診断用の記録だけ（ログ・調査で「いつのproject
+       revisionで作ったか」を辿るためだけに持つ）。有効性の判定には使わない
+       ―― project.revision は行の編集以外（他行の確定・用語登録など）でも
+       進むため、鮮度の根拠にすると無関係な変化でキャッシュを毎回捨てる側へ
+       倒れる。有効性の唯一の根拠は translationAtGeneration（この行の訳文
+       そのもの、fitBatchCacheEntry が Ordinal 一致で見る）。 */
     fitBatchCandidateCache[id] = { jobId: jobId, candidateSet: candidateSet || null, revisionAtGeneration: revision(), translationAtGeneration: String(segment.translation || '') };
   }
   /* サーバの直列契約（Start-YakuTranslationJob は同時1本しか許さず、超過は
@@ -3693,10 +3733,16 @@
     el('cat-fit-batch-close').hidden = false; el('cat-fit-batch-close').textContent = '閉じる';
     el('cat-fit-batch-dialog').showModal();
   }
+  /* JOB_RUNNINGの再試行に上限を付ける（CoD審査 REWORK-1 MEDIUM-M3）。
+     サーバが直列契約違反を返し続ける病的な状況でも、この行を永遠に
+     待ち続けない（1回あたり1.5秒待ちなので、上限20回で最大約30秒）。
+     超えたらその行だけをエラーとして数え、キューは次の行へ進む
+     （「生成失敗した行があってもキューは続行」の一部として扱う）。 */
+  var YAKU_FIT_BATCH_JOB_RUNNING_RETRY_LIMIT = 20;
   function beginFitBatchQueue() {
     var targets = fitBatchTargets();
     if (!targets.length) { el('cat-fit-batch-dialog').close(); return; }
-    fitBatchQueue = { ids: targets.map(function (segment) { return String(segment.segment_id || ''); }), cursor: 0, generated: 0, cannotFit: 0, errors: 0, abortRequested: false, running: true, currentJobId: '' };
+    fitBatchQueue = { ids: targets.map(function (segment) { return String(segment.segment_id || ''); }), cursor: 0, generated: 0, cannotFit: 0, errors: 0, abortRequested: false, running: true, currentJobId: '', currentAttempt: 0 };
     setBusy(true);
     el('cat-fit-batch-confirm').hidden = true;
     el('cat-fit-batch-start').hidden = true;
@@ -3716,15 +3762,29 @@
     if (!state || !state.running) return;
     if (state.abortRequested || state.cursor >= state.ids.length) { finishFitBatchQueue(); return; }
     var segment = (project && project.segments || []).find(function (item) { return String(item.segment_id || '') === state.ids[state.cursor]; });
-    if (!segment) { state.cursor++; runFitBatchStep(); return; }
+    /* 行そのものが消えた（結合・分割・削除など）場合も、黙って飛ばさず
+       エラーとして数える。数えないと 生成+収まらず+エラー の合計がNより
+       小さくなり、要約の件数が対象行数と合わなくなる（CoD審査 REWORK-1 LOW-2）。 */
+    if (!segment) { state.errors++; state.cursor++; state.currentAttempt = 0; runFitBatchStep(); return; }
     var position = state.cursor + 1, total = state.ids.length;
     el('cat-fit-batch-progress').textContent = fitBatchProgressText(position, total, 0);
     var index = Number(segment.index);
     var budget = computeFitBudget(segment);
     var destinationCount = segment.placement && segment.placement.destinations ? segment.placement.destinations.length : 1;
     requestFitCandidateJobStart(index, budget.maxChars, destinationCount).then(function (data) {
-      if (state.abortRequested) { finishFitBatchQueue(); return; }
-      var jobId = String(data.job_id || ''); if (!jobId) throw new Error('候補作成を開始できませんでした。');
+      /* job_id は abort の有無に関係なく必ず先に読む。ここを
+         abortRequested のチェックより後に置くと、開始の往復中に押した
+         中止がジョブを取り消さないまま捨ててしまい、サーバの直列枠
+         （1ジョブしか同時に持てない）を握ったままになる。以降のあらゆる
+         翻訳が「別の翻訳が実行中です」で失敗し続ける（CoD審査 REWORK-1
+         BLOCKER-M1）。 */
+      var jobId = String(data.job_id || '');
+      if (state.abortRequested) {
+        if (jobId) { state.currentJobId = jobId; YakuCommon.post('/api/cancel-translation', { job_id: jobId }).catch(function () {}); }
+        finishFitBatchQueue();
+        return;
+      }
+      if (!jobId) throw new Error('候補作成を開始できませんでした。');
       state.currentJobId = jobId;
       return pollFitCandidateJob(jobId, function (tick) {
         if (state.abortRequested) return;
@@ -3734,21 +3794,29 @@
         if (state.abortRequested) { finishFitBatchQueue(); return; }
         cacheFitBatchResult(segment, jobId, result.candidate_set);
         if (result.candidate_set && (result.candidate_set.candidates || []).length) state.generated++; else state.cannotFit++;
-        state.cursor++;
+        state.cursor++; state.currentAttempt = 0;
         runFitBatchStep();
       });
     }).catch(function (error) {
       state.currentJobId = '';
       if (state.abortRequested) { finishFitBatchQueue(); return; }
-      if (isJobRunningConflict(error)) { window.setTimeout(continueFitBatchQueue, 1500); return; }
-      state.errors++; state.cursor++; runFitBatchStep();
+      if (isJobRunningConflict(error)) {
+        state.currentAttempt = (state.currentAttempt || 0) + 1;
+        if (state.currentAttempt < YAKU_FIT_BATCH_JOB_RUNNING_RETRY_LIMIT) { window.setTimeout(continueFitBatchQueue, 1500); return; }
+        /* 上限に達した。この行だけエラーとして数え、次の行へ進む
+           （中止しなくても、いつか必ず終わる）。 */
+      }
+      state.errors++; state.cursor++; state.currentAttempt = 0; runFitBatchStep();
     });
   }
   function abortFitBatchQueue() {
     var state = fitBatchQueue;
     if (!state || !state.running || state.abortRequested) return;
     state.abortRequested = true;
-    el('cat-fit-batch-abort').disabled = true;
+    /* ここで disabled にしない（CoD審査 REWORK-1 MEDIUM-M3）。JOB_RUNNINGの
+       再試行が上限（20回・最大約30秒）まで続く間、押せる状態のまま見せて
+       いつでも出られることを示す。二重送信は abortRequested の早期returnで
+       既に防いでいるので、押せたままでも安全。 */
     el('cat-fit-batch-progress').textContent = '中止しています…';
     if (state.currentJobId) YakuCommon.post('/api/cancel-translation', { job_id: state.currentJobId }).catch(function () {});
   }

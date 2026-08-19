@@ -2733,19 +2733,24 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
     clip-path: inset(50%);
     white-space: nowrap;
   }
-  /* The three static row-bar tools (TM pretranslate, preview toggle, full
-     preview) keep their label visible instead of icon-only — the ribbon has
-     1846px of room and used only 272px of it (measured), and their glyphs
-     otherwise repeat other icon-only row controls. The per-segment dynamic
-     tools (copy/confirm/term) stay icon-only; their accessible names remain
-     in title/aria-label. */
+  /* The static row-bar tools (TM pretranslate, preview toggle, full preview,
+     and — CoD審査 REWORK-1 BLOCKER-B1 — まとめて収める) keep their label
+     visible instead of icon-only — the ribbon has 1846px of room and used
+     only 272px of it (measured), and their glyphs otherwise repeat other
+     icon-only row controls. まとめて収める additionally needs its count
+     （「（N行）」）on screen, not just in title/aria-label: unlike the other
+     three, the number is the whole reason to look at the button before
+     pressing it (どれだけ Copilot を呼ぶかを見て確認する対象)。The
+     per-segment dynamic tools (copy/confirm/term) stay icon-only; their
+     accessible names remain in title/aria-label. */
   body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-tm-pretranslate,
   body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-dock-toggle,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-open {
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-open,
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-fit-batch-open {
     /* The shared rule's flex-basis (30px, fixed) wins over width regardless
        of what width is set to, so the basis itself has to change too — a
        width-only override left the label text rendered inside a still-30px
-       box (measured: overlapping glyphs). flex-shrink stays 0 so these three
+       box (measured: overlapping glyphs). flex-shrink stays 0 so these
        never get squeezed by their icon-only neighbors. */
     flex: 0 0 auto;
     width: auto;
@@ -2755,7 +2760,8 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
   }
   body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-tm-pretranslate .cat-segment-button-label,
   body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-dock-toggle .cat-segment-button-label,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-open .cat-segment-button-label {
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-open .cat-segment-button-label,
+  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-fit-batch-open .cat-segment-button-label {
     position: static;
     width: auto;
     height: auto;
