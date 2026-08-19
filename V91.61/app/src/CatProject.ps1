@@ -4326,6 +4326,42 @@ function ConvertTo-YakuCatCheckpointRows {
     return @($rows.ToArray())
 }
 
+function Add-YakuCatPartialPreviewRows {
+    <#
+      CAT翻訳の部分結果先出し。ConvertTo-YakuCatCheckpointRows が返した、
+      いま終わったバッチぶんの行を、ジョブ state の累積へ積む。
+
+      なぜ切り出したか（ConvertTo-YakuCatDedupedItems と同じ理由）:
+      呼び出し元の OnBatchCompleted closure は Server.ps1 のジョブ用
+      scriptblock の中にだけあり、ジョブは別のランスペースで走るため
+      試験から直接届かない。累積の作り方（1回の代入で丸ごと差し替える・
+      masked/saved は運ばない）だけをここへ出し、素の Synchronized
+      ハッシュへ対して端から端まで検証できるようにする。
+
+      $JobState は Synchronized ハッシュ（読み手はHTTP応答生成が1本）。
+      追記ではなく、既存 + 今回ぶんで新しい配列を作ってから1回で
+      $JobState['partial_rows'] を差し替える。in-place の追記
+      （.Add など）は読み手に半端な配列を見せる可能性があるため使わない。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$JobState,
+        [Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$CheckpointRows
+    )
+    if (@($CheckpointRows).Count -eq 0) { return }
+    $existingPartialRows = @()
+    if ($JobState.ContainsKey('partial_rows') -and $null -ne $JobState['partial_rows']) { $existingPartialRows = @($JobState['partial_rows']) }
+    $nextPartialRows = New-Object System.Collections.Generic.List[object]
+    foreach ($existingRow in $existingPartialRows) { [void]$nextPartialRows.Add($existingRow) }
+    foreach ($newRow in @($CheckpointRows)) {
+        # index/source/text だけを運ぶ。masked（マスク済み文字列）も
+        # saved（checkpoint 保存フラグ相当）も、この先出し経路では出さない
+        # （設計判断3）。
+        [void]$nextPartialRows.Add([ordered]@{ index = [int]$newRow.index; source = [string]$newRow.source; text = [string]$newRow.text })
+    }
+    $JobState['partial_rows'] = $nextPartialRows.ToArray()
+    $JobState['partial_total'] = $nextPartialRows.Count
+}
+
 function Get-YakuCatCopilotUsage {
     <# 画面の概算と実処理が同じ重複排除・マスク・分割を使う。
        machine draft のcross-project cacheは使わない。 #>

@@ -880,6 +880,21 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
   font-size: var(--font-meta);
 }
 
+/* 部分結果先出しの印(class 名だけ、色は下の workspace 専用ブロックで足す)。
+   状態帯（data-yaku-cat-state の border-left-color）とは別の合図として、
+   訳文欄にだけ薄い縁を足す。render() が行を丸ごと作り直すタイミングで
+   class ごと消える（先出し専用の後始末コードは持たない、設計判断1）。 */
+.cat-partial-badge {
+  display: inline-block;
+  margin-top: 3px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: var(--font-meta);
+  white-space: nowrap;
+}
+
 /* 開いていない行は従属。付随する印まで出すと一覧で目が滑る。 */
 .cat-grid tbody tr:not(.is-active) .cat-origin { display: none; }
 
@@ -3195,6 +3210,16 @@ body.app-cat[data-cat-view="workspace"] .cat-grid tbody textarea[data-cat-input]
   outline: 2px solid #6f52bc;
   outline-offset: 1px;
   box-shadow: 0 0 0 2px rgba(129, 96, 209, .28);
+}
+
+/* 部分結果先出し。base の textarea[data-cat-input] ルール（直前のブロック、
+   border-color:transparent/background:#fff）と同じ詳細度の綱引きを避けるため、
+   ここでは tr.cat-partial-preview を1つ足して確実に勝たせる。途中は表示のみで
+   正本はまだ確定していない（設計判断1）ことを示す控えめな縁だけで、
+   aria-invalid（実在する点検指摘）の赤とは別の色にする。 */
+body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.cat-partial-preview textarea[data-cat-input] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 /* The single far-right confirmation control keeps the original check glyph

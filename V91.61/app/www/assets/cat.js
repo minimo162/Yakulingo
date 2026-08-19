@@ -1443,8 +1443,45 @@
 
   function startJobHtml(html, context) {
     el('cat-job').innerHTML = html; var node = el('cat-job').querySelector('[data-yaku-job-id]'); if (!node) throw new Error('翻訳を始められませんでした。1分ほど待ってから、もう一度お試しください。');
-    context = context || {}; context.token = ++jobSerial; context.startedAt = Date.now(); jobContext = context;
+    context = context || {}; context.token = ++jobSerial; context.startedAt = Date.now();
+    /* 部分結果先出し。受け取った checkpoint 行を、差分カーソルの分母として
+       ここへ積む(サーバの partial_rows は毎回「N件目以降」だけを返す)。
+       プロジェクト状態は変えない・表示のみ(設計判断1・2)。 */
+    context.partialRows = [];
+    jobContext = context;
     pollJob(node.getAttribute('data-yaku-job-id'), context.token);
+  }
+  /* 先出しで届いた1行を、いま画面に見えている該当行だけへ書き込む。
+     renderRows() は毎秒の全面再描画になり選択・コピー・スクロールを壊すため
+     呼ばない(設計判断4)。 値のセットだけで input/change は発火させない。 */
+  function applyPartialPreviewRow(row) {
+    var index = Number(row && row.index);
+    if (!project || !Array.isArray(project.segments) || !isFinite(index)) return;
+    var rowEl = document.querySelector('[data-cat-row="' + index + '"]');
+    if (!rowEl) return;
+    var segment = project.segments.find(function (item) { return Number(item.index) === index; });
+    if (!segment || String(segment.source || '') !== String(row.source || '')) return;
+    var input = rowEl.querySelector('textarea[data-cat-input="' + index + '"]');
+    if (!input || String(input.value || '').trim() !== '') return;
+    input.value = String(row.text || '');
+    autoGrow(input);
+    rowEl.classList.add('cat-partial-preview');
+    if (!rowEl.querySelector('.cat-partial-badge')) {
+      /* 場所は cat-col-loc/cat-col-no ではなく訳文欄側に置く。行番号・場所の列は
+         実測で既に幅が詰まっており（CLAUDE.md「点検で気になる点」119px事例）、
+         テキストの印を足すと折り返す危険がある。訳文欄は textarea の下に
+         流れるだけの余白がある。 */
+      var targetCell = rowEl.querySelector('.cat-target');
+      if (targetCell) targetCell.insertAdjacentHTML('beforeend', '<span class="cat-partial-badge" title="Copilotから先に届いた訳文です。翻訳が全部終わると確定します。">先出し</span>');
+    }
+  }
+  function applyPartialPreview(data) {
+    var incoming = Array.isArray(data && data.partial_rows) ? data.partial_rows : [];
+    if (!incoming.length || !jobContext || !Array.isArray(jobContext.partialRows)) return;
+    for (var i = 0; i < incoming.length; i++) {
+      jobContext.partialRows.push(incoming[i]);
+      applyPartialPreviewRow(incoming[i]);
+    }
   }
   function elapsedLabel(startedAt) {
     var seconds = Math.max(0, Math.round((Date.now() - Number(startedAt || Date.now())) / 1000));
@@ -1457,11 +1494,18 @@
   function jobHtml(id, data, startedAt) {
     var percent = Math.max(0, Math.min(100, Math.round(Number(data.progress) || 0)));
     var detail = String(data.detail || '');
+    /* 先出しの分母(partial_expected_total)が有るCAT翻訳ジョブでだけ、
+       「訳了 n/N 行(先出し)」を1行足す。n はサーバの累積値(partial_total)を
+       そのまま使う(自前集計と食い違わせない)。 */
+    var partialExpectedTotal = Number(data.partial_expected_total) || 0;
+    var partialLine = partialExpectedTotal > 0
+      ? ('<br><span class="job-partial-progress">訳了 ' + (Number(data.partial_total) || 0) + '/' + partialExpectedTotal + ' 行(先出し)</span>')
+      : '';
     return '<div class="job-loading"><div class="job-loading-inner">' +
       '<div class="job-topline"><div class="job-phase">' + esc(data.label || data.phase || '翻訳しています') + '</div><div class="job-percent">' + percent + '%</div></div>' +
       '<div class="job-progress-line" role="progressbar" aria-label="翻訳の進み具合" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + percent + '"><span class="job-progress-bar" style="width:' + percent + '%"></span></div>' +
       '<div class="job-bottomline"><div class="job-meta">' + (detail ? esc(detail) : 'Copilotの返事を待っています。') +
-      '<br><span class="job-elapsed">' + esc(elapsedLabel(startedAt)) + '</span></div>' +
+      '<br><span class="job-elapsed">' + esc(elapsedLabel(startedAt)) + '</span>' + partialLine + '</div>' +
       '<button type="button" class="secondary-button job-cancel" data-yaku-cancel-job="' + esc(id) + '">翻訳をやめる</button></div>' +
       '</div></div>';
   }
@@ -1477,8 +1521,14 @@
     window.clearTimeout(jobTimer);
     failureCount = Number(failureCount || 0);
     var startedAt = jobContext && jobContext.startedAt;
-    YakuCommon.json('/api/jobs/' + encodeURIComponent(id)).then(function (data) {
+    /* 差分カーソル。次に欲しいのは自前累積の後ろから(=既に受け取った件数)。
+       cancelled/error/done の最後の1回も同じ形で取り、キャンセル・失敗時に
+       画面へ残す分を取りこぼさない(設計判断5)。 */
+    var partialAfter = (jobContext && Array.isArray(jobContext.partialRows)) ? jobContext.partialRows.length : 0;
+    var partialQuery = partialAfter > 0 ? ('?partial_after=' + partialAfter) : '';
+    YakuCommon.json('/api/jobs/' + encodeURIComponent(id) + partialQuery).then(function (data) {
       if (!jobContext || jobContext.token !== token) return;
+      applyPartialPreview(data);
       el('cat-job').innerHTML = jobHtml(id, data, startedAt);
       if (['done','completed_with_warnings'].indexOf(data.mode) >= 0) {
         /* apply後の応答（プロジェクトのJSON）にはマスク件数が無い。消える前の
