@@ -312,6 +312,10 @@
             </details>
             <span id="cat-filter-count" class="muted"></span>
             <button id="cat-confirm-bulk" type="button" class="secondary-button compact" hidden></button>
+            <!-- まとめて収める。収まらない見込みで配置調整できる行をまとめて処理し、
+                 短縮候補を先回りして作る（生成のみ。適用は行ごとの比較確認のまま、
+                 まとめて適用は作らない）。0件なら隠す（点検の指摘などと同じ扱い）。 -->
+            <button id="cat-fit-batch-open" type="button" class="secondary-button compact" hidden></button>
             <!-- 左の資料一覧も畳める。Crowdin の Ctrl+[ に合わせる。 -->
             <button id="cat-docs-toggle" type="button" class="link-button" aria-expanded="false" aria-controls="cat-docs-pane" aria-keyshortcuts="Control+[" title="資料の一覧を出す・隠す（Ctrl+[）">資料一覧</button>
             <!-- 右の参考情報は畳める。市販CATでも横のペインは閉じられる。 -->
@@ -507,7 +511,22 @@
     <p id="cat-publication-maxchars-note" class="muted" role="status"></p>
     <div id="cat-publication-candidates"></div>
     <details><summary>この資料で使ってよい略語を登録</summary><form id="cat-abbreviation-form"><label>正式名称<input id="cat-abbreviation-full" type="text" required></label><label>略語<input id="cat-abbreviation-short" type="text" required></label><label>意味<input id="cat-abbreviation-meaning" type="text" required></label><label>初出の扱い<select id="cat-abbreviation-first"><option value="define_first">初出では正式名称も示す</option><option value="source_defined_only">原文で定義済みの場合だけ使う</option><option value="none">定義不要</option></select></label><button type="submit" class="secondary-button">この資料で承認する</button></form></details>
-    <div class="dialog-actions"><button type="button" class="secondary-button" id="cat-publication-close">閉じる</button><button type="button" id="cat-publication-generate">候補を作る</button></div>
+    <div class="dialog-actions"><button type="button" class="secondary-button" id="cat-publication-close">閉じる</button><button type="button" class="secondary-button" id="cat-publication-regenerate" hidden>作り直す</button><button type="button" id="cat-publication-generate">候補を作る</button></div>
+  </dialog>
+  <!-- まとめて収める。1ボタン+確認1回で、対象行ぜんぶの短縮候補を順番に先回り
+       生成する。適用は作らない（行ごとの比較確認は cat-publication-dialog の
+       ままで、ここでは何もExcelへ入れない）。 -->
+  <dialog id="cat-fit-batch-dialog" class="confirm-dialog" aria-labelledby="cat-fit-batch-title">
+    <h2 id="cat-fit-batch-title">まとめて収める</h2>
+    <p id="cat-fit-batch-confirm" class="muted" role="status"></p>
+    <p id="cat-fit-batch-progress" class="muted" role="status" aria-live="polite" hidden></p>
+    <p id="cat-fit-batch-summary" class="muted" role="status" hidden></p>
+    <div class="dialog-actions">
+      <button type="button" class="secondary-button" id="cat-fit-batch-filter" hidden>収まらない見込みだけ表示して確認する</button>
+      <button type="button" class="secondary-button" id="cat-fit-batch-abort" hidden>中止</button>
+      <button type="button" class="secondary-button" id="cat-fit-batch-close">閉じる</button>
+      <button type="button" id="cat-fit-batch-start">開始</button>
+    </div>
   </dialog>
   <dialog id="cat-source-update-dialog" class="confirm-dialog cat-source-update-dialog" aria-labelledby="cat-source-update-title">
     <h2 id="cat-source-update-title">原文ファイルの差し替え内容</h2>
