@@ -98,6 +98,11 @@
     } catch (error) {}
   }
 
+  /* CoD審査REWORK-1 MINOR-6: 隣の<label>が既に「文脈」と言っているので、
+     選択肢側の「文脈: 」接頭辞は重複——480x640の実測幅(92px)では約6文字
+     しか見えず、接頭辞だけで40px近くを失っていた。既定の「なし」
+     (value="")だけは接頭辞を残す(文脈が無いこと自体を明示する必要が
+     あるため)。はみ出す資料名はopt.titleでホバー時に全体を読める。 */
   function populateContextOptions(rows) {
     if (!contextSelect) return;
     contextRows = rows || [];
@@ -106,14 +111,32 @@
     contextRows.forEach(function (row) {
       var opt = document.createElement('option');
       opt.value = String(row.id || '');
-      opt.textContent = '文脈: ' + String(row.file_name || '');
+      var name = String(row.file_name || '');
+      opt.textContent = name;
+      opt.title = name;
       contextSelect.appendChild(opt);
     });
   }
 
+  /* 保存済みの選択が一覧(recentの直近10件)に無いとき用の、追加の1件。
+     一覧に無い=消えた、ではない——recentは「最終更新の新しい順で10件」
+     でしかなく、11件目以降を開いただけで前回選んだ資料が一覧から
+     押し出される(CoD審査REWORK-1 MINOR-2)。サーバ(/api/palette/instant)は
+     idさえ渡せば一覧に関わらず解決できるので、無言で消して選択を失わせず、
+     保存済みの表示名で選択肢へ足しておく——サーバが実際に解決できるかは
+     貼り付けたときの応答(project_hit)が教える。死んでいても実害は無い
+     (選んでも黙って文脈なし相当になるだけ、既存のフォールバックのまま)。 */
+  function appendStoredContextOption(id, name) {
+    if (!contextSelect) return;
+    var opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = name || id;
+    if (name) opt.title = name;
+    contextSelect.appendChild(opt);
+  }
+
   /* 起動時に一度だけ、選べる資料の一覧を取り、保存済みの選択を復元する。
-     選んだ資料が一覧に無ければ(消えた・別環境)、無言で「なし」へ戻し、
-     古い保存も消す(次回また同じ検出をしなくて済むように)。 */
+     選んだ資料が一覧(直近10件)に無くても、保存は消さない(MINOR-2)。 */
   function initContextPicker() {
     if (!contextSelect) return;
     YakuCommon.post('/api/cat/recent', {}).then(function (data) {
@@ -122,8 +145,8 @@
       var saved = loadContextSelection();
       if (!saved) return;
       var stillThere = rows.some(function (row) { return String(row.id) === saved.id; });
-      if (stillThere) { contextSelect.value = saved.id; }
-      else { saveContextSelection('', ''); contextSelect.value = ''; }
+      if (!stillThere) { appendStoredContextOption(saved.id, saved.name); }
+      contextSelect.value = saved.id;
     }).catch(function () {
       // 引けなくても翻訳は続く。選択肢が0でも「なし」のまま使える。
     });
@@ -764,6 +787,10 @@
       var kind = document.createElement('span');
       kind.className = 'result-kind';
       kind.textContent = hasProjectHit ? 'この資料の確定訳' : '訳文メモリの完全一致（未確認）';
+      // project_hit.project_nameはCoD審査REWORK-1のNIT: 新しい行を増やさず
+      // titleへ載せる(ホバーで「どの資料の確定訳か」を確かめられる、
+      // 480x640の幾何ゲートに触れない)。
+      if (hasProjectHit && projectHit.project_name) { kind.title = String(projectHit.project_name); }
       var copyBtn = document.createElement('button');
       copyBtn.type = 'button';
       copyBtn.className = 'secondary-button copy-button';

@@ -16,9 +16,12 @@
       (既存のTM欄を奪い合う、新しいカードを増やさない)
     - Enter/1キーのコピーは既存の候補機構のまま(新しい配線を作らない)
     - 文脈を「なし」へ戻すと、以後の貼り付けは従来どおり(TMがそのまま出る)
-    - 資料が一覧から消えていれば(recentに無い)、無言で「なし」へ戻り、
-      localStorageの古い記録も消える(次回また出さない)
+    - 資料が一覧(直近10件)から消えていても、保存は消さない——recentの
+      非掲載は「消えた」の証明にならない(CoD審査REWORK-1 MINOR-2)。
+      保存済みの表示名で選択肢へ足し、選択も保ったままにする
     - 資料が一覧にまだあれば、再読み込みだけで操作ゼロのまま選択が戻る
+    - 480x640で選択肢が実際に埋まった状態でも、direction-rowの高さが
+      崩れない(実測115.9px、幾何ゲートの前提、NIT)
 
   使い方: node palette-context-gate.js <wwwDir> <outJson>
 */
@@ -154,7 +157,14 @@ const server = http.createServer(function (req, res) {
       return !!sel && sel.options.length >= 3;
     }, { timeout: 5000 });
     out.initialOptionValues = await page.$$eval('#palette-context-select option', function (nodes) {
-      return nodes.map(function (node) { return { value: node.value, text: node.textContent }; });
+      return nodes.map(function (node) { return { value: node.value, text: node.textContent, title: node.title }; });
+    });
+
+    // NIT: 選択肢が実際に埋まった状態でも、既存のdirection-rowの高さが
+    // 崩れないこと(#67 B1の教訓、レビューが115.9pxを実測して固定)。
+    out.rowGeometryPopulated480 = await page.evaluate(function () {
+      function r(el) { var rr = el.getBoundingClientRect(); return { top: rr.top, bottom: rr.bottom, height: rr.height }; }
+      return { row: r(document.querySelector('.palette-direction-row')), select: r(document.getElementById('palette-context-select')) };
     });
 
     // --- B) 選ぶと localStorage へ id・表示名だけ ------------------------
@@ -215,7 +225,13 @@ const server = http.createServer(function (req, res) {
 
     await page.close();
 
-    // --- E) 資料が一覧から消えていた場合: 無言で「なし」へ、localStorageも消す --
+    // --- E) 資料が一覧(直近10件)に無い場合: 消さずに保つ(MINOR-2) --------
+    // recentは「最終更新の新しい順で10件」でしかない——11件目以降を開いた
+    // だけで前回選んだ資料が一覧から押し出されることがあり、それは
+    // 「資料が消えた」ことの証明にならない。サーバはidさえあれば一覧に
+    // 関わらず解決できるので、保存済みの表示名で選択肢へ足し、選択も
+    // 保ったままにする(無言で消して文脈を失わせない)。
+    const STALE_NAME = '消えた資料.xlsx';
     page = await browser.newPage({ viewport: { width: 480, height: 640 }, reducedMotion: 'reduce' });
     page.on('pageerror', function (error) { out.errors.push(String((error && error.message) || error)); });
     page.on('console', function (message) { if (message.type() === 'error') out.console.push(message.text()); });
@@ -223,8 +239,8 @@ const server = http.createServer(function (req, res) {
     // 3引数の呼び方(fn, a, b)は2つ目以降が無視される——ここで一度踏んだ実装地図
     // の罠なので、複数値は1つのオブジェクトへまとめて渡す。
     await page.addInitScript(function (seed) {
-      try { window.localStorage.setItem(seed.key, JSON.stringify({ id: seed.id, name: '消えた資料.xlsx' })); } catch (error) {}
-    }, { key: 'yaku.palette.context', id: STALE_ID });
+      try { window.localStorage.setItem(seed.key, JSON.stringify({ id: seed.id, name: seed.name })); } catch (error) {}
+    }, { key: 'yaku.palette.context', id: STALE_ID, name: STALE_NAME });
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#palette-input');
     await page.waitForFunction(function () {
@@ -233,7 +249,23 @@ const server = http.createServer(function (req, res) {
     }, { timeout: 5000 });
     await page.waitForTimeout(150);
     out.selectValueAfterStale = await page.$eval('#palette-context-select', function (node) { return node.value; });
+    out.optionsAfterStale = await page.$$eval('#palette-context-select option', function (nodes) {
+      return nodes.map(function (node) { return { value: node.value, text: node.textContent, title: node.title }; });
+    });
     out.localStorageAfterStale = await page.evaluate(function (key) { return window.localStorage.getItem(key); }, 'yaku.palette.context');
+
+    // 選んでも死んでいれば実害が無いこと(project_hit=null、従来の
+    // フォールバックのまま)も、実際に貼って確かめる。
+    instantRequests.length = 0;
+    await pasteText(page, CONTEXT_MATCH_TEXT);
+    await page.waitForSelector('#palette-tm-candidate', { timeout: 5000 });
+    await page.waitForTimeout(150);
+    out.instantRequestsWithStaleContext = instantRequests.slice();
+    out.cardAfterStaleContext = await page.evaluate(function () {
+      var card = document.getElementById('palette-tm-candidate');
+      if (!card) return null;
+      return { hasContextHit: card.hasAttribute('data-yaku-context-hit'), candidateText: card.getAttribute('data-yaku-candidate-text') };
+    });
     await page.close();
 
     // --- F) 資料がまだ一覧にある場合: 再読み込みだけで操作ゼロのまま復元 ---

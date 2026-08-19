@@ -19,6 +19,20 @@
        新しいカード・新しい行を増やさない)。
     6. translate/chipのPOSTにはcontextを渡さない(エンジン変更はスコープ外)。
 
+  CoD審査REWORK-1で確定した追加の制約:
+    - MAJOR-1: project_hitの一致ループは、確定済み(.Confirmed)だけでなく
+      Test-YakuCatSegmentQcCurrentで「今の用語スナップショットに対して
+      点検が最新か」も見る(memory-path/restore-pathの両方で対称)。
+    - MINOR-2: 選んだ資料が/api/cat/recentの直近10件に無くても、
+      localStorageの選択は消さない(無くなった証明にならないため)。
+    - MINOR-4: ディスク復元(Restore-YakuCatProject)は、manifestの
+      segment_countが閾値(300)を超える資料には行わない(直列の待ち受けを
+      長く止めない)。
+    - MINOR-5: 試験の種はSet-YakuCatSegmentConfirmedという実際の確定経路を
+      通す(直接.State/.Confirmedを立てない)。
+    - MINOR-6: 文脈選択肢の文言から「文脈: 」接頭辞を外す(隣のlabelと
+      重複、480x640の実測幅ではほぼ全て接頭辞に食われていた)。
+
   見るのは3つ。
 
   (a) 静的部。palette.html/js/css が、文脈選択の合図
@@ -31,23 +45,35 @@
 
   (b) サーバ単体。実際のInvoke-YakuRoute(Server.ps1からAST抽出、V9195と
       同じ手法——Server.ps1を丸ごとdot-sourceすると入口の待ち受けが動く
-      ため)へ、実際のCatProject.ps1が作った資料(確定セグメント入り)を
-      使って/api/palette/instantを直接叩く。
+      ため)へ、実際のCatProject.ps1が作った資料(Set-YakuCatSegmentConfirmed
+      という実経路で確定したセグメント入り、MINOR-5)を使って
+      /api/palette/instantを直接叩く。
+
+      MAJOR-1の再現と修正確認: 確定後に用語(project scope)を足して
+      スナップショットを古くし、(a)メモリに残ったまま・(b)ディスクへ
+      追い出した後、の両方でproject_hitがnullになる(対称)ことを見る。
+
+      MINOR-4の再現と修正確認: 300セグメント未満の資料はRestore経由で
+      従来どおり解決でき、300セグメントを超える資料はメモリに無ければ
+      Restoreを諦めてproject_hit=nullになる(例外にはしない)ことと、
+      その所要時間がmanifestだけを読む速さ(500ms未満)であることを見る。
 
       実装前の確認(報告のみ、停止不要)の実測もここで行う:
         - recentアクションの応答形は investigation 済み(id/file_name/
           direction等、Get-YakuCatRecentProjectRows)。POST /api/cat/recent
           は既存の境界チェック(path.StartsWith('/api/cat/'))をそのまま通る。
-        - プロジェクト読込(Restore-YakuCatProject)のコストを、600行規模の
-          資料で実測し、Write-Hostへ出す(仕様書 実装前の確認 item 2)。
+        - プロジェクト読込(Restore-YakuCatProject)のコストを実測し、
+          Write-Hostへ出す(仕様書 実装前の確認 item 2)。
         - 方向の食い違いガード(item 3)を、実際に方向の違う資料で確かめる。
 
   (c) 実機Chromium部。本物のpalette.html/js/cssを配り、起動時に選べる
-      資料が並ぶ→選ぶとlocalStorageへid・表示名だけが残る→貼ると
-      project_hitが候補1になる(同時にTM完全一致が来てもproject_hitが
-      勝つ)→Enter/1キーでコピー→「なし」へ戻すと従来どおり→資料が
-      一覧から消えていれば無言でフォールバック→まだ一覧にあれば
-      再読み込みだけで操作ゼロのまま選択が戻る、を実際に押して確かめる。
+      資料が並ぶ(接頭辞なし、MINOR-6)→選ぶとlocalStorageへid・表示名
+      だけが残る→貼るとproject_hitが候補1になる(同時にTM完全一致が
+      来てもproject_hitが勝つ)→Enter/1キーでコピー→「なし」へ戻すと
+      従来どおり→資料が一覧(直近10件)に無くても選択は保たれる
+      (MINOR-2)→まだ一覧にあれば再読み込みだけで操作ゼロのまま選択が
+      戻る→選択肢が実際に埋まってもdirection-rowの高さが崩れない(NIT)、
+      を実際に押して確かめる。
       node/Playwright/Chromium が無い環境では UNMEASURED(exit 3)にする。
 
 .EXAMPLE
@@ -104,6 +130,16 @@ if (Test-Path -LiteralPath $N9203PaletteJsPath -PathType Leaf) {
     Assert-N9203 ($N9203Js -match "YakuCommon\.post\('/api/cat/recent'") 'palette.js が既存の /api/cat/recent を呼ぶ(新しい一覧APIを作らない)'
     Assert-N9203 ($N9203Js -match "function loadContextSelection") 'palette.js が保存済み選択の読み出し関数を持つ'
     Assert-N9203 ($N9203Js -match "function saveContextSelection") 'palette.js が選択の保存関数を持つ'
+    Assert-N9203 ($N9203Js -match "function appendStoredContextOption") 'palette.js が一覧に無い保存済み選択を足す関数を持つ(MINOR-2)'
+    # MINOR-2: initContextPickerの本体が、一覧に無いときsaveContextSelection('', '')
+    # で無言に消す旧配線を持たない(消さずappendStoredContextOptionで足すだけ)。
+    $N9203InitPickerBody = ''
+    if ($N9203Js -match "(?s)function initContextPicker\(\) \{(.*?)\n  \}") { $N9203InitPickerBody = $Matches[1] }
+    Assert-N9203 (-not [string]::IsNullOrWhiteSpace($N9203InitPickerBody)) 'initContextPicker の本体を取り出せる(前提条件)'
+    if (-not [string]::IsNullOrWhiteSpace($N9203InitPickerBody)) {
+        Assert-N9203 ($N9203InitPickerBody -notmatch "saveContextSelection\('', ''\)") 'MINOR-2: initContextPickerは一覧に無い選択を無言で消さない(saveContextSelectionの空呼び出しが無い)'
+        Assert-N9203 ($N9203InitPickerBody -match 'appendStoredContextOption\(saved\.id, saved\.name\)') 'MINOR-2: 一覧に無ければ保存済みの表示名で選択肢へ足す'
+    }
     # 保存はid・表示名のみ(本文を含まない、設計判断3)。
     $N9203SaveBody = ''
     if ($N9203Js -match "(?s)function saveContextSelection\(id, name\) \{(.*?)\n  \}") { $N9203SaveBody = $Matches[1] }
@@ -119,6 +155,7 @@ if (Test-Path -LiteralPath $N9203PaletteJsPath -PathType Leaf) {
     Assert-N9203 (@($N9203ChipCallLine).Count -ge 1 -and -not (@($N9203ChipCallLine) -match 'context_project_id')) '/api/palette/chip の呼び出しに context_project_id を渡さない(設計判断6)'
     Assert-N9203 ($N9203Js -match "data-yaku-context-hit") 'palette.js が文脈ヒットの合図(data-yaku-context-hit)を持つ'
     Assert-N9203 ($N9203Js -match "この資料の確定訳") 'palette.js が文脈ヒットのラベル文言を持つ(設計判断5)'
+    Assert-N9203 ($N9203Js -match 'kind\.title = String\(projectHit\.project_name\)') 'NIT: project_hit.project_nameをkindのtitleへ描画する(新しい行を増やさず、どの資料の確定訳か確かめられる)'
     # 既存の候補機構に乗せるだけ(新しいコピー配線を作らない、設計判断5)。
     # #palette-tm-candidate を奪い合う形になっている(新しいid/カードを作らない)。
     Assert-N9203 (@([regex]::Matches($N9203Js, "card\.id = 'palette-tm-candidate';")).Count -eq 1) 'project_hit/tmは同じ器(#palette-tm-candidate)を奪い合う(新しいカードを作らない)'
@@ -161,6 +198,11 @@ $N9203ServerPath = Join-Path $N9203Src 'Server.ps1'
 $N9203Tokens = $null; $N9203ParseErrors = $null
 $N9203ServerAst = [System.Management.Automation.Language.Parser]::ParseFile($N9203ServerPath, [ref]$N9203Tokens, [ref]$N9203ParseErrors)
 Assert-N9203 (@($N9203ParseErrors).Count -eq 0) 'Server.ps1 が構文エラー無く解析できる'
+
+# 字面での早期警告(実効性はこの後のサーバ単体テストで実測する)。
+$N9203ServerRaw = [IO.File]::ReadAllText($N9203ServerPath, [Text.UTF8Encoding]::new($false))
+Assert-N9203 ($N9203ServerRaw -match 'Test-YakuCatSegmentQcCurrent -Segment \$seg -TerminologySnapshotHash \$snapshotHash') 'MAJOR-1: project_hitの一致ループがTest-YakuCatSegmentQcCurrentで点検の古さを見る'
+Assert-N9203 ($N9203ServerRaw -match 'Get-YakuCatProjectDiskSegmentCount -Id \$contextProjectId') 'MINOR-4: ディスク復元の前にmanifestのsegment_countを見る'
 
 # Invoke-YakuRouteの/api/cat/recentはGet-YakuCatRecentProjectRows(同じく
 # Server.ps1内、CatProject.ps1側ではない)を呼ぶので、一緒に取り出す。
@@ -216,8 +258,16 @@ Assert-N9203 ([string]::IsNullOrWhiteSpace($N9203RecentCheck.Exception)) ('POST 
 Assert-N9203 ($null -ne $N9203RecentCheck.Body -and ($N9203RecentCheck.Body.PSObject.Properties.Name -contains 'projects')) 'POST /api/cat/recent が projects 配列を返す(実装前の確認item1、応答形はid/file_name/direction等)'
 
 # --- 資料(文脈プロジェクト)を用意する -------------------------------------
+# CoD審査REWORK-1 MINOR-5: .State/.Confirmedを直接立てるのはやめ、
+# Set-YakuCatSegmentConfirmedという実際の確定経路を通す。この経路は
+# Invoke-YakuCatSegmentValidationを実際に走らせ、QcStatus='passed'・
+# QcSourceHash/QcTargetHash・QcTerminologyHash(確定した瞬間のスナップ
+# ショット)を本物どおりに埋める——直接代入では作れない形であり、
+# MAJOR-1(用語が変わった後の点検の古さ)はまさにこの形に依存する。
+#
 # ProjectA: to_en、3セグメント。0番は確定済み(完全一致の的)、1番は
-# 未確定(確定していないと出さないことを見る)、2番は確定だが別文。
+# 未確定(確定していないと出さないことを見る、訳は付くが確定はしない)、
+# 2番は確定だが別文。
 $N9203MatchSource = '御社の今期決算の言い回しは確定済みの表現でご案内します。'
 $N9203MatchTarget = 'We will describe this fiscal year''s results using the finalized wording for this document.'
 $N9203OtherSource = 'これは別の一致しない原文です。'
@@ -226,35 +276,30 @@ $N9203UnconfirmedSource = 'これは未確定のままの原文です。'
 
 $N9203ProjA = New-YakuCatTextProject -Root $N9203Root -Text ($N9203MatchSource + "`n" + $N9203UnconfirmedSource + "`n" + $N9203OtherSource) -Settings $settings -Direction 'to_en' -Register:$false
 Assert-N9203 (@($N9203ProjA.Segments).Count -eq 3) '題材ProjectAが3セグメントに分かれる(前提条件)'
-# Confirmedはstate派生プロパティ(Initialize-YakuCatProjectStateがSegment.State
-# =='reviewed'から毎回計算し直す、CatProject.ps1:574)。.Confirmedだけを直接
-# 立てても、Copy-YakuCatProjectForMutation(Commit内で必ず通る)の
-# Initialize-YakuCatProjectStateで無条件に上書きされて消える(実測、デバッグで
-# 確認済み)。試験の種はSet-YakuCatSegmentConfirmedと同じ組(State='reviewed'+
-# Confirmed=$true)で立てる。
 $N9203ProjA.Segments[0].Translation = $N9203MatchTarget
-$N9203ProjA.Segments[0].State = 'reviewed'
-$N9203ProjA.Segments[0].Confirmed = $true
+$null = Set-YakuCatSegmentConfirmed -Project $N9203ProjA -Index 0 -Confirmed $true
 $N9203ProjA.Segments[1].Translation = 'Draft, not confirmed yet.'
-$N9203ProjA.Segments[1].State = 'machine_draft'
-$N9203ProjA.Segments[1].Confirmed = $false
+# 1番は確定しない(Set-YakuCatSegmentConfirmedを呼ばない)。訳は付いた
+# ままInitialize-YakuCatProjectStateが'machine_draft'を計算する(実経路)。
 $N9203ProjA.Segments[2].Translation = $N9203OtherTarget
-$N9203ProjA.Segments[2].State = 'reviewed'
-$N9203ProjA.Segments[2].Confirmed = $true
+$null = Set-YakuCatSegmentConfirmed -Project $N9203ProjA -Index 2 -Confirmed $true
 $N9203ProjA.FileName = 'A社_決算資料.xlsx'
 $N9203ProjA = Commit-YakuNewCatProject -Project $N9203ProjA
 Assert-N9203 ($N9203ProjA.Id -match '^[a-f0-9]{32}$') 'ProjectAが32桁16進のIDでコミットされる(前提条件)'
 Assert-N9203 ([bool]$N9203ProjA.Segments[0].Confirmed -and [bool]$N9203ProjA.Segments[2].Confirmed -and -not [bool]$N9203ProjA.Segments[1].Confirmed) 'ProjectAの確定状態がコミット後も種のとおり(0/2確定・1未確定、前提条件)'
+Assert-N9203 ([string]$N9203ProjA.Segments[0].QcStatus -eq 'passed' -and -not [string]::IsNullOrWhiteSpace([string]$N9203ProjA.Segments[0].QcTerminologyHash)) '確定済みセグメントが実際にQC合格・用語スナップショット付きになっている(実経路で立てた証拠、MINOR-5)'
 
-# ProjectC: to_en(向きが逆)。英文は自動判定で to_jp になる
-# (Test-YakuJapaneseText の定義どおり、日本語だけがto_enと判定される)ので、
-# to_enの資料へ英文を貼れば必ず向きが食い違う——方向の食い違いガード
-# (item 3)を見るための題材。
+# ProjectC: to_en。/api/palette/instantへ送る原文(英文)と方向が食い違う
+# ことを見るための題材(item 7)。Set-YakuCatSegmentConfirmedはTranslation
+# の言語をDirectionへ照らして検査する(Test-YakuCatTranslationInvalid、
+# to_enなら訳文は英語優勢でなければ弾かれる)ので、SourceもTranslationも
+# 英語にする——Sourceの言語はこの検査の対象外であり、「原文が英語の
+# to_en資料」という不自然さはこの試験の関心(方向ガードそのもの)には
+# 影響しない。
 $N9203MismatchSource = 'Revenue increased significantly this quarter.'
 $N9203ProjC = New-YakuCatTextProject -Root $N9203Root -Text $N9203MismatchSource -Settings $settings -Direction 'to_en' -Register:$false
-$N9203ProjC.Segments[0].Translation = [string][char]0x53CE + [char]0x76CA + [char]0x306F + [char]0x5927 + [char]0x5E45 + [char]0x306B + [char]0x5897 + [char]0x52A0 + [char]0x3057 + [char]0x305F + [char]0x3002
-$N9203ProjC.Segments[0].State = 'reviewed'
-$N9203ProjC.Segments[0].Confirmed = $true
+$N9203ProjC.Segments[0].Translation = 'Revenue rose sharply this quarter, per preliminary results.'
+$null = Set-YakuCatSegmentConfirmed -Project $N9203ProjC -Index 0 -Confirmed $true
 $N9203ProjC.FileName = 'C社_逆方向資料.xlsx'
 $N9203ProjC = Commit-YakuNewCatProject -Project $N9203ProjC
 Assert-N9203 ([bool]$N9203ProjC.Segments[0].Confirmed) 'ProjectCの確定状態がコミット後も種のとおり(前提条件)'
@@ -317,69 +362,57 @@ $N9203Mismatch = Invoke-N9203Route -Method 'POST' -Path '/api/palette/instant' -
 Assert-N9203 ([string]$N9203Mismatch.Body.direction -eq 'to_jp') '方向食い違い題材: この英文は to_jp と判定される(前提条件、Test-YakuJapaneseTextの定義どおり)'
 Assert-N9203 ($null -eq $N9203Mismatch.Body.project_hit) '文脈プロジェクトの方向(to_en)と判定方向(to_jp)が食い違えば project_hit を出さない(設計判断・実装前の確認item3)'
 
-Write-Host '-- 実装前の確認: プロジェクト読込のコスト(ディスク復元経路) --'
+Write-Host '-- MAJOR-1: 用語スナップショットが変わった後の点検の古さ(memory/restore対称性) --'
 
-# 8) メモリから追い出し、Restore-YakuCatProjectの経路を実際に踏ませる。
-#    /api/cat/resumeと同じ二段構え(Get-YakuCatProject→無ければRestore)。
-#    このブロックは下のterms(用語集)試験より先に置く——terms試験が
-#    ProjectAへ新しいproject scopeの用語(御社)を足すと、
-#    Initialize-YakuCatProjectStateの用語スナップショット差分検知
-#    (CatProject.ps1:576-590)が確定済みセグメントを'stale'へ落とす
-#    (実測で確認: 順序を入れ替える前は本試験がここでNGになった。
-#    これはアプリの意図した動作——用語が変わったら確定済みの点検は
-#    古くなる、CLAUDE.mdのsegment-qc-not-currentと同じ理屈——であって
-#    実装の欠陥ではないが、この試験の関心はRestore経路そのものなので、
-#    影響を受けない順序に置く)。
+# CoD審査REWORK-1 MAJOR-1の再現: ProjectAの確定済みセグメント0は、確定した
+# 瞬間のQcTerminologyHashを持っている(上でSet-YakuCatSegmentConfirmedを
+# 通したので本物)。ここで「御社」を含むproject scopeの用語を後から足すと、
+# Get-YakuCatTerminologySnapshotHashが変わり、確定済みセグメントの点検は
+# 古くなる——TM登録がConfirmed AND QcCurrentを要求する(CatProject.ps1:5838)
+# のと同じ基準を、即答のproject_hitにも適用する。
+$N9203Alias = [string]([char]0x5FA1) + [string]([char]0x793E)
+$N9203ProjectTarget = 'your company (project A)'
+$N9203ProjectAdd = Add-YakuTerminologyEntry -Scope project -ProjectId ([string]$N9203ProjA.Id) -Kind occurrence -Enforcement advisory `
+    -JapanesePreferred $N9203Alias -EnglishPreferred $N9203ProjectTarget -Origin 'palette-9203-test' `
+    -OriginProjectId ([string]$N9203ProjA.Id) -OriginFileName 'A社_決算資料.xlsx' `
+    -OriginSegmentId '33333333333333333333333333333333' -OriginLocation 'Sheet1, A1' -OriginRevision 1
+Assert-N9203 ([bool]$N9203ProjectAdd.Added) 'プロジェクトスコープの用語を仕込めた(前提条件、MAJOR-1の種)'
+
+# (a) memory-path: メモリから追い出していない(Get-YakuCatProjectがそのまま
+#     当たる)のに、用語スナップショットが変わったのでproject_hitは出ない。
+#     修正前はここが緑にならなかった(.Confirmedは見た目trueのまま
+#     Initialize-YakuCatProjectStateを通らないので古さが検出されなかった)。
+$N9203StaleInMemory = Get-YakuCatProject -Id ([string]$N9203ProjA.Id)
+Assert-N9203 ($null -ne $N9203StaleInMemory -and [bool]$N9203StaleInMemory.Segments[0].Confirmed) 'MAJOR-1前提: 用語追加後もメモリ上の.Confirmedは見た目true のまま(古さの検出はInitialize-側にしか無いことの直接証拠)'
+$N9203MemoryStale = Invoke-N9203Route -Method 'POST' -Path '/api/palette/instant' -Payload @{ text = $N9203MatchSource; direction_intent = 'auto'; context_project_id = $N9203ProjA.Id }
+Assert-N9203 ($null -eq $N9203MemoryStale.Body.project_hit) 'MAJOR-1(a) memory-path: 用語スナップショットが古ければ、.Confirmed=trueのままでも project_hit を出さない'
+
+# (b) restore-path: メモリから追い出し、同じ古さの状態をディスクから
+#     読み直しても、結果は(a)と対称(どちらもnull)であること。
 $null = $script:YakuCatProjects.Remove([string]$N9203ProjA.Id)
-$N9203Restored = Invoke-N9203Route -Method 'POST' -Path '/api/palette/instant' -Payload @{ text = $N9203MatchSource; direction_intent = 'auto'; context_project_id = $N9203ProjA.Id }
-Assert-N9203 ($null -ne $N9203Restored.Body.project_hit -and [string]$N9203Restored.Body.project_hit.target -eq $N9203MatchTarget) 'メモリに無い場合はRestore-YakuCatProjectへ落ちて、それでも project_hit が返る(/api/cat/resumeと同じ二段構え)'
-
-# 600セグメント規模の資料でコスト実測(仕様書「実装前の確認」item2)。
-$N9203LargeLines = New-Object System.Collections.Generic.List[string]
-for ($i = 0; $i -lt 600; $i++) { [void]$N9203LargeLines.Add('これは実測用の第' + $i + '文です。数値' + $i + 'を含みます。') }
-$N9203LargeText = [string]::Join("`n", $N9203LargeLines.ToArray())
-$N9203ProjLarge = New-YakuCatTextProject -Root $N9203Root -Text $N9203LargeText -Settings $settings -Direction 'to_en' -Register:$false
-Assert-N9203 (@($N9203ProjLarge.Segments).Count -ge 500) ('大規模題材が実際に500行以上に分かれる(実測 ' + (@($N9203ProjLarge.Segments).Count) + '行、前提条件)')
-$N9203LargeMatchIndex = [Math]::Floor(@($N9203ProjLarge.Segments).Count / 2)
-$N9203LargeMatchSource = [string]$N9203ProjLarge.Segments[$N9203LargeMatchIndex].Text
-$N9203LargeMatchTarget = 'Large-project confirmed translation at the middle row.'
-for ($i = 0; $i -lt @($N9203ProjLarge.Segments).Count; $i++) {
-    if ($i -eq $N9203LargeMatchIndex) { $N9203ProjLarge.Segments[$i].Translation = $N9203LargeMatchTarget }
-    else { $N9203ProjLarge.Segments[$i].Translation = ('draft ' + $i) }
-    # Confirmedはstate派生(上のProjectAと同じ理由でState='reviewed'も要る)。
-    $N9203ProjLarge.Segments[$i].State = 'reviewed'
-    $N9203ProjLarge.Segments[$i].Confirmed = $true
-}
-$N9203ProjLarge.FileName = '大規模資料_600行.xlsx'
-$N9203ProjLarge = Commit-YakuNewCatProject -Project $N9203ProjLarge
-Assert-N9203 ([bool]$N9203ProjLarge.Segments[$N9203LargeMatchIndex].Confirmed) '大規模題材の確定状態がコミット後も種のとおり(前提条件)'
-$null = $script:YakuCatProjects.Remove([string]$N9203ProjLarge.Id)
-
-$N9203Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-$N9203LargeResult = Invoke-N9203Route -Method 'POST' -Path '/api/palette/instant' -Payload @{ text = $N9203LargeMatchSource; direction_intent = 'auto'; context_project_id = $N9203ProjLarge.Id }
-$N9203Stopwatch.Stop()
-Write-Host ('  info 実装前の確認(item2): 600行規模の資料をディスクから復元してinstantを1回処理する所要時間 = ' + $N9203Stopwatch.ElapsedMilliseconds + 'ms(貼り付けごとに1回なので許容想定、仕様書どおり)')
-Assert-N9203 ($null -ne $N9203LargeResult.Body.project_hit -and [string]$N9203LargeResult.Body.project_hit.target -eq $N9203LargeMatchTarget) '600行規模でもRestore経由で正しい project_hit が返る'
-Assert-N9203 ($N9203Stopwatch.ElapsedMilliseconds -lt 5000) ('600行規模の実測が5秒未満(実測 ' + $N9203Stopwatch.ElapsedMilliseconds + 'ms、貼り付けごとに1回の許容想定)')
+$N9203RestoreStale = Invoke-N9203Route -Method 'POST' -Path '/api/palette/instant' -Payload @{ text = $N9203MatchSource; direction_intent = 'auto'; context_project_id = $N9203ProjA.Id }
+Assert-N9203 ($null -eq $N9203RestoreStale.Body.project_hit) 'MAJOR-1(b) restore-path: 同じ古さの状態でも project_hit を出さない(memory-pathと対称、レビューア再現の "memory=true/restore=false" という非対称を解消)'
+# (b)が実際にRestore-YakuCatProjectを踏んだこと(閾値ガードに阻まれて
+# 何もせず素通りしていないこと)を確かめる——ProjAは3セグメントで
+# 閾値(300)を大きく下回るので、メモリへ戻っているはず。ここが偽陽性の
+# 落とし穴だった: Get-YakuCatProjectDiskSegmentCountの旧実装(区切り文字
+# 決め打ち)がpwsh7@Linuxでは常にnullを返し、Restoreそのものが一度も
+# 呼ばれないまま(b)が「正しくnullになった」ように見えていた
+# (実装前の確認で実際に踏んだ、上のコメント参照)。
+Assert-N9203 ($null -ne (Get-YakuCatProject -Id $N9203ProjA.Id)) 'MAJOR-1(b)前提: Restore-YakuCatProjectが実際に走り、メモリへ戻っている(閾値ガードに阻まれて素通りしていない)'
 
 Write-Host '-- terms: project+personal 統合、project優先 --'
 
-# 8) 用語集の統合。同じ日本語エイリアスに personal と project(ProjectA)の
-#    両方を仕込み、文脈ありでは project が勝ち、文脈なしでは personal のみ。
-# 御社
-$N9203Alias = [string]([char]0x5FA1) + [string]([char]0x793E)
+# 用語集の統合。同じ日本語エイリアス(上でproject scopeを仕込み済み)へ
+# personal も足し、文脈ありでは project が勝ち、文脈なしでは personal
+# のみになることを見る。project scopeの追加自体はMAJOR-1の種で既に
+# 済んでいるので、ここでは重複して足さない。
 $N9203PersonalTarget = 'your firm (personal)'
-$N9203ProjectTarget = 'your company (project A)'
 $N9203PersonalAdd = Add-YakuTerminologyEntry -Scope personal -Kind occurrence -Enforcement advisory `
     -JapanesePreferred $N9203Alias -EnglishPreferred $N9203PersonalTarget -Origin 'palette-9203-test' `
     -OriginProjectId '11111111111111111111111111111111' -OriginFileName 'x.xlsx' `
     -OriginSegmentId '22222222222222222222222222222222' -OriginLocation 'Sheet1, A1' -OriginRevision 1
 Assert-N9203 ([bool]$N9203PersonalAdd.Added) '個人スコープの用語を仕込めた(前提条件)'
-$N9203ProjectAdd = Add-YakuTerminologyEntry -Scope project -ProjectId ([string]$N9203ProjA.Id) -Kind occurrence -Enforcement advisory `
-    -JapanesePreferred $N9203Alias -EnglishPreferred $N9203ProjectTarget -Origin 'palette-9203-test' `
-    -OriginProjectId ([string]$N9203ProjA.Id) -OriginFileName 'A社_決算資料.xlsx' `
-    -OriginSegmentId '33333333333333333333333333333333' -OriginLocation 'Sheet1, A1' -OriginRevision 1
-Assert-N9203 ([bool]$N9203ProjectAdd.Added) 'プロジェクトスコープの用語を仕込めた(前提条件)'
 
 $N9203TermText = $N9203Alias + [string][char]0x306B + [char]0x3054 + [char]0x6848 + [char]0x5185 + [char]0x3057 + [char]0x307E + [char]0x3059 + [char]0x3002
 
@@ -390,6 +423,58 @@ Assert-N9203 ($N9203RowsNoContext.Count -eq 1 -and [string]$N9203RowsNoContext[0
 $N9203TermsWithContext = Invoke-N9203Route -Method 'POST' -Path '/api/palette/instant' -Payload @{ text = $N9203TermText; direction_intent = 'auto'; context_project_id = $N9203ProjA.Id }
 $N9203RowsWithContext = @($N9203TermsWithContext.Body.terms | Where-Object { [string]$_.source -eq $N9203Alias })
 Assert-N9203 ($N9203RowsWithContext.Count -eq 1 -and [string]$N9203RowsWithContext[0].target -eq $N9203ProjectTarget) '文脈ありでは同じ位置の重複でproject語が勝つ(Find-YakuTerminologyMatchesの既存ScopeWeight規則そのまま、統合ロジックを新設しない)'
+
+Write-Host '-- MINOR-4: 大きい資料はディスク復元を諦める(直列の待ち受けを長く止めない) --'
+
+# 小さい資料(閾値300を十分下回る)は従来どおりRestore経由で解決できる。
+# 確定はSet-YakuCatSegmentConfirmedの実経路を通す(MINOR-5)。
+$N9203SmallLines = New-Object System.Collections.Generic.List[string]
+for ($i = 0; $i -lt 30; $i++) { [void]$N9203SmallLines.Add('これは小さい題材の第' + $i + '文です。') }
+$N9203SmallText = [string]::Join("`n", $N9203SmallLines.ToArray())
+$N9203ProjSmall = New-YakuCatTextProject -Root $N9203Root -Text $N9203SmallText -Settings $settings -Direction 'to_en' -Register:$false
+Assert-N9203 (@($N9203ProjSmall.Segments).Count -lt 300) ('小規模題材の閾値未満を確認(実測 ' + (@($N9203ProjSmall.Segments).Count) + 'セグメント、前提条件)')
+$N9203SmallMatchSource = [string]$N9203ProjSmall.Segments[0].Text
+$N9203SmallMatchTarget = 'Small-project confirmed translation at the first row.'
+$N9203ProjSmall.Segments[0].Translation = $N9203SmallMatchTarget
+$null = Set-YakuCatSegmentConfirmed -Project $N9203ProjSmall -Index 0 -Confirmed $true
+$N9203ProjSmall.FileName = '小規模資料.xlsx'
+$N9203ProjSmall = Commit-YakuNewCatProject -Project $N9203ProjSmall
+$null = $script:YakuCatProjects.Remove([string]$N9203ProjSmall.Id)
+
+$N9203SmallStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+$N9203SmallResult = Invoke-N9203Route -Method 'POST' -Path '/api/palette/instant' -Payload @{ text = $N9203SmallMatchSource; direction_intent = 'auto'; context_project_id = $N9203ProjSmall.Id }
+$N9203SmallStopwatch.Stop()
+Write-Host ('  info MINOR-4: 閾値未満(' + (@($N9203ProjSmall.Segments).Count) + 'セグメント)のRestoreに要した時間 = ' + $N9203SmallStopwatch.ElapsedMilliseconds + 'ms')
+Assert-N9203 ($null -ne $N9203SmallResult.Body.project_hit -and [string]$N9203SmallResult.Body.project_hit.target -eq $N9203SmallMatchTarget) '閾値未満の資料はメモリに無くてもRestore経由で正しく project_hit が返る(MINOR-4は下限を締めない)'
+
+# 大きい資料(閾値300を超える)は、メモリに無ければRestoreそのものを
+# 諦める——project_hitはnullになるが、例外にはしない(壊れていても
+# 翻訳は続く、CLAUDE.md「コーパスは足し」)。確定するのは1行だけに絞り、
+# 残りは未確定のまま作る(MINOR-5は「確定/QCの主張に関わる行」を実経路で
+# 作ることが目的で、大きさを稼ぐためだけの残りの行を1行ずつ確定する
+# 意味は無い——時間を浪費するだけになる)。
+$N9203LargeLines = New-Object System.Collections.Generic.List[string]
+for ($i = 0; $i -lt 400; $i++) { [void]$N9203LargeLines.Add('これは実測用の第' + $i + '文です。数値' + $i + 'を含みます。') }
+$N9203LargeText = [string]::Join("`n", $N9203LargeLines.ToArray())
+$N9203ProjLarge = New-YakuCatTextProject -Root $N9203Root -Text $N9203LargeText -Settings $settings -Direction 'to_en' -Register:$false
+Assert-N9203 (@($N9203ProjLarge.Segments).Count -gt 300) ('大規模題材が実際に閾値(300)を超える(実測 ' + (@($N9203ProjLarge.Segments).Count) + 'セグメント、前提条件)')
+$N9203LargeMatchIndex = [Math]::Floor(@($N9203ProjLarge.Segments).Count / 2)
+$N9203LargeMatchSource = [string]$N9203ProjLarge.Segments[$N9203LargeMatchIndex].Text
+$N9203LargeMatchTarget = 'Large-project confirmed translation at the middle row.'
+$N9203ProjLarge.Segments[$N9203LargeMatchIndex].Translation = $N9203LargeMatchTarget
+$null = Set-YakuCatSegmentConfirmed -Project $N9203ProjLarge -Index $N9203LargeMatchIndex -Confirmed $true
+$N9203ProjLarge.FileName = '大規模資料.xlsx'
+$N9203ProjLarge = Commit-YakuNewCatProject -Project $N9203ProjLarge
+Assert-N9203 ([bool]$N9203ProjLarge.Segments[$N9203LargeMatchIndex].Confirmed) '大規模題材の確定状態がコミット後も種のとおり(前提条件)'
+$null = $script:YakuCatProjects.Remove([string]$N9203ProjLarge.Id)
+
+$N9203LargeStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+$N9203LargeResult = Invoke-N9203Route -Method 'POST' -Path '/api/palette/instant' -Payload @{ text = $N9203LargeMatchSource; direction_intent = 'auto'; context_project_id = $N9203ProjLarge.Id }
+$N9203LargeStopwatch.Stop()
+Write-Host ('  info MINOR-4: 閾値超過(' + (@($N9203ProjLarge.Segments).Count) + 'セグメント)でRestoreを諦めた場合の所要時間 = ' + $N9203LargeStopwatch.ElapsedMilliseconds + 'ms(manifestだけを読む、旧実装は同規模で約2000msだった)')
+Assert-N9203 ([string]::IsNullOrWhiteSpace($N9203LargeResult.Exception)) ('閾値超過でも例外を出さない: ' + $N9203LargeResult.Exception)
+Assert-N9203 ($null -eq $N9203LargeResult.Body.project_hit) '閾値を超える資料はメモリに無ければRestoreを諦め、project_hit はnull(MINOR-4、直列の待ち受けを長く止めない)'
+Assert-N9203 ($N9203LargeStopwatch.ElapsedMilliseconds -lt 500) ('閾値超過時はmanifestだけを読むので高速(実測 ' + $N9203LargeStopwatch.ElapsedMilliseconds + 'ms、500ms未満)')
 
 # ============================================================ (c) 実機Chromium部
 Write-Host '-- chromium --'
@@ -448,7 +533,23 @@ if (Test-Path -LiteralPath $N9203OutJson -PathType Leaf) {
     $N9203InitialOptions = @($N9203Observed.initialOptionValues)
     Assert-N9203 ($N9203InitialOptions.Count -eq 3) ('起動時のoption数が3(なし+資料2件、実際 ' + $N9203InitialOptions.Count + ')')
     Assert-N9203 ([string]$N9203InitialOptions[0].value -eq '') '先頭は「文脈: なし」(value空)のまま'
-    Assert-N9203 (@($N9203InitialOptions | Where-Object { $_.text -match 'A社_決算資料\.xlsx' }).Count -eq 1) '/api/cat/recent で取得した資料名がoptionに反映される'
+    Assert-N9203 ([string]$N9203InitialOptions[0].text -eq '文脈: なし') '先頭だけは接頭辞「文脈: 」を残す(MINOR-6、文脈が無いこと自体を明示する必要がある)'
+    $N9203OptA = @($N9203InitialOptions | Where-Object { $_.value -eq 'aaaa1111aaaa1111aaaa1111aaaa1111' })
+    Assert-N9203 ($N9203OptA.Count -eq 1) '/api/cat/recent で取得した資料(ProjectA)がoptionに反映される'
+    if ($N9203OptA.Count -eq 1) {
+        Assert-N9203 ([string]$N9203OptA[0].text -eq 'A社_決算資料.xlsx') 'MINOR-6: 資料名の選択肢に「文脈: 」接頭辞が付かない(隣のlabelと重複するため)'
+        Assert-N9203 ([string]$N9203OptA[0].title -eq 'A社_決算資料.xlsx') 'MINOR-6: opt.titleに資料名全体が入る(はみ出しても確かめられる)'
+    }
+
+    Write-Host '-- NIT: 選択肢が実際に埋まってもdirection-rowの高さが崩れない --'
+    $N9203RowGeom = $N9203Observed.rowGeometryPopulated480
+    Assert-N9203 ($null -ne $N9203RowGeom -and $null -ne $N9203RowGeom.row) '選択肢埋め込み後のdirection-rowの矩形を測れている(前提条件)'
+    if ($null -ne $N9203RowGeom -and $null -ne $N9203RowGeom.row) {
+        # レビューアが実測した115.9pxを固定する(#67 B1、幾何ゲートの前提)。
+        # 小数第1位までの丸めで比較し、レンダリング系の端数差を吸収する。
+        $N9203RowHeightRounded = [Math]::Round([double]$N9203RowGeom.row.height, 1)
+        Assert-N9203 ($N9203RowHeightRounded -eq 115.9) ('選択肢が埋まった480x640でもdirection-rowの高さが115.9pxのまま(実測 ' + $N9203RowHeightRounded + 'px)')
+    }
 
     Write-Host '-- B) 選ぶとlocalStorageへid・表示名だけ --'
     $N9203Saved = $N9203Observed.localStorageAfterSelect
@@ -489,9 +590,22 @@ if (Test-Path -LiteralPath $N9203OutJson -PathType Leaf) {
         Assert-N9203 ([string]$N9203CardNone.candidateText -eq 'TM decoy translation (must not be shown once project_hit wins).') '「なし」に戻すと従来どおりTMの中身が出る'
     }
 
-    Write-Host '-- E) 資料が一覧から消えていれば無言でフォールバック --'
-    Assert-N9203 ([string]$N9203Observed.selectValueAfterStale -eq '') '一覧に無い資料が保存されていても、選択は「なし」のまま(無言のフォールバック)'
-    Assert-N9203 ([string]::IsNullOrEmpty([string]$N9203Observed.localStorageAfterStale)) '消えた資料の古い記録はlocalStorageから消える(次回また同じ検出をしない)'
+    Write-Host '-- E) 資料が一覧(直近10件)に無くても、選択は消さない(MINOR-2) --'
+    Assert-N9203 ([string]$N9203Observed.selectValueAfterStale -eq 'cccc3333cccc3333cccc3333cccc3333') '一覧に無い資料でも、選択はlocalStorageの保存どおり保たれる(無言で消さない、MINOR-2)'
+    Assert-N9203 (-not [string]::IsNullOrEmpty([string]$N9203Observed.localStorageAfterStale)) 'localStorageの記録も消えない(MINOR-2、recentの非掲載は消えた証明にならない)'
+    $N9203StaleOptions = @($N9203Observed.optionsAfterStale)
+    $N9203StaleOpt = @($N9203StaleOptions | Where-Object { $_.value -eq 'cccc3333cccc3333cccc3333cccc3333' })
+    Assert-N9203 ($N9203StaleOpt.Count -eq 1) '一覧に無い資料は、保存済みの表示名で追加の選択肢として足される(MINOR-2)'
+    if ($N9203StaleOpt.Count -eq 1) {
+        Assert-N9203 ([string]$N9203StaleOpt[0].text -eq '消えた資料.xlsx') '追加された選択肢の文言は保存済みの表示名そのまま'
+    }
+    # 死んでいても実害が無いこと(サーバは黙ってフォールバックする、
+    # project_hitはnullで従来どおり)を、実際に貼って確かめる。
+    Assert-N9203 (@($N9203Observed.instantRequestsWithStaleContext).Count -ge 1 -and [string]$N9203Observed.instantRequestsWithStaleContext[0].context_project_id -eq 'cccc3333cccc3333cccc3333cccc3333') '選んだ死んでいるidも、そのまま context_project_id として送られる(サーバ側の黙ったフォールバックに任せる)'
+    $N9203StaleCard = $N9203Observed.cardAfterStaleContext
+    if ($null -ne $N9203StaleCard) {
+        Assert-N9203 (-not [bool]$N9203StaleCard.hasContextHit) '死んでいるidを選んでも、project_hitは付かない(実害が無い、MINOR-2)'
+    }
 
     Write-Host '-- F) 資料がまだ一覧にあれば、再読み込みだけで操作ゼロのまま復元 --'
     Assert-N9203 ([string]$N9203Observed.selectValueAfterRestore -eq 'aaaa1111aaaa1111aaaa1111aaaa1111') '再読み込み後、選択が自動で元の資料へ戻る(操作ゼロ、UX検収基準)'

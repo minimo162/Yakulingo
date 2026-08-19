@@ -2613,9 +2613,27 @@ function Invoke-YakuRoute {
                     # directionと、この貼り付けの判定方向が食い違えば出さない。
                     if ([string]$contextProject.Direction -eq $direction) {
                         $needle = $text.Trim()
+                        # CoD審査REWORK-1 MAJOR-1: Get-YakuCatProject(メモリ命中)は
+                        # Initialize-YakuCatProjectStateを通らないので、用語スナップ
+                        # ショットが変わって点検が古くなったセグメントでも
+                        # .Confirmedがtrueのまま残り得る(CatProject.ps1の遅延評価――
+                        # 古さの検出はInitialize側にしか無い)。Restore経路は末尾で
+                        # Initialize-YakuCatProjectStateを通るため'stale'へ落ちて
+                        # 弾かれるのに、メモリ経路だけ食い違った結果になっていた
+                        # (実測: 同じ状態でmemory hit=true/restore hit=false)。
+                        # ここでは Initialize- を呼ばない(パレットは読み取り専用の
+                        # 経路であるべきで、CAT側の生きたprojectを書き換えてはならない)。
+                        # 代わりに Test-YakuCatSegmentQcCurrent で「今のスナップショット
+                        # に対して点検が最新か」をその場で判定するだけにする
+                        # (副作用なし、CLAUDE.mdのsegment-qc-not-currentと同じ基準を
+                        # 即答経路にも適用する)。TM登録(CatProject.ps1:5838)が
+                        # Confirmed AND QcCurrent を要求しているのと同じ強さに揃える
+                        # ——TM行より弱い保証の訳を候補1として出さない。
+                        $snapshotHash = Get-YakuCatTerminologySnapshotHash -Project $contextProject
                         foreach ($seg in @($contextProject.Segments)) {
                             if (-not [bool]$seg.Confirmed) { continue }
                             if ([string]::IsNullOrWhiteSpace([string]$seg.Translation)) { continue }
+                            if (-not (Test-YakuCatSegmentQcCurrent -Segment $seg -TerminologySnapshotHash $snapshotHash)) { continue }
                             # 完全一致(原文Ordinal、trim後)。あいまい照合はしない
                             # (即答経路のO(1)原則、#63の決定を踏襲)。
                             if ([string]::Equals((([string]$seg.Text).Trim()), $needle, [StringComparison]::Ordinal)) {
