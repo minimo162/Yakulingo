@@ -1252,6 +1252,9 @@ function Start-YakuTranslationJob {
                             })
                         }
                     }
+                    # 送った分（実際に訳文が付いた行）だけを数える。マスク件数の
+                    # 見える化（2026-08-18）。対応表は運ばず、件数だけを合算する。
+                    $maskTotals = Get-YakuCatSentMaskTotals -Items @($items.ToArray()) -Map $map
                     $result = [pscustomobject]@{
                         Kind = 'cat'
                         Mode = 'translate'
@@ -1260,6 +1263,8 @@ function Start-YakuTranslationJob {
                         Translations = @($pairs.ToArray())
                         Sent = $copilotItems.Count
                         CacheHits = [int]$catContext['CacheHits']
+                        MaskedCount = [int]$maskTotals.MaskedCount
+                        KeptCount = [int]$maskTotals.KeptCount
                         Warnings = @($catWarnings.ToArray())
                     }
                 } catch {
@@ -1282,10 +1287,14 @@ function Start-YakuTranslationJob {
                                 [void]$partialPairs.Add([ordered]@{ index=[int]$t; text=[string]$partial[[int]$entry.Index]; masked=[string]$entry.MaskedTranslation; source=[string](Get-YakuFileItemOriginalText -Item $entry) })
                             }
                         }
+                        # 完了(CompletedMap)分だけ数える。送っていない分を数えない
+                        # （マスク件数見える化 2026-08-18、途中停止でも見せる分の設計）。
+                        $partialMaskTotals = Get-YakuCatSentMaskTotals -Items @($items.ToArray()) -Map $partial
                         $result = [pscustomobject]@{
                             Kind='cat'; Mode='translate'; ProjectId=[string]$cat.project_id; ProjectRevision=[int]$cat.expected_project_revision
                             Translations=@($partialPairs.ToArray()); Sent=$items.Count; Partial=$true
                             PartialError=$failureMessage; CacheHits=[int]$catContext['CacheHits']
+                            MaskedCount=[int]$partialMaskTotals.MaskedCount; KeptCount=[int]$partialMaskTotals.KeptCount
                             Warnings=@($catWarnings.ToArray())
                         }
                     } else {
@@ -1505,6 +1514,10 @@ function Convert-YakuTranslationJobResultJson {
     $paletteDirection = ''
     $paletteMaskedTranslation = ''
     $paletteStyle = ''
+    # CATの翻訳完了時にもマスク件数を見せるため（マスク件数見える化
+    # 2026-08-18）。#63のパレット拡張と同じやり方で、既にある戻り値へ
+    # 足すだけにする。対応表(Map)は運ばない。件数だけ。
+    $catMaskedCount = 0
     if ($mode -eq 'cancelled') {
         $html = New-YakuAlertHtml -Kind warning -Message '翻訳をキャンセルしました。'
     } elseif ($mode -in @('done','completed_with_warnings','error','failed','interrupted')) {
@@ -1545,6 +1558,11 @@ function Convert-YakuTranslationJobResultJson {
                         }
                     }
                 } catch { $paletteSourceText = ''; $paletteDirection = ''; $paletteMaskedTranslation = ''; $paletteStyle = '' }
+                try {
+                    if ([string]$typedResult.Kind -eq 'cat' -and $typedResult.PSObject.Properties.Name -contains 'MaskedCount') {
+                        $catMaskedCount = [int]$typedResult.MaskedCount
+                    }
+                } catch { $catMaskedCount = 0 }
                 if ($resultKind -eq 'render') {
                     $currentRenderProject = Get-YakuCatProject -Id ([string]$typedResult.ProjectId)
                     if ($null -eq $currentRenderProject) { $applicationStatus = 'stale' }
@@ -1607,6 +1625,7 @@ function Convert-YakuTranslationJobResultJson {
         direction = $paletteDirection
         masked_translation = $paletteMaskedTranslation
         style = $paletteStyle
+        masked_count = $catMaskedCount
     } | ConvertTo-Json -Depth 40 -Compress)
 }
 

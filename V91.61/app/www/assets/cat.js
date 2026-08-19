@@ -1222,7 +1222,7 @@
     }
     syncLocation(String(project.id || ''));
     if (el('cat-editor-layout').classList.contains('is-docs-open')) renderDocsPane();
-    if (previousProjectId && previousProjectId !== String(project.id || '')) { activeSegmentId = ''; activeIndex = -1; revisionComparison = null; currentFilter = 'actionable'; currentLocation = 'all'; currentChange = 'all'; resetSearchTools(); }
+    if (previousProjectId && previousProjectId !== String(project.id || '')) { activeSegmentId = ''; activeIndex = -1; revisionComparison = null; currentFilter = 'actionable'; currentLocation = 'all'; currentChange = 'all'; resetSearchTools(); el('cat-mask-notice').textContent = ''; }
     if (outputScope && (outputScope.id !== String(project.id || '') || outputScope.revision !== revision())) clearOutputDisplay();
     dirty.clear(); candidateSeq++;
     /* 画面遷移なしで確認作業へ入る道（その場で訳す → 長すぎるので渡す）ができた。
@@ -1409,7 +1409,13 @@
     YakuCommon.json('/api/jobs/' + encodeURIComponent(id)).then(function (data) {
       if (!jobContext || jobContext.token !== token) return;
       el('cat-job').innerHTML = jobHtml(id, data, startedAt);
-      if (['done','completed_with_warnings'].indexOf(data.mode) >= 0) { setJobTitle('✔ 翻訳が終わりました'); finishJob(id, token); return; }
+      if (['done','completed_with_warnings'].indexOf(data.mode) >= 0) {
+        /* apply後の応答（プロジェクトのJSON）にはマスク件数が無い。消える前の
+           このポーリング応答だけが持っているので、ここで拾っておく。まとめ翻訳・
+           1行だけ翻訳のときだけ見せる（直す・過去訳の突き合わせは対象外）。 */
+        if (jobContext && jobContext.type === 'translate' && String(data.kind || '') === 'cat') jobContext.maskedCount = Number(data.masked_count || 0);
+        setJobTitle('✔ 翻訳が終わりました'); finishJob(id, token); return;
+      }
       if (data.mode === 'cancelled') { setJobTitle(''); setBusy(false); el('cat-job').innerHTML = ''; status('翻訳をやめました。ここまでにできた訳文は保存されています。「Copilotで未訳を翻訳」を押すと続きから再開できます。'); return; }
       if (['error','failed'].indexOf(data.mode) >= 0) { setJobTitle(''); setBusy(false); status(data.detail || '翻訳が途中で止まりました。ここまでにできた訳文は保存されています。もう一度「Copilotで未訳を翻訳」を押すと、続きから再開します。', true); return; }
       setJobTitle(Math.round(Number(data.progress) || 0) + '% 翻訳中');
@@ -1422,6 +1428,13 @@
       el('cat-job').innerHTML = jobHtml(id, { label: next < 3 ? '進み具合をもう一度確認しています' : '接続の回復を待っています', detail: '翻訳は続いています。画面の更新だけを待っています。', progress: 0 }, startedAt);
       jobTimer = window.setTimeout(function () { pollJob(id, token, next); }, Math.min(6000, 800 * Math.pow(2, Math.min(next, 3))));
     });
+  }
+  /* テキスト/パレット経路にある New-YakuMaskingNoticeHtml と同じ文言・同じ
+     流儀。0件も明示する（何も出さないと、安全を毎回見せる目的を外す）。 */
+  function maskNoticeText(count) {
+    return count > 0
+      ? ('数値 ' + count + ' 件をマスクして送信しました。数値以外の文はマスクせずに送っています。')
+      : 'この翻訳で外部へ送った数値はありません。数値以外の文はマスクせずに送っています。';
   }
   function finishJob(jobId, token) {
     var context = jobContext;
@@ -1436,6 +1449,8 @@
           if (revisionComparison) { inspectorTab = 'revisions'; setDockOpen(true, true); }
         }
         render(data, true);
+        /* 操作ゼロで件数が見える。次の翻訳まで残す（自動では消さない）。 */
+        if (context.type === 'translate' && typeof context.maskedCount === 'number') el('cat-mask-notice').textContent = maskNoticeText(context.maskedCount);
       }
       else { setBusy(false); loadRecent(); }
       return data;

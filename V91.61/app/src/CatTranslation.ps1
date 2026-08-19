@@ -150,6 +150,35 @@ function ConvertTo-YakuCatDedupedItems {
     return @($items.ToArray())
 }
 
+function Get-YakuCatSentMaskTotals {
+    <#
+      マスク件数見える化(2026-08-18)。送った分（訳文が実際に届いた行）だけ
+      Protect-YakuCatItems が item へ積んだ MaskedCount/KeptCount を合算する。
+      対応表(NumericMaskMap)は受け取らず、件数だけを返す
+      （Translation.ps1:2106-2107 の設計判断。§8「件数のみ」）。
+
+      ジョブの scriptblock からは試験が届かないため、集計だけを切り出す
+      （ConvertTo-YakuCatDedupedItems と同じ理由、CoD審査 2026-08-18
+      REWORK-1 の教訓を踏襲）。成功経路・部分失敗(CompletedMap)経路の
+      どちらも、同じ関数へ Map を渡すだけで済む。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Items,
+        [Parameter(Mandatory=$true)]$Map
+    )
+    $maskedTotal = 0
+    $keptTotal = 0
+    foreach ($entry in @($Items)) {
+        if ($null -eq $entry) { continue }
+        if (-not $Map.ContainsKey([int]$entry.Index)) { continue }
+        $translation = [string]$Map[[int]$entry.Index]
+        if ([string]::IsNullOrWhiteSpace($translation)) { continue }
+        $maskedTotal += [int]$entry.MaskedCount
+        $keptTotal += [int]$entry.KeptCount
+    }
+    return [pscustomobject]@{ MaskedCount = [int]$maskedTotal; KeptCount = [int]$keptTotal }
+}
+
 function New-YakuCatCharacterTargets {
     <#
       幅を知って最初から訳す。
