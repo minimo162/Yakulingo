@@ -219,9 +219,12 @@ const server = http.createServer(function (req, res) {
     page = await browser.newPage({ viewport: { width: 480, height: 640 }, reducedMotion: 'reduce' });
     page.on('pageerror', function (error) { out.errors.push(String((error && error.message) || error)); });
     page.on('console', function (message) { if (message.type() === 'error') out.console.push(message.text()); });
-    await page.addInitScript(function (key, id) {
-      try { window.localStorage.setItem(key, JSON.stringify({ id: id, name: '消えた資料.xlsx' })); } catch (error) {}
-    }, 'yaku.palette.context', STALE_ID);
+    // page.addInitScriptは(script, arg)の2引数までしか渡せない(arg1個のみ)。
+    // 3引数の呼び方(fn, a, b)は2つ目以降が無視される——ここで一度踏んだ実装地図
+    // の罠なので、複数値は1つのオブジェクトへまとめて渡す。
+    await page.addInitScript(function (seed) {
+      try { window.localStorage.setItem(seed.key, JSON.stringify({ id: seed.id, name: '消えた資料.xlsx' })); } catch (error) {}
+    }, { key: 'yaku.palette.context', id: STALE_ID });
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#palette-input');
     await page.waitForFunction(function () {
@@ -237,9 +240,9 @@ const server = http.createServer(function (req, res) {
     page = await browser.newPage({ viewport: { width: 480, height: 640 }, reducedMotion: 'reduce' });
     page.on('pageerror', function (error) { out.errors.push(String((error && error.message) || error)); });
     page.on('console', function (message) { if (message.type() === 'error') out.console.push(message.text()); });
-    await page.addInitScript(function (key, id, name) {
-      try { window.localStorage.setItem(key, JSON.stringify({ id: id, name: name })); } catch (error) {}
-    }, 'yaku.palette.context', PROJ_A_ID, PROJECT_A_NAME);
+    await page.addInitScript(function (seed) {
+      try { window.localStorage.setItem(seed.key, JSON.stringify({ id: seed.id, name: seed.name })); } catch (error) {}
+    }, { key: 'yaku.palette.context', id: PROJ_A_ID, name: PROJECT_A_NAME });
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#palette-input');
     await page.waitForFunction(function () {

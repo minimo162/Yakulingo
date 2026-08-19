@@ -68,7 +68,7 @@ body.app-palette {
    （原生select要素でもChromiumはtext-overflow:ellipsisを効かせる、実測)。 */
 .palette-context-select-label { color: var(--muted); font-size: var(--font-meta); margin-left: 4px; }
 #palette-context-select {
-  /* width:autoにする——styles.css:189の既定(select{width:100%})のままだと、
+  /* width:autoにする——styles.cssの既定(select要素はwidth:100%)のままだと、
      flex-wrapのこの行でこのselectだけが1行分の幅を占めて強制改行する
      (実測: #palette-direction-selectが同じ理由で既にそうなっており、
      その1行だけで行の高さが116pxになっている、palette.cssの旧註のとおり)。
