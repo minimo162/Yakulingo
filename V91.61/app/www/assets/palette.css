@@ -44,11 +44,24 @@ body.app-palette {
 .palette-input-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
 .palette-count { color: var(--muted); font-size: var(--font-meta); font-variant-numeric: tabular-nums; }
 .palette-long-notice { color: var(--warning); font-size: var(--font-meta); flex-basis: 100%; }
-/* 文字数の行とは別行にする（MAJOR-B）。ラベル+選択+ボタンの3要素だけなので、
-   480px幅でも1行に収まる（実測: 3要素同居だと折り返して3行ぶん食っていた）。 */
+/* 文字数の行とは別行にする（MAJOR-B）。「480px幅でも1行に収まる」という
+   このコメントの旧文は、実測(CoD審査 REWORK-1 NIT-D)とは食い違っていた
+   ——selectがそれ自体でflexの1行分を占め、この行は元から（#palette-handoff
+   を足す前から）3行に折り返しており、行の高さは480px幅・1912px幅の
+   どちらでも116pxだった。以後は測った値のほうを書く（CLAUDE.md
+   「画面の寸法を語るときは測った値を使う」）。
+   「CATで開く」(#palette-handoff)はここへ同居させている——新しい行そのもの
+   を増やすと、480x640では原文欄が画面外へ押し出される(実測: 独立行を
+   試したところ原文欄bottom=-41.6〜-22.6、MAJOR-B)。同居させた結果、
+   #palette-handoffは「今すぐ訳す」と同じ行へ収まり、行の高さは
+   （元から3行だった）116pxのまま480px幅・1912px幅のどちらでも変わらない。 */
 .palette-direction-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
 .palette-direction-select-label { color: var(--muted); font-size: var(--font-meta); }
 #palette-direction-select { min-height: 32px; padding: 2px 6px; font-size: var(--font-meta); }
+/* direction-row内ではlink-button既定のmargin-top(8px)を消し、隣の要素と
+   同じ基準線に揃える(align-items:centerだけでは上マージン分だけ下へ
+   ずれて見える)。 */
+.palette-direction-row #palette-handoff { margin-top: 0; }
 .palette-fineprint { margin: 0; color: var(--muted); font-size: var(--font-meta); }
 .palette-direction-note { margin: 0; color: var(--muted); font-size: var(--font-meta); }
 

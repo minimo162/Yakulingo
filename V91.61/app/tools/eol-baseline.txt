@@ -151,6 +151,7 @@ tools/Test-YakuV9195Palette.ps1	crlf
 tools/Test-YakuV9196FitVisibility.ps1	crlf
 tools/Test-YakuV9197WidthTargets.ps1	crlf
 tools/Test-YakuV9198CatMaskNotice.ps1	crlf
+tools/Test-YakuV9199PaletteHandoff.ps1	crlf
 tools/V64-HTTP-Boundary-Test.ps1	crlf
 tools/V65-Saving-Validation-Test.ps1	crlf
 tools/Wait-YakuCopilotResponse-Watcher-Test.ps1	crlf

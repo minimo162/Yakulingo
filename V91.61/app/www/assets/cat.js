@@ -15,6 +15,11 @@
       if (tourMeta) tourMeta.setAttribute('content', '1');
     }
   } catch (_) {}
+  /* パレット(/palette)の昇格(「CATで開く」)が使う、移動の直前だけの
+     sessionStorage退避キー。quick.js の draftStorageKey と同じ流儀
+     （作業や翻訳メモリには保存せず、読まれれば消える）。palette.js と
+     同じ文字列を持つ。 */
+  var paletteHandoffStorageKey = 'yaku.palette.handoff';
   var ready = false, busy = false, project = null, pendingDirection = null, uploaded = null, directFilePath = '';
   var dirty = new Map(), saveChain = Promise.resolve(), jobTimer = null, jobContext = null, candidateSeq = 0;
   var deleteTarget = null, preflightScope = null, jobSerial = 0, viewEpoch = 0, outputScope = null;
@@ -4661,12 +4666,37 @@
       }
       var text = String(detail.text || '');
       if (!text.trim()) return;
+      /* パレットからの昇格は、明示に選んだ方向を運んでくることがある
+         （quick.js の貼り付け欄からの受け口はここを渡さないので常に auto）。
+         to_en/to_jp 以外は auto のまま——方向は確認画面で選び直せる。 */
+      var handoffDirection = detail.direction === 'to_en' || detail.direction === 'to_jp' ? detail.direction : 'auto';
       /* 先に選ぶ画面へ戻してから始める。訳す向きを聞き返されたときの二択は
          選ぶ画面の中に居るので、隠したままだと行き止まりになる。 */
       showPicker();
       el('quick-input').value = text;
-      openSource('text', 'auto');
+      openSource('text', handoffDirection);
     });
+  }
+
+  /* パレット(/palette)の昇格を、起動時に一度だけ受け取る。sessionStorage は
+     読んだ瞬間に消す（読み捨て。ブラウザの戻る・再読み込みで二重に発火
+     しない）。既存の yaku-instant-handoff 受け口へそのまま渡すだけで、
+     その処理（showPicker/openSourceの配線）は複製しない。
+     キー欠落・本文空・JSON壊れのいずれも、何もせず通常起動に落ちる。 */
+  function consumePaletteHandoff() {
+    var raw = '';
+    try {
+      raw = window.sessionStorage.getItem(paletteHandoffStorageKey) || '';
+      window.sessionStorage.removeItem(paletteHandoffStorageKey);
+    } catch (error) { return false; }
+    if (!raw) return false;
+    var payload = null;
+    try { payload = JSON.parse(raw); } catch (error) { return false; }
+    var text = payload && typeof payload.text === 'string' ? payload.text : '';
+    if (!text.trim()) return false;
+    var directionIntent = payload && payload.direction_intent;
+    window.dispatchEvent(new CustomEvent('yaku-instant-handoff', { detail: { text: text, direction: directionIntent } }));
+    return true;
   }
   function start() {
     YakuCommon.start(); YakuCommon.onReady(function (value) { ready = value; setBusy(busy); }); bind(); bindInstant(); loadRecent();
@@ -4680,6 +4710,10 @@
       resume(wanted).then(function () { if (autoTranslate) translateWhenReady(); });
       return;
     }
+    /* パレット(/palette)の「CATで開く」から来たとき(?handoff=palette)。
+       consumePaletteHandoff が読み捨てと既存受け口への引き渡しを済ませる。
+       何かを渡せたら、そこから先(showPicker等)はその受け口の中で完結する。 */
+    if (params.get('handoff') === 'palette' && consumePaletteHandoff()) return;
     showPicker();
     /* ?import=1 で開いたときは、過去の対訳の取り込み欄をそのまま出す。
        この画面だけ WebAssembly が使える（PDF の解析に要る）。 */
