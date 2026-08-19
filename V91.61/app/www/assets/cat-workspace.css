@@ -264,6 +264,7 @@ body[data-cat-view="workspace"] #cat-help-links { display: none; }
    空いていた（2026-08-13 実測）。幅に関係なく、空なら場所を取らない。 */
 .app-cat #cat-status:empty,
 .app-cat #cat-export-blocked:empty,
+.app-cat #cat-mask-notice:empty,
 .app-cat #cat-job:empty { display: none; min-height: 0; margin: 0; }
 
 /* 確認作業に入ったら、始めるための入口は出さない。次の資料を始める入口は
@@ -1146,6 +1147,16 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 .cat-text-output-note:empty { display: none; }
 
 .cat-export-blocked {
+  min-height: 1.4em;
+  margin: 7px 0;
+  color: var(--muted);
+  font-size: var(--font-meta);
+}
+
+/* マスク件数見える化(2026-08-18): テキスト/パレット経路にある安全の見える化
+   (New-YakuMaskingNoticeHtml)をCATへも横展開する。件数の欄なので同じ流儀で
+   目立たせすぎない。空のあいだは場所を取らない(下の :empty 規則)。 */
+.cat-mask-notice {
   min-height: 1.4em;
   margin: 7px 0;
   color: var(--muted);

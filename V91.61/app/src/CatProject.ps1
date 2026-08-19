@@ -4370,6 +4370,14 @@ function Protect-YakuCatItems {
         $item | Add-Member -NotePropertyName NumericMaskMap -NotePropertyValue $maskResult.Map -Force
         $item | Add-Member -NotePropertyName MaskedText -NotePropertyValue ([string]$maskResult.Text) -Force
         $item | Add-Member -NotePropertyName ProtectionContractVersion -NotePropertyValue 'cat-protection-v1' -Force
+        # 件数だけを持たせる。呼び出し側（ジョブ）はこれを合算して画面へ渡す。
+        # 対応表(NumericMaskMap)そのものは結果オブジェクトへ載せない
+        # （Translation.ps1:2106-2107 の設計判断。マスク件数見える化 2026-08-18）。
+        # KeptCount は運ばない: ここは -AllowExistingTokens を付けずに呼んで
+        # いるため、New-YakuNumericMaskMap の Kept は構造上つねに0になる
+        # （Translation.ps1:952-959,990）。常に0の値を5ファイルへ通す方が
+        # 誤読を招く（CoD審査 2026-08-19 REWORK-1 LOW-3）。
+        $item | Add-Member -NotePropertyName MaskedCount -NotePropertyValue ([int]$maskResult.MaskedCount) -Force
         $item.Text = [string]$maskResult.Text
         if ([int]$maskResult.MaskedCount -gt 0) { $maskedItems++ }
     }
