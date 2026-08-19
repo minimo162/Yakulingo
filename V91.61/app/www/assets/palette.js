@@ -135,6 +135,10 @@
     for (var j = 0; j < stale.length; j++) stale[j].removeAttribute('data-yaku-candidate-index');
     found.forEach(function (candidate, index) { candidate.node.setAttribute('data-yaku-candidate-index', String(index + 1)); });
     candidates = found;
+    // 学習（用語登録先行）。候補ごとに「覚える」を1つ添える。既に付いていれば
+    // 何もしない(冪等)——finishJob/swapAltIntoMainのたびに何度も通る関数なので、
+    // 押した直後の disabled/文言をここで巻き戻してはならない。
+    found.forEach(function (candidate) { ensureLearnButtonFor(candidate); });
     updateHintTarget();
   }
 
@@ -306,9 +310,165 @@
     revealMainResult();
   }
 
+  /* --- 学習（用語登録先行）------------------------------------------------
+     パレットで得た訳を1クリックで個人用語集へ登録する。構想図の「学習」の
+     前半（TMへの登録は素性設計が要るため後続に分離、スコープ外）。
+
+     480x640では主札の下端と帯の間の余白が実測24px前後しかない(CoD審査)。
+     新しい行を1つ増やすだけで候補1(主札)が帯の裏へ沈むので、TM・主訳の
+     釦は既存の行の中(または絶対配置で高さに寄与しない場所)に収め、
+     新しい行を増やさない。添え候補(候補2以降)は画面内に収まる保証の対象
+     外なので、そこだけ新しい行を許す。 */
+
+  function looksLikeSentence(text) {
+    // 「文」に見えるかの判定。しきい値40字と句点[。．]は、既存の個人用語集
+    // 書き込み(PersonalGlossary.ps1のAdd-YakuPersonalGlossaryEntry、
+    // 40字超または[。．]を含むと弾く)と同じ値を流用した——ここは弾かず
+    // 確認を挟むだけなので、禁止を発明しない(8/17の利用者判断)。改行と
+    // 英語の終止符も対象に加える(源文が英語の場合もあるため)。
+    if (!text) return false;
+    if (/[\r\n]/.test(text)) return true;
+    if (/[。．.!?！？]/.test(text)) return true;
+    return text.length > 40;
+  }
+
+  /* instantの取り直し(renderInstant)はTM候補の<div>を丸ごと作り直す
+     ——ボタンも新品に戻るので、間を置かずに取り直すと「覚えました」の
+     確認表示を利用者が読む前に消してしまう(実測: 実機Chromiumで0ms後に
+     読むと"覚える"のまま)。確認を読めるだけの間を置いてから取り直す。 */
+  var TERM_LEARN_REFRESH_DELAY_MS = 900;
+
+  function sendTermLearn(button, sourceText, targetText) {
+    button.disabled = true;
+    var restoreLabel = '覚える';
+    var seqAtClick = translateSeq;
+    button.textContent = '登録しています…';
+    YakuCommon.post('/api/palette/term-learn', { source: sourceText, target: targetText, direction: lastDirection }).then(function (data) {
+      button.disabled = false;
+      button.textContent = (data && data.status === 'unchanged') ? '登録済みです' : '覚えました';
+      // 即効性の見える化: 即答欄が開いていれば同じ原文でinstantを取り直し、
+      // 登録した用語がその場で反映されることを見せる(学習の魔法の瞬間)。
+      var instantBox = el('palette-instant');
+      if (instantBox && !instantBox.hidden) {
+        window.setTimeout(function () {
+          if (seqAtClick !== translateSeq) return;
+          fireInstant(sourceText, currentDirectionIntent(), translateSeq);
+        }, TERM_LEARN_REFRESH_DELAY_MS);
+      }
+    }).catch(function (error) {
+      button.disabled = false;
+      var message = (error && error.message) || '登録できませんでした。';
+      // 帯にも主札にも属さない小さな釦なので、長い文言をそのまま出すと
+      // 480px幅でカードの外へはみ出す。短く切る(CSSのellipsisは保険)。
+      if (message.length > 12) message = message.substring(0, 12) + '…';
+      button.textContent = message;
+      window.setTimeout(function () {
+        if (!button.disabled && button.textContent === message) button.textContent = restoreLabel;
+      }, 4000);
+    });
+  }
+
+  /* getTarget は候補のテキストをクリックの瞬間に読み直す関数
+     （スナップショットを閉じ込めない）。添え札は入れ替え(swapAltIntoMain)で
+     中身が変わるため、これが無いと入れ替え後も古い訳文を登録してしまう。 */
+  function wireLearnButton(button, getTarget) {
+    button.addEventListener('click', function (event) {
+      // TM候補・添え候補はカード/釦自体がクリックで別の動作(コピー/入れ替え)を
+      // 持つ委譲先(document)の子孫にある。ここで止めないと、覚える釦を押した
+      // つもりが同時にコピーや入れ替えも起きてしまう。
+      event.stopPropagation();
+      if (button.disabled) return;
+      var sourceText = input.value.trim();
+      var targetText = String(getTarget() || '').trim();
+      if (!sourceText || !targetText) return;
+      if (looksLikeSentence(sourceText)) {
+        if (!window.confirm('文章そのものを用語として覚えます。よろしいですか?')) return;
+      }
+      sendTermLearn(button, sourceText, targetText);
+    });
+  }
+
+  function buildLearnButton(extraClass) {
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = extraClass ? ('term-learn-button ' + extraClass) : 'term-learn-button';
+    button.setAttribute('data-yaku-term-learn', '1');
+    button.textContent = '覚える';
+    return button;
+  }
+
+  /* TM候補: is-compactになると.result-actions(種別ラベル+コピー釦)ごと
+     隠れる(既存仕様、480x640で高さを詰めるため)。覚える釦をその中に置くと
+     圧縮直後(貼り付けてすぐ)に押せなくなるので、行に依存しない絶対配置に
+     する(高さを一切増やさない、palette.cssのterm-learn-corner)。 */
+  function ensureTmLearnButton(tmNode) {
+    var button = tmNode.querySelector('[data-yaku-term-learn]');
+    if (button) return button;
+    button = buildLearnButton('term-learn-corner');
+    tmNode.appendChild(button);
+    wireLearnButton(button, function () { return tmNode.getAttribute('data-yaku-candidate-text') || ''; });
+    return button;
+  }
+
+  /* 主訳: .result-actionsはis-compactでも隠れない(main.cssの対象外)ので、
+     既存の行(種別ラベル+コピー釦)の中へ差し込む。コピー釦の見た目の位置
+     (右端)を動かさないよう、コピー釦を覚える釦と同じ小さな器へ包み直す。
+     実測: 480px幅でこの行はkind+copy使用後も約76px余っている。 */
+  function ensureMainLearnButton(mainCard) {
+    var actions = mainCard.querySelector('.result-actions');
+    if (!actions) return null;
+    var existing = actions.querySelector('[data-yaku-term-learn]');
+    if (existing) return existing;
+    var button = buildLearnButton('');
+    var copyButton = actions.querySelector('[data-yaku-copy-b64]');
+    if (copyButton && copyButton.parentNode === actions) {
+      var group = document.createElement('span');
+      group.className = 'term-learn-group';
+      actions.insertBefore(group, copyButton);
+      group.appendChild(copyButton);
+      group.appendChild(button);
+    } else {
+      actions.appendChild(button);
+    }
+    wireLearnButton(button, function () { return mainCardText(mainCard); });
+    return button;
+  }
+
+  /* 添え候補: 候補1(主札)ではないので、画面内に収まる保証(幾何ゲート)の対象
+     外——ここだけ新しい行を増やしてよい。添え札そのものが<button>なので、
+     中へ入れ子の<button>を作らない(button-in-buttonはHTML的に不正で、
+     クリックの奪い合いにもなる)。代わりに器で包み、覚える釦を兄弟にする。 */
+  function ensureAltLearnButton(altNode) {
+    var shell = altNode.parentNode;
+    if (!shell || !shell.classList || !shell.classList.contains('result-alt-shell')) {
+      shell = document.createElement('div');
+      shell.className = 'result-alt-shell';
+      altNode.parentNode.insertBefore(shell, altNode);
+      shell.appendChild(altNode);
+    }
+    var button = shell.querySelector('[data-yaku-term-learn]');
+    if (button) return button;
+    button = buildLearnButton('');
+    shell.appendChild(button);
+    wireLearnButton(button, function () { return decodeAltText(altNode); });
+    return button;
+  }
+
+  function ensureLearnButtonFor(candidate) {
+    var node = candidate.node;
+    if (node.id === 'palette-tm-candidate') { ensureTmLearnButton(node); return; }
+    if (node.hasAttribute && node.hasAttribute('data-yaku-main-card')) { ensureMainLearnButton(node); return; }
+    if (node.classList && node.classList.contains('result-alt')) { ensureAltLearnButton(node); return; }
+  }
+
   /* --- 即答（TM完全一致・個人用語集）------------------------------------ */
 
   function renderInstant(data) {
+    // 「覚える」が/api/palette/term-learnへ送るdirectionは、ジョブ完了時だけ
+    // (finishJob)ではなく、即答のみの段階でも要る——TM候補は貼り付け直後の
+    // 数秒しかresult-actionsが縮まない(is-compact)前の姿でいないので、その間に
+    // 押されても正しい方向で登録できるよう、ここでも同じ変数を更新する。
+    if (data && data.direction) { lastDirection = String(data.direction); }
     var box = el('palette-instant');
     box.innerHTML = '';
     var hasTm = !!(data && data.tm && data.tm.target);

@@ -2661,6 +2661,73 @@ function Invoke-YakuRoute {
         }
         return
     }
+    if ($method -eq 'POST' -and $path -eq '/api/palette/term-learn') {
+        # 学習（用語登録先行）。パレットで得た訳を1クリックで個人用語集へ足す。
+        # プロジェクト非依存の Add-YakuTerminologyEntry(personal scope)を直接
+        # 呼ぶ——term-add(3418行)はCATプロジェクト必須の/api/cat/配下にあり、
+        # 中身は project 非依存でもパレットからは呼べない。検証の値(80字・
+        # 改行不可)は term-add(3425行)とそのまま揃える(独自の上限は作らない)。
+        try {
+            $payload = Read-YakuRequestJson -Request $req -MaxBytes 8192
+            $sourceTerm = ([string]$payload['source']).Trim()
+            $targetTerm = ([string]$payload['target']).Trim()
+            if ([string]::IsNullOrWhiteSpace($sourceTerm) -or [string]::IsNullOrWhiteSpace($targetTerm)) {
+                throw 'PALETTE_TERM_EMPTY: 原文と訳文の両方がないと覚えられません。'
+            }
+            if ($sourceTerm.Length -gt 80 -or $targetTerm.Length -gt 80 -or $sourceTerm -match "[`r`n]" -or $targetTerm -match "[`r`n]") {
+                throw 'PALETTE_TERM_TOO_LONG: 用語は改行を含まない80文字以内で登録してください。'
+            }
+            $direction = ''
+            if (@('to_en','to_jp') -contains [string]$payload['direction']) { $direction = [string]$payload['direction'] }
+            if ($direction -ne 'to_en' -and $direction -ne 'to_jp') {
+                # クライアントが方向を送れなかった/壊れていたときだけ、ここで
+                # 判定し直す(/api/palette/instantと同じ関数・同じ非確認の流儀。
+                # 用語登録は間違えると逆方向に登録される実害があるが、それでも
+                # ここを409で止めるとワンクリックの体験が壊れるので、見込みの
+                # 方向のまま進める——押し直しは分かればすぐできる)。
+                $decision = Resolve-YakuDirectionDecision -Text $sourceTerm
+                $direction = $(if ([bool]$decision.RequiresConfirmation) { [string]$decision.SuggestedDirection } else { [string]$decision.Resolved })
+                if ($direction -ne 'to_en' -and $direction -ne 'to_jp') { $direction = 'to_en' }
+            }
+            # 出典(origin_*)はCATセルに紐づかないので、パレット専用の固定値で
+            # 埋める。New-YakuTerminologyEntry は project_id/segment_id に
+            # 32桁16進を要求する(Terminology.ps1:140/144)ので、実在プロジェクトを
+            # 装わない固定ハッシュへ逃がす——原文ハッシュをsegment_idに使うのは、
+            # TMの回帰試験(Test-YakuV9195Palette.ps1:273)が同じ手口で
+            # segment_idを作っているのと同じ考え方。
+            $originProjectId = (Get-YakuTerminologyHash -Text 'yaku-palette-term-learn').Substring(0, 32)
+            $originSegmentId = (Get-YakuTerminologyHash -Text $sourceTerm).Substring(0, 32)
+            $termParams = @{
+                Scope='personal'; Kind='occurrence'
+                # advisory: term-add(3439行)は project/personal を問わず
+                # Enforcement=required固定だが、personal scopeのoccurrenceは
+                # Test-YakuTerminologyCompliance(Terminology.ps1:486-487)が
+                # プロジェクトを問わず全件見るため、requiredにすると「パレットで
+                # 覚えた」だけで無関係な別資料のCATがterminology-missing=error
+                # (Terminology.ps1:552)で止まる。これは用語の適用ロジックの
+                # 変更(スコープ外)にあたるので避け、パレットの即答照合で実績の
+                # あるadvisory(Test-YakuV9195Palette.ps1:278)を使う。
+                Enforcement='advisory'
+                Origin='palette-term-learn'
+                OriginProjectId=$originProjectId; OriginFileName='貼り付け資料'
+                OriginSegmentId=$originSegmentId; OriginLocation='パレット（お手軽翻訳）'
+                OriginRevision=0
+            }
+            if ($direction -eq 'to_en') {
+                $termParams.JapanesePreferred=$sourceTerm; $termParams.EnglishPreferred=$targetTerm
+            } else {
+                $termParams.EnglishPreferred=$sourceTerm; $termParams.JapanesePreferred=$targetTerm
+            }
+            $added = Add-YakuTerminologyEntry @termParams
+            $status = if ([bool]$added.Added) { 'added' } else { 'unchanged' }
+            $message = if ($status -eq 'added') { '覚えました。次から同じ訳が出ます。' } else { 'すでに同じ内容で登録されています。' }
+            $response = [ordered]@{ ok=$true; status=$status; message=$message; term_id=[string]$added.Entry.term_id }
+            Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+        } catch {
+            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$false; error=(Convert-YakuExceptionToUserMessage $_) } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
+        }
+        return
+    }
     # ---------------------------------------------------------------------
     # V91.61 参考資料コーパス（管理者用）。
     # $script:YakuAdminMode が偽のときは、この塊ごと素通りする。
