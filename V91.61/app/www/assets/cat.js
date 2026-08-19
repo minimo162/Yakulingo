@@ -1246,6 +1246,23 @@
     /* 翻訳中に絞り込みを変えると行が作り直される。編集不可の状態を引き継ぐ。 */
     if (busy) body.querySelectorAll('textarea[data-cat-input], input.revise-input').forEach(function (input) { input.readOnly = true; });
     body.querySelectorAll('textarea[data-cat-input]').forEach(autoGrow);
+    /* 絞り込み・行を開く操作は busy 中も生きており、renderRows() を再度
+       走らせる（訳文欄クリック→focusin→activateIndex、絞り込みボタンは
+       setBusyでもdisabled=false のまま）。そのたびに先出しの書き込みが
+       消えてしまう（renderRows由来の再構築はcheckpointへ届いていない
+       DOMを作り直すだけで、jobContext.partialRowsの累積自体は失われて
+       いない）。同じガード（source一致・訳文欄が空）で再適用し、
+       カーソルが進んでいるぶんも取りこぼさず埋め直す（冪等）
+       （CoD審査 REWORK-1 MINOR-2）。
+       renderRows()自体は毎tickでは呼ばれない（設計判断4は不変）ので、
+       これは全面再描画からの回復であって、tickからの呼び出しではない。 */
+    if (jobContext && Array.isArray(jobContext.partialRows)) {
+      /* deferGrow=true で書き込みだけ先に済ませ、autoGrow(強制同期レイアウト)は
+         最後に一括で回す(CoD審査REWORK-3 MINOR-D)。forEach(applyPartialPreviewRow)
+         と直接渡すと第2引数の配列位置が deferGrow に化けるため、明示的に包む。 */
+      jobContext.partialRows.forEach(function (partialRow) { applyPartialPreviewRow(partialRow, true); });
+      body.querySelectorAll('textarea[data-cat-input]').forEach(autoGrow);
+    }
     el('cat-candidates').hidden = false;
     if (current) candidates(Number(current.index)); else { el('cat-candidate-count').textContent = '0'; el('cat-candidates-list').innerHTML = '<p class="muted">行がありません。左の「すべて」を押すと、全部の行が表示されます。</p>'; }
   }
@@ -1443,8 +1460,65 @@
 
   function startJobHtml(html, context) {
     el('cat-job').innerHTML = html; var node = el('cat-job').querySelector('[data-yaku-job-id]'); if (!node) throw new Error('翻訳を始められませんでした。1分ほど待ってから、もう一度お試しください。');
-    context = context || {}; context.token = ++jobSerial; context.startedAt = Date.now(); jobContext = context;
+    context = context || {}; context.token = ++jobSerial; context.startedAt = Date.now();
+    /* 部分結果先出し。受け取った checkpoint 行を、差分カーソルの分母として
+       ここへ積む(サーバの partial_rows は毎回「N件目以降」だけを返す)。
+       プロジェクト状態は変えない・表示のみ(設計判断1・2)。 */
+    context.partialRows = [];
+    jobContext = context;
     pollJob(node.getAttribute('data-yaku-job-id'), context.token);
+  }
+  /* 先出しで届いた1行を、いま画面に見えている該当行だけへ書き込む。
+     renderRows() は毎秒の全面再描画になり選択・コピー・スクロールを壊すため
+     呼ばない(設計判断4)。 値のセットだけで input/change は発火させない。 */
+  function applyPartialPreviewRow(row, deferGrow) {
+    var index = Number(row && row.index);
+    /* cancelled/error後にjobContextをnullにしない設計（MINOR-2でrenderRows末尾
+       からの再適用を足したため、同じ資料に留まっている限りは効かせたい）の
+       裏返しとして、資料を切り替えても前の資料のjobContextが生き続ける。
+       finishJob()はcontext.scopeで守っているのに、ここは守っていなかった
+       （CoD審査REWORK-2 MAJOR-A、実機4クリックで再現）。scopeが無いジョブ
+       （align）は先出し行を生まないため無害。 */
+    if (!jobContext || !jobContext.scope || !project || String(project.id || '') !== String(jobContext.scope.id)) return;
+    if (!project || !Array.isArray(project.segments) || !isFinite(index)) return;
+    var rowEl = document.querySelector('[data-cat-row="' + index + '"]');
+    if (!rowEl) return;
+    /* segments[i].index === i（CatProject.ps1:3786、ConvertTo-YakuCatProjectJson の
+       index = $i）が正本の並びなので、毎回 find() で線形探索しない（CoD審査
+       REWORK-2 NIT-B。なお600行の実測では find は3.6msで、遅さの主因は
+       autoGrow の強制同期レイアウトだった — REWORK-3 MINOR-D を参照）。
+       並びがずれていた場合に備え、直取りした要素の.indexが一致するかだけは確認する。 */
+    var segment = project.segments[index];
+    if (!segment || Number(segment.index) !== index || String(segment.source || '') !== String(row.source || '')) return;
+    var input = rowEl.querySelector('textarea[data-cat-input="' + index + '"]');
+    // NIT-C: text=''の先出し行(正本では到達しないはずだが、renderRows由来の
+    // リプレイ対象になった以上は防御する）は、空の訳文欄へバッジだけ付けて
+    // しまわないよう、ここで弾く。
+    if (!input || String(input.value || '').trim() !== '' || !String(row.text || '').trim()) return;
+    input.value = String(row.text || '');
+    /* autoGrow は scrollHeight と getComputedStyle を読む＝強制同期レイアウト。
+       renderRows() 末尾のリプレイで1行ごとに読み書きを交互にやると、600行資料の
+       再描画1回が 556ms→2344ms に膨らんだ(CoD審査REWORK-3 MINOR-D の実測)。
+       リプレイ側は deferGrow=true で書き込みだけ先に済ませ、autoGrow は呼び出し元が
+       最後に一括で回す(703msまで戻る)。pollJob からの1行ずつの経路は従来どおり。 */
+    if (!deferGrow) autoGrow(input);
+    rowEl.classList.add('cat-partial-preview');
+    if (!rowEl.querySelector('.cat-partial-badge')) {
+      /* 場所は cat-col-loc/cat-col-no ではなく訳文欄側に置く。行番号・場所の列は
+         実測で既に幅が詰まっており（CLAUDE.md「点検で気になる点」119px事例）、
+         テキストの印を足すと折り返す危険がある。訳文欄は textarea の下に
+         流れるだけの余白がある。 */
+      var targetCell = rowEl.querySelector('.cat-target');
+      if (targetCell) targetCell.insertAdjacentHTML('beforeend', '<span class="cat-partial-badge" title="Copilotから先に届いた訳文です。翻訳が全部終わると確定します。">先出し</span>');
+    }
+  }
+  function applyPartialPreview(data) {
+    var incoming = Array.isArray(data && data.partial_rows) ? data.partial_rows : [];
+    if (!incoming.length || !jobContext || !Array.isArray(jobContext.partialRows)) return;
+    for (var i = 0; i < incoming.length; i++) {
+      jobContext.partialRows.push(incoming[i]);
+      applyPartialPreviewRow(incoming[i]);
+    }
   }
   function elapsedLabel(startedAt) {
     var seconds = Math.max(0, Math.round((Date.now() - Number(startedAt || Date.now())) / 1000));
@@ -1457,11 +1531,18 @@
   function jobHtml(id, data, startedAt) {
     var percent = Math.max(0, Math.min(100, Math.round(Number(data.progress) || 0)));
     var detail = String(data.detail || '');
+    /* 先出しの分母(partial_expected_total)が有るCAT翻訳ジョブでだけ、
+       「訳了 n/N 行(先出し)」を1行足す。n はサーバの累積値(partial_total)を
+       そのまま使う(自前集計と食い違わせない)。 */
+    var partialExpectedTotal = Number(data.partial_expected_total) || 0;
+    var partialLine = partialExpectedTotal > 0
+      ? ('<br><span class="job-partial-progress">訳了 ' + (Number(data.partial_total) || 0) + '/' + partialExpectedTotal + ' 行(先出し)</span>')
+      : '';
     return '<div class="job-loading"><div class="job-loading-inner">' +
       '<div class="job-topline"><div class="job-phase">' + esc(data.label || data.phase || '翻訳しています') + '</div><div class="job-percent">' + percent + '%</div></div>' +
       '<div class="job-progress-line" role="progressbar" aria-label="翻訳の進み具合" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + percent + '"><span class="job-progress-bar" style="width:' + percent + '%"></span></div>' +
       '<div class="job-bottomline"><div class="job-meta">' + (detail ? esc(detail) : 'Copilotの返事を待っています。') +
-      '<br><span class="job-elapsed">' + esc(elapsedLabel(startedAt)) + '</span></div>' +
+      '<br><span class="job-elapsed">' + esc(elapsedLabel(startedAt)) + '</span>' + partialLine + '</div>' +
       '<button type="button" class="secondary-button job-cancel" data-yaku-cancel-job="' + esc(id) + '">翻訳をやめる</button></div>' +
       '</div></div>';
   }
@@ -1477,8 +1558,14 @@
     window.clearTimeout(jobTimer);
     failureCount = Number(failureCount || 0);
     var startedAt = jobContext && jobContext.startedAt;
-    YakuCommon.json('/api/jobs/' + encodeURIComponent(id)).then(function (data) {
+    /* 差分カーソル。次に欲しいのは自前累積の後ろから(=既に受け取った件数)。
+       cancelled/error/done の最後の1回も同じ形で取り、キャンセル・失敗時に
+       画面へ残す分を取りこぼさない(設計判断5)。 */
+    var partialAfter = (jobContext && Array.isArray(jobContext.partialRows)) ? jobContext.partialRows.length : 0;
+    var partialQuery = partialAfter > 0 ? ('?partial_after=' + partialAfter) : '';
+    YakuCommon.json('/api/jobs/' + encodeURIComponent(id) + partialQuery).then(function (data) {
       if (!jobContext || jobContext.token !== token) return;
+      applyPartialPreview(data);
       el('cat-job').innerHTML = jobHtml(id, data, startedAt);
       if (['done','completed_with_warnings'].indexOf(data.mode) >= 0) {
         /* apply後の応答（プロジェクトのJSON）にはマスク件数が無い。消える前の

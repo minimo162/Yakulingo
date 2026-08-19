@@ -982,6 +982,12 @@ function Start-YakuTranslationJob {
         build_id = $script:YakuBuildId
         session_token = $script:YakuSessionToken
         project_id = $jobProjectId
+        # 部分結果先出し。累積は常にこのキーへ配列を丸ごと差し替える形でのみ
+        # 書く（読み手はHTTP1本、in-place追記で半端な配列を見せない）。
+        # translate モード以外のCATジョブ・cat以外のKindでは空のまま。
+        partial_rows = @()
+        partial_total = 0
+        partial_expected_total = 0
     })
     $settingsJson = $Settings | ConvertTo-Json -Depth 20 -Compress
     $root = [string]$script:YakuRoot
@@ -1185,6 +1191,10 @@ function Start-YakuTranslationJob {
                     # の註を参照）。
                     $items = New-Object System.Collections.Generic.List[object]
                     foreach ($dedupedEntry in @(ConvertTo-YakuCatDedupedItems -RawItems @($cat.items))) { [void]$items.Add($dedupedEntry) }
+                    # 部分結果先出しの分母。cat.items は重複排除前、1行=1セグメントの
+                    # 生の依頼件数（Server.ps1のtranslateルートが segs を1件ずつ積んだもの）
+                    # なので、checkpoint行（展開後・1行=1セグメント）の総数とそのまま揃う。
+                    $JobState['partial_expected_total'] = @($cat.items).Count
                     # 幅を知って最初から訳す。目標が1件以上あるときだけ、翻訳開始時の
                     # 進捗detailへ1行添える（利用者の判断で設定・ボタンは増やさない）。
                     # **畳んだ後**の行数を数える。複製の1つでも無指定なら
@@ -1205,6 +1215,10 @@ function Start-YakuTranslationJob {
                         $checkpointRows = @(ConvertTo-YakuCatCheckpointRows -Items @($completedItems) -Translations $completedMap -Warnings $catWarnings -Direction ([string]$cat.direction))
                         if ($checkpointRows.Count -gt 0) {
                             $null = Save-YakuCatBatchCheckpoint -ProjectId $checkpointProjectId -ProjectRevision $checkpointProjectRevision -Translations $checkpointRows
+                            # 部分結果先出し。累積の作り方は CatProject.ps1 側の関数に
+                            # 切り出してある（ジョブの scriptblock からは試験が届かない。
+                            # ConvertTo-YakuCatDedupedItems と同じ理由）。
+                            Add-YakuCatPartialPreviewRows -JobState $JobState -CheckpointRows $checkpointRows
                         }
                     }.GetNewClosure()
                     # 文例は自動では引かない。引くかどうかは利用者が別のボタンで決める
@@ -1495,7 +1509,12 @@ function Convert-YakuResultJsonToHtml {
 }
 
 function Convert-YakuTranslationJobResultJson {
-    param([Parameter(Mandatory=$true)]$State)
+    param(
+        [Parameter(Mandatory=$true)]$State,
+        # 部分結果先出しの差分カーソル。累積 rows の何件目以降を返すか。
+        # 不正・既定値(0)は「先頭から全部」。負値も0扱いにする。
+        [int]$PartialAfter = 0
+    )
     Update-YakuTranslationJobs
     $mode = [string]$State['mode']
     $progress = 0
@@ -1517,6 +1536,19 @@ function Convert-YakuTranslationJobResultJson {
     # 2026-08-18）。#63のパレット拡張と同じやり方で、既にある戻り値へ
     # 足すだけにする。対応表(Map)は運ばない。件数だけ。
     $catMaskedCount = 0
+    # 部分結果先出し。terminal 判定([mode]分岐)の外で $State から直接読む
+    # （途中も終了後も同じ形で返す。キャンセル・失敗時も画面に残す設計のため
+    # ここを terminal 分岐の内側へは置かない）。cat の translate モード以外は
+    # 既定の 0 / 空配列のまま（Start-YakuTranslationJob の初期値）。
+    $partialTotal = 0
+    try { $partialTotal = [int]$State['partial_total'] } catch { $partialTotal = 0 }
+    $partialExpectedTotal = 0
+    try { $partialExpectedTotal = [int]$State['partial_expected_total'] } catch { $partialExpectedTotal = 0 }
+    $partialRowsAll = @()
+    try { if ($null -ne $State['partial_rows']) { $partialRowsAll = @($State['partial_rows']) } } catch { $partialRowsAll = @() }
+    $partialAfterClamped = [Math]::Max(0, $PartialAfter)
+    $partialRowsSlice = @()
+    if ($partialAfterClamped -lt $partialRowsAll.Count) { $partialRowsSlice = @($partialRowsAll[$partialAfterClamped..($partialRowsAll.Count - 1)]) }
     if ($mode -eq 'cancelled') {
         $html = New-YakuAlertHtml -Kind warning -Message '翻訳をキャンセルしました。'
     } elseif ($mode -in @('done','completed_with_warnings','error','failed','interrupted')) {
@@ -1625,6 +1657,9 @@ function Convert-YakuTranslationJobResultJson {
         masked_translation = $paletteMaskedTranslation
         style = $paletteStyle
         masked_count = $catMaskedCount
+        partial_total = $partialTotal
+        partial_expected_total = $partialExpectedTotal
+        partial_rows = $partialRowsSlice
     } | ConvertTo-Json -Depth 40 -Compress)
 }
 
@@ -2439,7 +2474,30 @@ function Invoke-YakuRoute {
             Send-YakuTextResponse -Context $Context -Text ([ordered]@{ mode='error'; error_code='JOB_NOT_FOUND'; detail=(Get-YakuTranslationJobMissingMessage -JobId $jobId) } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 404
             return
         }
-        Send-YakuTextResponse -Context $Context -Text (Convert-YakuTranslationJobResultJson -State $script:YakuTranslateJobs[$jobId]) -ContentType 'application/json; charset=utf-8'
+        # 部分結果先出しの差分カーソル。$path は AbsolutePath（クエリを含まない）
+        # なので、上のルート一致は query string の有無に左右されない。
+        # 値は RawUrl から自前で読む（Get-YakuQueryValue、日本語CP932化けと
+        # 同じ理由。ここは数字しか受けないが同じ流儀に揃える）。
+        # [int]直接castはInt32の桁を超える数字列(例: 99999999999999)で例外を
+        # 投げ、catchで0へ落ちる。0は「先頭から全部」の意味なので、範囲外の
+        # つもりが逆に全件返ってしまう(CoD審査 REWORK-1 NIT-8)。Int64で
+        # 受けてからInt32の範囲へ丸める。Int64の桁も超える文字列は
+        # TryParseそのものを避け、長さで「十分大きい」と判定する。
+        $partialAfter = 0
+        try {
+            $partialAfterRaw = [string](Get-YakuQueryValue -Request $req -Name 'partial_after')
+            if ($partialAfterRaw -match '^[0-9]+$') {
+                if ($partialAfterRaw.Length -gt 15) {
+                    $partialAfter = [int]::MaxValue
+                } else {
+                    $partialAfterInt64 = [int64]0
+                    if ([int64]::TryParse($partialAfterRaw, [ref]$partialAfterInt64)) {
+                        $partialAfter = [int][Math]::Min($partialAfterInt64, [int64]([int]::MaxValue))
+                    }
+                }
+            }
+        } catch { $partialAfter = 0 }
+        Send-YakuTextResponse -Context $Context -Text (Convert-YakuTranslationJobResultJson -State $script:YakuTranslateJobs[$jobId] -PartialAfter $partialAfter) -ContentType 'application/json; charset=utf-8'
         return
     }
     if ($method -eq 'POST' -and $path -eq '/api/cancel-translation') {
