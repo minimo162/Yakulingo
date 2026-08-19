@@ -253,10 +253,10 @@
   function copyCandidate(candidate, displayIndex) {
     if (!candidate || !candidate.text) return;
     YakuCommon.copyText(candidate.text).then(function (ok) {
-      var status = el('palette-copy-status');
-      status.textContent = ok
-        ? ('候補' + displayIndex + 'をコピーしました。')
-        : 'コピーできませんでした。もう一度お試しください。';
+      setCopyStatusLine(
+        ok ? ('候補' + displayIndex + 'をコピーしました。') : 'コピーできませんでした。もう一度お試しください。',
+        ok ? 'success' : 'error'
+      );
     });
   }
 
@@ -362,12 +362,40 @@
      「登録しています…」「覚えました」のような長い文言は候補本文へ
      56px/24pxもはみ出して重なった、実測)。詳細な文言(重複の案内・
      サーバのエラー本文)は、候補の近くではなく帯の共有行
-     (#palette-copy-status、コピー結果と同じ場所)へ出す(MINOR-B)。 */
-  function setTermLearnStatusLine(text) {
+     (#palette-copy-status、コピー結果と同じ場所)へ出す(MINOR-B)。
+
+     色はkindで決める(CoD審査 REWORK-2 NEW-3: styles.cssの.cat-save-status.
+     is-errorと同じ流儀——既定は成功色(var(--success))、is-error/is-warning
+     で上書きする)。既存のコピー結果(候補Nをコピーしました/コピーできません
+     でした)もこのヘルパーへ通し、失敗を成功と同じ緑で出していた既存の穴を
+     ついでに塞ぐ。呼ぶたびに前回のkindを必ずクリアする——でないと、衝突の
+     警告(黄)を出した直後に別の候補をコピー(既定は成功色のみを想定した
+     旧実装)しても、黄のままコピー成功の緑へ戻らない。 */
+  function setCopyStatusLine(text, kind) {
     var status = el('palette-copy-status');
-    if (status) status.textContent = text;
+    if (!status) return;
+    status.textContent = text;
+    status.classList.remove('is-error', 'is-warning');
+    if (kind === 'error') status.classList.add('is-error');
+    else if (kind === 'warning') status.classList.add('is-warning');
   }
 
+  /* CoD審査 REWORK-2 NEW-2: 帯(.palette-footer)は#palette-copy-statusを含む
+     ため、文言が入る(または長くなる)と帯自体の高さが伸びる。revealMainResult/
+     revealNodeは「その時点の」帯の高さ(visibleBottomLimit)で移動量を計算する
+     ——学習成功はジョブ完了より後に起きるので、主札は既にその時点の帯の高さで
+     画面内へ寄せ終わっている。そのあとで帯が伸びると、寄せ切ったはずの主札の
+     下端が伸びた帯の裏へ沈む(実測 480x640: 空文字は0.25px・単純な成功文言は
+     5.73px・衝突文言(3行)は29.66pxを帯の裏に隠していた)。
+     文言確定の直後にもう一度revealMainResult()を呼び、伸びた後の帯の高さで
+     寄せ直す(呼んだ時点でどちらの候補が主役かを毎回計算し直すので、
+     TM候補だけ・主訳だけのどちらでも正しく動く)。1行ぶんの高さは
+     .palette-copy-status のmin-height(下記CSS)を1行の実測(24px相当)まで
+     広げて先に確保する(空文字→短文の遷移で帯が伸びる分は、この確保だけで
+     ゼロになる、スクロールをやり直さない)。3行になる衝突文言だけは、
+     再寄せで対応する(確保を3行ぶん常設すると、そのぶんだけ主札の
+     入る余地が常に削れる——実測24.5pxしかない帯より上の余白を、
+     使っていない状態でも54px以上削ることになり、V9195の幾何ゲートを崩す)。 */
   function sendTermLearn(button, sourceText, targetText) {
     button.disabled = true;
     var seqAtClick = translateSeq;
@@ -375,7 +403,10 @@
     YakuCommon.post('/api/palette/term-learn', { source: sourceText, target: targetText, direction: lastDirection }).then(function (data) {
       button.disabled = false;
       button.textContent = '済み';
-      setTermLearnStatusLine((data && data.message) || '覚えました。次から同じ訳が出ます。');
+      var status = (data && data.status) || 'added';
+      var kind = (status === 'conflict-added' || status === 'unchanged-conflict') ? 'warning' : 'success';
+      setCopyStatusLine((data && data.message) || '覚えました。次から同じ訳が出ます。', kind);
+      revealMainResult();
       window.setTimeout(function () {
         if (button.textContent === '済み') button.textContent = '覚える';
       }, TERM_LEARN_RESTORE_DELAY_MS);
@@ -391,7 +422,8 @@
     }).catch(function (error) {
       button.disabled = false;
       button.textContent = 'エラー';
-      setTermLearnStatusLine((error && error.message) || '登録できませんでした。');
+      setCopyStatusLine((error && error.message) || '登録できませんでした。', 'error');
+      revealMainResult();
       window.setTimeout(function () {
         if (button.textContent === 'エラー') button.textContent = '覚える';
       }, TERM_LEARN_RESTORE_DELAY_MS);
@@ -714,7 +746,7 @@
     updateHandoffButton(true);
     candidates = [];
     el('palette-chips').hidden = true;
-    el('palette-copy-status').textContent = '';
+    setCopyStatusLine('', 'success');
     el('palette-instant').hidden = true;
     el('palette-instant').innerHTML = '';
     el('palette-direction').hidden = true;
@@ -775,7 +807,7 @@
     el('palette-instant').hidden = true; el('palette-instant').innerHTML = '';
     el('palette-result').innerHTML = '';
     el('palette-chips').hidden = true;
-    el('palette-copy-status').textContent = '';
+    setCopyStatusLine('', 'success');
     el('palette-direction').hidden = true;
     el('palette-long-notice').hidden = true;
     candidates = [];

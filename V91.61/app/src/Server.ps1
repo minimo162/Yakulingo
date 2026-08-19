@@ -2725,11 +2725,14 @@ function Invoke-YakuRoute {
             $termParams = @{
                 Scope='personal'; Kind='occurrence'
                 # advisory: これが避けるのは terminology-missing=error だけ
-                # ————CATのterm-add/glossary-addアクションはEnforcement=required
-                # 固定で、personal scopeのoccurrenceをrequiredにすると、その語を
-                # 含む行はTest-YakuTerminologyCompliance(Terminology.ps1)の判定で
-                # terminology-missingがerrorになり出力を止める。advisoryはそこを
-                # warningへ留める。
+                # ————CATのterm-addアクション(Kind=occurrence)はEnforcement=
+                # required固定で、personal scopeのoccurrenceをrequiredにすると、
+                # その語を含む行はTest-YakuTerminologyCompliance(Terminology.ps1)
+                # の判定でterminology-missingがerrorになり出力を止める。advisory
+                # はそこをwarningへ留める(REWORK-2 NEW-1で訂正: CATのglossary-add
+                # アクション(Kind=cell_exact)は同じrequired固定ではなく、既に
+                # personal scope+advisoryを使っている。この経路のadvisoryは発明
+                # ではなく、glossary-addにある既存の製品内の先例に倣った)。
                 #
                 # advisoryにしても効かない部分がある(既存の欠陥、ここでは直さ
                 # ない): personal用語集への書き込みは、advisory/requiredを問わず
@@ -2757,9 +2760,16 @@ function Invoke-YakuRoute {
                 $termParams.EnglishPreferred=$sourceTerm; $termParams.JapanesePreferred=$targetTerm
             }
             $added = Add-YakuTerminologyEntry @termParams
-            $status = if (-not [bool]$added.Added) { 'unchanged' } elseif ($existingConflict.Count -gt 0) { 'conflict-added' } else { 'added' }
+            # CoD審査 REWORK-2 NEW-4: 「すでに同じ内容で登録されています」だけを
+            # 返すと、$existingConflictが1件以上ある(別targetのエントリが今も
+            # activeのまま残っている)場合に、勝者が登録順で決まらない事実を
+            # 隠してしまう。$existingConflictはAddより前に、今回のtargetとは
+            # 一致しないエントリだけを集めているので、unchanged側でもそのまま
+            # 使える。
+            $status = if (-not [bool]$added.Added) { if ($existingConflict.Count -gt 0) { 'unchanged-conflict' } else { 'unchanged' } } elseif ($existingConflict.Count -gt 0) { 'conflict-added' } else { 'added' }
             $message = switch ($status) {
                 'unchanged' { 'すでに同じ内容で登録されています。' }
+                'unchanged-conflict' { 'すでに同じ内容で登録されています。ただしこの語には別の訳も登録されており、どちらが即答に出るかは登録の順番では決まりません。古い方は用語一覧から削除してください。' }
                 'conflict-added' { '登録しました。ただしこの語には別の訳がすでに登録されており、どちらが即答に出るかは登録の順番では決まりません。古い方は用語一覧から削除してください。' }
                 default { '覚えました。次から同じ訳が出ます。' }
             }

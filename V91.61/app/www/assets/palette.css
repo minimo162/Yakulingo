@@ -116,7 +116,20 @@ body.app-palette {
 }
 .palette-hint { margin: 2px 0 0; color: var(--faint); font-size: var(--font-meta); }
 .palette-hint kbd { margin: 0 1px; }
-.palette-copy-status { min-height: 1.2em; margin: 0; color: var(--success); font-size: var(--font-meta); }
+/* CoD審査 REWORK-2 NEW-2: min-heightは1行ぶんの実測(480x640、
+   font-size:.88rem相当で23.92px)まで広げる。空文字→1行の文言が入る遷移で
+   帯(.palette-footer)の高さが変わらなくなり、直前にrevealNode/reveal
+   MainResultで寄せた主札が帯の裏へ沈む(実測5.73px)分をこれだけで消す。
+   3行になる衝突文言(登録しました。ただし…)まで常設で確保すると、
+   使っていない状態でも主札の入る余地を54px以上削り、V9195の幾何ゲート
+   (実測24.5pxしかない帯より上の余白)を崩す——3行のケースは
+   palette.jsのsendTermLearnがsetCopyStatusLineの直後にrevealMainResult()を
+   再度呼び、伸びた後の帯の高さで寄せ直すことで対応する(NEW-2)。 */
+.palette-copy-status { min-height: 1.7em; margin: 0; color: var(--success); font-size: var(--font-meta); }
+/* CoD審査 REWORK-2 NEW-3: styles.cssの.cat-save-status.is-errorと同じ流儀。
+   既定(クラス無し)は成功色のまま、is-error/is-warningで上書きする。 */
+.palette-copy-status.is-error { color: var(--error); }
+.palette-copy-status.is-warning { color: var(--warning); }
 
 /* 帯の下に隠れて読めなくなるぶんを常に確保する。scrollIntoView の着地点も
    この分だけ余裕を持たせる（scroll-margin-bottom）。 */

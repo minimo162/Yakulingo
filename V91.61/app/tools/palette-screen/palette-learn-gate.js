@@ -31,6 +31,11 @@ const SLOW_TARGET = 'SLOWTARGET-delayed-response';
 const CONFLICT_TARGET = 'CONFLICTTARGET-another-translation-exists';
 const CONFLICT_MESSAGE = '登録しました。ただしこの語には別の訳がすでに登録されており、どちらが即答に出るかは登録の順番では決まりません。古い方は用語一覧から削除してください。';
 const PLAIN_SUCCESS_MESSAGE = '覚えました。次から同じ訳が出ます。';
+// CoD審査 REWORK-2 NEW-4: 既に同じ内容(=同じsource+target)で登録済みだが、
+// 同じsourceの別targetがまだactiveで残っている場合。「すでに同じ内容で
+// 登録されています」だけでは、勝者が登録順で決まらない事実を隠す。
+const UNCHANGED_CONFLICT_TARGET = 'UNCHANGEDCONFLICTTARGET-rival-still-active';
+const UNCHANGED_CONFLICT_MESSAGE = 'すでに同じ内容で登録されています。ただしこの語には別の訳も登録されており、どちらが即答に出るかは登録の順番では決まりません。古い方は用語一覧から削除してください。';
 
 function b64(text) { return Buffer.from(text, 'utf8').toString('base64'); }
 
@@ -123,6 +128,12 @@ const server = http.createServer(function (req, res) {
           res.end(JSON.stringify({ ok: true, status: 'conflict-added', message: CONFLICT_MESSAGE, term_id: 'cccccccccccccccccccccccccccccc' }));
           return;
         }
+        if (target === UNCHANGED_CONFLICT_TARGET) {
+          // CoD審査 REWORK-2 NEW-4。
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ ok: true, status: 'unchanged-conflict', message: UNCHANGED_CONFLICT_MESSAGE, term_id: 'dddddddddddddddddddddddddddddd' }));
+          return;
+        }
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify({ ok: true, status: 'added', message: PLAIN_SUCCESS_MESSAGE, term_id: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' }));
       };
@@ -209,6 +220,51 @@ function measureGeometry(page) {
     // CoD審査 REWORK-1 MINOR-B: 詳細な文言は釦ではなく帯の共有行
     // (#palette-copy-status)へ出る。
     async function statusLineText() { return page.$eval('#palette-copy-status', function (node) { return node.textContent; }); }
+    // CoD審査 REWORK-2 NEW-3: 色は#palette-copy-statusのクラスで決まる
+    // (is-error/is-warning、既定はvar(--success))。
+    async function statusLineClass() { return page.$eval('#palette-copy-status', function (node) { return node.className; }); }
+    // CoD審査 REWORK-2 NEW-2: 帯(.palette-footer)が文言で伸びても、今
+    // 見えているべき候補(主訳が有れば主訳、無ければTM)の下端が帯の裏へ
+    // 沈んでいないこと。measureGeometryは常にmain/tmの両方を返すので、
+    // ここではどちらが「今の主役」かも一緒に返す(主訳があれば主訳)。
+    // CoD審査 REWORK-2 NOTE-6: MINOR-A(丸1)で直した「圧縮時カードの下端を
+    // 釦がはみ出す/候補本文と重なる」を、今後の文言変更でも機械的に検知
+    // できるようにする。TM候補カードと学習釦、両方の矩形を返す
+    // (呼び出し側でオーバーラップ/はみ出し/重なりを計算する)。
+    async function measureLearnButtonFit() {
+      return page.evaluate(function () {
+        var card = document.getElementById('palette-tm-candidate');
+        var btn = card ? card.querySelector('[data-yaku-term-learn]') : null;
+        var text = card ? card.querySelector('.translation') : null;
+        if (!card || !btn || !text) return null;
+        var cr = card.getBoundingClientRect(), br = btn.getBoundingClientRect(), tr = text.getBoundingClientRect();
+        return {
+          label: btn.textContent,
+          cardTop: cr.top, cardBottom: cr.bottom,
+          btnTop: br.top, btnBottom: br.bottom, btnLeft: br.left, btnRight: br.right,
+          textRight: tr.right,
+          overhang: br.bottom - cr.bottom, // >0なら釦がカードの下端をはみ出す
+          overlap: tr.right - br.left // >0なら候補本文と釦が重なる
+        };
+      });
+    }
+
+    async function measureFooterFit() {
+      return page.evaluate(function () {
+        function rectOf(node) { if (!node) return null; var r = node.getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; }
+        var main = document.querySelector('#palette-result [data-yaku-main-card]');
+        var tm = document.getElementById('palette-tm-candidate');
+        var target = main || tm;
+        var footer = document.querySelector('.palette-footer');
+        if (!target || !footer) return null;
+        var tr = target.getBoundingClientRect();
+        var fr = footer.getBoundingClientRect();
+        return {
+          usedMain: !!main, bottom: tr.bottom, footerTop: fr.top, footerHeight: fr.height,
+          clearance: fr.top - tr.bottom
+        };
+      });
+    }
 
     // ============================================================ シナリオ1
     // TMHIT: 句点を含む「文っぽい」原文。TM候補が即答で出て、即答欄は開く。
@@ -219,6 +275,8 @@ function measureGeometry(page) {
 
     // 幾何: 即答のみの段階でも学習釦が入って崩れていないこと。
     out.geometryAfterInstantWithLearnButton = await measureGeometry(page);
+    // CoD審査 REWORK-2 NEW-2: 帯の共有行が空文字のベースライン(比較の基準)。
+    out.footerFitEmptyStatus = await measureFooterFit();
 
     const beforeTmClick = await copiedSnapshot();
     await page.click('#palette-tm-candidate [data-yaku-term-learn]');
@@ -236,6 +294,8 @@ function measureGeometry(page) {
     out.instantRequestCountRightAfterTmLearn = instantRequests.length;
     out.tmLearnButtonTextAfterSuccess = await page.$eval('#palette-tm-candidate [data-yaku-term-learn]', function (node) { return node.textContent; });
     out.tmLearnStatusLineAfterSuccess = await statusLineText();
+    out.tmLearnStatusClassAfterSuccess = await statusLineClass();
+    out.footerFitAfterTmSuccess = await measureFooterFit();
     await page.waitForTimeout(1000);
     out.instantRequestCountAfterTmLearnDelay = instantRequests.length;
     await resetConfirmCalls();
@@ -262,6 +322,8 @@ function measureGeometry(page) {
     out.instantRequestCountRightAfterMainLearn = instantRequests.length;
     out.mainLearnButtonTextAfterSuccess = await page.$eval('[data-yaku-main-card] [data-yaku-term-learn]', function (node) { return node.textContent; });
     out.mainLearnStatusLineAfterSuccess = await statusLineText();
+    out.mainLearnStatusClassAfterSuccess = await statusLineClass();
+    out.footerFitAfterMainSuccess = await measureFooterFit();
     await page.waitForTimeout(1000);
     out.instantRequestCountAfterMainLearnDelay = instantRequests.length;
     // CoD審査 REWORK-1 MINOR-C: 主訳は次の翻訳までDOMが作り直されない
@@ -289,13 +351,25 @@ function measureGeometry(page) {
 
     // ============================================================ シナリオ4
     // 短い語句(句点なし・40字以下)は確認を挟まない。
+    // ついでにNOTE-6(MINOR-Aの丸1固定): この時点でTM候補は既にis-compact
+    // (実測、ここまでのpollCountAの消化で背景ジョブが1回のpollで終わる)。
+    // 4つの状態(覚える/登録中/済み/エラー)ぶんの釦とカードの矩形を残す。
     await pasteText('TMHIT2 短い語句');
     await page.waitForSelector('#palette-tm-candidate [data-yaku-term-learn]', { timeout: 5000 });
     await resetConfirmCalls();
+    out.buttonFitIdle = await measureLearnButtonFit();
+    learnDelayMs = 200;
+    await page.evaluate(function (slow) {
+      var node = document.getElementById('palette-tm-candidate');
+      if (node) node.setAttribute('data-yaku-candidate-text', slow);
+    }, SLOW_TARGET);
     await page.click('#palette-tm-candidate [data-yaku-term-learn]');
-    await page.waitForTimeout(150);
+    out.buttonFitPending = await measureLearnButtonFit();
     out.confirmCallsForShortSource = await confirmCalls();
+    await page.waitForTimeout(400);
+    out.buttonFitSuccess = await measureLearnButtonFit();
     out.learnRequestCountAfterShortSourceClick = learnRequests.length;
+    learnDelayMs = 0;
     await page.keyboard.press('Escape');
     await page.waitForTimeout(80);
 
@@ -312,12 +386,15 @@ function measureGeometry(page) {
     await page.waitForTimeout(150);
     out.tmLearnButtonTextAfterUnchanged = await page.$eval('#palette-tm-candidate [data-yaku-term-learn]', function (node) { return node.textContent; });
     out.tmLearnStatusLineAfterUnchanged = await statusLineText();
+    out.tmLearnStatusClassAfterUnchanged = await statusLineClass();
     await page.keyboard.press('Escape');
     await page.waitForTimeout(80);
 
     // ============================================================ シナリオ4.6
     // MAJOR-2: 同じ語に別の訳が既にある場合(conflict-added)は、単純な
     // 成功文言(PLAIN_SUCCESS_MESSAGE)を出さず、重複の案内を出す。
+    // NEW-2: この文言は3行に折り返す(実測)——足す前に主札/TM候補が
+    // 帯の裏へ沈んでいないことも測る。
     await pasteText('TMHIT2 衝突の的');
     await page.waitForSelector('#palette-tm-candidate [data-yaku-term-learn]', { timeout: 5000 });
     await page.evaluate(function (conflict) {
@@ -328,6 +405,26 @@ function measureGeometry(page) {
     await page.waitForTimeout(150);
     out.tmLearnButtonTextAfterConflict = await page.$eval('#palette-tm-candidate [data-yaku-term-learn]', function (node) { return node.textContent; });
     out.tmLearnStatusLineAfterConflict = await statusLineText();
+    out.tmLearnStatusClassAfterConflict = await statusLineClass();
+    out.footerFitAfterConflict = await measureFooterFit();
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(80);
+
+    // ============================================================ シナリオ4.65
+    // NEW-4: 同じ内容(unchanged)でも、別targetの既存語がまだactiveなら
+    // status=unchanged-conflictにして、単純な「登録済みです」より詳しい
+    // 案内を出す。
+    await pasteText('TMHIT2 未変更衝突の的');
+    await page.waitForSelector('#palette-tm-candidate [data-yaku-term-learn]', { timeout: 5000 });
+    await page.evaluate(function (uc) {
+      var node = document.getElementById('palette-tm-candidate');
+      if (node) node.setAttribute('data-yaku-candidate-text', uc);
+    }, UNCHANGED_CONFLICT_TARGET);
+    await page.click('#palette-tm-candidate [data-yaku-term-learn]');
+    await page.waitForTimeout(150);
+    out.tmLearnButtonTextAfterUnchangedConflict = await page.$eval('#palette-tm-candidate [data-yaku-term-learn]', function (node) { return node.textContent; });
+    out.tmLearnStatusLineAfterUnchangedConflict = await statusLineText();
+    out.tmLearnStatusClassAfterUnchangedConflict = await statusLineClass();
     await page.keyboard.press('Escape');
     await page.waitForTimeout(80);
 
@@ -410,6 +507,8 @@ function measureGeometry(page) {
     await page.waitForTimeout(200);
     out.tmLearnButtonTextAfterFailure = await page.$eval('#palette-tm-candidate [data-yaku-term-learn]', function (node) { return node.textContent; });
     out.tmLearnStatusLineAfterFailure = await statusLineText();
+    out.tmLearnStatusClassAfterFailure = await statusLineClass();
+    out.buttonFitError = await measureLearnButtonFit();
     out.tmLearnButtonDisabledAfterFailure = await page.$eval('#palette-tm-candidate [data-yaku-term-learn]', function (node) { return node.disabled; });
     await page.waitForTimeout(4000);
     out.tmLearnButtonTextAfterFailureRestore = await page.$eval('#palette-tm-candidate [data-yaku-term-learn]', function (node) { return node.textContent; });
