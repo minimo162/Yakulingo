@@ -213,6 +213,12 @@
     if (raw === 'CAT_PUBLICATION_CANDIDATE_STALE') {
       return '内容が変わったため、この候補は使えません。作り直してください。';
     }
+    /* ジョブは完了から30分でサーバが破棄する（メモリ内ジョブ表、restart でも消える）。
+       キャッシュした候補を30分後に適用しようとすると、この2コードが本文無しで
+       そのまま届く（CoD審査 ROUND-2 備考N1）。どちらも「作り直す」で復旧できる。 */
+    if (raw === 'CAT_PUBLICATION_JOB_NOT_FOUND' || raw === 'CAT_PUBLICATION_JOB_NOT_COMPLETE') {
+      return '候補の作成結果が残っていません（時間が経つと消えます）。作り直してください。';
+    }
     return raw;
   }
   function status(text, error) {
