@@ -232,29 +232,39 @@ body.app-palette {
    (V9195/V9199/V9200)がそこへ乗っているため。ここでは display:none で
    隠すだけにする。 */
 .bilingual-toggle-row { display: flex; gap: 6px; margin-bottom: 6px; }
-.bilingual-toggle-option {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  background: var(--surface);
-  color: var(--muted);
-  font-size: var(--font-meta);
-  padding: 2px 10px;
-  cursor: pointer;
-}
-.bilingual-toggle-option[aria-pressed="true"] {
-  background: var(--soft);
-  color: var(--text);
+/* CoD審査 REWORK-1 MAJOR-1: 詳細度の作法(CLAUDE.md「CSSの詳細度も自分の
+   道具である」)。トグル釦自体はJS側で secondary-button/compact を持つ
+   ので、styles.css:158/159 の基色ルール(button:not(.secondary-button,
+   ...))はそもそも対象から外れる——ここで「勝つ」必要が無い。
+   選択中(aria-pressed=true)だけ、ここで塗る。祖先クラス(.bilingual-toggle-row)
+   を足したセレクタで詳細度を(0,3,0)まで上げ、.secondary-button(0,1,0)・
+   .secondary-button.compact(0,2,0)・.secondary-button:hover(0,2,0、
+   styles.css)を、読み込み順に頼らず確実に上回る。hoverも同じ形で明示し、
+   .secondary-button:hoverへ運任せにしない(実測: 明示しないと選択中の
+   釦がhoverで文字色が読めなくなった、1.25:1)。 */
+.bilingual-toggle-row .bilingual-toggle-option[aria-pressed="true"] {
+  background: var(--accent);
   border-color: var(--accent);
+  color: #fff;
+}
+.bilingual-toggle-row .bilingual-toggle-option[aria-pressed="true"]:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: #fff;
 }
 #palette-result [data-yaku-main-card] [data-yaku-main-text].is-bilingual-hidden { display: none; }
 .bilingual-view { display: grid; gap: 10px; padding: 6px 12px; }
-.bilingual-pair { display: grid; gap: 2px; }
+.bilingual-pair { display: grid; gap: 6px; }
 .bilingual-pair:not(:first-child) { border-top: 1px solid var(--line); padding-top: 8px; }
-.bilingual-source, .bilingual-target { margin: 0; white-space: pre-line; }
-/* 原文は控えめな色(仕様item 2)。訳文は通常の本文色のまま、preの見た目
-   (styles.cssの.translation)と揃える。 */
-.bilingual-source { color: var(--muted); font-size: var(--font-meta); }
-.bilingual-target { color: var(--text); }
+/* 原文は控えめな色のまま(仕様item 2)。white-space は pre-wrap にする
+   (CoD審査 REWORK-1 MINOR-2: pre-line は空白の連続を潰す。金額の桁揃えの
+   ような連続空白が、対訳表示でだけ単一ブロックと違って見えていた)。 */
+.bilingual-source { margin: 0; white-space: pre-wrap; color: var(--muted); font-size: var(--font-meta); }
+/* 訳文段落の見た目そのもの(font-size/line-height/max-width/pre-wrap)は
+   styles.cssの.translationをJS側で流用しており(palette.js
+   buildBilingualView)、ここでは複製しない——複製すると値がずれる
+   (MINOR-2で実測: 17px/27.2 vs 18.02px/33.34)。.bilingual-targetは
+   JS/試験が拾うためのマーカークラスで、見た目は持たない。 */
 
 @media (max-width: 380px) {
   .palette-shell { padding: 10px 10px 32px; }

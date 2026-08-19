@@ -169,7 +169,13 @@
       sourceP.className = 'bilingual-source';
       sourceP.textContent = sourceParas[i];
       var targetP = document.createElement('p');
-      targetP.className = 'bilingual-target';
+      // 'translation'を流用する(styles.cssの.translation、preが使っている
+      // のと同じクラス)。font-size/line-height/max-width/pre-wrapを
+      // palette.css側で複製しない——複製すると値がずれる(CoD審査
+      // REWORK-1 MINOR-2で実測: 17px/27.2 vs 18.02px/33.34、pre-lineが
+      // 空白の連続を潰す)。'bilingual-target'はJS/試験が拾うための
+      // マーカークラスで、見た目は.translationにまかせる。
+      targetP.className = 'bilingual-target translation';
       targetP.textContent = targetParas[i];
       pair.appendChild(sourceP);
       pair.appendChild(targetP);
@@ -220,14 +226,21 @@
     var controls = document.createElement('div');
     controls.className = 'bilingual-toggle-row';
     controls.setAttribute('data-yaku-bilingual-controls', '1');
+    // CoD審査 REWORK-1 MAJOR-1: 'secondary-button'を必ず足す。
+    // styles.css:158/159の基色ルール(button:not(.secondary-button, ...))は
+    // secondary-buttonを持つ要素をそもそも対象から外す——「勝つ」のではなく
+    // 「対象から外れる」側に回るのが、このアプリの物静かな釦の作法
+    // (CLAUDE.md「CSSの詳細度も自分の道具である」)。'compact'も足し、
+    // 他の物静かな小さい釦(.secondary-button.compact)と同じ土台にする
+    // (min-height:44pxのタッチ床はそのまま、詰めない)。
     var bilingualButton = document.createElement('button');
     bilingualButton.type = 'button';
-    bilingualButton.className = 'bilingual-toggle-option';
+    bilingualButton.className = 'bilingual-toggle-option secondary-button compact';
     bilingualButton.setAttribute('data-yaku-bilingual-mode', 'bilingual');
     bilingualButton.textContent = '対訳';
     var monoButton = document.createElement('button');
     monoButton.type = 'button';
-    monoButton.className = 'bilingual-toggle-option';
+    monoButton.className = 'bilingual-toggle-option secondary-button compact';
     monoButton.setAttribute('data-yaku-bilingual-mode', 'mono');
     monoButton.textContent = '訳のみ';
     controls.appendChild(bilingualButton);

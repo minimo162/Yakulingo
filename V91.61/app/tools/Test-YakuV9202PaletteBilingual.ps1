@@ -12,9 +12,15 @@
       data-yaku-swap・data-yaku-term-learn、V9195/V9199/V9200がピン）の
       文字列がそのまま残っていること。
 
+      REWORK-1で追加: トグル釦がsecondary-button/compactを持つこと
+      （styles.css:158/159の基色ルールの対象からそもそも外れる、MAJOR-1の
+      直し方）。訳文段落がstyles.cssの.translationを流用すること
+      （font-size/line-height/max-width/pre-wrapを複製しない、MINOR-2の
+      直し方）。palette.cssにpre-lineが残っていないこと。
+
   (b) 実機Chromium部。本物のpalette.html/palette.js/palette.cssを配り、
-      3つの題材（原文原文3段落・訳3段落=一致／3vs2=不一致／1段落のみ）を
-      実際に貼り付けて確かめる。
+      4つの題材（原文3段落・訳3段落=一致／3vs2=不一致／1段落のみ／
+      対訳表示中のチップ）を実際に貼り付け・押して確かめる。
 
         - 一致(3段落): 対訳（原文段落/訳段落の交互リスト）が並ぶこと。
           原文段落の内容が実際の原文と一致すること（空行区切り・空白だけの
@@ -24,9 +30,16 @@
           往復でき、訳のみ表示中もコピーは全文のまま。覚える釦の送信対象も
           全文のまま(段落の1つではない)。添え札スワップで対訳ビューが
           新しい中身へ作り直され、既定(対訳)へ戻る。スワップ後のコピーも
-          全文のまま。
+          全文のまま。トグル釦のcomputed style(選択中/未選択×既定/hover、
+          計4状態)を実測し、いずれもコントラスト比4.5:1以上であること
+          (MAJOR-1)。同じ添え札を計4回クリックしても、対訳ビュー・
+          トグル行・preが1つずつのまま重複しないこと(COVERAGE(c)、
+          レビューで確認済みの内容を退行として固定する)。
         - 不一致(3vs2): 対訳ビューを作らず、現行の単一ブロックのまま。
         - 1段落のみ: 同じく単一ブロックのまま。
+        - 対訳表示中のチップ(丁寧に): チップの完了後、対訳ビューが新しい
+          訳文で作り直され(重複せず1つのまま)、原文段落は変わらないこと
+          (COVERAGE(b))。
 
       node/Playwright/Chromium が無い環境では UNMEASURED(exit 3)にする
       （「測れなかった」を赤に畳まない、CLAUDE.md）。
@@ -46,6 +59,49 @@ function Assert-N9202 {
     param([bool]$Condition, [string]$Message)
     if ($Condition) { Write-Host ('  ok   ' + $Message) }
     else { Write-Host ('  NG   ' + $Message); [void]$script:N9202Failures.Add($Message) }
+}
+
+# ---- CoD審査 REWORK-1 MAJOR-1: コントラスト比の計算(WCAG 2.x式) ----------
+# 判定(4.5:1以上か)はここPowerShell側で行う。観測(Chromiumドライバ)は
+# computed styleの文字列を書き出すだけ(既存の流儀「判定はしない」)。
+function Get-N9202RgbFromCss {
+    param([string]$Css)
+    if ([string]::IsNullOrWhiteSpace($Css)) { return $null }
+    if ($Css -match 'rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(,\s*([0-9.]+)\s*)?\)') {
+        $alpha = 1.0
+        if ($Matches[5]) { $alpha = [double]$Matches[5] }
+        return [pscustomobject]@{ R = [double]$Matches[1]; G = [double]$Matches[2]; B = [double]$Matches[3]; A = $alpha }
+    }
+    return $null
+}
+# 透明(alpha=0、.secondary-buttonの既定=quiet)は、実際に画面へ塗られる
+# 色ではない。祖先(主札カード)の背景で置き換える——コントラストは
+# 「実際に目に映る組み合わせ」で測る。
+function Resolve-N9202EffectiveBg {
+    param([string]$OwnCss, [string]$FallbackCss)
+    $own = Get-N9202RgbFromCss -Css $OwnCss
+    if ($null -eq $own -or $own.A -eq 0) { return $FallbackCss }
+    return $OwnCss
+}
+function Get-N9202RelativeLuminance {
+    param($Rgb)
+    $lin = @()
+    foreach ($component in @($Rgb.R, $Rgb.G, $Rgb.B)) {
+        $v = $component / 255.0
+        if ($v -le 0.03928) { $lin += ($v / 12.92) } else { $lin += ([Math]::Pow((($v + 0.055) / 1.055), 2.4)) }
+    }
+    return (0.2126 * $lin[0]) + (0.7152 * $lin[1]) + (0.0722 * $lin[2])
+}
+function Get-N9202ContrastRatio {
+    param([string]$FgCss, [string]$BgCss)
+    $fg = Get-N9202RgbFromCss -Css $FgCss
+    $bg = Get-N9202RgbFromCss -Css $BgCss
+    if ($null -eq $fg -or $null -eq $bg) { return 0.0 }
+    $l1 = Get-N9202RelativeLuminance -Rgb $fg
+    $l2 = Get-N9202RelativeLuminance -Rgb $bg
+    $lighter = [Math]::Max($l1, $l2)
+    $darker = [Math]::Min($l1, $l2)
+    return ($lighter + 0.05) / ($darker + 0.05)
 }
 
 Write-Host 'Test-YakuV9202PaletteBilingual'
@@ -93,6 +149,13 @@ if (Test-Path -LiteralPath $N9202PaletteJsPath -PathType Leaf) {
         Assert-N9202 ($N9202ApplyBody -notmatch '\bpre\.textContent\s*=') 'applyBilingualView が主訳pre変数のtextContentへ直接代入しない(見た目だけを差し替える)'
     }
 
+    # CoD審査 REWORK-1 MAJOR-1: トグル釦はsecondary-button/compactを持つ
+    # (styles.css:158/159の基色ルールの対象からそもそも外れる)。
+    Assert-N9202 ($N9202Js -match "'bilingual-toggle-option secondary-button compact'") 'palette.js のトグル釦がsecondary-button/compactを持つ(MAJOR-1、基色ルールの対象から外れる)'
+    # CoD審査 REWORK-1 MINOR-2: 訳文段落はstyles.cssの.translationを流用する
+    # (font-size/line-height/max-width/pre-wrapを個別に複製しない)。
+    Assert-N9202 ($N9202Js -match "'bilingual-target translation'") 'palette.js の訳文段落が.translationクラスを流用する(MINOR-2、preと見た目を複製せず揃える)'
+
     # 既存のDOM契約(V9195/V9199/V9200がピン)の文字列がそのまま残っていること。
     Assert-N9202 ($N9202Js -match "querySelector\('\[data-yaku-main-text\]'\)") 'palette.js が data-yaku-main-text を引き続き読む(mainCardText)'
     Assert-N9202 ($N9202Js -match "mainCopyBtn\.setAttribute\('data-yaku-copy-b64'") 'palette.js のスワップが引き続き data-yaku-copy-b64 を更新する'
@@ -106,8 +169,23 @@ if (Test-Path -LiteralPath $N9202PaletteCssPath -PathType Leaf) {
     $N9202Css = [IO.File]::ReadAllText($N9202PaletteCssPath, [Text.UTF8Encoding]::new($false))
     Assert-N9202 ($N9202Css -match 'is-bilingual-hidden') 'palette.css が is-bilingual-hidden の見た目(display:none)を定義する'
     Assert-N9202 ($N9202Css -match '\.bilingual-view') 'palette.css が .bilingual-view の見た目を定義する'
-    Assert-N9202 ($N9202Css -match '\.bilingual-toggle-option') 'palette.css がトグル釦の見た目を定義する'
     Assert-N9202 ($N9202Css -match '\.bilingual-source') 'palette.css が原文段落の見た目(控えめな色)を定義する'
+
+    # CoD審査 REWORK-1 MAJOR-1: 選択中(aria-pressed=true)の塗りは、祖先クラス
+    # (.bilingual-toggle-row)を足したセレクタで詳細度(0,3,0)まで上げてある
+    # こと。.secondary-button(0,1,0)・.secondary-button.compact(0,2,0)・
+    # .secondary-button:hover(styles.css、0,2,0)のいずれより高く、
+    # 読み込み順に頼らず確実に勝つ(CLAUDE.md「CSSの詳細度も自分の道具」)。
+    Assert-N9202 ($N9202Css -match '\.bilingual-toggle-row \.bilingual-toggle-option\[aria-pressed="true"\]\s*\{') 'palette.css が選択中トグルの塗りを祖先クラス込みの詳細度(0,3,0)で定義する(MAJOR-1)'
+    Assert-N9202 ($N9202Css -match '\.bilingual-toggle-row \.bilingual-toggle-option\[aria-pressed="true"\]:hover') 'palette.css が選択中トグルのhoverも明示する(.secondary-button:hoverへ運任せにしない、MAJOR-1)'
+
+    # CoD審査 REWORK-1 MINOR-2: white-space:pre-line(空白の連続を潰す)の
+    # 宣言がpalette.css内に残っていない。原文・訳文どちらもpre-wrapへ
+    # 統一した。字面での"pre-line"検索だと、直した理由を書いた説明コメント
+    # 自身に当たって誤検出するので、宣言の形(white-space: pre-line)だけを
+    # 狙い撃ちする。
+    Assert-N9202 ($N9202Css -notmatch 'white-space\s*:\s*pre-line') 'palette.css に white-space:pre-line の宣言が残っていない(MINOR-2、空白の連続を潰さない)'
+    Assert-N9202 ($N9202Css -match '\.bilingual-source[^\}]*pre-wrap') 'palette.css が原文段落をpre-wrapにする(MINOR-2)'
 }
 
 # ============================================================ (b) 実機Chromium部
@@ -179,6 +257,17 @@ if (Test-Path -LiteralPath $N9202OutJson -PathType Leaf) {
     $mismatchTranslation = ([string][char]0x30A2 + [char]0x30EB + [char]0x30D5 + [char]0x30A1) + ' 1' + ([string][char]0x884C + [char]0x76EE) + [char]0x3002 + "`n`n" + ([string][char]0x30A2 + [char]0x30EB + [char]0x30D5 + [char]0x30A1) + ' 2' + ([string][char]0x884C + [char]0x76EE) + [char]0x3002
     $singleTranslation = [string][char]0x4E00 + [char]0x6BB5 + [char]0x843D + [char]0x3060 + [char]0x3051 + [char]0x3067 + [char]0x3059 + [char]0x3002
 
+    # COVERAGE(b)の期待値(チップ、丁寧に)。原文はASCIIなのでそのまま書ける。
+    $chipSrcPara1 = 'Please review the proposal.'
+    $chipSrcPara2 = 'We look forward to your reply.'
+    $chipSrcPara3 = "Regards,`nBob"
+    $chipInitPara1 = [string][char]0x3054 + [char]0x63D0 + [char]0x6848 + [char]0x3092 + [char]0x3054 + [char]0x78BA + [char]0x8A8D + [char]0x304F + [char]0x3060 + [char]0x3055 + [char]0x3044 + [char]0x3002
+    $chipInitPara2 = [string][char]0x304A + [char]0x8FD4 + [char]0x4E8B + [char]0x3092 + [char]0x304A + [char]0x5F85 + [char]0x3061 + [char]0x3057 + [char]0x3066 + [char]0x3044 + [char]0x307E + [char]0x3059 + [char]0x3002
+    $chipInitPara3 = [string][char]0x3088 + [char]0x308D + [char]0x3057 + [char]0x304F + "`n" + [char]0x30DC + [char]0x30D6
+    $chipRevPara1 = [string][char]0x3054 + [char]0x63D0 + [char]0x6848 + [char]0x3092 + [char]0x3054 + [char]0x78BA + [char]0x8A8D + [char]0x3044 + [char]0x305F + [char]0x3060 + [char]0x3051 + [char]0x307E + [char]0x3059 + [char]0x3068 + [char]0x5E78 + [char]0x3044 + [char]0x3067 + [char]0x3059 + [char]0x3002
+    $chipRevPara2 = [string][char]0x3054 + [char]0x8FD4 + [char]0x4FE1 + [char]0x3092 + [char]0x5FC3 + [char]0x3088 + [char]0x308A + [char]0x304A + [char]0x5F85 + [char]0x3061 + [char]0x7533 + [char]0x3057 + [char]0x4E0A + [char]0x3052 + [char]0x3066 + [char]0x304A + [char]0x308A + [char]0x307E + [char]0x3059 + [char]0x3002
+    $chipRevPara3 = [string][char]0x656C + [char]0x5177 + "`n" + [char]0x30DC + [char]0x30D6
+
     Write-Host '-- match (3 paragraphs) --'
     $m = $N9202Observed.matchSnapshot
     Assert-N9202 ($null -ne $m -and [bool]$m.hasCard) '一致題材: 主札が出る(前提条件)'
@@ -195,6 +284,47 @@ if (Test-Path -LiteralPath $N9202OutJson -PathType Leaf) {
         Assert-N9202 ($tgtTexts.Count -eq 3 -and [string]$tgtTexts[0] -eq $tgtPara1 -and [string]$tgtTexts[1] -eq $tgtPara2 -and [string]$tgtTexts[2] -eq $tgtPara3) '一致題材: 訳段落の中身が実際の訳文と一致する'
         Assert-N9202 ([bool]$m.hasToggle) '一致題材: トグル釦(対訳/訳のみ)が出る'
         Assert-N9202 ([string]$m.bilingualPressed -eq 'true' -and [string]$m.monoPressed -eq 'false') '一致題材: 既定で「対訳」側が押下済み表示'
+    }
+
+    Write-Host '-- toggle contrast (MAJOR-1) --'
+    # 実際に画面へ塗られる色(未選択の既定=透明の場合は主札カードの背景で
+    # 置き換える)で、4状態(選択中/未選択 × 既定/hover)すべてのコントラスト
+    # 比を計算する。判定はここでだけ行う(ドライバは観測のみ)。
+    $cardBg = [string]$N9202Observed.mainCardBackground
+    $selDefault = $N9202Observed.toggleSelectedDefault
+    $unselDefault = $N9202Observed.toggleUnselectedDefault
+    $selHover = $N9202Observed.toggleSelectedHover
+    $unselHover = $N9202Observed.toggleUnselectedHover
+    Assert-N9202 ($null -ne $selDefault -and $null -ne $unselDefault -and $null -ne $selHover -and $null -ne $unselHover -and -not [string]::IsNullOrWhiteSpace($cardBg)) 'トグルのcomputed styleを4状態とも読めている(前提条件)'
+    if ($null -ne $selDefault -and $null -ne $unselDefault -and $null -ne $selHover -and $null -ne $unselHover) {
+        # 「読み違い(選択/未選択が逆)」を具体的な色の一致で直接検出する。
+        # 未選択の既定はsecondary-buttonの素のtransparentのまま(quiet)で
+        # あるべきで、accentで塗られていてはならない。
+        Assert-N9202 ([string]$selDefault.backgroundColor -eq 'rgb(31, 58, 95)') '選択中(既定)の背景がaccent(rgb(31, 58, 95))で塗られている(逆転していない)'
+        Assert-N9202 ([string]$selDefault.color -eq 'rgb(255, 255, 255)') '選択中(既定)の文字が白'
+        Assert-N9202 ([string]$unselDefault.backgroundColor -eq 'rgba(0, 0, 0, 0)') '未選択(既定)の背景は透明のまま(secondary-buttonの素のquiet、基色ルールに塗られていない)'
+        Assert-N9202 ([string]$selHover.backgroundColor -eq 'rgb(22, 44, 72)') '選択中hoverの背景がaccent-hover(rgb(22, 44, 72))'
+        Assert-N9202 ([string]$selHover.color -eq 'rgb(255, 255, 255)') '選択中hoverの文字が白のまま(.secondary-button:hoverへ運任せにしていない)'
+
+        $selDefaultBg = Resolve-N9202EffectiveBg -OwnCss $selDefault.backgroundColor -FallbackCss $cardBg
+        $unselDefaultBg = Resolve-N9202EffectiveBg -OwnCss $unselDefault.backgroundColor -FallbackCss $cardBg
+        $selHoverBg = Resolve-N9202EffectiveBg -OwnCss $selHover.backgroundColor -FallbackCss $cardBg
+        $unselHoverBg = Resolve-N9202EffectiveBg -OwnCss $unselHover.backgroundColor -FallbackCss $cardBg
+
+        $ratioSelDefault = Get-N9202ContrastRatio -FgCss $selDefault.color -BgCss $selDefaultBg
+        $ratioUnselDefault = Get-N9202ContrastRatio -FgCss $unselDefault.color -BgCss $unselDefaultBg
+        $ratioSelHover = Get-N9202ContrastRatio -FgCss $selHover.color -BgCss $selHoverBg
+        $ratioUnselHover = Get-N9202ContrastRatio -FgCss $unselHover.color -BgCss $unselHoverBg
+
+        Write-Host ('  info 選択中(既定)   fg=' + $selDefault.color + ' bg=' + $selDefaultBg + ' contrast=' + [Math]::Round($ratioSelDefault, 2) + ':1')
+        Write-Host ('  info 未選択(既定)   fg=' + $unselDefault.color + ' bg=' + $unselDefaultBg + '(実効、素は透明) contrast=' + [Math]::Round($ratioUnselDefault, 2) + ':1')
+        Write-Host ('  info 選択中(hover)  fg=' + $selHover.color + ' bg=' + $selHoverBg + ' contrast=' + [Math]::Round($ratioSelHover, 2) + ':1')
+        Write-Host ('  info 未選択(hover)  fg=' + $unselHover.color + ' bg=' + $unselHoverBg + ' contrast=' + [Math]::Round($ratioUnselHover, 2) + ':1')
+
+        Assert-N9202 ($ratioSelDefault -ge 4.5) ('選択中(既定)のコントラストが4.5:1以上(実測 ' + [Math]::Round($ratioSelDefault, 2) + ':1)')
+        Assert-N9202 ($ratioUnselDefault -ge 4.5) ('未選択(既定)のコントラストが4.5:1以上(実測 ' + [Math]::Round($ratioUnselDefault, 2) + ':1)')
+        Assert-N9202 ($ratioSelHover -ge 4.5) ('選択中(hover)のコントラストが4.5:1以上(実測 ' + [Math]::Round($ratioSelHover, 2) + ':1、MAJOR-1が実際に踏んだ値=1.25:1)')
+        Assert-N9202 ($ratioUnselHover -ge 4.5) ('未選択(hover)のコントラストが4.5:1以上(実測 ' + [Math]::Round($ratioUnselHover, 2) + ':1)')
     }
 
     $matchOne = @($N9202Observed.copiedAfterDigitOneBilingual)
@@ -235,6 +365,19 @@ if (Test-Path -LiteralPath $N9202OutJson -PathType Leaf) {
     $swapDigit = @($N9202Observed.copiedAfterSwapDigit)
     Assert-N9202 ($swapDigit.Count -eq 1 -and [string]$swapDigit[0] -eq $altMatch) 'スワップ後の1キーコピーも、入れ替わった訳文の全体のまま'
 
+    # CoD審査 REWORK-1 COVERAGE(c): 繰り返しスワップで対訳ビュー・トグル行・
+    # preが重複生成されないこと(レビューで確認済みの内容を退行として固定する)。
+    # ここまでで既に1回スワップ済み、ドライバがさらに3回押して合計4回にする
+    # ——偶数回なので、中身は元(displayMatch)へ戻っているはず。
+    $repeatCounts = $N9202Observed.countsAfterRepeatSwap
+    Assert-N9202 ($null -ne $repeatCounts) '繰り返しスワップ後の要素数を読めている(前提条件)'
+    if ($null -ne $repeatCounts) {
+        Assert-N9202 ([int]$repeatCounts.views -eq 1) '繰り返しスワップ(合計4回)後も対訳ビュー(data-yaku-bilingual-view)は1つだけ(重複しない)'
+        Assert-N9202 ([int]$repeatCounts.controls -eq 1) '繰り返しスワップ後もトグル行(data-yaku-bilingual-controls)は1つだけ'
+        Assert-N9202 ([int]$repeatCounts.pres -eq 1) '繰り返しスワップ後もpre(data-yaku-main-text)は1つだけ'
+    }
+    Assert-N9202 ([string]$N9202Observed.mainTextAfterRepeatSwap -eq $displayMatch) '繰り返しスワップ(偶数回)後、主訳は元の訳文全体へ戻る'
+
     Write-Host '-- mismatch (3 vs 2) --'
     $mm = $N9202Observed.mismatchSnapshot
     Assert-N9202 ($null -ne $mm -and [bool]$mm.hasCard) '不一致題材: 主札が出る(前提条件)'
@@ -255,12 +398,55 @@ if (Test-Path -LiteralPath $N9202OutJson -PathType Leaf) {
         Assert-N9202 ([string]$sg.preText -eq $singleTranslation) '1段落題材: preの中身は訳文のまま'
     }
 
+    Write-Host '-- chip while bilingual (COVERAGE(b)) --'
+    # チップは finishJob と同じ完了経路(pollJob)を通るので applyBilingualView
+    # も走るはず——それを実際に押して確かめる(字面の配線確認ではない)。
+    $cb = $N9202Observed.chipBeforeSnapshot
+    Assert-N9202 ($null -ne $cb -and [bool]$cb.hasView) 'チップ前: 対訳ビューが出ている(前提条件)'
+    if ($null -ne $cb) {
+        $cbTgt = @($cb.targetTexts)
+        Assert-N9202 ($cbTgt.Count -eq 3 -and [string]$cbTgt[0] -eq $chipInitPara1) 'チップ前: 初回訳の対訳が並んでいる(前提条件)'
+    }
+
+    $chipReq = @($N9202Observed.chipRequests)
+    Assert-N9202 ($chipReq.Count -eq 1 -and [string]$chipReq[0].chip -eq 'revise') '「丁寧に」チップが1回送られる(chip=revise)'
+    if ($chipReq.Count -eq 1) {
+        Assert-N9202 ([string]$chipReq[0].source_text -eq ($chipSrcPara1 + "`n`n" + $chipSrcPara2 + "`n`n" + $chipSrcPara3)) 'チップ送信のsource_textは原文のまま'
+    }
+
+    $ca = $N9202Observed.chipAfterSnapshot
+    Assert-N9202 ($null -ne $ca -and [bool]$ca.hasView -and $ca.viewHidden -eq $false) 'チップ後: 対訳ビューが新しい訳文で作り直され、表示される(既定=対訳)'
+    if ($null -ne $ca) {
+        $caTgt = @($ca.targetTexts)
+        $caSrc = @($ca.sourceTexts)
+        Assert-N9202 ($caTgt.Count -eq 3 -and [string]$caTgt[0] -eq $chipRevPara1 -and [string]$caTgt[1] -eq $chipRevPara2 -and [string]$caTgt[2] -eq $chipRevPara3) 'チップ後: 訳段落がチップ後の新しい訳文を反映する'
+        Assert-N9202 ($caSrc.Count -eq 3 -and [string]$caSrc[0] -eq $chipSrcPara1 -and [string]$caSrc[2] -eq $chipSrcPara3) 'チップ後: 原文段落は変わらない(チップは原文を変えない)'
+    }
+    Assert-N9202 ([int]$N9202Observed.viewCountAfterChip -eq 1) 'チップ後も対訳ビューは1つだけ(重複再生成されない、COVERAGE(b))'
+
     Write-Host '-- geometry --'
-    # UX検収基準(仕様): 480x640でもキー案内(帯)は必ず見える(position:sticky)。
-    # 主札そのものの全体収まりは、対訳表示では要求しない——対訳表示は原文を
-    # カード内へ直接並べるため、別建ての原文欄(#palette-input)を画面内に
-    # 保つ意義(原文併記)がその時点で対訳ビュー自身に肩代わりされる
-    # (設計判断、成果物の説明に記載)。
+    # UX検収基準(仕様): 480x640でもキー案内(帯)は必ず見える(position:sticky、
+    # CSSの仕組みそのものが保証するので、対訳表示の有無に関わらず崩れない)。
+    #
+    # 主札そのものの全体収まりと、原文欄(#palette-input)の可視性は、対訳表示
+    # では要求しない。これはV9195の幾何ゲートが緑であることとは無関係
+    # ——V9195の題材(palette-gate.js)はどれも1段落の短文で、対訳の判定
+    # (両方2段落以上・数が一致)を一度も満たさない。つまりV9195はこの経路を
+    # 一度も踏んでおらず、V9195が緑であることはこの設計判断の根拠にならない。
+    #
+    # 根拠は本題材(一致・3段落)でのこのテスト自身の実測(geometryMatch480、
+    # 下のWrite-Hostで毎回の実行時の値をそのまま出す)である: 480x640で
+    # 主札はtop=93.1/bottom=552.1(画面内に収まる)なのに、原文欄は
+    # top=-330.1/bottom=-242.6(完全に画面外、一部も見えない)。
+    # 対訳表示は単一ブロックより縦に伸び、revealMainResult()が主札の下端を
+    # 帯(footer)の上へ寄せるぶん、原文欄がそのまま押し出される。
+    #
+    # これを許容する設計判断(レビューで承認、根拠): 対訳表示は原文を
+    # カード内に段落ごと直接並べるため、原文欄を画面内に保つ意義
+    # (原文併記、単一ブロック表示のときの唯一の原文確認手段)は、その時点で
+    # 対訳ビュー自身に肩代わりされる。キー案内(帯)だけは対訳表示でも
+    # 必ず見える必要があるので、そこだけは引き続き要求する(下のAssertで
+    # 実測して確かめる)。
     $g480 = $N9202Observed.geometryMatch480
     Assert-N9202 ($null -ne $g480 -and $null -ne $g480.hint) '480x640: キー案内の矩形を測れている(前提条件)'
     if ($null -ne $g480 -and $null -ne $g480.hint) {

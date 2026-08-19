@@ -19,6 +19,16 @@
         改行を含む1段落）も、この1本の題材へ寄せて同時に確かめる。
     - BILINGUALMISMATCH: 原文3段落・訳2段落（不一致）→単一ブロックのまま。
     - BILINGUALSINGLE  : 原文1段落・訳1段落→単一ブロックのまま。
+    - BILINGUALCHIP    : 対訳表示中に「丁寧に」チップを押す→新しい訳文で
+        対訳ビューが作り直されること（COVERAGE(b)）。
+
+  レビュー2周目からの追加分:
+    - MAJOR-1: トグル釦(選択中/未選択/hover、計4状態)のcomputed styleを
+      実際に読み、コントラストの判定はPowerShell側に渡す(この観測スクリプト
+      は判定しない、既存の流儀)。
+    - COVERAGE(c): 同じ添え札を繰り返しクリックして(合計4回)、対訳ビュー・
+      トグル行・pre が重複生成されないことを見る(レビューで確認済みの
+      内容を退行として固定する)。
 
   使い方: node palette-bilingual-gate.js <wwwDir> <outJson>
 */
@@ -35,6 +45,8 @@ const MIME = { '.js': 'application/javascript; charset=utf-8', '.css': 'text/css
 const JOB_MATCH = 'b111000000000000000000000000001';
 const JOB_MISMATCH = 'b222000000000000000000000000002';
 const JOB_SINGLE = 'b333000000000000000000000000003';
+const JOB_CHIP_INITIAL = 'b444000000000000000000000000004';
+const JOB_CHIP_REVISED = 'b555000000000000000000000000005';
 
 function b64(text) { return Buffer.from(text, 'utf8').toString('base64'); }
 
@@ -107,10 +119,38 @@ const singleHtml =
   "  <button type='button' class='secondary-button copy-button' data-yaku-copy-b64='" + b64(SINGLE_TRANSLATION) + "'>コピー</button></div>" +
   "</article></section>";
 
+// --- BILINGUALCHIP: 対訳表示中に「丁寧に」チップ(COVERAGE(b)) -----------------
+// 初回訳・チップ後訳のどちらも原文3段落と数が揃う(対訳が両方の段階で
+// 成立する題材)。原文は変わらないまま、訳文だけチップで置き換わる。
+const CHIP_SOURCE = 'Please review the proposal.\n\nWe look forward to your reply.\n\nRegards,\nBob';
+const CHIP_INITIAL_PARA_1 = 'ご提案をご確認ください。';
+const CHIP_INITIAL_PARA_2 = 'お返事をお待ちしています。';
+const CHIP_INITIAL_PARA_3 = 'よろしく\nボブ';
+const CHIP_INITIAL_TRANSLATION = CHIP_INITIAL_PARA_1 + '\n\n' + CHIP_INITIAL_PARA_2 + '\n\n' + CHIP_INITIAL_PARA_3;
+const CHIP_REVISED_PARA_1 = 'ご提案をご確認いただけますと幸いです。';
+const CHIP_REVISED_PARA_2 = 'ご返信を心よりお待ち申し上げております。';
+const CHIP_REVISED_PARA_3 = '敬具\nボブ';
+const CHIP_REVISED_TRANSLATION = CHIP_REVISED_PARA_1 + '\n\n' + CHIP_REVISED_PARA_2 + '\n\n' + CHIP_REVISED_PARA_3;
+const PASTE_CHIP_TEXT = 'BILINGUALCHIP 丁寧に直してください。';
+
+function chipHtml(translation) {
+  return "<section class='result-stack' data-yaku-state='done'>" +
+    "<article class='result-card result-card-translation' data-yaku-main-card>" +
+    "  <pre class='translation' data-yaku-main-text>" + translation + "</pre>" +
+    "  <div class='result-actions'><span class='result-kind' data-yaku-main-kind>標準訳案（Copilot訳・未確認）</span>" +
+    "  <button type='button' class='secondary-button copy-button' data-yaku-copy-b64='" + b64(translation) + "'>コピー</button></div>" +
+    "</article></section>";
+}
+const chipInitialHtml = chipHtml(CHIP_INITIAL_TRANSLATION);
+const chipRevisedHtml = chipHtml(CHIP_REVISED_TRANSLATION);
+
 const learnRequests = [];
+const chipRequests = [];
 let pollMatch = 0;
 let pollMismatch = 0;
 let pollSingle = 0;
+let pollChipInitial = 0;
+let pollChipRevised = 0;
 
 const server = http.createServer(function (req, res) {
   const url = new URL(req.url, 'http://127.0.0.1');
@@ -145,7 +185,16 @@ const server = http.createServer(function (req, res) {
       if (text.indexOf('BILINGUALMATCH') >= 0) { res.end(JSON.stringify({ job_id: JOB_MATCH })); return; }
       if (text.indexOf('BILINGUALMISMATCH') >= 0) { res.end(JSON.stringify({ job_id: JOB_MISMATCH })); return; }
       if (text.indexOf('BILINGUALSINGLE') >= 0) { res.end(JSON.stringify({ job_id: JOB_SINGLE })); return; }
+      if (text.indexOf('BILINGUALCHIP') >= 0) { res.end(JSON.stringify({ job_id: JOB_CHIP_INITIAL })); return; }
       res.end(JSON.stringify({ job_id: JOB_SINGLE }));
+      return;
+    }
+    if (url.pathname === '/api/palette/chip') {
+      let payload = {};
+      try { payload = JSON.parse(body || '{}'); } catch (parseError) {}
+      chipRequests.push(payload);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ job_id: JOB_CHIP_REVISED }));
       return;
     }
     if (url.pathname === '/api/palette/term-learn') {
@@ -183,6 +232,28 @@ const server = http.createServer(function (req, res) {
       res.end(JSON.stringify({
         mode: 'done', progress: 100, label: 'Done', class: 'ok', html: singleHtml,
         source_text: SINGLE_SOURCE, masked_translation: SINGLE_TRANSLATION, direction: 'to_jp', style: 'full'
+      }));
+      return;
+    }
+    if (url.pathname === '/api/jobs/' + JOB_CHIP_INITIAL) {
+      pollChipInitial++;
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      if (pollChipInitial < 2) { res.end(JSON.stringify({ mode: 'working', progress: 40, label: '翻訳中', detail: '', html: '' })); return; }
+      res.end(JSON.stringify({
+        mode: 'done', progress: 100, label: 'Done', class: 'ok', html: chipInitialHtml,
+        source_text: CHIP_SOURCE, masked_translation: CHIP_INITIAL_TRANSLATION, direction: 'to_jp', style: 'full'
+      }));
+      return;
+    }
+    if (url.pathname === '/api/jobs/' + JOB_CHIP_REVISED) {
+      pollChipRevised++;
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      if (pollChipRevised < 2) { res.end(JSON.stringify({ mode: 'working', progress: 40, label: '丁寧にしています', detail: '', html: '' })); return; }
+      // チップは原文を変えない(source_textは同じCHIP_SOURCEのまま)。
+      // 訳文だけがCHIP_REVISED_TRANSLATIONへ置き換わる。
+      res.end(JSON.stringify({
+        mode: 'done', progress: 100, label: 'Done', class: 'ok', html: chipRevisedHtml,
+        source_text: CHIP_SOURCE, masked_translation: CHIP_REVISED_TRANSLATION, direction: 'to_jp', style: 'full'
       }));
       return;
     }
@@ -280,6 +351,38 @@ function measureGeometry(page) {
     out.matchSnapshot = await bilingualSnapshot();
     out.geometryMatch480 = await measureGeometry(page);
 
+    // ---- MAJOR-1: トグル釦のcomputed style(選択中/未選択 × 既定/hover) ----
+    // 判定(コントラスト比の計算)はしない。ここは読んだ値をそのまま書き出す
+    // だけ(既存の流儀)。既定は既にbilingual側が選択中(applyBilingualViewの
+    // 既定)。未選択(mono)側のbackground-colorは.secondary-buttonの
+    // transparentのままなので、実際に画面へ塗られる色は祖先(主札カード)の
+    // background——それも一緒に読み、PowerShell側でtransparentのときだけ
+    // これへ差し替える。
+    async function computedButtonStyle(selector) {
+      return page.$eval(selector, function (node) {
+        var cs = window.getComputedStyle(node);
+        return { backgroundColor: cs.backgroundColor, color: cs.color };
+      });
+    }
+    out.mainCardBackground = await page.$eval('#palette-result [data-yaku-main-card]', function (node) {
+      return window.getComputedStyle(node).backgroundColor;
+    });
+    // 直前のクリック等でカーソルが釦の上に残っていると既定値が読めない
+    // (:hoverが化ける)。中立な場所へ退避してから測る。
+    await page.mouse.move(5, 5);
+    await page.waitForTimeout(200);
+    out.toggleSelectedDefault = await computedButtonStyle('[data-yaku-main-card] [data-yaku-bilingual-mode="bilingual"]');
+    out.toggleUnselectedDefault = await computedButtonStyle('[data-yaku-main-card] [data-yaku-bilingual-mode="mono"]');
+    await page.hover('[data-yaku-main-card] [data-yaku-bilingual-mode="bilingual"]');
+    await page.waitForTimeout(200); // transition(styles.css var(--motion)=140ms)が収まるまで待つ
+    out.toggleSelectedHover = await computedButtonStyle('[data-yaku-main-card] [data-yaku-bilingual-mode="bilingual"]');
+    await page.mouse.move(5, 5);
+    await page.hover('[data-yaku-main-card] [data-yaku-bilingual-mode="mono"]');
+    await page.waitForTimeout(200);
+    out.toggleUnselectedHover = await computedButtonStyle('[data-yaku-main-card] [data-yaku-bilingual-mode="mono"]');
+    await page.mouse.move(5, 5);
+    await page.waitForTimeout(50);
+
     // コピー(1キー): 対訳表示中でも全文のまま。
     await page.keyboard.press('1');
     await page.waitForTimeout(120);
@@ -324,6 +427,24 @@ function measureGeometry(page) {
     await page.waitForTimeout(120);
     out.copiedAfterSwapDigit = (await copiedSnapshot()).slice(beforeSwapDigit.length);
 
+    // ---- COVERAGE(c): 繰り返しスワップで対訳ビュー/トグル行/preが重複
+    // 生成されないこと(レビューで確認済みの内容を退行として固定する)。
+    // ここまでで既に1回スワップ済みなので、さらに3回押して合計4回にする
+    // (偶数回なので、最終的に中身は元(DISPLAY_TRANSLATION_MATCH)へ戻る)。
+    for (let swapIndex = 0; swapIndex < 3; swapIndex++) {
+      await page.click('.result-alt[data-yaku-swap]');
+      await page.waitForTimeout(120);
+    }
+    out.countsAfterRepeatSwap = await page.evaluate(function () {
+      var card = document.querySelector('#palette-result [data-yaku-main-card]');
+      return {
+        views: card ? card.querySelectorAll('[data-yaku-bilingual-view]').length : -1,
+        controls: card ? card.querySelectorAll('[data-yaku-bilingual-controls]').length : -1,
+        pres: card ? card.querySelectorAll('[data-yaku-main-text]').length : -1
+      };
+    });
+    out.mainTextAfterRepeatSwap = await page.$eval('[data-yaku-main-card] [data-yaku-main-text]', function (node) { return node.textContent; });
+
     await page.keyboard.press('Escape');
     await page.waitForTimeout(80);
 
@@ -345,6 +466,37 @@ function measureGeometry(page) {
     await page.waitForSelector('#palette-result [data-yaku-main-card]', { timeout: 10000 });
     await page.waitForTimeout(300);
     out.singleSnapshot = await bilingualSnapshot();
+
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(80);
+
+    // ============================================================ シナリオ4: チップ(丁寧に)を対訳表示中に押す
+    // COVERAGE(b): チップは finishJob と同じ完了経路(pollJob)を通るので
+    // applyBilingualView も同様に走るはずだが、それを字面ではなく実際に
+    // 押して確かめる。原文は変わらないまま、訳文だけ新しい中身へ置き換わり、
+    // 対訳ビューが重複なく作り直されることを見る。
+    await pasteText(PASTE_CHIP_TEXT);
+    await page.waitForSelector('#palette-result [data-yaku-main-card]', { timeout: 10000 });
+    await page.waitForTimeout(300);
+    out.chipBeforeSnapshot = await bilingualSnapshot();
+
+    await page.waitForSelector('#palette-chips [data-yaku-chip="revise"]:not([disabled])', { timeout: 5000 });
+    await page.click('[data-yaku-chip="revise"]');
+    // チップのジョブが完了する(訳文がCHIP_REVISED_TRANSLATIONへ変わる)まで待つ。
+    // preはbilingual既定で is-bilingual-hidden により非表示(display:none)の
+    // ままになるので、waitForSelectorの既定(visible待ち)は使わない
+    // ——waitForFunctionでtextContentの中身だけを見る。
+    await page.waitForFunction(function () {
+      var pre = document.querySelector('[data-yaku-main-card] [data-yaku-main-text]');
+      return !!pre && pre.textContent.indexOf('幸いです') >= 0;
+    }, { timeout: 10000 });
+    await page.waitForTimeout(200);
+    out.chipRequests = chipRequests.slice();
+    out.chipAfterSnapshot = await bilingualSnapshot();
+    out.viewCountAfterChip = await page.evaluate(function () {
+      var card = document.querySelector('#palette-result [data-yaku-main-card]');
+      return card ? card.querySelectorAll('[data-yaku-bilingual-view]').length : -1;
+    });
 
     await page.keyboard.press('Escape');
     await page.waitForTimeout(80);
