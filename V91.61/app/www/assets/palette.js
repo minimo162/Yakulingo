@@ -321,31 +321,64 @@
      外なので、そこだけ新しい行を許す。 */
 
   function looksLikeSentence(text) {
-    // 「文」に見えるかの判定。しきい値40字と句点[。．]は、既存の個人用語集
-    // 書き込み(PersonalGlossary.ps1のAdd-YakuPersonalGlossaryEntry、
-    // 40字超または[。．]を含むと弾く)と同じ値を流用した——ここは弾かず
-    // 確認を挟むだけなので、禁止を発明しない(8/17の利用者判断)。改行と
-    // 英語の終止符も対象に加える(源文が英語の場合もあるため)。
+    // 「文」に見えるかの判定。しきい値40字は、既存の個人用語集書き込み
+    // (PersonalGlossary.ps1のAdd-YakuPersonalGlossaryEntry、40字超だと弾く)
+    // と同じ値を流用した——ここは弾かず確認を挟むだけなので、禁止を発明
+    // しない(8/17の利用者判断)。
+    //
+    // 全角の句点・疑問符・感嘆符（。．！？）と改行は常に「文」とみなす。
+    // 半角ピリオド(.)だけは別扱いにする——単純に「.を含む」で判定すると、
+    // 'U.S.'・'Ltd.'・'No.1' のような語句までいちいち確認ダイアログを
+    // 挟んでしまう(CoD審査 REWORK-1 MINOR-D の実測)。ここでは「直前が
+    // 単語境界から始まる2文字以上の小文字の並びで、直後が空白か文字列の
+    // 終端」のときだけ終止符として数える——'U.S.'は直前が大文字の頭文字
+    // (U/S)、'Ltd.'は単語の先頭が大文字(L)なので単語境界からの小文字の並び
+    // にならず、'No.1'は直後が数字なので、どれも外れる。
+    // 単純さを優先した割り切りなので、'etc.'のような全部小文字の略語は
+    // 依然として引っかかるし、文末が大文字始まりの単語(固有名詞など)で
+    // 終わる英文は逆に拾えない——どちらも「確認を1回増やすかどうか」の
+    // ガードでしかなく、しきい値40字が保険になる(8/17の利用者判断どおり、
+    // 決め打ちの禁止ではない)。
     if (!text) return false;
     if (/[\r\n]/.test(text)) return true;
-    if (/[。．.!?！？]/.test(text)) return true;
+    if (/[。．！？!?]/.test(text)) return true;
+    if (/\b[a-z]{2,}\.(?:\s|$)/.test(text)) return true;
     return text.length > 40;
   }
 
   /* instantの取り直し(renderInstant)はTM候補の<div>を丸ごと作り直す
-     ——ボタンも新品に戻るので、間を置かずに取り直すと「覚えました」の
-     確認表示を利用者が読む前に消してしまう(実測: 実機Chromiumで0ms後に
-     読むと"覚える"のまま)。確認を読めるだけの間を置いてから取り直す。 */
+     ——ボタンも新品に戻るので、間を置かずに取り直すと登録結果の表示を
+     利用者が読む前に消してしまう(実測: 実機Chromiumで0ms後に読むと
+     "覚える"のまま)。確認を読めるだけの間を置いてから取り直す。 */
   var TERM_LEARN_REFRESH_DELAY_MS = 900;
+  /* 成功/失敗どちらの表示も、この時間だけ見せたら元の「覚える」へ戻す
+     (CoD審査 REWORK-1 MINOR-C: 主訳・添え候補は次の翻訳が始まるまで
+     DOMが作り直されないため、restoreLabelが無いと「覚えました」が
+     押せる状態のまま残り続けていた)。 */
+  var TERM_LEARN_RESTORE_DELAY_MS = 4000;
+
+  /* 釦自体の文言は状態を表す2〜4文字だけにする(CoD審査 REWORK-1
+     MINOR-A: 480x640ではTM候補の圧縮時カードが高さ43.3pxしかなく、
+     「登録しています…」「覚えました」のような長い文言は候補本文へ
+     56px/24pxもはみ出して重なった、実測)。詳細な文言(重複の案内・
+     サーバのエラー本文)は、候補の近くではなく帯の共有行
+     (#palette-copy-status、コピー結果と同じ場所)へ出す(MINOR-B)。 */
+  function setTermLearnStatusLine(text) {
+    var status = el('palette-copy-status');
+    if (status) status.textContent = text;
+  }
 
   function sendTermLearn(button, sourceText, targetText) {
     button.disabled = true;
-    var restoreLabel = '覚える';
     var seqAtClick = translateSeq;
-    button.textContent = '登録しています…';
+    button.textContent = '登録中';
     YakuCommon.post('/api/palette/term-learn', { source: sourceText, target: targetText, direction: lastDirection }).then(function (data) {
       button.disabled = false;
-      button.textContent = (data && data.status === 'unchanged') ? '登録済みです' : '覚えました';
+      button.textContent = '済み';
+      setTermLearnStatusLine((data && data.message) || '覚えました。次から同じ訳が出ます。');
+      window.setTimeout(function () {
+        if (button.textContent === '済み') button.textContent = '覚える';
+      }, TERM_LEARN_RESTORE_DELAY_MS);
       // 即効性の見える化: 即答欄が開いていれば同じ原文でinstantを取り直し、
       // 登録した用語がその場で反映されることを見せる(学習の魔法の瞬間)。
       var instantBox = el('palette-instant');
@@ -357,14 +390,11 @@
       }
     }).catch(function (error) {
       button.disabled = false;
-      var message = (error && error.message) || '登録できませんでした。';
-      // 帯にも主札にも属さない小さな釦なので、長い文言をそのまま出すと
-      // 480px幅でカードの外へはみ出す。短く切る(CSSのellipsisは保険)。
-      if (message.length > 12) message = message.substring(0, 12) + '…';
-      button.textContent = message;
+      button.textContent = 'エラー';
+      setTermLearnStatusLine((error && error.message) || '登録できませんでした。');
       window.setTimeout(function () {
-        if (!button.disabled && button.textContent === message) button.textContent = restoreLabel;
-      }, 4000);
+        if (button.textContent === 'エラー') button.textContent = '覚える';
+      }, TERM_LEARN_RESTORE_DELAY_MS);
     });
   }
 

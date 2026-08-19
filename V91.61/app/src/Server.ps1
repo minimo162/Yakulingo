@@ -2664,9 +2664,13 @@ function Invoke-YakuRoute {
     if ($method -eq 'POST' -and $path -eq '/api/palette/term-learn') {
         # 学習（用語登録先行）。パレットで得た訳を1クリックで個人用語集へ足す。
         # プロジェクト非依存の Add-YakuTerminologyEntry(personal scope)を直接
-        # 呼ぶ——term-add(3418行)はCATプロジェクト必須の/api/cat/配下にあり、
-        # 中身は project 非依存でもパレットからは呼べない。検証の値(80字・
-        # 改行不可)は term-add(3425行)とそのまま揃える(独自の上限は作らない)。
+        # 呼ぶ——CATのterm-add操作(/api/cat/のアクションswitchにある'term-add')は
+        # CATプロジェクト必須の経路にあり、中身はproject非依存でもパレットからは
+        # 呼べない。検証の値(80字・改行不可)は同アクションとそのまま揃える
+        # (独自の上限は作らない)。行番号では引かない——このファイル内の別関数の
+        # 行は、この塊への追記だけで簡単にずれる(CoD審査 REWORK-1 NIT-A の実測:
+        # この塊を足す前は3418/3425/3439行だったterm-add側の行が、追記後は
+        # 3485/3492/3506行になっていた)。
         try {
             $payload = Read-YakuRequestJson -Request $req -MaxBytes 8192
             $sourceTerm = ([string]$payload['source']).Trim()
@@ -2691,22 +2695,56 @@ function Invoke-YakuRoute {
             }
             # 出典(origin_*)はCATセルに紐づかないので、パレット専用の固定値で
             # 埋める。New-YakuTerminologyEntry は project_id/segment_id に
-            # 32桁16進を要求する(Terminology.ps1:140/144)ので、実在プロジェクトを
+            # 32桁16進を要求する(TERMINOLOGY_PROJECT_ID_REQUIRED/
+            # TERMINOLOGY_PROVENANCE_REQUIREDを投げる検証)ので、実在プロジェクトを
             # 装わない固定ハッシュへ逃がす——原文ハッシュをsegment_idに使うのは、
-            # TMの回帰試験(Test-YakuV9195Palette.ps1:273)が同じ手口で
-            # segment_idを作っているのと同じ考え方。
+            # TMの回帰試験(Add-YakuTranslationMemoryEntryを種に仕込むテスト、
+            # Test-YakuV9195Palette.ps1)が同じ手口でsegment_idを作っているのと
+            # 同じ考え方。
             $originProjectId = (Get-YakuTerminologyHash -Text 'yaku-palette-term-learn').Substring(0, 32)
             $originSegmentId = (Get-YakuTerminologyHash -Text $sourceTerm).Substring(0, 32)
+            # 事前チェック(重複の見える化、CoD審査 REWORK-1 MAJOR-2): 同じ原文に
+            # 既に別の訳が登録されているかを、足す前に見ておく。個人用語集は
+            # 同一source+targetでない限り「上書き」ではなく「共存」する
+            # (Add-YakuTerminologyEntryの契約どおり)。しかも即答(Find-Yaku
+            # TerminologyMatches)がどちらを先に返すかは登録順で決まらない——
+            # 全候補が同点のときは並べ替えの決着が term_id(GUID)の大小になり、
+            # 実測(12組の重複ペア)でfirstWins=4/secondWins=8と、新しく登録した
+            # 方が勝つとは限らなかった。だから「次から同じ訳が出ます」は嘘に
+            # なりうる。ここで検出し、その場合だけ文言を変える(消さない・
+            # 拒まない——足すのが安全、データを失わない)。
+            $sourceField = if ($direction -eq 'to_en') { 'ja' } else { 'en' }
+            $targetField = if ($direction -eq 'to_en') { 'en' } else { 'ja' }
+            $sourceCompare = if ($sourceField -eq 'ja') { [StringComparison]::Ordinal } else { [StringComparison]::OrdinalIgnoreCase }
+            $targetCompare = if ($targetField -eq 'ja') { [StringComparison]::Ordinal } else { [StringComparison]::OrdinalIgnoreCase }
+            $existingConflict = @(Read-YakuPersonalTerminologyEntries | Where-Object {
+                [string]$_.scope -eq 'personal' -and [string]$_.kind -eq 'occurrence' -and [bool]$_.active -and
+                [string]::Equals([string]$_.$sourceField.preferred, $sourceTerm, $sourceCompare) -and
+                -not [string]::Equals([string]$_.$targetField.preferred, $targetTerm, $targetCompare)
+            })
             $termParams = @{
                 Scope='personal'; Kind='occurrence'
-                # advisory: term-add(3439行)は project/personal を問わず
-                # Enforcement=required固定だが、personal scopeのoccurrenceは
-                # Test-YakuTerminologyCompliance(Terminology.ps1:486-487)が
-                # プロジェクトを問わず全件見るため、requiredにすると「パレットで
-                # 覚えた」だけで無関係な別資料のCATがterminology-missing=error
-                # (Terminology.ps1:552)で止まる。これは用語の適用ロジックの
-                # 変更(スコープ外)にあたるので避け、パレットの即答照合で実績の
-                # あるadvisory(Test-YakuV9195Palette.ps1:278)を使う。
+                # advisory: これが避けるのは terminology-missing=error だけ
+                # ————CATのterm-add/glossary-addアクションはEnforcement=required
+                # 固定で、personal scopeのoccurrenceをrequiredにすると、その語を
+                # 含む行はTest-YakuTerminologyCompliance(Terminology.ps1)の判定で
+                # terminology-missingがerrorになり出力を止める。advisoryはそこを
+                # warningへ留める。
+                #
+                # advisoryにしても効かない部分がある(既存の欠陥、ここでは直さ
+                # ない): personal用語集への書き込みは、advisory/requiredを問わず
+                # Get-YakuTerminologySnapshotHash(全エントリをscope/kind/
+                # enforcementで絞らずハッシュに混ぜる)を変える。Initialize-
+                # YakuCatProjectState はこのハッシュが変わると
+                # $Project.TerminologySnapshotHashを無条件に書き換えるため、
+                # 既に確認済みで点検が通っていた行のQcTerminologyHashが古い値の
+                # ままになり、Test-YakuCatSegmentQcCurrentが「点検が古い」と
+                # 判定して segment-qc-not-current が立つ——学習した語が実際に
+                # その資料へ現れるかどうかに関係なく、開いているだけの
+                # 無関係な別資料でも起きる(実測、下記の記録を参照)。CATの
+                # term-add/glossary-addも同じ書き込み経路を通るので、この変更が
+                # 新しく作った欠陥ではない。粒度を絞る修正はスコープ外
+                # (詳細: _docs/欠陥記録_用語スナップショットの粒度_2026-08-19.md)。
                 Enforcement='advisory'
                 Origin='palette-term-learn'
                 OriginProjectId=$originProjectId; OriginFileName='貼り付け資料'
@@ -2719,8 +2757,12 @@ function Invoke-YakuRoute {
                 $termParams.EnglishPreferred=$sourceTerm; $termParams.JapanesePreferred=$targetTerm
             }
             $added = Add-YakuTerminologyEntry @termParams
-            $status = if ([bool]$added.Added) { 'added' } else { 'unchanged' }
-            $message = if ($status -eq 'added') { '覚えました。次から同じ訳が出ます。' } else { 'すでに同じ内容で登録されています。' }
+            $status = if (-not [bool]$added.Added) { 'unchanged' } elseif ($existingConflict.Count -gt 0) { 'conflict-added' } else { 'added' }
+            $message = switch ($status) {
+                'unchanged' { 'すでに同じ内容で登録されています。' }
+                'conflict-added' { '登録しました。ただしこの語には別の訳がすでに登録されており、どちらが即答に出るかは登録の順番では決まりません。古い方は用語一覧から削除してください。' }
+                default { '覚えました。次から同じ訳が出ます。' }
+            }
             $response = [ordered]@{ ok=$true; status=$status; message=$message; term_id=[string]$added.Entry.term_id }
             Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
         } catch {

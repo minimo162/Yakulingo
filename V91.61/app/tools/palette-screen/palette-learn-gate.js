@@ -28,6 +28,9 @@ const TM_TARGET = 'TM memory phrase for the pasted text.';
 const FAIL_TARGET = 'FAILTARGET-should-error';
 const DUP_TARGET = 'DUPTARGET-already-registered';
 const SLOW_TARGET = 'SLOWTARGET-delayed-response';
+const CONFLICT_TARGET = 'CONFLICTTARGET-another-translation-exists';
+const CONFLICT_MESSAGE = '登録しました。ただしこの語には別の訳がすでに登録されており、どちらが即答に出るかは登録の順番では決まりません。古い方は用語一覧から削除してください。';
+const PLAIN_SUCCESS_MESSAGE = '覚えました。次から同じ訳が出ます。';
 
 function b64(text) { return Buffer.from(text, 'utf8').toString('base64'); }
 
@@ -112,8 +115,16 @@ const server = http.createServer(function (req, res) {
           res.end(JSON.stringify({ ok: true, status: 'unchanged', message: 'すでに同じ内容で登録されています。', term_id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }));
           return;
         }
+        if (target === CONFLICT_TARGET) {
+          // CoD審査 REWORK-1 MAJOR-2: 同じ原文に既に別の訳がある場合の応答。
+          // 足すのは止めない(データを失わない)が、文言は単純な成功文言とは
+          // 別にする(即答の勝者は登録順で決まらないため)。
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ ok: true, status: 'conflict-added', message: CONFLICT_MESSAGE, term_id: 'cccccccccccccccccccccccccccccc' }));
+          return;
+        }
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify({ ok: true, status: 'added', message: '覚えました。次から同じ訳が出ます。', term_id: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' }));
+        res.end(JSON.stringify({ ok: true, status: 'added', message: PLAIN_SUCCESS_MESSAGE, term_id: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' }));
       };
       if (target === SLOW_TARGET && learnDelayMs > 0) { setTimeout(respond, learnDelayMs); } else { respond(); }
       return;
@@ -195,6 +206,9 @@ function measureGeometry(page) {
     async function copiedSnapshot() { return page.evaluate(function () { return window.__yakuCopied.slice(); }); }
     async function confirmCalls() { return page.evaluate(function () { return window.__yakuConfirmCalls.slice(); }); }
     async function resetConfirmCalls() { return page.evaluate(function () { window.__yakuConfirmCalls = []; }); }
+    // CoD審査 REWORK-1 MINOR-B: 詳細な文言は釦ではなく帯の共有行
+    // (#palette-copy-status)へ出る。
+    async function statusLineText() { return page.$eval('#palette-copy-status', function (node) { return node.textContent; }); }
 
     // ============================================================ シナリオ1
     // TMHIT: 句点を含む「文っぽい」原文。TM候補が即答で出て、即答欄は開く。
@@ -213,12 +227,15 @@ function measureGeometry(page) {
     out.copiedAfterTmLearnClick = (await copiedSnapshot()).length - beforeTmClick.length;
     out.tmLearnRequestCountAfterClick = learnRequests.length;
     out.tmLearnRequestBody = learnRequests[learnRequests.length - 1];
-    // 登録成功の表示(「覚えました」)は、instantの取り直し(TERM_LEARN_REFRESH_
-    // DELAY_MS後)より先に読めること——取り直しはTM候補のDOMを丸ごと作り
-    // 直すので、間を置かずに読むと既に消えている(実測、この遅延を入れる前は
-    // 常に"覚える"のまま)。
+    // 登録成功の表示は、instantの取り直し(TERM_LEARN_REFRESH_DELAY_MS後)
+    // より先に読めること——取り直しはTM候補のDOMを丸ごと作り直すので、
+    // 間を置かずに読むと既に消えている(実測、この遅延を入れる前は常に
+    // "覚える"のまま)。釦自体は短い状態語(「済み」)だけを示し、詳細な
+    // 文言(サーバのmessage)は帯の共有行(#palette-copy-status)へ出る
+    // (CoD審査 REWORK-1 MINOR-A/B)。
     out.instantRequestCountRightAfterTmLearn = instantRequests.length;
     out.tmLearnButtonTextAfterSuccess = await page.$eval('#palette-tm-candidate [data-yaku-term-learn]', function (node) { return node.textContent; });
+    out.tmLearnStatusLineAfterSuccess = await statusLineText();
     await page.waitForTimeout(1000);
     out.instantRequestCountAfterTmLearnDelay = instantRequests.length;
     await resetConfirmCalls();
@@ -244,8 +261,15 @@ function measureGeometry(page) {
     out.mainLearnRequestBody = learnRequests[learnRequests.length - 1];
     out.instantRequestCountRightAfterMainLearn = instantRequests.length;
     out.mainLearnButtonTextAfterSuccess = await page.$eval('[data-yaku-main-card] [data-yaku-term-learn]', function (node) { return node.textContent; });
+    out.mainLearnStatusLineAfterSuccess = await statusLineText();
     await page.waitForTimeout(1000);
     out.instantRequestCountAfterMainLearnDelay = instantRequests.length;
+    // CoD審査 REWORK-1 MINOR-C: 主訳は次の翻訳までDOMが作り直されない
+    // ——復帰の仕組み(TERM_LEARN_RESTORE_DELAY_MS)が無いと「済み」の
+    // ままdisabledではない状態で残り続けていた。復帰後の文言を見る
+    // (クリックから合計4000ms以上待つ、上の1000msぶんは既に消化済み)。
+    await page.waitForTimeout(3200);
+    out.mainLearnButtonTextAfterRestore = await page.$eval('[data-yaku-main-card] [data-yaku-term-learn]', function (node) { return node.textContent; });
 
     // ============================================================ シナリオ3
     // 添え候補の「覚える」。押しても入れ替え(swap)は起きない。
@@ -287,6 +311,37 @@ function measureGeometry(page) {
     await page.click('#palette-tm-candidate [data-yaku-term-learn]');
     await page.waitForTimeout(150);
     out.tmLearnButtonTextAfterUnchanged = await page.$eval('#palette-tm-candidate [data-yaku-term-learn]', function (node) { return node.textContent; });
+    out.tmLearnStatusLineAfterUnchanged = await statusLineText();
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(80);
+
+    // ============================================================ シナリオ4.6
+    // MAJOR-2: 同じ語に別の訳が既にある場合(conflict-added)は、単純な
+    // 成功文言(PLAIN_SUCCESS_MESSAGE)を出さず、重複の案内を出す。
+    await pasteText('TMHIT2 衝突の的');
+    await page.waitForSelector('#palette-tm-candidate [data-yaku-term-learn]', { timeout: 5000 });
+    await page.evaluate(function (conflict) {
+      var node = document.getElementById('palette-tm-candidate');
+      if (node) node.setAttribute('data-yaku-candidate-text', conflict);
+    }, CONFLICT_TARGET);
+    await page.click('#palette-tm-candidate [data-yaku-term-learn]');
+    await page.waitForTimeout(150);
+    out.tmLearnButtonTextAfterConflict = await page.$eval('#palette-tm-candidate [data-yaku-term-learn]', function (node) { return node.textContent; });
+    out.tmLearnStatusLineAfterConflict = await statusLineText();
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(80);
+
+    // ============================================================ シナリオ4.7
+    // MINOR-D: 'U.S.'のような略語は、句点扱いされて確認ダイアログが出ない
+    // こと(短い語句なので長さのしきい値にも掛からない)。
+    await pasteText('TMHIT2 U.S.');
+    await page.waitForSelector('#palette-tm-candidate [data-yaku-term-learn]', { timeout: 5000 });
+    await resetConfirmCalls();
+    const learnCountBeforeAbbrev = learnRequests.length;
+    await page.click('#palette-tm-candidate [data-yaku-term-learn]');
+    await page.waitForTimeout(150);
+    out.confirmCallsForAbbreviation = await confirmCalls();
+    out.learnRequestCountAfterAbbreviationClick = learnRequests.length - learnCountBeforeAbbrev;
     await page.keyboard.press('Escape');
     await page.waitForTimeout(80);
 
@@ -342,7 +397,9 @@ function measureGeometry(page) {
     await page.waitForTimeout(80);
 
     // ============================================================ シナリオ8
-    // 失敗応答: 短い文言で表示され、しばらくすると元の文言へ戻る。
+    // 失敗応答: 釦は短い状態語(「エラー」)だけ、全文はサーバのエラー本文
+    // そのまま帯(#palette-copy-status)へ出る(MINOR-B、12字への切り詰め廃止)。
+    // しばらくすると釦は元の文言へ戻る(MINOR-C)。
     await pasteText('TMHIT4 失敗の的');
     await page.waitForSelector('#palette-tm-candidate [data-yaku-term-learn]', { timeout: 5000 });
     await page.evaluate(function (fail) {
@@ -352,7 +409,10 @@ function measureGeometry(page) {
     await page.click('#palette-tm-candidate [data-yaku-term-learn]');
     await page.waitForTimeout(200);
     out.tmLearnButtonTextAfterFailure = await page.$eval('#palette-tm-candidate [data-yaku-term-learn]', function (node) { return node.textContent; });
+    out.tmLearnStatusLineAfterFailure = await statusLineText();
     out.tmLearnButtonDisabledAfterFailure = await page.$eval('#palette-tm-candidate [data-yaku-term-learn]', function (node) { return node.disabled; });
+    await page.waitForTimeout(4000);
+    out.tmLearnButtonTextAfterFailureRestore = await page.$eval('#palette-tm-candidate [data-yaku-term-learn]', function (node) { return node.textContent; });
   } catch (error) {
     out.errors.push(String((error && error.stack) || error));
   } finally {
