@@ -18,8 +18,16 @@
      読まれれば消える。 */
   var handoffStorageKey = 'yaku.palette.handoff';
 
+  /* パレットの文脈ポインタ。選んだ資料の id・表示名だけを保存する
+     （機密本文は保存しない、設計判断3）。選んだ資料が消えていたら
+     無言で「なし」へフォールバックする（initContextPickerが検出して
+     消す。壊れていても翻訳は続く、CLAUDE.md「コーパスは足し」）。 */
+  var paletteContextStorageKey = 'yaku.palette.context';
+
   var input = null;
   var directionSelect = null;
+  var contextSelect = null;
+  var contextRows = [];
   var handoffButton = null;
   var candidates = [];
   var translateSeq = 0;
@@ -61,6 +69,87 @@
      同じ考え方：選んだらそれを使い、選んでいなければ自動判定に任せる。 */
   function currentDirectionIntent() {
     return (explicitDirection === 'to_en' || explicitDirection === 'to_jp') ? explicitDirection : 'auto';
+  }
+
+  /* --- 文脈ポインタ ---------------------------------------------------------
+     「この資料の文脈で訳す」選択。選択肢は既存の /api/cat/ の recent
+     アクション（プロジェクト不要の事前アクション）から取る（設計判断2）。
+     保存はlocalStorageへid・表示名のみ（設計判断3）。効かせる先は
+     即答(instant)のみ——Copilotプロンプトへは注入しない（設計判断1）。 */
+
+  function currentContextProjectId() {
+    return contextSelect ? contextSelect.value : '';
+  }
+
+  function loadContextSelection() {
+    try {
+      var raw = window.localStorage.getItem(paletteContextStorageKey);
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed.id !== 'string' || !parsed.id) return null;
+      return parsed;
+    } catch (error) { return null; }
+  }
+
+  function saveContextSelection(id, name) {
+    try {
+      if (!id) { window.localStorage.removeItem(paletteContextStorageKey); return; }
+      window.localStorage.setItem(paletteContextStorageKey, JSON.stringify({ id: id, name: name }));
+    } catch (error) {}
+  }
+
+  /* CoD審査REWORK-1 MINOR-6: 隣の<label>が既に「文脈」と言っているので、
+     選択肢側の「文脈: 」接頭辞は重複——480x640の実測幅(92px)では約6文字
+     しか見えず、接頭辞だけで40px近くを失っていた。既定の「なし」
+     (value="")だけは接頭辞を残す(文脈が無いこと自体を明示する必要が
+     あるため)。はみ出す資料名はopt.titleでホバー時に全体を読める。 */
+  function populateContextOptions(rows) {
+    if (!contextSelect) return;
+    contextRows = rows || [];
+    // 先頭の「文脈: なし」(value="")だけを残し、残りを作り直す。
+    while (contextSelect.options.length > 1) contextSelect.remove(1);
+    contextRows.forEach(function (row) {
+      var opt = document.createElement('option');
+      opt.value = String(row.id || '');
+      var name = String(row.file_name || '');
+      opt.textContent = name;
+      opt.title = name;
+      contextSelect.appendChild(opt);
+    });
+  }
+
+  /* 保存済みの選択が一覧(recentの直近10件)に無いとき用の、追加の1件。
+     一覧に無い=消えた、ではない——recentは「最終更新の新しい順で10件」
+     でしかなく、11件目以降を開いただけで前回選んだ資料が一覧から
+     押し出される(CoD審査REWORK-1 MINOR-2)。サーバ(/api/palette/instant)は
+     idさえ渡せば一覧に関わらず解決できるので、無言で消して選択を失わせず、
+     保存済みの表示名で選択肢へ足しておく——サーバが実際に解決できるかは
+     貼り付けたときの応答(project_hit)が教える。死んでいても実害は無い
+     (選んでも黙って文脈なし相当になるだけ、既存のフォールバックのまま)。 */
+  function appendStoredContextOption(id, name) {
+    if (!contextSelect) return;
+    var opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = name || id;
+    if (name) opt.title = name;
+    contextSelect.appendChild(opt);
+  }
+
+  /* 起動時に一度だけ、選べる資料の一覧を取り、保存済みの選択を復元する。
+     選んだ資料が一覧(直近10件)に無くても、保存は消さない(MINOR-2)。 */
+  function initContextPicker() {
+    if (!contextSelect) return;
+    YakuCommon.post('/api/cat/recent', {}).then(function (data) {
+      var rows = (data && data.projects) || [];
+      populateContextOptions(rows);
+      var saved = loadContextSelection();
+      if (!saved) return;
+      var stillThere = rows.some(function (row) { return String(row.id) === saved.id; });
+      if (!stillThere) { appendStoredContextOption(saved.id, saved.name); }
+      contextSelect.value = saved.id;
+    }).catch(function () {
+      // 引けなくても翻訳は続く。選択肢が0でも「なし」のまま使える。
+    });
   }
 
   function utf8ToBase64(text) {
@@ -285,7 +374,10 @@
     if (!span) return;
     if (candidates.length === 0) { span.textContent = '既定候補'; return; }
     var node = candidates[0].node;
-    if (node.id === 'palette-tm-candidate') { span.textContent = '訳文メモリの候補'; return; }
+    if (node.id === 'palette-tm-candidate') {
+      span.textContent = (node.hasAttribute && node.hasAttribute('data-yaku-context-hit')) ? 'この資料の確定訳' : '訳文メモリの候補';
+      return;
+    }
     if (node.hasAttribute && node.hasAttribute('data-yaku-main-card')) { span.textContent = '標準訳'; return; }
     span.textContent = '既定候補';
   }
@@ -670,23 +762,35 @@
     if (data && data.direction) { lastDirection = String(data.direction); }
     var box = el('palette-instant');
     box.innerHTML = '';
-    var hasTm = !!(data && data.tm && data.tm.target);
+    // 文脈ポインタ(project_hit)は、既存のTM欄より優先する候補として返る
+    // (設計判断4)。同じ器(#palette-tm-candidate)を奪い合う形にし、
+    // 両方を並べて新しい行を増やさない——project_hitがあればそちらだけを
+    // 見せる(既存の候補機構に乗せるだけ、新しいコピー配線を作らない)。
+    var projectHit = (data && data.project_hit) || null;
+    var hasProjectHit = !!(projectHit && projectHit.target);
+    var hasTm = !hasProjectHit && !!(data && data.tm && data.tm.target);
     var terms = (data && data.terms) || [];
-    if (!hasTm && terms.length === 0) { box.hidden = true; return; }
+    if (!hasProjectHit && !hasTm && terms.length === 0) { box.hidden = true; return; }
     box.hidden = false;
-    if (hasTm) {
+    if (hasProjectHit || hasTm) {
+      var cardText = hasProjectHit ? String(projectHit.target) : String(data.tm.target);
       var card = document.createElement('div');
       card.id = 'palette-tm-candidate';
-      card.setAttribute('data-yaku-candidate-text', data.tm.target);
+      card.setAttribute('data-yaku-candidate-text', cardText);
+      if (hasProjectHit) card.setAttribute('data-yaku-context-hit', '1');
       var pre = document.createElement('pre');
       pre.className = 'translation';
-      pre.textContent = data.tm.target;
+      pre.textContent = cardText;
       card.appendChild(pre);
       var actions = document.createElement('div');
       actions.className = 'result-actions';
       var kind = document.createElement('span');
       kind.className = 'result-kind';
-      kind.textContent = '訳文メモリの完全一致（未確認）';
+      kind.textContent = hasProjectHit ? 'この資料の確定訳' : '訳文メモリの完全一致（未確認）';
+      // project_hit.project_nameはCoD審査REWORK-1のNIT: 新しい行を増やさず
+      // titleへ載せる(ホバーで「どの資料の確定訳か」を確かめられる、
+      // 480x640の幾何ゲートに触れない)。
+      if (hasProjectHit && projectHit.project_name) { kind.title = String(projectHit.project_name); }
       var copyBtn = document.createElement('button');
       copyBtn.type = 'button';
       copyBtn.className = 'secondary-button copy-button';
@@ -720,7 +824,7 @@
     // 「見込みの方向」は出さない(MAJOR-B)。ジョブ完了時に finishJob が
     // 「検出した方向」を出すのでいずれ分かるし、小窓(480x640)では、
     // ここで24px+間隔を使うと原文欄が画面外へ押し出される主因の一つだった。
-    YakuCommon.post('/api/palette/instant', { text: text, direction_intent: directionIntent }).then(function (data) {
+    YakuCommon.post('/api/palette/instant', { text: text, direction_intent: directionIntent, context_project_id: currentContextProjectId() }).then(function (data) {
       if (seq !== translateSeq) return;
       renderInstant(data);
     }).catch(function () {
@@ -1084,6 +1188,7 @@
   function start() {
     input = el('palette-input');
     directionSelect = el('palette-direction-select');
+    contextSelect = el('palette-context-select');
     handoffButton = el('palette-handoff');
     if (!input || !el('palette-form')) return;
     YakuCommon.start();
@@ -1107,6 +1212,17 @@
         var value = directionSelect.value;
         explicitDirection = (value === 'to_en' || value === 'to_jp') ? value : '';
       });
+    }
+    if (contextSelect) {
+      contextSelect.addEventListener('change', function () {
+        var id = contextSelect.value;
+        var row = contextRows.filter(function (r) { return String(r.id) === id; })[0];
+        // recent 圏外の保存文脈(appendStoredContextOption の選択肢)は contextRows に
+        // 居ないため、選択肢自身から表示名を拾う。空で保存すると次回の表示が id の裸になる。
+        var opt = contextSelect.options[contextSelect.selectedIndex];
+        saveContextSelection(id, row ? String(row.file_name || '') : (opt ? (opt.title || opt.textContent) : ''));
+      });
+      initContextPicker();
     }
     if (handoffButton) handoffButton.addEventListener('click', startHandoff);
     document.addEventListener('click', onDocumentClick);

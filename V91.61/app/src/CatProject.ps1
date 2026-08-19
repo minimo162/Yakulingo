@@ -2485,6 +2485,36 @@ function Get-YakuCatProjectDiskRevision {
     } catch { return $null }
 }
 
+function Get-YakuCatProjectDiskSegmentCount {
+    <# manifest(project.json)だけを見て、世代の中身(segments.jsonl等)には
+       触れない安価な件数取得。Get-YakuCatProjectDiskRevisionと同じ形。
+       パレットの文脈ポインタ(/api/palette/instant)が、ディスク復元
+       (Restore-YakuCatProject)へ進む前に大きさを見積もるために使う
+       (CoD審査REWORK-1 MINOR-4: 実測600行で約2秒かかり、直列の
+       待ち受けを丸ごと止めていた)。読めなければ$nullを返す——
+       呼び出し側は「見積もれない」を安全側(復元しない)に倒す。 #>
+    param([Parameter(Mandatory=$true)][string]$Id)
+    if ($Id -notmatch '^[a-fA-F0-9]{32}$') { return $null }
+    # 区切り文字は決め打ちしない([System.IO.Path]::DirectorySeparatorChar)。
+    # 姉妹関数Get-YakuCatProjectDiskRevisionは'\'を決め打ちしており、これは
+    # Windows PowerShell 5.1(本番)では実害が無いが、検証で使うpwsh7@Linuxでは
+    # GetFullPathが'/'区切りを返すため接頭辞比較が常に不成立になり、
+    # 実装前の確認で実際に踏んだ(この関数の閾値ガードが常にnullを返し、
+    # Restore-YakuCatProjectが一度も呼ばれなくなっていた)。ここだけは直す。
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    $store = ([System.IO.Path]::GetFullPath((Get-YakuCatProjectStoreDir))).TrimEnd($sep)
+    $projectDir = [System.IO.Path]::GetFullPath((Join-Path $store $Id))
+    if (-not $projectDir.StartsWith($store + $sep, [StringComparison]::OrdinalIgnoreCase)) { return $null }
+    $file = Join-Path $projectDir 'project.json'
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { $file = Join-Path $store ($Id + '.json') }
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return $null }
+    try {
+        $manifest = Get-Content -LiteralPath $file -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($manifest.PSObject.Properties.Name -notcontains 'segment_count') { return $null }
+        return [int]$manifest.segment_count
+    } catch { return $null }
+}
+
 function Get-YakuCatOwnedSourceArtifactPath {
     param(
         [Parameter(Mandatory=$true)][string]$ProjectId,

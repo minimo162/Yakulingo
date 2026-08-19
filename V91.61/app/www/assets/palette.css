@@ -62,6 +62,26 @@ body.app-palette {
    同じ基準線に揃える(align-items:centerだけでは上マージン分だけ下へ
    ずれて見える)。 */
 .palette-direction-row #palette-handoff { margin-top: 0; }
+/* 文脈ポインタ。direction-row(既存)へ4要素目として同居させる(新しい行を
+   増やさない、実測で確認した空き幅(134px)へ収める)。select自体の幅は
+   資料名の長さで伸びないよう上限を切り、はみ出す分は省略記号にする
+   （原生select要素でもChromiumはtext-overflow:ellipsisを効かせる、実測)。 */
+.palette-context-select-label { color: var(--muted); font-size: var(--font-meta); margin-left: 4px; }
+#palette-context-select {
+  /* width:autoにする——styles.cssの既定(select要素はwidth:100%)のままだと、
+     flex-wrapのこの行でこのselectだけが1行分の幅を占めて強制改行する
+     (実測: #palette-direction-selectが同じ理由で既にそうなっており、
+     その1行だけで行の高さが116pxになっている、palette.cssの旧註のとおり)。
+     文脈selectは同じ轍を踏まず、他の要素(釦)と同じ行に収める。 */
+  width: auto;
+  min-height: 32px;
+  padding: 2px 4px;
+  font-size: var(--font-meta);
+  max-width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .palette-fineprint { margin: 0; color: var(--muted); font-size: var(--font-meta); }
 .palette-direction-note { margin: 0; color: var(--muted); font-size: var(--font-meta); }
 
