@@ -44,6 +44,14 @@
             <option value="to_jp">英語 → 日本語</option>
           </select>
           <button id="palette-submit" type="submit" class="secondary-button compact">今すぐ訳す</button>
+          <!-- パレットの昇格。手に負えない長さ・重要度の本文を、1回の操作で
+               CAT(資料翻訳)の確認画面へそのまま渡す。新しい行を足すと
+               480x640で原文欄を画面外へ押し出す高さになる(実測、独立行の
+               案で確認済み)ため、direction-row(flex-wrap:wrap)の3要素目の
+               隣へ同居させ、新しい行を増やさない。副次導線なので
+               link-buttonで小さく——type="button"なのでEnter/送信は奪わない。
+               結果の有無に関わらず本文があれば押せる（訳す前でもよい）。 -->
+          <button id="palette-handoff" type="button" class="link-button" disabled>CATで開く</button>
         </div>
       </form>
 

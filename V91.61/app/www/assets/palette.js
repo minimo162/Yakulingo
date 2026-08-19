@@ -12,8 +12,15 @@
 
   function el(id) { return document.getElementById(id); }
 
+  /* パレットの昇格(「CATで開く」)。移動の直前だけ sessionStorage へ退避し、
+     CAT側(cat.js)が起動時に一度だけ読んで消す。quick.js の draft退避
+     (draftStorageKey)と同じ流儀——作業や翻訳メモリには保存せず、
+     読まれれば消える。 */
+  var handoffStorageKey = 'yaku.palette.handoff';
+
   var input = null;
   var directionSelect = null;
+  var handoffButton = null;
   var candidates = [];
   var translateSeq = 0;
   var jobTimer = null;
@@ -74,6 +81,19 @@
     } else {
       notice.hidden = true;
     }
+    updateHandoffButton();
+  }
+
+  /* 「CATで開く」の押せる/押せないを1か所へ集める。本文が無ければ押せない
+     （結果の有無は問わない）。翻訳ジョブ実行中も押せない——jobRunning が
+     このファイルの busy 概念にあたる(quick.js の busy と同じ役割)。
+     busyOverride を渡さないときは現在の jobRunning を見る。
+     setChipsBusy と一緒に呼ぶ箇所では、jobRunning がまだ更新される前の
+     瞬間があるため、その場のbusy値を明示で渡す。 */
+  function updateHandoffButton(busyOverride) {
+    if (!handoffButton) return;
+    var busy = typeof busyOverride === 'boolean' ? busyOverride : jobRunning;
+    handoffButton.disabled = !input.value.trim() || busy;
   }
 
   function jobLoadingHtml(label, percent, detail) {
@@ -371,6 +391,7 @@
     // （実測: 主札を挿し込んだ直後に計算した移動量どおりへ動いたのに、
     // 直後にチップ欄が現れた分(約56px)だけ主札が帯の下へ再びはみ出した）。
     setChipsBusy(false);
+    updateHandoffButton(false);
     var chipsBox = el('palette-chips');
     chipsBox.hidden = !(lastSourceText && lastMaskedTranslation);
     if (lastDirection) {
@@ -391,12 +412,14 @@
       if (data.mode === 'cancelled') {
         jobRunning = false;
         setChipsBusy(false);
+        updateHandoffButton(false);
         el('palette-result').innerHTML = '<div class="alert alert-warning">翻訳をやめました。</div>';
         return;
       }
       if (['error', 'failed'].indexOf(data.mode) >= 0) {
         jobRunning = false;
         setChipsBusy(false);
+        updateHandoffButton(false);
         /* data.html は Convert-YakuTextResultToHtml が
            ConvertTo-YakuUserFacingError を通した後の安全な文言（例:
            SHORTEN_UNMASKED_CURRENT・EXTERNAL_SEND_*・PROTECTED_PROMPT_* を
@@ -418,6 +441,7 @@
 
   function reportJobStartError(error) {
     jobRunning = false;
+    updateHandoffButton(false);
     if (error && error.status === 409 && error.data && error.data.code === 'JOB_RUNNING') {
       el('palette-result').innerHTML = '<div class="alert alert-warning">' + YakuCommon.escape('別の翻訳が進行中です。終わってからもう一度お試しください。') + '</div>';
       return;
@@ -433,6 +457,7 @@
   function showDirectionConfirm(text, suggested, seq) {
     if (seq !== translateSeq) return;
     jobRunning = false;
+    updateHandoffButton(false);
     directionConfirmContext = { text: text, suggested: suggested };
     var label = directionLabel(suggested) || suggested;
     el('palette-result').innerHTML =
@@ -484,6 +509,7 @@
     var mySeq = ++translateSeq;
     window.clearTimeout(jobTimer);
     jobRunning = false;
+    updateHandoffButton(true);
     candidates = [];
     el('palette-chips').hidden = true;
     el('palette-copy-status').textContent = '';
@@ -512,6 +538,7 @@
     // 捨てないと、ジョブ中に1〜9を押すと消えたノードのテキストをコピーする。
     candidates = [];
     setChipsBusy(true);
+    updateHandoffButton(true);
     el('palette-result').innerHTML = jobLoadingHtml('丁寧にしています', 0, '');
     YakuCommon.post('/api/palette/chip', {
       chip: chip, source_text: lastSourceText, current_text: lastMaskedTranslation,
@@ -644,9 +671,29 @@
     event.returnValue = '';
   }
 
+  /* 「CATで開く」。本文(と、明示選択されていれば方向)を sessionStorage の
+     専用キーへ退避し、/cat?handoff=palette へ移る（別タブは開かない——
+     小窓運用ではウィンドウがそのままCATになる。Edge appモードの小窓で
+     別タブは体験を壊す）。CAT側(cat.js)は起動時にこのキーを一度だけ読んで
+     消し、既存の yaku-instant-handoff 受け口へそのまま渡す（ここでは
+     その処理を複製しない）。 */
+  function startHandoff() {
+    if (handoffButton.disabled) return;
+    var text = input.value;
+    if (!text.trim()) return;
+    try {
+      window.sessionStorage.setItem(handoffStorageKey, JSON.stringify({
+        text: text,
+        direction_intent: currentDirectionIntent()
+      }));
+    } catch (error) {}
+    window.location.assign('/cat?handoff=palette');
+  }
+
   function start() {
     input = el('palette-input');
     directionSelect = el('palette-direction-select');
+    handoffButton = el('palette-handoff');
     if (!input || !el('palette-form')) return;
     YakuCommon.start();
     input.addEventListener('input', function (event) {
@@ -670,6 +717,7 @@
         explicitDirection = (value === 'to_en' || value === 'to_jp') ? value : '';
       });
     }
+    if (handoffButton) handoffButton.addEventListener('click', startHandoff);
     document.addEventListener('click', onDocumentClick);
     document.addEventListener('keydown', onDocumentKeydown);
     window.addEventListener('beforeunload', onBeforeUnload);
