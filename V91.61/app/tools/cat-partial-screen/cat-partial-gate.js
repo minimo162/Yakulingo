@@ -44,8 +44,8 @@ const projectDone = JSON.parse(fs.readFileSync(projectDonePath, 'utf8'));
 const projectCancel = JSON.parse(fs.readFileSync(projectCancelPath, 'utf8'));
 const projectDoneApplied = JSON.parse(fs.readFileSync(projectDoneAppliedPath, 'utf8'));
 
-const JOB_ID_DONE = 'aaaaaaaa11111111111111111111111';
-const JOB_ID_CANCEL = 'bbbbbbbb22222222222222222222222';
+const JOB_ID_DONE = 'aaaaaaaa111111111111111111111111';
+const JOB_ID_CANCEL = 'bbbbbbbb222222222222222222222222';
 
 const projectsById = {};
 projectsById[String(projectDone.id)] = projectDone;
@@ -290,6 +290,21 @@ const server = http.createServer(async function (req, res) {
       return ok;
     });
     out.domIdentityPreservedAfterTicks = !!(out.domIdentityAfterTick0 && domIdentityAfterTick1);
+
+    // (MINOR-2) working中でも絞り込みボタンはdisabledにならず
+    // （setBusyはtextarea/inputだけを読み取り専用にする）、押すと
+    // redrawAfterFlush→renderRows()が走る。renderRows()自体はDOMを
+    // 作り直す正当な再描画（tickからの毎秒再描画とは別物）なので、
+    // ここでのDOM要素同一性の喪失は想定どおり——だから(d)のDOM同一性
+    // 検証(tick前後の要素参照比較)より後で行う。見るのは、作り直された
+    // 後の行にも先出しの内容（値・印）が残っていること。
+    await page.click('[data-cat-filter="all"]');
+    await page.waitForFunction(function () {
+      var b = document.querySelector('[data-cat-filter="all"]');
+      return !!(b && b.getAttribute('aria-pressed') === 'true');
+    }, null, { timeout: 10000 });
+    out.row0ValueAfterFilterClick = await page.$eval('[data-cat-row="0"] textarea[data-cat-input]', function (el) { return el.value; });
+    out.row0HasPartialClassAfterFilterClick = await page.$eval('[data-cat-row="0"]', function (el) { return el.classList.contains('cat-partial-preview'); });
 
     // -------------------------------------------------- (e) done -> apply -> render
     await page.waitForFunction(function () {

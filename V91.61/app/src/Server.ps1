@@ -2478,10 +2478,24 @@ function Invoke-YakuRoute {
         # なので、上のルート一致は query string の有無に左右されない。
         # 値は RawUrl から自前で読む（Get-YakuQueryValue、日本語CP932化けと
         # 同じ理由。ここは数字しか受けないが同じ流儀に揃える）。
+        # [int]直接castはInt32の桁を超える数字列(例: 99999999999999)で例外を
+        # 投げ、catchで0へ落ちる。0は「先頭から全部」の意味なので、範囲外の
+        # つもりが逆に全件返ってしまう(CoD審査 REWORK-1 NIT-8)。Int64で
+        # 受けてからInt32の範囲へ丸める。Int64の桁も超える文字列は
+        # TryParseそのものを避け、長さで「十分大きい」と判定する。
         $partialAfter = 0
         try {
             $partialAfterRaw = [string](Get-YakuQueryValue -Request $req -Name 'partial_after')
-            if ($partialAfterRaw -match '^[0-9]+$') { $partialAfter = [int]$partialAfterRaw }
+            if ($partialAfterRaw -match '^[0-9]+$') {
+                if ($partialAfterRaw.Length -gt 15) {
+                    $partialAfter = [int]::MaxValue
+                } else {
+                    $partialAfterInt64 = [int64]0
+                    if ([int64]::TryParse($partialAfterRaw, [ref]$partialAfterInt64)) {
+                        $partialAfter = [int][Math]::Min($partialAfterInt64, [int64]([int]::MaxValue))
+                    }
+                }
+            }
         } catch { $partialAfter = 0 }
         Send-YakuTextResponse -Context $Context -Text (Convert-YakuTranslationJobResultJson -State $script:YakuTranslateJobs[$jobId] -PartialAfter $partialAfter) -ContentType 'application/json; charset=utf-8'
         return

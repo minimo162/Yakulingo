@@ -1246,6 +1246,17 @@
     /* 翻訳中に絞り込みを変えると行が作り直される。編集不可の状態を引き継ぐ。 */
     if (busy) body.querySelectorAll('textarea[data-cat-input], input.revise-input').forEach(function (input) { input.readOnly = true; });
     body.querySelectorAll('textarea[data-cat-input]').forEach(autoGrow);
+    /* 絞り込み・行を開く操作は busy 中も生きており、renderRows() を再度
+       走らせる（訳文欄クリック→focusin→activateIndex、絞り込みボタンは
+       setBusyでもdisabled=false のまま）。そのたびに先出しの書き込みが
+       消えてしまう（renderRows由来の再構築はcheckpointへ届いていない
+       DOMを作り直すだけで、jobContext.partialRowsの累積自体は失われて
+       いない）。同じガード（source一致・訳文欄が空）で再適用し、
+       カーソルが進んでいるぶんも取りこぼさず埋め直す（冪等）
+       （CoD審査 REWORK-1 MINOR-2）。
+       renderRows()自体は毎tickでは呼ばれない（設計判断4は不変）ので、
+       これは全面再描画からの回復であって、tickからの呼び出しではない。 */
+    if (jobContext && Array.isArray(jobContext.partialRows)) jobContext.partialRows.forEach(applyPartialPreviewRow);
     el('cat-candidates').hidden = false;
     if (current) candidates(Number(current.index)); else { el('cat-candidate-count').textContent = '0'; el('cat-candidates-list').innerHTML = '<p class="muted">行がありません。左の「すべて」を押すと、全部の行が表示されます。</p>'; }
   }

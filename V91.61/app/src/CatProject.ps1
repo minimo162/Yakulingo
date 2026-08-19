@@ -4342,6 +4342,13 @@ function Add-YakuCatPartialPreviewRows {
       追記ではなく、既存 + 今回ぶんで新しい配列を作ってから1回で
       $JobState['partial_rows'] を差し替える。in-place の追記
       （.Add など）は読み手に半端な配列を見せる可能性があるため使わない。
+
+      ConvertTo-YakuCatCheckpointRows は数値不整合で棄却した item も
+      text='' のまま rows へ emit する（実際に捨てているのは
+      Save-YakuCatBatchCheckpoint の空白述語）。先出しの正本は
+      「checkpoint に実在する行」なので、ここでも同じ述語で弾く
+      （CoD審査 REWORK-1 MAJOR-1）。弾かないと、訳せなかった行にまで
+      「先出し」バッジが付き、訳了 n/N が水増しされる。
     #>
     param(
         [Parameter(Mandatory=$true)]$JobState,
@@ -4353,6 +4360,7 @@ function Add-YakuCatPartialPreviewRows {
     $nextPartialRows = New-Object System.Collections.Generic.List[object]
     foreach ($existingRow in $existingPartialRows) { [void]$nextPartialRows.Add($existingRow) }
     foreach ($newRow in @($CheckpointRows)) {
+        if ([string]::IsNullOrWhiteSpace([string]$newRow.source) -or [string]::IsNullOrWhiteSpace([string]$newRow.text)) { continue }
         # index/source/text だけを運ぶ。masked（マスク済み文字列）も
         # saved（checkpoint 保存フラグ相当）も、この先出し経路では出さない
         # （設計判断3）。

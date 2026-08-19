@@ -206,6 +206,7 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .job-bottomline { align-items: flex-start; }
 .job-cancel { flex: 0 0 auto; }
 .job-elapsed { color: var(--muted); font-size: var(--font-meta); font-variant-numeric: tabular-nums; }
+.job-partial-progress { color: var(--muted); font-size: var(--font-meta); font-variant-numeric: tabular-nums; }
 /* 数十分待つ画面で唯一動くもの。2px では動いているかどうかが分からない。 */
 .job-progress-line { position: relative; width: 100%; height: 10px; overflow: hidden; border-radius: 999px; background: var(--line); border: 1px solid var(--line-strong); }
 .job-progress-bar { position: absolute; inset: 0 auto 0 0; width: 0%; background: var(--accent); transition: width 300ms linear; }

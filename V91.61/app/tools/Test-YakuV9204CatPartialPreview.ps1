@@ -13,32 +13,46 @@
       通す。checkpoint行がジョブ state へ積まれること、重複排除で1 item が複数
       セグメントへ展開される場合に rows が展開後(1行=1セグメント)であること、
       実値へ復元済みで [[N が残らないことを、本物のマスク・復元パイプラインで確認する。
+      題材の3item目はわざと数値マスクの個数整合を崩す応答を返させ、
+      ConvertTo-YakuCatCheckpointRows が text='' のまま emit する行(数値不整合で
+      棄却された行)を Add-YakuCatPartialPreviewRows が弾くこと、partial_total が
+      Save-YakuCatBatchCheckpoint の戻り値と一致することを固定する(CoD審査
+      REWORK-1 MAJOR-1)。items は手組みではなく ConvertTo-YakuCatDedupedItems
+      から作る(NIT-5)。
 
   (c) Convert-YakuTranslationJobResultJson(Server.ps1からAST抽出)。partial_after の
-      差分カーソル(負値・範囲外・省略時デフォルト0を含む)、partial_total が常に
-      累積総数であること、cancelled/error等の terminal 分岐でも同じ形で返ること、
+      差分カーソル(負値・範囲外・省略時デフォルト0・Int32上限を含む)、partial_total が
+      常に累積総数であること、cancelled/error等の terminal 分岐でも同じ形で返ること、
       kind=text 等 partial_* を持たない State では 0/空配列に落ちること。
 
   (d) Server.ps1 の静的配線。/api/jobs/ ルートの一致行($path = AbsolutePath、
       正規表現)が変わっていないこと(クエリ文字列はそもそも $path に乗らないため
       ルート自体の変更は不要という実装前確認の結果を、以後の変更から守るピン)。
-      partial_after の読み出しに Get-YakuQueryValue を使っていること。
+      partial_after の読み出しに Get-YakuQueryValue を使っていること。分母
+      (partial_expected_total)の算出式のピン(MINOR-3)。partial_after を
+      Int64で受けてからInt32へ丸める経路のピン(NIT-8)。
 
   (e) 実機Chromium(tools/cat-partial-screen/cat-partial-gate.js)。
       working(部分rows有)→doneの順で返すpollスタブで:
         - 該当行に先出しが表示される(a)
+        - working中に絞り込みボタン(すべて)を押してrenderRows()が走っても、
+          先出しの訳文・印は残る(MINOR-2)
         - 訳文欄が非空の行は触らない(b)
         - source不一致の行は触らない(c)
         - 全面再描画が起きていない(tick前後で無関係な行の要素同一性が保たれる)(d)
         - done→apply→render後は先出しの印が消え、apply結果で上書きされる(e)
         - cancelled で先出し表示が画面に残る(f)
 
-  突然変異2種(壊して赤・戻して緑、diffで復元がクリーンなことも確認):
+  突然変異3種(壊して赤・戻して緑、diffで復元がクリーンなことも確認):
     1. Add-YakuCatPartialPreviewRows が text の代わりに masked を運ぶよう変異
        → (b)の「[[N が残らない」assertが赤になる
     2. Convert-YakuTranslationJobResultJson の差分カーソルを無効化(常に全件)する
        よう変異 → (c)の差分assertが赤になる
-  この2つは tools/Mutate-V9204*.ps1 ではなく、このファイルの実行前後で
+    3. Add-YakuCatPartialPreviewRows の空白述語ガード(MAJOR-1で足した1行)を
+       外す変異 → (b)の「数値不整合で棄却された行(index=3)は先出しに載らない」
+       assertと「partial_totalはSave-YakuCatBatchCheckpointの戻り値と一致する」
+       assertが赤になる
+  この3つは tools/Mutate-V9204*.ps1 ではなく、このファイルの実行前後で
   手動再現した記録として README 相当を持たない(CoD運用メモに実行ログを残す)。
 
   node/Playwright/Chromium が無い環境では(e)を**緑にしない**。終了コード3
@@ -111,22 +125,36 @@ Write-Host '-- (b) OnBatchCompleted相当: 実バッチ翻訳→checkpoint→先
 
 $source1 = 'We shipped 120 units this quarter.'
 $source2 = 'Operating profit was 296 million yen.'
+# segment 3 はわざと数値マスクの整合が壊れる訳文を返させる題材(下記)。
+# ConvertTo-YakuCatCheckpointRows は数値不整合で棄却した item も text='' の
+# ままrowsへ載せる(実際に捨てるのはSave-YakuCatBatchCheckpointの空白述語)。
+# Add-YakuCatPartialPreviewRows が同じ述語で弾かないと、この行にまで
+# 「先出し」バッジが付き、訳了 n/N が水増しされる(CoD審査 REWORK-1 MAJOR-1)。
+$source3 = 'Net sales grew 45 percent.'
 $segments = @(
     [pscustomobject]@{ Text=$source1; Translation=''; MaskedTranslation=''; Origin=''; Confirmed=$false; Joined=$false; Kind='text'; Sheet=''; Location='本文'; BlockIds=@(); Cells=@() },
     [pscustomobject]@{ Text=$source1; Translation=''; MaskedTranslation=''; Origin=''; Confirmed=$false; Joined=$false; Kind='text'; Sheet=''; Location='本文'; BlockIds=@(); Cells=@() },
-    [pscustomobject]@{ Text=$source2; Translation=''; MaskedTranslation=''; Origin=''; Confirmed=$false; Joined=$false; Kind='text'; Sheet=''; Location='本文'; BlockIds=@(); Cells=@() }
+    [pscustomobject]@{ Text=$source2; Translation=''; MaskedTranslation=''; Origin=''; Confirmed=$false; Joined=$false; Kind='text'; Sheet=''; Location='本文'; BlockIds=@(); Cells=@() },
+    [pscustomobject]@{ Text=$source3; Translation=''; MaskedTranslation=''; Origin=''; Confirmed=$false; Joined=$false; Kind='text'; Sheet=''; Location='本文'; BlockIds=@(); Cells=@() }
 )
 $project = [pscustomobject]@{ Id='partial-preview'; Path=''; FileName='貼り付け'; Direction='to_jp'; Source='text'; CreatedAt=(Get-Date).ToString('s'); CorpusSection=''; Blocks=@(); Segments=$segments }
 $script:YakuCatProjects[$project.Id] = $project
 Chk (Save-YakuCatProject -Project $project) '空のProjectを先に永続化する'
 
-# 重複排除で1 item が複数セグメントへ展開される場合を作る:
-# segment 0・1 は同じ原文なので、実装(ConvertTo-YakuCatDedupedItems)なら
-# 1つの item(Index=1) に畳まれ Targets=@(0,1) を持つ。ここではその畳んだ
-# あとの形を直接組む(実装前確認の結論: rows は Targets 展開後=1行=1セグメント)。
+# 重複排除で1 item が複数セグメントへ展開される場合を、手組みではなく
+# 実装(ConvertTo-YakuCatDedupedItems)から作る(正解が自分の出力由来に
+# ならないよう、CoD審査 REWORK-1 NIT-5 の指摘どおり実装へ委ねる)。
+# segment 0・1 は同じ原文なので1つの item(Targets=@(0,1))へ畳まれる
+# (実装前確認の結論: checkpoint rows は Targets 展開後=1行=1セグメント)。
+$rawItems = @(
+    [pscustomobject]@{ index = 0; text = $source1 }
+    [pscustomobject]@{ index = 1; text = $source1 }
+    [pscustomobject]@{ index = 2; text = $source2 }
+    [pscustomobject]@{ index = 3; text = $source3 }
+)
 $items = New-Object System.Collections.Generic.List[object]
-$items.Add([pscustomobject]@{ Index=1; Text=$source1; Targets=@(0,1); BlockIds=(New-Object System.Collections.Generic.List[string]) }) | Out-Null
-$items.Add([pscustomobject]@{ Index=2; Text=$source2; Targets=@(2); BlockIds=(New-Object System.Collections.Generic.List[string]) }) | Out-Null
+foreach ($dedupedEntry in @(ConvertTo-YakuCatDedupedItems -RawItems $rawItems)) { [void]$items.Add($dedupedEntry) }
+Chk (@($items.ToArray()).Count -eq 3) ('dedupeで3 item になる(実際 ' + @($items.ToArray()).Count + ')')
 $null = Protect-YakuCatItems -Items @($items.ToArray()) -Root $root -Direction 'to_jp'
 $warnings = New-Object System.Collections.Generic.List[object]
 
@@ -135,35 +163,45 @@ function Invoke-YakuProtectedTransportTestHook {
     $requestId = [regex]::Match($Prompt, 'YAKULINGO_END:([0-9a-f]{32})').Groups[1].Value
     # Copilotは伏せた数値トークンをそのまま返す(意味を知らないため)。
     # 復元(Restore-YakuCatItemTranslations)がここで [[N1]] を実値へ戻す。
-    return ("[[ID:1]] 1. 今四半期の出荷台数は[[N1]]台です。`n[[ID:2]] 2. 営業利益は[[N1]]百万円でした。`nYAKULINGO_END:$requestId")
+    # ID:3(source3、数値1個をマスク済み)だけは、わざとトークンを落として
+    # 返す。数値マスクの個数整合が崩れ、Restore側がこの item を
+    # $copyMap から取り除く(数値が抜けた訳は欠陥、CLAUDE.md)。
+    return ("[[ID:1]] 1. 今四半期の出荷台数は[[N1]]台です。`n[[ID:2]] 2. 営業利益は[[N1]]百万円でした。`n[[ID:3]] 3. 純売上高は増加しました。`nYAKULINGO_END:$requestId")
 }
 
-$jobStateB = [hashtable]::Synchronized(@{})
+$jobStateB = [hashtable]::Synchronized(@{ _test_checkpoint_saved_count = -1 })
 $callback = {
     param($completedItems, $completedMap)
     # Server.ps1 の onCatBatchCompleted closure と同じ形(1203行台)。
     $rows = @(ConvertTo-YakuCatCheckpointRows -Items @($completedItems) -Translations $completedMap -Warnings $warnings -Direction 'to_jp')
     if ($rows.Count -gt 0) {
-        $null = Save-YakuCatBatchCheckpoint -ProjectId $project.Id -ProjectRevision ([int]$project.Revision) -Translations $rows
+        # .GetNewClosure() は $script: スカラーへの代入をこの closure の
+        # 私有スコープへ止め、呼び出し元へ伝播させない(実測して確認した罠)。
+        # 参照型($jobStateB自体、既にpartial_rows/partial_totalの書き込みに
+        # 使っている)へ載せることで確実に外へ伝える。
+        $jobStateB['_test_checkpoint_saved_count'] = Save-YakuCatBatchCheckpoint -ProjectId $project.Id -ProjectRevision ([int]$project.Revision) -Translations $rows
         Add-YakuCatPartialPreviewRows -JobState $jobStateB -CheckpointRows $rows
     }
 }.GetNewClosure()
 $context = @{
     BatchOrdinal=0; TotalBatches=1; MaxRetryDepth=0
-    CacheHits=0; TranslatedSoFar=0; UniqueTotal=2; CopilotCalls=0
+    CacheHits=0; TranslatedSoFar=0; UniqueTotal=3; CopilotCalls=0
     CompletedMap=@{}; OnBatchCompleted=$callback
 }
 $null = Invoke-YakuCatTranslationItems -Root $root -Items @($items.ToArray()) -Settings $settings -Direction 'to_jp' -MaxChars 3000 -Warnings $warnings -Context $context
 
-Chk ([int]$jobStateB['partial_total'] -eq 3) ('2 item(展開後3セグメント)ぶんが1回のバッチ完了で積まれる(実際 ' + [int]$jobStateB['partial_total'] + ')')
+Chk ([int]$jobStateB['partial_total'] -eq 3) ('3 item(展開後4セグメントのうち数値不整合の1行を除いた3件)が積まれる(実際 ' + [int]$jobStateB['partial_total'] + ')')
 $partialRowsB = @($jobStateB['partial_rows'] | Sort-Object { [int]$_.index })
 Chk (@($partialRowsB).Count -eq 3) '積んだ行も3件(1行=1セグメント、item単位ではない)'
 Chk ([int]$partialRowsB[0].index -eq 0 -and [int]$partialRowsB[1].index -eq 1 -and [int]$partialRowsB[2].index -eq 2) 'indexはプロジェクトのセグメントindex(0,1,2)そのもの'
+Chk ((@($partialRowsB.index)) -notcontains 3) ('[MAJOR-1] 数値不整合で棄却された行(index=3)は先出しに載らない(実際のindex一覧: ' + (($partialRowsB.index) -join ',') + ')')
+Chk ([int]$jobStateB['partial_total'] -eq [int]$jobStateB['_test_checkpoint_saved_count']) ('[MAJOR-1] partial_totalはSave-YakuCatBatchCheckpointの戻り値と一致する(実際 partial_total=' + [int]$jobStateB['partial_total'] + ' / checkpoint保存件数=' + [int]$jobStateB['_test_checkpoint_saved_count'] + ')')
 Chk ([string]$partialRowsB[0].text -eq [string]$partialRowsB[1].text) '重複した原文(segment 0,1)は同じ訳文を持つ(1 item→複数行への正しい展開)'
 Chk ([string]$partialRowsB[0].source -eq $source1 -and [string]$partialRowsB[2].source -eq $source2) 'sourceは実際のプロジェクト原文と一致する'
 foreach ($r in $partialRowsB) {
     Chk (([string]$r.text) -notmatch '\[\[N') ('先出しtextにマスク残留[[Nが無い(index=' + $r.index + '、実際「' + [string]$r.text + '」)')
     Chk (([string]$r.text) -notmatch '\[\[P') ('先出しtextにマスク残留[[Pが無い(index=' + $r.index + '、実際「' + [string]$r.text + '」)')
+    Chk (-not [string]::IsNullOrWhiteSpace([string]$r.text)) ('[MAJOR-1] 先出しtextは空でない(index=' + $r.index + ')')
 }
 Chk (([string]$partialRowsB[0].text) -match '120') '数値そのものは実値へ復元されている(index0、120)'
 Chk (([string]$partialRowsB[2].text) -match '296') '数値そのものは実値へ復元されている(index2、296)'
@@ -255,6 +293,25 @@ Chk ($serverSource.Contains("`$path -match '^/api/jobs/([a-f0-9]{32})`$'")) 'GET
 Chk ($serverSource.Contains('$path = $req.Url.AbsolutePath')) '$path は引き続き AbsolutePath(クエリを含まない)から作る(実装前確認の前提)'
 Chk ($serverSource.Contains("Get-YakuQueryValue -Request `$req -Name 'partial_after'")) 'partial_after の読み出しは Get-YakuQueryValue 経由(QueryStringのCP932化けを避ける既存流儀を踏襲)'
 Chk ($serverSource.Contains('-PartialAfter $partialAfter')) 'ルートは読み取った partial_after を Convert-YakuTranslationJobResultJson へ渡す'
+# 分母(partial_expected_total)はジョブ scriptblock 内のローカル代入で、
+# 試験からは端から端まで叩けない(分子=partial_rowsの積み上げ方は
+# Add-YakuCatPartialPreviewRows へ切り出して(b)で叩いているのに、分母だけ
+# 同じ穴に残っていた。CoD審査 REWORK-1 MINOR-3)。せめて式そのものを
+# ピンし、以後の変更が黙って書き換えないようにする。
+Chk ($serverSource.Contains("`$JobState['partial_expected_total'] = @(`$cat.items).Count")) '[MINOR-3] partial_expected_totalの算出式(cat.items件数=展開前・1行=1セグメントの生の依頼件数)がピンどおり'
+# [int]直接castはInt32の桁を超える数字列で例外→catchで0→「先頭から全部」に
+# 反転する(CoD審査 REWORK-1 NIT-8)。Int64で受けてからInt32へ丸める経路が
+# 実装に残っていることをピンする(500にならないことは経路自体が例外を
+# 投げない作りであることで担保する)。
+Chk ($serverSource.Contains('[int64]::TryParse($partialAfterRaw, [ref]$partialAfterInt64)')) '[NIT-8] partial_afterはInt64で受けてからInt32へ丸める(直接[int]castで例外→0フォールバックしない)'
+Chk ($serverSource.Contains('$partialAfterRaw.Length -gt 15')) '[NIT-8] Int64の桁も超える文字列はTryParseへ渡さず、長さで大きい値と判定する'
+
+# 実測: NIT-8のとおり、境界値をConvert-YakuTranslationJobResultJson側で
+# 確かめる(ルート側の文字列→Int32丸めが正しく動けば、渡ってくる
+# PartialAfterはInt32範囲に収まるので、ここでは丸め後の値を模して
+# 「範囲外の巨大値=0件」を再確認する。実際のルート解析はソースピンで守る)。
+$jsonAfterHuge = Convert-YakuTranslationJobResultJson -State $stateAll -PartialAfter ([int]::MaxValue) | ConvertFrom-Json
+Chk (@($jsonAfterHuge.partial_rows).Count -eq 0) '[NIT-8] Int32範囲に丸めた最大値でも例外にならず0件(全件返りに反転しない)'
 
 # ============================================================ (e) 実機Chromium部
 Write-Host '-- (e) chromium --'
@@ -329,6 +386,9 @@ Chk ([string]$o.observedPartialAfterThird -eq '3') '3回目のpollはpartial_aft
 Chk ([bool]$o.row0HasPartialClass) '(a) 該当行(index=0)にcat-partial-previewの印が付く'
 Chk ([string]$o.row0Value -eq 'Translated shipment zero.') ('(a) 該当行の訳文欄へ先出しのtextが書き込まれる(実際: ' + [string]$o.row0Value + ')')
 Chk ([bool]$o.row0BadgeFound) '(a) 先出しバッジが訳文欄側に見える'
+
+Chk ([string]$o.row0ValueAfterFilterClick -eq 'Translated shipment zero.') ('[MINOR-2] working中に絞り込みボタン(すべて)を押してrenderRows()が走っても、先出しの訳文は残る(実際: ' + [string]$o.row0ValueAfterFilterClick + ')')
+Chk ([bool]$o.row0HasPartialClassAfterFilterClick) '[MINOR-2] 絞り込みで作り直された行にも先出しの印が付き直す'
 
 Chk ([string]$o.row1ValueAfterTick -eq 'manually typed by user') ('(b) 訳文欄が非空の行(index=1)は先出しで上書きされない(実際: ' + [string]$o.row1ValueAfterTick + ')')
 Chk (-not [bool]$o.row1HasPartialClassAfterTick) '(b) 触らなかった行には先出しの印も付かない'
