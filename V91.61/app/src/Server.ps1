@@ -1264,7 +1264,6 @@ function Start-YakuTranslationJob {
                         Sent = $copilotItems.Count
                         CacheHits = [int]$catContext['CacheHits']
                         MaskedCount = [int]$maskTotals.MaskedCount
-                        KeptCount = [int]$maskTotals.KeptCount
                         Warnings = @($catWarnings.ToArray())
                     }
                 } catch {
@@ -1294,7 +1293,7 @@ function Start-YakuTranslationJob {
                             Kind='cat'; Mode='translate'; ProjectId=[string]$cat.project_id; ProjectRevision=[int]$cat.expected_project_revision
                             Translations=@($partialPairs.ToArray()); Sent=$items.Count; Partial=$true
                             PartialError=$failureMessage; CacheHits=[int]$catContext['CacheHits']
-                            MaskedCount=[int]$partialMaskTotals.MaskedCount; KeptCount=[int]$partialMaskTotals.KeptCount
+                            MaskedCount=[int]$partialMaskTotals.MaskedCount
                             Warnings=@($catWarnings.ToArray())
                         }
                     } else {

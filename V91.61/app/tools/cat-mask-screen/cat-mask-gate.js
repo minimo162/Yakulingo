@@ -9,20 +9,27 @@
 
   判定はしない。判定は呼び出し側の PowerShell が行う（既存の流儀）。
 
-  見るのは3つ。
+  見るのは4つ。
     (1) まとめて翻訳が終わると、#cat-mask-notice に「数値 N 件をマスクして
         送信しました。」が出る（サーバが返す masked_count をそのまま使う）
     (2) N=0 のときは「この翻訳で外部へ送った数値はありません。」と明示する
         （何も出さないのではない）
     (3) 出した通知は、その後の別の操作（この行を確認済みにする＝
         mutate('confirm', ...) の render()）でも消えない（自動で消えない）
+    (4) 資料を切り替えると通知は消える。#cat-doc-switch(cat.html)を押して
+        開くダイアログから、もう一方の資料(data-cat-doc-open、cat.js)を
+        実際に押す。page.goto の再読み込みでは cat.js の render() 内の
+        「資料が変わったら消す」分岐（previousProjectId !== 新id）を一度も
+        通らないため、REWORK-1(MEDIUM-1)の指摘どおり in-app の切り替えで
+        確かめる。/api/cat/recent は両方の資料を返す必要がある。
 
   使い方:
     node cat-mask-gate.js <wwwDir> <projectWithMaskPath> <projectZeroMaskPath> <outJson>
 
   projectWithMaskPath: ConvertTo-YakuCatProjectJson の出力。翻訳後に
-    masked_count > 0 を返す題材で使う。
+    masked_count > 0 を返す題材で使う。切り替え元の資料でもある。
   projectZeroMaskPath: 同じ形。masked_count = 0 を返す題材で使う。
+    切り替え先の資料として、翻訳もここで行う（2回目の goto は使わない）。
 */
 const fs = require('fs');
 const http = require('http');
@@ -93,8 +100,10 @@ const server = http.createServer(async function (req, res) {
     res.end(JSON.stringify({ canTranslate: true, label: '準備完了', class: 'ok' })); return;
   }
   if (p === '/api/cat/recent') {
+    // 切り替えダイアログ(#cat-doc-switch)が両方の資料を選べる必要がある
+    // （REWORK-1 MEDIUM-1）。本物の資料JSONをそのまま並べる（写経しない）。
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({ projects: [] })); return;
+    res.end(JSON.stringify({ projects: [projectWithMask, projectZeroMask] })); return;
   }
   if (p === '/api/cat/resume') {
     const wanted = parsed ? String(parsed.project_id || '') : '';
@@ -174,9 +183,25 @@ const server = http.createServer(async function (req, res) {
       out.noticeAfterConfirm = null;
     }
 
+    // -------------------------------------------------- (4) 資料を切り替えると消える
+    // page.goto の再読み込みでは previousProjectId が常に空になり、cat.js の
+    // render() 内「資料が変わったら消す」分岐を一度も通らない
+    // （REWORK-1 MEDIUM-1: cat-doc-switch.js が同じ穴を踏んでいた）。
+    // ここでは実際にダイアログを開いて、もう一方の資料を押す。
+    await page.click('#cat-doc-switch');
+    const otherId = String(projectZeroMask.id);
+    const otherChoiceSelector = '#cat-doc-dialog-list [data-cat-doc-open="' + otherId + '"]';
+    await page.waitForSelector(otherChoiceSelector, { timeout: 10000 });
+    await page.click(otherChoiceSelector);
+    // resume() の render() が終わり、URLのproject=が切り替わるまで待つ
+    // （syncLocation、cat.js:197-206）。dialogが閉じることも確認する。
+    await page.waitForFunction(function (id) { return location.search.indexOf(id) >= 0; }, otherId, { timeout: 10000 });
+    await page.waitForFunction(function () { var d = document.getElementById('cat-doc-dialog'); return !d || !d.open; }, null, { timeout: 10000 });
+    out.noticeAfterDocSwitch = await page.$eval('#cat-mask-notice', function (el) { return el.textContent; });
+
     // -------------------------------------------------- (2) masked_count = 0
-    await page.goto('http://127.0.0.1:' + port + '/cat?project=' + encodeURIComponent(projectZeroMask.id), { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('#cat-workspace:not([hidden])', { timeout: 10000 });
+    // 既に(4)で切り替え先の資料（projectZeroMask）を開いているので、
+    // 2回目の goto は使わず、そのまま翻訳する。
     await page.waitForFunction(function () { var b = document.getElementById('cat-translate'); return b && !b.disabled; }, null, { timeout: 10000 });
     await page.click('#cat-translate');
     await page.waitForFunction(function () {

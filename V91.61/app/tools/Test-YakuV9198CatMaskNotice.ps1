@@ -4,16 +4,20 @@
 
 .DESCRIPTION
   テキスト/パレット経路には既にある安全の見える化(New-YakuMaskingNoticeHtml、
-  Html.ps1:321-334)を、件数がいちばん多いCAT経路へ横展開した。見るのは4つ。
+  Html.ps1:321-334)を、件数がいちばん多いCAT経路へ横展開した。見るのは5つ。
 
-  (a) Protect-YakuCatItems が、dedupe後の item ごとに MaskedCount/KeptCount を
-      積むこと。複製された原文（同じ文が複数行にある）は1回だけ数えること。
-      対応表(NumericMaskMap)は運ばず件数だけを持つこと。
+  (a) Protect-YakuCatItems が、dedupe後の item ごとに MaskedCount を積むこと。
+      複製された原文（同じ文が複数行にある）は1回だけ数えること。
+      対応表(NumericMaskMap)は運ばず件数だけを持つこと。KeptCount は運ばない
+      （CAT経路は -AllowExistingTokens 無しで呼ぶため構造上つねに0になり、
+      常に0の値を持ち回る方が誤読を招く。CoD審査 2026-08-19 REWORK-1 LOW-3）。
 
   (b) Get-YakuCatSentMaskTotals（Server.ps1のジョブscriptblockから直接は
       試験が届かないため切り出した集計関数、ConvertTo-YakuCatDedupedItems と
       同じ理由）が、「送った分（訳文が実際に届いた行）」だけを合算すること。
-      未送達・空訳文は数えないこと。
+      未送達・空訳文は数えないこと。題材は合計(4)と item 件数(3)をわざと
+      不一致にしてある（「合計のつもりが件数を数えていた」変異を掴むため。
+      CoD審査 2026-08-19 REWORK-1 LOW-2）。
 
   (c) Convert-YakuTranslationJobResultJson が、Kind='cat' の結果に載った
       MaskedCount を masked_count として返すこと。MaskedCount を持たない
@@ -25,6 +29,11 @@
       「この翻訳で外部へ送った数値はありません。」と明示すること
       （何も出さないのではない）。出した通知は、別の render() を経由する
       操作（行の確認）でも消えないこと（自動では消えない）。
+
+  (e) 資料を切り替えると通知は消えること。#cat-doc-switch から開くダイアログ
+      で、実際にもう一方の資料を押して切り替える（page.goto の再読み込みでは
+      cat.js の render() 内「資料が変わったら消す」分岐を一度も通らず、この
+      性質が未検証のまま残っていた。CoD審査 2026-08-19 REWORK-1 MEDIUM-1）。
 
   node/Playwright/Chromium が無い環境では **緑にしない**。終了コード3
   （未測定）で抜ける。
@@ -66,7 +75,10 @@ Write-Host '-- (a) Protect-YakuCatItems: item ごとの件数、複製は1回だ
 $rawItems = @(
     [pscustomobject]@{ index = 1; text = '出荷台数は659千台。'; terminology = @() }
     [pscustomobject]@{ index = 2; text = '当社の方針は変わりません。'; terminology = @() }
-    [pscustomobject]@{ index = 3; text = '営業利益は296億円、税金費用99億円の見込みです。'; terminology = @() }
+    # 3個の数値を持たせる。合計(1+0+3=4)と item 件数(3)をわざと食い違わせる。
+    # 一致していると「合計を数えたつもりが件数を数えていた」変異が通ってしまう
+    # （CoD審査 2026-08-19 REWORK-1 LOW-2）。
+    [pscustomobject]@{ index = 3; text = '営業利益は296億円、税金費用99億円、前年同期は421億円の見込みです。'; terminology = @() }
     # index=1と同じ原文。dedupeで1つの item に畳まれ、MaskedCountは二重に
     # 積まれてはならない（重複行を訳すたびに件数が水増しされる欠陥を防ぐ）。
     [pscustomobject]@{ index = 4; text = '出荷台数は659千台。'; terminology = @() }
@@ -80,9 +92,13 @@ foreach ($it in @($items)) { $itemByIndex[[int]$it.Index] = $it }
 Chk ([int]$itemByIndex[1].MaskedCount -eq 1) ('659千台の item は MaskedCount=1（実際 ' + [int]$itemByIndex[1].MaskedCount + '）')
 Chk (@($itemByIndex[1].Targets) -contains 1 -and @($itemByIndex[1].Targets) -contains 4) '複製された行(index=1,4)は同じ item の Targets へ両方入る（二重計上の芽を断つ）'
 Chk ([int]$itemByIndex[2].MaskedCount -eq 0) ('数字を含まない item は MaskedCount=0（実際 ' + [int]$itemByIndex[2].MaskedCount + '）')
-Chk ([int]$itemByIndex[3].MaskedCount -eq 2) ('296億円・99億円の item は MaskedCount=2（実際 ' + [int]$itemByIndex[3].MaskedCount + '）')
+Chk ([int]$itemByIndex[3].MaskedCount -eq 3) ('296億円・99億円・421億円の item は MaskedCount=3（実際 ' + [int]$itemByIndex[3].MaskedCount + '）')
 foreach ($it in @($items)) {
     Chk ($it.PSObject.Properties.Name -contains 'NumericMaskMap') 'item は対応表(NumericMaskMap)自体は従来どおり持つ（実値への割り戻しに要る）'
+    # KeptCount は運ばない。Protect-YakuCatItems は -AllowExistingTokens 無しで
+    # 呼ぶため、Kept は構造上つねに0になる。常に0の値を5ファイルへ通す方が
+    # 誤読を招くため、この機能では落とした（CoD審査 2026-08-19 REWORK-1 LOW-3）。
+    Chk ($it.PSObject.Properties.Name -notcontains 'KeptCount') 'item は KeptCount を持たない（構造上つねに0になる値は運ばない設計）'
 }
 # 対応表そのもの・マスク済み本文は、この試験でも結果オブジェクトへは載せない
 # （§8「件数のみ」。ここでは item が Map を「件数」以外の形で外へ運ぶ経路が
@@ -93,9 +109,9 @@ Write-Host '-- (b) Get-YakuCatSentMaskTotals: 送った分だけを合算 --'
 
 $fullMap = @{ 1 = 'A'; 2 = 'B'; 3 = 'C' }
 $fullTotals = Get-YakuCatSentMaskTotals -Items @($items) -Map $fullMap
-Chk ([int]$fullTotals.MaskedCount -eq 3) ('全部送った(1+0+2): 合計3（実際 ' + [int]$fullTotals.MaskedCount + '）')
+Chk ([int]$fullTotals.MaskedCount -eq 4) ('全部送った(1+0+3): 合計4（実際 ' + [int]$fullTotals.MaskedCount + '。item件数3とはわざと不一致）')
 
-# 部分失敗を模す。index=3(MaskedCount=2)の訳文が届いていない
+# 部分失敗を模す。index=3(MaskedCount=3)の訳文が届いていない
 # （CompletedMapに無い＝送っていない分）。
 $partialMap = @{ 1 = 'A'; 2 = 'B' }
 $partialTotals = Get-YakuCatSentMaskTotals -Items @($items) -Map $partialMap
@@ -104,11 +120,12 @@ Chk ([int]$partialTotals.MaskedCount -eq 1) ('index=3が未送達なら合計1�
 # キーはあるが訳文が空（サーバの $pairs 構築と同じ扱い）。
 $blankMap = @{ 1 = ''; 2 = 'B'; 3 = 'C' }
 $blankTotals = Get-YakuCatSentMaskTotals -Items @($items) -Map $blankMap
-Chk ([int]$blankTotals.MaskedCount -eq 2) ('index=1の訳文が空なら合計2（実際 ' + [int]$blankTotals.MaskedCount + '。空訳文は数えない）')
+Chk ([int]$blankTotals.MaskedCount -eq 3) ('index=1の訳文が空なら合計3（実際 ' + [int]$blankTotals.MaskedCount + '。空訳文は数えない）')
 
 $emptyMap = @{}
 $emptyTotals = Get-YakuCatSentMaskTotals -Items @($items) -Map $emptyMap
-Chk ([int]$emptyTotals.MaskedCount -eq 0 -and [int]$emptyTotals.KeptCount -eq 0) '何も届いていなければ合計0（0件も明示する設計の材料）'
+Chk ([int]$emptyTotals.MaskedCount -eq 0) '何も届いていなければ合計0（0件も明示する設計の材料）'
+Chk ($emptyTotals.PSObject.Properties.Name -notcontains 'KeptCount') 'Get-YakuCatSentMaskTotals の戻り値も KeptCount を持たない'
 
 # ============================================================ (c) Convert-YakuTranslationJobResultJson
 Write-Host '-- (c) Convert-YakuTranslationJobResultJson: masked_count の配線 --'
@@ -140,7 +157,7 @@ function New-N9198JobState {
     }
 }
 
-$catResultWithCount = [ordered]@{ Kind = 'cat'; Mode = 'translate'; Translations = @(); MaskedCount = 5; KeptCount = 1 } | ConvertTo-Json -Depth 6 -Compress
+$catResultWithCount = [ordered]@{ Kind = 'cat'; Mode = 'translate'; Translations = @(); MaskedCount = 5 } | ConvertTo-Json -Depth 6 -Compress
 $catStateWithCount = New-N9198JobState -ResultJson $catResultWithCount
 $catJsonWithCount = Convert-YakuTranslationJobResultJson -State $catStateWithCount | ConvertFrom-Json
 Chk ([int]$catJsonWithCount.masked_count -eq 5) ('Kind=cat, MaskedCount=5 の結果は masked_count=5 を返す（実際 ' + [int]$catJsonWithCount.masked_count + '）')
@@ -159,7 +176,11 @@ Chk ([int]$textJsonWithCount.masked_count -eq 0) ('Kind=text（パレット/簡�
 Write-Host '-- (d) chromium --'
 
 $driver = Join-Path (Join-Path $toolsRoot 'cat-mask-screen') 'cat-mask-gate.js'
-if (-not (Test-Path -LiteralPath $driver -PathType Leaf)) { Write-Host ('UNMEASURED: 運転席がありません: ' + $driver) -ForegroundColor Red; exit $YAKU_SCREEN_UNMEASURED }
+if (-not (Test-Path -LiteralPath $driver -PathType Leaf)) {
+    Write-Host ('UNMEASURED: 運転席がありません: ' + $driver) -ForegroundColor Red
+    if ($script:fail -gt 0) { exit 1 }
+    exit $YAKU_SCREEN_UNMEASURED
+}
 
 $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
 if ($null -eq $nodeCmd) {
@@ -209,6 +230,9 @@ $expectedNonZero = '数値 3 件をマスクして送信しました。数値以
 Chk ([string]$o.noticeAfterTranslate -eq $expectedNonZero) ('翻訳が終わると件数が出る（実際: ' + [string]$o.noticeAfterTranslate + '）')
 Chk ([bool]$o.confirmButtonFound) '確認ボタンが見つかる（前提条件）'
 Chk ([string]$o.noticeAfterConfirm -eq $expectedNonZero) ('別の操作(行の確認)を挟んでも通知は消えない（実際: ' + [string]$o.noticeAfterConfirm + '）')
+# (e) 資料を切り替えると通知は消える。#cat-doc-switch から開くダイアログで
+# 実際にもう一方の資料を押した後の状態（CoD審査 2026-08-19 REWORK-1 MEDIUM-1）。
+Chk ([string]::IsNullOrEmpty([string]$o.noticeAfterDocSwitch)) ('資料を切り替えると通知は消える（実際: 「' + [string]$o.noticeAfterDocSwitch + '」）')
 $expectedZero = 'この翻訳で外部へ送った数値はありません。数値以外の文はマスクせずに送っています。'
 Chk ([string]$o.noticeZeroCase -eq $expectedZero) ('0件のときは明示の文言が出る（実際: ' + [string]$o.noticeZeroCase + '）')
 
