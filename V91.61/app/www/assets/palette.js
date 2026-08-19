@@ -117,6 +117,127 @@
     try { return YakuCommon.decodeBase64(raw); } catch (error) { return ''; }
   }
 
+  /* --- 対訳並置ビュー（パレット、V9202）-----------------------------------
+     複数段落の原文(典型: 英文メールの和訳)を訳したとき、原文と訳文を
+     段落ごとに交互へ並べて出す。「置き換えずに並べる」——読者がいつでも
+     照合できる形にする(Immersive Translate方式)。クライアントのみの見た目の
+     変更で、Html.ps1が作るDOM契約(data-yaku-main-text/data-yaku-copy-b64)は
+     一切書き換えない。pre[data-yaku-main-text]はCSSで隠すだけで常に残す
+     ——1〜9/Enterのコピー(refreshCandidatesのmainCardText=pre.textContent)と
+     コピー釦(data-yaku-copy-b64)の契約(V9195/V9199/V9200がピン)がそこへ
+     乗っているため、対訳ビューはpreの外側に増設した別要素にする。 */
+
+  var BILINGUAL_MIN_PARAGRAPHS = 2;
+
+  /* 空行(前後の空白を許す、\n\s*\n)で段落に区切る。以下を正規化する:
+     - 先頭・末尾の空行は、split結果の空文字列として現れるのでtrim後に捨てる。
+     - 空白だけの行(または行の並び)は、前後の空行と地続きなら\s*が丸ごと
+       1つの区切りとして飲み込むため、そもそも独立した段落にならない。
+       それ以外の形で紛れ込んだ場合もtrim後空文字になるので捨てる。
+     - 段落内部の単一改行(署名の「結び+氏名」のような2行1段落)は分割しない。
+       trim()は前後の空白だけを削り、内部の改行はそのまま残す
+       (表示側はwhite-space:pre-lineで改行を保つ、palette.css参照)。 */
+  function splitBilingualParagraphs(text) {
+    var raw = String(text || '').replace(/\r\n?/g, '\n');
+    var parts = raw.split(/\n\s*\n/);
+    var out = [];
+    for (var i = 0; i < parts.length; i++) {
+      var trimmed = parts[i].trim();
+      if (trimmed === '') continue;
+      out.push(trimmed);
+    }
+    return out;
+  }
+
+  /* 両方が2段落以上、かつ段落数が一致するときだけ対訳表示を成立させる
+     (仕様item 1)。段落数がCopilot応答次第でずれても、静かに単一ブロックの
+     ままにする(フォールバックは無言・既定挙動)。 */
+  function bilingualParagraphsEligible(sourceParas, targetParas) {
+    return sourceParas.length >= BILINGUAL_MIN_PARAGRAPHS &&
+      targetParas.length >= BILINGUAL_MIN_PARAGRAPHS &&
+      sourceParas.length === targetParas.length;
+  }
+
+  function buildBilingualView(sourceParas, targetParas) {
+    var view = document.createElement('div');
+    view.className = 'bilingual-view';
+    view.setAttribute('data-yaku-bilingual-view', '1');
+    for (var i = 0; i < targetParas.length; i++) {
+      var pair = document.createElement('div');
+      pair.className = 'bilingual-pair';
+      var sourceP = document.createElement('p');
+      sourceP.className = 'bilingual-source';
+      sourceP.textContent = sourceParas[i];
+      var targetP = document.createElement('p');
+      targetP.className = 'bilingual-target';
+      targetP.textContent = targetParas[i];
+      pair.appendChild(sourceP);
+      pair.appendChild(targetP);
+      view.appendChild(pair);
+    }
+    return view;
+  }
+
+  /* 対訳ビュー・トグルを完全に取り除き、preを見える状態へ戻す。
+     applyBilingualView が毎回まずこれを呼び、前回ぶんを残さない
+     (スワップ・再翻訳のたびに中身が変わるため、古い対訳が残ってはならない)。 */
+  function removeBilingualUi(mainCard) {
+    var view = mainCard.querySelector('[data-yaku-bilingual-view]');
+    if (view && view.parentNode) view.parentNode.removeChild(view);
+    var controls = mainCard.querySelector('[data-yaku-bilingual-controls]');
+    if (controls && controls.parentNode) controls.parentNode.removeChild(controls);
+    var pre = mainCard.querySelector('[data-yaku-main-text]');
+    if (pre) pre.classList.remove('is-bilingual-hidden');
+  }
+
+  /* 対訳/訳のみを切り替える。preのtextContent自体は動かさない
+     ——見た目(表示/非表示)だけを切り替える。 */
+  function setBilingualMode(mainCard, showBilingual) {
+    var pre = mainCard.querySelector('[data-yaku-main-text]');
+    var view = mainCard.querySelector('[data-yaku-bilingual-view]');
+    if (!pre || !view) return;
+    pre.classList.toggle('is-bilingual-hidden', showBilingual);
+    view.hidden = !showBilingual;
+    var bilingualButton = mainCard.querySelector('[data-yaku-bilingual-mode="bilingual"]');
+    var monoButton = mainCard.querySelector('[data-yaku-bilingual-mode="mono"]');
+    if (bilingualButton) bilingualButton.setAttribute('aria-pressed', showBilingual ? 'true' : 'false');
+    if (monoButton) monoButton.setAttribute('aria-pressed', showBilingual ? 'false' : 'true');
+  }
+
+  /* finishJob(新しい翻訳結果)・swapAltIntoMain(添え札の入れ替え)の両方から
+     呼ぶ。判定が成立すればカード上部にトグルを足し、既定で対訳を表示する
+     (選択はページ内のみ保持——次の翻訳やスワップでは、この関数がもう一度
+     判定し直し、対訳表示は既定へ戻る)。不成立なら現行の単一ブロックの
+     ままにする。 */
+  function applyBilingualView(mainCard, sourceText) {
+    if (!mainCard) return;
+    var pre = mainCard.querySelector('[data-yaku-main-text]');
+    if (!pre) return;
+    var targetParas = splitBilingualParagraphs(pre.textContent);
+    var sourceParas = splitBilingualParagraphs(sourceText);
+    removeBilingualUi(mainCard);
+    if (!bilingualParagraphsEligible(sourceParas, targetParas)) return;
+    var controls = document.createElement('div');
+    controls.className = 'bilingual-toggle-row';
+    controls.setAttribute('data-yaku-bilingual-controls', '1');
+    var bilingualButton = document.createElement('button');
+    bilingualButton.type = 'button';
+    bilingualButton.className = 'bilingual-toggle-option';
+    bilingualButton.setAttribute('data-yaku-bilingual-mode', 'bilingual');
+    bilingualButton.textContent = '対訳';
+    var monoButton = document.createElement('button');
+    monoButton.type = 'button';
+    monoButton.className = 'bilingual-toggle-option';
+    monoButton.setAttribute('data-yaku-bilingual-mode', 'mono');
+    monoButton.textContent = '訳のみ';
+    controls.appendChild(bilingualButton);
+    controls.appendChild(monoButton);
+    var view = buildBilingualView(sourceParas, targetParas);
+    pre.parentNode.insertBefore(view, pre.nextSibling);
+    mainCard.insertBefore(controls, mainCard.firstChild);
+    setBilingualMode(mainCard, true);
+  }
+
   /* 候補の並びは常に「TM完全一致（あれば）→ Copilotの主訳 → 添えの訳」の順。
      TMは自前のカードなので data-yaku-candidate-text を直接持たせる。
      Copilotの2つはサーバが作ったマークアップ（Html.ps1）をそのまま使い、
@@ -306,6 +427,9 @@
     if (oldHead && oldHead.parentNode) oldHead.parentNode.replaceChild(rebuilt.head, oldHead); else altButton.appendChild(rebuilt.head);
     if (oldBody && oldBody.parentNode) oldBody.parentNode.replaceChild(rebuilt.body, oldBody); else altButton.appendChild(rebuilt.body);
 
+    // 入れ替え後の中身で対訳ビューを作り直す(原文は同じジョブ由来のまま、
+    // V9202)。既定へ戻す(選択の持ち回りはしない、仕様item 3)。
+    applyBilingualView(mainCard, lastSourceText);
     refreshCandidates();
     revealMainResult();
   }
@@ -621,6 +745,9 @@
       if (label) { el('palette-direction').textContent = '検出した方向: ' + label; el('palette-direction').hidden = false; }
     }
     setCompactInstant(true);
+    // レイアウトに効く変更は revealMainResult() より先に済ませる、の続き
+    // (V9202): 対訳ビューの有無・高さもここで確定させてから寄せる。
+    applyBilingualView(document.querySelector('#palette-result [data-yaku-main-card]'), lastSourceText);
     refreshCandidates();
     revealMainResult();
   }
@@ -822,6 +949,18 @@
   /* --- 配線 ----------------------------------------------------------------- */
 
   function onDocumentClick(event) {
+    // 対訳/訳のみトグル(V9202)。コピー・スワップ・覚えるのどの委譲よりも
+    // 先に判定する——data-yaku-copy-b64を持たない専用ボタンなので他の分岐と
+    // 衝突しないが、早めに拾って return したほうが読みやすい。
+    var bilingualToggle = event.target.closest('[data-yaku-bilingual-mode]');
+    if (bilingualToggle) {
+      var bilingualCard = bilingualToggle.closest('[data-yaku-main-card]');
+      if (bilingualCard) {
+        setBilingualMode(bilingualCard, bilingualToggle.getAttribute('data-yaku-bilingual-mode') === 'bilingual');
+        revealMainResult();
+      }
+      return;
+    }
     // コピー釦(data-yaku-tm-copy)は圧縮時(is-compact)に隠すので、カードの
     // どこを押しても拾えるようにする(圧縮していないときは釦を押しても同じ)。
     var tmCopy = event.target.closest('#palette-tm-candidate');

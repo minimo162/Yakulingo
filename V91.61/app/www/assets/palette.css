@@ -226,6 +226,36 @@ body.app-palette {
 .result-alt-shell { display: grid; gap: 4px; }
 .result-alt-shell .term-learn-button { justify-self: start; }
 
+/* 対訳並置ビュー（V9202）。主訳カードの中身を「原文段落(控えめな色)/
+   訳段落」の交互リストへ、見た目だけ差し替える。pre[data-yaku-main-text]は
+   常にDOMへ残す(消さない)——1〜9/Enterのコピーとdata-yaku-copy-b64の契約
+   (V9195/V9199/V9200)がそこへ乗っているため。ここでは display:none で
+   隠すだけにする。 */
+.bilingual-toggle-row { display: flex; gap: 6px; margin-bottom: 6px; }
+.bilingual-toggle-option {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: var(--font-meta);
+  padding: 2px 10px;
+  cursor: pointer;
+}
+.bilingual-toggle-option[aria-pressed="true"] {
+  background: var(--soft);
+  color: var(--text);
+  border-color: var(--accent);
+}
+#palette-result [data-yaku-main-card] [data-yaku-main-text].is-bilingual-hidden { display: none; }
+.bilingual-view { display: grid; gap: 10px; padding: 6px 12px; }
+.bilingual-pair { display: grid; gap: 2px; }
+.bilingual-pair:not(:first-child) { border-top: 1px solid var(--line); padding-top: 8px; }
+.bilingual-source, .bilingual-target { margin: 0; white-space: pre-line; }
+/* 原文は控えめな色(仕様item 2)。訳文は通常の本文色のまま、preの見た目
+   (styles.cssの.translation)と揃える。 */
+.bilingual-source { color: var(--muted); font-size: var(--font-meta); }
+.bilingual-target { color: var(--text); }
+
 @media (max-width: 380px) {
   .palette-shell { padding: 10px 10px 32px; }
 }
