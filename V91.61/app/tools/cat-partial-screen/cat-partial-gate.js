@@ -6,9 +6,10 @@
   cat-workspace.css をローカル HTTP で配り、/api/* は決め打ちの応答を返し、
   実際に押す・打つ）。判定はしない。判定は呼び出し側の PowerShell が行う。
 
-  見るのは6つ（(a)〜(f)、Test-YakuV9204CatPartialPreview.ps1 のコメント参照）。
-  ジョブは2本使う。1本目(JOB_ID_DONE)は working→working→done→apply まで進め、
-  2本目(JOB_ID_CANCEL、別の資料)は working→cancelled で止める。
+  見るのは7つ（(a)〜(f) と MAJOR-A、Test-YakuV9204CatPartialPreview.ps1 の
+  コメント参照）。ジョブは2本使う。1本目(JOB_ID_DONE)は working→working→
+  done→apply まで進め、2本目(JOB_ID_CANCEL、別の資料)は working→cancelled
+  で止める。
 
   working の1回目・2回目は、応答に partial_rows を混ぜる:
     1回目: index=0（正しいsource）だけ。押す前に index=1 の訳文欄へ
@@ -17,15 +18,26 @@
     2回目: index=1（source正しいが訳文欄が非空）と index=2（source不一致）を
       混ぜる。どちらも触られないことを見る((b)(c))。
 
+  MAJOR-A: cancelled後、jobContextはnullにならない（MINOR-2の効果を同じ資料
+  内で保つ設計上の判断）。そのため、キャンセル後に別資料へ**同じページ内で**
+  切り替える（page.gotoでの再読み込みではjobContext自体が消えて再現しない。
+  #cat-doc-switchから実際にダイアログを開いて選ぶ）と、旧ジョブの
+  partialRowsが新資料のrenderRows()末尾の再適用（MINOR-2）でリプレイされうる。
+  projectSwitchTargetはprojectCancelの1行目と**同じ原文**を持つ（金融資料の
+  「(単位:百万円)」のような先頭行一致は日常であり、source一致ガードだけでは
+  防げないことを実証する題材）。
+
   使い方:
     node cat-partial-gate.js <wwwDir> <projectDonePath> <projectCancelPath>
-      <projectDoneAppliedPath> <outJson>
+      <projectDoneAppliedPath> <projectSwitchTargetPath> <outJson>
 
   projectDonePath: 先出し前の姿(ConvertTo-YakuCatProjectJson)。3セグメント、
     すべて訳文が空。
   projectDoneAppliedPath: apply後の「正本」の姿。同じ資料IDで、3行とも
     先出しの値とは別の文字列に訳文が入っている。
   projectCancelPath: 別資料。3セグメント、すべて訳文が空。
+  projectSwitchTargetPath: さらに別の資料。1行目の原文がprojectCancelの
+    1行目と一致する。3セグメント、すべて訳文が空。
 */
 const fs = require('fs');
 const http = require('http');
@@ -36,13 +48,15 @@ const wwwDir = process.argv[2];
 const projectDonePath = process.argv[3];
 const projectCancelPath = process.argv[4];
 const projectDoneAppliedPath = process.argv[5];
-const outPath = process.argv[6];
+const projectSwitchTargetPath = process.argv[6];
+const outPath = process.argv[7];
 
 const MIME = { '.js': 'application/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8' };
 
 const projectDone = JSON.parse(fs.readFileSync(projectDonePath, 'utf8'));
 const projectCancel = JSON.parse(fs.readFileSync(projectCancelPath, 'utf8'));
 const projectDoneApplied = JSON.parse(fs.readFileSync(projectDoneAppliedPath, 'utf8'));
+const projectSwitchTarget = JSON.parse(fs.readFileSync(projectSwitchTargetPath, 'utf8'));
 
 const JOB_ID_DONE = 'aaaaaaaa111111111111111111111111';
 const JOB_ID_CANCEL = 'bbbbbbbb222222222222222222222222';
@@ -50,6 +64,7 @@ const JOB_ID_CANCEL = 'bbbbbbbb222222222222222222222222';
 const projectsById = {};
 projectsById[String(projectDone.id)] = projectDone;
 projectsById[String(projectCancel.id)] = projectCancel;
+projectsById[String(projectSwitchTarget.id)] = projectSwitchTarget;
 
 // どちらの資料を翻訳中か（直近の /api/cat/translate 呼び出し）で、どちらの
 // ジョブ台本を再生するか決める（逐次実行前提、cat-mask-gate.js と同じ単純化）。
@@ -104,7 +119,7 @@ const server = http.createServer(async function (req, res) {
   }
   if (p === '/api/cat/recent') {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({ projects: [projectDone, projectCancel] })); return;
+    res.end(JSON.stringify({ projects: [projectDone, projectCancel, projectSwitchTarget] })); return;
   }
   if (p === '/api/cat/resume') {
     const wanted = parsed ? String(parsed.project_id || '') : '';
@@ -338,6 +353,25 @@ const server = http.createServer(async function (req, res) {
     out.cancelRow0Value = await page.$eval('[data-cat-row="0"] textarea[data-cat-input]', function (el) { return el.value; });
     out.cancelRow0HasPartialClass = await page.$eval('[data-cat-row="0"]', function (el) { return el.classList.contains('cat-partial-preview'); });
     out.cancelStatusText = await page.$eval('#cat-status', function (el) { return el.textContent; });
+
+    // -------------------------------------------------- (MAJOR-A) キャンセル後に別資料へ切り替えても先出しが漏れない
+    // jobContextはcancelledでもnullにならない（MINOR-2のため）。page.gotoで
+    // 再読み込みするとjobContext自体が消えて再現しないので、実際にダイアログを
+    // 開いて同じページ内で切り替える（cat-mask-gate.jsの資料切り替えと同じ作法）。
+    await page.click('#cat-doc-switch');
+    const switchTargetId = String(projectSwitchTarget.id);
+    const switchChoiceSelector = '#cat-doc-dialog-list [data-cat-doc-open="' + switchTargetId + '"]';
+    await page.waitForSelector(switchChoiceSelector, { timeout: 10000 });
+    await page.click(switchChoiceSelector);
+    await page.waitForFunction(function (id) { return location.search.indexOf(id) >= 0; }, switchTargetId, { timeout: 10000 });
+    await page.waitForFunction(function () { var d = document.getElementById('cat-doc-dialog'); return !d || !d.open; }, null, { timeout: 10000 });
+    // resume()のrender()はrenderRows()を呼ぶので、MINOR-2の再適用も同時に走る。
+    // MAJOR-Aのガードが効いていれば、新資料のindex=0(原文はprojectCancelの
+    // index=0と同一)は空のまま。ガードが無ければ'Translated cancel zero.'が
+    // ここへ書き込まれてしまう。
+    out.switchTargetSharedSource = await page.$eval('[data-cat-row="0"] .cat-source-text', function (el) { return el.textContent; });
+    out.switchTargetRow0Value = await page.$eval('[data-cat-row="0"] textarea[data-cat-input]', function (el) { return el.value; });
+    out.switchTargetRow0HasPartialClass = await page.$eval('[data-cat-row="0"]', function (el) { return el.classList.contains('cat-partial-preview'); });
   } catch (e) {
     out.fatal = String((e && e.stack) || e);
   } finally {

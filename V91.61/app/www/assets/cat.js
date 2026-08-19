@@ -1467,13 +1467,27 @@
      呼ばない(設計判断4)。 値のセットだけで input/change は発火させない。 */
   function applyPartialPreviewRow(row) {
     var index = Number(row && row.index);
+    /* cancelled/error後にjobContextをnullにしない設計（MINOR-2でrenderRows末尾
+       からの再適用を足したため、同じ資料に留まっている限りは効かせたい）の
+       裏返しとして、資料を切り替えても前の資料のjobContextが生き続ける。
+       finishJob()はcontext.scopeで守っているのに、ここは守っていなかった
+       （CoD審査REWORK-2 MAJOR-A、実機4クリックで再現）。scopeが無いジョブ
+       （align）は先出し行を生まないため無害。 */
+    if (!jobContext || !jobContext.scope || !project || String(project.id || '') !== String(jobContext.scope.id)) return;
     if (!project || !Array.isArray(project.segments) || !isFinite(index)) return;
     var rowEl = document.querySelector('[data-cat-row="' + index + '"]');
     if (!rowEl) return;
-    var segment = project.segments.find(function (item) { return Number(item.index) === index; });
-    if (!segment || String(segment.source || '') !== String(row.source || '')) return;
+    /* segments[i].index === i（CatProject.ps1:3786、ConvertTo-YakuCatProjectJson の
+       index = $i）が正本の並びなので、毎回 find() で線形探索しない。600行資料の
+       再適用で+67.8msかかっていた（CoD審査REWORK-2 NIT-B）。並びがずれていた
+       場合に備え、直取りした要素の.indexが本当に一致するかだけは確認する。 */
+    var segment = project.segments[index];
+    if (!segment || Number(segment.index) !== index || String(segment.source || '') !== String(row.source || '')) return;
     var input = rowEl.querySelector('textarea[data-cat-input="' + index + '"]');
-    if (!input || String(input.value || '').trim() !== '') return;
+    // NIT-C: text=''の先出し行(正本では到達しないはずだが、renderRows由来の
+    // リプレイ対象になった以上は防御する）は、空の訳文欄へバッジだけ付けて
+    // しまわないよう、ここで弾く。
+    if (!input || String(input.value || '').trim() !== '' || !String(row.text || '').trim()) return;
     input.value = String(row.text || '');
     autoGrow(input);
     rowEl.classList.add('cat-partial-preview');

@@ -3,7 +3,7 @@
   V91.61: CAT翻訳の部分結果先出しの回帰試験。
 
 .DESCRIPTION
-  見るのは4つ。
+  見るのは5つ((a)〜(e)。MAJOR-Aは(e)の中で見る)。
 
   (a) Add-YakuCatPartialPreviewRows(CatProject.ps1、ConvertTo-YakuCatCheckpointRows
       の直後に置いた新関数)。累積は1回の代入で丸ごと差し替えること。index/source/text
@@ -42,8 +42,16 @@
         - 全面再描画が起きていない(tick前後で無関係な行の要素同一性が保たれる)(d)
         - done→apply→render後は先出しの印が消え、apply結果で上書きされる(e)
         - cancelled で先出し表示が画面に残る(f)
+        - MAJOR-A: cancelled後、page.gotoでの再読み込みではなく#cat-doc-switch
+          から**同じページ内で**別資料へ切り替える(jobContextは
+          cancelled/errorでもnullにならない設計のため、再読み込みしないと
+          再現しない)。切り替え先資料のindex=0はcancelProjectと**同一原文**
+          （source一致ガードだけでは防げない題材、金融資料の「(単位:百万円)」
+          相当）。applyPartialPreviewRow の資料一致ガード
+          (jobContext.scope.id === project.id)が効き、切り替え先の行へは
+          前資料の先出しが書き込まれないことを見る。
 
-  突然変異3種(壊して赤・戻して緑、diffで復元がクリーンなことも確認):
+  突然変異4種(壊して赤・戻して緑、diffで復元がクリーンなことも確認):
     1. Add-YakuCatPartialPreviewRows が text の代わりに masked を運ぶよう変異
        → (b)の「[[N が残らない」assertが赤になる
     2. Convert-YakuTranslationJobResultJson の差分カーソルを無効化(常に全件)する
@@ -52,7 +60,10 @@
        外す変異 → (b)の「数値不整合で棄却された行(index=3)は先出しに載らない」
        assertと「partial_totalはSave-YakuCatBatchCheckpointの戻り値と一致する」
        assertが赤になる
-  この3つは tools/Mutate-V9204*.ps1 ではなく、このファイルの実行前後で
+    4. applyPartialPreviewRow の資料一致ガード(MAJOR-Aで足した1行)を外す変異
+       → MAJOR-Aの「切り替え後も前資料の先出し訳文が書き込まれない」assertが
+       赤になる(既存3種はどれも資料をまたがないため検出しない)
+  この4つは tools/Mutate-V9204*.ps1 ではなく、このファイルの実行前後で
   手動再現した記録として README 相当を持たない(CoD運用メモに実行ログを残す)。
 
   node/Playwright/Chromium が無い環境では(e)を**緑にしない**。終了コード3
@@ -337,11 +348,18 @@ if ($LASTEXITCODE -ne 0) {
     exit $YAKU_SCREEN_UNMEASURED
 }
 
-# 実際に開く2つの資料(done→apply/f キャンセル)を、本物の関数で作る(写経しない)。
+# 実際に開く資料(done→apply/f キャンセル/MAJOR-A 切り替え先)を、本物の関数で
+# 作る(写経しない)。MAJOR-A用のswitchTargetProjectは、cancelProjectの1行目と
+# **同じ原文**を持つ(金融資料の「(単位:百万円)」のような先頭行一致は日常で、
+# source一致ガードだけでは資料またぎの誤書き込みを防げないことを実証する)。
+$sharedFirstLine = '(単位:百万円)を含む中止用の原文です。'
 $doneProject = New-YakuCatTextProject -Root $root -Text ('先出し原文Aです。' + "`n" + '先出し原文Bです。' + "`n" + '先出し原文Cです。') -Settings $settings -Direction 'to_en'
-$cancelProject = New-YakuCatTextProject -Root $root -Text ('中止用の原文Xです。' + "`n" + '中止用の原文Yです。' + "`n" + '中止用の原文Zです。') -Settings $settings -Direction 'to_en'
+$cancelProject = New-YakuCatTextProject -Root $root -Text ($sharedFirstLine + "`n" + '中止用の原文Yです。' + "`n" + '中止用の原文Zです。') -Settings $settings -Direction 'to_en'
+$switchTargetProject = New-YakuCatTextProject -Root $root -Text ($sharedFirstLine + "`n" + '乗り換え先の原文Bです。' + "`n" + '乗り換え先の原文Cです。') -Settings $settings -Direction 'to_en'
+Chk ([string]$cancelProject.Segments[0].Text -eq $sharedFirstLine -and [string]$switchTargetProject.Segments[0].Text -eq $sharedFirstLine) '[MAJOR-A前提] cancelProjectとswitchTargetProjectのindex=0は同一原文(source一致ガードだけでは防げない題材)'
 $doneProjectJson = ConvertTo-YakuCatProjectJson -Project $doneProject
 $cancelProjectJson = ConvertTo-YakuCatProjectJson -Project $cancelProject
+$switchTargetProjectJson = ConvertTo-YakuCatProjectJson -Project $switchTargetProject
 
 # apply後の「正本」snapshot。先出しの値とは別の文字列にして、apply結果で
 # 確実に上書きされたことを見分けられるようにする。まず先出し前の姿を
@@ -359,13 +377,15 @@ $utf8 = New-Object System.Text.UTF8Encoding($false)
 $doneProjectPath = Join-Path $tmp 'project-done.json'
 $cancelProjectPath = Join-Path $tmp 'project-cancel.json'
 $applyDoneProjectPath = Join-Path $tmp 'project-done-applied.json'
+$switchTargetProjectPath = Join-Path $tmp 'project-switch-target.json'
 [IO.File]::WriteAllText($doneProjectPath, $doneProjectJson, $utf8)
 [IO.File]::WriteAllText($cancelProjectPath, $cancelProjectJson, $utf8)
 [IO.File]::WriteAllText($applyDoneProjectPath, $applyDoneProjectJson, $utf8)
+[IO.File]::WriteAllText($switchTargetProjectPath, $switchTargetProjectJson, $utf8)
 $observedPath = Join-Path $tmp 'observed.json'
 $stderrPath = Join-Path $tmp 'node-stderr.txt'
 
-$arguments = @($driver, (Join-Path $root 'www'), $doneProjectPath, $cancelProjectPath, $applyDoneProjectPath, $observedPath) | ForEach-Object { '"' + $_ + '"' }
+$arguments = @($driver, (Join-Path $root 'www'), $doneProjectPath, $cancelProjectPath, $applyDoneProjectPath, $switchTargetProjectPath, $observedPath) | ForEach-Object { '"' + $_ + '"' }
 $proc = Start-Process -FilePath $nodeExe -ArgumentList $arguments -NoNewWindow -Wait -PassThru -RedirectStandardError $stderrPath
 $nodeErr = ''
 if (Test-Path -LiteralPath $stderrPath) { $nodeErr = [string][IO.File]::ReadAllText($stderrPath) }
@@ -405,6 +425,10 @@ Chk (-not [bool]$o.row0BadgeFoundAfterApply) '(e) 先出しバッジも apply �
 Chk ([bool]$o.cancelRow0HasPartialClass) '(f) キャンセル後も先出しの印が画面に残る'
 Chk ([string]$o.cancelRow0Value -eq 'Translated cancel zero.') ('(f) キャンセル後も先出しの訳文が画面に残る(実際: ' + [string]$o.cancelRow0Value + ')')
 Chk ([string]$o.cancelStatusText -match '保存されています') '(f) 既存のキャンセル文言(保存されています)と矛盾しない'
+
+Chk ([string]$o.switchTargetSharedSource -eq $sharedFirstLine) '[MAJOR-A前提] 切り替え先資料のindex=0はcancelProjectと同一原文が画面にも出ている(題材が成立している)'
+Chk ([string]$o.switchTargetRow0Value -eq '') ('[MAJOR-A] キャンセル後に別資料へ切り替えても、前の資料の先出し訳文が新しい資料の同一原文行へ書き込まれない(実際: 「' + [string]$o.switchTargetRow0Value + '」)')
+Chk (-not [bool]$o.switchTargetRow0HasPartialClass) '[MAJOR-A] 切り替え先の行に先出しの印も付かない'
 
 Write-Host ('checks=' + $script:checks + ' fail=' + $script:fail)
 if ($script:fail -gt 0) { exit 1 }
