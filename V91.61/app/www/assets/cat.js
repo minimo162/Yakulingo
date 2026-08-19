@@ -1256,7 +1256,13 @@
        （CoD審査 REWORK-1 MINOR-2）。
        renderRows()自体は毎tickでは呼ばれない（設計判断4は不変）ので、
        これは全面再描画からの回復であって、tickからの呼び出しではない。 */
-    if (jobContext && Array.isArray(jobContext.partialRows)) jobContext.partialRows.forEach(applyPartialPreviewRow);
+    if (jobContext && Array.isArray(jobContext.partialRows)) {
+      /* deferGrow=true で書き込みだけ先に済ませ、autoGrow(強制同期レイアウト)は
+         最後に一括で回す(CoD審査REWORK-3 MINOR-D)。forEach(applyPartialPreviewRow)
+         と直接渡すと第2引数の配列位置が deferGrow に化けるため、明示的に包む。 */
+      jobContext.partialRows.forEach(function (partialRow) { applyPartialPreviewRow(partialRow, true); });
+      body.querySelectorAll('textarea[data-cat-input]').forEach(autoGrow);
+    }
     el('cat-candidates').hidden = false;
     if (current) candidates(Number(current.index)); else { el('cat-candidate-count').textContent = '0'; el('cat-candidates-list').innerHTML = '<p class="muted">行がありません。左の「すべて」を押すと、全部の行が表示されます。</p>'; }
   }
@@ -1465,7 +1471,7 @@
   /* 先出しで届いた1行を、いま画面に見えている該当行だけへ書き込む。
      renderRows() は毎秒の全面再描画になり選択・コピー・スクロールを壊すため
      呼ばない(設計判断4)。 値のセットだけで input/change は発火させない。 */
-  function applyPartialPreviewRow(row) {
+  function applyPartialPreviewRow(row, deferGrow) {
     var index = Number(row && row.index);
     /* cancelled/error後にjobContextをnullにしない設計（MINOR-2でrenderRows末尾
        からの再適用を足したため、同じ資料に留まっている限りは効かせたい）の
@@ -1478,9 +1484,10 @@
     var rowEl = document.querySelector('[data-cat-row="' + index + '"]');
     if (!rowEl) return;
     /* segments[i].index === i（CatProject.ps1:3786、ConvertTo-YakuCatProjectJson の
-       index = $i）が正本の並びなので、毎回 find() で線形探索しない。600行資料の
-       再適用で+67.8msかかっていた（CoD審査REWORK-2 NIT-B）。並びがずれていた
-       場合に備え、直取りした要素の.indexが本当に一致するかだけは確認する。 */
+       index = $i）が正本の並びなので、毎回 find() で線形探索しない（CoD審査
+       REWORK-2 NIT-B。なお600行の実測では find は3.6msで、遅さの主因は
+       autoGrow の強制同期レイアウトだった — REWORK-3 MINOR-D を参照）。
+       並びがずれていた場合に備え、直取りした要素の.indexが一致するかだけは確認する。 */
     var segment = project.segments[index];
     if (!segment || Number(segment.index) !== index || String(segment.source || '') !== String(row.source || '')) return;
     var input = rowEl.querySelector('textarea[data-cat-input="' + index + '"]');
@@ -1489,7 +1496,12 @@
     // しまわないよう、ここで弾く。
     if (!input || String(input.value || '').trim() !== '' || !String(row.text || '').trim()) return;
     input.value = String(row.text || '');
-    autoGrow(input);
+    /* autoGrow は scrollHeight と getComputedStyle を読む＝強制同期レイアウト。
+       renderRows() 末尾のリプレイで1行ごとに読み書きを交互にやると、600行資料の
+       再描画1回が 556ms→2344ms に膨らんだ(CoD審査REWORK-3 MINOR-D の実測)。
+       リプレイ側は deferGrow=true で書き込みだけ先に済ませ、autoGrow は呼び出し元が
+       最後に一括で回す(703msまで戻る)。pollJob からの1行ずつの経路は従来どおり。 */
+    if (!deferGrow) autoGrow(input);
     rowEl.classList.add('cat-partial-preview');
     if (!rowEl.querySelector('.cat-partial-badge')) {
       /* 場所は cat-col-loc/cat-col-no ではなく訳文欄側に置く。行番号・場所の列は
