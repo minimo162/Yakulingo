@@ -19,6 +19,19 @@
      翻訳ジョブ実行中は押せないことも見る(貼り付けで実際にジョブを
      起こし、進行中→完了で押せる/押せないが切り替わることを見る)。
 
+     A':MAJOR-A(CoD審査 REWORK-1)。80msで1回サンプルするだけの上の
+     busy確認では、jobRunning=trueへ変わった直後にupdateHandoffButton
+     を呼び直しているか(このRE-WORKで足した箇所)を掴めない
+     ——サンプルした時点でたまたま押せない状態だっただけかもしれない。
+     ここでは/api/palette/translateをわざと遅らせ(RACETEST)、
+     その往復の最中に(jobRunningがまだfalseのうちに)#palette-inputへ
+     もう1文字打つ入力イベントを送る。startTranslationの
+     updateHandoffButton(true)は打鍵のupdateCount()に上書きされて消える
+     のが仕様どおりの弱点で、そのあとjobRunningが実際にtrueへ変わった
+     瞬間にupdateHandoffButtonを呼び直していなければ、押せない状態は
+     一度も戻ってこない。突然変異(このRE-WORKで足したupdateHandoffButton
+     呼び出しを消す)を当てると赤くなる想定の題材。
+
   B) /cat 側、キー欠落: sessionStorage に何も無いまま ?handoff=palette で
      開いても、quick-inputは空のまま・/api/cat/openは飛ばず・通常起動する。
 
@@ -48,6 +61,12 @@ const outPath = process.argv[4];
 const MIME = { '.js': 'application/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8' };
 const HANDOFF_KEY = 'yaku.palette.handoff';
 const JOB_ID = 'ddeeff0000000000000000000000009';
+// MAJOR-A(CoD審査 REWORK-1)の題材専用。/api/palette/translate をわざと
+// 遅らせ、その往復の最中に「もう1文字打つ」隙間を作る。完了はさせない
+// (完了させなくても、jobRunning=trueへ変わった直後の再締めが効いているか
+// だけを見れば足りる。完了まで見るのは既存のJOB_IDが既に担っている)。
+const RACE_JOB_ID = 'race00000000000000000000000000a';
+const RACE_TRANSLATE_DELAY_MS = 350;
 
 const projectJsonText = fs.readFileSync(projectJsonPath, 'utf8');
 
@@ -115,8 +134,23 @@ const server = http.createServer(async function (req, res) {
     res.end(JSON.stringify({ direction: 'to_en', tm: null, terms: [] })); return;
   }
   if (url.pathname === '/api/palette/translate') {
+    // MAJOR-A題材(RACETEST)だけ、応答をわざと遅らせる。それ以外は
+    // 従来どおり即応答する(他の検証の待ち時間を増やさない)。
+    if (String(payload.text || '').indexOf('RACETEST') >= 0) {
+      setTimeout(function () {
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ job_id: RACE_JOB_ID }));
+      }, RACE_TRANSLATE_DELAY_MS);
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({ job_id: JOB_ID })); return;
+  }
+  if (url.pathname === '/api/jobs/' + RACE_JOB_ID) {
+    // わざと完了させない(見出しコメント参照)。ポーリング中(jobRunning=true)
+    // であり続けることだけが要る。
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ mode: 'working', progress: 10, label: '翻訳中', detail: '', html: '' })); return;
   }
   if (url.pathname === '/api/jobs/' + JOB_ID) {
     pollCount++;
@@ -189,6 +223,49 @@ async function readSessionStorage(page, key) {
     await palettePage.waitForSelector('#palette-result [data-yaku-main-card]', { timeout: 10000 });
     await palettePage.waitForTimeout(80);
     out.handoffEnabledAfterJobDone = await palettePage.$eval('#palette-handoff', function (node) { return !node.disabled; });
+
+    // --- A': MAJOR-A(CoD審査 REWORK-1)。ジョブ開始の往復の最中に
+    // もう1文字打つ隙間を作り、jobRunning=trueへ変わった瞬間に
+    // updateHandoffButtonを呼び直しているかを見る(見出しコメント参照)。
+    await palettePage.evaluate(function () {
+      var target = document.getElementById('palette-input');
+      target.focus();
+      target.value = 'RACETEST race probe source text';
+      target.dispatchEvent(new InputEvent('input', { inputType: 'insertFromPaste', bubbles: true }));
+    });
+    // startTranslationの同期部分(updateHandoffButton(true))が走った直後、
+    // まだ/api/palette/translateの応答(RACE_TRANSLATE_DELAY_MS後)は
+    // 届いていない=jobRunningはまだfalseのはずの窓。ここでもう1文字打ち、
+    // updateCount()にbusy=jobRunning(false)で再計算させる
+    // (打鍵後の一時的なdisabled=falseそのものは、この試験のassertの
+    // 対象ではない——直せる弱点ではなく、直すのは「jobRunning=trueへ
+    // 変わった瞬間に締め直しているか」のほう)。
+    await palettePage.waitForTimeout(60);
+    await palettePage.evaluate(function () {
+      var target = document.getElementById('palette-input');
+      target.value += '!';
+      target.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    });
+    // RACE_TRANSLATE_DELAY_MSより長く待ち、jobRunning=trueへ実際に変わった
+    // (=ポーリング中になった)直後を狙ってサンプルする。打鍵はまだしない
+    // ——ここでdisabled=falseなら、jobRunning=trueへ変わった箇所で
+    // updateHandoffButtonを呼び直していない(MAJOR-A本体)。
+    await palettePage.waitForTimeout(RACE_TRANSLATE_DELAY_MS + 150);
+    out.handoffDisabledWhilePolling = await palettePage.$eval('#palette-handoff', function (node) { return node.disabled; });
+    // ポーリング中(jobRunning=true)にもう1文字打っても、押せないままで
+    // あること(既定のbusy=jobRunningの読みが正しく効いていることの傍証。
+    // MAJOR-A自体の再現ではないが、直した箇所を挟んで壊していないかを見る)。
+    await palettePage.evaluate(function () {
+      var target = document.getElementById('palette-input');
+      target.value += '?';
+      target.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    });
+    out.handoffDisabledWhileTypingDuringPolling = await palettePage.$eval('#palette-handoff', function (node) { return node.disabled; });
+    // 後始末。Escでクリアし、次の検証(押す→退避)を汚さない
+    // (RACE_JOB_IDはわざと完了させないので、Escで明示的にjobRunningを
+    // falseへ戻す必要がある)。
+    await palettePage.keyboard.press('Escape');
+    await palettePage.waitForTimeout(50);
 
     // 押した本文へ戻す。方向を明示してから押す。
     await palettePage.fill('#palette-input', 'エスカレーション対象の長文本文です。');

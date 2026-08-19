@@ -473,6 +473,12 @@
     YakuCommon.post('/api/palette/translate', { text: text, direction_intent: directionIntent }).then(function (data) {
       if (seq !== translateSeq) return;
       jobRunning = true;
+      /* startTranslationのupdateHandoffButton(true)は、このPOSTの往復中
+         ずっと有効なわけではない——待っているあいだに1文字でも打つと
+         updateCount()がbusy=jobRunning(まだfalse)で押せる状態へ戻して
+         しまう(CoD審査 REWORK-1 MAJOR-A)。jobRunningが実際にtrueへ
+         変わるこの瞬間に、あらためて明示で締め直す。 */
+      updateHandoffButton(true);
       pollJob(data.job_id, seq, 0);
     }).catch(function (error) {
       if (seq !== translateSeq) return;
@@ -488,6 +494,12 @@
     if (!YakuCommon.isReady()) {
       pendingTranslate = { text: text, directionIntent: directionIntent, seq: seq };
       el('palette-result').innerHTML = '<div class="alert">Copilotの準備ができ次第、この文章を送ります。そのままお待ちください。</div>';
+      /* startTranslationのupdateHandoffButton(true)は「送った」ことを
+         前提にした締めで、ここは実はまだ送っていない(Copilotの準備待ちで
+         足止め)。ジョブは動いていないので押せて当然——待っているあいだ
+         こそCATへ逃がしたいはずで、ここを塞ぐとパレットが最も無力な場面で
+         昇格も塞ぐことになる(CoD審査 REWORK-1 MINOR-B)。 */
+      updateHandoffButton(false);
       return;
     }
     sendTranslate(text, directionIntent, seq);
@@ -546,6 +558,11 @@
     }).then(function (data) {
       if (mySeq !== translateSeq) return;
       jobRunning = true;
+      // 同じ穴(CoD審査 REWORK-1 MAJOR-A)がここにもある。setChipsBusy(true)
+      // 直後のupdateHandoffButton(true)は、このPOSTの往復中に1文字でも
+      // 打たれると打ち消される。jobRunningが実際にtrueへ変わる瞬間に
+      // 締め直す。
+      updateHandoffButton(true);
       pollJob(data.job_id, mySeq, 0);
     }).catch(function (error) {
       if (mySeq !== translateSeq) return;

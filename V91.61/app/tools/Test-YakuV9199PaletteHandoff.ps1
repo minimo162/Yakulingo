@@ -30,6 +30,12 @@
       パレットで本文を打つ→「CATで開く」が押せるようになる→押すと
       sessionStorageへ退避してから遷移しようとする(遷移先URL・退避内容を
       実際に見る)→翻訳ジョブ実行中は押せない、を実際に押して確かめる。
+      /api/palette/translateをわざと遅らせ、その往復の最中(jobRunningが
+      まだfalseのうち)に1文字打つ隙間を作ってから、実際にポーリングへ
+      入った後をサンプルする題材も持つ(CoD審査 REWORK-1 MAJOR-A。
+      busy概念の再計算がjobRunning=trueへ変わった瞬間に締め直されて
+      いるかを見る——固定の待ち時間で1回だけサンプルする素朴な確認では、
+      たまたま押せない状態を掴むだけで取りこぼす)。
       別に、cat.htmlを ?handoff=palette + sessionStorage仕込みで開き、
       quick-inputへ本文が入り、既存経路(/api/cat/open)へ実際に
       text・direction_intentが飛ぶことを見る。キー欠落・JSON破損では
@@ -203,6 +209,15 @@ if ($null -ne $o.storedHandoffPayload) {
 }
 Chk ([bool]$o.handoffDisabledWhileJobRunning) '翻訳ジョブ実行中は押せない(既存の busy 概念、jobRunningに従う)'
 Chk ([bool]$o.handoffEnabledAfterJobDone) 'ジョブが完了すると再び押せるようになる'
+
+# MAJOR-A(CoD審査 REWORK-1)。/api/palette/translate をわざと遅らせ、その
+# 往復の最中(jobRunningがまだfalseのうち)に1文字打たせてから、
+# jobRunning=trueへ実際に変わった後(ポーリング中)を狙ってサンプルする。
+# ここでdisabled=falseなら、jobRunning=trueへ変わった箇所で
+# updateHandoffButtonを呼び直していない(sendTranslate/onChipClickの
+# .then直後に足した呼び出しを消す変異で、ここが赤くなる想定)。
+Chk ([bool]$o.handoffDisabledWhilePolling) ('ジョブ開始の往復中に1文字打っても、実際にポーリングへ入った後は押せない(実際disabled=' + [string]$o.handoffDisabledWhilePolling + '。MAJOR-A)')
+Chk ([bool]$o.handoffDisabledWhileTypingDuringPolling) 'ポーリング中にもう1文字打っても、押せないままである'
 
 Write-Host '  -- B) /cat: キー欠落は通常起動 --'
 Chk ([string]$o.quickInputAfterEmptyKey -eq '') 'sessionStorageにキーが無ければ quick-input は空のまま(通常起動)'
