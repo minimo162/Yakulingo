@@ -12,9 +12,11 @@
     quickToneRequested: false,
     quickBriefApplied: false,
     quickActionBusy: false,
+    toolsInvoker: null,
     initialWorkMode: (function () { try { return new URLSearchParams(window.location.search).get('view') === 'work'; } catch (_) { return false; } })(),
     toastTimer: null
   };
+  var premiumRowWait = null;
 
   function el(id) { return document.getElementById(id); }
   function one(selector, root) { return (root || document).querySelector(selector); }
@@ -60,6 +62,8 @@
     if (!toast) {
       toast = create('div', 'premium-toast');
       toast.id = 'premium-toast';
+      toast.setAttribute('role', 'status');
+      toast.setAttribute('aria-live', 'polite');
       document.body.appendChild(toast);
     }
     toast.textContent = String(message || '');
@@ -69,6 +73,57 @@
     toast.classList.add('is-showing');
     window.clearTimeout(premiumState.toastTimer);
     premiumState.toastTimer = window.setTimeout(function () { toast.classList.remove('is-showing'); }, 2200);
+  }
+
+  function syncToolsExpanded() {
+    var workspace = el('cat-workspace');
+    var toolbar = el('cat-editor-toolbar');
+    var active = document.body.classList.contains('premium-cat') &&
+      document.body.classList.contains('premium-mode-workspace') &&
+      !!(workspace && !workspace.hidden && toolbar);
+    var expanded = document.body.classList.contains('premium-tools-open') ? 'true' : 'false';
+    ['premium-settings', 'premium-tools'].forEach(function (id) {
+      var node = el(id);
+      if (!node) return;
+      if (!active) {
+        node.removeAttribute('aria-controls');
+        node.removeAttribute('aria-expanded');
+        return;
+      }
+      node.setAttribute('aria-controls', 'cat-editor-toolbar');
+      node.setAttribute('aria-expanded', expanded);
+    });
+  }
+
+  function focusFirstTool() {
+    var toolbar = el('cat-editor-toolbar');
+    if (!toolbar) return;
+    var first = one('button:not([hidden]):not([disabled]),input:not([hidden]):not([disabled]),select:not([hidden]):not([disabled]),textarea:not([hidden]):not([disabled]),summary', toolbar);
+    if (!first) return;
+    try { first.focus({ preventScroll: true }); } catch (_) { first.focus(); }
+  }
+
+  function openTools(invoker) {
+    premiumState.toolsInvoker = invoker || null;
+    document.body.classList.add('premium-tools-open');
+    syncToolsExpanded();
+    var toolbar = el('cat-editor-toolbar');
+    if (toolbar) toolbar.scrollTop = 0;
+    focusFirstTool();
+  }
+
+  function closeTools() {
+    var wasOpen = document.body.classList.contains('premium-tools-open');
+    var toolbar = el('cat-editor-toolbar');
+    var active = document.activeElement;
+    var shouldRestore = wasOpen && !!(toolbar && active && toolbar.contains(active));
+    var invoker = premiumState.toolsInvoker;
+    document.body.classList.remove('premium-tools-open');
+    syncToolsExpanded();
+    premiumState.toolsInvoker = null;
+    if (shouldRestore && invoker && document.contains(invoker) && !invoker.hidden && !invoker.disabled) {
+      try { invoker.focus({ preventScroll: true }); } catch (_) { invoker.focus(); }
+    }
   }
 
   function logoMarkup() {
@@ -157,9 +212,7 @@
     var settings = el('premium-settings');
     if (settings) settings.addEventListener('click', function () {
       if (document.body.classList.contains('premium-cat') && document.body.classList.contains('premium-mode-workspace')) {
-        document.body.classList.add('premium-tools-open');
-        var toolbar = el('cat-editor-toolbar');
-        if (toolbar) toolbar.scrollTop = 0;
+        openTools(settings);
       } else {
         showToast('翻訳設定はExcel翻訳の詳細ツールから変更できます。');
       }
@@ -239,14 +292,14 @@
       '<header class="premium-start-heading"><div><span class="premium-eyebrow">Excelレイアウト翻訳</span><h1>セル幅に合わせて、短く正確に。</h1>' +
       '<p>Excelを読み込み、収まりにくいセルだけを仕上げます。</p></div></header>' +
       '<div class="premium-start-grid"><section class="premium-start-primary">' + visualStepsMarkup() +
-      '<div id="premium-file-drop" class="premium-file-drop" role="button" tabindex="0" aria-label="Excelファイルを選ぶ、またはドロップする">' +
+      '<div id="premium-file-drop" class="premium-file-drop" role="group" aria-label="Excelファイルを選ぶ、またはドロップする">' +
       '<div class="premium-excel-mark">X</div><div class="premium-drop-copy"><strong>Excelをここに置く</strong>' +
       '<span>列幅・結合セル・右側の空きセルを読み取り、収まる長さで翻訳します。</span>' +
       '<div class="premium-drop-tags"><i>列幅を測定</i><i>短訳を生成</i><i>超過だけ確認</i></div></div>' +
       '<div class="premium-drop-actions"><button id="premium-file-select" type="button">Excelを選ぶ</button><small>.xlsx / .xlsm</small></div>' +
       '<input id="premium-file-input" type="file" accept=".xlsx,.xlsm" hidden></div></section>' +
-      '<aside class="premium-start-aside"><section><h2>翻訳方向</h2><div id="premium-direction-switch" class="premium-direction-switch">' +
-      '<button type="button" class="is-active" data-direction="to_en">日本語 → 英語</button><button type="button" data-direction="to_jp">英語 → 日本語</button></div></section>' +
+      '<aside class="premium-start-aside"><section><h2>翻訳方向</h2><div id="premium-direction-switch" class="premium-direction-switch" role="group" aria-label="翻訳方向">' +
+      '<button type="button" class="is-active" aria-pressed="true" data-direction="to_en">日本語 → 英語</button><button type="button" aria-pressed="false" data-direction="to_jp">英語 → 日本語</button></div></section>' +
       '<section><h2>参考資料（任意）</h2><p>過去の日英PDFを登録すると、確定訳が候補に出ます。</p><button id="premium-reference-open" type="button" class="premium-secondary-action">過去訳を登録</button></section>' +
       '<section><h2>読み込み後</h2><div class="premium-outcome-row"><span>収まり済み</span><i><b style="width:82%"></b></i><strong>優先表示</strong></div>' +
       '<div class="premium-outcome-row is-alert"><span>要調整</span><i><b style="width:20%"></b></i><strong>数セル</strong></div></section></aside></div>';
@@ -255,7 +308,10 @@
     var direction = 'to_en';
     all('#premium-direction-switch button').forEach(function (button) {
       button.addEventListener('click', function () {
-        all('#premium-direction-switch button').forEach(function (item) { item.classList.remove('is-active'); });
+        all('#premium-direction-switch button').forEach(function (item) {
+          item.classList.toggle('is-active', item === button);
+          item.setAttribute('aria-pressed', item === button ? 'true' : 'false');
+        });
         button.classList.add('is-active');
         direction = button.getAttribute('data-direction') || 'to_en';
       });
@@ -266,9 +322,6 @@
     function choose() { if (fileInput) { fileInput.value = ''; fileInput.click(); } }
     if (fileSelect) fileSelect.addEventListener('click', choose);
     if (drop) {
-      drop.addEventListener('keydown', function (event) {
-        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); choose(); }
-      });
       ['dragenter', 'dragover'].forEach(function (name) { drop.addEventListener(name, function (event) { event.preventDefault(); drop.classList.add('is-dragging'); }); });
       ['dragleave', 'drop'].forEach(function (name) { drop.addEventListener(name, function (event) { event.preventDefault(); drop.classList.remove('is-dragging'); }); });
       drop.addEventListener('drop', function (event) {
@@ -285,6 +338,10 @@
   }
   function openExcelFile(file, direction) {
     if (!file) return;
+    if (Number(file.size || 0) <= 0) {
+      showToast('空のファイルは読み込めません。', 'warning');
+      return;
+    }
     if (!/\.(xlsx|xlsm)$/i.test(String(file.name || ''))) {
       showToast('Excelファイル（.xlsx / .xlsm）を選んでください。', 'warning');
       return;
@@ -496,15 +553,76 @@
     renderFitRows();
     syncTopActionStates();
   }
+  function cancelPremiumRowWait() {
+    if (!premiumRowWait) return;
+    premiumRowWait.observer.disconnect();
+    window.clearTimeout(premiumRowWait.timer);
+    premiumRowWait = null;
+  }
+  function premiumViewIdentity() {
+    var project = '';
+    try { project = new URLSearchParams(window.location.search).get('project') || ''; } catch (_) {}
+    var workspace = el('cat-workspace');
+    var title = textOf(el('cat-toolbar-title'));
+    var direction = textOf(el('cat-toolbar-direction'));
+    return [window.location.pathname, project, document.body.getAttribute('data-cat-view') || '',
+      workspace && !workspace.hidden ? 'workspace' : 'hidden', title, direction].join('|');
+  }
+  function waitForPremiumRow(index) {
+    cancelPremiumRowWait();
+    var workspace = el('cat-workspace');
+    if (!workspace) return;
+    var identity = premiumViewIdentity();
+    var requestedInput = null;
+    function inspect() {
+      if (premiumViewIdentity() !== identity) {
+        cancelPremiumRowWait();
+        return true;
+      }
+      var row = one('#cat-grid-body [data-cat-row="' + index + '"]');
+      var input = row && one('textarea[data-cat-input]', row);
+      if (!row || !input) return false;
+      if (!row.classList.contains('is-active')) {
+        if (requestedInput !== input) {
+          requestedInput = input;
+          input.dispatchEvent(new Event('focusin', { bubbles: true }));
+        }
+        return false;
+      }
+      cancelPremiumRowWait();
+      input.focus();
+      row.scrollIntoView({ block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth' });
+      return true;
+    }
+    var observer = new MutationObserver(inspect);
+    premiumRowWait = {
+      observer: observer,
+      identity: identity,
+      /* The observer is the success path; this is only a route/error teardown
+         guard so a failed import cannot leave an observer forever. */
+      timer: window.setTimeout(cancelPremiumRowWait, 30000)
+    };
+    observer.observe(workspace, { childList: true, subtree: true, attributes: true });
+    inspect();
+  }
   function openPremiumRow(index) {
     var row = one('#cat-grid-body [data-cat-row="' + index + '"]');
     if (!row) {
       var allFilter = one('[data-cat-filter="all"]');
       if (allFilter) allFilter.click();
-      window.setTimeout(function () { openPremiumRow(index); }, 80);
+      waitForPremiumRow(index);
       return;
     }
     var input = one('textarea[data-cat-input]', row);
+    if (!input) {
+      waitForPremiumRow(index);
+      return;
+    }
+    if (!row.classList.contains('is-active')) {
+      waitForPremiumRow(index);
+      return;
+    }
+    cancelPremiumRowWait();
     if (input) {
       input.focus();
       row.scrollIntoView({ block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth' });
@@ -526,7 +644,10 @@
     var tools = el('premium-tools');
     if (tools && tools.getAttribute('data-bound') !== '1') {
       tools.setAttribute('data-bound', '1');
-      tools.addEventListener('click', function () { document.body.classList.toggle('premium-tools-open'); });
+      tools.addEventListener('click', function () {
+        if (document.body.classList.contains('premium-tools-open')) closeTools();
+        else openTools(tools);
+      });
     }
   }
   function syncTopActionStates() {
@@ -540,6 +661,7 @@
       var original = el(pair[1]);
       if (!proxy || !original) return;
       proxy.disabled = !!original.disabled;
+      proxy.hidden = !!original.hidden;
       if (pair[0] === 'premium-export') {
         var originalText = textOf(original);
         proxy.textContent = /Word/.test(originalText) ? 'Wordを書き出す' : /コピー/.test(originalText) ? '訳文をコピー' : 'Excelを書き出す';
@@ -556,9 +678,14 @@
     var workspace = el('cat-workspace');
     var isWorkspace = document.body.getAttribute('data-cat-view') === 'workspace' && workspace && !workspace.hidden;
     var workMode = premiumState.initialWorkMode;
+    if (!isWorkspace) {
+      cancelPremiumRowWait();
+      closeTools();
+    }
     document.body.classList.toggle('premium-mode-workspace', !!isWorkspace);
     document.body.classList.toggle('premium-mode-worklist', !isWorkspace && workMode);
     document.body.classList.toggle('premium-mode-excel-start', !isWorkspace && !workMode);
+    syncToolsExpanded();
     var start = el('premium-cat-start');
     var work = el('premium-work-list');
     if (start) start.hidden = !!isWorkspace || workMode;
@@ -597,11 +724,17 @@
     document.addEventListener('click', function (event) {
       var row = event.target.closest('[data-premium-row]');
       if (row) { openPremiumRow(row.getAttribute('data-premium-row')); return; }
-      if (document.body.classList.contains('premium-tools-open') && !event.target.closest('#cat-editor-toolbar,#premium-tools')) {
-        document.body.classList.remove('premium-tools-open');
+      if (document.body.classList.contains('premium-tools-open') && !event.target.closest('#cat-editor-toolbar,#premium-tools,#premium-settings')) {
+        closeTools();
       }
     });
-    document.addEventListener('keydown', function (event) { if (event.key === 'Escape') document.body.classList.remove('premium-tools-open'); });
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') {
+        closeTools();
+      }
+    });
+    window.addEventListener('pagehide', cancelPremiumRowWait);
+    window.addEventListener('popstate', cancelPremiumRowWait);
 
     var refresh = debounce(function () { syncCatMode(); refreshWorkspaceUi(); renderWorkCards(); }, 90);
     /* Observe only legacy application nodes. Observing #cat-workspace also sees
