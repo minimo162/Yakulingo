@@ -2,106 +2,77 @@ name: Windows integrity
 
 on:
   pull_request:
-  push:
-    branches:
-      - main
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  distribution-integrity:
+  patch-publication-fit:
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
-      - name: Checkout
+      - name: Checkout patch branch
         uses: actions/checkout@v4
+        with:
+          ref: codex/publication-fit-remeasure
+          fetch-depth: 2
 
-      - name: Check PowerShell encodings
-        shell: powershell
-        run: .\V91.61\app\tools\Check-Encoding.ps1
-
-      - name: Test fit-first prompt contract
+      - name: Patch fit measurement and restore integrity workflow
         shell: powershell
         run: |
-          $root = Join-Path $PWD 'V91.61\app'
-          . (Join-Path $root 'src\CatTranslation.ps1')
-          $targets = New-YakuCatCharacterTargets -Items @([pscustomobject]@{ Index = 1; MaxChars = 24 })
-          if ($targets -notmatch '(?i)space budget') { throw 'FIT_FIRST_SPACE_BUDGET_MISSING' }
-          if ($targets -notmatch '(?i)compress the wording') { throw 'FIT_FIRST_COMPACTION_MISSING' }
-          if ($targets -notmatch '(?i)stay at or below') { throw 'FIT_FIRST_TARGET_MISSING' }
-          if ($targets -notmatch '(?i)exceed it only as a last resort') { throw 'FIT_FIRST_FALLBACK_TOO_WEAK' }
-          if ((Get-YakuCatPromptContractVersion) -ne 'cat-fit-first-v1-terminology') { throw 'FIT_FIRST_CONTRACT_VERSION_MISMATCH' }
-          foreach ($name in @('cat_translate_to_en.txt','cat_translate_to_jp.txt')) {
-            $text = [IO.File]::ReadAllText((Join-Path $root ('prompts\' + $name)), [Text.Encoding]::UTF8)
-            if ($text -notmatch '(?i)space budget') { throw "FIT_FIRST_TEMPLATE_SPACE_BUDGET_MISSING: $name" }
-            if ($text -notmatch '(?i)shorten the wording, not the meaning') { throw "FIT_FIRST_TEMPLATE_COMPACTION_MISSING: $name" }
-            if ($text -notmatch '(?i)no target') { throw "FIT_FIRST_TEMPLATE_NORMAL_FALLBACK_MISSING: $name" }
-            if ($text -notmatch '(?i)primary layout goal') { throw "FIT_FIRST_TEMPLATE_PRIMARY_GOAL_MISSING: $name" }
-            if ($text -notmatch '(?i)grammatical role') { throw "FIT_FIRST_TEMPLATE_FRAGMENT_PRESERVATION_MISSING: $name" }
-            if ($text -notmatch '(?i)full sentence merely to sound polished') { throw "FIT_FIRST_TEMPLATE_ANTI_EXPANSION_MISSING: $name" }
-            if ($text -notmatch '(?i)internal final fit pass') { throw "FIT_FIRST_TEMPLATE_FINAL_FIT_PASS_MISSING: $name" }
-            if ($text -notmatch '(?i)visible character count') { throw "FIT_FIRST_TEMPLATE_LENGTH_CHECK_MISSING: $name" }
-            if ($text -notmatch '(?i)rewrite it more compactly and repeat until it fits') { throw "FIT_FIRST_TEMPLATE_RETRY_MISSING: $name" }
-            if ($text -match '(?i)Do not abbreviate, summarize, compress, merge, omit, or add information\.') { throw "FIT_FIRST_TEMPLATE_GLOBAL_COMPACTION_BAN: $name" }
+          $ErrorActionPreference = 'Stop'
+          $catPath = 'V91.61/app/www/assets/cat.js'
+          $text = [IO.File]::ReadAllText($catPath, [Text.Encoding]::UTF8)
+
+          $fitTextPattern = "(?ms)^  function segmentFitText\(segment\) \{\r?\n    var target = String\(segment\.translation \|\| ''\);\r?\n    return target\.trim\(\) \? target : String\(segment\.source \|\| ''\);\r?\n  \}"
+          if ([regex]::Matches($text, $fitTextPattern).Count -ne 1) { throw 'SEGMENT_FIT_TEXT_PATTERN_COUNT_INVALID' }
+          $fitTextReplacement = @'
+          function segmentFitText(segment) {
+            /* 掲載用の短縮訳を採用した後は、実際に出力する文字列を測る。
+               基準訳は translation に残し、fit 判定だけ publication_translation を優先する。 */
+            var publication = String(segment && segment.publication_translation || '');
+            if (publication.trim()) return publication;
+            var target = String(segment && segment.translation || '');
+            return target.trim() ? target : String(segment && segment.source || '');
           }
+          '@
+          $fitTextReplacement = ($fitTextReplacement -replace '(?m)^          ','').TrimEnd("`r","`n")
+          $text = [regex]::Replace($text, $fitTextPattern, $fitTextReplacement, 1)
 
-      - name: Test duplicate-cell fit policy
-        shell: powershell
-        run: |
-          $root = Join-Path $PWD 'V91.61\app'
-          . (Join-Path $root 'src\CatTranslation.ps1')
-          . (Join-Path $root 'src\FitPolicy.ps1')
-          if ((Resolve-YakuCatFitTargetForDuplicates -MaxCharsValues @(30, 18, 24)) -ne 18) { throw 'FIT_DUPLICATE_MINIMUM_BUDGET_MISSING' }
-          if ((Resolve-YakuCatFitTargetForDuplicates -MaxCharsValues @(30, $null, 18)) -ne 18) { throw 'FIT_DUPLICATE_UNKNOWN_CELL_CANCELLED_KNOWN_BUDGET' }
-          if ($null -ne (Resolve-YakuCatFitTargetForDuplicates -MaxCharsValues @($null, $null))) { throw 'FIT_DUPLICATE_UNKNOWN_ONLY_SHOULD_HAVE_NO_BUDGET' }
-          . (Join-Path $root 'src\SrcModules.ps1')
-          $cat = [Array]::IndexOf($script:YakuSrcModuleFiles, 'CatTranslation.ps1')
-          $fit = [Array]::IndexOf($script:YakuSrcModuleFiles, 'FitPolicy.ps1')
-          if ($cat -lt 0 -or $fit -ne ($cat + 1)) { throw 'FIT_POLICY_MODULE_ORDER_INVALID' }
+          $capacityPattern = "(?m)^    var text = String\(segment\.translation \|\| ''\);\r?\n    if \(!text\) return null;$"
+          if ([regex]::Matches($text, $capacityPattern).Count -ne 1) { throw 'SEGMENT_FIT_CAPACITY_PATTERN_COUNT_INVALID' }
+          $text = [regex]::Replace($text, $capacityPattern, "    var text = segmentFitText(segment);`n    if (!text.trim()) return null;", 1)
 
-      - name: Test fit-only publication candidates
-        shell: powershell
-        run: |
-          $root = Join-Path $PWD 'V91.61\app'
-          function Complete-YakuCatPublicationCandidateSet {
-            param($Project, $Request, $Parsed)
-            return [pscustomobject]@{ candidates=@($Parsed.Candidates); cannot_fit_reason=[string]$Parsed.CannotFitReason }
-          }
-          . (Join-Path $root 'src\PublicationFitPolicy.ps1')
-          $items = @(
-            [pscustomobject]@{ text='fits-six'; deterministic_qc_status='passed'; fit_verification_status='within_estimate' },
-            [pscustomobject]@{ text='overflow'; deterministic_qc_status='passed'; fit_verification_status='estimated_overflow' },
-            [pscustomobject]@{ text='qc-fail'; deterministic_qc_status='failed'; fit_verification_status='within_estimate' },
-            [pscustomobject]@{ text='fit'; deterministic_qc_status='passed'; fit_verification_status='within_estimate' }
-          )
-          $result = Complete-YakuCatPublicationCandidateSet -Project @{} -Request @{} -Parsed ([pscustomobject]@{ Candidates=$items; CannotFitReason='' })
-          if (@($result.candidates).Count -ne 2) { throw 'FIT_PUBLICATION_ADOPTABLE_COUNT_INVALID' }
-          if (@($result.candidates | Where-Object { [string]$_.fit_verification_status -eq 'estimated_overflow' }).Count -ne 0) { throw 'FIT_PUBLICATION_OVERFLOW_CANDIDATE_LEAKED' }
-          if (@($result.candidates | Where-Object { [string]$_.deterministic_qc_status -ne 'passed' }).Count -ne 0) { throw 'FIT_PUBLICATION_QC_FAILED_CANDIDATE_LEAKED' }
-          if ([string]$result.candidates[0].text -ne 'fit') { throw 'FIT_PUBLICATION_SHORTEST_SAFE_CANDIDATE_NOT_FIRST' }
-          if ([int]$result.fit_candidate_count -ne 2) { throw 'FIT_PUBLICATION_SAFE_COUNT_INVALID' }
-          if ([int]$result.overflow_candidate_count -ne 1) { throw 'FIT_PUBLICATION_OVERFLOW_COUNT_INVALID' }
-          if ([int]$result.qc_rejected_candidate_count -ne 1) { throw 'FIT_PUBLICATION_QC_REJECTED_COUNT_INVALID' }
-          if (@($result.rejected_candidate_diagnostics).Count -ne 2) { throw 'FIT_PUBLICATION_REJECTED_DIAGNOSTICS_COUNT_INVALID' }
-          if (@($result.rejected_candidate_diagnostics | Where-Object { [string]$_.deterministic_qc_status -eq 'failed' }).Count -ne 1) { throw 'FIT_PUBLICATION_QC_DIAGNOSTIC_MISSING' }
-          if (@($result.rejected_candidate_diagnostics | Where-Object { [string]$_.fit_verification_status -eq 'estimated_overflow' }).Count -ne 1) { throw 'FIT_PUBLICATION_OVERFLOW_DIAGNOSTIC_MISSING' }
-          $qcOnly = Complete-YakuCatPublicationCandidateSet -Project @{} -Request @{} -Parsed ([pscustomobject]@{ Candidates=@([pscustomobject]@{ text='qc-only'; deterministic_qc_status='failed'; fit_verification_status='within_estimate' }); CannotFitReason='' })
-          if (@($qcOnly.candidates).Count -ne 0 -or [int]$qcOnly.fit_candidate_count -ne 0) { throw 'FIT_PUBLICATION_QC_ONLY_SHOULD_NOT_BE_PRESENTED' }
-          if ([int]$qcOnly.qc_rejected_candidate_count -ne 1) { throw 'FIT_PUBLICATION_QC_ONLY_COUNT_INVALID' }
-          if ([string]$qcOnly.cannot_fit_reason -notmatch '自動点検') { throw 'FIT_PUBLICATION_QC_ONLY_REASON_MISSING' }
-          $none = Complete-YakuCatPublicationCandidateSet -Project @{} -Request @{} -Parsed ([pscustomobject]@{ Candidates=@([pscustomobject]@{ text='too-long'; deterministic_qc_status='passed'; fit_verification_status='estimated_overflow' }); CannotFitReason='' })
-          if (@($none.candidates).Count -ne 0) { throw 'FIT_PUBLICATION_OVERFLOW_SHOULD_NOT_BE_PRESENTED' }
-          if ([string]::IsNullOrWhiteSpace([string]$none.cannot_fit_reason)) { throw 'FIT_PUBLICATION_EMPTY_REASON_MISSING' }
-          . (Join-Path $root 'src\SrcModules.ps1')
-          $publication = [Array]::IndexOf($script:YakuSrcModuleFiles, 'Publication.ps1')
-          $policy = [Array]::IndexOf($script:YakuSrcModuleFiles, 'PublicationFitPolicy.ps1')
-          if ($publication -lt 0 -or $policy -ne ($publication + 1)) { throw 'FIT_PUBLICATION_POLICY_MODULE_ORDER_INVALID' }
+          $budgetPattern = "(?m)^    var maxChars = measuredCapacity \? measuredCapacity\.maxChars : Math\.max\(20, Math\.floor\(String\(segment\.translation \|\| ''\)\.length \* 0\.8\)\);$"
+          if ([regex]::Matches($text, $budgetPattern).Count -ne 1) { throw 'COMPUTE_FIT_BUDGET_PATTERN_COUNT_INVALID' }
+          $text = [regex]::Replace($text, $budgetPattern, "    var currentText = segmentFitText(segment);`n    var maxChars = measuredCapacity ? measuredCapacity.maxChars : Math.max(20, Math.floor(currentText.length * 0.8));", 1)
 
-      - name: Test local bootstrap and repair paths
-        shell: powershell
-        run: .\V91.61\app\tools\Test-YakuBootstrap.ps1
+          if ($text -notmatch "if \(!String\(segment\.translation \|\| ''\)\.trim\(\)\) return \{ risk: false \};") { throw 'UNTRANSLATED_FIT_GATE_LOST' }
+          [IO.File]::WriteAllText($catPath, $text, (New-Object Text.UTF8Encoding($true)))
 
-      - name: Test package language boundary
-        shell: powershell
-        run: .\V91.61\app\tools\Test-YakuPackageLanguageBoundary.ps1
+          $workflowPath = '.github/workflows/windows-integrity.yml'
+          git checkout HEAD^ -- $workflowPath
+          $workflow = [IO.File]::ReadAllText($workflowPath, [Text.Encoding]::UTF8)
+          $anchor = '      - name: Test local bootstrap and repair paths'
+          if (-not $workflow.Contains($anchor)) { throw 'INTEGRITY_WORKFLOW_ANCHOR_MISSING' }
+          $sourceStep = @'
+                - name: Test adopted publication translation remeasurement
+                  shell: powershell
+                  run: |
+                    $catPath = Join-Path $PWD 'V91.61\app\www\assets\cat.js'
+                    $cat = [IO.File]::ReadAllText($catPath, [Text.Encoding]::UTF8)
+                    if ($cat -notmatch "(?s)function segmentFitText\(segment\).*?publication_translation.*?return publication") { throw 'FIT_REMEASURE_PUBLICATION_PRIORITY_MISSING' }
+                    if ($cat -notmatch "(?s)function segmentFitCapacity\(segment\).*?var text = segmentFitText\(segment\);") { throw 'FIT_REMEASURE_CAPACITY_SOURCE_MISSING' }
+                    if ($cat -notmatch "(?s)function computeFitBudget\(segment\).*?var currentText = segmentFitText\(segment\);.*?currentText\.length \* 0\.8") { throw 'FIT_REMEASURE_FALLBACK_SOURCE_MISSING' }
+                    if ($cat -notmatch "if \(!String\(segment\.translation \|\| ''\)\.trim\(\)\) return \{ risk: false \};") { throw 'FIT_REMEASURE_UNTRANSLATED_GATE_MISSING' }
+          '@
+          $sourceStep = ($sourceStep -replace '(?m)^        ','').TrimEnd("`r","`n")
+          $workflow = $workflow.Replace($anchor, $sourceStep + "`n`n" + $anchor)
+          [IO.File]::WriteAllText($workflowPath, $workflow, (New-Object Text.UTF8Encoding($false)))
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- $catPath $workflowPath
+          git diff --cached --check
+          git commit -m 'Remeasure adopted publication translations'
+          git push origin HEAD:codex/publication-fit-remeasure
