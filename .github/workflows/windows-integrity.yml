@@ -76,11 +76,20 @@ jobs:
             [pscustomobject]@{ text='fit'; deterministic_qc_status='passed'; fit_verification_status='within_estimate' }
           )
           $result = Complete-YakuCatPublicationCandidateSet -Project @{} -Request @{} -Parsed ([pscustomobject]@{ Candidates=$items; CannotFitReason='' })
-          if (@($result.candidates).Count -ne 3) { throw 'FIT_PUBLICATION_OVERFLOW_FILTER_COUNT_INVALID' }
+          if (@($result.candidates).Count -ne 2) { throw 'FIT_PUBLICATION_ADOPTABLE_COUNT_INVALID' }
           if (@($result.candidates | Where-Object { [string]$_.fit_verification_status -eq 'estimated_overflow' }).Count -ne 0) { throw 'FIT_PUBLICATION_OVERFLOW_CANDIDATE_LEAKED' }
+          if (@($result.candidates | Where-Object { [string]$_.deterministic_qc_status -ne 'passed' }).Count -ne 0) { throw 'FIT_PUBLICATION_QC_FAILED_CANDIDATE_LEAKED' }
           if ([string]$result.candidates[0].text -ne 'fit') { throw 'FIT_PUBLICATION_SHORTEST_SAFE_CANDIDATE_NOT_FIRST' }
-          if (@($result.candidates | Where-Object { [string]$_.deterministic_qc_status -eq 'failed' }).Count -ne 1) { throw 'FIT_PUBLICATION_QC_DIAGNOSTIC_WAS_REMOVED' }
+          if ([int]$result.fit_candidate_count -ne 2) { throw 'FIT_PUBLICATION_SAFE_COUNT_INVALID' }
           if ([int]$result.overflow_candidate_count -ne 1) { throw 'FIT_PUBLICATION_OVERFLOW_COUNT_INVALID' }
+          if ([int]$result.qc_rejected_candidate_count -ne 1) { throw 'FIT_PUBLICATION_QC_REJECTED_COUNT_INVALID' }
+          if (@($result.rejected_candidate_diagnostics).Count -ne 2) { throw 'FIT_PUBLICATION_REJECTED_DIAGNOSTICS_COUNT_INVALID' }
+          if (@($result.rejected_candidate_diagnostics | Where-Object { [string]$_.deterministic_qc_status -eq 'failed' }).Count -ne 1) { throw 'FIT_PUBLICATION_QC_DIAGNOSTIC_MISSING' }
+          if (@($result.rejected_candidate_diagnostics | Where-Object { [string]$_.fit_verification_status -eq 'estimated_overflow' }).Count -ne 1) { throw 'FIT_PUBLICATION_OVERFLOW_DIAGNOSTIC_MISSING' }
+          $qcOnly = Complete-YakuCatPublicationCandidateSet -Project @{} -Request @{} -Parsed ([pscustomobject]@{ Candidates=@([pscustomobject]@{ text='qc-only'; deterministic_qc_status='failed'; fit_verification_status='within_estimate' }); CannotFitReason='' })
+          if (@($qcOnly.candidates).Count -ne 0 -or [int]$qcOnly.fit_candidate_count -ne 0) { throw 'FIT_PUBLICATION_QC_ONLY_SHOULD_NOT_BE_PRESENTED' }
+          if ([int]$qcOnly.qc_rejected_candidate_count -ne 1) { throw 'FIT_PUBLICATION_QC_ONLY_COUNT_INVALID' }
+          if ([string]::IsNullOrWhiteSpace([string]$qcOnly.cannot_fit_reason)) { throw 'FIT_PUBLICATION_QC_ONLY_REASON_MISSING' }
           $none = Complete-YakuCatPublicationCandidateSet -Project @{} -Request @{} -Parsed ([pscustomobject]@{ Candidates=@([pscustomobject]@{ text='too-long'; deterministic_qc_status='passed'; fit_verification_status='estimated_overflow' }); CannotFitReason='' })
           if (@($none.candidates).Count -ne 0) { throw 'FIT_PUBLICATION_OVERFLOW_SHOULD_NOT_BE_PRESENTED' }
           if ([string]::IsNullOrWhiteSpace([string]$none.cannot_fit_reason)) { throw 'FIT_PUBLICATION_EMPTY_REASON_MISSING' }
@@ -88,6 +97,16 @@ jobs:
           $publication = [Array]::IndexOf($script:YakuSrcModuleFiles, 'Publication.ps1')
           $policy = [Array]::IndexOf($script:YakuSrcModuleFiles, 'PublicationFitPolicy.ps1')
           if ($publication -lt 0 -or $policy -ne ($publication + 1)) { throw 'FIT_PUBLICATION_POLICY_MODULE_ORDER_INVALID' }
+
+      - name: Test adopted publication translation remeasurement
+        shell: powershell
+        run: |
+          $catPath = Join-Path $PWD 'V91.61\app\www\assets\cat.js'
+          $cat = [IO.File]::ReadAllText($catPath, [Text.Encoding]::UTF8)
+          if ($cat -notmatch "(?s)function segmentFitText\(segment\).*?publication_translation.*?return publication") { throw 'FIT_REMEASURE_PUBLICATION_PRIORITY_MISSING' }
+          if ($cat -notmatch "(?s)function segmentFitCapacity\(segment\).*?var text = segmentFitText\(segment\);") { throw 'FIT_REMEASURE_CAPACITY_SOURCE_MISSING' }
+          if ($cat -notmatch "(?s)function computeFitBudget\(segment\).*?var currentText = segmentFitText\(segment\);.*?currentText\.length \* 0\.8") { throw 'FIT_REMEASURE_FALLBACK_SOURCE_MISSING' }
+          if ($cat -notmatch "if \(!String\(segment\.translation \|\| ''\)\.trim\(\)\) return \{ risk: false \};") { throw 'FIT_REMEASURE_UNTRANSLATED_GATE_MISSING' }
 
       - name: Test local bootstrap and repair paths
         shell: powershell
