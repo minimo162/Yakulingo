@@ -33,6 +33,7 @@ src/Paths.ps1	crlf
 src/PersonalGlossary.ps1	lf
 src/PromptBuilder.ps1	lf
 src/Publication.ps1	lf
+src/PublicationFitPolicy.ps1	crlf
 src/Render.ps1	lf
 src/Review.ps1	lf
 src/Runtime.ps1	crlf
