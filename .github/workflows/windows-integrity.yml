@@ -76,9 +76,11 @@ jobs:
             [pscustomobject]@{ text='fit'; deterministic_qc_status='passed'; fit_verification_status='within_estimate' }
           )
           $result = Complete-YakuCatPublicationCandidateSet -Project @{} -Request @{} -Parsed ([pscustomobject]@{ Candidates=$items; CannotFitReason='' })
-          if (@($result.candidates).Count -ne 2) { throw 'FIT_PUBLICATION_UNUSABLE_CANDIDATES_LEAKED' }
+          if (@($result.candidates).Count -ne 3) { throw 'FIT_PUBLICATION_OVERFLOW_FILTER_COUNT_INVALID' }
+          if (@($result.candidates | Where-Object { [string]$_.fit_verification_status -eq 'estimated_overflow' }).Count -ne 0) { throw 'FIT_PUBLICATION_OVERFLOW_CANDIDATE_LEAKED' }
           if ([string]$result.candidates[0].text -ne 'fit') { throw 'FIT_PUBLICATION_SHORTEST_SAFE_CANDIDATE_NOT_FIRST' }
-          if ([int]$result.rejected_candidate_count -ne 2) { throw 'FIT_PUBLICATION_REJECT_COUNT_INVALID' }
+          if (@($result.candidates | Where-Object { [string]$_.deterministic_qc_status -eq 'failed' }).Count -ne 1) { throw 'FIT_PUBLICATION_QC_DIAGNOSTIC_WAS_REMOVED' }
+          if ([int]$result.overflow_candidate_count -ne 1) { throw 'FIT_PUBLICATION_OVERFLOW_COUNT_INVALID' }
           $none = Complete-YakuCatPublicationCandidateSet -Project @{} -Request @{} -Parsed ([pscustomobject]@{ Candidates=@([pscustomobject]@{ text='too-long'; deterministic_qc_status='passed'; fit_verification_status='estimated_overflow' }); CannotFitReason='' })
           if (@($none.candidates).Count -ne 0) { throw 'FIT_PUBLICATION_OVERFLOW_SHOULD_NOT_BE_PRESENTED' }
           if ([string]::IsNullOrWhiteSpace([string]$none.cannot_fit_reason)) { throw 'FIT_PUBLICATION_EMPTY_REASON_MISSING' }
