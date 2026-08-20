@@ -38,6 +38,11 @@ jobs:
             if ($text -notmatch '(?i)shorten the wording, not the meaning') { throw "FIT_FIRST_TEMPLATE_COMPACTION_MISSING: $name" }
             if ($text -notmatch '(?i)no target') { throw "FIT_FIRST_TEMPLATE_NORMAL_FALLBACK_MISSING: $name" }
             if ($text -notmatch '(?i)primary layout goal') { throw "FIT_FIRST_TEMPLATE_PRIMARY_GOAL_MISSING: $name" }
+            if ($text -notmatch '(?i)grammatical role') { throw "FIT_FIRST_TEMPLATE_FRAGMENT_PRESERVATION_MISSING: $name" }
+            if ($text -notmatch '(?i)full sentence merely to sound polished') { throw "FIT_FIRST_TEMPLATE_ANTI_EXPANSION_MISSING: $name" }
+            if ($text -notmatch '(?i)internal final fit pass') { throw "FIT_FIRST_TEMPLATE_FINAL_FIT_PASS_MISSING: $name" }
+            if ($text -notmatch '(?i)visible character count') { throw "FIT_FIRST_TEMPLATE_LENGTH_CHECK_MISSING: $name" }
+            if ($text -notmatch '(?i)rewrite it more compactly and repeat until it fits') { throw "FIT_FIRST_TEMPLATE_RETRY_MISSING: $name" }
             if ($text -match '(?i)Do not abbreviate, summarize, compress, merge, omit, or add information\.') { throw "FIT_FIRST_TEMPLATE_GLOBAL_COMPACTION_BAN: $name" }
           }
 
