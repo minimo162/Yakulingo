@@ -4,7 +4,7 @@
 
 .DESCRIPTION
   一時フォルダに共有ルートを模擬し、初回導入・再利用・更新・改ざん検出・
-  オフライン継続・旧版互換・不正ポインタの各経路を検証する。
+  オフライン継続・旧版互換・不正ポインタ・ローカル破損修復・manifest境界を検証する。
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\tools\Test-YakuBootstrap.ps1
@@ -58,7 +58,13 @@ try {
     Copy-YakuPublishedTree -Source $VersionRoot -Destination (Join-Path $shared $versionName)
     [IO.File]::WriteAllText((Join-Path $shared 'current.txt'), ($versionName + "`r`n"), (New-Object Text.UTF8Encoding($true)))
     $sharedVersion = Join-Path $shared $versionName
-    & (Join-Path $sharedVersion 'app\tools\New-YakuPackage.ps1') -SourceRoot $sharedVersion -OutputPath (Join-Path $sandbox 'pkg.zip') -BuildId $versionName | Out-Null
+    $newPackage = Join-Path $sharedVersion 'app\tools\New-YakuPackage.ps1'
+    & $newPackage -SourceRoot $sharedVersion -OutputPath (Join-Path $sandbox 'pkg.zip') -BuildId $versionName | Out-Null
+
+    Write-Host 'CASE 0: package生成側も危険なbuild_idを拒否する'
+    $buildBefore = [IO.File]::ReadAllText((Join-Path $sharedVersion 'app\config\build.txt'))
+    Assert-YakuBootstrapThrows { & $newPackage -SourceRoot $sharedVersion -BuildId '..\escape' -ManifestOnly } 'PACKAGE_BUILD_ID_INVALID' 'パスへ使えないBuildIdをmanifest生成前に拒否する'
+    Assert-YakuBootstrap ([IO.File]::ReadAllText((Join-Path $sharedVersion 'app\config\build.txt')) -eq $buildBefore) '不正BuildIdではbuild.txtを書き換えない'
 
     Write-Host 'CASE 1: 初回導入'
     $run1 = & $BootstrapPath -SharedRoot $shared -LocalRoot $local -NoLaunch
@@ -66,26 +72,50 @@ try {
     Assert-YakuBootstrap (-not $run1.StartsWith($shared)) '起動対象が共有フォルダではない'
     Assert-YakuBootstrap (Test-Path -LiteralPath (Join-Path $run1 '.installed')) '.installed マーカーが作られる'
 
-    Write-Host 'CASE 2: 2回目は再複製しない'
-    $probe = Join-Path $run1 'app\PROBE.txt'
-    [IO.File]::WriteAllText($probe, 'probe')
+    Write-Host 'CASE 2: 正常な導入済み版は再複製せず再利用する'
+    $markerPath = Join-Path $run1 '.installed'
+    $markerBefore = [IO.File]::ReadAllText($markerPath)
+    $markerTimeBefore = (Get-Item -LiteralPath $markerPath).LastWriteTimeUtc
+    Start-Sleep -Milliseconds 1100
     $run2 = & $BootstrapPath -SharedRoot $shared -LocalRoot $local -NoLaunch
     Assert-YakuBootstrap ($run2 -eq $run1) '同じフォルダを再利用する'
-    Assert-YakuBootstrap (Test-Path -LiteralPath $probe) '導入済みなら再複製しない'
-    Remove-Item -LiteralPath $probe -Force
+    Assert-YakuBootstrap ([IO.File]::ReadAllText($markerPath) -eq $markerBefore) '正常なら導入マーカーを書き直さない'
+    Assert-YakuBootstrap ((Get-Item -LiteralPath $markerPath).LastWriteTimeUtc -eq $markerTimeBefore) '正常なら再インストールしない'
+
+    Write-Host 'CASE 2B: 導入後にローカル版が壊れたら共有側から自己修復する'
+    $localVictim = Join-Path $run1 'app\prompts\text_translate_full_to_en.txt'
+    $sharedVictim = Join-Path $sharedVersion 'app\prompts\text_translate_full_to_en.txt'
+    $expectedVictimHash = (Get-FileHash -LiteralPath $sharedVictim -Algorithm SHA256).Hash
+    $bytes = [IO.File]::ReadAllBytes($localVictim)
+    $bytes[100] = [byte]($bytes[100] -bxor 0x01)
+    [IO.File]::WriteAllBytes($localVictim, $bytes)
+    $extraLocalFile = Join-Path $run1 'app\UNLISTED-PROBE.txt'
+    [IO.File]::WriteAllText($extraLocalFile, 'must be removed by repair')
+    $run2b = & $BootstrapPath -SharedRoot $shared -LocalRoot $local -NoLaunch
+    Assert-YakuBootstrap ($run2b -eq $run1) '同じmanifestの正式フォルダへ修復する'
+    Assert-YakuBootstrap ((Get-FileHash -LiteralPath $localVictim -Algorithm SHA256).Hash -eq $expectedVictimHash) '改変された列挙ファイルを共有側の正しい内容へ戻す'
+    Assert-YakuBootstrap (-not (Test-Path -LiteralPath $extraLocalFile)) 'manifest未記載ファイルも修復時に除去する'
 
     Write-Host 'CASE 3: 共有側の更新で別フォルダへ導入し、旧版を掃除する'
     Add-Content -LiteralPath (Join-Path $sharedVersion 'app\DESIGN.md') -Value "`nbootstrap update probe"
-    & (Join-Path $sharedVersion 'app\tools\New-YakuPackage.ps1') -SourceRoot $sharedVersion -OutputPath (Join-Path $sandbox 'pkg2.zip') -BuildId $versionName | Out-Null
+    & $newPackage -SourceRoot $sharedVersion -OutputPath (Join-Path $sandbox 'pkg2.zip') -BuildId $versionName | Out-Null
     $run3 = & $BootstrapPath -SharedRoot $shared -LocalRoot $local -NoLaunch
     Assert-YakuBootstrap ($run3 -ne $run1) '内容が変われば別フォルダへ導入する'
     Assert-YakuBootstrap (-not (Test-Path -LiteralPath $run1)) '使用中でない旧ローカル版を削除する'
 
-    Write-Host 'CASE 4: 共有へ到達できなくても導入済みローカル版で起動する'
+    Write-Host 'CASE 4: 共有へ到達できなくても完全性確認済みのローカル版で起動する'
     $brokenShared = Join-Path $sandbox 'shared-broken'
     New-Item -ItemType Directory -Path $brokenShared -Force | Out-Null
-    Assert-YakuBootstrap ((& $BootstrapPath -SharedRoot $brokenShared -LocalRoot $local -NoLaunch) -eq $run3) 'ローカル版へフォールバックする'
+    Assert-YakuBootstrap ((& $BootstrapPath -SharedRoot $brokenShared -LocalRoot $local -NoLaunch) -eq $run3) '正常なローカル版へフォールバックする'
     Assert-YakuBootstrapThrows { & $BootstrapPath -SharedRoot $brokenShared -LocalRoot (Join-Path $sandbox 'local-empty') -NoLaunch } 'SHARED_VERSION_NOT_FOUND' '共有もローカルも無ければ停止する'
+
+    Write-Host 'CASE 4B: オフライン時は壊れたローカル版を起動しない'
+    $offlineCorrupt = Join-Path $sandbox 'local-offline-corrupt'
+    Copy-Item -LiteralPath $local -Destination $offlineCorrupt -Recurse -Force
+    $offlineVersion = @(Get-ChildItem -LiteralPath (Join-Path $offlineCorrupt 'versions') -Directory | Select-Object -First 1)[0].FullName
+    $offlineVictim = Join-Path $offlineVersion 'app\prompts\text_translate_full_to_en.txt'
+    [IO.File]::AppendAllText($offlineVictim, 'corrupt')
+    Assert-YakuBootstrapThrows { & $BootstrapPath -SharedRoot $brokenShared -LocalRoot $offlineCorrupt -NoLaunch } 'SHARED_VERSION_NOT_FOUND' '共有が無いとき改変済みローカル版へフォールバックしない'
 
     Write-Host 'CASE 5: 改ざんされた共有パッケージは導入しない'
     $tampered = Join-Path $sandbox 'shared-tampered'
@@ -97,6 +127,43 @@ try {
     $tamperLocal = Join-Path $sandbox 'local-tampered'
     Assert-YakuBootstrapThrows { & $BootstrapPath -SharedRoot $tampered -LocalRoot $tamperLocal -NoLaunch } 'INSTALL_VERIFY_FAILED' '内容不一致を検出して導入を中止する'
     Assert-YakuBootstrap (@(Get-ChildItem -LiteralPath (Join-Path $tamperLocal 'versions') -Directory -ErrorAction SilentlyContinue).Count -eq 0) '失敗時に中途半端なフォルダを残さない'
+
+    Write-Host 'CASE 5B: manifestのパストラバーサルと不正build_idを配布境界で拒否する'
+    $unsafePathShared = Join-Path $sandbox 'shared-unsafe-path'
+    Copy-Item -LiteralPath $shared -Destination $unsafePathShared -Recurse -Force
+    $unsafePathManifestPath = Join-Path $unsafePathShared ($versionName + '\manifest.json')
+    $unsafePathManifest = [IO.File]::ReadAllText($unsafePathManifestPath) | ConvertFrom-Json
+    $unsafePathManifest.files[0].path = '../escaped.txt'
+    [IO.File]::WriteAllText($unsafePathManifestPath, ($unsafePathManifest | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding($true)))
+    $unsafePathLocal = Join-Path $sandbox 'local-unsafe-path'
+    Assert-YakuBootstrapThrows { & $BootstrapPath -SharedRoot $unsafePathShared -LocalRoot $unsafePathLocal -NoLaunch } 'MANIFEST_PATH_INVALID|MANIFEST_PATH_ESCAPE' '.. を含むmanifestパスをコピー前に拒否する'
+    Assert-YakuBootstrap (-not (Test-Path -LiteralPath (Join-Path $unsafePathLocal 'escaped.txt'))) '拒否したmanifestからインストール先外へ書き込まない'
+
+    $unsafeBuildShared = Join-Path $sandbox 'shared-unsafe-build'
+    Copy-Item -LiteralPath $shared -Destination $unsafeBuildShared -Recurse -Force
+    $unsafeBuildManifestPath = Join-Path $unsafeBuildShared ($versionName + '\manifest.json')
+    $unsafeBuildManifest = [IO.File]::ReadAllText($unsafeBuildManifestPath) | ConvertFrom-Json
+    $unsafeBuildManifest.build_id = '../escape'
+    $unsafeBuildManifest.version = '../escape'
+    [IO.File]::WriteAllText($unsafeBuildManifestPath, ($unsafeBuildManifest | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding($true)))
+    Assert-YakuBootstrapThrows { & $BootstrapPath -SharedRoot $unsafeBuildShared -LocalRoot (Join-Path $sandbox 'local-unsafe-build') -NoLaunch } 'MANIFEST_BUILD_ID_INVALID' 'フォルダ名へ使えないmanifest build_idを拒否する'
+
+    Write-Host 'CASE 5C: manifestの重複パスと不正SHAを拒否する'
+    $duplicateShared = Join-Path $sandbox 'shared-duplicate-manifest'
+    Copy-Item -LiteralPath $shared -Destination $duplicateShared -Recurse -Force
+    $duplicateManifestPath = Join-Path $duplicateShared ($versionName + '\manifest.json')
+    $duplicateManifest = [IO.File]::ReadAllText($duplicateManifestPath) | ConvertFrom-Json
+    $duplicateManifest.files[1].path = [string]$duplicateManifest.files[0].path
+    [IO.File]::WriteAllText($duplicateManifestPath, ($duplicateManifest | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding($true)))
+    Assert-YakuBootstrapThrows { & $BootstrapPath -SharedRoot $duplicateShared -LocalRoot (Join-Path $sandbox 'local-duplicate') -NoLaunch } 'MANIFEST_PATH_DUPLICATE' '大文字小文字を同一視してmanifest重複パスを拒否する'
+
+    $badShaShared = Join-Path $sandbox 'shared-bad-sha'
+    Copy-Item -LiteralPath $shared -Destination $badShaShared -Recurse -Force
+    $badShaManifestPath = Join-Path $badShaShared ($versionName + '\manifest.json')
+    $badShaManifest = [IO.File]::ReadAllText($badShaManifestPath) | ConvertFrom-Json
+    $badShaManifest.files[0].sha256 = 'not-a-sha256'
+    [IO.File]::WriteAllText($badShaManifestPath, ($badShaManifest | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding($true)))
+    Assert-YakuBootstrapThrows { & $BootstrapPath -SharedRoot $badShaShared -LocalRoot (Join-Path $sandbox 'local-bad-sha') -NoLaunch } 'MANIFEST_SHA256_INVALID' '形式不正のSHA256を検証前に拒否する'
 
     Write-Host 'CASE 6: manifest の無い旧版は共有フォルダ上で直接起動する'
     $legacyShared = Join-Path $sandbox 'shared-legacy'
