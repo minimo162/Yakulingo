@@ -21,6 +21,10 @@ jobs:
         shell: powershell
         run: .\V91.61\app\tools\Check-Encoding.ps1
 
+      - name: Test fit-first prompt contract
+        shell: powershell
+        run: .\V91.61\app\tools\Test-YakuFitFirstPrompt.ps1
+
       - name: Test local bootstrap and repair paths
         shell: powershell
         run: .\V91.61\app\tools\Test-YakuBootstrap.ps1
