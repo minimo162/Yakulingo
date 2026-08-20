@@ -1,0 +1,22 @@
+name: Premium UI integrity
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  premium-ui-contract:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Test premium specialized UI
+        shell: powershell
+        run: .\V91.61\app\tools\Test-YakuPremiumUi.ps1
