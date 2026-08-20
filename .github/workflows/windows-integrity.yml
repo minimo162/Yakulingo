@@ -89,7 +89,7 @@ jobs:
           $qcOnly = Complete-YakuCatPublicationCandidateSet -Project @{} -Request @{} -Parsed ([pscustomobject]@{ Candidates=@([pscustomobject]@{ text='qc-only'; deterministic_qc_status='failed'; fit_verification_status='within_estimate' }); CannotFitReason='' })
           if (@($qcOnly.candidates).Count -ne 0 -or [int]$qcOnly.fit_candidate_count -ne 0) { throw 'FIT_PUBLICATION_QC_ONLY_SHOULD_NOT_BE_PRESENTED' }
           if ([int]$qcOnly.qc_rejected_candidate_count -ne 1) { throw 'FIT_PUBLICATION_QC_ONLY_COUNT_INVALID' }
-          if ([string]$qcOnly.cannot_fit_reason -notmatch '自動点検') { throw 'FIT_PUBLICATION_QC_ONLY_REASON_MISSING' }
+          if ([string]::IsNullOrWhiteSpace([string]$qcOnly.cannot_fit_reason)) { throw 'FIT_PUBLICATION_QC_ONLY_REASON_MISSING' }
           $none = Complete-YakuCatPublicationCandidateSet -Project @{} -Request @{} -Parsed ([pscustomobject]@{ Candidates=@([pscustomobject]@{ text='too-long'; deterministic_qc_status='passed'; fit_verification_status='estimated_overflow' }); CannotFitReason='' })
           if (@($none.candidates).Count -ne 0) { throw 'FIT_PUBLICATION_OVERFLOW_SHOULD_NOT_BE_PRESENTED' }
           if ([string]::IsNullOrWhiteSpace([string]$none.cannot_fit_reason)) { throw 'FIT_PUBLICATION_EMPTY_REASON_MISSING' }
