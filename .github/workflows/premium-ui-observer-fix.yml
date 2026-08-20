@@ -1,0 +1,43 @@
+name: Patch premium UI observer
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-observer:
+    if: github.event.label.name == 'premium-ui-observer-fix'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout implementation branch
+        uses: actions/checkout@v4
+        with:
+          ref: codex/premium-specialized-ui
+          fetch-depth: 2
+
+      - name: Replace broad workspace observer
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = 'V91.61/app/www/assets/premium-ui.js'
+          $text = [IO.File]::ReadAllText($path, [Text.Encoding]::UTF8)
+          $old = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('ICAgIHZhciByZWZyZXNoID0gZGVib3VuY2UoZnVuY3Rpb24gKCkgeyBzeW5jQ2F0TW9kZSgpOyByZWZyZXNoV29ya3NwYWNlVWkoKTsgcmVuZGVyV29ya0NhcmRzKCk7IH0sIDkwKTsKICAgIHZhciB3b3Jrc3BhY2UgPSBlbCgnY2F0LXdvcmtzcGFjZScpOwogICAgaWYgKHdvcmtzcGFjZSkgbmV3IE11dGF0aW9uT2JzZXJ2ZXIocmVmcmVzaCkub2JzZXJ2ZSh3b3Jrc3BhY2UsIHsgY2hpbGRMaXN0OiB0cnVlLCBzdWJ0cmVlOiB0cnVlLCBhdHRyaWJ1dGVzOiB0cnVlLCBjaGFyYWN0ZXJEYXRhOiB0cnVlIH0pOwo='))
+          $new = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('ICAgIHZhciByZWZyZXNoID0gZGVib3VuY2UoZnVuY3Rpb24gKCkgeyBzeW5jQ2F0TW9kZSgpOyByZWZyZXNoV29ya3NwYWNlVWkoKTsgcmVuZGVyV29ya0NhcmRzKCk7IH0sIDkwKTsKICAgIC8qIE9ic2VydmUgb25seSBsZWdhY3kgYXBwbGljYXRpb24gbm9kZXMuIE9ic2VydmluZyAjY2F0LXdvcmtzcGFjZSBhbHNvIHNlZXMKICAgICAgIHRoZSBwcmVtaXVtIHN1bW1hcnkvbGlzdCBtdXRhdGlvbnMgcHJvZHVjZWQgYnkgcmVmcmVzaFdvcmtzcGFjZVVpKCksCiAgICAgICBjYXVzaW5nIGEgc2VsZi1zdXN0YWluaW5nIHJlZHJhdyBsb29wLiAqLwogICAgW2VsKCdjYXQtZ3JpZC1ib2R5JyksIGVsKCdjYXQtZWRpdG9yLXRvb2xiYXInKV0uZm9yRWFjaChmdW5jdGlvbiAobm9kZSkgewogICAgICBpZiAobm9kZSkgbmV3IE11dGF0aW9uT2JzZXJ2ZXIocmVmcmVzaCkub2JzZXJ2ZShub2RlLCB7IGNoaWxkTGlzdDogdHJ1ZSwgc3VidHJlZTogdHJ1ZSwgYXR0cmlidXRlczogdHJ1ZSwgY2hhcmFjdGVyRGF0YTogdHJ1ZSB9KTsKICAgIH0pOwo='))
+          $count = ([regex]::Matches($text, [regex]::Escape($old))).Count
+          if ($count -ne 1) { throw "PREMIUM_OBSERVER_PATCH_COUNT_INVALID: $count" }
+          $text = $text.Replace($old, $new)
+          [IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding($true)))
+          node --check $path
+          if ($LASTEXITCODE -ne 0) { throw "PREMIUM_OBSERVER_NODE_CHECK_FAILED: $LASTEXITCODE" }
+          .\V91.61\app\tools\Test-YakuPremiumUi.ps1
+          .\V91.61\app\tools\Check-Encoding.ps1
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- $path
+          git diff --cached --check
+          git commit -m 'Avoid premium UI self-refresh loop'
+          git push origin HEAD:codex/premium-specialized-ui
