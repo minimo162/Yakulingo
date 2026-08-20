@@ -51,6 +51,7 @@ $script:YakuSrcModuleFiles = @(
     'WordAdapter.ps1',
     'CatProject.ps1',
     'Publication.ps1',
+    'PublicationFitPolicy.ps1',
     'Render.ps1',
     'VersionUpdate.ps1',
     'SourceRebase.ps1',
