@@ -31,6 +31,11 @@ jobs:
             return (@($parts | ForEach-Object { [IO.File]::ReadAllText($_.FullName, [Text.Encoding]::ASCII) }) -join '')
           }
 
+          function ConvertFrom-YakuUtf8Base64 {
+            param([Parameter(Mandatory=$true)][string]$Value)
+            return [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Value))
+          }
+
           function Expand-YakuPayload {
             param(
               [Parameter(Mandatory=$true)][string]$Base64,
@@ -65,11 +70,18 @@ jobs:
           function Update-YakuPage {
             param(
               [Parameter(Mandatory=$true)][string]$Path,
+              [Parameter(Mandatory=$true)][string]$OldTitle,
+              [Parameter(Mandatory=$true)][string]$NewTitle,
               [Parameter(Mandatory=$true)][string]$BaseCss,
               [Parameter(Mandatory=$true)][string]$BaseJs
             )
             $text = [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8)
             $nl = if ($text.Contains("`r`n")) { "`r`n" } else { "`n" }
+            if ($text.Contains($OldTitle)) {
+              $text = Replace-YakuOnce -Text $text -Old $OldTitle -New $NewTitle -Code 'PREMIUM_TITLE'
+            } elseif (-not $text.Contains($NewTitle)) {
+              throw 'PREMIUM_TITLE_STATE_INVALID'
+            }
             $premiumCss = '  <link rel="stylesheet" href="/assets/premium-ui.css">'
             if (-not $text.Contains('/assets/premium-ui.css')) {
               $text = Replace-YakuOnce -Text $text -Old $BaseCss -New ($BaseCss + $nl + $premiumCss) -Code 'PREMIUM_CSS_ANCHOR'
@@ -85,8 +97,12 @@ jobs:
           Expand-YakuPayload -Base64 (Read-YakuPayload -Pattern 'css-*') -Destination 'V91.61/app/www/assets/premium-ui.css'
           Expand-YakuPayload -Base64 (Read-YakuPayload -Pattern 'test-*') -Destination 'V91.61/app/tools/Test-YakuPremiumUi.ps1'
 
-          Update-YakuPage -Path 'V91.61/app/www/cat.html' -BaseCss '  <link rel="stylesheet" href="/assets/cat-workspace.css">' -BaseJs '  <script src="/assets/cat.js" defer></script>'
-          Update-YakuPage -Path 'V91.61/app/www/palette.html' -BaseCss '  <link rel="stylesheet" href="/assets/palette.css">' -BaseJs '  <script src="/assets/palette.js" defer></script>'
+          $catOldTitle = ConvertFrom-YakuUtf8Base64 'PHRpdGxlPue/u+iosyAtIFlha3VMaW5nbzwvdGl0bGU+'
+          $catNewTitle = ConvertFrom-YakuUtf8Base64 'PHRpdGxlPkV4Y2Vs57+76KizIC0gWWFrdUxpbmdvPC90aXRsZT4='
+          $paletteOldTitle = ConvertFrom-YakuUtf8Base64 'PHRpdGxlPuOBiuaJi+i7vee/u+iosyAtIFlha3VMaW5nbzwvdGl0bGU+'
+          $paletteNewTitle = ConvertFrom-YakuUtf8Base64 'PHRpdGxlPuOCr+OCpOODg+OCr+e/u+iosyAtIFlha3VMaW5nbzwvdGl0bGU+'
+          Update-YakuPage -Path 'V91.61/app/www/cat.html' -OldTitle $catOldTitle -NewTitle $catNewTitle -BaseCss '  <link rel="stylesheet" href="/assets/cat-workspace.css">' -BaseJs '  <script src="/assets/cat.js" defer></script>'
+          Update-YakuPage -Path 'V91.61/app/www/palette.html' -OldTitle $paletteOldTitle -NewTitle $paletteNewTitle -BaseCss '  <link rel="stylesheet" href="/assets/palette.css">' -BaseJs '  <script src="/assets/palette.js" defer></script>'
 
           $baselinePath = 'V91.61/app/tools/eol-baseline.txt'
           $baseline = [IO.File]::ReadAllText($baselinePath, [Text.Encoding]::UTF8)
