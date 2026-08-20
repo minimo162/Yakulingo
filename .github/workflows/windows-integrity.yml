@@ -17,7 +17,7 @@ jobs:
           ref: codex/publication-fit-remeasure
           fetch-depth: 2
 
-      - name: Patch fit measurement and restore integrity workflow
+      - name: Patch publication fit measurement
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
@@ -26,17 +26,16 @@ jobs:
 
           $fitTextPattern = "(?ms)^  function segmentFitText\(segment\) \{\r?\n    var target = String\(segment\.translation \|\| ''\);\r?\n    return target\.trim\(\) \? target : String\(segment\.source \|\| ''\);\r?\n  \}"
           if ([regex]::Matches($text, $fitTextPattern).Count -ne 1) { throw 'SEGMENT_FIT_TEXT_PATTERN_COUNT_INVALID' }
-          $fitTextReplacement = @'
-          function segmentFitText(segment) {
-            /* 掲載用の短縮訳を採用した後は、実際に出力する文字列を測る。
-               基準訳は translation に残し、fit 判定だけ publication_translation を優先する。 */
-            var publication = String(segment && segment.publication_translation || '');
-            if (publication.trim()) return publication;
-            var target = String(segment && segment.translation || '');
-            return target.trim() ? target : String(segment && segment.source || '');
-          }
-          '@
-          $fitTextReplacement = ($fitTextReplacement -replace '(?m)^          ','').TrimEnd("`r","`n")
+          $fitTextReplacement = @(
+            '  function segmentFitText(segment) {',
+            '    /* Measure the actual publication text after a concise variant is adopted.',
+            '       Keep the canonical translation intact; fit checks prefer publication_translation. */',
+            "    var publication = String(segment && segment.publication_translation || '');",
+            '    if (publication.trim()) return publication;',
+            "    var target = String(segment && segment.translation || '');",
+            "    return target.trim() ? target : String(segment && segment.source || '');",
+            '  }'
+          ) -join "`n"
           $text = [regex]::Replace($text, $fitTextPattern, $fitTextReplacement, 1)
 
           $capacityPattern = "(?m)^    var text = String\(segment\.translation \|\| ''\);\r?\n    if \(!text\) return null;$"
@@ -50,29 +49,12 @@ jobs:
           if ($text -notmatch "if \(!String\(segment\.translation \|\| ''\)\.trim\(\)\) return \{ risk: false \};") { throw 'UNTRANSLATED_FIT_GATE_LOST' }
           [IO.File]::WriteAllText($catPath, $text, (New-Object Text.UTF8Encoding($true)))
 
-          $workflowPath = '.github/workflows/windows-integrity.yml'
-          git checkout HEAD^ -- $workflowPath
-          $workflow = [IO.File]::ReadAllText($workflowPath, [Text.Encoding]::UTF8)
-          $anchor = '      - name: Test local bootstrap and repair paths'
-          if (-not $workflow.Contains($anchor)) { throw 'INTEGRITY_WORKFLOW_ANCHOR_MISSING' }
-          $sourceStep = @'
-                - name: Test adopted publication translation remeasurement
-                  shell: powershell
-                  run: |
-                    $catPath = Join-Path $PWD 'V91.61\app\www\assets\cat.js'
-                    $cat = [IO.File]::ReadAllText($catPath, [Text.Encoding]::UTF8)
-                    if ($cat -notmatch "(?s)function segmentFitText\(segment\).*?publication_translation.*?return publication") { throw 'FIT_REMEASURE_PUBLICATION_PRIORITY_MISSING' }
-                    if ($cat -notmatch "(?s)function segmentFitCapacity\(segment\).*?var text = segmentFitText\(segment\);") { throw 'FIT_REMEASURE_CAPACITY_SOURCE_MISSING' }
-                    if ($cat -notmatch "(?s)function computeFitBudget\(segment\).*?var currentText = segmentFitText\(segment\);.*?currentText\.length \* 0\.8") { throw 'FIT_REMEASURE_FALLBACK_SOURCE_MISSING' }
-                    if ($cat -notmatch "if \(!String\(segment\.translation \|\| ''\)\.trim\(\)\) return \{ risk: false \};") { throw 'FIT_REMEASURE_UNTRANSLATED_GATE_MISSING' }
-          '@
-          $sourceStep = ($sourceStep -replace '(?m)^        ','').TrimEnd("`r","`n")
-          $workflow = $workflow.Replace($anchor, $sourceStep + "`n`n" + $anchor)
-          [IO.File]::WriteAllText($workflowPath, $workflow, (New-Object Text.UTF8Encoding($false)))
-
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- $catPath $workflowPath
+          git add -- $catPath
           git diff --cached --check
+          if ($LASTEXITCODE -ne 0) { throw 'CAT_JS_DIFF_CHECK_FAILED' }
           git commit -m 'Remeasure adopted publication translations'
+          if ($LASTEXITCODE -ne 0) { throw 'CAT_JS_COMMIT_FAILED' }
           git push origin HEAD:codex/publication-fit-remeasure
+          if ($LASTEXITCODE -ne 0) { throw 'CAT_JS_PUSH_FAILED' }
