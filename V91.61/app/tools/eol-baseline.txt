@@ -25,6 +25,7 @@ src/CorpusSearch.ps1	lf
 src/DesktopIntegration.ps1	lf
 src/EdgeLaunch.ps1	lf
 src/FileProcessors.ps1	lf
+src/FitPolicy.ps1	crlf
 src/GlossaryVariants.ps1	crlf
 src/Html.ps1	lf
 src/JobObject.ps1	crlf
