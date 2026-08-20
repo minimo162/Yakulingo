@@ -18,6 +18,7 @@
       <a class="brand home-link" href="/cat">YakuLingo</a>
       <div class="palette-status-block">
         <div id="copilot-status" class="status" aria-live="polite"><span class="status-dot warn"></span><span>準備しています</span></div>
+        <button id="copilot-window-open" type="button" class="link-button">Copilot画面を開く</button>
         <button id="copilot-prepare-retry" type="button" class="link-button" hidden>準備し直す</button>
       </div>
     </header>
@@ -34,35 +35,37 @@
         </div>
         <!-- 自動判定できないときは /api/palette/translate が409で止め、
              画面は結果欄に見込みの方向を選び直す口を出す（曖昧なまま送らない）。
-             文字数の行とは別の行にする——1行に詰めると小窓(480px)で折り返し、
-             3行ぶんの高さを食って原文欄を画面外へ押し出していた(MAJOR-B)。 -->
+             480pxの小窓でも主操作を一目で追えるよう、翻訳先・実行・CATへの
+             引き継ぎを1段目、参考資料を2段目に分ける。外側は既存の
+             direction-rowのままにし、高さとDOM契約は変えない。 -->
         <div class="palette-direction-row">
-          <label for="palette-direction-select" class="palette-direction-select-label">翻訳先</label>
-          <select id="palette-direction-select" aria-label="翻訳先">
-            <option value="">自動</option>
-            <option value="to_en">日本語 → 英語</option>
-            <option value="to_jp">英語 → 日本語</option>
-          </select>
-          <button id="palette-submit" type="submit" class="secondary-button compact">今すぐ訳す</button>
-          <!-- パレットの昇格。手に負えない長さ・重要度の本文を、1回の操作で
-               CAT(資料翻訳)の確認画面へそのまま渡す。新しい行を足すと
-               480x640で原文欄を画面外へ押し出す高さになる(実測、独立行の
-               案で確認済み)ため、direction-row(flex-wrap:wrap)の3要素目の
-               隣へ同居させ、新しい行を増やさない。副次導線なので
-               link-buttonで小さく——type="button"なのでEnter/送信は奪わない。
-               結果の有無に関わらず本文があれば押せる（訳す前でもよい）。 -->
-          <button id="palette-handoff" type="button" class="link-button" disabled>CATで開く</button>
-          <!-- パレットの文脈ポインタ。/api/cat/recent(プロジェクト不要の
-               事前アクション)から選べる資料を並べる。選ぶとlocalStorageへ
-               id・表示名だけを覚え(本文は保存しない)、以後の貼り付けで
-               その資料の確定済みの訳を即答の候補1として優先する
-               （即答(instant)にのみ効く。Copilotプロンプトへは注入しない）。
-               新しい行を増やさず、direction-row(flex-wrap:wrap)の4要素目
-               として同居させる(#palette-handoffと同じ考え方)。 -->
-          <label for="palette-context-select" class="palette-context-select-label">文脈</label>
-          <select id="palette-context-select" aria-label="文脈(選ぶとその資料の確定訳を優先します)">
-            <option value="">文脈: なし</option>
-          </select>
+          <div class="palette-direction-field">
+            <label for="palette-direction-select" class="palette-direction-select-label">翻訳先</label>
+            <select id="palette-direction-select" aria-label="翻訳先">
+              <option value="">自動</option>
+              <option value="to_en">日本語 → 英語</option>
+              <option value="to_jp">英語 → 日本語</option>
+            </select>
+          </div>
+          <div class="palette-action-group">
+            <button id="palette-submit" type="submit" class="secondary-button compact">今すぐ訳す</button>
+            <!-- 長文・重要文を資料翻訳へ引き継ぐ既存導線。表示名は既存利用者と
+                 回帰試験の契約を保ち、aria-label/titleで何が起きるかを補う。 -->
+            <button id="palette-handoff" type="button" class="link-button" aria-label="1文ずつ確認する画面で開く" title="長文を1文ずつ確認する画面へ引き継ぎます" disabled>CATで開く</button>
+          </div>
+          <!-- 参考資料は補助設定なので主操作と視覚的に分離する。ただし選択自体は
+               常時見せ、前回の選択を無言で隠さない。確定済み訳への完全一致だけを
+               即答候補へ使い、Copilotへ資料本文は送らない。 -->
+          <div class="palette-context-field">
+            <label for="palette-context-select" class="palette-context-select-label">
+              <span class="palette-context-label-text">参考資料（任意）</span>
+              <span class="palette-context-help">過去の確定訳を候補1にします。</span>
+            </label>
+            <select id="palette-context-select" aria-label="参考資料（選ぶとその資料の確定訳を優先します）">
+              <!-- textContent は既存契約を保ち、labelで利用者向け表示を明確にする。 -->
+              <option value="" label="参考資料なし">文脈: なし</option>
+            </select>
+          </div>
         </div>
       </form>
 
