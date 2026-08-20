@@ -2986,8 +2986,12 @@
      プレビューの表示側と連動させない（表示は見る側の都合、収まりは書く内容の
      都合で、別のもの）。 */
   function segmentFitText(segment) {
-    var target = String(segment.translation || '');
-    return target.trim() ? target : String(segment.source || '');
+    /* Measure the actual publication text after a concise variant is adopted.
+       Keep the canonical translation intact; fit checks prefer publication_translation. */
+    var publication = String(segment && segment.publication_translation || '');
+    if (publication.trim()) return publication;
+    var target = String(segment && segment.translation || '');
+    return target.trim() ? target : String(segment && segment.source || '');
   }
   /* 収まりの判定そのもの。プレビューの印（previewCellHtml）と、絞り込み・行の
      印（segmentFitRiskInfo 経由）の両方がこの1つを使う。呼び出し側が層・行・列・
@@ -3083,8 +3087,8 @@
      いるかを正直に出せるようにする。 */
   function segmentFitCapacity(segment) {
     if (!segment || segment.kind !== 'cell') return null;
-    var text = String(segment.translation || '');
-    if (!text) return null;
+    var text = segmentFitText(segment);
+    if (!text.trim()) return null;
     var ref = previewCellRef(segment.location);
     if (!ref) return null;
     var layout = previewLayout(ref.sheet);
@@ -3691,7 +3695,8 @@
      クランプが効いたかどうかまで正直に言う。 */
   function computeFitBudget(segment) {
     var measuredCapacity = segmentFitCapacity(segment);
-    var maxChars = measuredCapacity ? measuredCapacity.maxChars : Math.max(20, Math.floor(String(segment.translation || '').length * 0.8));
+    var currentText = segmentFitText(segment);
+    var maxChars = measuredCapacity ? measuredCapacity.maxChars : Math.max(20, Math.floor(currentText.length * 0.8));
     var note;
     if (measuredCapacity) {
       note = measuredCapacity.basis === 'below-min'
