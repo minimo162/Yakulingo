@@ -12,6 +12,11 @@ if (-not $ManifestOnly -and [string]::IsNullOrWhiteSpace($OutputPath)) {
 $source=(Resolve-Path -LiteralPath $SourceRoot).Path
 $build=$BuildId.Trim()
 if ([string]::IsNullOrWhiteSpace($build)) { throw 'PACKAGE_BUILD_ID_EMPTY: BuildId を指定してください。' }
+# build_id は bootstrap.ps1 でローカルのフォルダ名へ使う。生成側でも同じ境界を
+# 守り、パス区切り・親ディレクトリ・末尾ピリオド等を manifest へ持ち込ませない。
+if ($build -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' -or $build -in @('.', '..') -or $build.EndsWith('.')) {
+    throw "PACKAGE_BUILD_ID_INVALID: BuildId は英数字で始まる64文字以内の英数字・._-だけを使用してください: $build"
+}
 $buildPath=Join-Path $source 'app\config\build.txt'
 $utf8Bom=New-Object Text.UTF8Encoding($true)
 [IO.File]::WriteAllText($buildPath, $build+"`r`n", $utf8Bom)

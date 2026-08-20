@@ -40,6 +40,50 @@ function Join-YakuPath {
     return (Join-Path $Base $native)
 }
 
+function Assert-YakuBuildId {
+    param([Parameter(Mandatory=$true)][string]$BuildId)
+    if ($BuildId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' -or $BuildId -in @('.', '..') -or $BuildId.EndsWith('.')) {
+        throw "MANIFEST_BUILD_ID_INVALID: build_id は英数字で始まる64文字以内の英数字・._-だけを使用してください: $BuildId"
+    }
+}
+
+function Test-YakuManifestRelativePath {
+    param([Parameter(Mandatory=$true)][string]$Relative, [Parameter(Mandatory=$true)][ref]$Reason)
+    if ([string]::IsNullOrWhiteSpace($Relative)) { $Reason.Value = '空のパス'; return $false }
+    if ($Relative.IndexOf('\') -ge 0) { $Reason.Value = '区切りは / のみ使用できます'; return $false }
+    if ($Relative.StartsWith('/') -or $Relative.StartsWith('//') -or $Relative -match '^[A-Za-z]:' -or $Relative.IndexOf(':') -ge 0) {
+        $Reason.Value = '絶対パス・ドライブ・ADS は使用できません'; return $false
+    }
+    if ($Relative.IndexOfAny([char[]]@('<','>','"','|','?','*')) -ge 0) { $Reason.Value = 'Windowsで使用できない文字を含みます'; return $false }
+    foreach ($ch in $Relative.ToCharArray()) {
+        if ([int][char]$ch -lt 32) { $Reason.Value = '制御文字を含みます'; return $false }
+    }
+    $segments = @($Relative -split '/')
+    if ($segments.Count -eq 0) { $Reason.Value = 'パス要素がありません'; return $false }
+    foreach ($segment in $segments) {
+        if ([string]::IsNullOrEmpty($segment) -or $segment -in @('.', '..')) { $Reason.Value = '空・.・.. の要素は使用できません'; return $false }
+        if ($segment.EndsWith(' ') -or $segment.EndsWith('.')) { $Reason.Value = '末尾の空白・ピリオドは使用できません'; return $false }
+        $baseName = ($segment -split '\.')[0]
+        if ($baseName -match '^(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$') { $Reason.Value = 'Windows予約名は使用できません'; return $false }
+    }
+    return $true
+}
+
+function Join-YakuManifestPath {
+    param([Parameter(Mandatory=$true)][string]$Base, [Parameter(Mandatory=$true)][string]$Relative)
+    $reason = ''
+    if (-not (Test-YakuManifestRelativePath -Relative $Relative -Reason ([ref]$reason))) {
+        throw "MANIFEST_PATH_INVALID: $Relative ($reason)"
+    }
+    $baseFull = [IO.Path]::GetFullPath($Base).TrimEnd([char[]]@('\','/'))
+    $candidate = [IO.Path]::GetFullPath((Join-YakuPath -Base $baseFull -Relative $Relative))
+    $prefix = $baseFull + [IO.Path]::DirectorySeparatorChar
+    if (-not $candidate.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "MANIFEST_PATH_ESCAPE: 配布ルート外を参照するパスです: $Relative"
+    }
+    return $candidate
+}
+
 function Get-YakuLocalRoot {
     param([string]$Override)
     if (-not [string]::IsNullOrWhiteSpace($Override)) { return [IO.Path]::GetFullPath($Override) }
@@ -112,7 +156,8 @@ function Test-YakuTreeAgainstManifest {
     foreach ($item in @($Manifest.files)) { $expected[[string]$item.path] = $item }
     foreach ($relative in @($expected.Keys)) {
         $item = $expected[$relative]
-        $full = Join-YakuPath -Base $Root -Relative $relative
+        try { $full = Join-YakuManifestPath -Base $Root -Relative $relative }
+        catch { $Reason.Value = $_.Exception.Message; return $false }
         if (!(Test-Path -LiteralPath $full -PathType Leaf)) { $Reason.Value = "欠落: $relative"; return $false }
         if ([long](Get-Item -LiteralPath $full).Length -ne [long]$item.size) { $Reason.Value = "サイズ不一致: $relative"; return $false }
         if ((Get-YakuHashHex -Path $full) -ne ([string]$item.sha256).ToLowerInvariant()) { $Reason.Value = "内容不一致: $relative"; return $false }
@@ -129,9 +174,33 @@ function Test-YakuTreeAgainstManifest {
 function Read-YakuManifest {
     param([Parameter(Mandatory=$true)][string]$Path)
     $raw = [IO.File]::ReadAllText($Path)
-    $manifest = $raw | ConvertFrom-Json
+    try { $manifest = $raw | ConvertFrom-Json } catch { throw 'MANIFEST_INVALID_JSON: manifest.json を解析できません。' }
+    if ([int]$manifest.schema -ne 1) { throw "MANIFEST_SCHEMA_UNSUPPORTED: schema=$([string]$manifest.schema)" }
     if ([string]::IsNullOrWhiteSpace([string]$manifest.build_id)) { throw 'MANIFEST_BUILD_ID_MISSING: manifest.json に build_id がありません。' }
-    if (@($manifest.files).Count -eq 0) { throw 'MANIFEST_FILES_EMPTY: manifest.json にファイル一覧がありません。' }
+    Assert-YakuBuildId -BuildId ([string]$manifest.build_id)
+    if (-not [string]::Equals([string]$manifest.version, [string]$manifest.build_id, [System.StringComparison]::Ordinal)) {
+        throw "MANIFEST_VERSION_MISMATCH: version=$([string]$manifest.version) build_id=$([string]$manifest.build_id)"
+    }
+    $files = @($manifest.files)
+    if ($files.Count -eq 0) { throw 'MANIFEST_FILES_EMPTY: manifest.json にファイル一覧がありません。' }
+    if ([int]$manifest.file_count -ne $files.Count) { throw "MANIFEST_FILE_COUNT_MISMATCH: file_count=$([int]$manifest.file_count) files=$($files.Count)" }
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $total = 0L
+    foreach ($item in $files) {
+        $relative = [string]$item.path
+        $reason = ''
+        if (-not (Test-YakuManifestRelativePath -Relative $relative -Reason ([ref]$reason))) { throw "MANIFEST_PATH_INVALID: $relative ($reason)" }
+        if (-not $seen.Add($relative)) { throw "MANIFEST_PATH_DUPLICATE: $relative" }
+        $size = 0L
+        try { $size = [long]$item.size } catch { throw "MANIFEST_SIZE_INVALID: $relative" }
+        if ($size -lt 0) { throw "MANIFEST_SIZE_INVALID: $relative" }
+        $sha = [string]$item.sha256
+        if ($sha -notmatch '^[0-9A-Fa-f]{64}$') { throw "MANIFEST_SHA256_INVALID: $relative" }
+        $total += $size
+    }
+    if ($manifest.PSObject.Properties.Name -contains 'total_bytes') {
+        if ([long]$manifest.total_bytes -ne $total) { throw "MANIFEST_TOTAL_BYTES_MISMATCH: total_bytes=$([long]$manifest.total_bytes) files=$total" }
+    }
     return $manifest
 }
 
@@ -140,6 +209,27 @@ function Get-YakuInstalledMarker {
     $path = Join-Path $VersionDir '.installed'
     if (!(Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
     try { return ([IO.File]::ReadAllText($path) | ConvertFrom-Json) } catch { return $null }
+}
+
+function Test-YakuInstalledVersionReady {
+    param(
+        [Parameter(Mandatory=$true)][string]$VersionDir,
+        [string]$ExpectedManifestHash = '',
+        [Parameter(Mandatory=$true)][ref]$Reason
+    )
+    if (-not (Test-YakuVersionDir -Path $VersionDir)) { $Reason.Value = '起動スクリプトがありません'; return $false }
+    $marker = Get-YakuInstalledMarker -VersionDir $VersionDir
+    if ($null -eq $marker -or [string]::IsNullOrWhiteSpace([string]$marker.manifest_sha256)) { $Reason.Value = '.installed が不正です'; return $false }
+    $manifestPath = Join-Path $VersionDir 'manifest.json'
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { $Reason.Value = 'manifest.json がありません'; return $false }
+    try {
+        $actualManifestHash = Get-YakuHashHex -Path $manifestPath
+        if (-not [string]::Equals([string]$marker.manifest_sha256, $actualManifestHash, [System.StringComparison]::OrdinalIgnoreCase)) { $Reason.Value = 'manifest.json と .installed が一致しません'; return $false }
+        if (-not [string]::IsNullOrWhiteSpace($ExpectedManifestHash) -and -not [string]::Equals($ExpectedManifestHash, $actualManifestHash, [System.StringComparison]::OrdinalIgnoreCase)) { $Reason.Value = '共有側のmanifestと一致しません'; return $false }
+        $manifest = Read-YakuManifest -Path $manifestPath
+        if (-not [string]::Equals([string]$marker.build_id, [string]$manifest.build_id, [System.StringComparison]::Ordinal)) { $Reason.Value = 'build_id が一致しません'; return $false }
+        return (Test-YakuTreeAgainstManifest -Root $VersionDir -Manifest $manifest -Reason $Reason)
+    } catch { $Reason.Value = $_.Exception.Message; return $false }
 }
 
 function Unblock-YakuTree {
@@ -166,11 +256,11 @@ function Install-YakuVersion {
         # すべて一致していても未記載の実験プロファイル1件で導入不能になっていた。
         foreach ($item in @($Manifest.files)) {
             $relative = [string]$item.path
-            $sourceFile = Join-YakuPath -Base $SourceDir -Relative $relative
+            $sourceFile = Join-YakuManifestPath -Base $SourceDir -Relative $relative
             if (!(Test-Path -LiteralPath $sourceFile -PathType Leaf)) {
                 throw "INSTALL_SOURCE_MISSING: manifest記載ファイルが共有側にありません: $relative"
             }
-            $targetFile = Join-YakuPath -Base $stage -Relative $relative
+            $targetFile = Join-YakuManifestPath -Base $stage -Relative $relative
             $targetParent = Split-Path -Parent $targetFile
             if (!(Test-Path -LiteralPath $targetParent -PathType Container)) {
                 New-Item -ItemType Directory -Path $targetParent -Force | Out-Null
@@ -313,8 +403,11 @@ function Get-YakuNewestInstalledVersion {
     param([string]$VersionsDir)
     $best = $null
     foreach ($dir in @(Get-ChildItem -LiteralPath $VersionsDir -Directory -ErrorAction SilentlyContinue)) {
-        if (-not (Test-YakuVersionDir -Path $dir.FullName)) { continue }
-        if ($null -eq (Get-YakuInstalledMarker -VersionDir $dir.FullName)) { continue }
+        $reason = ''
+        if (-not (Test-YakuInstalledVersionReady -VersionDir $dir.FullName -Reason ([ref]$reason))) {
+            Write-YakuBootstrapWarn "壊れたローカル版をスキップします: $($dir.Name) ($reason)"
+            continue
+        }
         if ($null -eq $best -or $dir.LastWriteTimeUtc -gt $best.LastWriteTimeUtc) { $best = $dir }
     }
     if ($best) { return $best.FullName }
@@ -337,12 +430,12 @@ try { $sharedVersionDir = Resolve-YakuSharedVersionDir -Root $SharedRoot }
 catch { Write-YakuBootstrapWarn "共有フォルダを参照できません: $($_.Exception.Message)" }
 
 if ([string]::IsNullOrWhiteSpace($sharedVersionDir)) {
-    # 共有フォルダへ到達できない場合でも、導入済みのローカル版で作業を継続できるようにする。
+    # 共有フォルダへ到達できない場合でも、完全性を再検証できたローカル版だけで作業を継続する。
     $runDir = Get-YakuNewestInstalledVersion -VersionsDir $versionsDir
     if ([string]::IsNullOrWhiteSpace($runDir)) {
-        throw "SHARED_VERSION_NOT_FOUND: 共有フォルダに起動できるバージョンがなく、ローカルにも導入済みの版がありません。共有ルート: $SharedRoot"
+        throw "SHARED_VERSION_NOT_FOUND: 共有フォルダに起動できるバージョンがなく、ローカルにも検証済みの版がありません。共有ルート: $SharedRoot"
     }
-    Write-YakuBootstrapWarn "共有フォルダを参照できないため、導入済みのローカル版で起動します: $(Split-Path -Leaf $runDir)"
+    Write-YakuBootstrapWarn "共有フォルダを参照できないため、検証済みのローカル版で起動します: $(Split-Path -Leaf $runDir)"
 } else {
     $manifestPath = Join-Path $sharedVersionDir 'manifest.json'
     if (!(Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
@@ -358,18 +451,19 @@ if ([string]::IsNullOrWhiteSpace($sharedVersionDir)) {
         $targetName = '{0}-{1}' -f [string]$manifest.build_id, $manifestHash.Substring(0, 8)
         $targetDir = Join-Path $versionsDir $targetName
 
-        $marker = Get-YakuInstalledMarker -VersionDir $targetDir
-        if ($null -ne $marker -and [string]$marker.manifest_sha256 -eq $manifestHash -and (Test-YakuVersionDir -Path $targetDir)) {
-            Write-YakuBootstrapInfo "導入済みです: $targetName"
+        $readyReason = ''
+        if (Test-YakuInstalledVersionReady -VersionDir $targetDir -ExpectedManifestHash $manifestHash -Reason ([ref]$readyReason)) {
+            Write-YakuBootstrapInfo "導入済みです（完全性確認済み）: $targetName"
         } else {
+            if (Test-Path -LiteralPath $targetDir -PathType Container) { Write-YakuBootstrapWarn "ローカル版を修復します: $targetName ($readyReason)" }
             $mutex = New-Object System.Threading.Mutex($false, 'Local\YakuLingoBootstrapInstall')
             $held = $false
             try {
                 try { $held = $mutex.WaitOne([TimeSpan]::FromMinutes(5)) } catch [System.Threading.AbandonedMutexException] { $held = $true }
                 if (-not $held) { throw 'INSTALL_LOCK_TIMEOUT: 別の導入処理が終わりません。しばらく待って再試行してください。' }
-                # 待機中に他プロセスが導入を終えている場合がある。
-                $marker = Get-YakuInstalledMarker -VersionDir $targetDir
-                if ($null -eq $marker -or [string]$marker.manifest_sha256 -ne $manifestHash -or -not (Test-YakuVersionDir -Path $targetDir)) {
+                # 待機中に他プロセスが導入を終えている場合があるため、完全性をもう一度確認する。
+                $readyReason = ''
+                if (-not (Test-YakuInstalledVersionReady -VersionDir $targetDir -ExpectedManifestHash $manifestHash -Reason ([ref]$readyReason))) {
                     if (Test-Path -LiteralPath $targetDir) { Remove-Item -LiteralPath $targetDir -Recurse -Force }
                     Install-YakuVersion -SourceDir $sharedVersionDir -TargetDir $targetDir -Manifest $manifest -ManifestHash $manifestHash
                 }
