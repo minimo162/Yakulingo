@@ -46,6 +46,20 @@ jobs:
             if ($text -match '(?i)Do not abbreviate, summarize, compress, merge, omit, or add information\.') { throw "FIT_FIRST_TEMPLATE_GLOBAL_COMPACTION_BAN: $name" }
           }
 
+      - name: Test duplicate-cell fit policy
+        shell: powershell
+        run: |
+          $root = Join-Path $PWD 'V91.61\app'
+          . (Join-Path $root 'src\CatTranslation.ps1')
+          . (Join-Path $root 'src\FitPolicy.ps1')
+          if ((Resolve-YakuCatFitTargetForDuplicates -MaxCharsValues @(30, 18, 24)) -ne 18) { throw 'FIT_DUPLICATE_MINIMUM_BUDGET_MISSING' }
+          if ((Resolve-YakuCatFitTargetForDuplicates -MaxCharsValues @(30, $null, 18)) -ne 18) { throw 'FIT_DUPLICATE_UNKNOWN_CELL_CANCELLED_KNOWN_BUDGET' }
+          if ($null -ne (Resolve-YakuCatFitTargetForDuplicates -MaxCharsValues @($null, $null))) { throw 'FIT_DUPLICATE_UNKNOWN_ONLY_SHOULD_HAVE_NO_BUDGET' }
+          . (Join-Path $root 'src\SrcModules.ps1')
+          $cat = [Array]::IndexOf($script:YakuSrcModuleFiles, 'CatTranslation.ps1')
+          $fit = [Array]::IndexOf($script:YakuSrcModuleFiles, 'FitPolicy.ps1')
+          if ($cat -lt 0 -or $fit -ne ($cat + 1)) { throw 'FIT_POLICY_MODULE_ORDER_INVALID' }
+
       - name: Test local bootstrap and repair paths
         shell: powershell
         run: .\V91.61\app\tools\Test-YakuBootstrap.ps1
