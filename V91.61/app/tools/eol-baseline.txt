@@ -180,3 +180,6 @@ www/assets/tutorial.js	lf
 www/cat.html	lf
 www/palette.html	lf
 www/tutorial.html	lf
+tools/Test-YakuPremiumUi.ps1	lf
+www/assets/premium-ui.css	lf
+www/assets/premium-ui.js	lf
