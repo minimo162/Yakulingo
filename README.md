@@ -1,6 +1,10 @@
-# YakuLingo（ECM資料英訳ツール）
+# YakuLingo（枠に収める翻訳ツール）
 
-Microsoft 365 Copilot の画面を Edge DevTools Protocol（CDP）で操作し、テキストおよび Excel/CSV 資料を翻訳するローカル業務ツールです。
+YakuLingoは、Microsoft 365 Copilotを使いながら、**既存のExcelレイアウトに収まるよう短く翻訳すること**を主目的にしたローカル業務ツールです。Excelでは列幅・結合セル・右側の空きセルなどから使える幅を読み取り、対象セルごとの文字目標を翻訳時に渡します。意味・数値・限定・必須用語を削るのではなく、冗長な言い回しを削って収めます。
+
+一般的な文章翻訳、Word、過去訳、翻訳メモリ等の機能も残していますが、これらは主目的ではありません。製品判断では、汎用CAT機能を増やすことよりも、**「元レイアウトを崩さず、その場所に入る訳を作る」精度と手数の少なさ**を優先します。
+
+Microsoft 365 Copilot の画面は Edge DevTools Protocol（CDP）で操作します。数値は送信前にマスクし、保存型の作業では原文と訳文に結び付いたQCと人の確認を行います。
 
 このリポジトリは、共有フォルダ `ECM資料英訳ツール/` に配置される配布物一式をそのままの構成で管理します。
 
@@ -62,6 +66,6 @@ Windows + PowerShell 5.1 + Microsoft Edge が前提です。CSV 以外のファ�
 
 - `*.ps1`、`prompts/*.txt`、`www/` 配下の HTML/CSS/JS、`config/settings.template.json` は **UTF-8 BOM付き・CRLF** で保存します。
 - Markdown は UTF-8（BOMなし）です。`.vscode/settings.json` に既定を設定しています。
-- コミット・配布前に `powershell -ExecutionPolicy Bypass -File .\V91.59\app\tools\Check-Encoding.ps1` を実行します。
-- BOM違反は `V91.59\app\tools\Repair-YakuEncoding.ps1 -WhatIfOnly` で確認し、引数なし実行で一括修復できます。
+- コミット・配布前に `powershell -ExecutionPolicy Bypass -File .\V91.61\app\tools\Check-Encoding.ps1` を実行します。
+- BOM違反は `V91.61\app\tools\Repair-YakuEncoding.ps1 -WhatIfOnly` で確認し、引数なし実行で一括修復できます。
 - 本リポジトリの `.gitattributes` で改行コードの自動変換を無効化しています。配布物のバイト列をそのまま保持してください。
