@@ -30,6 +30,14 @@ body.app-palette {
 }
 .palette-header .brand { font-size: var(--font-ui); }
 .palette-status-block { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.palette-status-block .link-button { margin-top: 0; }
+/* 復帰導線を足してもヘッダーを高くしない。結果カードと原文欄へ使える高さを
+   480pxの小窓で減らさないため、この1ボタンだけを32pxの補助操作にする。 */
+.palette-status-block #copilot-window-open {
+  min-height: 32px;
+  padding: 2px 6px;
+  font-size: var(--font-meta);
+}
 
 .palette-main { display: grid; gap: 6px; }
 
@@ -44,44 +52,103 @@ body.app-palette {
 .palette-input-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
 .palette-count { color: var(--muted); font-size: var(--font-meta); font-variant-numeric: tabular-nums; }
 .palette-long-notice { color: var(--warning); font-size: var(--font-meta); flex-basis: 100%; }
-/* 文字数の行とは別行にする（MAJOR-B）。「480px幅でも1行に収まる」という
-   このコメントの旧文は、実測(CoD審査 REWORK-1 NIT-D)とは食い違っていた
-   ——selectがそれ自体でflexの1行分を占め、この行は元から（#palette-handoff
-   を足す前から）3行に折り返しており、行の高さは480px幅・1912px幅の
-   どちらでも116pxだった。以後は測った値のほうを書く（CLAUDE.md
-   「画面の寸法を語るときは測った値を使う」）。
-   「CATで開く」(#palette-handoff)はここへ同居させている——新しい行そのもの
-   を増やすと、480x640では原文欄が画面外へ押し出される(実測: 独立行を
-   試したところ原文欄bottom=-41.6〜-22.6、MAJOR-B)。同居させた結果、
-   #palette-handoffは「今すぐ訳す」と同じ行へ収まり、行の高さは
-   （元から3行だった）116pxのまま480px幅・1912px幅のどちらでも変わらない。 */
-.palette-direction-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
-.palette-direction-select-label { color: var(--muted); font-size: var(--font-meta); }
-#palette-direction-select { min-height: 32px; padding: 2px 6px; font-size: var(--font-meta); }
-/* direction-row内ではlink-button既定のmargin-top(8px)を消し、隣の要素と
-   同じ基準線に揃える(align-items:centerだけでは上マージン分だけ下へ
-   ずれて見える)。 */
-.palette-direction-row #palette-handoff { margin-top: 0; }
-/* 文脈ポインタ。direction-row(既存)へ4要素目として同居させる(新しい行を
-   増やさない、実測で確認した空き幅(134px)へ収める)。select自体の幅は
-   資料名の長さで伸びないよう上限を切り、はみ出す分は省略記号にする
-   （原生select要素でもChromiumはtext-overflow:ellipsisを効かせる、実測)。 */
-.palette-context-select-label { color: var(--muted); font-size: var(--font-meta); margin-left: 4px; }
-#palette-context-select {
-  /* width:autoにする——styles.cssの既定(select要素はwidth:100%)のままだと、
-     flex-wrapのこの行でこのselectだけが1行分の幅を占めて強制改行する
-     (実測: #palette-direction-selectが同じ理由で既にそうなっており、
-     その1行だけで行の高さが116pxになっている、palette.cssの旧註のとおり)。
-     文脈selectは同じ轍を踏まず、他の要素(釦)と同じ行に収める。 */
+
+/* 主操作と補助設定を同じ外枠の中で2段へ分ける。
+   旧配置はflex-wrapへ4要素を直置きし、資料名を92pxへ切り詰めていたため、
+   何を設定しているか読めなかった。外側の高さは既存の実測115.9pxを保ち、
+   480x640の原文・結果・キー案内の幾何契約は変えない。 */
+.palette-direction-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "direction actions"
+    "context context";
+  align-items: center;
+  align-content: start;
+  gap: 8px 12px;
+  min-height: 115.9px;
+  margin-top: 6px;
+}
+.palette-direction-field {
+  grid-area: direction;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.palette-direction-select-label {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: var(--font-meta);
+}
+#palette-direction-select {
   width: auto;
-  min-height: 32px;
-  padding: 2px 4px;
+  min-width: 0;
+  min-height: 36px;
+  flex: 1 1 120px;
+  padding: 2px 6px;
+  font-size: var(--font-meta);
+}
+.palette-action-group {
+  grid-area: actions;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  white-space: nowrap;
+}
+/* direction-row内ではlink-button既定のmargin-top(8px)を消し、隣の要素と
+   同じ基準線に揃える。 */
+.palette-direction-row #palette-handoff { margin-top: 0; }
+
+.palette-context-field {
+  grid-area: context;
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(180px, 1fr);
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--soft);
+}
+.palette-context-select-label {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  margin: 0;
+}
+.palette-context-label-text {
+  color: var(--text);
+  font-size: var(--font-meta);
+  font-weight: 600;
+  line-height: 1.35;
+}
+.palette-context-help {
+  color: var(--muted);
+  font-size: .78rem;
+  font-weight: 400;
+  line-height: 1.35;
+}
+/* 単独で置かれた場合の安全な基準。既存の回帰契約(width:auto / 92px上限)を
+   保ち、下の .palette-context-field 内だけ読みやすい幅へ拡張する。 */
+#palette-context-select {
+  width: auto;
+  min-height: 36px;
+  padding: 2px 8px;
   font-size: var(--font-meta);
   max-width: 92px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.palette-context-field #palette-context-select {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+}
+
 .palette-fineprint { margin: 0; color: var(--muted); font-size: var(--font-meta); }
 .palette-direction-note { margin: 0; color: var(--muted); font-size: var(--font-meta); }
 
@@ -285,6 +352,19 @@ body.app-palette {
    buildBilingualView)、ここでは複製しない——複製すると値がずれる
    (MINOR-2で実測: 17px/27.2 vs 18.02px/33.34)。.bilingual-targetは
    JS/試験が拾うためのマーカークラスで、見た目は持たない。 */
+
+@media (max-width: 340px) {
+  .palette-direction-row {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "direction"
+      "actions"
+      "context";
+    min-height: 0;
+  }
+  .palette-action-group { justify-content: flex-start; }
+  .palette-context-field { grid-template-columns: 1fr; }
+}
 
 @media (max-width: 380px) {
   .palette-shell { padding: 10px 10px 32px; }
