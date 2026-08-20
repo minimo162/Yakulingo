@@ -65,18 +65,11 @@ jobs:
           function Update-YakuPage {
             param(
               [Parameter(Mandatory=$true)][string]$Path,
-              [Parameter(Mandatory=$true)][string]$OldTitle,
-              [Parameter(Mandatory=$true)][string]$NewTitle,
               [Parameter(Mandatory=$true)][string]$BaseCss,
               [Parameter(Mandatory=$true)][string]$BaseJs
             )
             $text = [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8)
             $nl = if ($text.Contains("`r`n")) { "`r`n" } else { "`n" }
-            if ($text.Contains($OldTitle)) {
-              $text = Replace-YakuOnce -Text $text -Old $OldTitle -New $NewTitle -Code 'PREMIUM_TITLE'
-            } elseif (-not $text.Contains($NewTitle)) {
-              throw 'PREMIUM_TITLE_STATE_INVALID'
-            }
             $premiumCss = '  <link rel="stylesheet" href="/assets/premium-ui.css">'
             if (-not $text.Contains('/assets/premium-ui.css')) {
               $text = Replace-YakuOnce -Text $text -Old $BaseCss -New ($BaseCss + $nl + $premiumCss) -Code 'PREMIUM_CSS_ANCHOR'
@@ -92,14 +85,8 @@ jobs:
           Expand-YakuPayload -Base64 (Read-YakuPayload -Pattern 'css-*') -Destination 'V91.61/app/www/assets/premium-ui.css'
           Expand-YakuPayload -Base64 (Read-YakuPayload -Pattern 'test-*') -Destination 'V91.61/app/tools/Test-YakuPremiumUi.ps1'
 
-          Update-YakuPage -Path 'V91.61/app/www/cat.html' `
-            -OldTitle '<title>翻訳 - YakuLingo</title>' -NewTitle '<title>Excel翻訳 - YakuLingo</title>' `
-            -BaseCss '  <link rel="stylesheet" href="/assets/cat-workspace.css">' `
-            -BaseJs '  <script src="/assets/cat.js" defer></script>'
-          Update-YakuPage -Path 'V91.61/app/www/palette.html' `
-            -OldTitle '<title>お手軽翻訳 - YakuLingo</title>' -NewTitle '<title>クイック翻訳 - YakuLingo</title>' `
-            -BaseCss '  <link rel="stylesheet" href="/assets/palette.css">' `
-            -BaseJs '  <script src="/assets/palette.js" defer></script>'
+          Update-YakuPage -Path 'V91.61/app/www/cat.html' -BaseCss '  <link rel="stylesheet" href="/assets/cat-workspace.css">' -BaseJs '  <script src="/assets/cat.js" defer></script>'
+          Update-YakuPage -Path 'V91.61/app/www/palette.html' -BaseCss '  <link rel="stylesheet" href="/assets/palette.css">' -BaseJs '  <script src="/assets/palette.js" defer></script>'
 
           $baselinePath = 'V91.61/app/tools/eol-baseline.txt'
           $baseline = [IO.File]::ReadAllText($baselinePath, [Text.Encoding]::UTF8)
@@ -124,6 +111,7 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -- V91.61/app/www/cat.html V91.61/app/www/palette.html V91.61/app/www/assets/premium-ui.js V91.61/app/www/assets/premium-ui.css V91.61/app/tools/Test-YakuPremiumUi.ps1 V91.61/app/tools/eol-baseline.txt
           git diff --cached --check
-          if (git diff --cached --quiet) { Write-Host 'Premium UI is already materialized.'; exit 0 }
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) { Write-Host 'Premium UI is already materialized.'; exit 0 }
           git commit -m 'Implement premium specialized UI'
           git push origin HEAD:codex/premium-specialized-ui
