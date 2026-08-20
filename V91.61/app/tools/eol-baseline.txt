@@ -25,6 +25,7 @@ src/CorpusSearch.ps1	lf
 src/DesktopIntegration.ps1	lf
 src/EdgeLaunch.ps1	lf
 src/FileProcessors.ps1	lf
+src/FitPolicy.ps1	crlf
 src/GlossaryVariants.ps1	crlf
 src/Html.ps1	lf
 src/JobObject.ps1	crlf
@@ -124,7 +125,7 @@ tools/Test-YakuV9171CatQcLabelCoverage.ps1	crlf
 tools/Test-YakuV9171TranslationNumbers.ps1	crlf
 tools/Test-YakuV9172TmPretranslate.ps1	crlf
 tools/Test-YakuV9173SegmentSplitAt.ps1	crlf
-tools/Test-YakuV9174SearchReplace.ps1	crlf
+tools/Test-YakuV9174SearchReplaceUndo.ps1	crlf
 tools/Test-YakuV9175FuzzyMatchLabel.ps1	crlf
 tools/Test-YakuV9176CatScreenWiring.ps1	crlf
 tools/Test-YakuV9176ExportBlockerReasons.ps1	crlf
