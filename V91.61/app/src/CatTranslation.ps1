@@ -1,5 +1,5 @@
 ﻿function Get-YakuCatPromptContractVersion {
-    return 'cat-canonical-v2-terminology'
+    return 'cat-fit-first-v1-terminology'
 }
 
 function Test-YakuCatPromptTerminologyEligible {
@@ -191,13 +191,10 @@ function New-YakuCatCharacterTargets {
       出力書体の参照文字幅から出す)を、目標を持つ item だけへ列挙する。
       terminology_rules と同じ形（item番号ひも付けのJSON行＋前置文）にする。
 
-      soft target であり、情報を削って収めることは指示しない。CLAUDE.md の
-      決定どおり情報保持が最優先で、収まらなければ超えてよい。cat雛形の
-      「Do not abbreviate/summarize/compress/merge/omit」と矛盾しない文言に
-      する（圧縮は既存の publication-candidates の仕事で、ここでは求めない。
-      当初 summarize/compress を前置文から省いていたところ、CoD審査
-      2026-08-18 REWORK-1 で「省いたことが免除と読める」と指摘され、
-      雛形と同じ動詞を並べる形へ直した）。
+      この目標は「参考値」ではなく、対象セルに収めるための space budget として
+      扱う。意味・数値・限定・必須用語を削ることは許さず、削るのは冗長な言い回しと
+      構文だけにする。どうしても意味を保ったまま収まらない場合だけ超過を許す。
+      幅目標の無い item は従来どおり通常の完全な翻訳を行う。
     #>
     param(
         [Parameter(Mandatory=$true)][object[]]$Items
@@ -210,7 +207,7 @@ function New-YakuCatCharacterTargets {
         $records.Add([ordered]@{ item=[int]$item.Index; approximate_max_chars=$maxChars }) | Out-Null
     }
     if ($records.Count -eq 0) { return 'No character targets apply.' }
-    $preamble = 'The following approximate character targets are layout-derived targets, not measured cell capacities. Prefer phrasing that stays at or below the target for the matching item. Never omit, abbreviate, summarize, compress, or drop information to meet a target — accuracy and completeness always win; if the target cannot be met without loss, exceed it.'
+    $preamble = 'The following approximate character targets are layout-derived space budgets for the matching items, not measured cell capacities. For a targeted item, actively compress the wording and syntax and aim to stay at or below the target. Never omit, abbreviate, summarize, compress, or drop information to meet a target; compress the wording, not the information. Accuracy and completeness always win. If the budget truly cannot be met without losing meaning or required terminology, exceed it only as a last resort.'
     return ($preamble + "`n" + (@($records.ToArray()) | ConvertTo-Json -Compress -Depth 3))
 }
 
