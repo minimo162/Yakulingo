@@ -125,7 +125,7 @@ tools/Test-YakuV9171CatQcLabelCoverage.ps1	crlf
 tools/Test-YakuV9171TranslationNumbers.ps1	crlf
 tools/Test-YakuV9172TmPretranslate.ps1	crlf
 tools/Test-YakuV9173SegmentSplitAt.ps1	crlf
-tools/Test-YakuV9174SearchReplaceUndo.ps1	crlf
+tools/Test-YakuV9174SearchReplace.ps1	crlf
 tools/Test-YakuV9175FuzzyMatchLabel.ps1	crlf
 tools/Test-YakuV9176CatScreenWiring.ps1	crlf
 tools/Test-YakuV9176ExportBlockerReasons.ps1	crlf
