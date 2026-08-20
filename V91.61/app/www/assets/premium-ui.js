@@ -604,8 +604,12 @@
     document.addEventListener('keydown', function (event) { if (event.key === 'Escape') document.body.classList.remove('premium-tools-open'); });
 
     var refresh = debounce(function () { syncCatMode(); refreshWorkspaceUi(); renderWorkCards(); }, 90);
-    var workspace = el('cat-workspace');
-    if (workspace) new MutationObserver(refresh).observe(workspace, { childList: true, subtree: true, attributes: true, characterData: true });
+    /* Observe only legacy application nodes. Observing #cat-workspace also sees
+       the premium summary/list mutations produced by refreshWorkspaceUi(),
+       causing a self-sustaining redraw loop. */
+    [el('cat-grid-body'), el('cat-editor-toolbar')].forEach(function (node) {
+      if (node) new MutationObserver(refresh).observe(node, { childList: true, subtree: true, attributes: true, characterData: true });
+    });
     var resumeList = el('cat-resume-list');
     if (resumeList) new MutationObserver(function () { window.setTimeout(fetchRecent, 70); }).observe(resumeList, { childList: true, subtree: true });
     new MutationObserver(syncCatMode).observe(document.body, { attributes: true, attributeFilter: ['data-cat-view'] });
