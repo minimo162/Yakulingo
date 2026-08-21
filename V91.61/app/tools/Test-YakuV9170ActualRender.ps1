@@ -3,7 +3,7 @@
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 . (Join-Path (Join-Path $root 'src') 'SrcModules.ps1')
-foreach($name in $script:YakuSrcModuleFiles){if($name -eq 'DesktopIntegration.ps1'){continue};. (Join-Path (Join-Path $root 'src') $name)}
+foreach($name in $script:YakuSrcModuleFiles){. (Join-Path (Join-Path $root 'src') $name)}
 $temp=Join-Path ([IO.Path]::GetTempPath()) ('yaku-real-render-'+[guid]::NewGuid().ToString('N').Substring(0,8));$null=New-Item -ItemType Directory -Path $temp -Force
 $oldData=$env:YAKULINGO_DATA_DIR;$env:YAKULINGO_DATA_DIR=Join-Path $temp 'data'
 try{

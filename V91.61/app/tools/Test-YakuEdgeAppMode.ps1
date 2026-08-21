@@ -17,7 +17,6 @@ $cmd = Get-Content -LiteralPath (Join-Path $versionRoot 'YakuLingo起動.cmd') -
 $common = Get-Content -LiteralPath (Join-Path $appRoot 'www\assets\common.js') -Raw -Encoding UTF8
 $server = Get-Content -LiteralPath (Join-Path $appRoot 'src\Server.ps1') -Raw -Encoding UTF8
 $cat = Get-Content -LiteralPath (Join-Path $appRoot 'www\assets\cat.js') -Raw -Encoding UTF8
-$desktop = Get-Content -LiteralPath (Join-Path $appRoot 'src\DesktopIntegration.ps1') -Raw -Encoding UTF8
 $package = Get-Content -LiteralPath (Join-Path $appRoot 'tools\New-YakuPackage.ps1') -Raw -Encoding UTF8
 $shortcut = Get-Content -LiteralPath (Join-Path $appRoot 'tools\Create-Desktop-Shortcut.ps1') -Raw -Encoding UTF8
 
@@ -31,9 +30,9 @@ Assert-YakuBrowserTabMode ($cmd.Contains('Start-YakuLingoApp.ps1')) 'the direct 
 Assert-YakuBrowserTabMode (-not (Test-Path -LiteralPath (Join-Path $versionRoot 'YakuLingo起動.vbs')) -and -not (Test-Path -LiteralPath (Join-Path $repoRoot 'YakuLingo起動.vbs'))) 'current and shared launch surfaces must not expose a second VBScript entry point'
 Assert-YakuBrowserTabMode ($common.Contains("window.addEventListener('beforeunload'") -and $common.Contains('translationIsRunning()')) 'close confirmation must be tied to active translation'
 Assert-YakuBrowserTabMode ($cat.Contains('window.YakuCat = { isBusy:') -and ($cat -split "window.addEventListener\('beforeunload'").Count -eq 1) 'CAT must expose busy state without a separate unsaved-edit close prompt'
-Assert-YakuBrowserTabMode ($desktop.Contains('startup = $false') -and $desktop.Contains('startup_enabled = $false')) 'background startup must remain disabled'
+Assert-YakuBrowserTabMode ($launcher.Contains('Remove-YakuLegacyStartupShortcut') -and -not $launcher.Contains('Create-YakuStartupShortcut')) 'background startup must remain disabled while legacy startup is cleaned safely'
 Assert-YakuBrowserTabMode ($package.Contains("^app/(desktop|experiments)(/|`$)") -and $package.Contains('PACKAGE_APP_LAUNCHER_MISSING')) 'packages must omit the custom desktop shell and require the script launcher'
-Assert-YakuBrowserTabMode ($desktop.Contains("'YakuLingo起動.cmd'") -and -not $desktop.Contains("'YakuLingo起動.vbs'")) 'desktop and start-menu shortcuts must target the supported CMD launcher'
+Assert-YakuBrowserTabMode ($launcher.Contains("'YakuLingo起動.cmd'") -and -not $launcher.Contains("'YakuLingo起動.vbs'")) 'legacy shortcut cleanup must recognize only the supported CMD launcher'
 Assert-YakuBrowserTabMode ($shortcut.Contains("'YakuLingo起動.cmd'") -and -not $shortcut.Contains("'YakuLingo起動.vbs'") -and -not $shortcut.Contains("'desktop\YakuLingo.exe'")) 'the administrative desktop shortcut helper must target the supported CMD launcher'
 
 Write-Host "Edge browser-tab mode tests passed: $passed" -ForegroundColor Green

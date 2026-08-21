@@ -19,7 +19,7 @@ function Check-YakuH1 {
 
 foreach ($name in @(
     'Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1',
-    'FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1','CorpusReference.ps1',
+    'FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1',
     'CellSegments.ps1','CellAlign.ps1','CatProject.ps1'
 )) { . (Join-Path (Join-Path $root 'src') $name) }
 
@@ -109,7 +109,6 @@ try {
     $requiredProtectedCallSites = @{
         'Translation.ps1' = 3
         'CatBatch.ps1' = 3
-        'CorpusReference.ps1' = 1
         'Alignment.ps1' = 1
         'CopilotClient.ps1' = 1
     }
@@ -134,7 +133,7 @@ try {
     $numericMap = @{ '[[N1]]' = '1,234' }
     $rawNumericBlocked = $false
     try {
-        $null = New-YakuProtectedPromptPackage -Kind corpus -Root $root -Direction to_en `
+        $null = New-YakuProtectedPromptPackage -Kind text -Root $root -Direction to_en `
             -Fields @([pscustomobject]@{ Name='source'; OriginalText='売上高は1,234百万円でした。'; ProtectedText='売上高は1,234百万円でした。'; NumericMaskMaps=@($numericMap) }) `
             -Arguments ([pscustomobject]@{ RequestId=[guid]::NewGuid().ToString('N') })
     }
@@ -144,34 +143,34 @@ try {
     Check-YakuH1 (-not $packageCommand.Parameters.ContainsKey('Prompt')) 'public package builder cannot accept an arbitrary final prompt or append uncovered raw text'
     $wrongRootBlocked = $false
     try {
-        $null = New-YakuProtectedPromptPackage -Kind corpus -Root ([IO.Path]::GetTempPath()) -Direction to_en `
+        $null = New-YakuProtectedPromptPackage -Kind text -Root ([IO.Path]::GetTempPath()) -Direction to_en `
             -Fields @([pscustomobject]@{ Name='source'; OriginalText='SAFE'; ProtectedText='SAFE' }) `
             -Arguments ([pscustomobject]@{ RequestId=[guid]::NewGuid().ToString('N') })
     } catch { $wrongRootBlocked = $true }
     Check-YakuH1 $wrongRootBlocked 'canonical package rejects caller-selected roots'
     $callerRequestId = 'deadbeefdeadbeefdeadbeefdeadbeef'
-    $authorityIdPackage = New-YakuProtectedPromptPackage -Kind corpus -Root $root -Direction to_en `
+    $authorityIdPackage = New-YakuProtectedPromptPackage -Kind text -Root $root -Direction to_en `
         -Fields @([pscustomobject]@{ Name='source'; OriginalText='SAFE'; ProtectedText='SAFE' }) `
         -Arguments ([pscustomobject]@{ RequestId=$callerRequestId })
     Check-YakuH1 ($authorityIdPackage.Prompt.IndexOf($callerRequestId, [StringComparison]::Ordinal) -lt 0 -and
         [string]$authorityIdPackage.RequestId -match '^[a-f0-9]{32}$' -and [string]$authorityIdPackage.RequestId -ne $callerRequestId) `
         'canonical serializer generates RequestId internally and ignores caller-supplied values'
     $rawRequestId = "abc`n極秘売上高は1,234百万円"
-    $rawIdPackage = New-YakuProtectedPromptPackage -Kind corpus -Root $root -Direction to_en `
+    $rawIdPackage = New-YakuProtectedPromptPackage -Kind text -Root $root -Direction to_en `
         -Fields @([pscustomobject]@{ Name='source'; OriginalText='SAFE'; ProtectedText='SAFE' }) `
         -Arguments ([pscustomobject]@{ RequestId=$rawRequestId })
     Check-YakuH1 (-not ([string]$rawIdPackage.Prompt).Contains($rawRequestId) -and -not ([string]$rawIdPackage.Prompt).Contains('1,234')) `
         'caller RequestId cannot inject an uncovered confidential value into the serialized prompt'
     $unrelatedFieldBlocked = $false
     try {
-        $null = New-YakuProtectedPromptPackage -Kind corpus -Root $root -Direction to_en `
+        $null = New-YakuProtectedPromptPackage -Kind text -Root $root -Direction to_en `
             -Fields @(
                 [pscustomobject]@{ Name='source'; OriginalText='SAFE'; ProtectedText='SAFE' },
                 [pscustomobject]@{ Name='unrelated'; OriginalText='NOT_IN_PROMPT'; ProtectedText='NOT_IN_PROMPT' }
             ) -Arguments ([pscustomobject]@{})
     } catch { $unrelatedFieldBlocked = ($_.Exception.Message -match '^PROTECTED_PROMPT_RECEIPT_UNRELATED') }
     Check-YakuH1 $unrelatedFieldBlocked 'canonical package rejects an unrelated protected field instead of treating it as send authority'
-    $englishProperPackage = New-YakuProtectedPromptPackage -Kind corpus -Root $root -Direction to_jp `
+    $englishProperPackage = New-YakuProtectedPromptPackage -Kind text -Root $root -Direction to_jp `
         -Fields @([pscustomobject]@{ Name='source'; OriginalText='MAZDA MOTOR CORPORATION'; ProtectedText='MAZDA MOTOR CORPORATION' }) `
         -Arguments ([pscustomobject]@{})
     Check-YakuH1 ([string]$englishProperPackage.Prompt -match 'MAZDA MOTOR CORPORATION') `
@@ -201,7 +200,7 @@ try {
     }
     try {
         $protectedPrompt = '売上高は[[N1]]百万円でした。'
-        $validPackage = New-YakuProtectedPromptPackage -Kind corpus -Root $root -Direction to_en `
+        $validPackage = New-YakuProtectedPromptPackage -Kind text -Root $root -Direction to_en `
             -Fields @([pscustomobject]@{ Name='source'; OriginalText='売上高は1,234百万円でした。'; ProtectedText=$protectedPrompt; NumericMaskMaps=@($numericMap) }) `
             -Arguments ([pscustomobject]@{ RequestId=[guid]::NewGuid().ToString('N') })
         $mutatedEnvelope = $validPackage.Envelope.PSObject.Copy()

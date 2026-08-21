@@ -1,8 +1,7 @@
 ﻿[CmdletBinding()]
 param(
     [int]$Port = 8765,
-    [switch]$OpenBrowser,
-    [switch]$Admin
+    [switch]$OpenBrowser
 )
 
 $ErrorActionPreference = 'Stop'
@@ -12,8 +11,6 @@ $script:YakuRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyComman
 foreach ($yakuSrcModule in $script:YakuSrcModuleFiles) { . (Join-Path $PSScriptRoot $yakuSrcModule) }
 
 $script:YakuBuildId = Assert-YakuBuildIdentity -Root $script:YakuRoot -ExpectedBuildId (Get-YakuBuildId)
-# V91.61: 管理画面。既定は無効で、無効なら管理用の経路を一切登録しない。
-$script:YakuAdminMode = [bool]$Admin
 $script:ServerRunning = $true
 $script:YakuTranslateJobs = [hashtable]::Synchronized(@{})
 $script:YakuTranslateJobHandles = [hashtable]::Synchronized(@{})
@@ -1110,8 +1107,6 @@ function Start-YakuTranslationJob {
                     $reviewRun=Invoke-YakuCatDocumentReviewRequests -Root $Root -Project $reviewProject -DocumentIndex $documentIndex -Settings $settings -Warnings $catWarnings -ProgressState $JobState
                     $completedProject=Restore-YakuCatProject -Id ([string]$cat.project_id);$completedFingerprint=$(if($null -ne $completedProject){Get-YakuCatDocumentReviewDependencyFingerprint -Project $completedProject}else{''})
                     $result=[pscustomobject]@{Kind='cat';Mode='document_review';ResultKind='document_review';ResultId=[guid]::NewGuid().ToString('N');ProjectId=[string]$reviewProject.Id;StartedDependencyFingerprint=$startedFingerprint;CompletedDependencyFingerprint=$completedFingerprint;ApplicationStatus=$(if($startedFingerprint -eq $completedFingerprint){'current'}else{'stale'});DocumentIndexSnapshot=$documentIndex;Packets=@($reviewRun.Packets);SkippedSegmentIds=@($reviewRun.SkippedSegmentIds);Warnings=@($catWarnings.ToArray())}
-                } elseif ($catMode -eq 'corpus') {
-                    throw 'CAT_CORPUS_MODE_RETIRED: 過去の翻訳例は候補一覧から明示的に挿入してください。'
                 } elseif ($catMode -eq 'align') {
                     # 既にある訳と突き合わせる。訳はしない。
                     # 数分かかるのでジョブに乗せる。組み立てはサーバー側で行う
@@ -1889,7 +1884,7 @@ function Get-YakuContentSecurityPolicy {
     <#
       既定は script-src 'self' のみ。一般利用者の画面はこれを維持する。
 
-      AllowWasm は管理画面（コーパス作成）専用。ブラウザは CSP に
+      AllowWasm は過去訳PDFの取り込み専用。ブラウザは CSP に
       script-src がある場合、WebAssembly のコンパイルに 'wasm-unsafe-eval' を要求する。
       無いと WebAssembly.instantiateStreaming が
       「Refused to compile or instantiate WebAssembly module」で失敗する。
@@ -2115,7 +2110,7 @@ function Serve-YakuStaticFile {
 function Serve-YakuAppPage {
     param(
         [Parameter(Mandatory=$true)]$Context,
-        [Parameter(Mandatory=$true)][ValidateSet('cat.html','tutorial.html','palette.html')][string]$PageName,
+        [Parameter(Mandatory=$true)][ValidateSet('cat.html','palette.html')][string]$PageName,
         # 開いた瞬間の状態。?project= で来たと分かっているなら、始める画面を
         # 一度も描かずに確認作業として開く。付けないと、貼り付け欄が一瞬出てから
         # 入れ替わり、画面が点滅して見える（2026-08-13、利用者の指摘）。
@@ -2155,17 +2150,6 @@ function Serve-YakuAppPage {
     $html = $html.Replace('__YAKU_VIEW__', $(if ($InitialView -eq 'workspace') { 'workspace' } else { 'start' }))
     $html = $html.Replace('__YAKU_IMPORT__', $(if ($AllowWasm) { '1' } else { '' }))
     Send-YakuTextResponse -Context $Context -Text $html -ContentType 'text/html; charset=utf-8' -AllowWasm:$AllowWasm
-}
-
-function Serve-YakuAdminPage {
-    # V91.61: 管理画面。/api/ はセッショントークンを要求するため、
-    # index.html と同じ差し込みを行う。差し込まないと画面から API を呼べない。
-    param([Parameter(Mandatory=$true)]$Context)
-    $path = Join-Path $script:YakuRoot 'www\admin.html'
-    $html = Get-Content -LiteralPath $path -Raw -Encoding UTF8
-    $html = $html.Replace('__YAKU_SESSION_TOKEN__', (ConvertTo-YakuHtml $script:YakuSessionToken))
-    # 管理画面だけ WebAssembly を許す。一般利用者の画面は既定のまま。
-    Send-YakuTextResponse -Context $Context -Text $html -ContentType 'text/html; charset=utf-8' -AllowWasm
 }
 
 function ConvertTo-YakuCatMutationResponseJson {
@@ -2280,10 +2264,6 @@ function Invoke-YakuRoute {
         Serve-YakuAppPage -Context $Context -PageName 'palette.html'
         return
     }
-    if ($method -eq 'GET' -and $path -eq '/tutorial') {
-        Send-YakuRedirectResponse -Context $Context -Location '/cat'
-        return
-    }
     if ($method -eq 'GET' -and $path.StartsWith('/assets/')) {
         Serve-YakuStaticFile -Context $Context -RelativePath $path.TrimStart('/')
         return
@@ -2393,36 +2373,6 @@ function Invoke-YakuRoute {
             Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$true; started=$true } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
         } catch {
             Send-YakuTextResponse -Context $Context -Text ([ordered]@{ error=(Convert-YakuExceptionToUserMessage $_) } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
-        }
-        return
-    }
-    if ($method -eq 'GET' -and $path -eq '/api/desktop/preferences') {
-        $preferences = Get-YakuDesktopPreferences
-        Send-YakuTextResponse -Context $Context -Text ($preferences | ConvertTo-Json -Depth 6 -Compress) -ContentType 'application/json; charset=utf-8'
-        return
-    }
-    if ($method -eq 'POST' -and $path -eq '/api/desktop/tour-complete') {
-        # 案内を終えた（または飛ばした）ことだけを記録する。ショートカットは作らない。
-        try {
-            $preferences = Set-YakuTutorialCompleted
-            Send-YakuTextResponse -Context $Context -Text ($preferences | ConvertTo-Json -Depth 6 -Compress) -ContentType 'application/json; charset=utf-8'
-        } catch {
-            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ message=(Convert-YakuExceptionToUserMessage $_) } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
-        }
-        return
-    }
-    if ($method -eq 'POST' -and $path -eq '/api/desktop/preferences') {
-        try {
-            $payload = Read-YakuRequestJson -Request $req -MaxBytes 4096
-            if (-not $payload.ContainsKey('startup_enabled') -or $payload['startup_enabled'] -isnot [bool] -or
-                -not $payload.ContainsKey('desktop_shortcut') -or $payload['desktop_shortcut'] -isnot [bool]) {
-                throw 'DESKTOP_PREFERENCES_INVALID: 設定値を読み取れませんでした。'
-            }
-            $preferences = Set-YakuDesktopPreferences -StartupEnabled ([bool]$payload['startup_enabled']) -DesktopShortcut ([bool]$payload['desktop_shortcut'])
-            Send-YakuTextResponse -Context $Context -Text ($preferences | ConvertTo-Json -Depth 6 -Compress) -ContentType 'application/json; charset=utf-8'
-        } catch {
-            $body = [ordered]@{ available=$false; startup_enabled=$false; desktop_shortcut=$false; message=(Convert-YakuExceptionToUserMessage $_); warnings=@() }
-            Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 5 -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
         }
         return
     }
@@ -2934,118 +2884,6 @@ function Invoke-YakuRoute {
         }
         return
     }
-    # ---------------------------------------------------------------------
-    # V91.61 参考資料コーパス（管理者用）。
-    # $script:YakuAdminMode が偽のときは、この塊ごと素通りする。
-    # 一般利用者の起動では経路が存在しないのと同じになる。
-    # ---------------------------------------------------------------------
-    if ($script:YakuAdminMode -and $path.StartsWith('/api/admin/corpus')) {
-        if ($method -eq 'GET' -and $path -eq '/api/admin/corpus/status') {
-            $sourceRoot = Get-YakuQueryValue -Request $req -Name 'root'
-            $state = Get-YakuCorpusState -SourceRoot $sourceRoot
-            $payload = [ordered]@{
-                source_root = [string]$state.SourceRoot
-                reachable   = [bool]$state.Reachable
-                build_dir   = [string]$state.BuildDir
-                done_count  = [int]$state.DoneCount
-                relocated   = [int]$state.RelocatedCount
-                stale       = @(@($state.StaleEntries) | ForEach-Object { [string]$_.source })
-                databases   = @(@($state.Databases) | ForEach-Object { [ordered]@{ name=[string]$_.Database; done=[int]$_.Done; pending=[int]$_.Pending } })
-                pending     = @(@($state.Pending) | ForEach-Object { [ordered]@{ id=[string]$_.id; sha256=[string]$_.sha256; database=[string]$_.database; source=[string]$_.source; bytes=[int64]$_.bytes; relocated=[bool]$_.relocated; previous=[string]$_.previous } })
-            }
-            Send-YakuTextResponse -Context $Context -Text ($payload | ConvertTo-Json -Depth 6) -ContentType 'application/json; charset=utf-8'
-            return
-        }
-        if ($method -eq 'GET' -and $path -eq '/api/admin/corpus/pdf') {
-            $sourceRoot = Get-YakuQueryValue -Request $req -Name 'root'
-            $id = Get-YakuQueryValue -Request $req -Name 'id'
-            # 原本フォルダを列挙し直して id を突き合わせる。パスを直接受け取らない。
-            $match = @(Get-YakuCorpusSourceFiles -SourceRoot $sourceRoot | Where-Object { (Get-YakuCorpusFileId -Path $_.FullName).Id -eq $id } | Select-Object -First 1)
-            if ($match.Count -eq 0) {
-                Send-YakuTextResponse -Context $Context -Text 'Not found' -StatusCode 404 -ContentType 'text/plain; charset=utf-8'
-                return
-            }
-            $bytes = [System.IO.File]::ReadAllBytes([string]$match[0].FullName)
-            Send-YakuResponse -Context $Context -Bytes $bytes -ContentType 'application/pdf'
-            return
-        }
-        if ($method -eq 'POST' -and $path -eq '/api/admin/corpus/ingest') {
-            try {
-                $payload = Read-YakuRequestJson -Request $req -MaxBytes 33554432
-                $pageChars = @()
-                if ($payload.ContainsKey('page_chars')) { $pageChars = @($payload['page_chars']) }
-                $status = 'ok'
-                if ([string]$payload['status'] -eq 'failed') { $status = 'failed' }
-                elseif (Test-YakuCorpusLowText -PageChars $pageChars) { $status = 'low-text' }
-                $null = Save-YakuCorpusMarkdown -BuildDir (Get-YakuCorpusBuildDir) `
-                    -Id ([string]$payload['id']) -Sha256 ([string]$payload['sha256']) `
-                    -Database ([string]$payload['database']) -Source ([string]$payload['source']) `
-                    -Markdown ([string]$payload['markdown']) -Pages ([int]$payload['pages']) `
-                    -Status $status -Note ([string]$payload['note'])
-                Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$true; id=[string]$payload['id']; status=$status } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
-            } catch {
-                Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$false; error=[string]$_.Exception.Message } | ConvertTo-Json -Compress) -StatusCode 400 -ContentType 'application/json; charset=utf-8'
-            }
-            return
-        }
-        if ($method -eq 'GET' -and $path -eq '/api/admin/corpus/search') {
-            # 段階2 の確認用。索引が実データで引けるかを管理者が見るためだけの経路。
-            # 一般利用者の画面には出さない（修正指示書 §11「一般利用者の画面は触らない」）。
-            try {
-                $query = Get-YakuQueryValue -Request $req -Name 'q'
-                $dbRaw = Get-YakuQueryValue -Request $req -Name 'db'
-                $topRaw = Get-YakuQueryValue -Request $req -Name 'top'
-                $top = 5
-                if (-not [string]::IsNullOrWhiteSpace($topRaw)) { try { $top = [int]$topRaw } catch { $top = 5 } }
-                if ($top -lt 1) { $top = 1 }
-                if ($top -gt 20) { $top = 20 }
-                $databases = @()
-                if (-not [string]::IsNullOrWhiteSpace($dbRaw)) {
-                    $databases = @(($dbRaw -split ',') | ForEach-Object { ([string]$_).Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-                }
-                # 転置索引をやめる前の版が作ったフォルダを片付ける。
-                # 作れたのは検索した端末だけなので、検索の経路で始末するのが筋。
-                $null = Remove-YakuCorpusLegacyIndex
-                $corpusDir = Get-YakuCorpusSearchDir
-                if ([string]::IsNullOrWhiteSpace($corpusDir)) {
-                    Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$true; corpus_dir=''; hits=@() } | ConvertTo-Json -Depth 5 -Compress) -ContentType 'application/json; charset=utf-8'
-                    return
-                }
-                # 索引を持たないので、件数は台帳から数える。
-                $manifest = Read-YakuCorpusManifest -Dir $corpusDir
-                $swSearch = [System.Diagnostics.Stopwatch]::StartNew()
-                $hits = @(Search-YakuCorpus -Query $query -CorpusDir $corpusDir -Databases $databases -Top $top)
-                $swSearch.Stop()
-                Send-YakuTextResponse -Context $Context -Text ([ordered]@{
-                    ok           = $true
-                    corpus_dir   = [string]$corpusDir
-                    documents    = @(@($manifest.entries) | Where-Object { [string]$_.status -ne 'failed' }).Count
-                    elapsed_ms   = [int]$swSearch.Elapsed.TotalMilliseconds
-                    search_terms = @(Get-YakuCorpusTokens -Text $query)
-                    hits         = @(@($hits) | ForEach-Object { [ordered]@{ score=[double]$_.Score; database=[string]$_.Database; source=[string]$_.Source; page=[int]$_.Page; text=[string]$_.Text } })
-                } | ConvertTo-Json -Depth 5 -Compress) -ContentType 'application/json; charset=utf-8'
-            } catch {
-                Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$false; error=[string]$_.Exception.Message } | ConvertTo-Json -Compress) -StatusCode 400 -ContentType 'application/json; charset=utf-8'
-            }
-            return
-        }
-        if ($method -eq 'POST' -and $path -eq '/api/admin/corpus/publish') {
-            try {
-                $result = New-YakuCorpusPublishFolder
-                Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$true; version=[string]$result.Version; path=[string]$result.Path; corpus_dir=[string]$result.CorpusDir; count=[int]$result.Count } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
-            } catch {
-                Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$false; error=[string]$_.Exception.Message } | ConvertTo-Json -Compress) -StatusCode 400 -ContentType 'application/json; charset=utf-8'
-            }
-            return
-        }
-        Send-YakuTextResponse -Context $Context -Text 'Not found' -StatusCode 404 -ContentType 'text/plain; charset=utf-8'
-        return
-    }
-    if ($script:YakuAdminMode -and $method -eq 'GET' -and $path -eq '/admin') {
-        Serve-YakuAdminPage -Context $Context
-        return
-    }
-
     if ($method -in @('GET','HEAD') -and $path -eq '/api/cat/render-pdf') {
         try {
             $projectId = Get-YakuQueryValue -Request $req -Name 'id'
@@ -3254,7 +3092,7 @@ function Invoke-YakuRoute {
             }
             if ($null -eq $project) { throw '取り込んだファイルが見つかりません。もう一度「取り込んで確認を始める」を押してください。' }
 
-            $revisionActions = @('delete','glossary','merge','split','split-at','structure-undo','review-note-add','review-note-state','placement','publication-candidates','publication-apply','publication-revert','abbreviation-register','glossary-add','term-add','term-deactivate','term-insert','term-exception','tm-delete','tm-register','confirm','confirm-bulk','replace','replace-undo','tm-pretranslate','render-start','review-start','copilot-review-start','copilot-review-apply','finding-decision','pdf-review-apply','coverage-decision','final-review-decision','source-update-preview','source-update-decision','source-update-apply','save-corpus','segment','translate','apply','preflight','export','export-reviewed','personal-glossary-list','personal-glossary-remove')
+            $revisionActions = @('delete','glossary','merge','split','split-at','structure-undo','review-note-add','review-note-state','placement','publication-candidates','publication-apply','publication-revert','abbreviation-register','glossary-add','term-add','term-deactivate','term-insert','term-exception','tm-delete','tm-register','tm-register-bulk','confirm','confirm-bulk','replace','replace-undo','tm-pretranslate','render-start','review-start','copilot-review-start','copilot-review-apply','finding-decision','pdf-review-apply','coverage-decision','final-review-decision','source-update-preview','source-update-decision','source-update-apply','segment','translate','apply','preflight','export','export-reviewed','personal-glossary-list','personal-glossary-remove')
             $receiptActions = @('placement','publication-apply','publication-revert','abbreviation-register','source-update-apply')
             if ($receiptActions -contains $action -and [string]::IsNullOrWhiteSpace([string]$payload['idempotency_key'])) {
                 throw 'CAT_IDEMPOTENCY_KEY_REQUIRED: この更新には操作識別子が必要です。'
@@ -4050,10 +3888,24 @@ function Invoke-YakuRoute {
                     $body | Add-Member -NotePropertyName tm_registered_index -NotePropertyValue $index -Force
                     Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 8 -Compress) -ContentType 'application/json; charset=utf-8'
                 }
-                'save-corpus' {
-                    # グリッドで確かめた対訳をコーパスへ入れる。人が一度見てから
-                    # 貯める、という順序をここで担保する。
-                    throw 'CAT_CORPUS_PUBLIC_ATTESTATION_REQUIRED: 公表実績を検証する取込経路が未実装のため、この版では文例登録を停止しています。'
+                'tm-register-bulk' {
+                    # 対訳確認で明示的に確定した、現在のQC済み行だけを一括登録する。
+                    # ExpectedRevisionは通常のmutation境界で確認し、登録後すぐに
+                    # outboxを同期する。未確認・古い点検・空欄・登録済みは、
+                    # mutation結果の skipped として具体的に返す。
+                    $mutation = {
+                        param($candidate)
+                        return Register-YakuCatAlignmentTranslationMemoryBulk -Project $candidate
+                    }
+                    $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -NoCommitWhenNoMutation
+                    $project = $commit.Project
+                    $null = Sync-YakuCatTranslationMemoryOutbox -Project $project
+                    $body = (ConvertTo-YakuCatProjectJson -Project $project) | ConvertFrom-Json
+                    $body | Add-Member -NotePropertyName tm_registered_count -NotePropertyValue ([int]$commit.Result.RegisteredCount) -Force
+                    $body | Add-Member -NotePropertyName tm_skipped_count -NotePropertyValue ([int]$commit.Result.SkippedCount) -Force
+                    $body | Add-Member -NotePropertyName tm_registered -NotePropertyValue @($commit.Result.Registered) -Force
+                    $body | Add-Member -NotePropertyName tm_skipped -NotePropertyValue @($commit.Result.Skipped) -Force
+                    Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 10 -Compress) -ContentType 'application/json; charset=utf-8'
                 }
                 'segment' {
                     $index = -1
@@ -4123,7 +3975,6 @@ function Invoke-YakuRoute {
                     $catMode = 'translate'
                     try {
                         $requestedMode = [string]$payload['mode']
-                        if ($requestedMode -eq 'corpus') { throw 'CAT_CORPUS_MODE_RETIRED: 過去の翻訳例は候補一覧から明示的に挿入してください。' }
                         if ($requestedMode -eq 'revise') { $catMode = $requestedMode }
                     } catch {}
                     $pending = @()
@@ -4198,9 +4049,6 @@ function Invoke-YakuRoute {
                         throw 'CAT_JOB_PROJECT_MISMATCH: 翻訳を開始した作業と現在の作業が一致しないため、結果を適用しませんでした。'
                     }
                     if ([int]$result.ProjectRevision -ne [int]$project.Revision) { throw 'CAT_PROJECT_REVISION_CONFLICT: 翻訳中に作業内容が変更されたため、古い結果は適用しませんでした。' }
-                    if (($result.PSObject.Properties.Name -contains 'Mode') -and [string]$result.Mode -eq 'corpus') {
-                        throw 'CAT_CORPUS_MODE_RETIRED: 旧方式の翻訳例job結果は適用できません。'
-                    }
                     $mutation = {
                         param($candidate,$innerResult,$root,$innerSettings)
                         $segs = @($candidate.Segments)

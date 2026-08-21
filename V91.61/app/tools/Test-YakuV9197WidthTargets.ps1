@@ -48,7 +48,6 @@ Write-Host 'Test-YakuV9197WidthTargets'
 
 . (Join-Path $YakuT9197Src 'SrcModules.ps1')
 foreach ($YakuT9197File in $script:YakuSrcModuleFiles) {
-    if ($YakuT9197File -eq 'DesktopIntegration.ps1') { continue }
     . (Join-Path $YakuT9197Src $YakuT9197File)
 }
 

@@ -3661,11 +3661,8 @@ const timeoutMs = __TIMEOUT_MS__;
 const answerFormat = __ANSWER_FORMAT__;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const requestId = String(baseline.requestId || '');
-// SEARCH_TERMS は V91.61 段階3 のコーパス検索語。翻訳とは別の依頼だが、
-// 同じ labeled 契約（ラベル + YAKULINGO_END）で答えさせている。
-// ここに載せないと候補として認識されず、答えが届いていても待ち続けて失敗する。
-const labelRe = /(^|\n)\s*(FULL_TEXT|BRIEF_TEXT|JAPANESE_TEXT|FULL_NOTES|BRIEF_NOTES|JAPANESE_NOTES|SEARCH_TERMS|REVIEW_JSON)\s*:/i;
-const startLabelRe = /(^|\n)\s*(FULL_TEXT|JAPANESE_TEXT|SEARCH_TERMS|REVIEW_JSON)\s*:/i;
+const labelRe = /(^|\n)\s*(FULL_TEXT|BRIEF_TEXT|JAPANESE_TEXT|FULL_NOTES|BRIEF_NOTES|JAPANESE_NOTES|REVIEW_JSON)\s*:/i;
+const startLabelRe = /(^|\n)\s*(FULL_TEXT|JAPANESE_TEXT|REVIEW_JSON)\s*:/i;
 const endMarkerRe = requestId
   ? new RegExp('YAKULINGO_END:' + requestId, 'i')
   : /\bYAKULINGO\\?_(?:END|DONE)\b/i;
@@ -3795,9 +3792,6 @@ const hasUsefulLabeledOutput = (text) => {
     const reviewJson = labeledValue(t, 'REVIEW_JSON');
     return isLikelyOutputJson(reviewJson) || isLikelyOutputJson(extractFirstJsonObject(reviewJson));
   }
-  // コーパス検索語。中身が空でも「引く語が無い」という完結した答えなので、
-  // ラベルが在ることをもって有効とする（完了判定は YAKULINGO_END が別に見る）。
-  if (/SEARCH_TERMS\s*:/i.test(t)) return true;
   return false;
 };
 const hasUsableNumberedOutput = (text) => {
@@ -5806,7 +5800,7 @@ function Initialize-YakuProtectedPromptBoundary {
 
     $newPackage = {
         param(
-            [Parameter(Mandatory=$true)][ValidateSet('text','revision','shorten','cat','review','compaction','corpus','alignment','selftest')][string]$Kind,
+            [Parameter(Mandatory=$true)][ValidateSet('text','revision','shorten','cat','review','compaction','alignment','selftest')][string]$Kind,
             [Parameter(Mandatory=$true)][string]$Root,
             [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
             [Parameter(Mandatory=$true)][object[]]$Fields,
@@ -5845,8 +5839,7 @@ function Initialize-YakuProtectedPromptBoundary {
         switch ($Kind) {
             'text' {
                 $built = New-YakuTextPrompt -Root $trustedRoot -InputText (& $getField 'source') -Settings $Arguments.Settings -DirectionOverride $Direction `
-                    -StyleReference (& $getField 'style_reference' -Optional) -RequestId $requestIdArgument `
-                    -CorpusSection (& $getField 'corpus_section' -Optional) -Mode ([string]$Arguments.Mode)
+                    -StyleReference (& $getField 'style_reference' -Optional) -RequestId $requestIdArgument -Mode ([string]$Arguments.Mode)
                 $prompt = [string]$built.Prompt
                 $additional = & $getField 'additional_instruction' -Optional
                 if (-not [string]::IsNullOrWhiteSpace($additional)) { $prompt += "`n`n$additional" }
@@ -5886,9 +5879,6 @@ function Initialize-YakuProtectedPromptBoundary {
             }
             'compaction' {
                 $prompt = New-YakuCompactionCandidatePrompt -ProtectedSidecar (& $getField 'publication_sidecar') -RequestId $requestIdArgument -ContractVersion ([string]$Arguments.ContractVersion) -Direction $Direction -MaxChars $(try{$Arguments.MaxChars}catch{$null})
-            }
-            'corpus' {
-                $prompt = New-YakuCorpusQueryPrompt -Root $trustedRoot -InputText (& $getField 'source') -RequestId $requestIdArgument
             }
             'alignment' {
                 $ja = New-Object System.Collections.Generic.List[string]

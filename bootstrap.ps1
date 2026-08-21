@@ -23,9 +23,7 @@ param(
     [string]$SharedRoot = '',
     [string]$LocalRoot = '',
     [switch]$NoLaunch,
-    [switch]$NoBrowser,
-    # V91.61: コーパス作成用の管理画面を開く。管理者用ランチャーからのみ渡す。
-    [switch]$Admin
+    [switch]$NoBrowser
 )
 
 $ErrorActionPreference = 'Stop'
@@ -305,100 +303,6 @@ function Remove-YakuStaleVersions {
     }
 }
 
-# ---------------------------------------------------------------------------
-# V91.61 参考資料コーパス。
-#
-# アプリ本体と同じ作法で共有からローカルへ複製する。仕組みを増やさない。
-# コーパスはアプリとは別に版を持つ。資料が増えるたびにアプリの版を上げないため。
-#
-# 一般利用者はコーパスの存在を知らない。したがって取得できなくても
-# 警告を出さず、何事もなかったように起動する。翻訳は従来どおり動く。
-# ---------------------------------------------------------------------------
-
-function Get-YakuCorpusSharedDir {
-    param([Parameter(Mandatory=$true)][string]$SharedRoot)
-    try {
-        $dir = Join-YakuPath -Base $SharedRoot -Relative 'corpus'
-        if (!(Test-Path -LiteralPath $dir -PathType Container)) { return '' }
-        $pointer = Join-Path $dir 'current.txt'
-        if (!(Test-Path -LiteralPath $pointer -PathType Leaf)) { return '' }
-        $name = ([IO.File]::ReadAllText($pointer)).TrimStart([char]0xFEFF).Trim()
-        if ([string]::IsNullOrWhiteSpace($name)) { return '' }
-        # current.txt の中身をそのままパスへ使わない。フォルダ名だけを受け付ける。
-        if ($name -match '[\\/:*?"<>|]') { return '' }
-        $versionDir = Join-Path $dir $name
-        if (!(Test-Path -LiteralPath $versionDir -PathType Container)) { return '' }
-        if (!(Test-Path -LiteralPath (Join-Path $versionDir 'manifest.json') -PathType Leaf)) { return '' }
-        return $versionDir
-    } catch { return '' }
-}
-
-function Test-YakuCorpusTreeReady {
-    # 台帳に載っている .md がすべて揃っているかを見る。
-    # 中身のハッシュは持たないため、存在と件数で判定する。
-    param([Parameter(Mandatory=$true)][string]$Root)
-    $manifestPath = Join-Path $Root 'manifest.json'
-    if (!(Test-Path -LiteralPath $manifestPath -PathType Leaf)) { return $false }
-    try { $manifest = ([IO.File]::ReadAllText($manifestPath)) | ConvertFrom-Json } catch { return $false }
-    foreach ($entry in @($manifest.entries)) {
-        $rel = [string]$entry.markdown
-        if ([string]::IsNullOrWhiteSpace($rel)) { continue }
-        if (!(Test-Path -LiteralPath (Join-YakuPath -Base $Root -Relative $rel) -PathType Leaf)) { return $false }
-    }
-    return $true
-}
-
-function Install-YakuCorpus {
-    <#
-      共有のコーパスをローカルへ複製する。失敗しても呼び出し側は続行すること。
-      戻り値はローカルのパス。使えるものが無ければ空。
-    #>
-    param(
-        [Parameter(Mandatory=$true)][string]$SharedDir,
-        [Parameter(Mandatory=$true)][string]$CorpusRootDir
-    )
-    $name = Split-Path -Leaf $SharedDir
-    $target = Join-Path $CorpusRootDir $name
-    if ((Test-Path -LiteralPath $target -PathType Container) -and (Test-YakuCorpusTreeReady -Root $target)) {
-        return $target
-    }
-    $stage = $target + '.stage-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-    if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue }
-    try {
-        Copy-Item -LiteralPath $SharedDir -Destination $stage -Recurse -Force -ErrorAction Stop
-        if (-not (Test-YakuCorpusTreeReady -Root $stage)) { throw '複製結果が台帳と一致しません。' }
-        if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction Stop }
-        Move-Item -LiteralPath $stage -Destination $target -ErrorAction Stop
-        return $target
-    } catch {
-        if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue }
-        # 直前の版が残っていればそれを使う。無ければコーパス無しで起動する。
-        if ((Test-Path -LiteralPath $target -PathType Container) -and (Test-YakuCorpusTreeReady -Root $target)) { return $target }
-        return ''
-    }
-}
-
-function Resolve-YakuCorpusDir {
-    param([Parameter(Mandatory=$true)][string]$SharedRoot, [Parameter(Mandatory=$true)][string]$LocalRootPath)
-    $corpusRootDir = Join-Path $LocalRootPath 'corpus'
-    $shared = Get-YakuCorpusSharedDir -SharedRoot $SharedRoot
-    if ([string]::IsNullOrWhiteSpace($shared)) {
-        # 共有に無い。ローカルに以前の版があればそれを使う。
-        if (!(Test-Path -LiteralPath $corpusRootDir -PathType Container)) { return '' }
-        $newest = @(Get-ChildItem -LiteralPath $corpusRootDir -Directory -ErrorAction SilentlyContinue |
-                    Where-Object { Test-YakuCorpusTreeReady -Root $_.FullName } |
-                    Sort-Object Name -Descending | Select-Object -First 1)
-        if ($newest.Count -eq 0) { return '' }
-        return [string]$newest[0].FullName
-    }
-    if (!(Test-Path -LiteralPath $corpusRootDir)) { New-Item -ItemType Directory -Path $corpusRootDir -Force | Out-Null }
-    $local = Install-YakuCorpus -SharedDir $shared -CorpusRootDir $corpusRootDir
-    if (-not [string]::IsNullOrWhiteSpace($local)) {
-        Remove-YakuStaleVersions -VersionsDir $corpusRootDir -KeepName (Split-Path -Leaf $local)
-    }
-    return $local
-}
-
 function Get-YakuNewestInstalledVersion {
     param([string]$VersionsDir)
     $best = $null
@@ -485,16 +389,12 @@ $appLauncher = Join-YakuPath -Base $runDir -Relative 'app/Start-YakuLingoApp.ps1
 
 $env:YAKULINGO_SHARED_ROOT = $SharedRoot
 
-# Reference data is owned by the user from this release onward.  Do not
-# discover a shared corpus or silently reactivate a corpus copied by an older
-# release.  Old local files are intentionally left on disk for recovery.
-Remove-Item Env:\YAKULINGO_CORPUS_DIR -ErrorAction SilentlyContinue
 Write-YakuBootstrapInfo ("起動します: {0}{1}" -f (Split-Path -Leaf $runDir), $(if ($legacyMode) { '（共有フォルダ上・旧方式）' } else { '（ローカル）' }))
 Write-Host ''
 
 if ($NoLaunch) { return $runDir }
-if ($Admin -or $NoBrowser) {
-    & $startScript -NoBrowser:$NoBrowser -Admin:$Admin
+if ($NoBrowser) {
+    & $startScript -NoBrowser:$NoBrowser
     return
 }
 if (!(Test-Path -LiteralPath $appLauncher -PathType Leaf)) {

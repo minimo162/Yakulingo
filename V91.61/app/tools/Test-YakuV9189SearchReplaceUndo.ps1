@@ -15,7 +15,7 @@ function Invoke-T9189Replace {
 
 Write-Host 'Test-YakuV9189SearchReplaceUndo'
 . (Join-Path $YakuT9189Src 'SrcModules.ps1')
-foreach($YakuT9189File in $script:YakuSrcModuleFiles){ if($YakuT9189File -eq 'DesktopIntegration.ps1'){continue}; . (Join-Path $YakuT9189Src $YakuT9189File) }
+foreach($YakuT9189File in $script:YakuSrcModuleFiles){ . (Join-Path $YakuT9189Src $YakuT9189File) }
 $YakuT9189Unmeasured = 3
 $YakuT9189Node = Get-Command node -ErrorAction SilentlyContinue
 if ($null -eq $YakuT9189Node) { Write-Host 'UNMEASURED: node is unavailable.'; exit $YakuT9189Unmeasured }

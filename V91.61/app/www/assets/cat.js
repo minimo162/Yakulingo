@@ -1,20 +1,5 @@
 ﻿(function () {
   'use strict';
-  /* 「使い方を見る」は /cat?tour=1 へ来る。ところが下の syncLocation がアドレスを
-     /cat（いまは /cat?tab=quick）へ書き換えるため、tour.js が読む前に tour=1 が消え、
-     案内がいつまでも始まらなかった。実測 2026-08-13: /cat?tour=1 を開くと
-     アドレスは /cat?tab=quick、meta は空、案内の要素は0個。
-     変更前のコードも /cat へ書き換えていたので、これは前からの不具合である。
-
-     ここで meta へ写しておく。cat.js は tour.js より先に読まれ、この即時実行は
-     start() より前に走るので、アドレスが書き換わるより先に印が残る。
-     tour.js の wanted() は meta を先に見る。 */
-  try {
-    if (new URLSearchParams(window.location.search).get('tour') === '1') {
-      var tourMeta = document.querySelector('meta[name="yaku-tour"]');
-      if (tourMeta) tourMeta.setAttribute('content', '1');
-    }
-  } catch (_) {}
   /* パレット(/palette)の昇格(「CATで開く」)が使う、移動の直前だけの
      sessionStorage退避キー。quick.js の draftStorageKey と同じ流儀
      （作業や翻訳メモリには保存せず、読まれれば消える）。palette.js と
@@ -248,9 +233,9 @@
      の3段になり、戻るを1回押しても同じ資料に戻るだけだった（2026-08-13）。
      しかも戻った先の住所は translate=1 付きなので、読み直すとまた訳しにいく。 */
   var locationSynced = false;
-  function syncLocation(projectId) {
+  function syncLocation(projectId, preserveImport, preserveWork) {
     try {
-      var next = projectId ? ('/cat?project=' + encodeURIComponent(projectId)) : '/cat';
+      var next = projectId ? ('/cat?project=' + encodeURIComponent(projectId)) : (preserveImport ? '/cat?import=1' : preserveWork ? '/cat?view=work' : '/cat');
       var first = !locationSynced;
       locationSynced = true;
       if (location.pathname + location.search === next) return;
@@ -310,7 +295,7 @@
      器の高さを窓に固定する規則（cat-workspace.css）は、一覧が主役の確認作業に
      しか合わない。選ぶ画面とその場で訳す状態は、内容の丈だけ縦に伸びてよい。 */
   function setView(name) { document.body.setAttribute('data-cat-view', name); }
-  function showPicker() { if(project) reportProjectLease('closed'); syncLocation(''); viewEpoch++; candidateSeq++; project = null; activeSegmentId = ''; activeIndex = -1; revisionComparison = null; currentFilter = 'actionable'; currentLocation = 'all'; currentChange = 'all'; resetSearchTools(); termSelection = { index: -1, source: '', target: '' }; dirty.clear(); directFilePath = ''; clearOutputDisplay(); document.title = '翻訳 - YakuLingo'; el('cat-page-title').textContent = '翻訳'; setView('start'); el('cat-picker').hidden = false; el('cat-workspace').hidden = true; el('cat-current-summary').hidden = true; closeStartPanels(); loadRecent(); }
+  function showPicker(preserveImport, preserveWork) { if(project) reportProjectLease('closed'); syncLocation('', !!preserveImport, !!preserveWork); viewEpoch++; candidateSeq++; project = null; activeSegmentId = ''; activeIndex = -1; revisionComparison = null; currentFilter = 'actionable'; currentLocation = 'all'; currentChange = 'all'; resetSearchTools(); termSelection = { index: -1, source: '', target: '' }; dirty.clear(); directFilePath = ''; clearOutputDisplay(); document.body.removeAttribute('data-cat-source'); document.title = '翻訳 - YakuLingo'; el('cat-page-title').textContent = '翻訳'; setView('start'); el('cat-picker').hidden = false; el('cat-workspace').hidden = true; el('cat-current-summary').hidden = true; closeStartPanels(); loadRecent(); }
   function closeStartPanels() { document.querySelectorAll('.cat-start-panel').forEach(function (panel) { panel.hidden = true; }); el('cat-direction-choice').hidden = true; }
   /* 開いた欄は、いちばん少ない移動で見える所へ入れる（block:'nearest'）。
      画面の中央へ寄せていたころは、押しただけで 560px 飛び、押したボタン自身が
@@ -412,6 +397,36 @@
     setFileLoading(false);
   }
 
+  function updateAlignmentRegistrationUi() {
+    var button = el('cat-align-register-bulk');
+    if (!button) return;
+    if (!project || project.source !== 'align') {
+      button.removeAttribute('aria-disabled');
+      return;
+    }
+    var eligible = Number(project.tm_bulk_eligible_count);
+    if (!isFinite(eligible)) {
+      button.disabled = busy;
+      button.removeAttribute('aria-disabled');
+      button.textContent = '確認済みを過去訳として登録';
+      button.title = '';
+      return;
+    }
+    eligible = Math.max(0, eligible);
+    var pending = Math.max(0, Number(project.tm_pending || 0));
+    var retryPending = eligible === 0 && pending > 0;
+    var unavailable = eligible === 0 && !retryPending;
+    button.disabled = busy || unavailable;
+    button.setAttribute('aria-disabled', unavailable ? 'true' : 'false');
+    button.textContent = retryPending ? '翻訳メモリへの反映を再試行'
+      : unavailable ? '登録できる過去訳はありません' : '確認済みを過去訳として登録';
+    button.title = retryPending
+      ? '反映待ちの' + pending + '件を、翻訳メモリへもう一度反映します。'
+      : unavailable
+        ? '現在、確認済み・最新の点検済み・非空・未登録の行はありません。'
+        : eligible + '行を翻訳メモリへ登録できます。';
+  }
+
   function setBusy(value) {
     busy = value;
     updateActionLabels();
@@ -438,6 +453,7 @@
          押せる状態にしない。開始条件だけは本文の有無からもう一度決める。 */
       if (el('cat-align-open')) updateAlignEstimate();
     }
+    updateAlignmentRegistrationUi();
   }
 
   /* 保存した作業は既定で直近3件だけ出す。実機で10件あり、この一覧だけで
@@ -1320,6 +1336,7 @@
     el('cat-picker').hidden = true; el('cat-workspace').hidden = false; el('cat-current-summary').hidden = true;
     el('cat-current-title').textContent = project.file_name || '貼り付けた文章';
     var isAlignment = project.source === 'align';
+    document.body.setAttribute('data-cat-source', String(project.source || ''));
     document.title = (isAlignment ? '過去訳の対応確認' : '翻訳') + ' - YakuLingo';
     el('cat-page-title').textContent = isAlignment ? '過去訳の対応確認' : '翻訳';
     el('cat-current-progress').textContent = workName(project.source, project.direction) + '・全' + project.total + '行のうち' + project.confirmed + '行を確認済み・残り' + Math.max(0, project.total - project.confirmed) + '行';
@@ -2052,6 +2069,38 @@
     if (!window.confirm('この確認済みの訳を翻訳メモリへ登録します。\n\n次の資料で同じ表現の候補として使われます。登録しますか？')) return;
     return mutate('tm-register', { index: index }, '翻訳メモリへ登録しています…').then(function (data) {
       if (data) status('この訳を翻訳メモリへ登録しました。次の資料から候補として使えます。');
+      return data;
+    });
+  }
+  function registerAlignmentTranslationMemoryBulk() {
+    if (!project || project.source !== 'align') {
+      status('過去訳の対応確認でのみ一括登録できます。', true);
+      return Promise.resolve(null);
+    }
+    var eligible = Number(project.tm_bulk_eligible_count);
+    var pendingBefore = Math.max(0, Number(project.tm_pending || 0));
+    var retryPending = isFinite(eligible) && eligible <= 0 && pendingBefore > 0;
+    if (isFinite(eligible) && eligible <= 0 && !retryPending) {
+      updateAlignmentRegistrationUi();
+      status('現在、登録できる確認済み・最新の点検済み・非空・未登録の行はありません。', true);
+      return Promise.resolve(null);
+    }
+    var confirmed = (project.segments || []).filter(function (segment) { return !!segment.confirmed; }).length;
+    if (!retryPending && !window.confirm('確認済みの過去訳を翻訳メモリへ登録します。\n\n現在 ' + confirmed + ' 行が確認済みです。未確認・点検が古い・空欄の行は登録しません。続けますか？')) return Promise.resolve(null);
+    return mutate('tm-register-bulk', {}, retryPending ? '翻訳メモリへの反映を再試行しています…' : '確認済みの過去訳を登録しています…').then(function (data) {
+      if (!data) return data;
+      var registered = Number(data.tm_registered_count || 0);
+      var skipped = Number(data.tm_skipped_count || 0);
+      var pending = Number(data.tm_pending || 0);
+      if (pending > 0) {
+        status('登録内容を保存しましたが、翻訳メモリへの反映待ちが' + pending + '件あります。同期が完了するまで登録完了とは扱いません。', true);
+      } else if (retryPending) {
+        status('翻訳メモリへの反映が完了しました。反映待ちはありません。');
+      } else if (registered <= 0) {
+        status('今回、登録できる過去訳はありませんでした。対象外 ' + skipped + ' 行。', true);
+      } else {
+        status('過去訳を登録しました。登録 ' + registered + ' 行、対象外 ' + skipped + ' 行。');
+      }
       return data;
     });
   }
@@ -4433,8 +4482,11 @@
     });
     /* ブラウザの戻る。資料を開くかどうかだけで決まるようになった（帯を外したため）。 */
     window.addEventListener('popstate', function () {
-      var wanted = new URLSearchParams(location.search).get('project');
+      var params = new URLSearchParams(location.search);
+      var wanted = params.get('project');
       if (wanted) { if (!project || String(project.id || '') !== wanted) resume(wanted); }
+      else if (params.get('import') === '1') { showPicker(true); showStart('align'); }
+      else if (params.get('view') === 'work') { showPicker(false, true); }
       else if (project) showPicker();
     });
     /* 通常の終了では確認を出さない。画面が隠れる直前に打ちかけを保存し、
@@ -4679,7 +4731,7 @@
     });
     document.addEventListener('click', function (event) {
       var button = event.target.closest('button'); if (!button) return;
-      if (busy && (button.id === 'cat-confirm-bulk' || button.id === 'cat-fit-batch-open' || button.id === 'cat-replace-run' || button.id === 'cat-replace-undo' || button.id === 'cat-structure-undo' || button.id === 'cat-tm-pretranslate' || button.hasAttribute('data-cat-translate-row') || button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-tm-register') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-split-at') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision') || button.hasAttribute('data-cat-review-note-state') || button.hasAttribute('data-cat-fit-candidates'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
+      if (busy && (button.id === 'cat-confirm-bulk' || button.id === 'cat-align-register-bulk' || button.id === 'cat-fit-batch-open' || button.id === 'cat-replace-run' || button.id === 'cat-replace-undo' || button.id === 'cat-structure-undo' || button.id === 'cat-tm-pretranslate' || button.hasAttribute('data-cat-translate-row') || button.hasAttribute('data-cat-confirm') || button.hasAttribute('data-cat-unconfirm') || button.hasAttribute('data-cat-tm-register') || button.hasAttribute('data-cat-revert') || button.hasAttribute('data-cat-merge') || button.hasAttribute('data-cat-split') || button.hasAttribute('data-cat-split-at') || button.hasAttribute('data-cat-glossary') || button.hasAttribute('data-cat-insert') || button.hasAttribute('data-cat-term-open') || button.hasAttribute('data-cat-term-insert') || button.hasAttribute('data-cat-term-edit') || button.hasAttribute('data-cat-term-deactivate') || button.hasAttribute('data-cat-term-exception') || button.hasAttribute('data-cat-tm-delete') || button.hasAttribute('data-cat-accept-revision') || button.hasAttribute('data-cat-revert-revision') || button.hasAttribute('data-cat-review-note-state') || button.hasAttribute('data-cat-fit-candidates'))) { status('いま翻訳しています。終わってからもう一度お試しください。'); return; }
       if (button.hasAttribute('data-cat-preview-mode')) { setPreviewMode(button.getAttribute('data-cat-preview-mode')); return; }
       if (button.hasAttribute('data-cat-preview-side')) { previewSide = button.getAttribute('data-cat-preview-side') || 'target'; renderPreview(); return; }
       if (button.hasAttribute('data-cat-dock-side')) { dockSide = button.getAttribute('data-cat-dock-side') || 'target'; renderDockPreview(); return; }
@@ -4729,6 +4781,7 @@
       if (button.hasAttribute('data-cat-personal-remove')) return removePersonalGlossary(button);
       if (button.hasAttribute('data-cat-resume')) return resume(button.getAttribute('data-cat-resume'));
       if (button.id === 'cat-confirm-bulk') return confirmBulk(button);
+      if (button.id === 'cat-align-register-bulk') return registerAlignmentTranslationMemoryBulk();
       if (button.id === 'cat-fit-batch-open') return openFitBatchDialog();
       if (button.id === 'cat-replace-run') return runReplace();
       if (button.id === 'cat-replace-undo') return undoReplace();
@@ -5052,7 +5105,7 @@
        いた経路。訳文を送り返す promote とは別で、そちらは artifact ID だけ） */
     window.addEventListener('yaku-instant-handoff', function (event) {
       var detail = (event && event.detail) || {};
-      /* DesktopIntegration の既存イベントは detail.filePath に絶対パスを渡す。
+      /* 外部ランチャーのイベントは detail.filePath に絶対パスを渡す。
          旧 #cat-path 欄へ書き戻す経路は撤去したが、この外部入口そのものは
          単一CAT入口へ残す。前後の引用符と空白だけを整え、NULや文字列以外は
          サーバへ送らない。実在性・共有フォルダ可否はサーバ側で判定する。 */
@@ -5120,11 +5173,15 @@
        consumePaletteHandoff が読み捨てと既存受け口への引き渡しを済ませる。
        何かを渡せたら、そこから先(showPicker等)はその受け口の中で完結する。 */
     if (params.get('handoff') === 'palette' && consumePaletteHandoff()) return;
-    showPicker();
-    /* ?import=1 で開いたときは、過去の対訳の取り込み欄をそのまま出す。
-       この画面だけ WebAssembly が使える（PDF の解析に要る）。 */
     var importMeta = document.querySelector('meta[name="yaku-import"]');
-    if (importMeta && importMeta.getAttribute('content') === '1') { showStart('align'); return; }
+    var importMode = importMeta && importMeta.getAttribute('content') === '1';
+    var workMode = params.get('view') === 'work';
+    /* ?import=1 で開いたときは、過去の対訳の取り込み欄をそのまま出す。
+       この画面だけ WebAssembly が使える（PDF の解析に要る）。
+       showPicker は通常 /cat へ戻すが、import 起動だけURLを保持する。 */
+    if (importMode) { showPicker(importMode); showStart('align'); return; }
+    if (workMode) { showPicker(false, true); return; }
+    showPicker();
     if (cameFromInstant && window.YakuInstant) window.YakuInstant.show();
   }
   window.YakuCat = { isBusy: function () { return busy; } };

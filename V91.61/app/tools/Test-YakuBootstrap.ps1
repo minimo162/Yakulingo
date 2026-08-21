@@ -181,24 +181,6 @@ try {
     $run7 = & $BootstrapPath -SharedRoot $badPointer -LocalRoot $badLocal -NoLaunch
     Assert-YakuBootstrap ($run7 -like (Join-Path (Join-Path $badLocal 'versions') ($versionName + '-*'))) '実在する版へフォールバックする'
 
-    Write-Host 'CASE 8: 旧共有コーパスがあっても読み込まず、環境変数を消す'
-    Remove-Item Env:\YAKULINGO_CORPUS_DIR -ErrorAction SilentlyContinue
-    $corpusLocal = Join-Path $sandbox 'local-corpus'
-    $corpusShared = Join-Path $shared 'corpus'
-    New-Item -ItemType Directory -Path (Join-Path $corpusShared '2026-08-04\英文短信') -Force | Out-Null
-    [IO.File]::WriteAllText((Join-Path $corpusShared '2026-08-04\英文短信\a.md'), "<!--yaku-page:1-->`nEquity ratio increased.")
-    [IO.File]::WriteAllText((Join-Path $corpusShared '2026-08-04\manifest.json'),
-        (@{ schema='yaku-corpus-1'; corpus_version='2026-08-04'; entries=@(@{ id='aaaaaaaa'; markdown='英文短信/a.md' }) } | ConvertTo-Json -Depth 5))
-    [IO.File]::WriteAllText((Join-Path $corpusShared 'current.txt'), "2026-08-04`r`n")
-    $cachedCorpus = Join-Path $corpusLocal 'corpus\2025-legacy\英文短信'
-    New-Item -ItemType Directory -Path $cachedCorpus -Force | Out-Null
-    [IO.File]::WriteAllText((Join-Path $cachedCorpus 'cached.md'), 'cached legacy corpus')
-    $env:YAKULINGO_CORPUS_DIR = Join-Path $corpusLocal 'corpus\2025-legacy'
-    $null = & $BootstrapPath -SharedRoot $shared -LocalRoot $corpusLocal -NoLaunch
-    Assert-YakuBootstrap ([string]::IsNullOrWhiteSpace([string]$env:YAKULINGO_CORPUS_DIR)) '共有・キャッシュのコーパスがあっても環境変数を設定しない'
-    Assert-YakuBootstrap (-not (Test-Path -LiteralPath (Join-Path $corpusLocal 'corpus\2026-08-04'))) '共有コーパスをローカルへ複製しない'
-    Assert-YakuBootstrap (Test-Path -LiteralPath (Join-Path $cachedCorpus 'cached.md') -PathType Leaf) '旧キャッシュは利用せず、利用者データとして勝手に削除もしない'
-    Remove-Item Env:\YAKULINGO_CORPUS_DIR -ErrorAction SilentlyContinue
 } finally {
     if (Test-Path -LiteralPath $sandbox) { Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue }
 }

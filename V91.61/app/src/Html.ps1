@@ -51,52 +51,6 @@ function Convert-YakuStatusOobHtml {
     return "<div id='copilot-status' class='status' hx-swap-oob='outerHTML' aria-live='polite'><span class='status-dot $Class'></span><span>$(ConvertTo-YakuHtml $Label)</span></div>"
 }
 
-function New-YakuPastTranslationsHtml {
-    <#
-      過去に自社が公表した英訳を、日英そろえて出す。
-
-      利用者の課題は「過去の翻訳例が**見れない**」であって、「使えない」では
-      なかった（利用者 2026-08-08）。プロンプトへ埋めるのは使うことであって
-      見せることではない。埋めるだけなら、参考にしたと名乗るだけになる。
-
-      引くのは手元で完結する。日本語の原文から語を取り出して対訳の日本語側へ
-      当てるので、Copilot への往復は増えない。検索語を Copilot に作らせて
-      いた頃は1往復増えていたが、送りすぎると弾かれる以上それは払えない。
-
-      **何の語で当たったかを添える。** 出典だけでは、なぜこの文が出てきたのか
-      分からない。おかしいと思ったときに確かめられる形にしておく。
-
-      引けなければ何も出さない。利用者はコーパスの存在を知らないので、
-      「見つかりませんでした」と言われても対処のしようがない。
-    #>
-    param([AllowNull()][object[]]$Pairs)
-    $items = @()
-    try { $items = @(@($Pairs) | Where-Object { $null -ne $_ }) } catch { $items = @() }
-    if ($items.Count -le 0) { return '' }
-    $html = "<details class='past-translations'><summary>過去に公表した英訳を見る（$($items.Count)件）</summary>"
-    foreach ($p in $items) {
-        $source = [string]$p.Source
-        $terms = ''
-        try { $terms = (@($p.Terms) -join '、') } catch { $terms = '' }
-        $head = $source
-        if (-not [string]::IsNullOrWhiteSpace($terms)) { $head += '　当たった語: ' + $terms }
-        $ja = [string]$p.Ja
-        $en = [string]$p.En
-        # 長い一節は畳む。読ませたいのは言い回しであって全文ではない。
-        if ($ja.Length -gt 160) { $ja = $ja.Substring(0, 160) + '…' }
-        if ($en.Length -gt 260) { $en = $en.Substring(0, 260) + '…' }
-        $html += @"
-  <article class='past-pair'>
-    <p class='past-pair-head'>$(ConvertTo-YakuHtml $head)</p>
-    <p class='past-pair-ja'>$(ConvertTo-YakuHtml $ja)</p>
-    <p class='past-pair-en'>$(ConvertTo-YakuHtml $en)</p>
-  </article>
-"@
-    }
-    $html += '</details>'
-    return $html
-}
-
 function Convert-YakuTextResultToHtml {
     param(
         [Parameter(Mandatory=$true)]$Result,
@@ -138,10 +92,6 @@ function Convert-YakuTextResultToHtml {
     if (-not [string]::IsNullOrWhiteSpace($revisedFrom)) {
         $html += "<div class='batch-note'>修正の指示: $(ConvertTo-YakuHtml $revisedFrom)</div>"
     }
-
-    # 参照した社内資料の一覧は簡易翻訳では出さない。コーパスを引くのをやめたため
-    # （利用者の判断 2026-08-06）。New-YakuCorpusReferenceHtml は CAT 側で使う。
-
 
     $batchCount = 0
     try { $batchCount = [int]$Result.BatchCount } catch { $batchCount = 0 }
@@ -271,52 +221,6 @@ $altHtml  </div>
 }
 
 
-
-function New-YakuCorpusReferenceHtml {
-    <#
-      V91.61 段階3: 何を参照して訳したかを出す。
-
-      出典が見えないと、訳語がどこから来たのか確かめようがない。
-      用語集の pill 行と同じ形にして、行を増やさない。
-
-      **引けなかったときは何も出さない。** 利用者はコーパスの存在を知らないため、
-      「参照できませんでした」と言われても対処のしようがない。
-      理由は記録にだけ残す（Corpus reference skipped. reason=...）。
-
-      本文は伏せ字を掛けた後のものを出す。送ったものと違うものを見せない。
-    #>
-    param([Parameter(Mandatory=$true)]$Result)
-    $examples = @()
-    # 項目そのものが無い結果（エラー時・古い履歴）も来る。
-    # @($null) は要素1つの配列になるので、null を落としてから数える。
-    try { $examples = @(@($Result.CorpusExamples) | Where-Object { $null -ne $_ }) } catch { $examples = @() }
-    if ($examples.Count -le 0) { return '' }
-    $html = "<section class='glossary-preview' aria-label='参照した社内資料'><span class='glossary-preview-label'>参照した社内資料:</span>"
-    foreach ($ex in $examples) {
-        $label = [string]$ex.Source
-        $page = 0
-        try { $page = [int]$ex.Page } catch { $page = 0 }
-        if ($page -gt 0) { $label += ' p.' + [string]$page }
-        $html += "<span class='term-pill'>$(ConvertTo-YakuHtml $label)</span>"
-    }
-    $html += "</section>"
-    # 中身も確かめられるようにする。既定は閉じておき、普段は視界に入れない。
-    $detail = ''
-    foreach ($ex in $examples) {
-        $head = [string]$ex.Source
-        $page = 0
-        try { $page = [int]$ex.Page } catch { $page = 0 }
-        if ($page -gt 0) { $head += ' p.' + [string]$page }
-        $detail += "<div class='eyebrow'>$(ConvertTo-YakuHtml $head)</div><pre class='translation'>$(ConvertTo-YakuHtml ([string]$ex.Text))</pre>"
-    }
-    $terms = @()
-    try { $terms = @(@($Result.CorpusTerms) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }) } catch { $terms = @() }
-    $termNote = if ($terms.Count -gt 0) { '検索語: ' + ($terms -join ' ') } else { '' }
-    $html += "<details class='prompt-details'><summary>参照した箇所を見る</summary>"
-    if ($termNote) { $html += "<div class='batch-note'>$(ConvertTo-YakuHtml $termNote)</div>" }
-    $html += "<div class='batch-note'>数字は # に伏せて送っています。</div>$detail</details>"
-    return $html
-}
 
 function New-YakuMaskingNoticeHtml {
     <#

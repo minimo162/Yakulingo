@@ -1,11 +1,10 @@
 ﻿// PDF からテキストを取り出す共通部品。
 //
-// もともと管理画面（コーパス作成）の中にあった。過去の対訳の取り込みでも
-// 同じ処理が要るので、片方を写すのではなくここへ出した（2026-08-13）。
+// PDF取り込みで共通に使うため、ブラウザ側の部品として独立させている。
 // 写すと、段組みの判定のような測って決めた実装が2つに分かれて必ず食い違う。
 //
-// 動かすには CSP に 'wasm-unsafe-eval' が要る。管理画面と、
-// 取り込みで開いた画面（?import=1）だけがそれを受け取る。
+// 動かすには CSP に 'wasm-unsafe-eval' が要る。取り込みで開いた画面
+//（?import=1）だけがそれを受け取る。
 import init, { LiteParse } from '/assets/vendor/liteparse/liteparse_wasm.js';
 export { LiteParse };
 
@@ -172,7 +171,7 @@ export function yakuPageTextByColumns(page) {
 /* PDF のバイト列から、ページごとのテキストを取り出す。
    返すのは { pages: [{ page, text }], lowText } だけ。画像は返さない。
    lowText は「半数以上のページで文字がほとんど取れない」＝スキャンPDFの目印で、
-   PowerShell 側の Test-YakuCorpusLowText と同じ考え方（閾値200字）。 */
+   PowerShell 側の低抽出判定と同じ考え方（閾値200字）。 */
 export async function extractPdfPages(bytes) {
   await ensureWasm();
   const lp = new LiteParse({ outputFormat: 'json', ocrEnabled: false, quiet: true });

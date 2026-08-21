@@ -436,7 +436,7 @@ $usageSettings = $settings | Select-Object *
 $usageSettings.max_chars_per_batch_file = 3000
 $longA = 'あ' * 1477; $longB = 'い' * 1477
 $usageProject = [pscustomobject]@{
-    Id='usage1'; Direction='to_en'; CorpusSection=''; Source='text'; Blocks=@()
+    Id='usage1'; Direction='to_en'; Source='text'; Blocks=@()
     Segments=@(
         [pscustomobject]@{ Text=$longA; Translation='' },
         [pscustomobject]@{ Text=$longB; Translation='' }
@@ -452,10 +452,9 @@ $null = Protect-YakuCatItems -Items @($cacheSeed) -Root $root -Direction 'to_en'
 $cacheStyleA = Get-YakuCatCacheStyle
 $cacheKeyA = Get-YakuTranslationCacheKey -Kind 'cat' -Direction 'to_en' -Text ([string]$cacheSeed.Text) -Style $cacheStyleA -Root $root -Settings $usageSettings
 Set-YakuTranslationCacheValue -Key $cacheKeyA -Value 'Cached CAT translation.' -Settings $usageSettings
-$cacheUsageProject = [pscustomobject]@{ Id='cache1'; Direction='to_en'; CorpusSection='文例A'; Segments=@([pscustomobject]@{ Text=$cacheSource; Translation='' }) }
+$cacheUsageProject = [pscustomobject]@{ Id='cache1'; Direction='to_en'; Segments=@([pscustomobject]@{ Text=$cacheSource; Translation='' }) }
 $cacheHitUsage = Get-YakuCatCopilotUsage -Root $root -Project $cacheUsageProject -Settings $usageSettings
 Chk ([int]$cacheHitUsage.CacheHits -eq 0 -and [int]$cacheHitUsage.EstimatedCalls -eq 1) '別projectの機械下訳cacheを読まず送信1回と見積もる'
-$cacheUsageProject.CorpusSection = '文例B'
 $cacheSamePromptUsage = Get-YakuCatCopilotUsage -Root $root -Project $cacheUsageProject -Settings $usageSettings
 Chk ([int]$cacheSamePromptUsage.CacheHits -eq 0 -and [int]$cacheSamePromptUsage.EstimatedCalls -eq 1) '候補表示と無関係に別projectの機械下訳cacheを再利用しない'
 

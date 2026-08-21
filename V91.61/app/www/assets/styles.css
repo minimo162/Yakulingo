@@ -120,13 +120,6 @@ textarea:focus, input:focus, select:focus { background: var(--surface); box-shad
 /* 過去に公表した英訳。畳んで置く。開いたときに日英が並んで見えること、
    英文が原文より読みやすい大きさであることを優先する。読み違いが直接損害になるので
    本文は 16px を下回らせない。 */
-.past-translations { margin-top: 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
-.past-translations > summary { cursor: pointer; padding: 12px 16px; font-size: var(--font-body); font-weight: 600; }
-.past-pair { padding: 0 16px 14px 16px; }
-.past-pair + .past-pair { border-top: 1px solid var(--line); padding-top: 14px; }
-.past-pair-head { margin: 0 0 6px 0; color: var(--muted); font-size: var(--font-meta); }
-.past-pair-ja { margin: 0 0 6px 0; font-size: var(--font-body); line-height: 1.7; }
-.past-pair-en { margin: 0; font-size: var(--font-body); line-height: 1.7; color: var(--accent-text); }
 
 /* 行の頭に置く見出し。これがあると label:first-child が効かなくなるので、
    左端の丸めをこちらで持つ。 */
@@ -155,8 +148,8 @@ button, .button { min-height: 44px; display: inline-flex; align-items: center; j
    脇役（絞り込み、点検タブ、閉じている行）まで accent で塗られる。
    :not() は「引数の中でいちばん強いもの1つぶん」しか積まない。リスト形にして
    (0,1,1) に抑える。以後、状態を足すたびに詳細度を継ぎ足す必要がなくなる。 */
-button:not(.secondary-button, .tab-button, .file-clear-button, .link-button, .danger-button, .tutorial-skip, [disabled]), .button:not(.secondary-button, .danger-button, [disabled]) { background: var(--accent); border-color: var(--accent); color: #fff; }
-button:not(.secondary-button, .tab-button, .file-clear-button, .link-button, .danger-button, .tutorial-skip, [disabled]):hover, .button:not(.secondary-button, .danger-button, [disabled]):hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+button:not(.secondary-button, .tab-button, .file-clear-button, .link-button, .danger-button, [disabled]), .button:not(.secondary-button, .danger-button, [disabled]) { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:not(.secondary-button, .tab-button, .file-clear-button, .link-button, .danger-button, [disabled]):hover, .button:not(.secondary-button, .danger-button, [disabled]):hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 button:active:not([disabled]), .button:active:not([disabled]) { transform: translateY(.5px); }
 /* 無効ボタンを opacity で薄くすると、主ボタンの白文字が背景に溶けて 2.1:1 まで落ちる。
    空欄時の操作指示そのものが読めなくなるので、実色で塗る。 */
@@ -248,10 +241,6 @@ input[type="text"], input[type="search"], select { width: 100%; min-height: 44px
 .cat-text-row textarea { width: 100%; }
 .cat-open-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
 .cat-handoff { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: var(--space-2); font-size: var(--font-meta); }
-.cat-corpus-panel { margin-bottom: var(--space-2); }
-.cat-corpus-list { display: grid; gap: 8px; margin-top: 8px; max-height: max(30vh, 18rem); overflow: auto; }
-.cat-corpus-item { border-left: 2px solid var(--line-strong); padding-left: 10px; font-size: var(--font-meta); }
-.cat-corpus-where { color: var(--muted); }
 .cat-filter-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin-bottom: var(--space-2); font-size: var(--font-meta); }
 .cat-filter { display: flex; gap: 12px; align-items: center; }
 .cat-search-label { display: flex; gap: 6px; align-items: center; }
@@ -507,7 +496,7 @@ summary { cursor: pointer; color: var(--text); font-size: var(--font-meta); min-
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
 
-/* 起動して最初に出るのは翻訳画面そのもの。選ばせる画面（index.html）は 2026-08-12 に削除したので、その寄せ集めも残さない。残すのは使い方の出口だけ。 */
+/* 起動して最初に出るのは翻訳画面そのもの。選ばせる画面（index.html）は削除済み。 */
 .home-link { display: inline-flex; align-items: center; min-height: 44px; text-decoration: none; }
 .home-help-links { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-4); }
 .home-help-links a { color: var(--accent-text); font-size: var(--font-meta); }

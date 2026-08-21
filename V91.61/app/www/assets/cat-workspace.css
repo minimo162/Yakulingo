@@ -56,8 +56,7 @@
   padding: 0;
 }
 
-/* 使い方への出口は、始める画面のどこからでも届く場所に置いてある。確認作業に入ったら、
-   道具の帯とキーボード操作の一覧が案内を持つので、ここは出さない。 */
+/* 起動画面の補助説明は、確認作業へ移ったら畳んで道具の帯に集中させる。 */
 /* ==== 起動画面（2026-08-16 に入口を1つへ作り直した） =======================
 
    入口は1つで、同じ枠が貼り付けとファイルの落とし先を兼ねる。見出しの
@@ -755,8 +754,10 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 }
 .cat-align-review-guide p { margin: 3px 0 0; color: var(--muted); }
 .cat-align-review-guide button { flex: 0 0 auto; }
+.cat-align-review-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 @media (max-width: 760px) {
   .cat-align-review-guide { align-items: stretch; flex-direction: column; }
+  .cat-align-review-actions { justify-content: flex-start; }
 }
 
 .cat-grid-wrap {
@@ -1558,38 +1559,6 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 .cat-resume-row .cat-resume-card { flex: 1 1 auto; min-width: 0; }
 .cat-resume-row .cat-resume-drop { flex: 0 0 auto; align-self: center; color: var(--muted); }
 
-/* 初回の案内（コーチマーク）。対象の周りだけ明るく残し、外を落とす。
-   吹き出しは1つだけ出す。「次へ」は置かない（実際の操作で進む）。 */
-.yaku-tour-spotlight {
-  position: fixed;
-  z-index: 60;
-  border-radius: 8px;
-  box-shadow: 0 0 0 9999px rgba(15, 23, 38, .45);
-  pointer-events: none;
-  transition: top var(--motion) var(--ease), left var(--motion) var(--ease), width var(--motion) var(--ease), height var(--motion) var(--ease);
-}
-.yaku-tour-callout {
-  position: fixed;
-  z-index: 61;
-  max-width: 22rem;
-  padding: 14px 16px;
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-control);
-  background: var(--surface);
-  box-shadow: 0 8px 24px rgba(15, 23, 38, .18);
-}
-.yaku-tour-title { margin: 0; font-weight: 700; }
-.yaku-tour-body { margin: 6px 0 0; color: var(--muted); font-size: var(--font-meta); line-height: 1.6; }
-.yaku-tour-skip {
-  margin-top: 10px;
-  min-height: 32px;
-  padding: 2px 10px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-control);
-  background: var(--surface);
-  color: var(--muted);
-  font-size: var(--font-meta);
-}
 .cat-final-review-option{margin:1rem 0;padding:.8rem;border:1px solid var(--border,#cbd5e1);border-radius:.5rem}.cat-final-review-option label{display:block}.cat-final-review-option textarea{box-sizing:border-box;width:100%;margin-top:.35rem;resize:vertical}
 .cat-publication-dialog{width:min(68rem,calc(100vw - 2rem))}.cat-publication-compare{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.cat-publication-compare section,.cat-publication-candidate{border:1px solid var(--border,#d8dde6);border-radius:.65rem;padding:1rem;margin:.75rem 0}.cat-publication-compare h3,.cat-publication-candidate h3{margin-top:0}.cat-publication-text{font-size:1.05rem;white-space:pre-wrap}.cat-publication-candidate button{margin-top:.75rem}@media(max-width:760px){.cat-publication-compare{grid-template-columns:1fr}}
 

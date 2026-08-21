@@ -218,14 +218,13 @@ const server = http.createServer(async function (req, res) {
     } else { res.writeHead(404); res.end('not found'); }
     return;
   }
-  if (url.pathname === '/tutorial') {
-    res.writeHead(302, { Location: '/cat' });
-    res.end();
+  if (url.pathname === '/tutorial' || url.pathname === '/api/desktop/preferences') {
+    res.writeHead(404);
+    res.end('not found');
     return;
   }
   const body = await readBody(req);
   if (url.pathname === '/api/ready-state') { send(res, { canTranslate: true, label: 'ready', class: 'ok' }); return; }
-  if (url.pathname === '/api/desktop/preferences') { send(res, { available: true, tutorial_completed: true, desktop_shortcut: false }); return; }
   if (url.pathname === '/api/cat/recent') {
     send(res, { projects: [
       { id: project.id, file_name: project.file_name, source: project.source, direction: project.direction, total: project.total, confirmed: project.confirmed, saved: project.saved, revision: project.revision },
@@ -292,7 +291,8 @@ const server = http.createServer(async function (req, res) {
     const baseUrl = 'http://127.0.0.1:' + server.address().port;
     const initialStartHtml = await fetchText(baseUrl + '/cat');
     const initialWorkspaceHtml = await fetchText(baseUrl + '/cat?project=' + encodeURIComponent(project.id));
-    const tutorialRedirect = await fetchResponse(baseUrl + '/tutorial');
+    const tutorialResponse = await fetchResponse(baseUrl + '/tutorial');
+    const preferencesResponse = await fetchResponse(baseUrl + '/api/desktop/preferences');
     function initialViewContract(html, expected) {
       const matches = String(html || '').match(/data-cat-view="[^"]*"/g) || [];
       return {
@@ -310,9 +310,9 @@ const server = http.createServer(async function (req, res) {
       catHasTourMeta: initialStartHtml.indexOf('name="yaku-tour"') >= 0,
       catHasTourScript: initialStartHtml.indexOf('/assets/tour.js') >= 0,
       catHasStartLinks: /href="\/tutorial(?:#settings)?"/.test(initialStartHtml) || initialStartHtml.indexOf('id="cat-help-links"') >= 0,
-      tutorialStatus: tutorialRedirect.statusCode,
-      tutorialLocation: tutorialRedirect.location,
-      tutorialRedirectsToCat: tutorialRedirect.statusCode === 302 && tutorialRedirect.location === '/cat'
+      tutorialStatus: tutorialResponse.statusCode,
+      preferencesStatus: preferencesResponse.statusCode,
+      retiredRoutes404: tutorialResponse.statusCode === 404 && preferencesResponse.statusCode === 404
     };
     browser = await chromium.launch();
     const page = await browser.newPage({ viewport: { width: 1912, height: 987 } });
@@ -1586,7 +1586,7 @@ try {
     Assert-T9194 -Condition (@($YakuT9194Observed.errors).Count -eq 0 -and @($YakuT9194Observed.console).Count -eq 0) -Message 'the rendered route had no page or console errors'
     Assert-T9194 -Condition ([bool]$YakuT9194Observed.initialView.start.exact -and [bool]$YakuT9194Observed.initialView.start.duplicateFree -and [bool]$YakuT9194Observed.initialView.start.placeholderFree -and [string]$YakuT9194Observed.initialView.start.value -eq 'start' -and [bool]$YakuT9194Observed.initialView.workspace.exact -and [bool]$YakuT9194Observed.initialView.workspace.duplicateFree -and [bool]$YakuT9194Observed.initialView.workspace.placeholderFree -and [string]$YakuT9194Observed.initialView.workspace.value -eq 'workspace') -Message ('initial HTML responses carry one explicit data-cat-view attribute before JavaScript (' + [string]$YakuT9194Observed.initialView.start.value + ' / ' + [string]$YakuT9194Observed.initialView.workspace.value + ')')
     Assert-T9194 -Condition ([bool]$YakuT9194Observed.initialStyle -and [string]$YakuT9194Observed.initialStyle.view -eq 'start' -and [string]$YakuT9194Observed.initialStyle.entryDisplay -eq 'grid' -and [string]$YakuT9194Observed.initialStyle.entryGrid -ne '' -and [string]$YakuT9194Observed.initialStyle.bodyBackground -ne 'rgb(238, 241, 247)') -Message ('the first observed start render already uses the bordered CAT surface rather than the old blue-gray landing layout (' + [string]$YakuT9194Observed.initialStyle.bodyBackground + ', ' + [string]$YakuT9194Observed.initialStyle.entryDisplay + ', ' + [string]$YakuT9194Observed.initialStyle.entryGrid + ')')
-    Assert-T9194 -Condition (-not [bool]$YakuT9194Observed.routeContract.catHasTourMeta -and -not [bool]$YakuT9194Observed.routeContract.catHasTourScript -and -not [bool]$YakuT9194Observed.routeContract.catHasStartLinks -and [bool]$YakuT9194Observed.routeContract.tutorialRedirectsToCat) -Message ('CAT has no tour meta/script or tutorial start links, and /tutorial redirects to /cat (status ' + [int]$YakuT9194Observed.routeContract.tutorialStatus + ', location ' + [string]$YakuT9194Observed.routeContract.tutorialLocation + ')')
+    Assert-T9194 -Condition (-not [bool]$YakuT9194Observed.routeContract.catHasTourMeta -and -not [bool]$YakuT9194Observed.routeContract.catHasTourScript -and -not [bool]$YakuT9194Observed.routeContract.catHasStartLinks -and [bool]$YakuT9194Observed.routeContract.retiredRoutes404) -Message ('CAT has no tour meta/script or tutorial start links, and retired tutorial/preferences endpoints are absent (tutorial ' + [int]$YakuT9194Observed.routeContract.tutorialStatus + ', preferences ' + [int]$YakuT9194Observed.routeContract.preferencesStatus + ')')
 
     $YakuT9194Canvas = $YakuT9194Observed.canvas
     Assert-T9194 -Condition ([double]$YakuT9194Canvas.canvasRatio -ge 0.9) -Message ('the default bilingual canvas uses at least 90 percent of workspace width (ratio ' + [math]::Round([double]$YakuT9194Canvas.canvasRatio, 3) + ')')

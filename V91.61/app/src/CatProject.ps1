@@ -2294,13 +2294,12 @@ function New-YakuCatAlignProject {
       日本語と英語のひと組から CAT のプロジェクトを作る。訳す代わりに、
       既にある訳と突き合わせる。市販ツールの「文書のアライメント」に当たる。
 
-      管理画面に取り込み専用の画面を作るのではなく、CAT の画面をそのまま
-      使う（利用者の指摘 2026-08-07「今の管理画面は使いづらい」）。
+      取り込み専用の画面を作るのではなく、CAT の確認画面をそのまま使う。
       利点は作りの節約ではなく、確認の質のほうにある。
 
         - 対応は原文と訳文が左右に並ぶ、いつものグリッドで見える
         - ずれていれば、いつもの結合・分割で直せる
-        - 直してからコーパスへ入れられる
+        - 直してから翻訳メモリへ登録できる
 
       機械が作った対応をそのまま貯めるのではなく、人が一度見てから貯める。
       誤った対訳は完全一致で機械置換され続けるので、入口で見るのが安い。
@@ -2415,51 +2414,6 @@ function New-YakuCatProjectFromPairs {
     $null = Initialize-YakuCatProjectState -Project $project
     if ($Register) { $script:YakuCatProjects[$project.Id] = $project }
     return $project
-}
-
-function Save-YakuCatProjectToCorpus {
-    <#
-      グリッドで確かめた対訳をコーパスへ入れる。人が直した対も、直していない
-      対も、この時点の中身をそのまま貯める。
-    #>
-    param(
-        [Parameter(Mandatory=$true)]$Project,
-        [Parameter(Mandatory=$true)][string]$Database,
-        [string]$Source = '',
-        # 保存先。既定は管理者の取り込み場所。試験は別の場所を指す。
-        [AllowNull()][string]$Dir,
-        [switch]$Public,
-        [switch]$PublicAttested
-    )
-    if ([string]::IsNullOrWhiteSpace($Dir)) { $Dir = Get-YakuCorpusBuildDir }
-    # 文例を作るのは開発者であって、日々の利用者ではない
-    # （利用者の整理 2026-08-08「公表資料は数も限られているので、開発者が
-    # 最終形を配布用として保存する前提のほうが良い」）。
-    # だから入口は突き合わせ（Source='align'）に限る。訳しながら片手間に
-    # 文例を作らせると、公表前の資料や作りかけの訳が混ざる。
-    if ([string]$Project.Source -ne 'align') {
-        throw '文例は、公表済みの資料を突き合わせたときだけ保存できます。'
-    }
-    if (-not $Public -or -not $PublicAttested) {
-        throw 'CAT_CORPUS_PUBLIC_ATTESTATION_REQUIRED: 公表実績を別途確認した資料だけを文例へ登録できます。'
-    }
-    $toEn = ([string]$Project.Direction -eq 'to_en')
-    $null = Initialize-YakuCatProjectState -Project $Project
-    $pairs = New-Object System.Collections.Generic.List[object]
-    foreach ($seg in @($Project.Segments)) {
-        if ([string]$seg.State -ne 'reviewed' -or -not (Test-YakuCatSegmentQcCurrent -Segment $seg)) { continue }
-        $a = [string]$seg.Text; $b = [string]$seg.Translation
-        if ([string]::IsNullOrWhiteSpace($a) -or [string]::IsNullOrWhiteSpace($b)) { continue }
-        [void]$pairs.Add([pscustomobject]@{
-            JaText        = [string]$(if ($toEn) { $a } else { $b })
-            EnText        = [string]$(if ($toEn) { $b } else { $a })
-            NumberChecked = $true
-            NumberAgree   = $true
-        })
-    }
-    $src = [string]$Source
-    if ([string]::IsNullOrWhiteSpace($src)) { $src = [string]$Project.FileName }
-    return (Add-YakuCorpusPairs -Dir $Dir -Database $Database -Source $src -Pairs @($pairs.ToArray()) -Public:$Public)
 }
 
 function Get-YakuCatProjectStoreDir {
@@ -3017,8 +2971,6 @@ function Save-YakuCatProject {
             document_format = $(try { [string]$Project.DocumentFormat } catch { '' })
             word_inventory = $(try { $Project.WordInventory } catch { $null })
             created = [string]$Project.CreatedAt
-            corpus_section = [string]$Project.CorpusSection
-            corpus_examples = @($Project.CorpusExamples)
             promotion_reference_translation = $(try { [string]$Project.PromotionReferenceTranslation } catch { '' })
             source_artifact_relative_path = $(try { [string]$Project.SourceArtifactRelativePath } catch { '' })
             source_artifact_sha256 = $(try { [string]$Project.SourceArtifactSha256 } catch { '' })
@@ -3505,10 +3457,6 @@ function Restore-YakuCatProject {
         PriorVersion = $o.prior_version
         VersionUpdateSummary = $o.version_update_summary
     }
-    if (-not [string]::IsNullOrWhiteSpace([string]$o.corpus_section)) {
-        $project | Add-Member -NotePropertyName 'CorpusSection' -NotePropertyValue ([string]$o.corpus_section) -Force
-        $project | Add-Member -NotePropertyName 'CorpusExamples' -NotePropertyValue @($o.corpus_examples) -Force
-    }
     $null = Initialize-YakuCatProjectState -Project $project
     if ($null -ne $project.PendingBulkReplaceUndo) {
         $null = Assert-YakuCatBulkReplaceUndoSnapshot -Project $project -Snapshot $project.PendingBulkReplaceUndo -RequireCurrent
@@ -3684,6 +3632,7 @@ function ConvertTo-YakuCatProjectJson {
     param([Parameter(Mandatory=$true)]$Project)
     $null = Initialize-YakuCatProjectState -Project $Project
     $segs = @($Project.Segments)
+    $tmBulkEligibleCount = @(Get-YakuCatAlignmentTranslationMemoryBulkEligibleSegments -Project $Project).Count
     # 元ファイルが無ければ再抽出できない。存在する場合は、出力時に原文を
     # 再対応付けし、曖昧・欠落があればコピーを作る前に安全停止する。
     $eligibility = Get-YakuCatOutputEligibility -Project $Project
@@ -3858,26 +3807,6 @@ function ConvertTo-YakuCatProjectJson {
         })
     }
     $summary = Get-YakuCatProjectSummary -Project $Project -Eligibility $eligibility
-    # 引いた文例。検索したときだけ入る。何が引けたかを見てから
-    # 使うかどうか決められるようにするため（利用者の判断 2026-08-06）。
-    $corpusExamples = @()
-    try { $corpusExamples = @($Project.CorpusExamples) } catch { $corpusExamples = @() }
-    $corpusRows = New-Object System.Collections.Generic.List[object]
-    foreach ($e in $corpusExamples) {
-        if ($null -eq $e) { continue }
-        # 出どころは Database / Source / Page。どの資料の何ページかが分からないと、
-        # 文例を採るかどうか判断できない。
-        $text = ''; $db = ''; $doc = ''; $page = ''
-        try { $text = [string]$e.Text } catch {}
-        try { $db = [string]$e.Database } catch {}
-        try { $doc = [string]$e.Source } catch {}
-        try { $page = [string]$e.Page } catch {}
-        # Source が既にデータベース名で始まっていることがある。二重に付けない。
-        if ((-not [string]::IsNullOrWhiteSpace($db)) -and $doc.StartsWith($db)) { $db = '' }
-        $where = (@($db, $doc) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join '/'
-        if (-not [string]::IsNullOrWhiteSpace($page)) { $where = ($where + ' p.' + $page).Trim() }
-        [void]$corpusRows.Add([ordered]@{ text = $text; where = $where })
-    }
     # 体裁（列幅・折り返し・結合）。原本の写しから Office 抜きで読む。
     # 同じ資料で何度も読まないよう、作業ごとに1回だけ覚える。読めなくても翻訳は続く。
     $sheetLayout = @()
@@ -3907,8 +3836,6 @@ function ConvertTo-YakuCatProjectJson {
         word_draft_eligibility = [bool]$eligibility.WordDraftEligible
         word_file_output_supported = $(try { [bool]$Project.WordInventory.DraftStructureEligible } catch { $false })
         eligibility_reasons = @($eligibility.Reasons)
-        corpus_ready = $(try { -not [string]::IsNullOrWhiteSpace([string]$Project.CorpusSection) } catch { $false })
-        corpus     = @($corpusRows.ToArray())
         promotion_reference_translation = $(try { [string]$Project.PromotionReferenceTranslation } catch { '' })
         version_update = $(try { $Project.VersionUpdateSummary } catch { $null })
         word_inventory = $(try {
@@ -3927,6 +3854,7 @@ function ConvertTo-YakuCatProjectJson {
         terminology_snapshot_hash = [string]$Project.TerminologySnapshotHash
         abbreviation_registry_hash = $(if(Get-Command Get-YakuCatAbbreviationRegistryHash -ErrorAction SilentlyContinue){Get-YakuCatAbbreviationRegistryHash -Project $Project}else{''})
         tm_pending = $(try { [int]$Project.TmPendingCount } catch { 0 })
+        tm_bulk_eligible_count = [int]$tmBulkEligibleCount
         bulk_replace_undo = $(if ($null -ne $Project.PendingBulkReplaceUndo) {
             [ordered]@{ available=$true; affected_count=[int]$Project.PendingBulkReplaceUndo.affected_count }
         } else { [ordered]@{ available=$false; affected_count=0 } })
@@ -4111,7 +4039,7 @@ function Get-YakuCatTranslationMemoryPretranslatePlan {
       重複を除いた原文の数を数えているので、引く回数もそれに揃う。
 
       翻訳メモリが読めないときは、そこで打ち切って空の計画を返す。
-      コーパスや翻訳メモリは足しであって前提ではない。読めなければ、
+      翻訳メモリは再利用のための補助であり前提ではない。読めなければ、
       対象行は空のまま Copilot への送信対象として残る。
     #>
     param(
@@ -5108,15 +5036,8 @@ function Get-YakuCatSegmentCandidates {
       Ctrl+数字 で差し込めるようにしている。訳す前に「過去はどう訳したか」が
       目に入ることが、一貫性を保つ仕組みそのものになっている。
 
-      出せるのは用語集と、過去の対訳（コーパスの対）である。
-
-      対訳のほうは長く出せなかった。コーパスが英文しか持たず、日本語の
-      原文から英語の検索語を作るのに Copilot への往復が要ったためで、
-      行を移るたびには引けなかった（利用者の指摘 2026-08-06）。
-      Copilot によるアライメントで日英の対が取れるようになり、日本語の
-      まま引けるようになったので、ここへ出す。
-
-      翻訳メモリ（この利用者自身が確定した訳）はまだ無い。
+      出せるのは用語集、翻訳メモリ、前回版の対応行である。翻訳メモリは
+      利用者自身が確認して登録した訳だけを出典付き候補として示す。
 
       完全一致だけでなく部分一致も出す。表のラベルは完全一致で機械置換
       できるが、文の中に現れた語は置換しない（活用と一致が壊れるため。
@@ -5126,10 +5047,7 @@ function Get-YakuCatSegmentCandidates {
         [Parameter(Mandatory=$true)][string]$Root,
         [Parameter(Mandatory=$true)]$Project,
         [Parameter(Mandatory=$true)][int]$Index,
-        [int]$Max = 8,
-        # Read compatibility only. Corpus candidates are retired and this
-        # value is intentionally ignored.
-        [AllowNull()][string]$PairsDir
+        [int]$Max = 8
     )
     $segs = @($Project.Segments)
     if ($Index -lt 0 -or $Index -ge $segs.Count) { return @() }
@@ -5917,6 +5835,81 @@ function Register-YakuCatSegmentTranslationMemory {
     $segment.TmRegistrationEventId = [string]$outboxEventId
     $null = Add-YakuCatHumanDecisionEvent -Project $Project -Scope 'translation_memory' -Action 'registered' -Segment $segment
     return [string]$outboxEventId
+}
+
+function Register-YakuCatAlignmentTranslationMemoryBulk {
+    <#
+      対訳確認で人が確定した行だけを、既存のTM outboxへまとめて積む。
+      ここはCATの翻訳結果や通常の作業を対象にしない。Source=alignを明示的に
+      要求し、各行の確定・現在のQC・原文/訳文の実在・未登録を確認してから
+      outboxへ渡す。登録しなかった行も理由を返すので、画面は未確認や古い点検を
+      「登録済み」と誤って表示しない。
+    #>
+    param([Parameter(Mandatory=$true)]$Project)
+    # Initialization clears a confirmed state when it notices stale QC. Keep
+    # that distinction for the bulk response instead of reporting stale rows
+    # as if they had never been confirmed.
+    $staleBeforeInitialize = @{}
+    foreach ($before in @($Project.Segments)) {
+        if ([bool]$before.TmRegistered -or -not [bool]$before.Confirmed -or
+            [string]::IsNullOrWhiteSpace([string]$before.Text) -or
+            [string]::IsNullOrWhiteSpace([string]$before.Translation)) { continue }
+        if (-not (Test-YakuCatSegmentQcCurrent -Segment $before -TerminologySnapshotHash ([string]$Project.TerminologySnapshotHash))) {
+            $staleBeforeInitialize[[string]$before.SegmentId] = $true
+        }
+    }
+    $null = Initialize-YakuCatProjectState -Project $Project
+    if ([string]$Project.Source -cne 'align') {
+        throw 'CAT_TM_BULK_REQUIRES_ALIGN: 過去訳の対応確認でのみ一括登録できます。'
+    }
+    $registered = New-Object System.Collections.Generic.List[object]
+    $skipped = New-Object System.Collections.Generic.List[object]
+    $terminologyHash = [string]$Project.TerminologySnapshotHash
+    $segments = @($Project.Segments)
+    for ($index = 0; $index -lt $segments.Count; $index++) {
+        $segment = $segments[$index]
+        $reason = ''
+        if ([bool]$segment.TmRegistered) {
+            $reason = 'already-registered'
+        } elseif ([string]::IsNullOrWhiteSpace([string]$segment.Text) -or
+                  [string]::IsNullOrWhiteSpace([string]$segment.Translation)) {
+            $reason = 'empty'
+        } elseif ($staleBeforeInitialize.ContainsKey([string]$segment.SegmentId)) {
+            $reason = 'stale-qc'
+        } elseif (-not [bool]$segment.Confirmed) {
+            $reason = 'unconfirmed'
+        } elseif (-not (Test-YakuCatSegmentQcCurrent -Segment $segment -TerminologySnapshotHash $terminologyHash)) {
+            $reason = 'stale-qc'
+        }
+        if (-not [string]::IsNullOrWhiteSpace($reason)) {
+            [void]$skipped.Add([pscustomobject]@{ index = $index; segment_id = [string]$segment.SegmentId; reason = $reason })
+            continue
+        }
+        $eventId = Add-YakuCatTranslationMemoryOutboxEvent -Project $Project -Segment $segment
+        $segment.TmRegistered = $true
+        $segment.TmRegistrationEventId = [string]$eventId
+        $null = Add-YakuCatHumanDecisionEvent -Project $Project -Scope 'translation_memory' -Action 'registered' -Segment $segment
+        [void]$registered.Add([pscustomobject]@{ index = $index; segment_id = [string]$segment.SegmentId; event_id = [string]$eventId })
+    }
+    return [pscustomobject]@{
+        RegisteredCount = [int]$registered.Count
+        SkippedCount = [int]$skipped.Count
+        Registered = @($registered.ToArray())
+        Skipped = @($skipped.ToArray())
+        NoMutation = ($registered.Count -eq 0)
+    }
+}
+
+function Get-YakuCatAlignmentTranslationMemoryBulkEligibleSegments {
+    param([Parameter(Mandatory=$true)]$Project)
+    if ([string]$Project.Source -cne 'align') { return @() }
+    $terminologyHash = [string]$Project.TerminologySnapshotHash
+    return @($Project.Segments | Where-Object {
+        -not [bool]$_.TmRegistered -and [bool]$_.Confirmed -and
+        -not [string]::IsNullOrWhiteSpace([string]$_.Text) -and
+        -not [string]::IsNullOrWhiteSpace([string]$_.Translation) -and
+        (Test-YakuCatSegmentQcCurrent -Segment $_ -TerminologySnapshotHash $terminologyHash)
+    })
 }
 
 function Get-YakuCatTranslationMemoryRegistrationsForRevocation {

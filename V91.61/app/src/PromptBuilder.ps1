@@ -576,9 +576,8 @@ function Get-YakuRelevantGlossaryMatches {
 # （_docs/決定_用語集は用語の一貫性ではなくレイアウトの保証.md）。
 # はみ出すのはラベルであり、文はセルの中で折り返せば行高が吸収する。
 #
-# 実機で、GLOSSARY 節があるとコーパスの言い回しが通らず、切ると通ることを
-# 確認した（_docs/実機検証結果_2026-08-05.md §3-2）。文中では用語集が
-# コーパスの邪魔をしていた。
+# 実機で、GLOSSARY 節があると通常の言い回しが崩れ、切ると通ることを
+# 確認した。文中では用語集を機械的に差し込まない。
 #
 # 既存の翻訳製品も、文中の用語を機械的に置換していない。CAT/TMS は印を付けて
 # 人が直し、MT の用語集（DeepL / Google）はモデルの内側で寄せる仕組みで、
@@ -781,9 +780,6 @@ function New-YakuTextPrompt {
         [ValidateSet('to_en','to_jp')][string]$DirectionOverride,
         [AllowNull()][string]$StyleReference,
         [AllowNull()][string]$RequestId,
-        # V91.61 段階3: 参考資料コーパスから引いた文例。
-        # 作るのは CorpusReference.ps1 で、ここは受け取って差し込むだけ。
-        [AllowNull()][string]$CorpusSection,
         # 通常翻訳は full。「短く」は専用処理から brief を指定する。
         [ValidateSet('full','brief')][string]$Mode = 'full'
     )
@@ -797,9 +793,6 @@ function New-YakuTextPrompt {
     $vars = @{
         input_text = $InputText.Trim()
         style_reference_section = Get-YakuStyleReferenceSection -StyleReference $StyleReference
-        # to_jp のテンプレートには枠が無い。渡ってきても差し込まれないが、
-        # 呼び出し側でも方向を見て空にしている（Test-YakuCorpusReferenceApplicable）。
-        corpus_section = [string]$CorpusSection
         # 金額の書き方は依頼の種類（そのまま／短く）では変わらない。設定で決まる。
         # 訳の種類と書き方を混ぜていたので、名前が何を指すのか分からなくなっていた
         # （利用者の指摘 2026-08-08「社内の書き方もおかしい」）。

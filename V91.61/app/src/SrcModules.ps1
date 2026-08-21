@@ -34,9 +34,6 @@ $script:YakuSrcModuleFiles = @(
     'CatBatch.ps1',
     'CatTranslation.ps1',
     'FitPolicy.ps1',
-    'Corpus.ps1',
-    'CorpusSearch.ps1',
-    'CorpusReference.ps1',
     'BriefStyle.ps1',
     'CellSegments.ps1',
     'GlossaryVariants.ps1',
@@ -47,7 +44,6 @@ $script:YakuSrcModuleFiles = @(
     'Terminology.ps1',
     'PersonalGlossary.ps1',
     'TranslationMemory.ps1',
-    'CorpusPairs.ps1',
     'WordAdapter.ps1',
     'CatProject.ps1',
     'Publication.ps1',
@@ -55,6 +51,5 @@ $script:YakuSrcModuleFiles = @(
     'Render.ps1',
     'VersionUpdate.ps1',
     'SourceRebase.ps1',
-    'Review.ps1',
-    'DesktopIntegration.ps1'
+    'Review.ps1'
 )

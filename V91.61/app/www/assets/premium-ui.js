@@ -14,6 +14,13 @@
     quickActionBusy: false,
     toolsInvoker: null,
     initialWorkMode: (function () { try { return new URLSearchParams(window.location.search).get('view') === 'work'; } catch (_) { return false; } })(),
+    initialImport: (function () {
+      try {
+        var params = new URLSearchParams(window.location.search);
+        var meta = document.querySelector('meta[name="yaku-import"]');
+        return params.get('import') === '1' || !!(meta && meta.getAttribute('content') === '1');
+      } catch (_) { return false; }
+    })(),
     toastTimer: null
   };
   var premiumRowWait = null;
@@ -79,10 +86,10 @@
     var workspace = el('cat-workspace');
     var toolbar = el('cat-editor-toolbar');
     var active = document.body.classList.contains('premium-cat') &&
-      document.body.classList.contains('premium-mode-workspace') &&
+      (document.body.classList.contains('premium-mode-workspace') || document.body.classList.contains('premium-mode-align-workspace')) &&
       !!(workspace && !workspace.hidden && toolbar);
     var expanded = document.body.classList.contains('premium-tools-open') ? 'true' : 'false';
-    ['premium-settings', 'premium-tools'].forEach(function (id) {
+    ['premium-tools'].forEach(function (id) {
       var node = el(id);
       if (!node) return;
       if (!active) {
@@ -134,6 +141,7 @@
     var items = [
       { key: 'excel', href: '/cat', icon: 'XLS', title: 'Excel翻訳', note: 'セル幅に合わせる' },
       { key: 'quick', href: '/palette', icon: '↗', title: 'クイック翻訳', note: '1文ずつすぐに' },
+      { key: 'past', href: '/cat?import=1', icon: '↔', title: '過去訳', note: '確認済みを再利用' },
       { key: 'work', href: '/cat?view=work', icon: '◴', title: '作業一覧', note: '保存済みの作業' }
     ];
     return items.map(function (item) {
@@ -149,7 +157,7 @@
       '<div class="premium-sidebar-rule"></div>' +
       '<div class="premium-recent-heading"><span>最近の作業</span><span id="premium-recent-count">0件</span></div>' +
       '<div id="premium-sidebar-recent" class="premium-sidebar-recent"><p class="premium-sidebar-loading">読み込んでいます…</p></div>' +
-      '<div class="premium-sidebar-bottom"><div id="premium-copilot-slot"></div><button id="premium-settings" type="button" class="premium-settings-link">設定</button></div>';
+      '<div class="premium-sidebar-bottom"><div id="premium-copilot-slot"></div></div>';
     return sidebar;
   }
   function buildTopbar() {
@@ -157,7 +165,7 @@
     topbar.innerHTML =
       '<div class="premium-topbar-left"><span id="premium-top-product" class="premium-top-product"></span><span class="premium-top-separator"></span>' +
       '<strong id="premium-top-context" class="premium-top-context"></strong></div>' +
-      '<div class="premium-top-actions"><a href="/cat?tour=1">使い方</a><a href="/cat?view=work">作業一覧</a>' +
+      '<div class="premium-top-actions"><a href="/cat?view=work">作業一覧</a>' +
       '<button id="premium-translate" type="button" class="premium-top-action" hidden>未訳を翻訳</button>' +
       '<button id="premium-qa" type="button" class="premium-top-action" hidden>点検結果</button>' +
       '<button id="premium-tools" type="button" class="premium-top-text-button" hidden>詳細ツール</button>' +
@@ -209,14 +217,6 @@
     var legacyHero = one('.hero,.palette-header', root);
     if (legacyHero) legacyHero.classList.add('premium-legacy-hero');
     moveCopilotControls(sidebar);
-    var settings = el('premium-settings');
-    if (settings) settings.addEventListener('click', function () {
-      if (document.body.classList.contains('premium-cat') && document.body.classList.contains('premium-mode-workspace')) {
-        openTools(settings);
-      } else {
-        showToast('翻訳設定はExcel翻訳の詳細ツールから変更できます。');
-      }
-    });
     return { app: app, sidebar: sidebar, main: main, topbar: topbar };
   }
 
@@ -227,6 +227,7 @@
       var remaining = Math.max(0, total - confirmed);
       return {
         id: String(item.id || ''),
+        source: String(item.source || ''),
         fileName: String(item.file_name || item.display_name || '名称未設定'),
         direction: String(item.direction || ''),
         revision: Number(item.revision || 0),
@@ -253,6 +254,9 @@
     });
   }
   function recentMeta(item) {
+    if (item.source === 'align') {
+      return '過去訳の対応確認 ・ ' + (item.remaining ? 'あと' + item.remaining + '行' : '確認完了');
+    }
     var direction = item.direction === 'to_jp' ? '英語 → 日本語' : '日本語 → 英語';
     return direction + ' ・ ' + (item.remaining ? 'あと' + item.remaining + '行' : '確認完了');
   }
@@ -290,7 +294,7 @@
     start.id = 'premium-cat-start';
     start.innerHTML =
       '<header class="premium-start-heading"><div><span class="premium-eyebrow">Excelレイアウト翻訳</span><h1>セル幅に合わせて、短く正確に。</h1>' +
-      '<p>Excelを読み込み、収まりにくいセルだけを仕上げます。</p></div></header>' +
+      '<p>Excelを読み込み、収まりにくいセルを仕上げます。以前に確認した日英PDFの訳も、過去訳として次の資料で再利用できます。</p></div></header>' +
       '<div class="premium-start-grid"><section class="premium-start-primary">' + visualStepsMarkup() +
       '<div id="premium-file-drop" class="premium-file-drop" role="group" aria-label="Excelファイルを選ぶ、またはドロップする">' +
       '<div class="premium-excel-mark">X</div><div class="premium-drop-copy"><strong>Excelをここに置く</strong>' +
@@ -300,7 +304,7 @@
       '<input id="premium-file-input" type="file" accept=".xlsx,.xlsm" hidden></div></section>' +
       '<aside class="premium-start-aside"><section><h2>翻訳方向</h2><div id="premium-direction-switch" class="premium-direction-switch" role="group" aria-label="翻訳方向">' +
       '<button type="button" class="is-active" aria-pressed="true" data-direction="to_en">日本語 → 英語</button><button type="button" aria-pressed="false" data-direction="to_jp">英語 → 日本語</button></div></section>' +
-      '<section><h2>参考資料（任意）</h2><p>過去の日英PDFを登録すると、確定訳が候補に出ます。</p><button id="premium-reference-open" type="button" class="premium-secondary-action">過去訳を登録</button></section>' +
+      '<section><h2>確認済みの過去訳を再利用</h2><p>日本語PDFと英語PDFを突き合わせ、確認した訳を登録すると、次の作業の候補に出ます。</p><button id="premium-reference-open" type="button" class="premium-secondary-action">過去訳を登録</button></section>' +
       '<section><h2>読み込み後</h2><div class="premium-outcome-row"><span>収まり済み</span><i><b style="width:82%"></b></i><strong>優先表示</strong></div>' +
       '<div class="premium-outcome-row is-alert"><span>要調整</span><i><b style="width:20%"></b></i><strong>数セル</strong></div></section></aside></div>';
     picker.appendChild(start);
@@ -375,7 +379,7 @@
     var view = create('section', 'premium-work-list');
     view.id = 'premium-work-list';
     view.innerHTML = '<header class="premium-work-list-head"><div><span class="premium-eyebrow">保存済みの作業</span><h1>作業一覧</h1>' +
-      '<p>途中のExcel翻訳を、残りのセルから再開できます。</p></div><button id="premium-new-excel" type="button">新しいExcelを開く</button></header>' +
+      '<p>Excel翻訳と過去訳の対応確認を、保存したところから再開できます。</p></div><button id="premium-new-excel" type="button">新しいExcelを開く</button></header>' +
       '<div id="premium-work-cards" class="premium-work-cards"></div>';
     picker.appendChild(view);
     var newExcel = el('premium-new-excel');
@@ -386,16 +390,21 @@
     if (!host) return;
     var rows = premiumState.recent;
     if (!rows.length) {
-      host.innerHTML = '<div class="premium-work-empty"><strong>保存済みの作業はまだありません。</strong><p>Excelを開くと、途中経過がここに自動保存されます。</p></div>';
+      host.innerHTML = '<div class="premium-work-empty"><strong>保存済みの作業はまだありません。</strong><p>Excel翻訳や過去訳の対応確認を始めると、途中経過がここに自動保存されます。</p></div>';
       return;
     }
     host.innerHTML = rows.map(function (item) {
       var direction = item.direction === 'to_jp' ? '英語 → 日本語' : '日本語 → 英語';
-      return '<article class="premium-work-card" data-work-id="' + escapeHtml(item.id) + '"><header><span class="premium-work-file-icon">XLS</span><div><h2 title="' + escapeHtml(item.fileName) + '">' + escapeHtml(item.fileName) + '</h2>' +
-        '<p>' + escapeHtml(direction) + '</p></div></header><div class="premium-work-metrics"><div><b>' + item.confirmed + ' / ' + item.total + '</b><span>確認済み</span></div>' +
+      var isAlignment = item.source === 'align';
+      var icon = isAlignment ? '↔' : 'XLS';
+      var description = isAlignment ? '過去訳の対応確認' : direction;
+      var sourceMeta = isAlignment ? '<small class="premium-work-card-meta">' + escapeHtml(recentMeta(item)) + '</small>' : '';
+      var openLabel = isAlignment ? '過去訳の対応確認を再開' : (item.remaining ? '続きから開く' : '開く');
+      return '<article class="premium-work-card" data-work-id="' + escapeHtml(item.id) + '"><header><span class="premium-work-file-icon">' + icon + '</span><div><h2 title="' + escapeHtml(item.fileName) + '">' + escapeHtml(item.fileName) + '</h2>' +
+        '<p>' + escapeHtml(description) + '</p>' + sourceMeta + '</div></header><div class="premium-work-metrics"><div><b>' + item.confirmed + ' / ' + item.total + '</b><span>確認済み</span></div>' +
         '<div><b>' + item.remaining + '</b><span>残り</span></div><div><b>' + item.percent + '%</b><span>進捗</span></div></div>' +
         '<div class="premium-work-progress"><i style="width:' + item.percent + '%"></i></div><footer><button type="button" data-work-delete="' + escapeHtml(item.id) + '">削除</button>' +
-        '<a href="/cat?project=' + encodeURIComponent(item.id) + '">' + (item.remaining ? '続きから開く' : '開く') + '</a></footer></article>';
+        '<a href="/cat?project=' + encodeURIComponent(item.id) + '">' + openLabel + '</a></footer></article>';
     }).join('');
     all('[data-work-delete]', host).forEach(function (button) {
       button.addEventListener('click', function () { deleteSavedWork(button.getAttribute('data-work-delete')); });
@@ -403,7 +412,10 @@
   }
   function deleteSavedWork(id) {
     var item = premiumState.recent.filter(function (row) { return row.id === id; })[0];
-    if (!item || !window.confirm('「' + item.fileName + '」の途中保存を削除します。元のExcelは削除しません。')) return;
+    var confirmMessage = item && item.source === 'align'
+      ? '「' + item.fileName + '」の過去訳の対応確認を削除します。元のPDFは削除しません。'
+      : item ? '「' + item.fileName + '」の途中保存を削除します。元のExcelは削除しません。' : '';
+    if (!item || !window.confirm(confirmMessage)) return;
     if (!(window.YakuCommon && YakuCommon.post)) return;
     YakuCommon.post('/api/cat/delete', {
       id: id,
@@ -467,6 +479,24 @@
     }
     moveRowActions();
     forcePreviewRail();
+  }
+  function removeExcelWorkspaceUi() {
+    var workspace = el('cat-workspace');
+    var editorLayout = el('cat-editor-layout');
+    var summary = el('premium-work-summary');
+    ['cat-output-help', 'cat-output-reason', 'cat-export-blocked', 'cat-mask-notice'].forEach(function (id) {
+      var node = el(id);
+      if (node && summary && summary.contains(node) && workspace) {
+        workspace.insertBefore(node, editorLayout || workspace.firstChild);
+      }
+    });
+    var actions = el('cat-segment-actions');
+    var legacyActions = el('cat-actions');
+    if (actions && legacyActions && actions.parentNode !== legacyActions) legacyActions.appendChild(actions);
+    ['premium-work-summary', 'premium-fit-panel', 'premium-editor-intro', 'premium-row-actions'].forEach(function (id) {
+      var node = el(id);
+      if (node && node.parentNode) node.parentNode.removeChild(node);
+    });
   }
   function moveRowActions() {
     var host = el('premium-row-actions');
@@ -677,20 +707,28 @@
   function syncCatMode() {
     var workspace = el('cat-workspace');
     var isWorkspace = document.body.getAttribute('data-cat-view') === 'workspace' && workspace && !workspace.hidden;
-    var workMode = premiumState.initialWorkMode;
+    var isAlignmentWorkspace = isWorkspace && document.body.getAttribute('data-cat-source') === 'align';
+    var workMode = (function () {
+      try { return new URLSearchParams(window.location.search).get('view') === 'work'; }
+      catch (_) { return premiumState.initialWorkMode; }
+    })();
+    var importMode = premiumState.initialImport && !isWorkspace && !workMode &&
+      !!(el('cat-source-align') && !el('cat-source-align').hidden);
     if (!isWorkspace) {
       cancelPremiumRowWait();
       closeTools();
     }
-    document.body.classList.toggle('premium-mode-workspace', !!isWorkspace);
+    document.body.classList.toggle('premium-mode-workspace', !!isWorkspace && !isAlignmentWorkspace);
+    document.body.classList.toggle('premium-mode-align-workspace', !!isAlignmentWorkspace);
     document.body.classList.toggle('premium-mode-worklist', !isWorkspace && workMode);
-    document.body.classList.toggle('premium-mode-excel-start', !isWorkspace && !workMode);
+    document.body.classList.toggle('premium-mode-excel-start', !isWorkspace && !workMode && !importMode);
+    document.body.classList.toggle('premium-mode-import', !!importMode);
     syncToolsExpanded();
     var start = el('premium-cat-start');
     var work = el('premium-work-list');
-    if (start) start.hidden = !!isWorkspace || workMode;
-    if (work) work.hidden = !!isWorkspace || !workMode;
-    if (isWorkspace) {
+    if (start) start.hidden = !!isWorkspace || workMode || importMode;
+    if (work) work.hidden = !!isWorkspace || !workMode || importMode;
+    if (isWorkspace && !isAlignmentWorkspace) {
       setActiveNav('excel');
       setTopbar('Excelレイアウト翻訳', textOf(el('cat-toolbar-title')) || 'Excel翻訳', {
         'premium-translate': true, 'premium-qa': true, 'premium-tools': true, 'premium-export': true
@@ -699,9 +737,18 @@
       ensureWorkspaceUi();
       setupTopActionProxies();
       window.setTimeout(refreshWorkspaceUi, 0);
+    } else if (isAlignmentWorkspace) {
+      removeExcelWorkspaceUi();
+      setActiveNav('past');
+      setTopbar('過去訳', '過去訳の対応確認', { 'premium-tools': true });
+      document.title = '過去訳の対応確認 - YakuLingo';
+    } else if (importMode) {
+      setActiveNav('past');
+      setTopbar('過去訳', '確認済みの対訳を再利用', {});
+      document.title = '過去訳 - YakuLingo';
     } else if (workMode) {
       setActiveNav('work');
-      setTopbar('作業一覧', '保存済みのExcel翻訳', {});
+      setTopbar('作業一覧', '保存済みの作業', {});
       document.title = '作業一覧 - YakuLingo';
       renderWorkCards();
     } else {
@@ -724,7 +771,7 @@
     document.addEventListener('click', function (event) {
       var row = event.target.closest('[data-premium-row]');
       if (row) { openPremiumRow(row.getAttribute('data-premium-row')); return; }
-      if (document.body.classList.contains('premium-tools-open') && !event.target.closest('#cat-editor-toolbar,#premium-tools,#premium-settings')) {
+      if (document.body.classList.contains('premium-tools-open') && !event.target.closest('#cat-editor-toolbar,#premium-tools')) {
         closeTools();
       }
     });
@@ -745,7 +792,7 @@
     });
     var resumeList = el('cat-resume-list');
     if (resumeList) new MutationObserver(function () { window.setTimeout(fetchRecent, 70); }).observe(resumeList, { childList: true, subtree: true });
-    new MutationObserver(syncCatMode).observe(document.body, { attributes: true, attributeFilter: ['data-cat-view'] });
+    new MutationObserver(syncCatMode).observe(document.body, { attributes: true, attributeFilter: ['data-cat-view', 'data-cat-source'] });
     syncCatMode();
   }
 

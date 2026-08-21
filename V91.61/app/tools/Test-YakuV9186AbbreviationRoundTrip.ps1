@@ -46,7 +46,6 @@ $script:YakuT9186Store = Join-Path $YakuT9186Temp 'store'
 
 . (Join-Path $YakuT9186Src 'SrcModules.ps1')
 foreach ($YakuT9186File in $script:YakuSrcModuleFiles) {
-    if ($YakuT9186File -eq 'DesktopIntegration.ps1') { continue }
     . (Join-Path $YakuT9186Src $YakuT9186File)
 }
 function Get-YakuCatProjectStoreDir { return $script:YakuT9186Store }

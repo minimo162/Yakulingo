@@ -58,7 +58,7 @@ function Invoke-N9192Structure {
 Write-Host 'Test-YakuV9192SegmentReviewNotes'
 . (Join-Path $N9192Src 'SrcModules.ps1')
 foreach ($N9192File in @($script:YakuSrcModuleFiles)) {
-    if ($N9192File -ne 'DesktopIntegration.ps1') { . (Join-Path $N9192Src $N9192File) }
+    . (Join-Path $N9192Src $N9192File)
 }
 $N9192Temp = Join-Path ([IO.Path]::GetTempPath()) ('yaku-review-notes-' + [guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $N9192Temp -Force

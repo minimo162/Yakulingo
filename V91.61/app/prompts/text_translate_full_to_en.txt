@@ -27,7 +27,6 @@ F13. Never backslash-escape characters; reproduce labels, underscores, placehold
 Before answering, verify that every heading, bullet, number, unit, sign, condition, negation, and modality remains.
 
 {numeric_rules}
-{corpus_section}
 {style_reference_section}
 
 SOURCE_BEGIN:{request_id}

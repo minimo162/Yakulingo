@@ -83,11 +83,10 @@ Check-YakuUse ($catHtml -match 'cat-key-help') 'キーボード操作の一覧�
 
 # 初回利用者の目で見て見つかった3件（2026-08-13、実機と3体の点検）。
 $styles = Get-Content -LiteralPath (Join-Path $root 'www\assets\styles.css') -Raw -Encoding UTF8
-$tourJs = Get-Content -LiteralPath (Join-Path $root 'www\assets\tour.js') -Raw -Encoding UTF8
 $serverForView = Get-Content -LiteralPath (Join-Path $root 'src\Server.ps1') -Raw -Encoding UTF8
 
 # 1. 使い方・設定・初回ツアーの入口は開始画面から退役した。
-#    互換アセットは残すが、CAT の URL/meta/script からは到達できない。
+#    退役したアセットも配布物には含めない。
 Check-YakuUse ($catJs -notmatch "location\.(?:assign|href).*?/tutorial(?:#settings)?") 'CAT client に tutorial/settings への遷移を残さない'
 Check-YakuUse ($catHtml -notmatch 'name="yaku-tour"' -and $catHtml -notmatch '/assets/tour.js') 'CAT テンプレートにツアーの meta/script を残さない'
 Check-YakuUse ($catHtml -notmatch '__YAKU_TOUR__' -and $catHtml -notmatch 'tour=1') 'CAT テンプレートに退役したツアー placeholder/URL hook を残さない'
@@ -104,7 +103,6 @@ Check-YakuUse ($catHtml -notmatch 'id="cat-help-links"' -and $catHtml -notmatch 
 $mainPos = $catHtml.IndexOf('class="entry-main"')
 $railPos = $catHtml.IndexOf('class="entry-rail"')
 Check-YakuUse ($mainPos -ge 0 -and $railPos -gt $mainPos) '主役の入力面を最近の作業 rail より先に置く'
-Check-YakuUse ($serverForView.Contains("if (`$method -eq 'GET' -and `$path -eq '/tutorial')") -and $serverForView.Contains("Send-YakuRedirectResponse -Context `$Context -Location '/cat'")) '退役した /tutorial は CAT へ redirect する'
 
 # 外へ送るものは、統合した入力枠の直下で短く1回だけ説明する。
 Check-YakuUse ($catHtml -match '数値は伏せて送ります。社名・人名と文章はそのまま送ります。ファイルは送りません。') '送るものと送らないものを同じ1行で書く'
@@ -115,9 +113,7 @@ Check-YakuUse ($catHtml -match 'ファイルは送りません') '送るのは�
 # いらない」）。形式ごとに書き分ける相手も無くなったので、言うのは
 # 「原本は触らない」「名前の先頭に DRAFT_ が付く」の2つだけ。
 $catProject = Get-Content -LiteralPath (Join-Path $root 'src\CatProject.ps1') -Raw -Encoding UTF8
-$tutorial = Get-Content -LiteralPath (Join-Path $root 'www\tutorial.html') -Raw -Encoding UTF8
 Check-YakuUse ($catProject -match '名前の先頭に「DRAFT_」が付きます。' -and $catProject -notmatch '本文の1行目') '出す前の確認は、名前のことだけを言う'
-Check-YakuUse ($tutorial -notmatch '下書きの印' -and $tutorial -match 'DRAFT_</code> が付いた別のコピー') '説明ページも名前のことだけを言う'
 Check-YakuUse ($catJs -notmatch '本文の1行目' -and $catJs -notmatch '見えない DRAFT の印') '作業画面にも中の印の話を残さない'
 Check-YakuUse ($catJs -notmatch '名前と文書内に DRAFT が付きます') '曖昧な言い方は残さない'
 
@@ -155,16 +151,7 @@ Check-YakuUse ($catJs -notmatch '残りの訳案を作る' -and $catHtml -notmat
 Check-YakuUse ($catJs -match "isCopy = mode === 'copy_text'" -and $catJs -match "isCopy \? 'コピーできます。' : 'ファイルにできます。'") 'コピーのときはコピーと言う'
 Check-YakuUse ($catProject -match "mode -eq 'copy_text'.*そのままコピーに入れます") '未確認の断りも出す先に合わせる'
 
-# 初回の案内。1つ目に本文の無い「訳したい文章を貼り付けます」を出していたが、
-# 画面の見出しが同じことを言っており、しかもすぐ下の1行を覆っていた
-# （実測 1240x860: 吹き出し y320-419 が「1行ずつ確認する画面に移ります。…」y376-400 を覆う）。
-$tourJsUse = Get-Content -LiteralPath (Join-Path $root 'www\assets\tour.js') -Raw -Encoding UTF8
-Check-YakuUse ($tourJsUse -notmatch "target: '#quick-input'") '当たり前の操作を説明する段は置かない'
-# 前の段の操作で画面が動くと、次の段のボタンが画面の外へ出て、吹き出しだけが端で切れる。
-Check-YakuUse ($tourJsUse -match 'box\.top < 12 \|\| box\.bottom > window\.innerHeight - 12') '指す先が画面の外なら、先に見える所へ戻す'
-Check-YakuUse ($tourJsUse -match "target: '#cat-open-file-entry'[\s\S]{0,500}?preservePosition: true" -and $tourJsUse.Contains('if (step.preservePosition) { next(); return; }')) '狭い初回画面では入力欄の位置を守る'
-Check-YakuUse ($tourJsUse -match "target: '#cat-open-file-entry'[\s\S]{0,700}?nextAtTop: true" -and $tourJsUse.Contains('target.blur();') -and $tourJsUse.Contains('window.scrollTo(0, 0);')) '資料選択の次は入力欄へ戻す'
-Check-YakuUse ($tourJsUse.Contains("document.getElementById('quick-form')") -and $tourJsUse.Contains('new MutationObserver') -and $tourJsUse.Contains('mutationObserver.disconnect()')) '入力で動いた送信ボタンを案内が追いかける'
+# 初回ツアーは退役したため、画面本体に残る入力・資料選択の導線だけを確認する。
 # 中央へ寄せると押しただけで大きく飛ぶ。開いた欄はいちばん少ない移動で見せる。
 # 2026-08-18: 最初の入力欄の bounding box で出し入れを決める2段目の条件が
 # 実機で偽のまま外れず、見出しが画面外で開いた。見出しへの scrollIntoView を
@@ -295,7 +282,7 @@ Check-YakuUse ($catJs -match "bindFileDrop\(el\('quick-area'\), el\('cat-file-in
 # まとめて行う道は道具の帯にあり、名前もそう言っている。
 Check-YakuUse ($catJs -match 'data-cat-translate-row') 'この行だけ訳すがある'
 Check-YakuUse ($catJs -match 'data-cat-copy-target') 'この行の訳文をコピーがある'
-Check-YakuUse ($catJs -match "(?s)function translateRow[\s\S]{0,700}?mode: 'translate', index: index") '1行だけの依頼も、まとめて訳すのと同じ口を使う'
+Check-YakuUse ($catJs -match "(?s)function translateRow[\s\S]{0,1600}?mode: 'translate', index: index") '1行だけの依頼も、まとめて訳すのと同じ口を使う'
 Check-YakuUse ($serverForView -match '\$onlyIndex') 'サーバは index を受けたらその行だけ訳す'
 
 
@@ -305,14 +292,12 @@ Check-YakuUse ($serverForView -match '\$onlyIndex') 'サーバは index を受�
 # PDF with a Word document」／Trados は Word原文↔PDF訳文の設定手順まで書いている）。
 $serverPdf = Get-Content -LiteralPath (Join-Path $root 'src\Server.ps1') -Raw -Encoding UTF8
 $pdfJs = Get-Content -LiteralPath (Join-Path $root 'www\assets\pdf-extract.js') -Raw -Encoding UTF8
-$adminJs = Get-Content -LiteralPath (Join-Path $root 'www\assets\admin.js') -Raw -Encoding UTF8
 # 利用者の画面は普段 script-src 'self' のまま。取り込みで開いたときだけ緩める。
 Check-YakuUse ($serverPdf -match "AllowWasm:\`$wantsImport") '取り込みで開いたときだけ WebAssembly を許す'
 Check-YakuUse ($serverPdf -match "Get-YakuQueryValue -Request \`$req -Name 'import'") '住所の import を見て決める'
 Check-YakuUse ($catHtml -match 'name="yaku-import"') '画面側にも、取り込みで来たことを渡す'
 # 段組みの判定は測って決めた実装。写すと必ず食い違うので、共通部品に1つだけ置く。
 Check-YakuUse ($pdfJs -match 'export function yakuPageTextByColumns') '段組みの判定は共通部品にある'
-Check-YakuUse ($adminJs -match "from '/assets/pdf-extract.js'" -and $adminJs -notmatch 'function yakuPageTextByColumns') '管理画面も同じ部品を使う（写しを持たない）'
 # 画像PDFは受けない。市販ツールも memoQ・Trados が外部OCRへ回している。
 Check-YakuUse ($pdfJs -match 'lowText') '文字が取れないPDFを見分ける'
 Check-YakuUse ($catJs -match 'OCRでテキスト付きのPDFにしてから') '画像PDFは、OCRしてからと案内する'

@@ -34,7 +34,6 @@ function NewCase-T9193 {
 Write-Host 'Test-YakuV9193NumericWordQa'
 . (Join-Path $YakuT9193Src 'SrcModules.ps1')
 foreach ($YakuT9193File in $script:YakuSrcModuleFiles) {
-    if ($YakuT9193File -eq 'DesktopIntegration.ps1') { continue }
     . (Join-Path $YakuT9193Src $YakuT9193File)
 }
 $YakuT9193Temp = Join-Path ([IO.Path]::GetTempPath()) ('yaku9193-' + [guid]::NewGuid().ToString('N'))
