@@ -29,6 +29,9 @@
 # maintenance scripts. Keep terminology QA available outside Server.ps1 too;
 # merely having no registered terms must never turn into a blocking
 # "terminology checker unavailable" result.
+if (-not (Get-Command Get-YakuFileSha256Hex -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'Runtime.ps1')
+}
 if (-not (Get-Command Test-YakuTerminologyCompliance -ErrorAction SilentlyContinue)) {
     . (Join-Path $PSScriptRoot 'Terminology.ps1')
 }
@@ -2596,7 +2599,7 @@ function Initialize-YakuCatProjectSourceArtifact {
     }
     $sourceFull = [System.IO.Path]::GetFullPath($sourcePath)
     $ext = [System.IO.Path]::GetExtension($sourceFull).ToLowerInvariant()
-    $sourceHash = (Get-FileHash -LiteralPath $sourceFull -Algorithm SHA256).Hash.ToLowerInvariant()
+    $sourceHash = Get-YakuFileSha256Hex -Path $sourceFull
     $sourceSnapshotId = $sourceHash.Substring(0, 32)
     $destination = [System.IO.Path]::GetFullPath((Get-YakuCatOwnedSourceArtifactPath -ProjectId ([string]$Project.Id) -Extension $ext -SourceSnapshotId $sourceSnapshotId))
     $sourceDir = Split-Path -Parent $destination
@@ -2604,13 +2607,13 @@ function Initialize-YakuCatProjectSourceArtifact {
 
     if (-not $sourceFull.Equals($destination, [StringComparison]::OrdinalIgnoreCase)) {
         if (Test-Path -LiteralPath $destination -PathType Leaf) {
-            $existingHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
+            $existingHash = Get-YakuFileSha256Hex -Path $destination
             if ($existingHash -ne $sourceHash) { throw 'CAT_SOURCE_ARTIFACT_CONFLICT' }
         } else {
             $tempPath = Join-Path $sourceDir ('.source-' + [guid]::NewGuid().ToString('N') + '.tmp')
             try {
                 [System.IO.File]::Copy($sourceFull, $tempPath, $false)
-                $copiedHash = (Get-FileHash -LiteralPath $tempPath -Algorithm SHA256).Hash.ToLowerInvariant()
+                $copiedHash = Get-YakuFileSha256Hex -Path $tempPath
                 if ($copiedHash -ne $sourceHash) { throw 'CAT_SOURCE_ARTIFACT_COPY_MISMATCH' }
                 [System.IO.File]::Move($tempPath, $destination)
             } finally {
@@ -2619,7 +2622,7 @@ function Initialize-YakuCatProjectSourceArtifact {
         }
     }
 
-    $artifactHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
+    $artifactHash = Get-YakuFileSha256Hex -Path $destination
     $artifactSize = [int64](Get-Item -LiteralPath $destination).Length
     if ($Project.PSObject.Properties.Name -contains 'SourceArtifactSha256' -and
         -not [string]::IsNullOrWhiteSpace([string]$Project.SourceArtifactSha256) -and
@@ -2664,7 +2667,7 @@ function Resolve-YakuCatSavedSourceArtifact {
     if (-not $artifactPath.StartsWith($projectFull + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'CAT_SOURCE_ARTIFACT_PATH_INVALID' }
     if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) { throw 'CAT_SOURCE_ARTIFACT_MISSING' }
     $expectedHash = ([string]$Record.source_artifact_sha256).ToLowerInvariant()
-    $actualHash = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $actualHash = Get-YakuFileSha256Hex -Path $artifactPath
     if ([string]::IsNullOrWhiteSpace($expectedHash) -or $actualHash -ne $expectedHash) { throw 'CAT_SOURCE_ARTIFACT_INTEGRITY_FAILED' }
     if ([int64]$Record.source_artifact_size -ne [int64](Get-Item -LiteralPath $artifactPath).Length) { throw 'CAT_SOURCE_ARTIFACT_INTEGRITY_FAILED' }
     return $artifactPath
@@ -6404,13 +6407,13 @@ function Export-YakuCatProject {
     if ($originalBlocks.Count -eq 0) {
         $originalBlocks = @(ConvertFrom-YakuCatSavedSegmentsToBlocks -Segments $segs)
     }
-    $hashBefore = (Get-FileHash -LiteralPath ([string]$Project.Path) -Algorithm SHA256).Hash
+    $hashBefore = (Get-YakuFileSha256Hex -Path ([string]$Project.Path)).ToUpperInvariant()
     if($hashBefore -cne $expectedSourceHash.ToUpperInvariant()){
         throw 'CAT_EXPORT_SOURCE_ARTIFACT_CONFLICT: 原本が作業開始後に変更されています。「原文ファイルを差し替える」から新版として取り込んでください。'
     }
     $currentExtract = Get-YakuExcelTextBlocks -Path ([string]$Project.Path) -Direction ([string]$Project.Direction) `
         -Settings $Settings -ProgressState $ProgressState
-    $hashAfter = (Get-FileHash -LiteralPath ([string]$Project.Path) -Algorithm SHA256).Hash
+    $hashAfter = (Get-YakuFileSha256Hex -Path ([string]$Project.Path)).ToUpperInvariant()
     if ($hashBefore -ne $hashAfter) {
         throw 'CAT_EXPORT_SOURCE_CHANGED_DURING_READ: 原文を確認している間に元の Excel が変更されました。もう一度出力してください。'
     }
@@ -6463,7 +6466,7 @@ function Export-YakuCatProject {
         }
     }
     $writeBlocks=@($currentExtract.Blocks)+@($confirmedEmptyBlocks)
-    $sourceHashBeforeWrite = (Get-FileHash -LiteralPath ([string]$Project.Path) -Algorithm SHA256).Hash
+    $sourceHashBeforeWrite = (Get-YakuFileSha256Hex -Path ([string]$Project.Path)).ToUpperInvariant()
     if ($sourceHashBeforeWrite -ne $hashAfter) {
         throw 'CAT_EXPORT_SOURCE_CHANGED_BEFORE_COPY: 元の Excel が出力直前に変更されました。訳文はまだ書き込んでいません。もう一度出力してください。'
     }

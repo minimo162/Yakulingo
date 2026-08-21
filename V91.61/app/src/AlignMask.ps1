@@ -27,10 +27,16 @@ $script:YakuAlignKanjiDigit = '[〇零一二三四五六七八九十百千万億
 # 「分」は十分（じゅうぶん）、「部」は一部、「方」は一方、「期」は四半期に
 # 当たってしまうので入れない。取りこぼすより、文を壊さないほうを採る。
 $script:YakuAlignKanjiUnit = '(?:円|ドル|株|名|人|件|台|年|月|日|回|倍|割|％|%|ポイント)'
-# 英語の綴りによる数。桁語（hundred 以上）を含むものだけを数とみなす。
-# そうしないと one of the ... まで潰れる。
-$script:YakuAlignEnWord = '(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|trillion|point)'
+# 英語の cardinal / ordinal 数詞。外部送信の最終数値スキャンも、桁語の
+# 有無によらずこれらを数値として扱うため、アライメント側でも全て消す。
+$script:YakuAlignEnCardinal = '(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)'
+$script:YakuAlignEnOrdinal = '(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth|fortieth|fiftieth|sixtieth|seventieth|eightieth|ninetieth|hundredth|thousandth|millionth|billionth|trillionth)'
 $script:YakuAlignEnScale = '(?:hundred|thousand|million|billion|trillion)'
+$script:YakuAlignEnNumberWord = '(?:' + $script:YakuAlignEnCardinal + '|' + $script:YakuAlignEnScale + '|' + $script:YakuAlignEnOrdinal + ')'
+# point は後続が zero-nine のときだけ小数点として数に含める。
+# それ以外の通常語（one point to consider 等）は point を残す。
+$script:YakuAlignEnFractionDigit = '(?:zero|one|two|three|four|five|six|seven|eight|nine)'
+$script:YakuAlignEnWord = $script:YakuAlignEnNumberWord
 
 function Get-YakuAlignmentMaskToken {
     param([ValidateSet('ja', 'en')][string]$Language = 'ja')
@@ -56,11 +62,14 @@ function ConvertTo-YakuAlignmentMaskedText {
     if ($Language -eq 'en') {
         # 12.2 billion / 1,234 thousand → [NUM]
         $s = [regex]::Replace($s, "(?:$num)(?:\s*$script:YakuAlignEnScale\b)?", $token, 'IgnoreCase')
-        # 綴りの数。桁語を含む並びだけを潰す。
+        # canonical scanner と同じく、point の後ろが数字語のときだけ小数を潰す。
+        $decimalLead = '(?:a|' + $script:YakuAlignEnNumberWord + ')'
+        $decimalPattern = '\b' + $decimalLead + '(?:[\s\-]+(?:and[\s\-]+)?' + $script:YakuAlignEnNumberWord + ')*[\s\-]+point[\s\-]+' + $script:YakuAlignEnFractionDigit + '(?:[\s\-]+' + $script:YakuAlignEnFractionDigit + ')*(?:[\s\-]+' + $script:YakuAlignEnScale + ')*\b'
+        $s = [regex]::Replace($s, $decimalPattern, $token, 'IgnoreCase')
+        # 綴りの cardinal / ordinal / scale は、point と独立に潰す。
         $s = [regex]::Replace($s, "\b$script:YakuAlignEnWord(?:[\s\-]+(?:and[\s\-]+)?$script:YakuAlignEnWord)*\b", {
                 param($m)
-                if ($m.Value -match $script:YakuAlignEnScale) { return $token }
-                return $m.Value
+                return $token
             }, 'IgnoreCase')
     }
     else {
@@ -100,7 +109,7 @@ function Test-YakuAlignmentTextSafe {
         else {
             $m = [regex]::Match($s, "\b$script:YakuAlignEnWord(?:[\s\-]+(?:and[\s\-]+)?$script:YakuAlignEnWord)*\b", 'IgnoreCase')
             while ($m.Success) {
-                if ($m.Value -match $script:YakuAlignEnScale) { [void]$hits.Add('綴りの数が残っている: ' + $m.Value); break }
+                if ($m.Value -match $script:YakuAlignEnNumberWord) { [void]$hits.Add('綴りの数が残っている: ' + $m.Value); break }
                 $m = $m.NextMatch()
             }
         }

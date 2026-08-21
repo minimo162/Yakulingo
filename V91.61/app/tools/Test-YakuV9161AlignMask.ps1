@@ -51,8 +51,27 @@ Chk ((MaskEn 'a loss of twelve point two billion yen') -eq 'a loss of [NUM] yen'
 Chk ((MaskEn 'approximately one hundred thousand units') -eq 'approximately [NUM] units') '綴りの数（桁語つき）を消す'
 
 Write-Host '英語: 消しすぎない' -ForegroundColor Cyan
-Chk ((MaskEn 'one of the three pillars of our strategy') -eq 'one of the three pillars of our strategy') '桁語を含まない綴りは数として扱わない'
+Chk ((MaskEn 'one of the three pillars of our strategy') -eq '[NUM] of the [NUM] pillars of our strategy') '桁語のない cardinal も数として扱う'
 Chk ((MaskEn 'The point is that quality matters') -eq 'The point is that quality matters') 'point 単独は数として扱わない'
+Chk ((MaskEn 'one point to consider') -eq '[NUM] point to consider') '通常語の point は小数点として吸収しない'
+Chk ([bool](Test-YakuAlignmentTextSafe -Lines @((MaskEn 'one point to consider')) -Language 'en').Safe) '通常語の point を残したマスクも検査を通る'
+
+Write-Host '英語: 年度と ordinal' -ForegroundColor Cyan
+$periodText = 'Period: FY2026 First Quarter'
+$periodMasked = [string](@(Protect-YakuAlignmentLines -Lines @($periodText) -Language 'en')[0])
+Chk ($periodMasked -eq 'Period: FY[NUM] [NUM] Quarter') 'FY年度と ordinal の数を同じtokenへ消す'
+
+# CopilotClient の最終 receipt と同じ canonical scanner を通す。ここで
+# MaskedCount が残れば PROTECTION_RECEIPT_PROTECTED_TEXT_NOT_MASKED になる。
+. (Join-Path (Join-Path $root 'src') 'Translation.ps1')
+$periodReceipt = New-YakuNumericMaskMap -Text $periodMasked -Root $root -Direction 'to_en' -Location 'test-alignment-protected-receipt' -AllowExistingTokens
+Chk ([int]$periodReceipt.MaskedCount -eq 0) 'FY年度と ordinal の protected text は canonical rescan を通る'
+$ordinaryPointMasked = [string](MaskEn 'one point to consider')
+$ordinaryPointReceipt = New-YakuNumericMaskMap -Text $ordinaryPointMasked -Root $root -Direction 'to_en' -Location 'test-alignment-ordinary-point' -AllowExistingTokens
+Chk ([int]$ordinaryPointReceipt.MaskedCount -eq 0) '通常語の point の protected text は canonical rescan を通る'
+$decimalMasked = [string](MaskEn 'a loss of twelve point two billion yen')
+$decimalReceipt = New-YakuNumericMaskMap -Text $decimalMasked -Root $root -Direction 'to_en' -Location 'test-alignment-decimal' -AllowExistingTokens
+Chk ([int]$decimalReceipt.MaskedCount -eq 0) '数字語の小数の protected text は canonical rescan を通る'
 
 Write-Host '検査: 残っていれば送らせない' -ForegroundColor Cyan
 $ok = Test-YakuAlignmentTextSafe -Lines @('生産設備等に〔数〕円', '売上は〔数〕円') -Language 'ja'

@@ -71,6 +71,21 @@ function Get-YakuSha256Hex {
     finally { $sha.Dispose() }
 }
 
+function Get-YakuFileSha256Hex {
+    param([Parameter(Mandatory=$true)][string]$Path)
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    $stream = $null
+    $sha = $null
+    try {
+        $stream = [System.IO.File]::Open($fullPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+    } finally {
+        if ($null -ne $sha) { $sha.Dispose() }
+        if ($null -ne $stream) { $stream.Dispose() }
+    }
+}
+
 function Write-YakuTextAtomic {
     param(
         [Parameter(Mandatory=$true)][string]$Path,

@@ -790,7 +790,7 @@ function New-YakuCatFinalReviewDecision {
         if([string]::IsNullOrWhiteSpace($ArtifactPath) -or -not (Test-Path -LiteralPath $ArtifactPath -PathType Leaf)){throw 'CAT_FINAL_REVIEW_ARTIFACT_MISSING'}
         $expectedExtension=@{draft_docx='.docx';draft_xlsx='.xlsx';draft_xlsm='.xlsm';draft_csv='.csv'}[$ArtifactKind]
         if([IO.Path]::GetExtension($ArtifactPath) -ine $expectedExtension){throw 'CAT_FINAL_REVIEW_ARTIFACT_KIND_MISMATCH'}
-        $artifacts.Add([pscustomobject]@{artifact_kind=$expectedExtension.TrimStart('.');sha256=(Get-FileHash -LiteralPath $ArtifactPath -Algorithm SHA256).Hash.ToLowerInvariant();source_generation_id='';role='deliverable';path=[IO.Path]::GetFullPath($ArtifactPath);render_id=''})|Out-Null
+        $artifacts.Add([pscustomobject]@{artifact_kind=$expectedExtension.TrimStart('.');sha256=(Get-YakuFileSha256Hex -Path $ArtifactPath);source_generation_id='';role='deliverable';path=[IO.Path]::GetFullPath($ArtifactPath);render_id=''})|Out-Null
     }
     $finalPdfHash='';$renderProfileHash='';$renderReviewed=$false
     if(-not [string]::IsNullOrWhiteSpace($RenderId)){
@@ -841,7 +841,7 @@ function Get-YakuCatFinalReviewDecisionStatus {
     if([string]$Decision.required_review_profile_hash -ne [string]$currentRequiredProfile.profile_hash){$reasons.Add('required_review_profile_changed')|Out-Null}
     foreach($artifact in @($Decision.final_artifacts|Where-Object{-not [string]::IsNullOrWhiteSpace([string]$_.path)})){
         if(-not (Test-Path -LiteralPath ([string]$artifact.path) -PathType Leaf)){$reasons.Add('artifact_missing')|Out-Null;continue}
-        if((Get-FileHash -LiteralPath ([string]$artifact.path) -Algorithm SHA256).Hash.ToLowerInvariant() -ne [string]$artifact.sha256){$reasons.Add('artifact_changed')|Out-Null}
+        if((Get-YakuFileSha256Hex -Path ([string]$artifact.path)) -ne [string]$artifact.sha256){$reasons.Add('artifact_changed')|Out-Null}
     }
     return [pscustomobject]@{status=$(if($reasons.Count -eq 0){'current'}else{'stale'});reasons=@($reasons.ToArray());decision=$Decision}
 }

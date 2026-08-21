@@ -67,6 +67,7 @@ tools/Test-YakuBootstrap.ps1	crlf
 tools/Test-YakuCopilotImportRegression.ps1	crlf
 tools/Test-YakuEdgeAppMode.ps1	lf
 tools/Test-YakuFeaturePruning.ps1	crlf
+tools/Test-YakuFileHashRuntime.ps1	crlf
 tools/Test-YakuPackage.ps1	crlf
 tools/Test-YakuPackageLanguageBoundary.ps1	lf
 tools/Test-YakuPremiumUi.ps1	lf
