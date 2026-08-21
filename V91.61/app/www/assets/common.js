@@ -1,6 +1,16 @@
 ﻿(function () {
   'use strict';
 
+  function ensureUiReviewStyles() {
+    if (document.querySelector('link[data-yaku-ui-review]')) return;
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = '/assets/ui-review.css?v=20260822a';
+    link.setAttribute('data-yaku-ui-review', '');
+    document.head.appendChild(link);
+  }
+  ensureUiReviewStyles();
+
   function meta(name) {
     var node = document.querySelector('meta[name="' + name + '"]');
     return node ? node.getAttribute('content') || '' : '';
