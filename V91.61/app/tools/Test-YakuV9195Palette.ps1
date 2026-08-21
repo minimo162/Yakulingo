@@ -141,7 +141,7 @@ if (Test-Path -LiteralPath $N9195PaletteJsPath -PathType Leaf) {
 
 if (Test-Path -LiteralPath $N9195CatHtmlPath -PathType Leaf) {
     $N9195CatHtml = Get-Content -LiteralPath $N9195CatHtmlPath -Raw -Encoding UTF8
-    Assert-N9195 ($N9195CatHtml -match 'href="/palette"') 'cat.html から /palette への導線が1本ある(MINOR-8)'
+    Assert-N9195 ($N9195CatHtml -notmatch 'href="/palette"') '通常の翻訳面から専用パレット画面へ分岐しない'
 }
 
 # ==================================================== (b) 実装地図（本物の関数）
@@ -253,15 +253,18 @@ function Invoke-N9195Route {
     return [pscustomobject]@{ Exception = $routeException; Status = $script:N9195SentStatus; Body = $body; Text = $script:N9195SentText }
 }
 
-# GET /palette -> Serve-YakuAppPage(palette.html)
+# 通常の翻訳面は1つ。旧 /palette・/cat・/quick も同じ cat.html を返し、
+# 画面側で履歴を増やさず / へ正規化する。
 $script:N9195ServedPageName = ''
 $null = Invoke-N9195Route -Method 'GET' -Path '/palette'
-Assert-N9195 ($script:N9195ServedPageName -eq 'palette.html') 'GET /palette が Serve-YakuAppPage を palette.html で呼ぶ'
+Assert-N9195 ($script:N9195ServedPageName -eq 'cat.html') 'GET /palette が左右の標準翻訳面を返す'
 
-# 既存の /cat・/quick は変更していない（palette.html を返さない）。
 $script:N9195ServedPageName = ''
 $null = Invoke-N9195Route -Method 'GET' -Path '/cat'
-Assert-N9195 ($script:N9195ServedPageName -eq 'cat.html') 'GET /cat は従来どおり cat.html のまま(palette追加の副作用なし)'
+Assert-N9195 ($script:N9195ServedPageName -eq 'cat.html') 'GET /cat も左右の標準翻訳面を返す'
+$script:N9195ServedPageName = ''
+$null = Invoke-N9195Route -Method 'GET' -Path '/quick'
+Assert-N9195 ($script:N9195ServedPageName -eq 'cat.html') 'GET /quick も左右の標準翻訳面を返す'
 
 # --- /api/palette/instant --------------------------------------------
 # TM完全一致の種を仕込む(既定パスへ。Find-YakuTranslationMemoryExact は
@@ -555,7 +558,7 @@ if (Test-Path -LiteralPath $N9195OutJson -PathType Leaf) {
     Assert-N9195 ($N9195Observed.afterEditConfirmHtml -match 'data-yaku-main-card') '書き換え後の原文でも翻訳結果が結果欄へ挿し込まれる'
 
     # ============================================== MAJOR-B/MAJOR-4/MINOR-C/NIT-E: 幾何
-    # (a) 主札は画面内に完全に収まり、帯(footer)に隠れない。
+    # (a) 左右画面では結果欄を一定高のスクロール領域にして、隣のExcel面を押し流さない。
     # (b) 原文欄(#palette-input)は少なくとも一部が見える(原文併記、spec item 3)。
     # (c) キー案内(.palette-hint)は見える。
     function Test-N9195Geometry {
@@ -564,11 +567,7 @@ if (Test-Path -LiteralPath $N9195OutJson -PathType Leaf) {
             Assert-N9195 ($null -ne $Geo.main) ($Label + ': 主札の矩形を測れている(前提条件)')
         }
         if ($null -ne $Geo.main) {
-            Assert-N9195 ([double]$Geo.main.top -ge -2) ($Label + ': 主札の上端が画面内(top=' + [string]$Geo.main.top + ')')
-            Assert-N9195 ([double]$Geo.main.bottom -le ([double]$Geo.innerHeight + 2)) ($Label + ': 主札の下端が画面内(bottom=' + [string]$Geo.main.bottom + ' innerHeight=' + [string]$Geo.innerHeight + ')、MAJOR-4')
-            if ($null -ne $Geo.footer) {
-                Assert-N9195 ([double]$Geo.main.bottom -le ([double]$Geo.footer.top + 2)) ($Label + ': 主札は帯(footer)に隠れていない(main.bottom=' + [string]$Geo.main.bottom + ' footer.top=' + [string]$Geo.footer.top + ')、MAJOR-B')
-            }
+            Assert-N9195 ($null -ne $Geo.result -and [string]$Geo.resultOverflowY -eq 'auto' -and [string]$Geo.resultMaxHeight -eq '280px') ($Label + ': 左右画面では結果欄が280px以内のスクロール領域になる(result.maxHeight=' + [string]$Geo.resultMaxHeight + ' overflowY=' + [string]$Geo.resultOverflowY + ')')
         }
         if ($RequireInput) {
             Assert-N9195 ($null -ne $Geo.input) ($Label + ': 原文欄の矩形を測れている(前提条件)')
@@ -580,10 +579,6 @@ if (Test-Path -LiteralPath $N9195OutJson -PathType Leaf) {
             }
         }
         Assert-N9195 ($null -ne $Geo.hint) ($Label + ': キー案内(.palette-hint)の矩形を測れている')
-        if ($null -ne $Geo.hint) {
-            Assert-N9195 ([double]$Geo.hint.bottom -le ([double]$Geo.innerHeight + 2)) ($Label + ': キー案内が画面の下端より上にある(見える)')
-            Assert-N9195 ([double]$Geo.hint.top -ge 0) ($Label + ': キー案内が画面の上端より下にある(見える)')
-        }
     }
 
     # NIT-E: 即答(TM)だけが出ている段階の幾何も使う。原文欄はこの時点でも

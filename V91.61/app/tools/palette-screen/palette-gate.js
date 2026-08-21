@@ -1,10 +1,10 @@
 'use strict';
 /*
-  お手軽翻訳(/palette)を、本物のChromiumで開いて確かめる。
+  標準の左右翻訳面(/)に埋め込まれたチャット翻訳を、本物のChromiumで開いて確かめる。
 
   cat-screen-gate.js と同じ考え方（本物のhtml/js/cssをローカルHTTPで配り、
   /api/* は決め打ちの応答で記録し、実際に押す・打つ）。ここでは題材を
-  palette 一本に絞り、cat-screen-gate.js を肥大化させない。
+  チャット翻訳一本に絞り、cat-screen-gate.js を肥大化させない。
 
   判定はしない。判定は呼び出し側の PowerShell が行う（観察と判定を分ける、
   既存の流儀）。ここは観察した結果をJSONで書き出すだけ。
@@ -83,9 +83,16 @@ const translateRequests = [];
 const server = http.createServer(function (req, res) {
   const url = new URL(req.url, 'http://127.0.0.1');
   if (url.pathname === '/palette' || url.pathname === '/') {
-    let html = fs.readFileSync(path.join(wwwDir, 'palette.html'), 'utf8');
+    let html = fs.readFileSync(path.join(wwwDir, 'cat.html'), 'utf8');
     html = html.replace(/__YAKU_SESSION_TOKEN__/g, 'palette-test-token')
-      .replace(/__YAKU_MAX_BATCH_CHARS__/g, '4000');
+      .replace(/__YAKU_MAX_UPLOAD_BYTES__/g, '52428800')
+      .replace(/__YAKU_MAX_BATCH_CHARS__/g, '4000')
+      .replace(/__YAKU_AMOUNT_NOTATION__/g, 'oku')
+      .replace(/__YAKU_OUTPUT_FONT__/g, 'Arial')
+      .replace(/__YAKU_OUTPUT_FONT_JP__/g, 'MS P\\u30b4\\u30b7\\u30c3\\u30af')
+      .replace(/__YAKU_TOUR__/g, '0')
+      .replace(/__YAKU_IMPORT__/g, '0')
+      .replace(/__YAKU_VIEW__/g, 'start');
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(html); return;
   }
   if (url.pathname.startsWith('/assets/')) {
@@ -99,6 +106,10 @@ const server = http.createServer(function (req, res) {
     if (url.pathname === '/api/ready-state') {
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ canTranslate: true, label: '準備完了', class: 'ok' })); return;
+    }
+    if (url.pathname === '/api/cat/recent') {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ projects: [] })); return;
     }
     if (url.pathname === '/api/palette/instant') {
       let payload = {};
@@ -176,6 +187,8 @@ function measureGeometry(page) {
     var hint = document.querySelector('.palette-hint');
     var footer = document.querySelector('.palette-footer');
     var input = document.getElementById('palette-input');
+    var result = document.getElementById('palette-result');
+    var resultStyle = result ? getComputedStyle(result) : null;
     var candidate1 = document.querySelector('[data-yaku-candidate-index="1"]');
     var hintTarget = document.getElementById('palette-hint-target');
     return {
@@ -185,6 +198,9 @@ function measureGeometry(page) {
       hint: rectOf(hint),
       footer: rectOf(footer),
       input: rectOf(input),
+      result: rectOf(result),
+      resultMaxHeight: resultStyle ? resultStyle.maxHeight : '',
+      resultOverflowY: resultStyle ? resultStyle.overflowY : '',
       candidate1: rectOf(candidate1),
       hintTargetText: hintTarget ? hintTarget.textContent : ''
     };
