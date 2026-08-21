@@ -597,45 +597,6 @@ function sendJson(response, value) {
     });
     assert.deepStrictEqual(state, { project: 'project-old', view: 'start', workspaceHidden: true, title: 'Project Old', direction: 'to-en', rowArrived: true, rowActive: false, focusedTarget: false, focusEvents: focusEventsBeforeViewExit, activationRerenders: 1, gridWasEmpty: true }, JSON.stringify(state));
 
-    const importPage = await browser.newPage({ viewport: { width: 1912, height: 987 } });
-    const importErrors = [];
-    importPage.on('pageerror', error => importErrors.push(error.message));
-    await importPage.goto(baseUrl + '/cat?import-test=1');
-    await importPage.setContent(`<!doctype html><html><head><title>import-test</title><meta name="yaku-import" content="1"></head><body class="app-cat" data-cat-view="start">
-      <main class="shell"><section id="cat-picker"><section id="cat-align-entry"><button id="cat-open-align-entry" type="button">過去のPDFを読み込む</button></section>
-        <section id="cat-source-align" class="cat-start-panel"><h3>過去の訳を登録する</h3><p>日本語版と英語版のPDFから、再利用する訳を登録します。</p>
-          <div class="field-label">日本語版のPDF<button type="button">ファイルを選ぶ</button></div>
-          <div class="field-label">英語版のPDF<button type="button">ファイルを選ぶ</button></div>
-          <button id="cat-align-paste-open" type="button">テキストを貼り付ける</button>
-        </section></section><section id="cat-workspace" hidden><div id="cat-editor-toolbar"></div></section></main></body></html>`);
-    await importPage.evaluate(() => history.replaceState(null, '', '/cat?import=1'));
-    await importPage.addScriptTag({ path: premiumPath });
-    await importPage.waitForFunction(() => {
-      const past = document.querySelector('[data-premium-nav="past"]');
-      const start = document.getElementById('premium-cat-start');
-      const work = document.getElementById('premium-work-list');
-      const align = document.getElementById('cat-source-align');
-      return past && past.classList.contains('is-active') && past.getAttribute('href') === '/cat?import=1' &&
-        document.body.classList.contains('premium-mode-import') && start && start.hidden && work && work.hidden &&
-        align && !align.hidden && new URL(location.href).searchParams.get('import') === '1';
-    }, null, { timeout: 20000 });
-    const importState = await importPage.evaluate(() => ({
-      activePast: document.querySelector('[data-premium-nav="past"]').classList.contains('is-active'),
-      href: document.querySelector('[data-premium-nav="past"]').getAttribute('href'),
-      search: location.search,
-      importMode: document.body.classList.contains('premium-mode-import'),
-      excelStartHidden: document.getElementById('premium-cat-start').hidden,
-      workListHidden: document.getElementById('premium-work-list').hidden,
-      alignVisible: !document.getElementById('cat-source-align').hidden,
-      japanesePdf: document.body.textContent.includes('日本語版のPDF'),
-      englishPdf: document.body.textContent.includes('英語版のPDF'),
-      primaryAction: document.body.textContent.includes('テキストを貼り付ける'),
-      viewport: [window.innerWidth, window.innerHeight]
-    }));
-    assert.deepStrictEqual(importState, { activePast: true, href: '/cat?import=1', search: '?import=1', importMode: true, excelStartHidden: true, workListHidden: true, alignVisible: true, japanesePdf: true, englishPdf: true, primaryAction: true, viewport: [1912, 987] }, JSON.stringify(importState));
-    if (importErrors.length) throw new Error('PREMIUM_UI_IMPORT_PAGEERROR: ' + importErrors.join(' | '));
-    await importPage.close();
-
     const alignPage = await browser.newPage({ viewport: { width: 1912, height: 987 } });
     const alignErrors = [];
     const alignConsole = [];
@@ -798,18 +759,25 @@ function sendJson(response, value) {
     const importCsp = importResponse ? (importResponse.headers()['content-security-policy'] || '') : '';
     await importRuntimePage.waitForFunction(() => {
       const meta = document.querySelector('meta[name="yaku-import"]');
+      const past = document.querySelector('[data-premium-nav="past"]');
+      const start = document.getElementById('premium-cat-start');
+      const work = document.getElementById('premium-work-list');
       const align = document.getElementById('cat-source-align');
       return location.search === '?import=1' && meta && meta.getAttribute('content') === '1' &&
-        document.body.classList.contains('premium-mode-import') && align && !align.hidden;
+        document.body.classList.contains('premium-mode-import') && past && past.getAttribute('href') === '/cat?import=1' &&
+        start && start.hidden && work && work.hidden && align && !align.hidden;
     }, null, { timeout: 20000 });
     let importRuntimeState = await importRuntimePage.evaluate(() => ({
       search: location.search,
       importMeta: document.querySelector('meta[name="yaku-import"]').getAttribute('content'),
       alignVisible: !document.getElementById('cat-source-align').hidden,
       activePast: document.querySelector('[data-premium-nav="past"]').classList.contains('is-active'),
+      pastHref: document.querySelector('[data-premium-nav="past"]').getAttribute('href'),
+      excelStartHidden: document.getElementById('premium-cat-start').hidden,
+      workListHidden: document.getElementById('premium-work-list').hidden,
       importMode: document.body.classList.contains('premium-mode-import')
     }));
-    assert.deepStrictEqual(importRuntimeState, { search: '?import=1', importMeta: '1', alignVisible: true, activePast: true, importMode: true }, JSON.stringify(importRuntimeState));
+    assert.deepStrictEqual(importRuntimeState, { search: '?import=1', importMeta: '1', alignVisible: true, activePast: true, pastHref: '/cat?import=1', excelStartHidden: true, workListHidden: true, importMode: true }, JSON.stringify(importRuntimeState));
     assert.ok(importCsp.includes('wasm-unsafe-eval'), importCsp);
 
     await importRuntimePage.evaluate(() => {
