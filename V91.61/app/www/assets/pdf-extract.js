@@ -59,6 +59,245 @@ export function ensureWasm() {
   return wasmReady;
 }
 
+function yakuGroupTextItemsByY(items, lineHeight) {
+  const tolerance = Math.max(3, lineHeight * 0.65);
+  const sorted = items.slice().sort(function (a, b) {
+    return (Number(a.y) || 0) - (Number(b.y) || 0);
+  });
+  const rows = [];
+  for (const item of sorted) {
+    const y = Number(item.y) || 0;
+    let row = rows.length ? rows[rows.length - 1] : null;
+    if (!row || Math.abs(y - row.y) > tolerance) {
+      row = { index: rows.length, y: y, items: [], anchorIds: [] };
+      rows.push(row);
+    }
+    row.items.push(item);
+    row.y = ((row.y * (row.items.length - 1)) + y) / row.items.length;
+  }
+  return rows;
+}
+
+function yakuLooksNumericCell(value) {
+  const text = String(value || '').trim();
+  if (!/[0-9０-９]/.test(text)) return false;
+  const digits = (text.match(/[0-9０-９]/g) || []).length;
+  const letters = (text.match(/[A-Za-zぁ-んァ-ヶ一-鿿]/g) || []).length;
+  // A numeric cell may carry a short unit (for example 百万円), but a sentence
+  // containing a date must not turn an ordinary prose row into a table.
+  return letters === 0 || digits >= letters;
+}
+
+function yakuTableRows(items, fallback, lineHeight) {
+  const rows = yakuGroupTextItemsByY(items, lineHeight);
+  if (rows.length < 3) return null;
+
+  // Cluster left edges with a small coordinate tolerance.  A cluster must occur
+  // on several different visual rows; one long heading at the page margin is
+  // therefore not enough to create a table column.
+  const xTolerance = Math.max(4, Math.min(8, lineHeight * 0.8));
+  const anchors = [];
+  for (const row of rows) {
+    row.anchorIds = [];
+    for (const item of row.items) {
+      const x = Number(item.x) || 0;
+      let best = -1;
+      let bestDistance = Infinity;
+      for (let i = 0; i < anchors.length; i++) {
+        const distance = Math.abs(x - anchors[i].x);
+        if (distance <= xTolerance && distance < bestDistance) {
+          best = i;
+          bestDistance = distance;
+        }
+      }
+      if (best < 0) {
+        best = anchors.length;
+        anchors.push({ x: x, sum: x, observations: 1, rows: new Set() });
+      } else {
+        anchors[best].sum += x;
+        anchors[best].observations++;
+      }
+      anchors[best].rows.add(row.index);
+      // Keep the observed edge stable when a PDF has small per-row jitter.
+      anchors[best].x = anchors[best].sum / anchors[best].observations;
+      row.anchorIds.push(best);
+    }
+  }
+
+  const repeatedIds = new Set();
+  for (let i = 0; i < anchors.length; i++) {
+    if (anchors[i].rows.size >= 3) repeatedIds.add(i);
+  }
+  if (repeatedIds.size < 3) return null;
+
+  function repeatedAnchorIds(row) {
+    return Array.from(new Set(row.anchorIds.filter(function (id) { return repeatedIds.has(id); })));
+  }
+
+  // At least three repeated body rows, each with two numeric cells, keeps
+  // ordinary two-column prose and date-heavy paragraphs out of this path.
+  const bodyRows = rows.filter(function (row) {
+    return repeatedAnchorIds(row).length >= 3 &&
+      row.items.filter(function (item) { return yakuLooksNumericCell(item.text); }).length >= 2;
+  });
+  if (bodyRows.length < 3) return null;
+
+  // Use the observed body spacing rather than a fixed page-coordinate cutoff.
+  // The lower median is stable when one or more gaps are outliers; a ratio
+  // guard catches a detached region while the line-height guard tolerates the
+  // roughly 51px body spacing in the real fixture despite 9px text height.
+  const bodyGaps = [];
+  for (let i = 1; i < bodyRows.length; i++) {
+    const gap = bodyRows[i].y - bodyRows[i - 1].y;
+    if (gap > 0) bodyGaps.push(gap);
+  }
+  if (bodyGaps.length) {
+    const sortedGaps = bodyGaps.slice().sort(function (a, b) { return a - b; });
+    const lowerMedian = sortedGaps[Math.floor((sortedGaps.length - 1) / 2)];
+    const maximumContinuousGap = Math.max(lineHeight * 8, lowerMedian * 3);
+    if (bodyGaps.some(function (gap) { return gap > maximumContinuousGap; })) return fallback;
+  }
+
+  // Do not bridge two independent numeric table bodies.  If the first and
+  // last body rows are separated by ordinary page content, tableStart..tableEnd
+  // would otherwise make that content look like row-major table text.
+  let bodyRegions = 0;
+  let previousBodyRow = null;
+  for (const row of bodyRows) {
+    let separatedByNonTable = false;
+    if (previousBodyRow && row.index > previousBodyRow.index + 1) {
+      const between = rows.slice(previousBodyRow.index + 1, row.index);
+      separatedByNonTable = between.some(function (middleRow) { return repeatedAnchorIds(middleRow).length < 3; });
+    }
+    if (!previousBodyRow || separatedByNonTable) bodyRegions++;
+    previousBodyRow = row;
+  }
+  if (bodyRegions > 1) return fallback;
+
+  // The same three (or more) anchors must survive every body row.  This is the
+  // high-precision part: repeated x positions in unrelated page regions do not
+  // get stitched into one table merely because they are individually common.
+  const commonBodyAnchors = repeatedAnchorIds(bodyRows[0]).filter(function (id) {
+    return bodyRows.every(function (row) { return repeatedAnchorIds(row).indexOf(id) >= 0; });
+  });
+  if (commonBodyAnchors.length < 3) return null;
+
+  // A short row immediately after the last numeric body, aligned to the final
+  // table column, is usually a wrapped continuation.  It cannot safely become
+  // a new logical line; fail closed only for a tight gap so the real footer
+  // roughly 66px below the body remains ordinary page text.  LiteParse may
+  // split one visual continuation into several text items on the same y row.
+  const finalBodyAnchorId = commonBodyAnchors.reduce(function (best, id) {
+    return anchors[id].x > anchors[best].x ? id : best;
+  }, commonBodyAnchors[0]);
+  const finalBodyX = anchors[finalBodyAnchorId].x;
+  const immediatePostBody = rows.filter(function (row) { return row.index === bodyRows[bodyRows.length - 1].index + 1; })[0];
+  if (immediatePostBody && repeatedAnchorIds(immediatePostBody).length < 3) {
+    const continuationGap = immediatePostBody.y - bodyRows[bodyRows.length - 1].y;
+    const firstContinuationItem = immediatePostBody.items.slice().sort(function (a, b) {
+      return (Number(a.x) || 0) - (Number(b.x) || 0);
+    })[0];
+    const firstContinuationX = firstContinuationItem ? Number(firstContinuationItem.x) : NaN;
+    const alignedToFinalColumn = isFinite(firstContinuationX) && Math.abs(firstContinuationX - finalBodyX) <= xTolerance;
+    if (continuationGap > 0 && continuationGap <= lineHeight * 3 && alignedToFinalColumn) return fallback;
+  }
+
+  const geometryRows = rows.filter(function (row) { return repeatedAnchorIds(row).length >= 3; });
+  const firstBody = bodyRows[0].index;
+  const lastBody = bodyRows[bodyRows.length - 1].index;
+  let tableStart = firstBody;
+  let tableEnd = lastBody;
+  // Include a compact header immediately above and a non-numeric table row
+  // immediately below the numeric body, but never reach unrelated page prose.
+  while (tableStart > 0 && tableStart > firstBody - 2 && geometryRows.some(function (row) { return row.index === tableStart - 1; })) tableStart--;
+  while (tableEnd + 1 < rows.length && tableEnd < lastBody + 2 && geometryRows.some(function (row) { return row.index === tableEnd + 1; })) tableEnd++;
+
+  // A table may be surrounded by a title, period, and footer (one item per
+  // row), but repeated two-column prose must keep the existing column-major
+  // reconstruction.  Returning null here safely hands the whole page back to
+  // that path instead of interleaving prose rows around the detected table.
+  const outsideRows = rows.filter(function (row) { return row.index < tableStart || row.index > tableEnd; });
+  const outsideAnchors = [];
+  const outsideAnchorRows = [];
+  for (const row of outsideRows) {
+    const ids = [];
+    for (const item of row.items) {
+      const x = Number(item.x) || 0;
+      let best = -1;
+      let bestDistance = Infinity;
+      for (let i = 0; i < outsideAnchors.length; i++) {
+        const distance = Math.abs(x - outsideAnchors[i].x);
+        if (distance <= xTolerance && distance < bestDistance) {
+          best = i;
+          bestDistance = distance;
+        }
+      }
+      if (best < 0) {
+        best = outsideAnchors.length;
+        outsideAnchors.push({ x: x, sum: x, observations: 1, rows: new Set() });
+      } else {
+        outsideAnchors[best].sum += x;
+        outsideAnchors[best].observations++;
+      }
+      outsideAnchors[best].rows.add(row.index);
+      outsideAnchors[best].x = outsideAnchors[best].sum / outsideAnchors[best].observations;
+      ids.push(best);
+    }
+    outsideAnchorRows.push({ row: row, ids: Array.from(new Set(ids)) });
+  }
+  const repeatedOutsideIds = new Set();
+  for (let i = 0; i < outsideAnchors.length; i++) {
+    if (outsideAnchors[i].rows.size >= 2) repeatedOutsideIds.add(i);
+  }
+  const outsideMultiColumnRows = outsideAnchorRows.filter(function (entry) {
+    return entry.ids.filter(function (id) { return repeatedOutsideIds.has(id); }).length >= 2;
+  });
+  if (outsideMultiColumnRows.length >= 2) {
+    for (let i = 0; i < outsideMultiColumnRows.length - 1; i++) {
+      for (let j = i + 1; j < outsideMultiColumnRows.length; j++) {
+        const commonOutsideAnchors = outsideMultiColumnRows[i].ids.filter(function (id) {
+          return repeatedOutsideIds.has(id) && outsideMultiColumnRows[j].ids.indexOf(id) >= 0;
+        });
+        if (commonOutsideAnchors.length >= 2) return null;
+      }
+    }
+  }
+
+  function renderRow(row, useCellGaps) {
+    if (!useCellGaps) {
+      return row.items.slice().sort(function (a, b) {
+        return (Number(a.x) || 0) - (Number(b.x) || 0);
+      }).map(function (item) { return String(item.text).trim(); }).join(' ');
+    }
+    const cells = [];
+    for (let i = 0; i < row.items.length; i++) {
+      const item = row.items[i];
+      const anchorId = row.anchorIds[i];
+      let cell = cells.filter(function (candidate) { return candidate.anchorId === anchorId; })[0];
+      if (!cell) {
+        cell = { anchorId: anchorId, x: Number(item.x) || 0, texts: [] };
+        cells.push(cell);
+      }
+      cell.x = Math.min(cell.x, Number(item.x) || 0);
+      cell.texts.push(String(item.text).trim());
+    }
+    cells.sort(function (a, b) { return a.x - b.x; });
+    return cells.map(function (cell) { return cell.texts.join(' '); }).join('  ');
+  }
+
+  const out = [];
+  for (const row of rows) {
+    const inTable = row.index >= tableStart && row.index <= tableEnd && repeatedAnchorIds(row).length >= 3;
+    const line = renderRow(row, inTable).trim();
+    if (line) out.push(line);
+  }
+  const text = out.join('\n');
+  // Keep the existing character-yield guard: if reconstruction loses too much
+  // text, the safer result is LiteParse's original page text.
+  if (text.replace(/\s/g, '').length < fallback.replace(/\s/g, '').length * 0.8) return null;
+  return text;
+}
+
 export function yakuPageTextByColumns(page) {
   const items = (page.textItems || []).filter(function (t) { return t && t.text && t.text.trim(); });
   const fallback = page.text || page.markdown || '';
@@ -73,6 +312,9 @@ export function yakuPageTextByColumns(page) {
   const width = maxX - minX;
   if (!isFinite(width) || width <= 0) return fallback;
   const lineHeight = (hSum / items.length) || 10;
+
+  const tableText = yakuTableRows(items, fallback, lineHeight);
+  if (tableText !== null) return tableText;
 
   // x 方向を細かい升目に落とし、何個の文字片が載っているかを数える。
   const BINS = 240;
