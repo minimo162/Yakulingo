@@ -152,7 +152,7 @@
   function buildSidebar(active) {
     var sidebar = create('aside', 'premium-sidebar');
     sidebar.innerHTML =
-      '<a class="premium-brand" href="/cat">' + logoMarkup() + '</a>' +
+      '<a class="premium-brand" href="/">' + logoMarkup() + '</a>' +
       '<p class="premium-nav-label">メニュー</p><nav class="premium-nav">' + navMarkup(active) + '</nav>' +
       '<div class="premium-sidebar-rule"></div>' +
       '<div class="premium-recent-heading"><span>最近の作業</span><span id="premium-recent-count">0件</span></div>' +

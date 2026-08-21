@@ -221,6 +221,7 @@ try {
     Assert-Yaku -Condition $mock.TrimEnd().EndsWith("YAKULINGO_END:$requestId") -Message 'mock must echo the contract ID'
 } finally { Remove-Item Env:YAKULINGO_MOCK -ErrorAction SilentlyContinue }
 
+$homeIndex = Get-Content -LiteralPath (Join-Path $root 'www\home.html') -Raw -Encoding UTF8
 $catIndex = Get-Content -LiteralPath (Join-Path $root 'www\cat.html') -Raw -Encoding UTF8
 $catClient = Get-Content -LiteralPath (Join-Path $root 'www\assets\cat.js') -Raw -Encoding UTF8
 # 画面は一つになった。その場で訳す状態も cat.html の中にある。
@@ -259,12 +260,11 @@ $copilotAutomationTest = Get-Content -LiteralPath (Join-Path $root 'tools\Test-C
 Assert-Yaku -Condition ($appJs -match 'X-Yaku-Session' -and $appJs -match 'application/octet-stream' -and $appJs -match '/api/jobs/') -Message 'browser client must use token, binary upload, and per-job polling'
 Assert-Yaku -Condition (-not ($appJs -match "localStorage\.setItem\([^\r\n]*(job|artifact)|sessionStorage\.setItem\([^\r\n]*(job|artifact)")) -Message 'Quick and CAT job or artifact identifiers must not leak into cross-session browser persistence'
 Assert-Yaku -Condition ($appJs -notmatch 'readAsDataURL|file_b64|application/x-www-form-urlencoded') -Message 'browser client must not Base64/urlencode file uploads'
-# 画面を一つにしたので、開始画面が選ばせるのはアプリではなく「どう始めるか」。
-# 行き先は同じ画面で、/quick はその場で訳す状態として残っている。
-# 2026-08-12: 選ばせる開始画面（index.html）を削除した。起動したら直接、貼り付け欄へ着地する（利用者の指摘「選ばなくてはいけないのはストレス」）。
-Assert-Yaku -Condition (-not (Test-Path -LiteralPath (Join-Path $root 'www\index.html'))) -Message 'the launcher must not present a choice screen before the translator'
-Assert-Yaku -Condition ($server -match "path -eq '/'" -and $server -notmatch "PageName 'index.html'" -and
-    ([regex]::Matches($server, [regex]::Escape("Serve-YakuAppPage -Context `$Context -PageName 'cat.html'")).Count -ge 2)) -Message 'the root route must land on the translation screen itself'
+# 2026-08-21: チャット翻訳とExcel翻訳は目的が異なるため、起動時は独立した
+# 二分割入口で対等に選び、それぞれ専用画面へ進む。
+Assert-Yaku -Condition (-not (Test-Path -LiteralPath (Join-Path $root 'www\index.html')) -and (Test-Path -LiteralPath (Join-Path $root 'www\home.html') -PathType Leaf)) -Message 'the supported translation chooser must be home.html, not the retired index.html'
+Assert-Yaku -Condition ($server -match "path -eq '/'" -and $server.Contains("PageName 'home.html'") -and $server.Contains("ValidateSet('home.html','cat.html','palette.html')")) -Message 'the root route must serve the independent translation chooser'
+Assert-Yaku -Condition ($homeIndex.Contains('id="home-chat-entry"') -and $homeIndex.Contains('href="/palette"') -and $homeIndex.Contains('id="home-excel-entry"') -and $homeIndex.Contains('href="/cat"') -and $homeIndex.Contains('/assets/common.js')) -Message 'the chooser must split chat and Excel routes while reporting UI presence'
 # 使い方・設定・ツアーのユーザー向け入口は退役した。
 # 開始画面から辿れるリンクや CAT の tour hook は残さない。
 Assert-Yaku -Condition (-not $catIndex.Contains('href="/tutorial') -and -not $catIndex.Contains('id="cat-help-links"') -and -not $catIndex.Contains('name="yaku-tour"') -and -not $catIndex.Contains('/assets/tour.js')) -Message 'the start screen must not expose retired tutorial/settings/tour entries'
