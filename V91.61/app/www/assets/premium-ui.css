@@ -1410,7 +1410,8 @@ body.premium-palette #premium-quick-handoff { width:100%; min-height:37px; margi
 /* Premium DOM bridge -------------------------------------------------------
    These selectors connect the preserved application DOM to the specialized
    shell created by premium-ui.js. */
-body.premium-cat.premium-mode-excel-start .premium-cat-start { display:block; }
+body.premium-cat.premium-mode-excel-start .premium-cat-start,
+body.premium-cat.premium-mode-combined-start .premium-cat-start { display:block; }
 body.premium-cat.premium-mode-excel-start .premium-work-list { display:none; }
 body.premium-cat.premium-mode-worklist .premium-cat-start { display:none; }
 body.premium-cat.premium-mode-worklist .premium-work-list { display:block; }
@@ -1433,6 +1434,114 @@ body.premium-cat .premium-start-file-form #cat-open-file-entry {
 body.premium-cat .premium-start-file-form #cat-open-file-entry:hover { background:var(--premium-brand-strong); }
 body.premium-cat .premium-start-aside #cat-open-align-entry { margin:0; }
 body.premium-cat #cat-resume { display:none !important; }
+
+/* Combined start ----------------------------------------------------------
+   The root route is a working surface, not a launcher. The existing quick
+   translator is moved into the left panel; the Excel uploader remains live
+   in the right panel. */
+body.premium-cat .premium-combined-heading { max-width:1500px; margin:0 auto 18px; }
+body.premium-cat .premium-combined-heading h1 {
+  margin:8px 0 5px; font-size:clamp(28px,2.2vw,38px); line-height:1.2;
+  letter-spacing:-.035em;
+}
+body.premium-cat .premium-combined-heading p { margin:0; color:var(--premium-muted); font-size:16px; }
+body.premium-cat .premium-combined-grid {
+  width:min(100%,1500px); margin:0 auto; display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; align-items:stretch;
+}
+body.premium-cat .premium-combined-panel {
+  min-width:0; min-height:690px; padding:clamp(20px,2vw,30px); border-radius:18px;
+  background:var(--premium-surface); box-shadow:var(--premium-shadow);
+}
+body.premium-cat .premium-combined-chat {
+  background:linear-gradient(155deg,#f7faff 0%,#fff 46%,#f5f8fc 100%);
+  box-shadow:0 16px 42px rgba(31,58,95,.13);
+}
+body.premium-cat .premium-combined-excel { background:linear-gradient(155deg,#fff 0%,#fbfdfc 58%,#eef8f3 100%); }
+body.premium-cat .premium-combined-panel > header {
+  min-height:112px; display:flex; align-items:flex-start; gap:15px; margin-bottom:18px;
+}
+body.premium-cat .premium-panel-number {
+  flex:0 0 auto; color:var(--premium-brand); font-size:14px; font-weight:750; letter-spacing:.08em;
+}
+body.premium-cat .premium-combined-panel h2 {
+  margin:7px 0; font-size:clamp(25px,2vw,32px); line-height:1.2; letter-spacing:-.035em;
+}
+body.premium-cat .premium-combined-panel > header p {
+  max-width:36em; margin:0; color:var(--premium-muted); font-size:15px; line-height:1.7;
+}
+body.premium-cat .premium-combined-chat-live { width:100%; min-width:0; }
+body.premium-cat .premium-combined-chat-live .palette-form { display:grid; gap:8px; }
+body.premium-cat .premium-combined-chat-live .palette-label,
+body.premium-cat .premium-combined-chat-live .palette-count,
+body.premium-cat .premium-combined-chat-live .palette-direction-select-label,
+body.premium-cat .premium-combined-chat-live .palette-context-select-label,
+body.premium-cat .premium-combined-chat-live .palette-fineprint,
+body.premium-cat .premium-combined-chat-live .palette-hint { font-size:14px; }
+body.premium-cat .premium-combined-chat-live #palette-input {
+  width:100%; min-height:260px; padding:22px; border:1px solid #b9c7d7;
+  border-radius:15px; background:#fff; font-size:18px; line-height:1.75; resize:vertical;
+}
+body.premium-cat .premium-combined-chat-live #palette-input:focus {
+  border-color:var(--premium-brand); outline:2px solid rgba(31,58,95,.16); outline-offset:1px;
+}
+body.premium-cat .premium-combined-chat-live .palette-direction-row {
+  display:grid; grid-template-columns:minmax(0,1fr) minmax(150px,.8fr); gap:10px 12px;
+  align-items:end; margin-top:6px;
+}
+body.premium-cat .premium-combined-chat-live .palette-direction-field,
+body.premium-cat .premium-combined-chat-live .palette-context-field { min-width:0; }
+body.premium-cat .premium-combined-chat-live #palette-direction-select,
+body.premium-cat .premium-combined-chat-live #palette-context-select {
+  width:100%; min-height:44px; font-size:14px;
+}
+body.premium-cat .premium-combined-chat-live .palette-action-group { display:block; }
+body.premium-cat .premium-combined-chat-live #palette-submit {
+  width:100%; min-height:50px; border:0; border-radius:11px; background:var(--premium-brand);
+  color:#fff; font-size:16px; font-weight:700; box-shadow:0 9px 22px rgba(27,58,96,.16);
+}
+body.premium-cat .premium-combined-chat-live #palette-submit:disabled { background:#c5cad1; box-shadow:none; }
+body.premium-cat .premium-combined-chat-live #palette-handoff { display:none; }
+body.premium-cat .premium-combined-chat-live .palette-context-field { grid-column:1/-1; }
+body.premium-cat .premium-combined-chat-live .palette-context-field label {
+  display:flex; justify-content:space-between; gap:8px; margin-bottom:5px;
+}
+body.premium-cat .premium-combined-chat-live .palette-fineprint { margin:10px 0 0; color:var(--premium-muted); }
+body.premium-cat .premium-combined-chat-live .palette-result,
+body.premium-cat .premium-combined-chat-live .palette-instant { max-height:280px; overflow:auto; }
+body.premium-cat .premium-combined-chat-live .palette-footer {
+  position:static; margin-top:8px; padding:8px 0 0; border-top:1px solid var(--premium-hairline);
+  background:transparent; box-shadow:none;
+}
+body.premium-cat .premium-combined-excel .premium-file-drop {
+  min-height:330px; grid-template-columns:76px minmax(0,1fr); gap:20px; padding:28px 24px;
+}
+body.premium-cat .premium-combined-excel .premium-excel-mark { width:72px; height:72px; font-size:28px; }
+body.premium-cat .premium-combined-excel .premium-drop-copy strong { font-size:20px; }
+body.premium-cat .premium-combined-excel .premium-drop-copy > span { font-size:14px; line-height:1.65; }
+body.premium-cat .premium-combined-excel .premium-drop-tags i,
+body.premium-cat .premium-combined-excel .premium-drop-actions small { font-size:13px; }
+body.premium-cat .premium-combined-excel .premium-drop-actions { grid-column:1/-1; }
+body.premium-cat .premium-combined-excel .premium-drop-actions button { min-height:50px; font-size:16px; }
+body.premium-cat .premium-combined-excel-options {
+  display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-top:14px;
+}
+body.premium-cat .premium-combined-excel-options > section {
+  min-width:0; padding:16px; border:1px solid var(--premium-hairline); border-radius:13px;
+  background:rgba(255,255,255,.78);
+}
+body.premium-cat .premium-combined-excel-options h3 { margin:0 0 10px; font-size:16px; }
+body.premium-cat .premium-combined-excel-options p { margin:0 0 10px; color:var(--premium-muted); font-size:14px; line-height:1.6; }
+body.premium-cat .premium-combined-excel-options .premium-secondary-action { width:100%; font-size:14px; }
+
+@media (max-width:1400px) {
+  body.premium-cat .premium-combined-excel-options { grid-template-columns:1fr; }
+  body.premium-cat .premium-combined-panel { min-height:740px; }
+}
+@media (max-width:900px) {
+  body.premium-cat .premium-combined-grid { grid-template-columns:1fr; }
+  body.premium-cat .premium-combined-panel { min-height:0; }
+}
 body.premium-cat #cat-source-align:not([hidden]) { display:block; }
 body.premium-cat #cat-source-align:not([hidden]) ~ .premium-cat-start,
 body.premium-cat #cat-source-align:not([hidden]) ~ .premium-work-list { display:none !important; }
@@ -1679,7 +1788,7 @@ body.premium-ui .premium-quick-layout .palette-context-select-label { font-size:
 body.premium-ui .premium-quick-layout .premium-answer-turn strong { font-size: 22px; }
 body.premium-ui .premium-quick-layout .premium-answer-avatar,
 body.premium-ui .premium-quick-layout .premium-result-link { font-size: 14px; }
-body.premium-ui #palette-submit { font-size: 0; }
+body.premium-palette #palette-submit { font-size: 0; }
 
 body.premium-cat .premium-start-heading-copy { min-width: 0; }
 body.premium-cat .premium-chat-cta {

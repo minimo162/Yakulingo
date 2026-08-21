@@ -235,8 +235,11 @@
   var locationSynced = false;
   function syncLocation(projectId, preserveImport, preserveWork) {
     try {
-      var next = projectId ? ('/cat?project=' + encodeURIComponent(projectId)) : (preserveImport ? '/cat?import=1' : preserveWork ? '/cat?view=work' : '/cat');
       var first = !locationSynced;
+      /* root は文章とExcelを同時に始められる画面。初期表示だけは /cat へ
+         書き換えず、premium-ui が左右の実作業面として判別できるようにする。 */
+      var keepCombinedRoot = first && !projectId && !preserveImport && !preserveWork && location.pathname === '/' && !location.search;
+      var next = projectId ? ('/cat?project=' + encodeURIComponent(projectId)) : (preserveImport ? '/cat?import=1' : preserveWork ? '/cat?view=work' : keepCombinedRoot ? '/' : '/cat');
       locationSynced = true;
       if (location.pathname + location.search === next) return;
       if (projectId && !first) window.history.pushState(null, '', next);
