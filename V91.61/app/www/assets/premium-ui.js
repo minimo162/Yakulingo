@@ -140,7 +140,7 @@
   function navMarkup(active) {
     var items = [
       { key: 'excel', href: '/cat', icon: 'XLS', title: 'Excel翻訳', note: 'セル幅に合わせる' },
-      { key: 'quick', href: '/palette', icon: '↗', title: 'クイック翻訳', note: '1文ずつすぐに' },
+      { key: 'quick', href: '/palette', icon: '↗', title: 'チャット翻訳', note: '文章を貼ってすぐ訳す' },
       { key: 'past', href: '/cat?import=1', icon: '↔', title: '過去訳', note: '確認済みを再利用' },
       { key: 'work', href: '/cat?view=work', icon: '◴', title: '作業一覧', note: '保存済みの作業' }
     ];
@@ -293,8 +293,9 @@
     var start = create('section', 'premium-cat-start');
     start.id = 'premium-cat-start';
     start.innerHTML =
-      '<header class="premium-start-heading"><div><span class="premium-eyebrow">Excelレイアウト翻訳</span><h1>セル幅に合わせて、短く正確に。</h1>' +
-      '<p>Excelを読み込み、収まりにくいセルを仕上げます。以前に確認した日英PDFの訳も、過去訳として次の資料で再利用できます。</p></div></header>' +
+      '<header class="premium-start-heading"><div class="premium-start-heading-copy"><span class="premium-eyebrow">Excelレイアウト翻訳</span><h1>セル幅に合わせて、短く正確に。</h1>' +
+      '<p>Excelを読み込み、収まりにくいセルを仕上げます。以前に確認した日英PDFの訳も、過去訳として次の資料で再利用できます。</p></div>' +
+      '<a id="premium-chat-cta" class="premium-chat-cta" href="/palette"><strong>文章をすぐ訳す</strong><span>ファイルなしで、文章を貼って翻訳</span></a></header>' +
       '<div class="premium-start-grid"><section class="premium-start-primary">' + visualStepsMarkup() +
       '<div id="premium-file-drop" class="premium-file-drop" role="group" aria-label="Excelファイルを選ぶ、またはドロップする">' +
       '<div class="premium-excel-mark">X</div><div class="premium-drop-copy"><strong>Excelをここに置く</strong>' +
@@ -864,7 +865,7 @@
     var layout = create('div', 'premium-quick-layout');
     layout.id = 'premium-quick-layout';
     var chat = create('section', 'premium-quick-chat');
-    chat.innerHTML = '<header class="premium-quick-head"><div><h1>クイック翻訳</h1><p>1文ずつ、用途に合う簡潔な訳を返します。</p></div>' +
+    chat.innerHTML = '<header class="premium-quick-head"><div><h1>チャット翻訳</h1><p>文章を貼ってすぐ訳します。用途に合う簡潔な訳を返します。</p></div>' +
       '<div class="premium-current-preset"><span id="premium-length-label">簡潔</span><i>×</i><span id="premium-tone-label">ビジネス</span></div></header>' +
       '<div class="premium-quick-thread"><div id="premium-quick-history"></div><div id="premium-current-source" class="premium-current-source" hidden></div>' +
       '<div id="premium-live-result" class="premium-live-result"></div></div><div id="premium-quick-composer" class="premium-quick-composer"></div>';
@@ -966,7 +967,7 @@
     });
   }
   function setupQuickTopbar() {
-    setTopbar('クイック翻訳', '1文ずつすぐに', { 'premium-new-chat': true });
+    setTopbar('チャット翻訳', '文章を貼ってすぐ訳す', { 'premium-new-chat': true });
     var button = el('premium-new-chat');
     if (button && button.getAttribute('data-bound') !== '1') {
       button.setAttribute('data-bound', '1');
@@ -990,12 +991,19 @@
     buildQuickLayout(main);
     setupQuickTopbar();
     setActiveNav('quick');
-    document.title = 'クイック翻訳 - YakuLingo';
+    document.title = 'チャット翻訳 - YakuLingo';
     fetchRecent();
   }
 
   onReady(function () {
-    if (document.body.classList.contains('app-cat')) setupCat();
-    else if (document.body.classList.contains('app-palette')) setupPalette();
+    try {
+      if (document.body.classList.contains('app-cat')) setupCat();
+      else if (document.body.classList.contains('app-palette')) setupPalette();
+    } catch (error) {
+      /* Reveal the legacy route when a Premium enhancement cannot mount. */
+      console.error('Premium UI setup failed', error);
+    } finally {
+      document.body.classList.remove('premium-booting');
+    }
   });
 })();
