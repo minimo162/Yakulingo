@@ -33,7 +33,9 @@ foreach ($html in @($cat, $palette)) {
     Assert-YakuPremiumCount $html '/assets/premium-ui.js' 1 'PREMIUM_UI_JS_REFERENCE_INVALID'
 }
 Assert-YakuPremiumContains $cat '<title>Excel翻訳 - YakuLingo</title>' 'PREMIUM_UI_CAT_TITLE_MISSING'
-Assert-YakuPremiumContains $palette '<title>クイック翻訳 - YakuLingo</title>' 'PREMIUM_UI_QUICK_TITLE_MISSING'
+Assert-YakuPremiumContains $palette '<title>チャット翻訳 - YakuLingo</title>' 'PREMIUM_UI_CHAT_TITLE_MISSING'
+Assert-YakuPremiumContains $cat 'premium-booting' 'PREMIUM_UI_CAT_BOOTING_CLASS_MISSING'
+Assert-YakuPremiumContains $palette 'premium-booting' 'PREMIUM_UI_PALETTE_BOOTING_CLASS_MISSING'
 
 foreach ($id in @('cat-picker','cat-workspace','cat-grid-body','cat-preview-dock','cat-export','cat-translate','cat-qa-open')) {
     Assert-YakuPremiumContains $cat ('id=["'']' + [regex]::Escape($id) + '["'']') ('PREMIUM_UI_CAT_CONTRACT_MISSING: ' + $id)
@@ -42,9 +44,14 @@ foreach ($id in @('palette-form','palette-input','palette-direction-select','pal
     Assert-YakuPremiumContains $palette ('id=["'']' + [regex]::Escape($id) + '["'']') ('PREMIUM_UI_PALETTE_CONTRACT_MISSING: ' + $id)
 }
 
-foreach ($label in @('Excel翻訳','クイック翻訳','過去訳','作業一覧','セル幅に合わせる','1文ずつすぐに','確認済みを再利用','保存済みの作業')) {
+foreach ($label in @('Excel翻訳','チャット翻訳','過去訳','作業一覧','セル幅に合わせる','文章を貼ってすぐ訳す','確認済みを再利用','保存済みの作業')) {
     Assert-YakuPremiumContains $js ([regex]::Escape($label)) ('PREMIUM_UI_NAV_LABEL_MISSING: ' + $label)
 }
+if ($js -match 'クイック翻訳') { throw 'PREMIUM_UI_OLD_CHAT_LABEL_REINTRODUCED' }
+Assert-YakuPremiumContains $js 'premium-chat-cta' 'PREMIUM_UI_CHAT_CTA_MISSING'
+Assert-YakuPremiumContains $js 'href="/palette"' 'PREMIUM_UI_CHAT_CTA_HREF_MISSING'
+Assert-YakuPremiumContains $js '文章をすぐ訳す|ファイルなしで、文章を貼って翻訳' 'PREMIUM_UI_CHAT_CTA_COPY_MISSING'
+Assert-YakuPremiumContains $js 'finally[\s\S]*premium-booting' 'PREMIUM_UI_BOOTING_FINALLY_MISSING'
 if ($js -match '枠に収める|サクッと翻訳') { throw 'PREMIUM_UI_REJECTED_NAV_LABEL_REINTRODUCED' }
 if ($js -match 'カジュアル') { throw 'PREMIUM_UI_UNSUPPORTED_TONE_EXPOSED' }
 Assert-YakuPremiumContains $js 'data-length=.brief' 'PREMIUM_UI_BRIEF_MODE_MISSING'
@@ -91,8 +98,14 @@ Assert-YakuPremiumContains $js 'removeAttribute\(''aria-controls''\)' 'PREMIUM_U
 
 Assert-YakuPremiumContains $css 'body\.premium-cat #cat-workspace' 'PREMIUM_UI_CAT_WORKSPACE_STYLE_MISSING'
 Assert-YakuPremiumContains $css 'body\.premium-palette \.premium-quick-layout' 'PREMIUM_UI_QUICK_WORKSPACE_STYLE_MISSING'
-Assert-YakuPremiumContains $css '--premium-brand:\s*#1b3a60' 'PREMIUM_UI_COLOR_TOKEN_MISSING'
-Assert-YakuPremiumContains $css 'Segoe UI Variable Text' 'PREMIUM_UI_FONT_STACK_MISSING'
+Assert-YakuPremiumContains $css '--premium-brand:\s*#1f3a5f' 'PREMIUM_UI_COLOR_TOKEN_MISSING'
+Assert-YakuPremiumContains $css '--premium-canvas:\s*#fafafa' 'PREMIUM_UI_CANVAS_TOKEN_MISSING'
+Assert-YakuPremiumContains $css '--premium-ink:\s*#18181b' 'PREMIUM_UI_INK_TOKEN_MISSING'
+Assert-YakuPremiumContains $css '--premium-muted:\s*#55565f' 'PREMIUM_UI_MUTED_TOKEN_MISSING'
+Assert-YakuPremiumContains $css 'BIZ UDPGothic' 'PREMIUM_UI_JP_FONT_STACK_MISSING'
+Assert-YakuPremiumContains $css 'font-size:\s*16px' 'PREMIUM_UI_BODY_FONT_FLOOR_MISSING'
+Assert-YakuPremiumContains $css 'premium-booting' 'PREMIUM_UI_BOOTING_STYLE_MISSING'
+Assert-YakuPremiumContains $css 'premium-chat-cta' 'PREMIUM_UI_CHAT_CTA_STYLE_MISSING'
 
 $node = Get-Command node -ErrorAction SilentlyContinue
 if ($null -eq $node) { throw 'PREMIUM_UI_NODE_NOT_FOUND' }
@@ -138,9 +151,10 @@ function sendJson(response, value) {
     const url = new URL(request.url, 'http://127.0.0.1');
     const isAlignProject = url.pathname === '/cat' && url.searchParams.get('project') === alignProject.id;
     const isPendingAlignProject = url.pathname === '/cat' && url.searchParams.get('project') === pendingAlignProject.id;
+    const isCatStartPage = url.pathname === '/cat' && !url.searchParams.has('project') && !url.searchParams.has('import') && !url.searchParams.has('view');
     const isImportPage = url.pathname === '/cat' && url.searchParams.get('import') === '1';
     const isWorkListPage = url.pathname === '/cat' && url.searchParams.get('view') === 'work';
-    if (isAlignProject || isPendingAlignProject || isImportPage || isWorkListPage) {
+    if (isCatStartPage || isAlignProject || isPendingAlignProject || isImportPage || isWorkListPage) {
       let html = fs.readFileSync(path.join(wwwPath, 'cat.html'), 'utf8');
       html = html.replace(/__YAKU_SESSION_TOKEN__/g, 'premium-align-test')
         .replace(/__YAKU_MAX_UPLOAD_BYTES__/g, '52428800')
@@ -150,7 +164,7 @@ function sendJson(response, value) {
         .replace(/__YAKU_OUTPUT_FONT_JP__/g, 'MS P\\u30b4\\u30b7\\u30c3\\u30af')
         .replace(/__YAKU_TOUR__/g, '0')
         .replace(/__YAKU_IMPORT__/g, isImportPage ? '1' : '0')
-        .replace(/__YAKU_VIEW__/g, isAlignProject || isPendingAlignProject ? 'workspace' : isWorkListPage ? 'work' : '');
+        .replace(/__YAKU_VIEW__/g, isCatStartPage ? 'start' : isAlignProject || isPendingAlignProject ? 'workspace' : isWorkListPage ? 'work' : '');
       response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...(isImportPage ? { 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'" } : {}) });
       response.end(html);
       return;
@@ -195,8 +209,88 @@ function sendJson(response, value) {
       const page = await browser.newPage({ viewport: { width: 1912, height: 987 } });
       const pageErrors = [];
       page.on('pageerror', error => pageErrors.push(error.message));
+      const startPage = await browser.newPage({ viewport: { width: 1912, height: 987 } });
+      const startErrors = [];
+      startPage.on('pageerror', error => startErrors.push(error.message));
+      await startPage.goto(baseUrl + '/cat', { waitUntil: 'domcontentloaded' });
+      await startPage.waitForFunction(() => {
+        const start = document.getElementById('premium-cat-start');
+        return start && !document.body.classList.contains('premium-booting') &&
+          getComputedStyle(start).display !== 'none' && start.getBoundingClientRect().width > 0;
+      }, null, { timeout: 20000 });
+      const measureStart = () => startPage.evaluate(() => {
+        const visible = node => {
+          if (!node) return false;
+          const style = getComputedStyle(node), box = node.getBoundingClientRect();
+          return !node.hidden && style.display !== 'none' && style.visibility !== 'hidden' && box.width > 0 && box.height > 0;
+        };
+        const box = id => {
+          const node = document.getElementById(id), rect = node && node.getBoundingClientRect();
+          return { visible: visible(node), width: rect ? rect.width : 0, height: rect ? rect.height : 0,
+            focusable: !!node && node.tabIndex >= 0 && !node.disabled };
+        };
+        const start = document.getElementById('premium-cat-start');
+        const rect = start && start.getBoundingClientRect();
+        const textNodes = start ? Array.from(start.querySelectorAll('h1,h2,p,a,button,strong,span,small')).filter(node => visible(node) && node.textContent.trim()) : [];
+        const fontSizes = textNodes.map(node => parseFloat(getComputedStyle(node).fontSize)).filter(Number.isFinite);
+        const cta = document.getElementById('premium-chat-cta');
+        const ctaRect = cta && cta.getBoundingClientRect();
+        const logo = document.querySelector('.premium-logo');
+        const flowArrows = Array.from(document.querySelectorAll('.premium-flow-arrow')).filter(visible);
+        const logoFont = logo && visible(logo) ? parseFloat(getComputedStyle(logo).fontSize) : 0;
+        const flowArrowFonts = flowArrows.map(node => parseFloat(getComputedStyle(node).fontSize)).filter(Number.isFinite);
+        const direction = Array.from(document.querySelectorAll('#premium-direction-switch button')).map(node => {
+          const item = node.getBoundingClientRect();
+          return { text: node.textContent.trim(), pressed: node.getAttribute('aria-pressed'), active: node.classList.contains('is-active'), visible: visible(node), width: item.width, height: item.height };
+        });
+        const overflow = document.documentElement.scrollWidth > window.innerWidth + 1 || document.body.scrollWidth > window.innerWidth + 1;
+        return {
+          viewport: { width: innerWidth, height: innerHeight }, booting: document.body.classList.contains('premium-booting'),
+          startVisible: visible(start), startWidth: rect ? rect.width : 0, startHeight: rect ? rect.height : 0,
+          grid: box('premium-direction-switch'), fileDrop: box('premium-file-drop'), excel: box('premium-file-select'),
+          reference: box('premium-reference-open'), cta: { visible: visible(cta), href: cta && cta.getAttribute('href'), width: ctaRect ? ctaRect.width : 0, height: ctaRect ? ctaRect.height : 0, focusable: !!cta && cta.tabIndex >= 0 },
+          logoFont, flowArrowFont: flowArrowFonts.length ? Math.min.apply(Math, flowArrowFonts) : 0,
+          direction: direction, activeDirection: direction.filter(item => item.pressed === 'true' && item.active).length,
+          minFont: fontSizes.length ? Math.min.apply(Math, fontSizes) : 0, bodyFont: parseFloat(getComputedStyle(document.body).fontSize),
+          overflow: overflow, scrollWidth: document.documentElement.scrollWidth
+        };
+      });
+      const startWide = await measureStart();
+      assert.strictEqual(startWide.booting, false, JSON.stringify(startWide));
+      assert.ok(startWide.startVisible && startWide.cta.visible && startWide.cta.href === '/palette' && startWide.cta.focusable && startWide.cta.width >= 180 && startWide.cta.height >= 44, JSON.stringify(startWide));
+      assert.ok(startWide.excel.visible && startWide.excel.focusable && startWide.excel.width >= 120 && startWide.excel.height >= 44, JSON.stringify(startWide));
+      assert.ok(startWide.reference.visible && startWide.reference.focusable && startWide.reference.width >= 120 && startWide.reference.height >= 44, JSON.stringify(startWide));
+      assert.strictEqual(startWide.direction.length, 2, JSON.stringify(startWide));
+      assert.strictEqual(startWide.activeDirection, 1, JSON.stringify(startWide));
+      assert.ok(startWide.direction.every(item => item.visible && item.width >= 120 && item.height >= 44) && startWide.direction[0].text !== startWide.direction[1].text, JSON.stringify(startWide));
+      assert.ok(startWide.minFont >= 12 && startWide.bodyFont >= 16 && !startWide.overflow, JSON.stringify(startWide));
+      assert.ok(startWide.logoFont >= 17 && startWide.flowArrowFont >= 26, JSON.stringify(startWide));
+      await startPage.locator('#premium-chat-cta').focus();
+      assert.strictEqual(await startPage.evaluate(() => document.activeElement && document.activeElement.id), 'premium-chat-cta');
+      const [chooser] = await Promise.all([startPage.waitForEvent('filechooser'), startPage.locator('#premium-file-select').click()]);
+      assert.ok(chooser, 'Excel chooser did not open');
+      await startPage.locator('#premium-direction-switch button[data-direction="to_jp"]').click();
+      let directionState = await startPage.evaluate(() => Array.from(document.querySelectorAll('#premium-direction-switch button')).map(node => [node.getAttribute('data-direction'), node.getAttribute('aria-pressed'), node.classList.contains('is-active')]));
+      assert.deepStrictEqual(directionState, [['to_en', 'false', false], ['to_jp', 'true', true]], JSON.stringify(directionState));
+      await startPage.locator('#premium-direction-switch button[data-direction="to_en"]').click();
+      directionState = await startPage.evaluate(() => Array.from(document.querySelectorAll('#premium-direction-switch button')).map(node => [node.getAttribute('data-direction'), node.getAttribute('aria-pressed'), node.classList.contains('is-active')]));
+      assert.deepStrictEqual(directionState, [['to_en', 'true', true], ['to_jp', 'false', false]], JSON.stringify(directionState));
+      await startPage.locator('#premium-reference-open').click();
+      await startPage.waitForFunction(() => new URL(location.href).searchParams.get('import') === '1' && document.getElementById('cat-source-align') && !document.getElementById('cat-source-align').hidden, null, { timeout: 20000 });
+      const importStartState = await startPage.evaluate(() => ({ query: new URL(location.href).searchParams.get('import'), panel: !document.getElementById('cat-source-align').hidden, japanese: document.body.textContent.includes('\u65e5\u672c\u8a9e\u7248\u306ePDF'), english: document.body.textContent.includes('\u82f1\u8a9e\u7248\u306ePDF') }));
+      assert.deepStrictEqual(importStartState, { query: '1', panel: true, japanese: true, english: true }, JSON.stringify(importStartState));
+      await startPage.goto(baseUrl + '/cat', { waitUntil: 'domcontentloaded' });
+      await startPage.waitForSelector('#premium-cat-start');
+      await startPage.setViewportSize({ width: 1200, height: 800 });
+      await startPage.waitForFunction(() => document.getElementById('premium-cat-start').getBoundingClientRect().width > 0 && !document.body.classList.contains('premium-booting'));
+      const startNarrow = await measureStart();
+      assert.ok(startNarrow.startVisible && startNarrow.cta.visible && startNarrow.cta.width >= 180 && startNarrow.cta.height >= 44 && startNarrow.excel.height >= 44 && startNarrow.reference.height >= 44 && startNarrow.direction.every(item => item.visible && item.height >= 44) && startNarrow.minFont >= 12 && !startNarrow.overflow, JSON.stringify(startNarrow));
+      console.log('Premium start 1912x987:', JSON.stringify(startWide));
+      console.log('Premium start 1200x800:', JSON.stringify(startNarrow));
+      if (startErrors.length) throw new Error('PREMIUM_UI_START_PAGEERROR: ' + startErrors.join(' | '));
+      await startPage.close();
       await page.goto(baseUrl + '/cat?project=project-old');
-    await page.setContent(`<!doctype html><html><head><title>test</title></head><body class="app-cat" data-cat-view="workspace">
+    await page.setContent(`<!doctype html><html><head><title>test</title><link rel="stylesheet" href="/assets/premium-ui.css"></head><body class="app-cat" data-cat-view="workspace">
       <main class="shell">
         <section id="cat-picker"></section>
         <section id="cat-workspace">
@@ -208,6 +302,12 @@ function sendJson(response, value) {
           </div>
           <div id="cat-editor-toolbar"><strong id="cat-toolbar-title">Project Old</strong><span id="cat-toolbar-direction">to-en</span><button id="tool-first" type="button">Tool</button></div>
         </section>
+        <section id="cat-preview-dock" class="cat-preview-dock">
+          <div class="cat-bottom-dock-bar"><div class="cat-inspector-tabs" role="tablist"><button id="cat-tab-preview" type="button" role="tab" aria-selected="true" data-cat-inspector="preview">プレビュー</button></div></div>
+          <aside id="cat-inspector-pane" class="cat-inspector-pane"><section id="cat-panel-preview" role="tabpanel"><strong class="cat-preview-dock-title">体裁プレビュー</strong><p class="cat-preview-dock-note">表示中の行を確認します。</p></section></aside>
+        </section>
+        <div id="cat-output-row"><span>訳文を入れたコピーを作りました</span><button id="cat-open-folder" type="button">フォルダを開く</button></div>
+        <div id="premium-toast" class="premium-toast is-showing" role="status">確認メッセージ</div>
         <button id="cat-translate" type="button" hidden>Translate</button>
         <button id="cat-qa-open" type="button" hidden>QA</button>
         <button id="cat-export" type="button" hidden>Export</button>
@@ -246,6 +346,84 @@ function sendJson(response, value) {
     await page.addScriptTag({ path: premiumPath });
     await page.waitForSelector('#premium-tools');
     await page.waitForSelector('#premium-fit-list .premium-fit-row');
+    await page.evaluate(() => {
+      const workspace = document.getElementById('cat-workspace');
+      const preview = document.getElementById('cat-preview-dock');
+      if (workspace && preview && preview.parentElement !== workspace) workspace.appendChild(preview);
+    });
+
+    const workspaceTypography = await page.evaluate(() => {
+      const workspace = document.getElementById('cat-workspace');
+      const visible = node => {
+        if (!node) return false;
+        const style = getComputedStyle(node), box = node.getBoundingClientRect();
+        return !node.hidden && style.display !== 'none' && style.visibility !== 'hidden' && box.width > 0 && box.height > 0;
+      };
+      const directText = node => Array.from(node.childNodes).some(child => child.nodeType === Node.TEXT_NODE && child.textContent.trim());
+      const font = node => parseFloat(getComputedStyle(node).fontSize);
+      const sourceNodes = workspace ? Array.from(workspace.querySelectorAll('.cat-source-text')).filter(visible) : [];
+      const targetNodes = workspace ? Array.from(workspace.querySelectorAll('textarea[data-cat-input]')).filter(visible) : [];
+      const utilityNodes = workspace ? Array.from(workspace.querySelectorAll('*')).filter(node => visible(node) && directText(node) && node.getAttribute('aria-hidden') !== 'true' && !node.matches('.cat-source-text,textarea[data-cat-input]') && !node.closest('.cat-source-text')) : [];
+      const output = document.getElementById('cat-output-row');
+      const outputButton = document.getElementById('cat-open-folder');
+      const toast = document.getElementById('premium-toast');
+      const utilityFonts = utilityNodes.map(font).filter(Number.isFinite);
+      const sourceFonts = sourceNodes.map(font).filter(Number.isFinite);
+      const targetFonts = targetNodes.map(font).filter(Number.isFinite);
+      const utilityLowest = utilityNodes.map(node => ({ tag: node.tagName, id: node.id, className: String(node.className || ''), text: node.textContent.trim().slice(0, 40), font: font(node) })).sort((a, b) => a.font - b.font).slice(0, 8);
+      return {
+        utilityFontFloor: utilityFonts.length ? Math.min.apply(Math, utilityFonts) : 0,
+        sourceFont: sourceFonts.length ? Math.min.apply(Math, sourceFonts) : 0,
+        targetFont: targetFonts.length ? Math.min.apply(Math, targetFonts) : 0,
+        outputFont: output && visible(output) ? font(output) : 0,
+        outputButtonFont: outputButton && visible(outputButton) ? font(outputButton) : 0,
+        outputButtonHeight: outputButton && visible(outputButton) ? outputButton.getBoundingClientRect().height : 0,
+        toastFont: toast && visible(toast) ? font(toast) : 0,
+        utilityNodes: utilityNodes.length,
+        utilityLowest,
+        sourceNodes: sourceNodes.length,
+        targetNodes: targetNodes.length,
+        overflow: document.documentElement.scrollWidth > innerWidth + 1 || document.body.scrollWidth > innerWidth + 1,
+        scrollWidth: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth)
+      };
+    });
+    assert.ok(workspaceTypography.utilityFontFloor >= 12 && workspaceTypography.sourceFont >= 16 && workspaceTypography.targetFont >= 16 && workspaceTypography.outputFont >= 12 && workspaceTypography.outputButtonFont >= 12 && workspaceTypography.outputButtonHeight >= 44 && workspaceTypography.toastFont >= 12 && !workspaceTypography.overflow, JSON.stringify(workspaceTypography));
+    console.log('Premium CAT workspace 1912x987 typography:', JSON.stringify(workspaceTypography));
+    const measureWorkspaceFrame = () => page.evaluate(() => {
+      const workspace = document.getElementById('cat-workspace');
+      const workspaceBox = workspace && workspace.getBoundingClientRect();
+      const visible = node => {
+        if (!node) return false;
+        const style = getComputedStyle(node), box = node.getBoundingClientRect();
+        return !node.hidden && style.display !== 'none' && style.visibility !== 'hidden' && box.width > 0 && box.height > 0;
+      };
+      const region = id => {
+        const node = document.getElementById(id), box = node && node.getBoundingClientRect();
+        const inViewport = !!box && box.left >= -1 && box.top >= -1 && box.right <= innerWidth + 1 && box.bottom <= innerHeight + 1;
+        const inWorkspace = !!box && !!workspaceBox && box.left >= workspaceBox.left - 1 && box.top >= workspaceBox.top - 1 && box.right <= workspaceBox.right + 1 && box.bottom <= workspaceBox.bottom + 1;
+        return { visible: visible(node), left: box ? box.left : 0, top: box ? box.top : 0, right: box ? box.right : 0, bottom: box ? box.bottom : 0, width: box ? box.width : 0, height: box ? box.height : 0, inViewport, inWorkspace };
+      };
+      const regions = { summary: region('premium-work-summary'), fit: region('premium-fit-panel'), editor: region('cat-editor-layout'), preview: region('cat-preview-dock') };
+      const workspaceInViewport = !!workspaceBox && workspaceBox.left >= -1 && workspaceBox.right <= innerWidth + 1 && workspaceBox.top >= -1 && workspaceBox.bottom <= innerHeight + 1;
+      return {
+        viewport: { width: innerWidth, height: innerHeight },
+        workspace: workspaceBox ? { left: workspaceBox.left, right: workspaceBox.right, top: workspaceBox.top, bottom: workspaceBox.bottom, width: workspaceBox.width, height: workspaceBox.height } : null,
+        regions,
+        previewVisible: regions.preview.visible,
+        noClip: workspaceInViewport && Object.keys(regions).every(key => regions[key].visible && regions[key].inViewport && regions[key].inWorkspace),
+        overflow: document.documentElement.scrollWidth > innerWidth + 1 || document.body.scrollWidth > innerWidth + 1,
+        scrollWidth: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth)
+      };
+    });
+    const workspaceWide = await measureWorkspaceFrame();
+    await page.setViewportSize({ width: 1200, height: 800 });
+    await page.waitForTimeout(80);
+    const workspaceNarrow = await measureWorkspaceFrame();
+    assert.ok(!workspaceWide.overflow, JSON.stringify(workspaceWide));
+    assert.ok(workspaceNarrow.noClip && workspaceNarrow.previewVisible && !workspaceNarrow.overflow, JSON.stringify(workspaceNarrow));
+    console.log('Premium CAT workspace 1912x987 frame:', JSON.stringify(workspaceWide));
+    console.log('Premium CAT workspace 1200x800 frame:', JSON.stringify(workspaceNarrow));
+    await page.setViewportSize({ width: 1912, height: 987 });
 
     let state = await page.evaluate(() => ({
       toolsControls: document.getElementById('premium-tools').getAttribute('aria-controls'),
@@ -732,13 +910,53 @@ function sendJson(response, value) {
     if (workConsole.length) throw new Error('PREMIUM_UI_WORK_CONSOLE: ' + workConsole.join(' | '));
     await workPage.close();
 
-    await page.setContent(`<!doctype html><html><head><title>palette-test</title></head><body class="app-palette">
+    await page.setContent(`<!doctype html><html><head><title>palette-test</title><link rel="stylesheet" href="/assets/premium-ui.css"></head><body class="app-palette premium-booting">
       <main class="palette-shell"><div class="palette-main">
-        <form id="palette-form"><textarea id="palette-input"></textarea><div class="palette-direction-row"><select id="palette-direction-select"><option value="">auto</option></select></div></form>
-        <div id="palette-instant"></div><div id="palette-chips" hidden></div><div id="palette-result"></div>
+        <form id="palette-form"><textarea id="palette-input">これは貼り付けた原文です。</textarea><div class="palette-input-row">入力 16 / 2000</div><div class="palette-direction-row"><div class="palette-direction-field"><label class="palette-direction-select-label" for="palette-direction-select">翻訳方向</label><select id="palette-direction-select"><option value="">自動判定</option><option value="to_en">日本語 → 英語</option></select></div><div class="palette-action-group"><button id="palette-submit" type="submit" aria-label="翻訳する">翻訳</button></div></div><div class="palette-context-field"><label class="palette-context-select-label" for="palette-context-select">用途</label><select id="palette-context-select"><option>一般</option></select></div></form>
+        <div id="palette-instant"><div class="result-card"><div class="translation">すぐ使える訳文</div><div class="result-actions"><span class="result-kind">短訳</span><button type="button">コピー</button></div></div></div>
+        <div id="palette-chips"><span>候補 3件</span><button type="button">候補を使う</button></div>
+        <div id="palette-result"><div class="result-card"><div class="translation">これは貼り付けた原文の訳です。</div><div class="result-actions"><span class="result-kind">翻訳結果</span><button type="button">コピー</button></div><p class="masking-notice">数値は送信前に保護されています。</p><p class="batch-note">結果を確認してから使えます。</p><div class="result-alts"><p class="result-alts-lead">別の言い方</p><button type="button" class="result-alt"><span class="result-alt-head">候補</span><span class="result-alt-body">別の訳文</span></button></div></div></div>
+        <div class="palette-footer"><span class="palette-copy-status">コピーしました</span></div><p class="palette-fineprint">入力内容はこの画面で処理します。</p><p class="palette-long-notice">長い文章は分けて処理します。</p>
       </div></main>
     </body></html>`);
     await page.addScriptTag({ path: premiumPath });
+    await page.waitForFunction(() => document.getElementById('premium-quick-layout') && !document.body.classList.contains('premium-booting'), null, { timeout: 10000 });
+    const measurePalette = () => page.evaluate(() => {
+      const visible = node => { const box = node && node.getBoundingClientRect(), style = node && getComputedStyle(node); return !!node && !node.hidden && style.display !== 'none' && style.visibility !== 'hidden' && box.width > 0 && box.height > 0; };
+      const directText = node => Array.from(node.childNodes).some(child => child.nodeType === Node.TEXT_NODE && child.textContent.trim());
+      const textNodes = Array.from(document.querySelectorAll('.premium-quick-layout h1,.premium-quick-layout h2,.premium-quick-layout h3,.premium-quick-layout p,.premium-quick-layout a,.premium-quick-layout button,.premium-quick-layout strong,.premium-quick-layout span,.premium-quick-layout small,.premium-quick-layout em,.premium-quick-layout label,.premium-quick-layout textarea,.premium-quick-layout select')).filter(node => visible(node) && (directText(node) || node.matches('textarea,select')) && node.id !== 'palette-submit' && node.getAttribute('aria-hidden') !== 'true');
+      const fonts = textNodes.map(node => parseFloat(getComputedStyle(node).fontSize)).filter(Number.isFinite);
+      const actions = Array.from(document.querySelectorAll('#palette-submit,#palette-direction-select,#palette-context-select,#premium-quick-handoff,.premium-quick-prompts button,.premium-segmented button,#palette-result .result-actions button,#palette-instant .result-actions button,#palette-chips button,.premium-result-link,.premium-answer-turn button,.result-alt')).filter(visible);
+      const actionMetrics = actions.map(node => ({ id: node.id, className: String(node.className || ''), height: node.getBoundingClientRect().height, font: parseFloat(getComputedStyle(node).fontSize), text: node.textContent.trim().slice(0, 30) }));
+      const meaningfulActionFonts = actionMetrics.map(item => item.font).filter(value => Number.isFinite(value) && value > 0);
+      const lowest = textNodes.map(node => ({ tag: node.tagName, id: node.id, className: String(node.className || ''), text: node.textContent.trim().slice(0, 40), font: parseFloat(getComputedStyle(node).fontSize) })).sort((a, b) => a.font - b.font).slice(0, 8);
+      return {
+        viewport: { width: innerWidth, height: innerHeight },
+        booting: document.body.classList.contains('premium-booting'),
+        title: document.title,
+        heading: document.querySelector('.premium-quick-head h1').textContent.trim(),
+        description: document.querySelector('.premium-quick-head p').textContent.trim(),
+        minFont: fonts.length ? Math.min.apply(Math, fonts) : 0,
+        lowest,
+        inputFont: parseFloat(getComputedStyle(document.getElementById('palette-input')).fontSize),
+        actionFontFloor: meaningfulActionFonts.length ? Math.min.apply(Math, meaningfulActionFonts) : 0,
+        actionMinHeight: actionMetrics.length ? Math.min.apply(Math, actionMetrics.map(item => item.height)) : 0,
+        actionMetrics,
+        bodyFont: parseFloat(getComputedStyle(document.body).fontSize),
+        overflow: document.documentElement.scrollWidth > innerWidth + 1 || document.body.scrollWidth > innerWidth + 1,
+        scrollWidth: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth)
+      };
+    });
+    const paletteWide = await measurePalette();
+    await page.setViewportSize({ width: 1200, height: 800 });
+    await page.waitForTimeout(80);
+    const paletteNarrow = await measurePalette();
+    [paletteWide, paletteNarrow].forEach(paletteState => {
+      assert.ok(paletteState.booting === false && paletteState.title === '\u30c1\u30e3\u30c3\u30c8\u7ffb\u8a33 - YakuLingo' && paletteState.heading === '\u30c1\u30e3\u30c3\u30c8\u7ffb\u8a33' && paletteState.description.includes('\u6587\u7ae0\u3092\u8cbc\u3063\u3066\u3059\u3050\u8a33') && paletteState.minFont >= 12 && paletteState.inputFont >= 16 && paletteState.actionFontFloor >= 12 && paletteState.actionMinHeight >= 44 && paletteState.bodyFont >= 16 && paletteState.overflow === false, JSON.stringify(paletteState));
+    });
+    console.log('Premium palette 1912x987 typography:', JSON.stringify(paletteWide));
+    console.log('Premium palette 1200x800 typography:', JSON.stringify(paletteNarrow));
+    await page.setViewportSize({ width: 1912, height: 987 });
     await page.waitForSelector('#premium-tools', { state: 'attached' });
     state = await page.evaluate(() => ({
       toolsControls: document.getElementById('premium-tools').getAttribute('aria-controls'),
