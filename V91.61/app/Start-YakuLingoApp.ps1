@@ -132,7 +132,7 @@ try {
 
     $edge = Get-YakuAppEdgePath
     $baseUrl = [string]$runtime.url
-    $uiUrl = $baseUrl.TrimEnd('/') + '/cat'
+    $uiUrl = $baseUrl.TrimEnd('/') + '/'
     $edgeArguments = @(
         '--new-tab',
         $uiUrl
