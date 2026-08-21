@@ -61,14 +61,30 @@ try {
 
     $catText = [IO.File]::ReadAllText((Join-Path $appRoot 'www\assets\cat.js'))
     Assert-YakuFeature ($catText -match 'function syncLocation\(projectId, preserveImport, preserveWork\)' -and
-        $catText -match "preserveImport \? '/cat\?import=1' : preserveWork \? '/cat\?view=work' : '/cat'" -and
-        $catText -match 'var importMeta = document\.querySelector\(' -and
-        $catText -match 'showPicker\(importMode\)' -and
+        $catText -match "preserveImport \? '/cat\?import=1' : preserveWork \? '/cat\?view=work' : '/'" -and
+        $catText -notmatch "preserveImport \? '/cat\?import=1' : preserveWork \? '/cat\?view=work' : '/cat'") 'CAT start routes keep root, import, and work URLs'
+    Assert-YakuFeature ($catText -match 'function showPicker\(preserveImport, preserveWork, refreshRecent\)' -and
+        $catText -match 'if \(refreshRecent !== false\) loadRecent\(true\);' -and
+        $catText -match 'function applyLocationFromUrl\(\)' -and
+        $catText -match "var startSurface = !project && document\.body\.getAttribute\('data-cat-view'\) === 'start';" -and
+        $catText -match 'var refreshRecent = !startSurface;' -and
+        $catText -match "showPicker\(true, false, refreshRecent\)" -and
+        $catText -match "showPicker\(false, true, refreshRecent\)" -and
+        $catText -match "showPicker\(false, false, refreshRecent\)") 'CAT start-to-start history reuses recent while workspace exit refreshes it'
+    Assert-YakuFeature ($catText -match 'var importMeta = document\.querySelector\(' -and
         $catText -match "if \(importMode\) \{ showPicker\(importMode\); showStart\('align'\); return; \}" -and
-        $catText -match "params\.get\('import'\) === '1'\) \{ showPicker\(true\); showStart\('align'\); \}" -and
-        $catText -match "params\.get\('view'\) === 'work'\) \{ showPicker\(false, true\); \}" -and
+        $catText -match "if \(workMode\) \{ showPicker\(false, true\); return; \}" -and
         $catText -match 'retryPending = eligible === 0 && pending > 0' -and
-        $catText -match '翻訳メモリへの反映を再試行') 'import, work, and pending TM retry startup contracts are present'
+        $catText -match '翻訳メモリへの反映を再試行') 'import/work startup and pending TM retry contracts are present'
+    Assert-YakuFeature ($catText -match 'function navigateStart\(view\) \{\s*if \(busy\) return false;' -and
+        $catText -match 'function restoreBusyHistory\(\)' -and
+        $catText -match 'history\.go\(delta\)' -and
+        $catText -match 'history\.replaceState\(historyStateFor' -and
+        $catText -match 'pendingHistoryResume' -and
+        $catText -match 'function resumeFromHistory\(id\)' -and
+        $catText -match 'function rollbackPendingHistoryResume\(token\)' -and
+        $catText -match 'if \(busy\) \{' -and
+        $catText -match 'restoreBusyHistory\(\); return;') 'busy navigation restores the applied entry without stale CAT state'
 
     $repoRoot = Split-Path -Parent (Split-Path -Parent $appRoot)
     $retiredRuntimePaths = @(
@@ -83,6 +99,7 @@ try {
     Assert-YakuFeature ($serverText -notmatch '(?i)corpus|save-corpus|/tutorial|desktopintegration') 'retired corpus and tutorial server routes are absent'
     $premiumText = [IO.File]::ReadAllText((Join-Path $appRoot 'www\assets\premium-ui.js'))
     Assert-YakuFeature ($premiumText -notmatch 'premium-settings|使い方|tour\.js|/tutorial') 'retired settings, help, and tour UI hooks are absent'
+    Assert-YakuFeature ($premiumText -match 'event\.defaultPrevented' -and $premiumText -match 'event\.button !== 0' -and $premiumText -match 'hasAttribute\(''download''\)') 'CAT start interception preserves modified, target, and download navigation'
     $packageText = [IO.File]::ReadAllText((Join-Path $appRoot 'tools\New-YakuPackage.ps1'))
     $uploadText = [IO.File]::ReadAllText((Join-Path $repoRoot 'New-YakuUploadFolder.ps1'))
     Assert-YakuFeature ($packageText -match '(?i)corpus' -and $packageText -match '管理者用_コーパス作成' -and

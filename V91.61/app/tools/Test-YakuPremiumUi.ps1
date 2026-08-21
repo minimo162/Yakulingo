@@ -67,7 +67,10 @@ Assert-YakuPremiumContains $js 'data-tone=.polite' 'PREMIUM_UI_POLITE_MODE_MISSI
 Assert-YakuPremiumContains $js "form\.addEventListener\('submit'" 'PREMIUM_UI_QUICK_SUBMIT_DELEGATION_MISSING'
 Assert-YakuPremiumContains $js 'palette-result' 'PREMIUM_UI_QUICK_RESULT_WIRING_MISSING'
 Assert-YakuPremiumContains $js '/api/cat/open' 'PREMIUM_UI_EXCEL_OPEN_WIRING_MISSING'
-Assert-YakuPremiumContains $js '/api/cat/recent' 'PREMIUM_UI_RECENT_WIRING_MISSING'
+Assert-YakuPremiumContains $catJs "post\('recent'|/api/cat/recent" 'PREMIUM_UI_CAT_RECENT_WIRING_MISSING'
+Assert-YakuPremiumContains $js 'adoptCatRecentSnapshot|yaku-cat-recent' 'PREMIUM_UI_CAT_RECENT_ADOPTION_MISSING'
+Assert-YakuPremiumContains $js 'event\.defaultPrevented|event\.button !== 0|download' 'PREMIUM_UI_NAV_MODIFIER_GUARD_MISSING'
+Assert-YakuPremiumContains $catJs 'pendingHistoryResume|resumeFromHistory|rollbackPendingHistoryResume' 'PREMIUM_UI_PROJECT_HISTORY_RESUME_GUARD_MISSING'
 Assert-YakuPremiumContains $js 'initialImport|premium-mode-import|cat-source-align' 'PREMIUM_UI_PAST_IMPORT_WIRING_MISSING'
 Assert-YakuPremiumContains $js 'Excel翻訳と過去訳の対応確認|Excel翻訳や過去訳の対応確認を始めると' 'PREMIUM_UI_MIXED_WORK_COPY_MISSING'
 Assert-YakuPremiumContains $js "setTopbar\('作業一覧', '保存済みの作業'" 'PREMIUM_UI_MIXED_WORK_TOPBAR_MISSING'
@@ -148,9 +151,14 @@ const recentFixture = { projects: [
   { id: alignProject.id, source: 'align', file_name: alignProject.file_name, direction: 'to_en', revision: 1, total: 3, confirmed: 1, saved: '2026-08-21T09:00:00' },
   excelRecent
 ] };
+let recentRequestCount = 0;
+let refreshRecentOnce = false;
+let delayedCatOpen = false;
+let recentFailureOnce = false;
+let delayedCatResumeMode = '';
 const assetTypes = { '.js': 'application/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8', '.wasm': 'application/wasm', '.json': 'application/json; charset=utf-8' };
-function sendJson(response, value) {
-  response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+function sendJson(response, value, statusCode = 200) {
+  response.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
   response.end(JSON.stringify(value));
 }
 
@@ -163,6 +171,26 @@ function sendJson(response, value) {
     const isLegacyStartPage = ['/quick', '/cat', '/palette'].includes(url.pathname) && !url.searchParams.has('project') && !url.searchParams.has('import') && !url.searchParams.has('view');
     const isImportPage = url.pathname === '/cat' && url.searchParams.get('import') === '1';
     const isWorkListPage = url.pathname === '/cat' && url.searchParams.get('view') === 'work';
+    if (url.pathname === '/__enable-recent-refresh') {
+      refreshRecentOnce = true;
+      response.writeHead(204); response.end(); return;
+    }
+    if (url.pathname === '/__enable-delayed-cat-open') {
+      delayedCatOpen = true;
+      response.writeHead(204); response.end(); return;
+    }
+    if (url.pathname === '/__enable-recent-failure') {
+      recentFailureOnce = true;
+      response.writeHead(204); response.end(); return;
+    }
+    if (url.pathname === '/__enable-delayed-cat-resume-success') {
+      delayedCatResumeMode = 'success';
+      response.writeHead(204); response.end(); return;
+    }
+    if (url.pathname === '/__enable-delayed-cat-resume-failure') {
+      delayedCatResumeMode = 'failure';
+      response.writeHead(204); response.end(); return;
+    }
     if (isCombinedPage || isLegacyStartPage || isAlignProject || isPendingAlignProject || isImportPage || isWorkListPage) {
       let html = fs.readFileSync(path.join(wwwPath, 'cat.html'), 'utf8');
       html = html.replace(/__YAKU_SESSION_TOKEN__/g, 'premium-align-test')
@@ -193,8 +221,33 @@ function sendJson(response, value) {
       request.on('end', () => {
         let body = {};
         try { body = JSON.parse(raw || '{}'); } catch (_) {}
-        if (url.pathname === '/api/cat/resume') return sendJson(response, body.project_id === pendingAlignProject.id ? pendingAlignProject : alignProject);
-        if (url.pathname === '/api/cat/recent') return sendJson(response, recentFixture);
+        if (url.pathname === '/api/cat/resume') {
+          const resumeResponse = body.project_id === pendingAlignProject.id ? pendingAlignProject : alignProject;
+          if (!delayedCatResumeMode) return sendJson(response, resumeResponse);
+          const resumeMode = delayedCatResumeMode;
+          delayedCatResumeMode = '';
+          return setTimeout(() => {
+            try { sendJson(response, resumeMode === 'failure' ? { error: 'delayed resume fixture failure' } : resumeResponse, resumeMode === 'failure' ? 503 : 200); } catch (_) {}
+          }, 1200);
+        }
+        if (url.pathname === '/api/upload') return sendJson(response, { file_handle: 'delayed-open-handle' });
+        if (url.pathname === '/api/cat/open') {
+          const openResponse = Object.assign({}, alignProject, { id: 'ffffffffffffffffffffffffffffffff', file_name: 'delayed-open.xlsx', source: 'file' });
+          if (!delayedCatOpen) return sendJson(response, openResponse);
+          return setTimeout(() => { try { sendJson(response, { error: 'delayed open fixture failure' }, 503); } catch (_) {} }, 1200);
+        }
+        if (url.pathname === '/api/cat/recent') {
+          recentRequestCount++;
+          if (recentFailureOnce) {
+            recentFailureOnce = false;
+            return sendJson(response, { error: 'recent fixture failure' }, 503);
+          }
+          if (refreshRecentOnce) {
+            refreshRecentOnce = false;
+            return sendJson(response, { projects: recentFixture.projects.concat([{ id: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', source: 'file', file_name: 'refresh-marker.xlsx', direction: 'to_en', revision: 8, total: 5, confirmed: 4, saved: '2026-08-21T11:00:00' }]) });
+          }
+          return sendJson(response, recentFixture);
+        }
         if (url.pathname === '/api/cat/tm-register-bulk') return sendJson(response, Object.assign({}, pendingAlignProject, {
           tm_pending: 0, tm_bulk_eligible_count: 0, tm_registered_count: 0, tm_skipped_count: 0, tm_registered: [], tm_skipped: []
         }));
@@ -250,8 +303,17 @@ function sendJson(response, value) {
           overflow: document.documentElement.scrollWidth > innerWidth + 1 || document.body.scrollWidth > innerWidth + 1
         };
       });
+      recentRequestCount = 0;
+      const combinedDocumentLoads = [];
+      combinedPage.on('domcontentloaded', () => combinedDocumentLoads.push(combinedPage.url()));
       await combinedPage.goto(baseUrl + '/', { waitUntil: 'domcontentloaded' });
       await combinedPage.waitForTimeout(300);
+      assert.strictEqual(recentRequestCount, 1, 'CAT initial load must request recent exactly once: ' + recentRequestCount);
+      await combinedPage.evaluate(() => fetch('/__enable-recent-refresh'));
+      await combinedPage.evaluate(() => window.YakuCat.refreshRecent());
+      await combinedPage.waitForFunction(() => !!document.querySelector('#premium-work-cards [data-work-id="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"]') && !!document.querySelector('.premium-recent-item[href*="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"]'), null, { timeout: 10000 });
+      assert.strictEqual(recentRequestCount, 2, 'YakuCat.refreshRecent must issue exactly one new recent request: ' + recentRequestCount);
+      const recentCountAfterRefresh = recentRequestCount;
       const combinedWide = await measureCombined();
       assert.ok(combinedWide.mode && combinedWide.title === '\u7ffb\u8a33 - YakuLingo' && combinedWide.chat.visible && combinedWide.excel.visible && combinedWide.splitDelta <= 2 && combinedWide.input.visible && combinedWide.input.form === 'palette-form' && combinedWide.input.font >= 18 && combinedWide.quickButton.visible && combinedWide.quickButton.font >= 16 && combinedWide.quickButton.height >= 50 && combinedWide.excelButton.visible && combinedWide.excelButton.font >= 16 && combinedWide.excelButton.height >= 50 && combinedWide.fileDropVisible && !combinedWide.legacyFileLaneVisible && combinedWide.minFont >= 13 && combinedWide.bodyFont >= 17 && !combinedWide.overflow, JSON.stringify(combinedWide));
       await combinedPage.locator('#palette-input').fill('\u58f2\u4e0a\u304c\u5897\u52a0\u3057\u307e\u3057\u305f\u3002');
@@ -265,6 +327,215 @@ function sendJson(response, value) {
       await combinedPage.locator('#premium-direction-switch button[data-direction="to_jp"]').click();
       let directionState = await combinedPage.evaluate(() => Array.from(document.querySelectorAll('#premium-direction-switch button')).map(node => [node.getAttribute('data-direction'), node.getAttribute('aria-pressed'), node.classList.contains('is-active')]));
       assert.deepStrictEqual(directionState, [['to_en', 'false', false], ['to_jp', 'true', true]], JSON.stringify(directionState));
+      await combinedPage.evaluate(() => { window.__catDocument = document; });
+      const navCountBeforeStartWork = combinedDocumentLoads.length;
+      const readStartNavState = () => combinedPage.evaluate(() => {
+        const align = document.getElementById('cat-source-align');
+        const active = document.querySelector('[data-premium-nav].is-active');
+        return {
+          url: location.pathname + location.search,
+          active: active ? active.getAttribute('data-premium-nav') : '',
+          startHidden: document.getElementById('premium-cat-start').hidden,
+          workHidden: document.getElementById('premium-work-list').hidden,
+          alignVisible: !!align && !align.hidden,
+          view: document.body.getAttribute('data-cat-view'),
+          identity: document === window.__catDocument
+        };
+      });
+      const catNavPre = await combinedPage.evaluate(() => ({ view: document.body.getAttribute('data-cat-view'), href: document.querySelector('[data-premium-nav="work"]').getAttribute('href'), navigate: typeof window.YakuCat && typeof window.YakuCat.navigateStart === 'function' }));
+      assert.deepStrictEqual(catNavPre, { view: 'start', href: '/cat?view=work', navigate: true }, JSON.stringify(catNavPre));
+      await combinedPage.locator('[data-premium-nav="work"]').click();
+      await combinedPage.waitForFunction(() => location.pathname === '/cat' && location.search === '?view=work' && document.body.classList.contains('premium-mode-worklist'), null, { timeout: 10000 });
+      assert.deepStrictEqual(await readStartNavState(), { url: '/cat?view=work', active: 'work', startHidden: true, workHidden: false, alignVisible: false, view: 'start', identity: true });
+      assert.strictEqual(combinedDocumentLoads.length, navCountBeforeStartWork, 'start -> work must not reload the document');
+      assert.strictEqual(recentRequestCount, recentCountAfterRefresh, 'start -> work must reuse the CAT recent snapshot');
+      assert.strictEqual(await combinedPage.evaluate(() => document === window.__catDocument), true, 'start -> work must preserve document identity');
+      await combinedPage.evaluate(() => history.back());
+      await combinedPage.waitForFunction(() => location.pathname === '/' && location.search === '' && document.body.classList.contains('premium-mode-combined-start'), null, { timeout: 10000 });
+      assert.deepStrictEqual(await readStartNavState(), { url: '/', active: 'translate', startHidden: false, workHidden: true, alignVisible: false, view: 'start', identity: true });
+      assert.strictEqual(combinedDocumentLoads.length, navCountBeforeStartWork, 'Back must remain in-document');
+      assert.strictEqual(await combinedPage.evaluate(() => document === window.__catDocument), true, 'Back must preserve document identity');
+      await combinedPage.evaluate(() => history.forward());
+      await combinedPage.waitForFunction(() => location.pathname === '/cat' && location.search === '?view=work' && document.body.classList.contains('premium-mode-worklist'), null, { timeout: 10000 });
+      assert.deepStrictEqual(await readStartNavState(), { url: '/cat?view=work', active: 'work', startHidden: true, workHidden: false, alignVisible: false, view: 'start', identity: true });
+      assert.strictEqual(combinedDocumentLoads.length, navCountBeforeStartWork, 'Forward must remain in-document');
+      assert.strictEqual(recentRequestCount, recentCountAfterRefresh, 'Forward must not reload recent projects');
+      assert.strictEqual(await combinedPage.evaluate(() => document === window.__catDocument), true, 'Forward must preserve document identity');
+      const navInterceptionProbes = await combinedPage.evaluate(() => {
+        const source = document.querySelector('[data-premium-nav="work"]');
+        return [
+          { button: 1 },
+          { button: 0, ctrlKey: true },
+          { button: 0, shiftKey: true },
+          { button: 0, target: '_blank' },
+          { button: 0, download: '' }
+        ].map(options => {
+          const link = source.cloneNode(true);
+          link.href = '#navigation-probe';
+          if (options.target) link.setAttribute('target', options.target);
+          if (options.download !== undefined) link.setAttribute('download', options.download);
+          document.body.appendChild(link);
+          const event = new MouseEvent('click', Object.assign({ bubbles: true, cancelable: true }, options));
+          link.dispatchEvent(event);
+          link.remove();
+          return { prevented: event.defaultPrevented, href: location.pathname + location.search };
+        });
+      });
+      assert.ok(navInterceptionProbes.every(item => !item.prevented && item.href === '/cat?view=work'), JSON.stringify(navInterceptionProbes));
+      const beginDelayedCatOpen = async () => {
+        await combinedPage.evaluate(() => {
+          const input = document.getElementById('cat-file-input');
+          const transfer = new DataTransfer();
+          transfer.items.add(new File(['delayed'], 'busy-open.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+          input.files = transfer.files;
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await combinedPage.waitForFunction(() => !!window.YakuCat && YakuCat.isBusy() && !!document.getElementById('cat-file-loading') && !document.getElementById('cat-file-loading').hidden, null, { timeout: 10000 });
+      };
+      await combinedPage.evaluate(() => history.back());
+      await combinedPage.waitForFunction(() => location.pathname === '/' && location.search === '' && document.body.classList.contains('premium-mode-combined-start'), null, { timeout: 10000 });
+      await combinedPage.evaluate(() => fetch('/__enable-delayed-cat-open'));
+      await beginDelayedCatOpen();
+      const busyClickLoads = combinedDocumentLoads.length;
+      const busyClickDocumentLoad = combinedPage.waitForEvent('domcontentloaded');
+      await combinedPage.locator('[data-premium-nav="work"]').click();
+      await busyClickDocumentLoad;
+      await combinedPage.waitForFunction(() => location.pathname === '/cat' && location.search === '?view=work' && document.body.classList.contains('premium-mode-worklist') && !!window.YakuCat && !YakuCat.isBusy() && !!document.getElementById('cat-file-loading') && document.getElementById('cat-file-loading').hidden, null, { timeout: 20000 });
+      assert.ok(combinedDocumentLoads.length > busyClickLoads, 'busy start navigation must perform a native document navigation');
+      await combinedPage.waitForTimeout(1500);
+      assert.deepStrictEqual(await readStartNavState(), { url: '/cat?view=work', active: 'work', startHidden: true, workHidden: false, alignVisible: false, view: 'start', identity: false });
+
+      /* Native busy navigation leaves a separate document entry. Start the
+         same-document Back/Forward assertions from a clean root/work pair so
+         the ordered app entries are the only candidates for history.go(). */
+      await combinedPage.goto(baseUrl + '/', { waitUntil: 'domcontentloaded' });
+      await combinedPage.waitForFunction(() => location.pathname === '/' && location.search === '' && document.body.classList.contains('premium-mode-combined-start'), null, { timeout: 10000 });
+      await combinedPage.locator('[data-premium-nav="work"]').click();
+      await combinedPage.waitForFunction(() => location.pathname === '/cat' && location.search === '?view=work' && document.body.classList.contains('premium-mode-worklist'), null, { timeout: 10000 });
+      await combinedPage.evaluate(() => history.back());
+      await combinedPage.waitForFunction(() => location.pathname === '/' && location.search === '' && document.body.classList.contains('premium-mode-combined-start'), null, { timeout: 10000 });
+      await combinedPage.evaluate(() => {
+        window.__busyPopstateCount = 0;
+        window.__busyBeforeUnloadCount = 0;
+        window.__busyBeforeUnload = event => { window.__busyBeforeUnloadCount += 1; event.preventDefault(); };
+        window.addEventListener('popstate', () => { window.__busyPopstateCount += 1; });
+        window.addEventListener('beforeunload', window.__busyBeforeUnload);
+      });
+      await beginDelayedCatOpen();
+      const busyForwardLoads = combinedDocumentLoads.length;
+      await combinedPage.evaluate(() => history.forward());
+      await combinedPage.waitForFunction(() => location.pathname === '/' && location.search === '' && document.body.classList.contains('premium-mode-combined-start') && !!window.YakuCat && YakuCat.isBusy() && !!document.getElementById('cat-file-loading') && !document.getElementById('cat-file-loading').hidden, null, { timeout: 10000 });
+      assert.strictEqual(combinedDocumentLoads.length, busyForwardLoads, 'busy Forward must restore the applied document entry without a reload');
+      assert.strictEqual(await combinedPage.evaluate(() => window.__busyPopstateCount), 2, 'busy Forward must restore once without a popstate loop');
+      assert.strictEqual(await combinedPage.evaluate(() => window.__busyBeforeUnloadCount), 0, 'busy Forward must not invoke a dismissible unload');
+      await combinedPage.waitForFunction(() => !!window.YakuCat && !YakuCat.isBusy() && !!document.getElementById('cat-file-loading') && document.getElementById('cat-file-loading').hidden && location.pathname === '/' && location.search === '', null, { timeout: 10000 });
+      await combinedPage.waitForTimeout(1500);
+      assert.strictEqual(await combinedPage.evaluate(() => location.pathname + location.search), '/', 'delayed open must not overwrite the busy Forward destination');
+
+      await combinedPage.locator('[data-premium-nav="work"]').click();
+      await combinedPage.waitForFunction(() => location.pathname === '/cat' && location.search === '?view=work' && document.body.classList.contains('premium-mode-worklist'), null, { timeout: 10000 });
+      await beginDelayedCatOpen();
+      const busyBackLoads = combinedDocumentLoads.length;
+      await combinedPage.evaluate(() => { window.__busyPopstateCount = 0; });
+      await combinedPage.evaluate(() => history.back());
+      await combinedPage.waitForFunction(() => location.pathname === '/cat' && location.search === '?view=work' && document.body.classList.contains('premium-mode-worklist') && !!window.YakuCat && YakuCat.isBusy() && !!document.getElementById('cat-file-loading') && !document.getElementById('cat-file-loading').hidden, null, { timeout: 10000 });
+      assert.strictEqual(combinedDocumentLoads.length, busyBackLoads, 'busy Back must restore the applied document entry without a reload');
+      assert.strictEqual(await combinedPage.evaluate(() => window.__busyPopstateCount), 2, 'busy Back must restore once without a popstate loop');
+      assert.strictEqual(await combinedPage.evaluate(() => window.__busyBeforeUnloadCount), 0, 'busy Back must not invoke a dismissible unload');
+      await combinedPage.waitForFunction(() => !!window.YakuCat && !YakuCat.isBusy() && !!document.getElementById('cat-file-loading') && document.getElementById('cat-file-loading').hidden && location.pathname === '/cat' && location.search === '?view=work', null, { timeout: 10000 });
+      await combinedPage.waitForTimeout(1500);
+      assert.strictEqual(await combinedPage.evaluate(() => location.pathname + location.search), '/cat?view=work', 'delayed open must not overwrite the busy Back destination');
+      await combinedPage.evaluate(() => window.removeEventListener('beforeunload', window.__busyBeforeUnload));
+      await combinedPage.evaluate(() => history.back());
+      await combinedPage.waitForFunction(() => location.pathname === '/' && location.search === '' && document.body.classList.contains('premium-mode-combined-start'), null, { timeout: 10000 });
+      const projectHistoryRoute = '/cat?project=' + alignProject.id;
+      const prepareProjectHistory = async (mode) => {
+        await combinedPage.evaluate(route => {
+          const rootState = Object.assign({}, history.state || {}, { yakuCatNavigation: true, sequence: 0, route: '/' });
+          history.replaceState(rootState, '', '/');
+          history.pushState(Object.assign({}, rootState, { sequence: 1, route }), '', route);
+          history.back();
+        }, projectHistoryRoute);
+        await combinedPage.waitForFunction(() => location.pathname === '/' && location.search === '' && document.body.classList.contains('premium-mode-combined-start') && !!window.YakuCat && !YakuCat.isBusy(), null, { timeout: 10000 });
+        await combinedPage.evaluate(() => {
+          window.__catDocument = document;
+          window.__resumePopstateCount = 0;
+        });
+        await combinedPage.evaluate(endpoint => fetch(endpoint), '/__enable-delayed-cat-resume-' + mode);
+        await combinedPage.evaluate(() => history.forward());
+        await combinedPage.waitForFunction(() => location.pathname === '/cat' && location.search.indexOf('?project=') === 0 && document.body.classList.contains('premium-mode-combined-start') && !!window.YakuCat && YakuCat.isBusy() && !document.getElementById('cat-picker').hidden && document.getElementById('cat-workspace').hidden, null, { timeout: 10000 });
+      };
+      await combinedPage.evaluate(() => { window.__resumePopstateCount = 0; window.addEventListener('popstate', () => { window.__resumePopstateCount += 1; }); });
+      await prepareProjectHistory('success');
+      await combinedPage.evaluate(() => history.back());
+      await combinedPage.waitForFunction(() => location.pathname === '/' && location.search === '' && document.body.classList.contains('premium-mode-combined-start') && !!window.YakuCat && !YakuCat.isBusy() && !document.getElementById('premium-cat-start').hidden && document.getElementById('premium-work-list').hidden, null, { timeout: 10000 });
+      assert.strictEqual(await combinedPage.evaluate(() => window.__resumePopstateCount), 2, 'cancelled project resume must not loop history');
+      assert.strictEqual(await combinedPage.evaluate(() => document === window.__catDocument), true, 'cancelled project resume must preserve document identity');
+      await combinedPage.waitForTimeout(1500);
+      const cancelledResumeState = await combinedPage.evaluate(() => ({ url: location.pathname + location.search, busy: YakuCat.isBusy(), start: !document.getElementById('premium-cat-start').hidden, work: document.getElementById('premium-work-list').hidden, workspace: document.getElementById('cat-workspace').hidden, status: document.getElementById('cat-status').textContent }));
+      assert.deepStrictEqual(cancelledResumeState, { url: '/', busy: false, start: true, work: true, workspace: true, status: '' }, JSON.stringify(cancelledResumeState));
+
+      await prepareProjectHistory('failure');
+      await combinedPage.waitForFunction(() => location.pathname === '/' && location.search === '' && !!window.YakuCat && !YakuCat.isBusy() && !!document.getElementById('cat-status') && document.getElementById('cat-status').textContent.indexOf('delayed resume fixture failure') >= 0, null, { timeout: 20000 });
+      assert.strictEqual(await combinedPage.evaluate(() => window.__resumePopstateCount), 2, 'failed project resume must rollback once without a history loop');
+      assert.strictEqual(await combinedPage.evaluate(() => document === window.__catDocument), true, 'failed project resume rollback must preserve document identity');
+      const failedResumeState = await combinedPage.evaluate(() => ({ url: location.pathname + location.search, busy: YakuCat.isBusy(), start: !document.getElementById('premium-cat-start').hidden, work: document.getElementById('premium-work-list').hidden, workspace: document.getElementById('cat-workspace').hidden, status: document.getElementById('cat-status').textContent }));
+      assert.strictEqual(failedResumeState.url, '/', JSON.stringify(failedResumeState));
+      assert.strictEqual(failedResumeState.busy, false, JSON.stringify(failedResumeState));
+      assert.strictEqual(failedResumeState.start && failedResumeState.work && failedResumeState.workspace, true, JSON.stringify(failedResumeState));
+      assert.ok(failedResumeState.status.indexOf('delayed resume fixture failure') >= 0, JSON.stringify(failedResumeState));
+      await combinedPage.goto(baseUrl + '/', { waitUntil: 'domcontentloaded' });
+      await combinedPage.waitForFunction(() => location.pathname === '/' && location.search === '' && document.body.classList.contains('premium-mode-combined-start') && !!window.YakuCat && !YakuCat.isBusy(), null, { timeout: 10000 });
+      await combinedPage.evaluate(() => {
+        window.__catDocument = document;
+        window.__resumePopstateCount = 0;
+        window.addEventListener('popstate', () => { window.__resumePopstateCount += 1; });
+      });
+      const duplicateProjectRoute = '/cat?project=' + alignProject.id;
+      const secondProjectRoute = '/cat?project=' + pendingAlignProject.id;
+      await combinedPage.evaluate(route => {
+        const rootState = Object.assign({}, history.state || {}, { yakuCatNavigation: true, sequence: 0, route: '/' });
+        history.replaceState(rootState, '', '/');
+        history.pushState(Object.assign({}, rootState, { sequence: 1, route }), '', route);
+        history.back();
+      }, duplicateProjectRoute);
+      await combinedPage.waitForFunction(() => location.pathname === '/' && location.search === '', null, { timeout: 10000 });
+      await combinedPage.evaluate(() => history.forward());
+      await combinedPage.waitForFunction(() => location.pathname === '/cat' && location.search.indexOf('?project=') === 0 && document.body.getAttribute('data-cat-view') === 'workspace' && !!window.YakuCat && !YakuCat.isBusy(), null, { timeout: 10000 });
+      await combinedPage.evaluate(({ first, second }) => {
+        const state = Object.assign({}, history.state || {}, { yakuCatNavigation: true });
+        history.pushState(Object.assign({}, state, { sequence: 2, route: second }), '', second);
+        history.pushState(Object.assign({}, state, { sequence: 3, route: first }), '', first);
+      }, { first: duplicateProjectRoute, second: secondProjectRoute });
+      await combinedPage.evaluate(() => fetch('/__enable-delayed-cat-resume-success'));
+      await combinedPage.evaluate(() => { window.__resumePopstateCount = 0; history.back(); });
+      await combinedPage.waitForFunction(() => location.pathname === '/cat' && location.search.indexOf('dddddddddddddddddddddddddddddddd') >= 0 && !!window.YakuCat && YakuCat.isBusy(), null, { timeout: 10000 });
+      await combinedPage.evaluate(() => history.back());
+      await combinedPage.waitForFunction(() => location.pathname === '/cat' && location.search.indexOf('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') >= 0 && document.body.getAttribute('data-cat-view') === 'workspace' && !!window.YakuCat && !YakuCat.isBusy(), null, { timeout: 10000 });
+      assert.strictEqual(await combinedPage.evaluate(() => window.__resumePopstateCount), 2, 'duplicate project Back must cancel delayed resume without a history loop');
+      const duplicateResumeState = await combinedPage.evaluate(() => ({ url: location.pathname + location.search, state: history.state, title: document.getElementById('cat-current-title').textContent, busy: YakuCat.isBusy(), workspace: !document.getElementById('cat-workspace').hidden, identity: document === window.__catDocument }));
+      assert.strictEqual(duplicateResumeState.url, duplicateProjectRoute, JSON.stringify(duplicateResumeState));
+      assert.strictEqual(duplicateResumeState.state.sequence, 1, JSON.stringify(duplicateResumeState));
+      assert.strictEqual(duplicateResumeState.busy, false, JSON.stringify(duplicateResumeState));
+      assert.strictEqual(duplicateResumeState.workspace && duplicateResumeState.identity, true, JSON.stringify(duplicateResumeState));
+      await combinedPage.waitForTimeout(1500);
+      assert.strictEqual(await combinedPage.evaluate(() => location.pathname + location.search), duplicateProjectRoute, 'stale delayed project response must not overwrite the earlier duplicate entry');
+      await combinedPage.evaluate(() => fetch('/__enable-delayed-cat-open'));
+      await combinedPage.evaluate(() => { window.__resumePopstateCount = 0; });
+      await beginDelayedCatOpen();
+      await combinedPage.evaluate(() => history.back());
+      await combinedPage.waitForFunction(() => location.pathname === '/cat' && location.search.indexOf('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') >= 0 && document.body.getAttribute('data-cat-view') === 'workspace' && !!window.YakuCat && YakuCat.isBusy() && !!document.getElementById('cat-file-loading') && !document.getElementById('cat-file-loading').hidden, null, { timeout: 10000 });
+      assert.strictEqual(await combinedPage.evaluate(() => window.__resumePopstateCount), 2, 'busy Back after duplicate projects must restore the immediate A entry only');
+      assert.strictEqual(await combinedPage.evaluate(() => history.state && history.state.sequence), 1, 'busy Back after duplicate projects must not jump to A3 or B2');
+      await combinedPage.waitForFunction(() => !!window.YakuCat && !YakuCat.isBusy() && !!document.getElementById('cat-file-loading') && document.getElementById('cat-file-loading').hidden && location.pathname === '/cat' && location.search.indexOf('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') >= 0, null, { timeout: 10000 });
+      await combinedPage.waitForTimeout(1500);
+      assert.strictEqual(await combinedPage.evaluate(() => location.pathname + location.search), duplicateProjectRoute, 'delayed busy operation must not overwrite duplicate-project history');
+      await combinedPage.evaluate(() => history.back());
+      await combinedPage.waitForFunction(() => location.pathname === '/' && location.search === '' && document.body.classList.contains('premium-mode-combined-start'), null, { timeout: 10000 });
+      await combinedPage.locator('[data-premium-nav="work"]').click();
+      await combinedPage.waitForFunction(() => location.pathname === '/cat' && location.search === '?view=work' && document.body.classList.contains('premium-mode-worklist'), null, { timeout: 10000 });
+      await combinedPage.evaluate(() => history.replaceState(null, '', '/'));
+      await combinedPage.evaluate(() => { const event = new PopStateEvent('popstate'); window.dispatchEvent(event); });
       await combinedPage.locator('#premium-reference-open').click();
       await combinedPage.waitForFunction(() => new URL(location.href).searchParams.get('import') === '1' && document.getElementById('cat-source-align') && !document.getElementById('cat-source-align').hidden, null, { timeout: 20000 });
       const importStartState = await combinedPage.evaluate(() => ({ query: new URL(location.href).searchParams.get('import'), panel: !document.getElementById('cat-source-align').hidden, japanese: document.body.textContent.includes('\u65e5\u672c\u8a9e\u7248\u306ePDF'), english: document.body.textContent.includes('\u82f1\u8a9e\u7248\u306ePDF') }));
@@ -279,6 +550,27 @@ function sendJson(response, value) {
       console.log('Premium combined 1200x800:', JSON.stringify(combinedNarrow));
       if (combinedErrors.length) throw new Error('PREMIUM_UI_COMBINED_PAGEERROR: ' + combinedErrors.join(' | '));
       await combinedPage.close();
+      const recentFailurePage = await browser.newPage({ viewport: { width: 1912, height: 987 } });
+      await recentFailurePage.goto(baseUrl + '/', { waitUntil: 'domcontentloaded' });
+      await recentFailurePage.waitForFunction(() => document.querySelectorAll('.premium-recent-item').length === 2, null, { timeout: 10000 });
+      const recentFailureBaseline = recentRequestCount;
+      await recentFailurePage.evaluate(() => fetch('/__enable-recent-failure'));
+      await recentFailurePage.reload({ waitUntil: 'domcontentloaded' });
+      await recentFailurePage.waitForFunction(() => !!document.querySelector('#premium-sidebar-recent [data-premium-recent-error]') && !!document.querySelector('#premium-work-cards [data-premium-recent-error]'), null, { timeout: 10000 });
+      assert.strictEqual(recentRequestCount, recentFailureBaseline + 1, 'recent failure must use one request and publish an explicit error snapshot');
+      const recentFailureState = await recentFailurePage.evaluate(() => ({
+        sidebarError: !!document.querySelector('#premium-sidebar-recent [data-premium-recent-error]'),
+        workError: !!document.querySelector('#premium-work-cards [data-premium-recent-error]'),
+        count: document.getElementById('premium-recent-count').textContent,
+        workCards: document.querySelectorAll('#premium-work-cards .premium-work-card').length
+      }));
+      assert.deepStrictEqual(recentFailureState, { sidebarError: true, workError: true, count: '\u8aad\u8fbc\u5931\u6557', workCards: 0 }, JSON.stringify(recentFailureState));
+      await recentFailurePage.locator('#premium-sidebar-recent [data-premium-recent-retry]').click();
+      await recentFailurePage.waitForFunction(() => !document.querySelector('#premium-sidebar-recent [data-premium-recent-error]') && document.querySelectorAll('.premium-recent-item').length === 2 && document.querySelectorAll('#premium-work-cards .premium-work-card').length === 2, null, { timeout: 10000 });
+      assert.strictEqual(recentRequestCount, recentFailureBaseline + 2, 'recent retry must issue one request and update both premium surfaces');
+      await recentFailurePage.waitForTimeout(200);
+      assert.strictEqual(recentRequestCount, recentFailureBaseline + 2, 'recent failure/retry must not create an API storm');
+      await recentFailurePage.close();
       const page = await browser.newPage({ viewport: { width: 1912, height: 987 } });
       const pageErrors = [];
       page.on('pageerror', error => pageErrors.push(error.message));

@@ -153,6 +153,7 @@ tools/Test-YakuV9204CatPartialPreview.ps1	crlf
 tools/V64-HTTP-Boundary-Test.ps1	crlf
 tools/V65-Saving-Validation-Test.ps1	crlf
 tools/Wait-YakuCopilotResponse-Watcher-Test.ps1	crlf
+tools/Test-YakuNavigationPerformance.ps1	lf
 www/assets/cat.js	lf
 www/assets/cat-workspace.css	lf
 www/assets/common.js	lf

@@ -4,6 +4,9 @@
   var PREMIUM_FLAG = 'data-yaku-premium-ready';
   var premiumState = {
     recent: [],
+    recentStatus: 'loading',
+    recentError: '',
+    recentRetrying: false,
     catFilter: 'issues',
     lastQuickSource: '',
     lastQuickArchived: '',
@@ -238,19 +241,54 @@
       };
     });
   }
+  function adoptRecent(data) {
+    var error = data && data.error;
+    premiumState.recentStatus = error ? 'error' : 'ready';
+    premiumState.recentError = error && error.message ? String(error.message) : '';
+    premiumState.recentRetrying = false;
+    premiumState.recent = normalizeRecent(data);
+    renderSidebarRecent();
+    renderWorkCards();
+    return premiumState.recent;
+  }
   function fetchRecent() {
     if (!(window.YakuCommon && YakuCommon.post)) return Promise.resolve([]);
     return YakuCommon.post('/api/cat/recent', {}).then(function (data) {
-      premiumState.recent = normalizeRecent(data);
-      renderSidebarRecent();
-      renderWorkCards();
-      return premiumState.recent;
+      return adoptRecent(data);
     }).catch(function () {
-      premiumState.recent = [];
+      return adoptRecent({ projects: [], error: { message: '最近の作業を読み込めませんでした。' } });
+    });
+  }
+  function adoptCatRecentSnapshot(data) {
+    if (data && typeof data === 'object') return adoptRecent(data);
+    if (window.YakuCat && typeof YakuCat.getRecentSnapshot === 'function') {
+      var snapshot = YakuCat.getRecentSnapshot();
+      if (snapshot) return adoptRecent(snapshot);
+    }
+    return premiumState.recent;
+  }
+  function retryCatRecent() {
+    if (premiumState.recentRetrying || !(window.YakuCat && typeof YakuCat.refreshRecent === 'function')) return;
+    premiumState.recentRetrying = true;
+    renderSidebarRecent();
+    renderWorkCards();
+    Promise.resolve(YakuCat.refreshRecent()).then(function () {
+      premiumState.recentRetrying = false;
       renderSidebarRecent();
       renderWorkCards();
-      return [];
+    }, function () {
+      premiumState.recentRetrying = false;
+      renderSidebarRecent();
+      renderWorkCards();
     });
+  }
+  function recentErrorMarkup() {
+    var retry = premiumState.recentRetrying ? '読み込み中…' : '再読み込み';
+    return '<div class="premium-recent-error" data-premium-recent-error role="alert"><strong>最近の作業を読み込めません</strong><span>' + escapeHtml(premiumState.recentError || '通信を確認して、もう一度お試しください。') + '</span><button type="button" data-premium-recent-retry>' + retry + '</button></div>';
+  }
+  function bindRecentRetry(host) {
+    var button = host && host.querySelector('[data-premium-recent-retry]');
+    if (button) { button.disabled = premiumState.recentRetrying; button.addEventListener('click', retryCatRecent); }
   }
   function recentMeta(item) {
     if (item.source === 'align') {
@@ -263,6 +301,12 @@
     var host = el('premium-sidebar-recent');
     var count = el('premium-recent-count');
     if (!host) return;
+    if (premiumState.recentStatus === 'error') {
+      if (count) count.textContent = '読込失敗';
+      host.innerHTML = recentErrorMarkup();
+      bindRecentRetry(host);
+      return;
+    }
     var rows = premiumState.recent.slice(0, 3);
     if (count) count.textContent = rows.length + '件';
     if (!rows.length) {
@@ -404,6 +448,11 @@
   function renderWorkCards() {
     var host = el('premium-work-cards');
     if (!host) return;
+    if (premiumState.recentStatus === 'error') {
+      host.innerHTML = recentErrorMarkup();
+      bindRecentRetry(host);
+      return;
+    }
     var rows = premiumState.recent;
     if (!rows.length) {
       host.innerHTML = '<div class="premium-work-empty"><strong>保存済みの作業はまだありません。</strong><p>Excel翻訳や過去訳の対応確認を始めると、途中経過がここに自動保存されます。</p></div>';
@@ -443,6 +492,7 @@
       premiumState.recent = premiumState.recent.filter(function (row) { return row.id !== id; });
       renderSidebarRecent();
       renderWorkCards();
+      if (window.YakuCat && typeof YakuCat.refreshRecent === 'function') YakuCat.refreshRecent();
       showToast('作業を削除しました。');
     }).catch(function (error) { showToast(error && error.message ? error.message : '削除できませんでした。', 'error'); });
   }
@@ -775,6 +825,17 @@
       document.title = '翻訳 - YakuLingo';
     }
   }
+  function interceptCatStartNavigation(event) {
+    if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) return;
+    var link = event.target.closest ? event.target.closest('[data-premium-nav]') : null;
+    if (!link || document.body.getAttribute('data-cat-view') !== 'start') return;
+    var target = link.getAttribute('target');
+    if ((target && target !== '_self') || link.hasAttribute('download')) return;
+    var key = link.getAttribute('data-premium-nav');
+    if (key !== 'translate' && key !== 'work') return;
+    if (!(window.YakuCat && typeof YakuCat.navigateStart === 'function')) return;
+    if (YakuCat.navigateStart(key === 'work' ? 'work' : 'translate')) event.preventDefault();
+  }
   function setupCat() {
     var shell = one('main.shell');
     if (!shell || document.body.hasAttribute(PREMIUM_FLAG)) return;
@@ -783,9 +844,11 @@
     var picker = el('cat-picker');
     buildCatStart(picker);
     buildWorkList(picker);
-    fetchRecent();
+    window.addEventListener('yaku-cat-recent', function (event) { adoptCatRecentSnapshot(event && event.detail); });
+    adoptCatRecentSnapshot();
     setupTopActionProxies();
 
+    document.addEventListener('click', interceptCatStartNavigation);
     document.addEventListener('click', function (event) {
       var row = event.target.closest('[data-premium-row]');
       if (row) { openPremiumRow(row.getAttribute('data-premium-row')); return; }
@@ -799,7 +862,7 @@
       }
     });
     window.addEventListener('pagehide', cancelPremiumRowWait);
-    window.addEventListener('popstate', cancelPremiumRowWait);
+    window.addEventListener('popstate', function () { cancelPremiumRowWait(); syncCatMode(); });
 
     var refresh = debounce(function () { syncCatMode(); refreshWorkspaceUi(); renderWorkCards(); }, 90);
     /* Observe only legacy application nodes. Observing #cat-workspace also sees
@@ -809,7 +872,7 @@
       if (node) new MutationObserver(refresh).observe(node, { childList: true, subtree: true, attributes: true, characterData: true });
     });
     var resumeList = el('cat-resume-list');
-    if (resumeList) new MutationObserver(function () { window.setTimeout(fetchRecent, 70); }).observe(resumeList, { childList: true, subtree: true });
+    if (resumeList) new MutationObserver(function () { window.setTimeout(adoptCatRecentSnapshot, 0); }).observe(resumeList, { childList: true, subtree: true });
     new MutationObserver(syncCatMode).observe(document.body, { attributes: true, attributeFilter: ['data-cat-view', 'data-cat-source'] });
     syncCatMode();
   }

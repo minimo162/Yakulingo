@@ -6,6 +6,7 @@
      同じ文字列を持つ。 */
   var paletteHandoffStorageKey = 'yaku.palette.handoff';
   var ready = false, busy = false, project = null, pendingDirection = null, uploaded = null, directFilePath = '';
+  var recentSnapshot = null, recentRequest = null, recentRequestOwner = false;
   var dirty = new Map(), saveChain = Promise.resolve(), jobTimer = null, jobContext = null, candidateSeq = 0;
   var deleteTarget = null, preflightScope = null, jobSerial = 0, viewEpoch = 0, outputScope = null;
   var fileLoadingOwner = 0;
@@ -232,17 +233,134 @@
        /cat → /cat?project=X&translate=1 → /cat?project=X
      の3段になり、戻るを1回押しても同じ資料に戻るだけだった（2026-08-13）。
      しかも戻った先の住所は translate=1 付きなので、読み直すとまた訳しにいく。 */
-  var locationSynced = false;
+  var locationSynced = false, historySequence = 0, appliedHistoryEntry = null, historyRestoreGuard = false, pendingHistoryResume = null;
+  function historyStateFor(route, sequence) {
+    var state = window.history.state && typeof window.history.state === 'object' ? Object.assign({}, window.history.state) : {};
+    state.yakuCatNavigation = true;
+    state.sequence = sequence;
+    state.route = route;
+    return state;
+  }
+  function readCatHistoryState() {
+    var state = window.history.state;
+    if (!state || state.yakuCatNavigation !== true || typeof state.sequence !== 'number' || typeof state.route !== 'string') return null;
+    return state;
+  }
+  function rememberAppliedHistoryEntry() {
+    var state = readCatHistoryState();
+    if (!state) return;
+    historySequence = Math.max(historySequence, state.sequence);
+    appliedHistoryEntry = { route: state.route, sequence: state.sequence };
+  }
+  function appliedRouteFallback() {
+    if (project && project.id) return '/cat?project=' + encodeURIComponent(String(project.id));
+    var params = new URLSearchParams(location.search);
+    if (params.get('import') === '1' || (document.querySelector('meta[name="yaku-import"]') && document.querySelector('meta[name="yaku-import"]').getAttribute('content') === '1')) return '/cat?import=1';
+    if (params.get('view') === 'work' || document.body.getAttribute('data-cat-view') === 'work') return '/cat?view=work';
+    return '/';
+  }
+  function keepBusyAtAppliedEntry() {
+    var applied = appliedHistoryEntry;
+    var route = applied && applied.route ? applied.route : appliedRouteFallback();
+    var sequence = applied && typeof applied.sequence === 'number' ? applied.sequence : historySequence;
+    try {
+      window.history.replaceState(historyStateFor(route, sequence), '', route);
+      rememberAppliedHistoryEntry();
+    } catch (_) {}
+    return true;
+  }
+  function restoreBusyHistory() {
+    var target = readCatHistoryState();
+    var applied = appliedHistoryEntry;
+    if (target && applied && target.route === applied.route) {
+      appliedHistoryEntry = { route: target.route, sequence: target.sequence };
+      historySequence = Math.max(historySequence, target.sequence);
+      return true;
+    }
+    if (target && applied && target.sequence !== applied.sequence) {
+      var delta = applied.sequence - target.sequence;
+      historyRestoreGuard = true;
+      try { window.history.go(delta); return true; }
+      catch (_) { historyRestoreGuard = false; }
+    }
+    /* A null/non-app entry cannot tell us its history offset. Keep the
+       already-applied screen and URL together in this entry instead of
+       reloading: common.js may correctly keep a beforeunload confirmation
+       open, and a dismissed confirmation must not leave the old screen at a
+       new address. The next explicit navigation can still leave normally. */
+    return keepBusyAtAppliedEntry();
+  }
+  function copyHistoryEntry(entry) {
+    return entry && typeof entry.route === 'string' && typeof entry.sequence === 'number'
+      ? { route: entry.route, sequence: entry.sequence } : null;
+  }
+  function sameHistoryEntry(left, right) {
+    return !!(left && right && left.route === right.route && left.sequence === right.sequence);
+  }
+  function cancelPendingHistoryResume() {
+    if (!pendingHistoryResume) return false;
+    pendingHistoryResume = null;
+    ++viewEpoch;
+    setBusy(false);
+    status('');
+    return true;
+  }
+  function rollbackPendingHistoryResume(token) {
+    var target = readCatHistoryState();
+    var applied = token && token.appliedEntry;
+    if (target && applied && target.sequence !== applied.sequence) {
+      var delta = applied.sequence - target.sequence;
+      historyRestoreGuard = true;
+      try { window.history.go(delta); return; }
+      catch (_) { historyRestoreGuard = false; }
+    }
+    keepBusyAtAppliedEntry();
+  }
+  function resumeFromHistory(id) {
+    var token = {
+      id: String(id || ''),
+      epoch: ++viewEpoch,
+      targetEntry: copyHistoryEntry(readCatHistoryState()),
+      appliedEntry: copyHistoryEntry(appliedHistoryEntry)
+    };
+    pendingHistoryResume = token;
+    setBusy(true);
+    status('続きの作業を開いています…');
+    return Promise.resolve().then(function () { return post('resume', { project_id: token.id }, false, null); }).then(function (data) {
+      if (pendingHistoryResume !== token || token.epoch !== viewEpoch) return;
+      render(data, true);
+      pendingHistoryResume = null;
+    }).catch(function (error) {
+      if (pendingHistoryResume !== token || token.epoch !== viewEpoch) return;
+      pendingHistoryResume = null;
+      setBusy(false);
+      status(error.message, true);
+      rollbackPendingHistoryResume(token);
+    });
+  }
   function syncLocation(projectId, preserveImport, preserveWork) {
     try {
       var first = !locationSynced;
       /* 翻訳の標準面は / の左右画面だけ。旧 /quick・/cat・/palette から来ても、
          資料・過去訳・作業一覧を指定していなければ履歴を増やさず / へ寄せる。 */
       var next = projectId ? ('/cat?project=' + encodeURIComponent(projectId)) : (preserveImport ? '/cat?import=1' : preserveWork ? '/cat?view=work' : '/');
+      var current = location.pathname + location.search;
+      var existing = readCatHistoryState();
+      var sequence = existing ? existing.sequence : (appliedHistoryEntry ? appliedHistoryEntry.sequence : historySequence);
       locationSynced = true;
-      if (location.pathname + location.search === next) return;
-      if (projectId && !first) window.history.pushState(null, '', next);
-      else window.history.replaceState(null, '', next);
+      if (current === next) {
+        if (!existing) window.history.replaceState(historyStateFor(next, sequence), '', next);
+        rememberAppliedHistoryEntry();
+        return;
+      }
+      if (projectId && !first) {
+        sequence = (appliedHistoryEntry ? appliedHistoryEntry.sequence : historySequence) + 1;
+        historySequence = sequence;
+        window.history.pushState(historyStateFor(next, sequence), '', next);
+      } else {
+        window.history.replaceState(historyStateFor(next, sequence), '', next);
+      }
+      rememberAppliedHistoryEntry();
     } catch (_) {}
   }
   /* 帯は外した（2026-08-13）。貼り付けも取り込みも同じ経路で作業を作るように
@@ -297,7 +415,24 @@
      器の高さを窓に固定する規則（cat-workspace.css）は、一覧が主役の確認作業に
      しか合わない。選ぶ画面とその場で訳す状態は、内容の丈だけ縦に伸びてよい。 */
   function setView(name) { document.body.setAttribute('data-cat-view', name); }
-  function showPicker(preserveImport, preserveWork) { if(project) reportProjectLease('closed'); syncLocation('', !!preserveImport, !!preserveWork); viewEpoch++; candidateSeq++; project = null; activeSegmentId = ''; activeIndex = -1; revisionComparison = null; currentFilter = 'actionable'; currentLocation = 'all'; currentChange = 'all'; resetSearchTools(); termSelection = { index: -1, source: '', target: '' }; dirty.clear(); directFilePath = ''; clearOutputDisplay(); document.body.removeAttribute('data-cat-source'); document.title = '翻訳 - YakuLingo'; el('cat-page-title').textContent = '翻訳'; setView('start'); el('cat-picker').hidden = false; el('cat-workspace').hidden = true; el('cat-current-summary').hidden = true; closeStartPanels(); loadRecent(); }
+  function showPicker(preserveImport, preserveWork, refreshRecent) { if(project) reportProjectLease('closed'); syncLocation('', !!preserveImport, !!preserveWork); viewEpoch++; candidateSeq++; project = null; activeSegmentId = ''; activeIndex = -1; revisionComparison = null; currentFilter = 'actionable'; currentLocation = 'all'; currentChange = 'all'; resetSearchTools(); termSelection = { index: -1, source: '', target: '' }; dirty.clear(); directFilePath = ''; clearOutputDisplay(); document.body.removeAttribute('data-cat-source'); document.title = '翻訳 - YakuLingo'; el('cat-page-title').textContent = '翻訳'; setView('start'); el('cat-picker').hidden = false; el('cat-workspace').hidden = true; el('cat-current-summary').hidden = true; closeStartPanels(); if (refreshRecent !== false) loadRecent(true); }
+  function navigateStart(view) {
+    if (busy) return false;
+    if (document.body.getAttribute('data-cat-view') !== 'start') return false;
+    var importMeta = document.querySelector('meta[name="yaku-import"]');
+    var params = new URLSearchParams(location.search);
+    if ((importMeta && importMeta.getAttribute('content') === '1') || params.get('import') === '1') return false;
+    var next = view === 'work' ? '/cat?view=work' : '/';
+    if (location.pathname + location.search === next) return true;
+    try {
+      var sequence = (appliedHistoryEntry ? appliedHistoryEntry.sequence : historySequence) + 1;
+      historySequence = sequence;
+      window.history.pushState(historyStateFor(next, sequence), '', next);
+      var event = typeof PopStateEvent === 'function' ? new PopStateEvent('popstate') : new Event('popstate');
+      window.dispatchEvent(event);
+      return true;
+    } catch (_) { return false; }
+  }
   function closeStartPanels() { document.querySelectorAll('.cat-start-panel').forEach(function (panel) { panel.hidden = true; }); el('cat-direction-choice').hidden = true; }
   /* 開いた欄は、いちばん少ない移動で見える所へ入れる（block:'nearest'）。
      画面の中央へ寄せていたころは、押しただけで 560px 飛び、押したボタン自身が
@@ -551,42 +686,97 @@
     if (el('cat-editor-layout') && el('cat-editor-layout').classList.contains('is-docs-open')) renderDocsPane();
   }
 
-  function loadRecent() {
-    return post('recent', {}).then(function (data) {
-      /* 消す手段が「開いてから、そのほか → 管理」の奥にしかなく、要らない作業が
-         溜まっていくだけだった（2026-08-12、利用者の指摘）。一覧のその場で消せる。
-         消すのは途中保存だけで、元のファイルには触らない。 */
-      var items = data.projects || [];
-      el('cat-resume').hidden = !items.length;
-      resumeItems = items;
-      if (items.length <= RESUME_VISIBLE) resumeExpanded = false;
-      /* /recent は一覧を読むだけの経路であり、表示名を作るために各資料を
-         resume してはいけない。resume は作業状態を開く操作なので、一覧を
-         開いただけで現在の資料やロック状態を変えてしまう（2026-08-17）。
-         API が読み取り専用の source_preview を返す場合だけ使い、無い資料は
-         保存時刻を見出しにする。現在開いている資料だけは、既に画面にある
-         segments から原文を使える。 */
-      var fallbackNames = {}, previewNames = {};
-      items.forEach(function (item) {
-        if (!isGenericPastedName(item.file_name) || item.display_name) return;
-        var preview = shortDocumentPreview(item.source_preview || item.source_text || item.first_source || item.preview);
-        if (!preview && project && String(project.id || '') === String(item.id || '')) preview = firstDocumentSource(project);
-        if (preview) {
-          var previewKey = preview, previewCount = (previewNames[previewKey] || 0) + 1;
-          previewNames[previewKey] = previewCount;
-          item.display_name = previewCount === 1 ? preview : previewCount + ': ' + preview;
-          return;
-        }
-        var saved = savedLabel(item.saved), base = '貼り付け' + (saved ? ' ' + saved : ''), candidate = base;
-        var suffix = String(item.id || '').slice(-6);
-        if (fallbackNames[base]) candidate = base + (suffix ? '・' + suffix : '・' + (fallbackNames[base] + 1));
-        fallbackNames[base] = (fallbackNames[base] || 0) + 1;
-        item.display_name = candidate;
+  function recentFailureSnapshot(error) {
+    var message = error && error.message ? String(error.message) : '最近の作業を読み込めませんでした。';
+    return { projects: [], error: { code: 'recent-unavailable', message: message } };
+  }
+  function publishRecentSnapshot(data) {
+    recentSnapshot = data && typeof data === 'object' ? data : { projects: [] };
+    try { window.dispatchEvent(new CustomEvent('yaku-cat-recent', { detail: recentSnapshot })); } catch (_) {}
+    return recentSnapshot;
+  }
+  function applyRecentSnapshot(data) {
+    /* 消す手段が「開いてから、そのほか → 管理」の奥にしかなく、要らない作業が
+       溜まっていくだけだった（2026-08-12、利用者の指摘）。一覧のその場で消せる。
+       消すのは途中保存だけで、元のファイルには触らない。 */
+    var failed = !!(data && data.error);
+    var items = data && Array.isArray(data.projects) ? data.projects : [];
+    el('cat-resume').hidden = !items.length;
+    resumeItems = items;
+    if (failed) {
+      el('cat-resume').hidden = false;
+      el('cat-resume-list').innerHTML = '<div class="alert alert-error" data-cat-recent-error>途中まで進めた作業の一覧を読み込めませんでした。<button type="button" class="link-button" data-cat-recent-retry>再読み込み</button></div>';
+      el('cat-resume-more').hidden = true;
+      var retry = el('cat-resume-list').querySelector('[data-cat-recent-retry]');
+      if (retry) retry.addEventListener('click', function () { retry.disabled = true; loadRecent(true); });
+      return recentSnapshot;
+    }
+    if (items.length <= RESUME_VISIBLE) resumeExpanded = false;
+    /* /recent は一覧を読むだけの経路であり、表示名を作るために各資料を
+       resume してはいけない。resume は作業状態を開く操作なので、一覧を
+       開いただけで現在の資料やロック状態を変えてしまう（2026-08-17）。
+       API が読み取り専用の source_preview を返す場合だけ使い、無い資料は
+       保存時刻を見出しにする。現在開いている資料だけは、既に画面にある
+       segments から原文を使える。 */
+    var fallbackNames = {}, previewNames = {};
+    items.forEach(function (item) {
+      if (!isGenericPastedName(item.file_name) || item.display_name) return;
+      var preview = shortDocumentPreview(item.source_preview || item.source_text || item.first_source || item.preview);
+      if (!preview && project && String(project.id || '') === String(item.id || '')) preview = firstDocumentSource(project);
+      if (preview) {
+        var previewKey = preview, previewCount = (previewNames[previewKey] || 0) + 1;
+        previewNames[previewKey] = previewCount;
+        item.display_name = previewCount === 1 ? preview : previewCount + ': ' + preview;
+        return;
+      }
+      var saved = savedLabel(item.saved), base = '貼り付け' + (saved ? ' ' + saved : ''), candidate = base;
+      var suffix = String(item.id || '').slice(-6);
+      if (fallbackNames[base]) candidate = base + (suffix ? '・' + suffix : '・' + (fallbackNames[base] + 1));
+      fallbackNames[base] = (fallbackNames[base] || 0) + 1;
+      item.display_name = candidate;
+    });
+    ++resumePreviewSeq;
+    renderRecent();
+    return recentSnapshot;
+  }
+  /* palette.js is embedded in CAT and asks for the same list to populate its
+     context selector. Keep that second consumer on the CAT-owned snapshot,
+     while allowing CAT's own forced refresh to reach the server. */
+  function installRecentSnapshotAdapter() {
+    if (!(window.YakuCommon && YakuCommon.post)) return;
+    var original = YakuCommon.post;
+    if (original.__yakuCatRecentAdapter) return;
+    var inAdapter = false;
+    var adapted = function (path, body) {
+      if (path !== '/api/cat/recent' || recentRequestOwner || inAdapter) return original.apply(YakuCommon, arguments);
+      inAdapter = true;
+      return Promise.resolve(loadRecent()).then(function (value) {
+        inAdapter = false;
+        return value;
+      }, function (error) {
+        inAdapter = false;
+        throw error;
       });
-      ++resumePreviewSeq;
-      renderRecent();
-      return Promise.resolve();
-    }).catch(function (error) { el('cat-resume').hidden = false; el('cat-resume-list').innerHTML = '<div class="alert alert-error">途中まで進めた作業の一覧を読み込めませんでした。画面を読み込み直してください（Ctrl+R）。' + esc(error.message) + '</div>'; });
+    };
+    adapted.__yakuCatRecentAdapter = true;
+    YakuCommon.post = adapted;
+  }
+  function loadRecent(force) {
+    if (!force && recentSnapshot) {
+      applyRecentSnapshot(recentSnapshot);
+      return Promise.resolve(recentSnapshot);
+    }
+    if (recentRequest) return recentRequest;
+    var request;
+    recentRequestOwner = true;
+    try { request = post('recent', {}); } finally { recentRequestOwner = false; }
+    request = request.then(function (data) {
+      return applyRecentSnapshot(publishRecentSnapshot(data));
+    }).catch(function (error) {
+      return applyRecentSnapshot(publishRecentSnapshot(recentFailureSnapshot(error)));
+    });
+    recentRequest = request.then(function (result) { recentRequest = null; return result; }, function (error) { recentRequest = null; throw error; });
+    return recentRequest;
   }
 
   function qcMessages(segment) {
@@ -1629,7 +1819,7 @@
         /* 操作ゼロで件数が見える。次の翻訳まで残す（自動では消さない）。 */
         if (context.type === 'translate' && typeof context.maskedCount === 'number') el('cat-mask-notice').textContent = maskNoticeText(context.maskedCount);
       }
-      else { setBusy(false); loadRecent(); }
+      else { setBusy(false); loadRecent(true); }
       return data;
     }).catch(function (error) { setBusy(false); if (project && String(project.id || '') === context.scope.id) status(error.message, true); });
   }
@@ -4136,7 +4326,7 @@
     dialog.showModal();
     var first = dialog.querySelector('.cat-doc-choice:not([disabled])') || el('cat-doc-dialog-import');
     if (first) YakuCommon.focus(first);
-    loadRecent().then(function () { if (dialog.open) renderDocDialogList(); }).catch(function () {});
+    loadRecent(true).then(function () { if (dialog.open) renderDocDialogList(); }).catch(function () {});
   }
   function openPreview() {
     if (!project) { status('資料が開かれていません。'); return; }
@@ -4482,15 +4672,36 @@
          打ちかけの訳文は先に保存する。保存できなければ入れ替えない。 */
       flush().then(function () { resume(id); }).catch(function (error) { status(error.message, true); });
     });
-    /* ブラウザの戻る。資料を開くかどうかだけで決まるようになった（帯を外したため）。 */
-    window.addEventListener('popstate', function () {
+    /* URL から開始画面の状態を一度だけ適用する。開始画面同士の履歴移動は
+       pickerを描き直すだけで、読み込み済みのrecent snapshotを再利用する。
+       資料から開始画面へ出る場合だけ、従来どおり lease を閉じて一覧を更新する。 */
+    function applyLocationFromUrl() {
+      if (historyRestoreGuard) { historyRestoreGuard = false; rememberAppliedHistoryEntry(); return; }
+      var historyTarget = readCatHistoryState();
+      if (busy) {
+        if (pendingHistoryResume && !sameHistoryEntry(historyTarget, pendingHistoryResume.targetEntry)) {
+          cancelPendingHistoryResume();
+        } else {
+          restoreBusyHistory(); return;
+        }
+      }
       var params = new URLSearchParams(location.search);
       var wanted = params.get('project');
-      if (wanted) { if (!project || String(project.id || '') !== wanted) resume(wanted); }
-      else if (params.get('import') === '1') { showPicker(true); showStart('align'); }
-      else if (params.get('view') === 'work') { showPicker(false, true); }
-      else if (project) showPicker();
-    });
+      if (wanted) {
+        if (project && String(project.id || '') === wanted) {
+          rememberAppliedHistoryEntry();
+          return;
+        }
+        resumeFromHistory(wanted);
+        return;
+      }
+      var startSurface = !project && document.body.getAttribute('data-cat-view') === 'start';
+      var refreshRecent = !startSurface;
+      if (params.get('import') === '1') { showPicker(true, false, refreshRecent); showStart('align'); return; }
+      if (params.get('view') === 'work') { showPicker(false, true, refreshRecent); return; }
+      showPicker(false, false, refreshRecent);
+    }
+    window.addEventListener('popstate', applyLocationFromUrl);
     /* 通常の終了では確認を出さない。画面が隠れる直前に打ちかけを保存し、
        翻訳中の終了確認だけはcommon.jsが担当する。 */
     document.addEventListener('visibilitychange', function () {
@@ -5073,7 +5284,7 @@
       var selectedMemory=document.querySelector('input[name="cat-delete-memory"]:checked');
       post('delete', { id: target.id, memory_policy: selectedMemory ? selectedMemory.value : 'retain_tm', client_id: YakuCommon.clientId() }, true, target).then(function () {
         setBusy(false);
-        if (target.fromList) { loadRecent(); status(target.name + ' を一覧から消しました。元のファイルは残っています。'); return; }
+        if (target.fromList) { loadRecent(true); status(target.name + ' を一覧から消しました。元のファイルは残っています。'); return; }
         if (!project || String(project.id || '') !== target.id) return;
         showPicker(); status('翻訳作業と途中保存を消しました。元のファイルは残っています。');
       }).catch(function (error) { setBusy(false); if (target.fromList || (project && String(project.id || '') === target.id)) status(error.message, true); });
@@ -5160,7 +5371,7 @@
     return true;
   }
   function start() {
-    YakuCommon.start(); YakuCommon.onReady(function (value) { ready = value; setBusy(busy); }); bind(); bindInstant(); loadRecent();
+    YakuCommon.start(); installRecentSnapshotAdapter(); YakuCommon.onReady(function (value) { ready = value; setBusy(busy); }); bind(); bindInstant(); loadRecent();
     var params = new URLSearchParams(location.search);
     var wanted = params.get('project');
     if (wanted) {
@@ -5182,6 +5393,12 @@
     if (workMode) { showPicker(false, true); return; }
     showPicker();
   }
-  window.YakuCat = { isBusy: function () { return busy; } };
+  window.YakuCat = {
+    isBusy: function () { return busy; },
+    getRecentSnapshot: function () { return recentSnapshot; },
+    getRecent: function () { return loadRecent(); },
+    refreshRecent: function () { return loadRecent(true); },
+    navigateStart: navigateStart
+  };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
