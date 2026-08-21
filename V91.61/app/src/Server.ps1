@@ -1902,19 +1902,32 @@ function Send-YakuResponse {
         [Parameter(Mandatory=$true)][byte[]]$Bytes,
         [string]$ContentType = 'text/html; charset=utf-8',
         [int]$StatusCode = 200,
-        [switch]$AllowWasm
+        [switch]$AllowWasm,
+        [switch]$StaticAsset,
+        [string]$ETag = ''
     )
     $resp = $Context.Response
     $resp.StatusCode = $StatusCode
     $resp.ContentType = $ContentType
-    $resp.ContentLength64 = $Bytes.Length
-    $resp.Headers['Cache-Control'] = 'no-store, no-cache, max-age=0'
+    $resp.Headers['Cache-Control'] = if ($StaticAsset) { 'private, no-cache' } else { 'no-store, no-cache, max-age=0' }
     $resp.Headers['Pragma'] = 'no-cache'
     $resp.Headers['Expires'] = '0'
     $resp.Headers['X-Content-Type-Options'] = 'nosniff'
     $resp.Headers['X-Frame-Options'] = 'DENY'
     $resp.Headers['Referrer-Policy'] = 'no-referrer'
     $resp.Headers['Content-Security-Policy'] = Get-YakuContentSecurityPolicy -AllowWasm:$AllowWasm
+    if ($StaticAsset -and -not [string]::IsNullOrWhiteSpace($ETag)) {
+        $resp.Headers['ETag'] = $ETag
+        $ifNoneMatch = [string]$Context.Request.Headers['If-None-Match']
+        $etagMatch = $ifNoneMatch -eq '*' -or @($ifNoneMatch.Split(',') | ForEach-Object { $_.Trim() }) -contains $ETag
+        if ($etagMatch) {
+            $resp.StatusCode = 304
+            $resp.ContentLength64 = 0
+            $resp.OutputStream.Close()
+            return
+        }
+    }
+    $resp.ContentLength64 = $Bytes.Length
     $resp.OutputStream.Write($Bytes, 0, $Bytes.Length)
     $resp.OutputStream.Close()
 }
@@ -2104,7 +2117,10 @@ function Serve-YakuStaticFile {
         return
     }
     $bytes = [System.IO.File]::ReadAllBytes($full)
-    Send-YakuResponse -Context $Context -Bytes $bytes -ContentType (Get-YakuMimeType -Path $full)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { $etag = '"' + [Convert]::ToBase64String($sha.ComputeHash($bytes)) + '"' }
+    finally { $sha.Dispose() }
+    Send-YakuResponse -Context $Context -Bytes $bytes -ContentType (Get-YakuMimeType -Path $full) -StaticAsset -ETag $etag
 }
 
 function Serve-YakuAppPage {
@@ -2220,16 +2236,11 @@ function Invoke-YakuRoute {
         Send-YakuTextResponse -Context $Context -Text 'Forbidden' -StatusCode 403 -ContentType 'text/plain; charset=utf-8'
         return
     }
-    # 全リクエストの先頭で毎回フルスキャン（Get-ChildItem -Recurse + 全manifestの
-    # JSON解析）していた。静的ファイルや1.5秒おきの /api/ready-state にもかかり、
-    # 実測で温い状態でも数十msかかる（D2-8）。掃除は60秒に1回で足りるので間引き、
-    # 対象外パス（/assets/ と ready-state/instance）はそもそも呼ばない。
-    $skipUploadSweep = $path.StartsWith('/assets/') -or $path -eq '/api/ready-state' -or $path -eq '/api/instance'
-    # R2-3: Invoke-YakuRoute だけをAST抽出して呼ぶ試験（Test-YakuV9165/V9170/V9172等）は
-    # ファイル先頭の script-scope 初期化（27行目）を経由しないため、
-    # $script:YakuLastUploadSweep が $null のまま呼ばれることがある。
-    # (Get-Date) - $null は例外になるので、$null を先に弾く。
-    if (-not $skipUploadSweep -and ($null -eq $script:YakuLastUploadSweep -or ((Get-Date) - $script:YakuLastUploadSweep).TotalSeconds -ge 60)) {
+    # 期限切れアップロードの掃除は、アップロードを受け付ける直前だけ行う。
+    # HTML・静的資産・recent API など普通の画面遷移へ全manifestの走査を持ち込むと、
+    # 画面を開くだけで数十msから数百msを使うため（2026-08-21）。
+    $isUploadRoute = $method -eq 'POST' -and $path -eq '/api/upload'
+    if ($isUploadRoute -and ($null -eq $script:YakuLastUploadSweep -or ((Get-Date) - $script:YakuLastUploadSweep).TotalSeconds -ge 60)) {
         $script:YakuLastUploadSweep = Get-Date
         Clear-YakuExpiredUploads
     }
@@ -4285,7 +4296,6 @@ Write-YakuLog "Server startup timing. phase=warmup-worker-dispatch elapsedMs=$($
 $maintenanceSw = [System.Diagnostics.Stopwatch]::StartNew()
 $startupSettings = Read-YakuSettings -Root $script:YakuRoot
 Invoke-YakuDiagnosticLogRotation -RetentionDays ([int]$startupSettings.diagnostic_retention_days) -MainLogRetentionDays ([int]$startupSettings.log_retention_days)
-Clear-YakuExpiredUploads
 Recover-YakuInterruptedJobs
 $maintenanceSw.Stop()
 Write-YakuLog "Server startup timing. phase=maintenance elapsedMs=$($maintenanceSw.ElapsedMilliseconds) sinceServerStartedMs=$($serverInitializationSw.ElapsedMilliseconds)" 'INFO'
