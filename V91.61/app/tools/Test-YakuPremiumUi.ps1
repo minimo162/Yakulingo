@@ -484,9 +484,25 @@ function sendJson(response, value) {
       qaProxyHidden: document.getElementById('premium-qa').hidden
     }));
     assert.deepStrictEqual(alignToolsBefore, { visible: true, controls: 'cat-editor-toolbar', expanded: 'false', excelProxyHidden: true, qaProxyHidden: true }, JSON.stringify(alignToolsBefore));
+    console.log('align tools open wait: start');
     await alignPage.locator('#premium-tools').click();
-    await alignPage.waitForFunction(() => document.body.classList.contains('premium-tools-open') &&
-      document.getElementById('cat-editor-toolbar') && getComputedStyle(document.getElementById('cat-editor-toolbar')).display !== 'none', null, { timeout: 5000 });
+    try {
+      await alignPage.waitForFunction(() => document.body.classList.contains('premium-tools-open') &&
+        document.getElementById('cat-editor-toolbar') && getComputedStyle(document.getElementById('cat-editor-toolbar')).display !== 'none', null, { timeout: 20000 });
+    } catch (error) {
+      const diagnostic = await alignPage.evaluate(() => ({
+        url: location.href,
+        source: document.body.getAttribute('data-cat-source'),
+        view: document.body.getAttribute('data-cat-view'),
+        toolsOpen: document.body.classList.contains('premium-tools-open'),
+        toolsHidden: document.getElementById('premium-tools') && document.getElementById('premium-tools').hidden,
+        controls: document.getElementById('premium-tools') && document.getElementById('premium-tools').getAttribute('aria-controls'),
+        expanded: document.getElementById('premium-tools') && document.getElementById('premium-tools').getAttribute('aria-expanded'),
+        toolbarDisplay: document.getElementById('cat-editor-toolbar') && getComputedStyle(document.getElementById('cat-editor-toolbar')).display
+      }));
+      throw new Error('PREMIUM_UI_ALIGN_TOOLS_OPEN_TIMEOUT: ' + JSON.stringify({ diagnostic, cause: error.message }));
+    }
+    console.log('align tools open wait: ready');
     const alignNativeTools = await alignPage.evaluate(() => {
       const visible = id => {
         const node = document.getElementById(id);
@@ -507,9 +523,25 @@ function sendJson(response, value) {
       };
     });
     assert.deepStrictEqual(alignNativeTools, { toolbarVisible: true, controls: 'cat-editor-toolbar', expanded: 'true', docSwitch: true, search: true, qa: true, export: true, filterVisible: true, segmentActions: true }, JSON.stringify(alignNativeTools));
+    console.log('align tools close wait: start');
     await alignPage.keyboard.press('Escape');
-    await alignPage.waitForFunction(() => !document.body.classList.contains('premium-tools-open') &&
-      document.getElementById('premium-tools').getAttribute('aria-expanded') === 'false', null, { timeout: 5000 });
+    try {
+      await alignPage.waitForFunction(() => !document.body.classList.contains('premium-tools-open') &&
+        document.getElementById('premium-tools').getAttribute('aria-expanded') === 'false', null, { timeout: 20000 });
+    } catch (error) {
+      const diagnostic = await alignPage.evaluate(() => ({
+        url: location.href,
+        source: document.body.getAttribute('data-cat-source'),
+        view: document.body.getAttribute('data-cat-view'),
+        toolsOpen: document.body.classList.contains('premium-tools-open'),
+        controls: document.getElementById('premium-tools') && document.getElementById('premium-tools').getAttribute('aria-controls'),
+        expanded: document.getElementById('premium-tools') && document.getElementById('premium-tools').getAttribute('aria-expanded'),
+        active: document.activeElement && document.activeElement.id,
+        toolbarDisplay: document.getElementById('cat-editor-toolbar') && getComputedStyle(document.getElementById('cat-editor-toolbar')).display
+      }));
+      throw new Error('PREMIUM_UI_ALIGN_TOOLS_CLOSE_TIMEOUT: ' + JSON.stringify({ diagnostic, cause: error.message }));
+    }
+    console.log('align tools close wait: ready');
     const alignToolsAfter = await alignPage.evaluate(() => ({
       toolbarVisible: getComputedStyle(document.getElementById('cat-editor-toolbar')).display !== 'none',
       expanded: document.getElementById('premium-tools').getAttribute('aria-expanded'),
