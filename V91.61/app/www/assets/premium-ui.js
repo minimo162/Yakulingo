@@ -288,11 +288,43 @@
       '<div class="premium-visual-step is-result"><span class="premium-step-number">3</span><strong>収まる訳だけ反映</strong>' +
       '<div class="premium-result-cell"><span>✓ 収まりました</span><b>Long-Term Reliability</b><small>2px余り・基準訳は保持</small></div></div></div>';
   }
+  function embeddedChatMarkup() {
+    return '<div class="premium-combined-chat-live">' +
+      '<form id="palette-form" class="palette-form"><label for="palette-input" class="palette-label">原文（貼り付けると自動で翻訳します）</label>' +
+      '<textarea id="palette-input" class="palette-input" rows="7" placeholder="ここに文章を貼り付けてください。" spellcheck="false" autocomplete="off"></textarea>' +
+      '<div class="palette-input-row"><span id="palette-count" class="palette-count">0字</span><span id="palette-long-notice" class="palette-long-notice" role="status" hidden></span></div>' +
+      '<div class="palette-direction-row"><div class="palette-direction-field"><label for="palette-direction-select" class="palette-direction-select-label">翻訳先</label>' +
+      '<select id="palette-direction-select" aria-label="翻訳先"><option value="">自動</option><option value="to_en">日本語 → 英語</option><option value="to_jp">英語 → 日本語</option></select></div>' +
+      '<div class="palette-action-group"><button id="palette-submit" type="submit">今すぐ訳す</button><button id="palette-handoff" type="button" class="link-button" disabled>CATで開く</button></div>' +
+      '<div class="palette-context-field"><label for="palette-context-select" class="palette-context-select-label"><span class="palette-context-label-text">参考資料（任意）</span>' +
+      '<span class="palette-context-help">過去の確定訳を候補1にします。</span></label><select id="palette-context-select" aria-label="参考資料（選ぶとその資料の確定訳を優先します）">' +
+      '<option value="" label="参考資料なし">文脈: なし</option></select></div></div></form>' +
+      '<p class="palette-fineprint">数値は伏せて送ります。社名・人名と文章はそのまま送ります。</p><p id="palette-direction" class="palette-direction-note" hidden></p>' +
+      '<div id="palette-instant" class="palette-instant" aria-live="polite" hidden></div><div id="palette-chips" class="palette-chips" hidden><button type="button" class="secondary-button compact" data-yaku-chip="revise">丁寧に</button></div>' +
+      '<div id="palette-result" class="palette-result" aria-live="polite"></div><div class="palette-footer"><p id="palette-copy-status" class="palette-copy-status" role="status" aria-live="polite"></p>' +
+      '<p class="palette-hint">候補は<kbd>1</kbd>〜<kbd>9</kbd>で選んでコピー。<kbd>Enter</kbd>で<span id="palette-hint-target">既定候補</span>をコピー。</p></div></div>';
+  }
   function buildCatStart(picker) {
     if (!picker || el('premium-cat-start')) return;
+    var isCombinedStart = window.location.pathname === '/';
     var start = create('section', 'premium-cat-start');
     start.id = 'premium-cat-start';
-    start.innerHTML =
+    start.innerHTML = isCombinedStart ?
+      '<header class="premium-combined-heading"><div><span class="premium-eyebrow">翻訳を始める</span><h1>文章もExcelも、ここからすぐに。</h1>' +
+      '<p>左は文章を貼ってそのまま翻訳。右はExcelを選んで、セル幅に合わせた翻訳を始めます。</p></div></header>' +
+      '<div class="premium-combined-grid"><section class="premium-combined-panel premium-combined-chat" aria-labelledby="premium-combined-chat-title">' +
+      '<header><span class="premium-panel-number">01</span><div><span class="premium-eyebrow">チャット翻訳</span><h2 id="premium-combined-chat-title">文章をすぐ訳す</h2>' +
+      '<p>メールやチャット、短い資料を貼り付けて、その場で訳します。</p></div></header>' + embeddedChatMarkup() + '</section>' +
+      '<section class="premium-combined-panel premium-combined-excel" aria-labelledby="premium-combined-excel-title"><header><span class="premium-panel-number">02</span><div>' +
+      '<span class="premium-eyebrow">レイアウトを保つ</span><h2 id="premium-combined-excel-title">Excelを翻訳する</h2><p>セル幅や結合セルを読み、収まる長さで翻訳します。</p></div></header>' +
+      '<div id="premium-file-drop" class="premium-file-drop" role="group" aria-label="Excelファイルを選ぶ、またはドロップする">' +
+      '<div class="premium-excel-mark">X</div><div class="premium-drop-copy"><strong>Excelをここに置く</strong><span>元のファイルは変えず、翻訳済みのコピーを作ります。</span>' +
+      '<div class="premium-drop-tags"><i>列幅を測定</i><i>短訳を生成</i><i>超過だけ確認</i></div></div>' +
+      '<div class="premium-drop-actions"><button id="premium-file-select" type="button">Excelを選ぶ</button><small>.xlsx / .xlsm</small></div>' +
+      '<input id="premium-file-input" type="file" accept=".xlsx,.xlsm" hidden></div>' +
+      '<div class="premium-combined-excel-options"><section><h3>翻訳方向</h3><div id="premium-direction-switch" class="premium-direction-switch" role="group" aria-label="翻訳方向">' +
+      '<button type="button" class="is-active" aria-pressed="true" data-direction="to_en">日本語 → 英語</button><button type="button" aria-pressed="false" data-direction="to_jp">英語 → 日本語</button></div></section>' +
+      '<section><h3>確認済みの過去訳を使う</h3><p>日英PDFから登録した訳を、次のExcelで再利用できます。</p><button id="premium-reference-open" type="button" class="premium-secondary-action">過去訳を登録</button></section></div></section></div>' :
       '<header class="premium-start-heading"><div class="premium-start-heading-copy"><span class="premium-eyebrow">Excelレイアウト翻訳</span><h1>セル幅に合わせて、短く正確に。</h1>' +
       '<p>Excelを読み込み、収まりにくいセルを仕上げます。以前に確認した日英PDFの訳も、過去訳として次の資料で再利用できます。</p></div>' +
       '<a id="premium-chat-cta" class="premium-chat-cta" href="/palette"><strong>文章をすぐ訳す</strong><span>ファイルなしで、文章を貼って翻訳</span></a></header>' +
@@ -715,6 +747,7 @@
     })();
     var importMode = premiumState.initialImport && !isWorkspace && !workMode &&
       !!(el('cat-source-align') && !el('cat-source-align').hidden);
+    var combinedStart = !isWorkspace && !workMode && !importMode && window.location.pathname === '/';
     if (!isWorkspace) {
       cancelPremiumRowWait();
       closeTools();
@@ -722,7 +755,8 @@
     document.body.classList.toggle('premium-mode-workspace', !!isWorkspace && !isAlignmentWorkspace);
     document.body.classList.toggle('premium-mode-align-workspace', !!isAlignmentWorkspace);
     document.body.classList.toggle('premium-mode-worklist', !isWorkspace && workMode);
-    document.body.classList.toggle('premium-mode-excel-start', !isWorkspace && !workMode && !importMode);
+    document.body.classList.toggle('premium-mode-combined-start', !!combinedStart);
+    document.body.classList.toggle('premium-mode-excel-start', !isWorkspace && !workMode && !importMode && !combinedStart);
     document.body.classList.toggle('premium-mode-import', !!importMode);
     syncToolsExpanded();
     var start = el('premium-cat-start');
@@ -752,6 +786,10 @@
       setTopbar('作業一覧', '保存済みの作業', {});
       document.title = '作業一覧 - YakuLingo';
       renderWorkCards();
+    } else if (combinedStart) {
+      setActiveNav('');
+      setTopbar('翻訳', '文章とExcelをすぐ始める', {});
+      document.title = '翻訳 - YakuLingo';
     } else {
       setActiveNav('excel');
       setTopbar('Excel翻訳', 'セル幅に合わせる', {});

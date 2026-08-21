@@ -22,8 +22,6 @@ function Assert-YakuPremiumCount {
     if ($count -ne $Expected) { throw ($Code + ': expected=' + $Expected + ' actual=' + $count) }
 }
 
-$homeHtml = Read-YakuPremiumText 'www\home.html'
-$homeCss = Read-YakuPremiumText 'www\assets\home.css'
 $cat = Read-YakuPremiumText 'www\cat.html'
 $palette = Read-YakuPremiumText 'www\palette.html'
 $catJs = Read-YakuPremiumText 'www\assets\cat.js'
@@ -34,16 +32,12 @@ foreach ($html in @($cat, $palette)) {
     Assert-YakuPremiumCount $html '/assets/premium-ui.css' 1 'PREMIUM_UI_CSS_REFERENCE_INVALID'
     Assert-YakuPremiumCount $html '/assets/premium-ui.js' 1 'PREMIUM_UI_JS_REFERENCE_INVALID'
 }
-Assert-YakuPremiumCount $homeHtml '/assets/home.css' 1 'PREMIUM_UI_HOME_CSS_REFERENCE_INVALID'
-Assert-YakuPremiumCount $homeHtml '/assets/common.js' 1 'PREMIUM_UI_HOME_COMMON_REFERENCE_INVALID'
-Assert-YakuPremiumContains $homeHtml '<title>翻訳を始める - YakuLingo</title>' 'PREMIUM_UI_HOME_TITLE_MISSING'
-foreach ($id in @('home-chat-entry','home-excel-entry')) {
-    Assert-YakuPremiumContains $homeHtml ('id=["'']' + [regex]::Escape($id) + '["'']') ('PREMIUM_UI_HOME_ENTRY_MISSING: ' + $id)
-}
-Assert-YakuPremiumContains $homeHtml 'href="/palette"[\s\S]*文章をすぐ訳す' 'PREMIUM_UI_HOME_CHAT_ROUTE_MISSING'
-Assert-YakuPremiumContains $homeHtml 'href="/cat"[\s\S]*Excelを翻訳する' 'PREMIUM_UI_HOME_EXCEL_ROUTE_MISSING'
-Assert-YakuPremiumContains $homeCss 'grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)' 'PREMIUM_UI_HOME_EQUAL_SPLIT_MISSING'
-Assert-YakuPremiumContains $homeCss 'font-size:\s*18px' 'PREMIUM_UI_HOME_BODY_FONT_MISSING'
+Assert-YakuPremiumContains $js 'premium-combined-chat' 'PREMIUM_UI_COMBINED_CHAT_MISSING'
+Assert-YakuPremiumContains $js 'premium-combined-excel' 'PREMIUM_UI_COMBINED_EXCEL_MISSING'
+Assert-YakuPremiumContains $js "window\.location\.pathname === '/'" 'PREMIUM_UI_COMBINED_ROOT_ROUTE_MISSING'
+Assert-YakuPremiumContains $js 'embeddedChatMarkup\(\)' 'PREMIUM_UI_LIVE_CHAT_EMBED_MISSING'
+Assert-YakuPremiumContains $cat 'premium-ui\.js[\s\S]{0,240}?palette\.js' 'PREMIUM_UI_LIVE_CHAT_SCRIPT_ORDER_MISSING'
+Assert-YakuPremiumContains $css 'premium-combined-grid[\s\S]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)' 'PREMIUM_UI_COMBINED_EQUAL_SPLIT_MISSING'
 Assert-YakuPremiumContains $cat '<title>Excel翻訳 - YakuLingo</title>' 'PREMIUM_UI_CAT_TITLE_MISSING'
 Assert-YakuPremiumContains $palette '<title>チャット翻訳 - YakuLingo</title>' 'PREMIUM_UI_CHAT_TITLE_MISSING'
 Assert-YakuPremiumContains $palette 'class="brand home-link" href="/"' 'PREMIUM_UI_PALETTE_HOME_ROUTE_MISSING'
@@ -79,7 +73,8 @@ Assert-YakuPremiumContains $js 'Excel翻訳と過去訳の対応確認|Excel翻�
 Assert-YakuPremiumContains $js "setTopbar\('作業一覧', '保存済みの作業'" 'PREMIUM_UI_MIXED_WORK_TOPBAR_MISSING'
 Assert-YakuPremiumContains $cat 'cat-source-align|日本語版のPDF|英語版のPDF' 'PREMIUM_UI_PAST_IMPORT_SURFACE_MISSING'
 Assert-YakuPremiumContains $catJs 'function syncLocation\(projectId, preserveImport, preserveWork\)' 'PREMIUM_UI_IMPORT_LOCATION_SYNC_MISSING'
-Assert-YakuPremiumContains $catJs "preserveImport \? '/cat\?import=1' : preserveWork \? '/cat\?view=work' : '/cat'" 'PREMIUM_UI_IMPORT_LOCATION_FALLBACK_MISSING'
+Assert-YakuPremiumContains $catJs "preserveImport \? '/cat\?import=1' : preserveWork \? '/cat\?view=work' : keepCombinedRoot \? '/' : '/cat'" 'PREMIUM_UI_IMPORT_LOCATION_FALLBACK_MISSING'
+Assert-YakuPremiumContains $catJs "keepCombinedRoot = first[\s\S]{0,240}?location\.pathname === '/'" 'PREMIUM_UI_COMBINED_LOCATION_PRESERVE_MISSING'
 Assert-YakuPremiumContains $catJs 'showPicker\(importMode\)' 'PREMIUM_UI_IMPORT_START_ORDER_MISSING'
 Assert-YakuPremiumContains $catJs 'retryPending = eligible === 0 && pending > 0|翻訳メモリへの反映を再試行' 'PREMIUM_UI_TM_PENDING_RETRY_WIRING_MISSING'
 Assert-YakuPremiumContains $catJs "data-cat-source.*project\.source" 'PREMIUM_UI_PROJECT_SOURCE_MARKER_MISSING'
@@ -163,20 +158,13 @@ function sendJson(response, value) {
 (async () => {
   const server = http.createServer((request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
-    const isHomePage = url.pathname === '/';
+    const isCombinedPage = url.pathname === '/';
     const isPalettePage = url.pathname === '/palette';
     const isAlignProject = url.pathname === '/cat' && url.searchParams.get('project') === alignProject.id;
     const isPendingAlignProject = url.pathname === '/cat' && url.searchParams.get('project') === pendingAlignProject.id;
     const isCatStartPage = url.pathname === '/cat' && !url.searchParams.has('project') && !url.searchParams.has('import') && !url.searchParams.has('view');
     const isImportPage = url.pathname === '/cat' && url.searchParams.get('import') === '1';
     const isWorkListPage = url.pathname === '/cat' && url.searchParams.get('view') === 'work';
-    if (isHomePage) {
-      let html = fs.readFileSync(path.join(wwwPath, 'home.html'), 'utf8');
-      html = html.replace(/__YAKU_SESSION_TOKEN__/g, 'premium-home-test');
-      response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      response.end(html);
-      return;
-    }
     if (isPalettePage) {
       let html = fs.readFileSync(path.join(wwwPath, 'palette.html'), 'utf8');
       html = html.replace(/__YAKU_SESSION_TOKEN__/g, 'premium-palette-test')
@@ -185,7 +173,7 @@ function sendJson(response, value) {
       response.end(html);
       return;
     }
-    if (isCatStartPage || isAlignProject || isPendingAlignProject || isImportPage || isWorkListPage) {
+    if (isCombinedPage || isCatStartPage || isAlignProject || isPendingAlignProject || isImportPage || isWorkListPage) {
       let html = fs.readFileSync(path.join(wwwPath, 'cat.html'), 'utf8');
       html = html.replace(/__YAKU_SESSION_TOKEN__/g, 'premium-align-test')
         .replace(/__YAKU_MAX_UPLOAD_BYTES__/g, '52428800')
@@ -195,7 +183,7 @@ function sendJson(response, value) {
         .replace(/__YAKU_OUTPUT_FONT_JP__/g, 'MS P\\u30b4\\u30b7\\u30c3\\u30af')
         .replace(/__YAKU_TOUR__/g, '0')
         .replace(/__YAKU_IMPORT__/g, isImportPage ? '1' : '0')
-        .replace(/__YAKU_VIEW__/g, isCatStartPage ? 'start' : isAlignProject || isPendingAlignProject ? 'workspace' : isWorkListPage ? 'work' : '');
+        .replace(/__YAKU_VIEW__/g, isCombinedPage || isCatStartPage ? 'start' : isAlignProject || isPendingAlignProject ? 'workspace' : isWorkListPage ? 'work' : '');
       response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...(isImportPage ? { 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'" } : {}) });
       response.end(html);
       return;
@@ -237,54 +225,57 @@ function sendJson(response, value) {
   try {
     try {
       browser = await chromium.launch({ headless: true });
-      const homePage = await browser.newPage({ viewport: { width: 1912, height: 987 } });
-      const homeErrors = [];
-      homePage.on('pageerror', error => homeErrors.push(error.message));
-      const measureHome = () => homePage.evaluate(() => {
+      const combinedPage = await browser.newPage({ viewport: { width: 1912, height: 987 } });
+      const combinedErrors = [];
+      combinedPage.on('pageerror', error => combinedErrors.push(error.message));
+      const measureCombined = () => combinedPage.evaluate(() => {
         const visible = node => {
           if (!node) return false;
           const style = getComputedStyle(node), box = node.getBoundingClientRect();
           return style.display !== 'none' && style.visibility !== 'hidden' && box.width > 0 && box.height > 0;
         };
-        const chat = document.getElementById('home-chat-entry');
-        const excel = document.getElementById('home-excel-entry');
+        const chat = document.querySelector('.premium-combined-chat');
+        const excel = document.querySelector('.premium-combined-excel');
         const chatBox = chat && chat.getBoundingClientRect();
         const excelBox = excel && excel.getBoundingClientRect();
-        const textNodes = Array.from(document.querySelectorAll('.home-choices .home-kicker,.home-choices .home-choice-title,.home-choices .home-choice-description,.home-choices .home-choice-action')).filter(visible);
+        const input = document.getElementById('palette-input');
+        const quickButton = document.getElementById('palette-submit');
+        const excelButton = document.getElementById('premium-file-select');
+        const textNodes = Array.from(document.querySelectorAll('.premium-combined-grid h2,.premium-combined-grid p,.premium-combined-grid button,.premium-combined-grid select')).filter(node => visible(node) && !node.classList.contains('sr-only') && node.textContent.trim());
         const fonts = textNodes.map(node => parseFloat(getComputedStyle(node).fontSize)).filter(Number.isFinite);
         return {
           viewport: { width: innerWidth, height: innerHeight },
-          chat: { visible: visible(chat), href: chat && chat.getAttribute('href'), width: chatBox ? chatBox.width : 0, height: chatBox ? chatBox.height : 0 },
-          excel: { visible: visible(excel), href: excel && excel.getAttribute('href'), width: excelBox ? excelBox.width : 0, height: excelBox ? excelBox.height : 0 },
+          mode: document.body.classList.contains('premium-mode-combined-start'),
+          title: document.title,
+          chat: { visible: visible(chat), width: chatBox ? chatBox.width : 0, height: chatBox ? chatBox.height : 0 },
+          excel: { visible: visible(excel), width: excelBox ? excelBox.width : 0, height: excelBox ? excelBox.height : 0 },
           splitDelta: chatBox && excelBox ? Math.abs(chatBox.width - excelBox.width) : 999,
           minFont: fonts.length ? Math.min.apply(Math, fonts) : 0,
           bodyFont: parseFloat(getComputedStyle(document.body).fontSize),
-          titleFloor: Math.min.apply(Math, Array.from(document.querySelectorAll('.home-choice-title')).map(node => parseFloat(getComputedStyle(node).fontSize))),
-          descriptionFloor: Math.min.apply(Math, Array.from(document.querySelectorAll('.home-choice-description')).map(node => parseFloat(getComputedStyle(node).fontSize))),
-          actionFloor: Math.min.apply(Math, Array.from(document.querySelectorAll('.home-choice-action')).map(node => parseFloat(getComputedStyle(node).fontSize))),
+          input: { visible: visible(input), font: input ? parseFloat(getComputedStyle(input).fontSize) : 0, form: input && input.form ? input.form.id : '' },
+          quickButton: { visible: visible(quickButton), font: quickButton ? parseFloat(getComputedStyle(quickButton).fontSize) : 0, height: quickButton ? quickButton.getBoundingClientRect().height : 0 },
+          excelButton: { visible: visible(excelButton), font: excelButton ? parseFloat(getComputedStyle(excelButton).fontSize) : 0, height: excelButton ? excelButton.getBoundingClientRect().height : 0 },
+          fileDropVisible: visible(document.getElementById('premium-file-drop')),
+          legacyFileLaneVisible: visible(document.getElementById('cat-file-area')),
           overflow: document.documentElement.scrollWidth > innerWidth + 1 || document.body.scrollWidth > innerWidth + 1
         };
       });
-      await homePage.goto(baseUrl + '/', { waitUntil: 'domcontentloaded' });
-      await homePage.waitForSelector('#home-chat-entry');
-      const homeWide = await measureHome();
-      assert.ok(homeWide.chat.visible && homeWide.excel.visible && homeWide.chat.href === '/palette' && homeWide.excel.href === '/cat', JSON.stringify(homeWide));
-      assert.ok(homeWide.splitDelta <= 1 && homeWide.chat.height >= 700 && homeWide.minFont >= 14 && homeWide.bodyFont >= 18 && homeWide.titleFloor >= 38 && homeWide.descriptionFloor >= 17 && homeWide.actionFloor >= 17 && !homeWide.overflow, JSON.stringify(homeWide));
-      await homePage.locator('#home-chat-entry').focus();
-      assert.strictEqual(await homePage.evaluate(() => document.activeElement && document.activeElement.id), 'home-chat-entry');
-      await homePage.locator('#home-chat-entry').click();
-      await homePage.waitForFunction(() => location.pathname === '/palette' && document.querySelector('.premium-quick-head h1') && !document.body.classList.contains('premium-booting'), null, { timeout: 20000 });
-      assert.strictEqual(await homePage.locator('.premium-quick-head h1').textContent(), '\u30c1\u30e3\u30c3\u30c8\u7ffb\u8a33');
-      await homePage.goto(baseUrl + '/', { waitUntil: 'domcontentloaded' });
-      await homePage.setViewportSize({ width: 1200, height: 800 });
-      const homeNarrow = await measureHome();
-      assert.ok(homeNarrow.chat.visible && homeNarrow.excel.visible && homeNarrow.splitDelta <= 1 && homeNarrow.chat.height >= 600 && homeNarrow.minFont >= 14 && homeNarrow.bodyFont >= 18 && homeNarrow.titleFloor >= 38 && homeNarrow.descriptionFloor >= 17 && homeNarrow.actionFloor >= 17 && !homeNarrow.overflow, JSON.stringify(homeNarrow));
-      await homePage.locator('#home-excel-entry').click();
-      await homePage.waitForFunction(() => location.pathname === '/cat' && document.getElementById('premium-cat-start') && !document.body.classList.contains('premium-booting'), null, { timeout: 20000 });
-      console.log('Premium home 1912x987:', JSON.stringify(homeWide));
-      console.log('Premium home 1200x800:', JSON.stringify(homeNarrow));
-      if (homeErrors.length) throw new Error('PREMIUM_UI_HOME_PAGEERROR: ' + homeErrors.join(' | '));
-      await homePage.close();
+      await combinedPage.goto(baseUrl + '/', { waitUntil: 'domcontentloaded' });
+      await combinedPage.waitForTimeout(300);
+      const combinedWide = await measureCombined();
+      assert.ok(combinedWide.mode && combinedWide.title === '\u7ffb\u8a33 - YakuLingo' && combinedWide.chat.visible && combinedWide.excel.visible && combinedWide.splitDelta <= 2 && combinedWide.input.visible && combinedWide.input.form === 'palette-form' && combinedWide.input.font >= 18 && combinedWide.quickButton.visible && combinedWide.quickButton.font >= 16 && combinedWide.quickButton.height >= 50 && combinedWide.excelButton.visible && combinedWide.excelButton.font >= 16 && combinedWide.excelButton.height >= 50 && combinedWide.fileDropVisible && !combinedWide.legacyFileLaneVisible && combinedWide.minFont >= 13 && combinedWide.bodyFont >= 17 && !combinedWide.overflow, JSON.stringify(combinedWide));
+      await combinedPage.locator('#palette-input').fill('\u58f2\u4e0a\u304c\u5897\u52a0\u3057\u307e\u3057\u305f\u3002');
+      await combinedPage.waitForTimeout(100);
+      assert.notStrictEqual(await combinedPage.locator('#palette-count').textContent(), '0\u5b57');
+      const [combinedChooser] = await Promise.all([combinedPage.waitForEvent('filechooser'), combinedPage.locator('#premium-file-select').click()]);
+      assert.ok(combinedChooser, 'PREMIUM_UI_COMBINED_EXCEL_CHOOSER_MISSING');
+      await combinedPage.setViewportSize({ width: 1200, height: 800 });
+      const combinedNarrow = await measureCombined();
+      assert.ok(combinedNarrow.chat.visible && combinedNarrow.excel.visible && combinedNarrow.splitDelta <= 2 && combinedNarrow.input.visible && combinedNarrow.excelButton.visible && !combinedNarrow.overflow, JSON.stringify(combinedNarrow));
+      console.log('Premium combined 1912x987:', JSON.stringify(combinedWide));
+      console.log('Premium combined 1200x800:', JSON.stringify(combinedNarrow));
+      if (combinedErrors.length) throw new Error('PREMIUM_UI_COMBINED_PAGEERROR: ' + combinedErrors.join(' | '));
+      await combinedPage.close();
       const page = await browser.newPage({ viewport: { width: 1912, height: 987 } });
       const pageErrors = [];
       page.on('pageerror', error => pageErrors.push(error.message));

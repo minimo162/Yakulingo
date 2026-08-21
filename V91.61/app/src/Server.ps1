@@ -2110,7 +2110,7 @@ function Serve-YakuStaticFile {
 function Serve-YakuAppPage {
     param(
         [Parameter(Mandatory=$true)]$Context,
-        [Parameter(Mandatory=$true)][ValidateSet('home.html','cat.html','palette.html')][string]$PageName,
+        [Parameter(Mandatory=$true)][ValidateSet('cat.html','palette.html')][string]$PageName,
         # 開いた瞬間の状態。?project= で来たと分かっているなら、始める画面を
         # 一度も描かずに確認作業として開く。付けないと、貼り付け欄が一瞬出てから
         # 入れ替わり、画面が点滅して見える（2026-08-13、利用者の指摘）。
@@ -2235,13 +2235,13 @@ function Invoke-YakuRoute {
     }
 
     if ($method -eq 'GET' -and $path -eq '/') {
-        # 2026-08-21 の利用者判断。チャット翻訳とExcel翻訳は目的も操作も違うため、
-        # 起動時は独立した二分割の入口を返し、それぞれ /palette と /cat へ進める。
-        Serve-YakuAppPage -Context $Context -PageName 'home.html'
+        # 2026-08-21 の利用者判断。選ぶためだけの入口画面は置かない。
+        # 同じ画面の左で文章を訳し、右でExcelを読み込める開始状態を返す。
+        Serve-YakuAppPage -Context $Context -PageName 'cat.html'
         return
     }
     # /quick はExcel/CAT画面の旧URLとして残し、既存ブックマークを壊さない。
-    # 新しい用途選択は / の home.html が担い、ここでは機能画面だけを返す。
+    # / は両方を始められる画面、/cat はExcel専用の開始画面として同じ実装を使う。
     if ($method -eq 'GET' -and ($path -eq '/quick' -or $path -eq '/cat')) {
         # ?project= で来たなら、始める画面を一度も描かずに確認作業として開く。
         # QueryString は使わない（日本語が CP932 で化ける。Get-YakuQueryValue の説明を参照）。

@@ -221,13 +221,13 @@ try {
     Assert-Yaku -Condition $mock.TrimEnd().EndsWith("YAKULINGO_END:$requestId") -Message 'mock must echo the contract ID'
 } finally { Remove-Item Env:YAKULINGO_MOCK -ErrorAction SilentlyContinue }
 
-$homeIndex = Get-Content -LiteralPath (Join-Path $root 'www\home.html') -Raw -Encoding UTF8
 $catIndex = Get-Content -LiteralPath (Join-Path $root 'www\cat.html') -Raw -Encoding UTF8
 $catClient = Get-Content -LiteralPath (Join-Path $root 'www\assets\cat.js') -Raw -Encoding UTF8
 # 画面は一つになった。その場で訳す状態も cat.html の中にある。
 $quickIndex = $catIndex
 $quickClient = Get-Content -LiteralPath (Join-Path $root 'www\assets\quick.js') -Raw -Encoding UTF8
 $commonClient = Get-Content -LiteralPath (Join-Path $root 'www\assets\common.js') -Raw -Encoding UTF8
+$premiumUiJs = Get-Content -LiteralPath (Join-Path $root 'www\assets\premium-ui.js') -Raw -Encoding UTF8
 # 2026-08-12: 全行確認を条件から外したので、出口を「確認済み訳文」とは呼べない。
 # 呼び名ではなく、出せるものが訳文一覧であることを見る。
 Assert-Yaku -Condition (($catIndex + $catClient).Contains('訳文をコピー') -and -not ($catClient -match "'確認済み訳文をコピー'")) -Message 'CAT output must be offered as the translation list it actually is'
@@ -260,11 +260,10 @@ $copilotAutomationTest = Get-Content -LiteralPath (Join-Path $root 'tools\Test-C
 Assert-Yaku -Condition ($appJs -match 'X-Yaku-Session' -and $appJs -match 'application/octet-stream' -and $appJs -match '/api/jobs/') -Message 'browser client must use token, binary upload, and per-job polling'
 Assert-Yaku -Condition (-not ($appJs -match "localStorage\.setItem\([^\r\n]*(job|artifact)|sessionStorage\.setItem\([^\r\n]*(job|artifact)")) -Message 'Quick and CAT job or artifact identifiers must not leak into cross-session browser persistence'
 Assert-Yaku -Condition ($appJs -notmatch 'readAsDataURL|file_b64|application/x-www-form-urlencoded') -Message 'browser client must not Base64/urlencode file uploads'
-# 2026-08-21: チャット翻訳とExcel翻訳は目的が異なるため、起動時は独立した
-# 二分割入口で対等に選び、それぞれ専用画面へ進む。
-Assert-Yaku -Condition (-not (Test-Path -LiteralPath (Join-Path $root 'www\index.html')) -and (Test-Path -LiteralPath (Join-Path $root 'www\home.html') -PathType Leaf)) -Message 'the supported translation chooser must be home.html, not the retired index.html'
-Assert-Yaku -Condition ($server -match "path -eq '/'" -and $server.Contains("PageName 'home.html'") -and $server.Contains("ValidateSet('home.html','cat.html','palette.html')")) -Message 'the root route must serve the independent translation chooser'
-Assert-Yaku -Condition ($homeIndex.Contains('id="home-chat-entry"') -and $homeIndex.Contains('href="/palette"') -and $homeIndex.Contains('id="home-excel-entry"') -and $homeIndex.Contains('href="/cat"') -and $homeIndex.Contains('/assets/common.js')) -Message 'the chooser must split chat and Excel routes while reporting UI presence'
+# 2026-08-21: 選ぶためだけの入口画面は置かず、rootの左で文章を訳し、右でExcelを開く。
+Assert-Yaku -Condition (-not (Test-Path -LiteralPath (Join-Path $root 'www\index.html')) -and -not (Test-Path -LiteralPath (Join-Path $root 'www\home.html'))) -Message 'the launcher must not present a translation choice screen'
+Assert-Yaku -Condition ($server -match "path -eq '/'" -and $server.Contains("PageName 'cat.html'") -and $server.Contains("ValidateSet('cat.html','palette.html')")) -Message 'the root route must serve the live combined translation screen'
+Assert-Yaku -Condition ($premiumUiJs.Contains('premium-combined-chat') -and $premiumUiJs.Contains('premium-combined-excel') -and $premiumUiJs.Contains("window.location.pathname === '/'")) -Message 'the root screen must place the live chat translator beside the live Excel importer'
 # 使い方・設定・ツアーのユーザー向け入口は退役した。
 # 開始画面から辿れるリンクや CAT の tour hook は残さない。
 Assert-Yaku -Condition (-not $catIndex.Contains('href="/tutorial') -and -not $catIndex.Contains('id="cat-help-links"') -and -not $catIndex.Contains('name="yaku-tour"') -and -not $catIndex.Contains('/assets/tour.js')) -Message 'the start screen must not expose retired tutorial/settings/tour entries'
