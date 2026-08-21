@@ -37,7 +37,7 @@ function Invoke-T9190Undo {param($Project)
 
 Write-Host 'Test-YakuV9190StructuralUndo'
 . (Join-Path $YakuT9190Src 'SrcModules.ps1')
-foreach($YakuT9190File in $script:YakuSrcModuleFiles){if($YakuT9190File -eq 'DesktopIntegration.ps1'){continue};. (Join-Path $YakuT9190Src $YakuT9190File)}
+foreach($YakuT9190File in $script:YakuSrcModuleFiles){. (Join-Path $YakuT9190Src $YakuT9190File)}
 $YakuT9190Temp=Join-Path ([IO.Path]::GetTempPath()) ('yaku-structural-undo-'+[guid]::NewGuid().ToString('N'))
 $null=New-Item -ItemType Directory -Path $YakuT9190Temp -Force;$script:YakuT9190Store=Join-Path $YakuT9190Temp 'store'
 function Get-YakuCatProjectStoreDir {return $script:YakuT9190Store}

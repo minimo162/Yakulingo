@@ -150,7 +150,7 @@ Write-Host '-- server routes (real functions, extracted via AST) --'
 
 . (Join-Path $N9195Src 'SrcModules.ps1')
 foreach ($N9195File in @($script:YakuSrcModuleFiles)) {
-    if ($N9195File -ne 'DesktopIntegration.ps1') { . (Join-Path $N9195Src $N9195File) }
+    . (Join-Path $N9195Src $N9195File)
 }
 
 # データを汚さない。既存の回帰テストと同じ退避先の作り方（Test-YakuV9172等）。

@@ -33,7 +33,6 @@ Write-Host 'Test-YakuV9187CompactionBudget'
 
 . (Join-Path $YakuT9187Src 'SrcModules.ps1')
 foreach ($YakuT9187File in $script:YakuSrcModuleFiles) {
-    if ($YakuT9187File -eq 'DesktopIntegration.ps1') { continue }
     . (Join-Path $YakuT9187Src $YakuT9187File)
 }
 

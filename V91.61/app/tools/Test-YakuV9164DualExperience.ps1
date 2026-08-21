@@ -108,7 +108,7 @@ Write-Host 'Load production helpers for dynamic contracts' -ForegroundColor Cyan
 foreach ($name in @(
     'Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1',
     'CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','CatBatch.ps1','CatTranslation.ps1',
-    'CorpusReference.ps1','CellSegments.ps1','CellAlign.ps1','TranslationMemory.ps1','CatProject.ps1'
+    'CellSegments.ps1','CellAlign.ps1','TranslationMemory.ps1','CatProject.ps1'
 )) {
     $path = Join-Path $srcRoot $name
     if (Test-Path -LiteralPath $path -PathType Leaf) { . $path }
@@ -315,7 +315,7 @@ Check-YakuDual ($catBatchSource -notmatch '\bAdd-YakuFileTranslationsToCache\b|\
 $catWorker = Get-YakuDualSlice -Text $server -Start "if (`$Kind -eq 'cat')" -End "elseif (`$Kind -eq 'shorten')"
 Check-YakuDual ($catWorker -notmatch '\bGet-YakuTranslationCacheValue\b|\bSet-YakuTranslationCacheValue\b') 'CAT worker does not read or write cross-project machine cache'
 Check-YakuDual ($catProjectSource -match 'Find-YakuTranslationMemory' -and $catProjectSource -notmatch 'Find-YakuCorpusPairsForSegment') 'CAT exposes only self-confirmed translations as cross-project segment candidates'
-Check-YakuDual ($server -match "requestedMode -eq 'corpus'[\s\S]{0,220}CAT_CORPUS_MODE_RETIRED" -and $server -match "result\.Mode -eq 'corpus'[\s\S]{0,220}CAT_CORPUS_MODE_RETIRED") 'retired corpus job cannot bypass explicit candidate insertion or persist hidden references'
+Check-YakuDual ($server -notmatch "requestedMode -eq 'corpus'" -and $server -notmatch "result\.Mode -eq 'corpus'") 'retired corpus job mode is absent from the CAT worker'
 
 if ($script:failed -gt 0) { throw ('Dual experience contract tests failed: ' + $script:failed) }
 Write-Host 'V91.64 dual experience regression passed.' -ForegroundColor Green

@@ -160,7 +160,7 @@ if ($LASTEXITCODE -ne 0) {
 
 . (Join-Path (Join-Path $root 'src') 'SrcModules.ps1')
 foreach ($name in @($script:YakuSrcModuleFiles)) {
-    if ($name -ne 'DesktopIntegration.ps1') { . (Join-Path (Join-Path $root 'src') $name) }
+    . (Join-Path (Join-Path $root 'src') $name)
 }
 
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ('yaku9199-' + [guid]::NewGuid().ToString('N').Substring(0, 8))

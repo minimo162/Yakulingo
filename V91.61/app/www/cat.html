@@ -87,7 +87,7 @@
            （実測 2026-08-16 1912x987: 入力欄の器は角丸16px・内側24px・影 none）。 -->
       <section id="cat-picker" class="cat-picker" aria-labelledby="cat-page-title">
         <div id="cat-entry-body" class="entry-body">
-          <!-- 主役の新しい翻訳を先に置く。最近の作業・過去訳登録・設定は
+          <!-- 主役の新しい翻訳を先に置く。最近の作業と過去訳登録は
                右の補助ペインへまとめ、視線と読み上げの順序を揃える。 -->
           <div class="entry-main">
             <section id="cat-instant" class="cat-instant" aria-labelledby="cat-start-title">
@@ -210,15 +210,6 @@
         <fieldset id="cat-direction-choice" class="direction-choice" hidden><legend>どちらに訳しますか？</legend><p class="muted">入力内容だけでは自動で決められません。</p><div class="direction-choice-grid"><button type="button" class="secondary-button" data-cat-direction="to_en">英語に訳す</button><button type="button" class="secondary-button" data-cat-direction="to_jp">日本語に訳す</button></div></fieldset>
 
       </section>
-
-      <!-- 使い方への出口は、どちらのタブからも届く場所に置く（2026-08-13）。
-           資料側のパネルの中に入れていたため、起動して最初に出る「その場で訳す」
-           からは一つも見えず（実測: 可視のリンク0本）、初めての人が案内へ
-           たどり着けなかった。資料を開いているあいだは道具の帯が主役なので出さない。 -->
-      <!-- 「左の柱へ移した」と書いていたが、移した先は実装されていない
-           （2026-08-18 実測: 起動画面に使い方への可視リンクは0本。/tutorial は
-           /cat へ302で、リンク禁止の表明が Smoke-Test ほかに複数ある）。
-           古い註を「実装どおり」へ訂正: 使い方への出口は現在この画面に無い。 -->
 
       <section id="cat-workspace" class="cat-workspace" hidden>
         <header id="cat-editor-toolbar" class="cat-editor-toolbar">
@@ -358,7 +349,7 @@
                 <strong id="cat-align-review-title">過去訳の対応候補を確認します</strong>
                 <p>自動で作った対応は推測です。日本語と英語を見比べ、違えば英語を直してから「確認済みにする」を押してください。確認済みにしただけでは候補にならず、翻訳メモリへ登録した行だけが次の資料の候補になります。</p>
               </div>
-              <button id="cat-align-next-document" type="button" class="secondary-button">次に、今回のWord・Excelを取り込む</button>
+              <div class="cat-align-review-actions"><button id="cat-align-register-bulk" type="button">確認済みを過去訳として登録</button><button id="cat-align-next-document" type="button" class="secondary-button">次に、今回のWord・Excelを取り込む</button></div>
             </section>
             <div id="cat-complete-state" class="cat-complete-state" hidden><strong>すべての行を確認し終えました</strong></div>
             <details id="cat-promotion-reference" class="cat-promotion-reference" hidden><summary>行に割り当てできなかった訳案</summary><p class="muted">原文の文の数と、訳案の文の数が合わなかったため、行ごとには入れていません。ここから必要な部分を選んで、各行の訳文へ手で写してください。</p><p id="cat-promotion-reference-text" class="cat-promotion-reference-text"></p></details><div id="cat-hidden-confirmed-notice" class="cat-hidden-confirmed-notice" hidden></div><div id="cat-empty-state" class="cat-empty-state" hidden>この絞り込みに当てはまる行はありません。左の「すべて」を押すと、全部の行が表示されます。</div>

@@ -482,12 +482,12 @@ try {
     Chk ($cat -match "Kind\s*=\s*'memory'") '翻訳メモリの候補に印を付ける'
     # 自分が確定した訳を先頭に置く。公表訳より自分の文体に合うため。
     Chk ($cat -match 'Weight   = 30000') '自分の訳を先に出す'
-    Chk ($cat -notmatch 'Find-YakuCorpusPairsForSegment' -and $cat -notmatch "Kind\s*=\s*'corpus'") '同梱コーパスを候補へ混ぜない'
-    # 文例を作るのは開発者。突き合わせた資料からだけ保存できる。
-    Chk ($cat -match "Project\.Source -ne 'align'") '文例は突き合わせからだけ保存できる'
+    Chk ($cat -notmatch 'Find-YakuCorpusPairsForSegment' -and $cat -notmatch "Kind\s*=\s*'corpus'") '候補に退役した参照資料を混ぜない'
+    # 過去訳の一括登録は、確認済みの対訳対応だけを対象にする。
+    Chk ($cat -match 'Register-YakuCatAlignmentTranslationMemoryBulk' -and $cat -match "Project\.Source -cne 'align'") '一括登録は突き合わせた資料からだけ保存できる'
 
     Write-Host '確定の状態' -ForegroundColor Cyan
-    foreach ($mod in @('Paths.ps1', 'Runtime.ps1', 'Settings.ps1', 'PromptBuilder.ps1', 'Translation.ps1',  'CatTranslation.ps1', 'CellSegments.ps1', 'Corpus.ps1', 'CorpusPairs.ps1', 'CatProject.ps1')) {
+    foreach ($mod in @('Paths.ps1', 'Runtime.ps1', 'Settings.ps1', 'PromptBuilder.ps1', 'Translation.ps1',  'CatTranslation.ps1', 'CellSegments.ps1', 'CatProject.ps1')) {
         . (Join-Path (Join-Path $root 'src') $mod)
     }
     $proj = New-YakuCatTextProject -Root $root -Settings $null -Direction 'to_en' `
@@ -548,7 +548,7 @@ try {
         -OriginPage 4 -ReviewRevision ([int]$proj.Revision)
     Chk ([bool]$tmSaved.Added) '保存済みCAT revisionから出典付きTMを作る'
     $candidateProject = New-YakuCatTextProject -Root $root -Settings $null -Direction 'to_en' -Text ([string]$reviewedSegment.Text)
-    $memoryCandidates = @(Get-YakuCatSegmentCandidates -Root $root -Project $candidateProject -Index 0 -PairsDir (Join-Path $tmp 'no-pairs') | Where-Object { [string]$_.Kind -eq 'memory' })
+    $memoryCandidates = @(Get-YakuCatSegmentCandidates -Root $root -Project $candidateProject -Index 0 | Where-Object { [string]$_.Kind -eq 'memory' })
     Chk ($memoryCandidates.Count -eq 1) '出典付きTMだけがCAT候補へ出る'
     Chk ([string]$memoryCandidates[0].SourceName -eq 'FY2025-results.docx' -and [string]$memoryCandidates[0].Location -eq '本文 段落 12' -and [int]$memoryCandidates[0].Page -eq 4) 'CAT候補がどの資料のどの箇所かを返す'
     $null = Set-YakuCatSegmentTranslation -Project $candidateProject -Index 0 -Text ([string]$memoryCandidates[0].Target)

@@ -269,8 +269,7 @@ body.premium-ui .premium-sidebar-bottom .status-detail {
   text-align: left;
   font-size: 10px;
 }
-body.premium-ui .premium-sidebar-bottom .link-button,
-body.premium-ui .premium-settings-link {
+body.premium-ui .premium-sidebar-bottom .link-button {
   display: block;
   width: 100%;
   min-height: 30px;
@@ -1410,8 +1409,10 @@ body.premium-cat.premium-mode-excel-start .premium-cat-start { display:block; }
 body.premium-cat.premium-mode-excel-start .premium-work-list { display:none; }
 body.premium-cat.premium-mode-worklist .premium-cat-start { display:none; }
 body.premium-cat.premium-mode-worklist .premium-work-list { display:block; }
+body.premium-cat.premium-mode-import .premium-cat-start,
+body.premium-cat.premium-mode-import .premium-work-list { display:none !important; }
 body.premium-cat.premium-mode-workspace #cat-picker { display:none !important; }
-body.premium-cat:not(.premium-mode-workspace) #cat-workspace { display:none !important; }
+body.premium-cat:not(.premium-mode-workspace):not(.premium-mode-align-workspace) #cat-workspace { display:none !important; }
 body.premium-cat .premium-cat-start,
 body.premium-cat .premium-work-list { display:none; }
 body.premium-cat .premium-start-file-form { width:100%; margin:0; padding:0; border:0; background:transparent; }

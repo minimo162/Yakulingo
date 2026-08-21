@@ -544,7 +544,7 @@ Assert-YakuMask (-not (([string]$resB.Options[0].Translation) -like '*500.5*')) 
 Assert-YakuMask (@($fullJobWarnings.ToArray() | Where-Object { [string]$_.Category -eq 'numeric-placeholder-unresolved' }).Count -eq 0) '解消すれば警告は残らない'
 
 Write-Host 'CASE 20A: 補助欄も共通envelopeの前でマスクする'
-# 原文だけをマスク表へ入れていた時期は、StyleReference / CorpusSection と
+# 原文だけをマスク表へ入れていた時期は、StyleReference と
 # クライアントから戻る CurrentText が最終promptへ平文で混入した。このstubは
 # protected adapterのさらに下、実transport相当で受け取った文字列だけを記録する。
 $script:SentPrompts.Clear()
@@ -564,11 +564,11 @@ function Invoke-YakuProtectedTransportTestHook {
 
 $auxWarnings = New-Object System.Collections.Generic.List[object]
 $quickAux = Invoke-YakuSingleTranslationBatch -Root $root -InputText '補助欄保護の業績説明です。' -Settings $settings -Direction 'to_en' `
-    -StyleReference 'STYLE: 極秘売上高は1,234百万円です。' -CorpusSection 'CORPUS: 極秘計画は7,777台です。' -Warnings $auxWarnings
+    -StyleReference 'STYLE: 極秘売上高は1,234百万円です。極秘計画は7,777台です。' -Warnings $auxWarnings
 $quickAuxPrompt = [string]$script:SentPrompts[0]
 Assert-YakuMask ($script:SentPrompts.Count -eq 1 -and @($quickAux.Options).Count -eq 1) 'Quick は保護済みpromptをtransportへ1回送って正常終了する'
 Assert-YakuMask (-not ($quickAuxPrompt -like '*1,234*')) 'Quick StyleReference の1,234はtransportへ平文で到達しない'
-Assert-YakuMask (-not ($quickAuxPrompt -like '*7,777*')) 'Quick CorpusSection の7,777はtransportへ平文で到達しない'
+Assert-YakuMask (-not ($quickAuxPrompt -like '*7,777*')) 'Quick の補助欄にある7,777もtransportへ平文で到達しない'
 Assert-YakuMask ($quickAuxPrompt -match ([regex]::Escape('[[N1]]')) -and $quickAuxPrompt -match ([regex]::Escape('[[N2]]'))) 'Quick の補助欄は別々の数値tokenとして送る'
 
 # 既存mapがある状態で補助欄に2値以上を足すと、N1→N2 のあと元N2まで
@@ -683,9 +683,6 @@ foreach ($srcFile in @(Get-ChildItem -LiteralPath (Join-Path $root 'src') -Filte
         $callSites += ($srcFile.Name)
     }
 }
-# V91.61 段階3: CorpusReference.ps1 が加わる。参考資料を引くための検索語を
-# Copilot に作らせる経路で、原文を外部へ送る点は翻訳と同じ。
-# 送る前にマスクしていることを下で確かめる。
 # V91.61: Alignment.ps1 が加わる。日英の対を Copilot に取らせる経路で、
 # 原文を外部へ送る点は翻訳と同じ。こちらは値を戻さない非可逆マスクを使う
 # （返るのは行番号だけで復元が要らないため、安全側に倒せる）。
@@ -696,7 +693,7 @@ foreach ($srcFile in @(Get-ChildItem -LiteralPath (Join-Path $root 'src') -Filte
 # 送信をマスクを持つファイルへ戻した。Server.ps1 は許可しない。ここは
 # 最大のファイルで、丸ごと許すと以後どこから送っても統制が何も言わなくなる。
 # 足したぶんのマスクは下（掲載候補・文書校正）で名指しして確かめる。
-$outside = @($callSites | Where-Object { $_ -notin @('CopilotClient.ps1','Translation.ps1','CatBatch.ps1','CorpusReference.ps1','Alignment.ps1','Publication.ps1','Review.ps1') })
+$outside = @($callSites | Where-Object { $_ -notin @('CopilotClient.ps1','Translation.ps1','CatBatch.ps1','Alignment.ps1','Publication.ps1','Review.ps1') })
 Assert-YakuMask ($outside.Count -eq 0) ("翻訳経路の外から呼ばれていない: " + (@($outside | Select-Object -Unique) -join ','))
 
 # 許可しただけでは統制にならない。Alignment.ps1 が実際にマスクを通してから
@@ -732,15 +729,6 @@ Assert-YakuMask ($alignSrc -match 'Protect-YakuAlignmentLines') 'アライメン
 Assert-YakuMask ($alignSrc -match "New-YakuProtectedPromptPackage\s+-Kind\s+alignment" -and
     $alignSrc -match 'ProtectedText=\[string\]\$jaMasked' -and
     $alignSrc -match 'ProtectedText=\[string\]\$enMasked') 'アライメント経路がマスク済みの行だけを渡している'
-
-# 外部へ送る経路が増えたら、そこもマスクを通っていること。
-# 経路を足すたびに手で思い出す話にしない。
-$corpusRefText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'CorpusReference.ps1'))
-$maskAt = $corpusRefText.IndexOf('New-YakuNumericMaskMap')
-$sendAt = $corpusRefText.IndexOf('Invoke-YakuProtectedCopilotPrompt')
-Assert-YakuMask ($maskAt -ge 0) 'コーパス検索語の経路もマスクを呼ぶ'
-Assert-YakuMask ($sendAt -ge 0 -and $maskAt -lt $sendAt) 'マスクしてから送っている'
-Assert-YakuMask ($corpusRefText -match "Location 'corpus-query'") '記録に経路名が残る（どこでマスクしたか分かる）'
 
 # 許可一覧へ足しただけでは統制にならない。足した2経路（掲載候補・文書校正）が
 # 実際に「伏せる → 封をする → 平文が残っていないか検査する → 送る」の順で
@@ -820,7 +808,6 @@ Write-Host '送信経路ごとの統制（表に無い経路が現れたら落�
 $sendingPaths = @(
     @{ File = 'Translation.ps1';     Numeric = 'New-YakuNumericMaskMap' }
     @{ File = 'CatProject.ps1';      Numeric = 'New-YakuNumericMaskMap' }
-    @{ File = 'CorpusReference.ps1'; Numeric = 'New-YakuNumericMaskMap' }
     @{ File = 'Alignment.ps1';       Numeric = 'Protect-YakuAlignmentLines' }
     # Excelに入れる候補と文書全体の確認。どちらも sidecar の JSON をまるごと
     # 伏せてから送る。伏せる関数と送る関数は同じファイルにあり、上で名指しした。

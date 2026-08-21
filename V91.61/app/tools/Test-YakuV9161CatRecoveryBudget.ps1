@@ -36,7 +36,7 @@ try {
         [pscustomobject]@{ Text=$source1; Translation=''; MaskedTranslation=''; Origin=''; Confirmed=$false; Joined=$false; Kind='text'; Sheet=''; Location='本文'; BlockIds=@(); Cells=@() },
         [pscustomobject]@{ Text=$source2; Translation=''; MaskedTranslation=''; Origin=''; Confirmed=$false; Joined=$false; Kind='text'; Sheet=''; Location='本文'; BlockIds=@(); Cells=@() }
     )
-    $project = [pscustomobject]@{ Id='recovery'; Path=''; FileName='貼り付け'; Direction='to_en'; Source='text'; CreatedAt=(Get-Date).ToString('s'); CorpusSection=''; Blocks=@(); Segments=$segments }
+    $project = [pscustomobject]@{ Id='recovery'; Path=''; FileName='貼り付け'; Direction='to_en'; Source='text'; CreatedAt=(Get-Date).ToString('s'); Blocks=@(); Segments=$segments }
     $script:YakuCatProjects[$project.Id] = $project
     Chk (Save-YakuCatProject -Project $project) '空のProjectを先に永続化する'
 
@@ -81,7 +81,7 @@ try {
     Chk (-not [string]::IsNullOrWhiteSpace([string]$restored.Segments[0].Translation) -and [string]::IsNullOrWhiteSpace([string]$restored.Segments[1].Translation)) 'applyなしで成功済み1件だけ復元する'
     Chk ([string]$restored.Segments[0].MaskedTranslation -eq [string]$restored.Segments[0].Translation -and [string]$restored.Segments[0].Origin -eq 'copilot') 'マスク後訳文と出所も保存する'
 
-    $fresh = [pscustomobject]@{ Id='fresh'; Direction='to_en'; CorpusSection=''; Segments=@([pscustomobject]@{ Text=$source1; Translation='' }) }
+    $fresh = [pscustomobject]@{ Id='fresh'; Direction='to_en'; Segments=@([pscustomobject]@{ Text=$source1; Translation='' }) }
     $beforeUsageSends = $script:YakuRecoverySends
     $usage = Get-YakuCatCopilotUsage -Root $root -Project $fresh -Settings $settings
     Chk ([int]$usage.CacheHits -eq 0 -and [int]$usage.EstimatedCalls -eq 1) ('成功バッチは別projectの意味的cacheへ流用しない (hits=' + [int]$usage.CacheHits + ' calls=' + [int]$usage.EstimatedCalls + ')')
@@ -97,7 +97,7 @@ try {
     Write-Host '実分割と概算の境界を共有する'
     Clear-YakuTranslationCache
     $settings.max_chars_per_batch_file = 3000
-    $boundary = [pscustomobject]@{ Id='boundary'; Direction='to_en'; CorpusSection=''; Segments=@([pscustomobject]@{Text=('う'*1477);Translation=''},[pscustomobject]@{Text=('え'*1477);Translation=''}) }
+    $boundary = [pscustomobject]@{ Id='boundary'; Direction='to_en'; Segments=@([pscustomobject]@{Text=('う'*1477);Translation=''},[pscustomobject]@{Text=('え'*1477);Translation=''}) }
     $boundaryUsage = Get-YakuCatCopilotUsage -Root $root -Project $boundary -Settings $settings
     Chk ([int]$boundaryUsage.EstimatedCalls -eq 2) '1477字×2件を実分割どおり2回と見積もる'
 } finally {

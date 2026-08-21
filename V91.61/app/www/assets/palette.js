@@ -20,8 +20,7 @@
 
   /* パレットの文脈ポインタ。選んだ資料の id・表示名だけを保存する
      （機密本文は保存しない、設計判断3）。選んだ資料が消えていたら
-     無言で「なし」へフォールバックする（initContextPickerが検出して
-     消す。壊れていても翻訳は続く、CLAUDE.md「コーパスは足し」）。 */
+     無言で「なし」へフォールバックする（initContextPickerが検出して消す）。 */
   var paletteContextStorageKey = 'yaku.palette.context';
 
   var input = null;
@@ -828,7 +827,7 @@
       if (seq !== translateSeq) return;
       renderInstant(data);
     }).catch(function () {
-      // 即答が引けなくても翻訳は続く。コーパス/TMは足しであって前提ではない。
+      // 即答が引けなくても翻訳は続く。CATの再利用情報は補助であり前提ではない。
       if (seq !== translateSeq) return;
       el('palette-instant').hidden = true;
     });

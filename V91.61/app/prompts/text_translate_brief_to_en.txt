@@ -68,7 +68,6 @@ EXAMPLES (SOURCE -> output)
 Before you answer, check: every number, unit, currency, sign, period, subject, qualifier, condition, negation, modifier attachment, and modality (plan / target / fcst. / act. / preliminary) from SOURCE is present, and no fact was dropped to save space.
 
 {numeric_rules}
-{corpus_section}
 {style_reference_section}
 
 SOURCE_BEGIN:{request_id}

@@ -178,7 +178,7 @@ Write-Host '-- server (real functions) --'
 
 . (Join-Path $N9203Src 'SrcModules.ps1')
 foreach ($N9203File in @($script:YakuSrcModuleFiles)) {
-    if ($N9203File -ne 'DesktopIntegration.ps1') { . (Join-Path $N9203Src $N9203File) }
+    . (Join-Path $N9203Src $N9203File)
 }
 
 $N9203Temp = Join-Path ([IO.Path]::GetTempPath()) ('yaku9203-' + [guid]::NewGuid().ToString('N').Substring(0, 8))

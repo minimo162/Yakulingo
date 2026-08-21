@@ -154,7 +154,7 @@ Write-Host '-- (b) server --'
 
 . (Join-Path (Join-Path $root 'src') 'SrcModules.ps1')
 foreach ($name in @($script:YakuSrcModuleFiles)) {
-    if ($name -ne 'DesktopIntegration.ps1') { . (Join-Path (Join-Path $root 'src') $name) }
+    . (Join-Path (Join-Path $root 'src') $name)
 }
 
 # CoD審査 REWORK-1 NIT-B: $env:YAKULINGO_DATA_DIR はプロセス全体に効く。

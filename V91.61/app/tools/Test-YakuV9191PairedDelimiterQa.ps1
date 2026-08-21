@@ -12,7 +12,7 @@ function Test-T9191Code { param($Findings,[string]$Code) return @($Findings|Wher
 
 Write-Host 'Test-YakuV9191PairedDelimiterQa'
 . (Join-Path $YakuT9191Src 'SrcModules.ps1')
-foreach($YakuT9191File in $script:YakuSrcModuleFiles){if($YakuT9191File -eq 'DesktopIntegration.ps1'){continue};. (Join-Path $YakuT9191Src $YakuT9191File)}
+foreach($YakuT9191File in $script:YakuSrcModuleFiles){. (Join-Path $YakuT9191Src $YakuT9191File)}
 $YakuT9191Temp=Join-Path ([IO.Path]::GetTempPath()) ('yaku9191-'+[guid]::NewGuid().ToString('N'))
 $null=New-Item -ItemType Directory -Path $YakuT9191Temp -Force
 $YakuT9191OldData=[string]$env:YAKULINGO_DATA_DIR;$env:YAKULINGO_DATA_DIR=Join-Path $YakuT9191Temp 'user-data'

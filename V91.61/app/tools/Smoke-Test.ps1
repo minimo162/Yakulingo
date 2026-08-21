@@ -223,7 +223,6 @@ try {
 
 $catIndex = Get-Content -LiteralPath (Join-Path $root 'www\cat.html') -Raw -Encoding UTF8
 $catClient = Get-Content -LiteralPath (Join-Path $root 'www\assets\cat.js') -Raw -Encoding UTF8
-$tutorial = Get-Content -LiteralPath (Join-Path $root 'www\tutorial.html') -Raw -Encoding UTF8
 # 画面は一つになった。その場で訳す状態も cat.html の中にある。
 $quickIndex = $catIndex
 $quickClient = Get-Content -LiteralPath (Join-Path $root 'www\assets\quick.js') -Raw -Encoding UTF8
@@ -266,10 +265,9 @@ Assert-Yaku -Condition ($appJs -notmatch 'readAsDataURL|file_b64|application/x-w
 Assert-Yaku -Condition (-not (Test-Path -LiteralPath (Join-Path $root 'www\index.html'))) -Message 'the launcher must not present a choice screen before the translator'
 Assert-Yaku -Condition ($server -match "path -eq '/'" -and $server -notmatch "PageName 'index.html'" -and
     ([regex]::Matches($server, [regex]::Escape("Serve-YakuAppPage -Context `$Context -PageName 'cat.html'")).Count -ge 2)) -Message 'the root route must land on the translation screen itself'
-# 使い方・設定・ツアーのユーザー向け入口は退役した。互換ページは残っても、
+# 使い方・設定・ツアーのユーザー向け入口は退役した。
 # 開始画面から辿れるリンクや CAT の tour hook は残さない。
 Assert-Yaku -Condition (-not $catIndex.Contains('href="/tutorial') -and -not $catIndex.Contains('id="cat-help-links"') -and -not $catIndex.Contains('name="yaku-tour"') -and -not $catIndex.Contains('/assets/tour.js')) -Message 'the start screen must not expose retired tutorial/settings/tour entries'
-Assert-Yaku -Condition ($server.Contains("if (`$method -eq 'GET' -and `$path -eq '/tutorial')") -and $server.Contains("Send-YakuRedirectResponse -Context `$Context -Location '/cat'") -and $server -notmatch 'StartTour|__YAKU_TOUR__') -Message 'the retired /tutorial route must redirect to CAT without a tour hook'
 # 文章とWord・Excelは同じ枠から入る。開始画面には確認を促す重複文を置かない。
 $entryBlock = ''
 if ($quickIndex -match '(?s)<section id="cat-picker".*?<section id="cat-workspace"') { $entryBlock = $Matches[0] }
@@ -377,8 +375,8 @@ Assert-Yaku -Condition ($catClient.Contains('var RESUME_VISIBLE = 3') -and $catI
 $filledBaseRule = ''
 if ($stylesSource -match '(?m)^(button:not\([^
 ]*?\{)') { $filledBaseRule = $Matches[1] }
-$requiredExclusions = @('.secondary-button','.tab-button','.file-clear-button','.link-button','.danger-button','.tutorial-skip','[disabled]')
-Assert-Yaku -Condition ($filledBaseRule -ne '' -and (@($requiredExclusions | Where-Object { -not $filledBaseRule.Contains($_) }).Count -eq 0)) -Message 'the filled base style must exclude secondary, tab, file-clear, link, danger and skip buttons'
+$requiredExclusions = @('.secondary-button','.tab-button','.file-clear-button','.link-button','.danger-button','[disabled]')
+Assert-Yaku -Condition ($filledBaseRule -ne '' -and (@($requiredExclusions | Where-Object { -not $filledBaseRule.Contains($_) }).Count -eq 0)) -Message 'the filled base style must exclude secondary, tab, file-clear, link and danger buttons'
 # 連ねた :not() が1つでもあれば詳細度が上がっている。
 Assert-Yaku -Condition ($stylesSource -notmatch '\):not\(') -Message 'exclusions must stay in one :not() list so the base specificity does not creep'
 # a.button（リンクのボタン）も同じ除外を持つ。持たないと secondary-button が塗られる。
