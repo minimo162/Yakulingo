@@ -139,8 +139,7 @@
   }
   function navMarkup(active) {
     var items = [
-      { key: 'excel', href: '/cat', icon: 'XLS', title: 'Excel翻訳', note: 'セル幅に合わせる' },
-      { key: 'quick', href: '/palette', icon: '↗', title: 'チャット翻訳', note: '文章を貼ってすぐ訳す' },
+      { key: 'translate', href: '/', icon: '訳', title: '翻訳', note: '文章もExcelもここで' },
       { key: 'past', href: '/cat?import=1', icon: '↔', title: '過去訳', note: '確認済みを再利用' },
       { key: 'work', href: '/cat?view=work', icon: '◴', title: '作業一覧', note: '保存済みの作業' }
     ];
@@ -306,12 +305,11 @@
   }
   function buildCatStart(picker) {
     if (!picker || el('premium-cat-start')) return;
-    var isCombinedStart = window.location.pathname === '/';
     var start = create('section', 'premium-cat-start');
     start.id = 'premium-cat-start';
-    start.innerHTML = isCombinedStart ?
-      '<header class="premium-combined-heading"><div><span class="premium-eyebrow">翻訳を始める</span><h1>文章もExcelも、ここからすぐに。</h1>' +
-      '<p>左は文章を貼ってそのまま翻訳。右はExcelを選んで、セル幅に合わせた翻訳を始めます。</p></div></header>' +
+    start.innerHTML =
+      '<header class="premium-combined-heading"><div><span class="premium-eyebrow">翻訳ワークスペース</span><h1>文章もExcelも、ひとつの画面で。</h1>' +
+      '<p>左は文章を貼ってそのまま翻訳。右はExcelを選んで、セル幅に合わせて翻訳します。</p></div></header>' +
       '<div class="premium-combined-grid"><section class="premium-combined-panel premium-combined-chat" aria-labelledby="premium-combined-chat-title">' +
       '<header><span class="premium-panel-number">01</span><div><span class="premium-eyebrow">チャット翻訳</span><h2 id="premium-combined-chat-title">文章をすぐ訳す</h2>' +
       '<p>メールやチャット、短い資料を貼り付けて、その場で訳します。</p></div></header>' + embeddedChatMarkup() + '</section>' +
@@ -324,22 +322,7 @@
       '<input id="premium-file-input" type="file" accept=".xlsx,.xlsm" hidden></div>' +
       '<div class="premium-combined-excel-options"><section><h3>翻訳方向</h3><div id="premium-direction-switch" class="premium-direction-switch" role="group" aria-label="翻訳方向">' +
       '<button type="button" class="is-active" aria-pressed="true" data-direction="to_en">日本語 → 英語</button><button type="button" aria-pressed="false" data-direction="to_jp">英語 → 日本語</button></div></section>' +
-      '<section><h3>確認済みの過去訳を使う</h3><p>日英PDFから登録した訳を、次のExcelで再利用できます。</p><button id="premium-reference-open" type="button" class="premium-secondary-action">過去訳を登録</button></section></div></section></div>' :
-      '<header class="premium-start-heading"><div class="premium-start-heading-copy"><span class="premium-eyebrow">Excelレイアウト翻訳</span><h1>セル幅に合わせて、短く正確に。</h1>' +
-      '<p>Excelを読み込み、収まりにくいセルを仕上げます。以前に確認した日英PDFの訳も、過去訳として次の資料で再利用できます。</p></div>' +
-      '<a id="premium-chat-cta" class="premium-chat-cta" href="/palette"><strong>文章をすぐ訳す</strong><span>ファイルなしで、文章を貼って翻訳</span></a></header>' +
-      '<div class="premium-start-grid"><section class="premium-start-primary">' + visualStepsMarkup() +
-      '<div id="premium-file-drop" class="premium-file-drop" role="group" aria-label="Excelファイルを選ぶ、またはドロップする">' +
-      '<div class="premium-excel-mark">X</div><div class="premium-drop-copy"><strong>Excelをここに置く</strong>' +
-      '<span>列幅・結合セル・右側の空きセルを読み取り、収まる長さで翻訳します。</span>' +
-      '<div class="premium-drop-tags"><i>列幅を測定</i><i>短訳を生成</i><i>超過だけ確認</i></div></div>' +
-      '<div class="premium-drop-actions"><button id="premium-file-select" type="button">Excelを選ぶ</button><small>.xlsx / .xlsm</small></div>' +
-      '<input id="premium-file-input" type="file" accept=".xlsx,.xlsm" hidden></div></section>' +
-      '<aside class="premium-start-aside"><section><h2>翻訳方向</h2><div id="premium-direction-switch" class="premium-direction-switch" role="group" aria-label="翻訳方向">' +
-      '<button type="button" class="is-active" aria-pressed="true" data-direction="to_en">日本語 → 英語</button><button type="button" aria-pressed="false" data-direction="to_jp">英語 → 日本語</button></div></section>' +
-      '<section><h2>確認済みの過去訳を再利用</h2><p>日本語PDFと英語PDFを突き合わせ、確認した訳を登録すると、次の作業の候補に出ます。</p><button id="premium-reference-open" type="button" class="premium-secondary-action">過去訳を登録</button></section>' +
-      '<section><h2>読み込み後</h2><div class="premium-outcome-row"><span>収まり済み</span><i><b style="width:82%"></b></i><strong>優先表示</strong></div>' +
-      '<div class="premium-outcome-row is-alert"><span>要調整</span><i><b style="width:20%"></b></i><strong>数セル</strong></div></section></aside></div>';
+      '<section><h3>確認済みの過去訳を使う</h3><p>日英PDFから登録した訳を、次のExcelで再利用できます。</p><button id="premium-reference-open" type="button" class="premium-secondary-action">過去訳を登録</button></section></div></section></div>';
     picker.appendChild(start);
 
     var direction = 'to_en';
@@ -747,7 +730,7 @@
     })();
     var importMode = premiumState.initialImport && !isWorkspace && !workMode &&
       !!(el('cat-source-align') && !el('cat-source-align').hidden);
-    var combinedStart = !isWorkspace && !workMode && !importMode && window.location.pathname === '/';
+    var combinedStart = !isWorkspace && !workMode && !importMode;
     if (!isWorkspace) {
       cancelPremiumRowWait();
       closeTools();
@@ -756,7 +739,7 @@
     document.body.classList.toggle('premium-mode-align-workspace', !!isAlignmentWorkspace);
     document.body.classList.toggle('premium-mode-worklist', !isWorkspace && workMode);
     document.body.classList.toggle('premium-mode-combined-start', !!combinedStart);
-    document.body.classList.toggle('premium-mode-excel-start', !isWorkspace && !workMode && !importMode && !combinedStart);
+    document.body.classList.remove('premium-mode-excel-start');
     document.body.classList.toggle('premium-mode-import', !!importMode);
     syncToolsExpanded();
     var start = el('premium-cat-start');
@@ -764,7 +747,7 @@
     if (start) start.hidden = !!isWorkspace || workMode || importMode;
     if (work) work.hidden = !!isWorkspace || !workMode || importMode;
     if (isWorkspace && !isAlignmentWorkspace) {
-      setActiveNav('excel');
+      setActiveNav('translate');
       setTopbar('Excelレイアウト翻訳', textOf(el('cat-toolbar-title')) || 'Excel翻訳', {
         'premium-translate': true, 'premium-qa': true, 'premium-tools': true, 'premium-export': true
       });
@@ -787,20 +770,16 @@
       document.title = '作業一覧 - YakuLingo';
       renderWorkCards();
     } else if (combinedStart) {
-      setActiveNav('');
-      setTopbar('翻訳', '文章とExcelをすぐ始める', {});
+      setActiveNav('translate');
+      setTopbar('翻訳', '文章とExcelをひとつの画面で', {});
       document.title = '翻訳 - YakuLingo';
-    } else {
-      setActiveNav('excel');
-      setTopbar('Excel翻訳', 'セル幅に合わせる', {});
-      document.title = 'Excel翻訳 - YakuLingo';
     }
   }
   function setupCat() {
     var shell = one('main.shell');
     if (!shell || document.body.hasAttribute(PREMIUM_FLAG)) return;
     document.body.setAttribute(PREMIUM_FLAG, '1');
-    mountPremiumFrame(shell, 'excel', 'premium-cat');
+    mountPremiumFrame(shell, 'translate', 'premium-cat');
     var picker = el('cat-picker');
     buildCatStart(picker);
     buildWorkList(picker);

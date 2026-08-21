@@ -236,10 +236,9 @@
   function syncLocation(projectId, preserveImport, preserveWork) {
     try {
       var first = !locationSynced;
-      /* root は文章とExcelを同時に始められる画面。初期表示だけは /cat へ
-         書き換えず、premium-ui が左右の実作業面として判別できるようにする。 */
-      var keepCombinedRoot = first && !projectId && !preserveImport && !preserveWork && location.pathname === '/' && !location.search;
-      var next = projectId ? ('/cat?project=' + encodeURIComponent(projectId)) : (preserveImport ? '/cat?import=1' : preserveWork ? '/cat?view=work' : keepCombinedRoot ? '/' : '/cat');
+      /* 翻訳の標準面は / の左右画面だけ。旧 /quick・/cat・/palette から来ても、
+         資料・過去訳・作業一覧を指定していなければ履歴を増やさず / へ寄せる。 */
+      var next = projectId ? ('/cat?project=' + encodeURIComponent(projectId)) : (preserveImport ? '/cat?import=1' : preserveWork ? '/cat?view=work' : '/');
       locationSynced = true;
       if (location.pathname + location.search === next) return;
       if (projectId && !first) window.history.pushState(null, '', next);
@@ -5162,9 +5161,6 @@
   }
   function start() {
     YakuCommon.start(); YakuCommon.onReady(function (value) { ready = value; setBusy(busy); }); bind(); bindInstant(); loadRecent();
-    /* 旧URLの /quick も同じ画面を返す。showPicker() がアドレスを /cat へ
-       書き換えるので、判定は先に取っておく。 */
-    var cameFromInstant = location.pathname === '/quick';
     var params = new URLSearchParams(location.search);
     var wanted = params.get('project');
     if (wanted) {
@@ -5185,7 +5181,6 @@
     if (importMode) { showPicker(importMode); showStart('align'); return; }
     if (workMode) { showPicker(false, true); return; }
     showPicker();
-    if (cameFromInstant && window.YakuInstant) window.YakuInstant.show();
   }
   window.YakuCat = { isBusy: function () { return busy; } };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();

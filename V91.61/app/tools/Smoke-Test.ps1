@@ -260,10 +260,11 @@ $copilotAutomationTest = Get-Content -LiteralPath (Join-Path $root 'tools\Test-C
 Assert-Yaku -Condition ($appJs -match 'X-Yaku-Session' -and $appJs -match 'application/octet-stream' -and $appJs -match '/api/jobs/') -Message 'browser client must use token, binary upload, and per-job polling'
 Assert-Yaku -Condition (-not ($appJs -match "localStorage\.setItem\([^\r\n]*(job|artifact)|sessionStorage\.setItem\([^\r\n]*(job|artifact)")) -Message 'Quick and CAT job or artifact identifiers must not leak into cross-session browser persistence'
 Assert-Yaku -Condition ($appJs -notmatch 'readAsDataURL|file_b64|application/x-www-form-urlencoded') -Message 'browser client must not Base64/urlencode file uploads'
-# 2026-08-21: 選ぶためだけの入口画面は置かず、rootの左で文章を訳し、右でExcelを開く。
+# 2026-08-21: 選ぶためだけの入口画面は置かず、通常の翻訳面をrootの左右画面へ一本化する。
 Assert-Yaku -Condition (-not (Test-Path -LiteralPath (Join-Path $root 'www\index.html')) -and -not (Test-Path -LiteralPath (Join-Path $root 'www\home.html'))) -Message 'the launcher must not present a translation choice screen'
-Assert-Yaku -Condition ($server -match "path -eq '/'" -and $server.Contains("PageName 'cat.html'") -and $server.Contains("ValidateSet('cat.html','palette.html')")) -Message 'the root route must serve the live combined translation screen'
-Assert-Yaku -Condition ($premiumUiJs.Contains('premium-combined-chat') -and $premiumUiJs.Contains('premium-combined-excel') -and $premiumUiJs.Contains("window.location.pathname === '/'")) -Message 'the root screen must place the live chat translator beside the live Excel importer'
+Assert-Yaku -Condition ($server.Contains("@('/', '/quick', '/cat', '/palette')") -and $server.Contains("PageName 'cat.html'") -and $server.Contains("ValidateSet('cat.html','palette.html')")) -Message 'root and legacy translation URLs must serve the same live translation screen'
+Assert-Yaku -Condition ($premiumUiJs.Contains('premium-combined-chat') -and $premiumUiJs.Contains('premium-combined-excel') -and $premiumUiJs.Contains('var combinedStart = !isWorkspace && !workMode && !importMode')) -Message 'the standard translation screen must place the live chat translator beside the live Excel importer'
+Assert-Yaku -Condition ($catClient.Contains("preserveWork ? '/cat?view=work' : '/')")) -Message 'leaving a project must return to the single combined translation screen'
 # 使い方・設定・ツアーのユーザー向け入口は退役した。
 # 開始画面から辿れるリンクや CAT の tour hook は残さない。
 Assert-Yaku -Condition (-not $catIndex.Contains('href="/tutorial') -and -not $catIndex.Contains('id="cat-help-links"') -and -not $catIndex.Contains('name="yaku-tour"') -and -not $catIndex.Contains('/assets/tour.js')) -Message 'the start screen must not expose retired tutorial/settings/tour entries'

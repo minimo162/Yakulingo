@@ -34,7 +34,9 @@ foreach ($html in @($cat, $palette)) {
 }
 Assert-YakuPremiumContains $js 'premium-combined-chat' 'PREMIUM_UI_COMBINED_CHAT_MISSING'
 Assert-YakuPremiumContains $js 'premium-combined-excel' 'PREMIUM_UI_COMBINED_EXCEL_MISSING'
-Assert-YakuPremiumContains $js "window\.location\.pathname === '/'" 'PREMIUM_UI_COMBINED_ROOT_ROUTE_MISSING'
+Assert-YakuPremiumContains $js 'var combinedStart = !isWorkspace && !workMode && !importMode' 'PREMIUM_UI_SINGLE_TRANSLATION_SURFACE_MISSING'
+Assert-YakuPremiumContains $js '翻訳ワークスペース[\s\S]{0,120}?文章もExcelも、ひとつの画面で。' 'PREMIUM_UI_WORKSPACE_COPY_MISSING'
+if ($js -match '翻訳を始める|文章もExcelも、ここからすぐに。') { throw 'PREMIUM_UI_ENTRY_PAGE_COPY_REINTRODUCED' }
 Assert-YakuPremiumContains $js 'embeddedChatMarkup\(\)' 'PREMIUM_UI_LIVE_CHAT_EMBED_MISSING'
 Assert-YakuPremiumContains $cat 'premium-ui\.js[\s\S]{0,240}?palette\.js' 'PREMIUM_UI_LIVE_CHAT_SCRIPT_ORDER_MISSING'
 Assert-YakuPremiumContains $css 'premium-combined-grid[\s\S]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)' 'PREMIUM_UI_COMBINED_EQUAL_SPLIT_MISSING'
@@ -52,13 +54,11 @@ foreach ($id in @('palette-form','palette-input','palette-direction-select','pal
     Assert-YakuPremiumContains $palette ('id=["'']' + [regex]::Escape($id) + '["'']') ('PREMIUM_UI_PALETTE_CONTRACT_MISSING: ' + $id)
 }
 
-foreach ($label in @('Excel翻訳','チャット翻訳','過去訳','作業一覧','セル幅に合わせる','文章を貼ってすぐ訳す','確認済みを再利用','保存済みの作業')) {
+foreach ($label in @('翻訳','文章もExcelもここで','過去訳','作業一覧','確認済みを再利用','保存済みの作業')) {
     Assert-YakuPremiumContains $js ([regex]::Escape($label)) ('PREMIUM_UI_NAV_LABEL_MISSING: ' + $label)
 }
 if ($js -match 'クイック翻訳') { throw 'PREMIUM_UI_OLD_CHAT_LABEL_REINTRODUCED' }
-Assert-YakuPremiumContains $js 'premium-chat-cta' 'PREMIUM_UI_CHAT_CTA_MISSING'
-Assert-YakuPremiumContains $js 'href="/palette"' 'PREMIUM_UI_CHAT_CTA_HREF_MISSING'
-Assert-YakuPremiumContains $js '文章をすぐ訳す|ファイルなしで、文章を貼って翻訳' 'PREMIUM_UI_CHAT_CTA_COPY_MISSING'
+if ($js -match 'href="/palette"|premium-mode-excel-start.*true|setActiveNav\(''excel''\)') { throw 'PREMIUM_UI_SEPARATE_TRANSLATION_START_REINTRODUCED' }
 Assert-YakuPremiumContains $js 'finally[\s\S]*premium-booting' 'PREMIUM_UI_BOOTING_FINALLY_MISSING'
 if ($js -match '枠に収める|サクッと翻訳') { throw 'PREMIUM_UI_REJECTED_NAV_LABEL_REINTRODUCED' }
 if ($js -match 'カジュアル') { throw 'PREMIUM_UI_UNSUPPORTED_TONE_EXPOSED' }
@@ -73,8 +73,8 @@ Assert-YakuPremiumContains $js 'Excel翻訳と過去訳の対応確認|Excel翻�
 Assert-YakuPremiumContains $js "setTopbar\('作業一覧', '保存済みの作業'" 'PREMIUM_UI_MIXED_WORK_TOPBAR_MISSING'
 Assert-YakuPremiumContains $cat 'cat-source-align|日本語版のPDF|英語版のPDF' 'PREMIUM_UI_PAST_IMPORT_SURFACE_MISSING'
 Assert-YakuPremiumContains $catJs 'function syncLocation\(projectId, preserveImport, preserveWork\)' 'PREMIUM_UI_IMPORT_LOCATION_SYNC_MISSING'
-Assert-YakuPremiumContains $catJs "preserveImport \? '/cat\?import=1' : preserveWork \? '/cat\?view=work' : keepCombinedRoot \? '/' : '/cat'" 'PREMIUM_UI_IMPORT_LOCATION_FALLBACK_MISSING'
-Assert-YakuPremiumContains $catJs "keepCombinedRoot = first[\s\S]{0,240}?location\.pathname === '/'" 'PREMIUM_UI_COMBINED_LOCATION_PRESERVE_MISSING'
+Assert-YakuPremiumContains $catJs "preserveImport \? '/cat\?import=1' : preserveWork \? '/cat\?view=work' : '/'" 'PREMIUM_UI_SINGLE_START_LOCATION_MISSING'
+if ($catJs -match "keepCombinedRoot|: '/cat'\)" ) { throw 'PREMIUM_UI_SEPARATE_EXCEL_START_REINTRODUCED' }
 Assert-YakuPremiumContains $catJs 'showPicker\(importMode\)' 'PREMIUM_UI_IMPORT_START_ORDER_MISSING'
 Assert-YakuPremiumContains $catJs 'retryPending = eligible === 0 && pending > 0|翻訳メモリへの反映を再試行' 'PREMIUM_UI_TM_PENDING_RETRY_WIRING_MISSING'
 Assert-YakuPremiumContains $catJs "data-cat-source.*project\.source" 'PREMIUM_UI_PROJECT_SOURCE_MARKER_MISSING'
@@ -114,7 +114,6 @@ Assert-YakuPremiumContains $css '--premium-muted:\s*#55565f' 'PREMIUM_UI_MUTED_T
 Assert-YakuPremiumContains $css 'BIZ UDPGothic' 'PREMIUM_UI_JP_FONT_STACK_MISSING'
 Assert-YakuPremiumContains $css '(?s)body\.premium-ui\s*\{.*?font-size:\s*17px' 'PREMIUM_UI_BODY_FONT_FLOOR_MISSING'
 Assert-YakuPremiumContains $css 'premium-booting' 'PREMIUM_UI_BOOTING_STYLE_MISSING'
-Assert-YakuPremiumContains $css 'premium-chat-cta' 'PREMIUM_UI_CHAT_CTA_STYLE_MISSING'
 
 $node = Get-Command node -ErrorAction SilentlyContinue
 if ($null -eq $node) { throw 'PREMIUM_UI_NODE_NOT_FOUND' }
@@ -159,21 +158,12 @@ function sendJson(response, value) {
   const server = http.createServer((request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
     const isCombinedPage = url.pathname === '/';
-    const isPalettePage = url.pathname === '/palette';
     const isAlignProject = url.pathname === '/cat' && url.searchParams.get('project') === alignProject.id;
     const isPendingAlignProject = url.pathname === '/cat' && url.searchParams.get('project') === pendingAlignProject.id;
-    const isCatStartPage = url.pathname === '/cat' && !url.searchParams.has('project') && !url.searchParams.has('import') && !url.searchParams.has('view');
+    const isLegacyStartPage = ['/quick', '/cat', '/palette'].includes(url.pathname) && !url.searchParams.has('project') && !url.searchParams.has('import') && !url.searchParams.has('view');
     const isImportPage = url.pathname === '/cat' && url.searchParams.get('import') === '1';
     const isWorkListPage = url.pathname === '/cat' && url.searchParams.get('view') === 'work';
-    if (isPalettePage) {
-      let html = fs.readFileSync(path.join(wwwPath, 'palette.html'), 'utf8');
-      html = html.replace(/__YAKU_SESSION_TOKEN__/g, 'premium-palette-test')
-        .replace(/__YAKU_MAX_BATCH_CHARS__/g, '4000');
-      response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      response.end(html);
-      return;
-    }
-    if (isCombinedPage || isCatStartPage || isAlignProject || isPendingAlignProject || isImportPage || isWorkListPage) {
+    if (isCombinedPage || isLegacyStartPage || isAlignProject || isPendingAlignProject || isImportPage || isWorkListPage) {
       let html = fs.readFileSync(path.join(wwwPath, 'cat.html'), 'utf8');
       html = html.replace(/__YAKU_SESSION_TOKEN__/g, 'premium-align-test')
         .replace(/__YAKU_MAX_UPLOAD_BYTES__/g, '52428800')
@@ -183,7 +173,7 @@ function sendJson(response, value) {
         .replace(/__YAKU_OUTPUT_FONT_JP__/g, 'MS P\\u30b4\\u30b7\\u30c3\\u30af')
         .replace(/__YAKU_TOUR__/g, '0')
         .replace(/__YAKU_IMPORT__/g, isImportPage ? '1' : '0')
-        .replace(/__YAKU_VIEW__/g, isCombinedPage || isCatStartPage ? 'start' : isAlignProject || isPendingAlignProject ? 'workspace' : isWorkListPage ? 'work' : '');
+        .replace(/__YAKU_VIEW__/g, isCombinedPage || isLegacyStartPage ? 'start' : isAlignProject || isPendingAlignProject ? 'workspace' : isWorkListPage ? 'work' : '');
       response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...(isImportPage ? { 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'" } : {}) });
       response.end(html);
       return;
@@ -272,6 +262,19 @@ function sendJson(response, value) {
       await combinedPage.setViewportSize({ width: 1200, height: 800 });
       const combinedNarrow = await measureCombined();
       assert.ok(combinedNarrow.chat.visible && combinedNarrow.excel.visible && combinedNarrow.splitDelta <= 2 && combinedNarrow.input.visible && combinedNarrow.excelButton.visible && !combinedNarrow.overflow, JSON.stringify(combinedNarrow));
+      await combinedPage.locator('#premium-direction-switch button[data-direction="to_jp"]').click();
+      let directionState = await combinedPage.evaluate(() => Array.from(document.querySelectorAll('#premium-direction-switch button')).map(node => [node.getAttribute('data-direction'), node.getAttribute('aria-pressed'), node.classList.contains('is-active')]));
+      assert.deepStrictEqual(directionState, [['to_en', 'false', false], ['to_jp', 'true', true]], JSON.stringify(directionState));
+      await combinedPage.locator('#premium-reference-open').click();
+      await combinedPage.waitForFunction(() => new URL(location.href).searchParams.get('import') === '1' && document.getElementById('cat-source-align') && !document.getElementById('cat-source-align').hidden, null, { timeout: 20000 });
+      const importStartState = await combinedPage.evaluate(() => ({ query: new URL(location.href).searchParams.get('import'), panel: !document.getElementById('cat-source-align').hidden, japanese: document.body.textContent.includes('\u65e5\u672c\u8a9e\u7248\u306ePDF'), english: document.body.textContent.includes('\u82f1\u8a9e\u7248\u306ePDF') }));
+      assert.deepStrictEqual(importStartState, { query: '1', panel: true, japanese: true, english: true }, JSON.stringify(importStartState));
+      for (const legacyPath of ['/cat', '/palette', '/quick']) {
+        await combinedPage.goto(baseUrl + legacyPath, { waitUntil: 'domcontentloaded' });
+        await combinedPage.waitForFunction(() => location.pathname === '/' && document.body.classList.contains('premium-mode-combined-start'), null, { timeout: 20000 });
+        const legacyState = await measureCombined();
+        assert.ok(legacyState.chat.visible && legacyState.excel.visible && legacyState.splitDelta <= 2, legacyPath + ': ' + JSON.stringify(legacyState));
+      }
       console.log('Premium combined 1912x987:', JSON.stringify(combinedWide));
       console.log('Premium combined 1200x800:', JSON.stringify(combinedNarrow));
       if (combinedErrors.length) throw new Error('PREMIUM_UI_COMBINED_PAGEERROR: ' + combinedErrors.join(' | '));
@@ -279,86 +282,6 @@ function sendJson(response, value) {
       const page = await browser.newPage({ viewport: { width: 1912, height: 987 } });
       const pageErrors = [];
       page.on('pageerror', error => pageErrors.push(error.message));
-      const startPage = await browser.newPage({ viewport: { width: 1912, height: 987 } });
-      const startErrors = [];
-      startPage.on('pageerror', error => startErrors.push(error.message));
-      await startPage.goto(baseUrl + '/cat', { waitUntil: 'domcontentloaded' });
-      await startPage.waitForFunction(() => {
-        const start = document.getElementById('premium-cat-start');
-        return start && !document.body.classList.contains('premium-booting') &&
-          getComputedStyle(start).display !== 'none' && start.getBoundingClientRect().width > 0;
-      }, null, { timeout: 20000 });
-      const measureStart = () => startPage.evaluate(() => {
-        const visible = node => {
-          if (!node) return false;
-          const style = getComputedStyle(node), box = node.getBoundingClientRect();
-          return !node.hidden && style.display !== 'none' && style.visibility !== 'hidden' && box.width > 0 && box.height > 0;
-        };
-        const box = id => {
-          const node = document.getElementById(id), rect = node && node.getBoundingClientRect();
-          return { visible: visible(node), width: rect ? rect.width : 0, height: rect ? rect.height : 0,
-            focusable: !!node && node.tabIndex >= 0 && !node.disabled };
-        };
-        const start = document.getElementById('premium-cat-start');
-        const rect = start && start.getBoundingClientRect();
-        const textNodes = start ? Array.from(start.querySelectorAll('h1,h2,p,a,button,strong,span,small')).filter(node => visible(node) && node.textContent.trim()) : [];
-        const fontSizes = textNodes.map(node => parseFloat(getComputedStyle(node).fontSize)).filter(Number.isFinite);
-        const cta = document.getElementById('premium-chat-cta');
-        const ctaRect = cta && cta.getBoundingClientRect();
-        const logo = document.querySelector('.premium-logo');
-        const flowArrows = Array.from(document.querySelectorAll('.premium-flow-arrow')).filter(visible);
-        const logoFont = logo && visible(logo) ? parseFloat(getComputedStyle(logo).fontSize) : 0;
-        const flowArrowFonts = flowArrows.map(node => parseFloat(getComputedStyle(node).fontSize)).filter(Number.isFinite);
-        const direction = Array.from(document.querySelectorAll('#premium-direction-switch button')).map(node => {
-          const item = node.getBoundingClientRect();
-          return { text: node.textContent.trim(), pressed: node.getAttribute('aria-pressed'), active: node.classList.contains('is-active'), visible: visible(node), width: item.width, height: item.height };
-        });
-        const overflow = document.documentElement.scrollWidth > window.innerWidth + 1 || document.body.scrollWidth > window.innerWidth + 1;
-        return {
-          viewport: { width: innerWidth, height: innerHeight }, booting: document.body.classList.contains('premium-booting'),
-          startVisible: visible(start), startWidth: rect ? rect.width : 0, startHeight: rect ? rect.height : 0,
-          grid: box('premium-direction-switch'), fileDrop: box('premium-file-drop'), excel: box('premium-file-select'),
-          reference: box('premium-reference-open'), cta: { visible: visible(cta), href: cta && cta.getAttribute('href'), width: ctaRect ? ctaRect.width : 0, height: ctaRect ? ctaRect.height : 0, focusable: !!cta && cta.tabIndex >= 0 },
-          logoFont, flowArrowFont: flowArrowFonts.length ? Math.min.apply(Math, flowArrowFonts) : 0,
-          direction: direction, activeDirection: direction.filter(item => item.pressed === 'true' && item.active).length,
-          minFont: fontSizes.length ? Math.min.apply(Math, fontSizes) : 0, bodyFont: parseFloat(getComputedStyle(document.body).fontSize),
-          overflow: overflow, scrollWidth: document.documentElement.scrollWidth
-        };
-      });
-      const startWide = await measureStart();
-      assert.strictEqual(startWide.booting, false, JSON.stringify(startWide));
-      assert.ok(startWide.startVisible && startWide.cta.visible && startWide.cta.href === '/palette' && startWide.cta.focusable && startWide.cta.width >= 180 && startWide.cta.height >= 44, JSON.stringify(startWide));
-      assert.ok(startWide.excel.visible && startWide.excel.focusable && startWide.excel.width >= 120 && startWide.excel.height >= 44, JSON.stringify(startWide));
-      assert.ok(startWide.reference.visible && startWide.reference.focusable && startWide.reference.width >= 120 && startWide.reference.height >= 44, JSON.stringify(startWide));
-      assert.strictEqual(startWide.direction.length, 2, JSON.stringify(startWide));
-      assert.strictEqual(startWide.activeDirection, 1, JSON.stringify(startWide));
-      assert.ok(startWide.direction.every(item => item.visible && item.width >= 120 && item.height >= 44) && startWide.direction[0].text !== startWide.direction[1].text, JSON.stringify(startWide));
-      assert.ok(startWide.minFont >= 13 && startWide.bodyFont >= 17 && !startWide.overflow, JSON.stringify(startWide));
-      assert.ok(startWide.logoFont >= 18 && startWide.flowArrowFont >= 26, JSON.stringify(startWide));
-      await startPage.locator('#premium-chat-cta').focus();
-      assert.strictEqual(await startPage.evaluate(() => document.activeElement && document.activeElement.id), 'premium-chat-cta');
-      const [chooser] = await Promise.all([startPage.waitForEvent('filechooser'), startPage.locator('#premium-file-select').click()]);
-      assert.ok(chooser, 'Excel chooser did not open');
-      await startPage.locator('#premium-direction-switch button[data-direction="to_jp"]').click();
-      let directionState = await startPage.evaluate(() => Array.from(document.querySelectorAll('#premium-direction-switch button')).map(node => [node.getAttribute('data-direction'), node.getAttribute('aria-pressed'), node.classList.contains('is-active')]));
-      assert.deepStrictEqual(directionState, [['to_en', 'false', false], ['to_jp', 'true', true]], JSON.stringify(directionState));
-      await startPage.locator('#premium-direction-switch button[data-direction="to_en"]').click();
-      directionState = await startPage.evaluate(() => Array.from(document.querySelectorAll('#premium-direction-switch button')).map(node => [node.getAttribute('data-direction'), node.getAttribute('aria-pressed'), node.classList.contains('is-active')]));
-      assert.deepStrictEqual(directionState, [['to_en', 'true', true], ['to_jp', 'false', false]], JSON.stringify(directionState));
-      await startPage.locator('#premium-reference-open').click();
-      await startPage.waitForFunction(() => new URL(location.href).searchParams.get('import') === '1' && document.getElementById('cat-source-align') && !document.getElementById('cat-source-align').hidden, null, { timeout: 20000 });
-      const importStartState = await startPage.evaluate(() => ({ query: new URL(location.href).searchParams.get('import'), panel: !document.getElementById('cat-source-align').hidden, japanese: document.body.textContent.includes('\u65e5\u672c\u8a9e\u7248\u306ePDF'), english: document.body.textContent.includes('\u82f1\u8a9e\u7248\u306ePDF') }));
-      assert.deepStrictEqual(importStartState, { query: '1', panel: true, japanese: true, english: true }, JSON.stringify(importStartState));
-      await startPage.goto(baseUrl + '/cat', { waitUntil: 'domcontentloaded' });
-      await startPage.waitForSelector('#premium-cat-start');
-      await startPage.setViewportSize({ width: 1200, height: 800 });
-      await startPage.waitForFunction(() => document.getElementById('premium-cat-start').getBoundingClientRect().width > 0 && !document.body.classList.contains('premium-booting'));
-      const startNarrow = await measureStart();
-      assert.ok(startNarrow.startVisible && startNarrow.cta.visible && startNarrow.cta.width >= 180 && startNarrow.cta.height >= 44 && startNarrow.excel.height >= 44 && startNarrow.reference.height >= 44 && startNarrow.direction.every(item => item.visible && item.height >= 44) && startNarrow.minFont >= 13 && startNarrow.bodyFont >= 17 && !startNarrow.overflow, JSON.stringify(startNarrow));
-      console.log('Premium start 1912x987:', JSON.stringify(startWide));
-      console.log('Premium start 1200x800:', JSON.stringify(startNarrow));
-      if (startErrors.length) throw new Error('PREMIUM_UI_START_PAGEERROR: ' + startErrors.join(' | '));
-      await startPage.close();
       await page.goto(baseUrl + '/cat?project=project-old');
     await page.setContent(`<!doctype html><html><head><title>test</title><link rel="stylesheet" href="/assets/premium-ui.css"></head><body class="app-cat" data-cat-view="workspace">
       <main class="shell">

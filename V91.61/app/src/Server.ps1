@@ -2234,15 +2234,10 @@ function Invoke-YakuRoute {
         Clear-YakuExpiredUploads
     }
 
-    if ($method -eq 'GET' -and $path -eq '/') {
-        # 2026-08-21 の利用者判断。選ぶためだけの入口画面は置かない。
-        # 同じ画面の左で文章を訳し、右でExcelを読み込める開始状態を返す。
-        Serve-YakuAppPage -Context $Context -PageName 'cat.html'
-        return
-    }
-    # /quick はExcel/CAT画面の旧URLとして残し、既存ブックマークを壊さない。
-    # / は両方を始められる画面、/cat はExcel専用の開始画面として同じ実装を使う。
-    if ($method -eq 'GET' -and ($path -eq '/quick' -or $path -eq '/cat')) {
+    # 通常の翻訳面は1つだけにする。/quick・/cat・/palette は古いブックマークを
+    # 壊さないため受け付けるが、プロジェクト等を指定しない限り画面側で / へ寄せる。
+    # / の左で文章を訳し、右でExcelを読み込む。別の開始画面は返さない。
+    if ($method -eq 'GET' -and $path -in @('/', '/quick', '/cat', '/palette')) {
         # ?project= で来たなら、始める画面を一度も描かずに確認作業として開く。
         # QueryString は使わない（日本語が CP932 で化ける。Get-YakuQueryValue の説明を参照）。
         # ここは16進のIDしか見ないが、例外を作ると次の人が真似る。
@@ -2254,12 +2249,6 @@ function Invoke-YakuRoute {
         $wantsImport = $false
         try { $wantsImport = ([string](Get-YakuQueryValue -Request $req -Name 'import') -eq '1') } catch {}
         Serve-YakuAppPage -Context $Context -PageName 'cat.html' -InitialView $initialView -AllowWasm:$wantsImport
-        return
-    }
-    # 「お手軽翻訳」の小窓。貼ったら即訳が出るだけの別画面で、/cat・/quick の
-    # 挙動には触れない。確認作業(CAT)を作らないので、開いた瞬間の状態分岐も無い。
-    if ($method -eq 'GET' -and $path -eq '/palette') {
-        Serve-YakuAppPage -Context $Context -PageName 'palette.html'
         return
     }
     if ($method -eq 'GET' -and $path.StartsWith('/assets/')) {
