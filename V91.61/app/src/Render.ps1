@@ -261,10 +261,10 @@ function New-YakuCatSourceFaithfulRender {
     try {
         $expectedSourceHash=[string]$Project.SourceArtifactSha256
         if($expectedSourceHash -notmatch '^[a-fA-F0-9]{64}$'){throw 'CAT_RENDER_SOURCE_HASH_REQUIRED'}
-        $actualSourceHash=(Get-FileHash -LiteralPath ([string]$Project.Path) -Algorithm SHA256).Hash.ToLowerInvariant()
+        $actualSourceHash=Get-YakuFileSha256Hex -Path ([string]$Project.Path)
         if($actualSourceHash -cne $expectedSourceHash.ToLowerInvariant()){throw 'CAT_RENDER_SOURCE_ARTIFACT_CONFLICT'}
         Copy-Item -LiteralPath ([string]$Project.Path) -Destination $sourceInputPath
-        $stagedSourceHash=(Get-FileHash -LiteralPath $sourceInputPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $stagedSourceHash=Get-YakuFileSha256Hex -Path $sourceInputPath
         if($stagedSourceHash -cne $actualSourceHash){throw 'CAT_RENDER_SOURCE_COPY_INTEGRITY_FAILED'}
         $renderProject=Copy-YakuCatProjectForMutation -Project $Project
         $renderProject.Path=$sourceInputPath
@@ -312,7 +312,7 @@ function New-YakuCatSourceFaithfulRender {
             }
         }
         $sourcePdfStructure=Get-YakuGeneratedPdfStructuralSnapshot -Path $sourcePdfPath
-        if((Get-FileHash -LiteralPath ([string]$Project.Path) -Algorithm SHA256).Hash.ToLowerInvariant() -cne $actualSourceHash){throw 'CAT_RENDER_SOURCE_CHANGED_DURING_RENDER'}
+        if((Get-YakuFileSha256Hex -Path ([string]$Project.Path)) -cne $actualSourceHash){throw 'CAT_RENDER_SOURCE_CHANGED_DURING_RENDER'}
         $unknown = @($printConformance.unknown_fields)
         $status = [string]$printConformance.status
         $manifest = [ordered]@{
@@ -321,10 +321,10 @@ function New-YakuCatSourceFaithfulRender {
             measured_source_sha256=$actualSourceHash; staged_source_sha256=$stagedSourceHash
             expected_print_fingerprint=[string]$sourcePrint.Fingerprint; actual_print_fingerprint=[string]$draftPrint.Fingerprint
             print_conformance_status=$status; unknown_print_fields=$unknown; mismatched_print_fields=@($printConformance.mismatched_fields); origin='generated'
-            output_xlsx=[IO.Path]::GetFileName($publishedDraft); output_xlsx_sha256=(Get-FileHash -LiteralPath $publishedDraft -Algorithm SHA256).Hash.ToLowerInvariant()
-            canonical_pdf=[IO.Path]::GetFileName($pdfPath); canonical_pdf_sha256=(Get-FileHash -LiteralPath $pdfPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            output_xlsx=[IO.Path]::GetFileName($publishedDraft); output_xlsx_sha256=(Get-YakuFileSha256Hex -Path $publishedDraft)
+            canonical_pdf=[IO.Path]::GetFileName($pdfPath); canonical_pdf_sha256=(Get-YakuFileSha256Hex -Path $pdfPath)
             pdf_structure_status=[string]$pdfStructure.status;pdf_size=[int64]$pdfStructure.size;pdf_page_count_estimate=[int]$pdfStructure.page_count_estimate;pdf_page_count_status=[string]$pdfStructure.page_count_status
-            source_pdf=[IO.Path]::GetFileName($sourcePdfPath); source_pdf_sha256=(Get-FileHash -LiteralPath $sourcePdfPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            source_pdf=[IO.Path]::GetFileName($sourcePdfPath); source_pdf_sha256=(Get-YakuFileSha256Hex -Path $sourcePdfPath)
             source_pdf_structure_status=[string]$sourcePdfStructure.status;source_pdf_size=[int64]$sourcePdfStructure.size;source_pdf_page_count_estimate=[int]$sourcePdfStructure.page_count_estimate;source_pdf_page_count_status=[string]$sourcePdfStructure.page_count_status
             writeback_completeness=$writebackCompleteness
             pdf_text_completeness_status='not_checked'; pdf_text_extractor_contract=''
@@ -356,13 +356,13 @@ function Resolve-YakuCatRenderPdf {
     if ($pdfName -notmatch '^[A-Za-z0-9_.-]+\.pdf$') { throw 'CAT_RENDER_PATH_INVALID' }
     $pdfPath = [IO.Path]::GetFullPath((Join-Path $renderDir $pdfName))
     if (-not $pdfPath.StartsWith($renderDir + '\', [StringComparison]::OrdinalIgnoreCase) -or -not (Test-Path -LiteralPath $pdfPath -PathType Leaf)) { throw 'CAT_RENDER_NOT_FOUND' }
-    $actualHash = (Get-FileHash -LiteralPath $pdfPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $actualHash = Get-YakuFileSha256Hex -Path $pdfPath
     $expectedPdfHash=$(if($Artifact -eq 'source'){[string]$manifest.source_pdf_sha256}else{[string]$manifest.canonical_pdf_sha256})
     if ($actualHash -ne $expectedPdfHash) { throw 'CAT_RENDER_INTEGRITY_FAILED' }
     $draftName=[string]$manifest.output_xlsx
     if($draftName -notmatch '^[A-Za-z0-9_.-]+\.(xlsx|xlsm)$'){throw 'CAT_RENDER_PATH_INVALID'}
     $draftPath=[IO.Path]::GetFullPath((Join-Path $renderDir $draftName))
     if(-not $draftPath.StartsWith($renderDir+'\',[StringComparison]::OrdinalIgnoreCase) -or -not(Test-Path -LiteralPath $draftPath -PathType Leaf)){throw 'CAT_RENDER_DRAFT_NOT_FOUND'}
-    if((Get-FileHash -LiteralPath $draftPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne [string]$manifest.output_xlsx_sha256){throw 'CAT_RENDER_DRAFT_INTEGRITY_FAILED'}
+    if((Get-YakuFileSha256Hex -Path $draftPath) -ne [string]$manifest.output_xlsx_sha256){throw 'CAT_RENDER_DRAFT_INTEGRITY_FAILED'}
     return [pscustomobject]@{ Path=$pdfPath; DraftPath=$draftPath; Manifest=$manifest }
 }

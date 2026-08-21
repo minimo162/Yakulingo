@@ -4142,7 +4142,7 @@ function Invoke-YakuRoute {
                         $stagedOutput=Join-Path $outputDir ('.'+[IO.Path]::GetFileName($outputPath)+'.'+[guid]::NewGuid().ToString('N')+'.tmp')
                         try{
                             Copy-Item -LiteralPath $render.DraftPath -Destination $stagedOutput
-                            $copiedHash=(Get-FileHash -LiteralPath $stagedOutput -Algorithm SHA256).Hash.ToLowerInvariant()
+                            $copiedHash=Get-YakuFileSha256Hex -Path $stagedOutput
                             if($copiedHash -ne [string]$render.Manifest.output_xlsx_sha256){throw 'CAT_RENDER_DRAFT_INTEGRITY_FAILED'}
                             if(Test-Path -LiteralPath $outputPath -PathType Leaf){$backup=$stagedOutput+'.bak';[IO.File]::Replace($stagedOutput,$outputPath,$backup,$true);Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue}else{[IO.File]::Move($stagedOutput,$outputPath)}
                         }finally{if(Test-Path -LiteralPath $stagedOutput){Remove-Item -LiteralPath $stagedOutput -Force -ErrorAction SilentlyContinue}}
@@ -4155,7 +4155,7 @@ function Invoke-YakuRoute {
                     $artifactKind=$(if([string]$project.Source -ne 'file'){'copied_text'}else{switch([string]$project.DocumentFormat){'docx'{'draft_docx'}'xlsx'{'draft_xlsx'}'xlsm'{'draft_xlsm'}'csv'{'draft_csv'}default{throw 'CAT_FINAL_REVIEW_ARTIFACT_KIND_UNSUPPORTED'}}})
                     $outputToken=[guid]::NewGuid().ToString('N')
                     $outputText=$(try{[string]$exported.Text}catch{''});$outputFile=[string]$exported.OutputPath
-                    $outputHash=$(if($artifactKind -eq 'copied_text'){Get-YakuCatSourceIntegrityHash -Text $outputText}else{(Get-FileHash -LiteralPath $outputFile -Algorithm SHA256).Hash.ToLowerInvariant()})
+                    $outputHash=$(if($artifactKind -eq 'copied_text'){Get-YakuCatSourceIntegrityHash -Text $outputText}else{Get-YakuFileSha256Hex -Path $outputFile})
                     $project.LastOutputRecord=[pscustomobject]@{
                         output_token=$outputToken;artifact_kind=$artifactKind;path=$outputFile;text=$outputText;sha256=$outputHash;project_revision=[int]$project.Revision
                         canonical_set_hash=(Get-YakuCatCanonicalTranslationSetHash -Project $project);publication_set_hash=(Get-YakuCatPublicationTranslationSetHash -Project $project);created_at=(Get-Date).ToString('o')

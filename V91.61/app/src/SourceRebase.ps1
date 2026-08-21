@@ -137,7 +137,7 @@ function New-YakuCatPreRebaseCheckpoint {
     if(-not(Test-Path -LiteralPath $manifestPath -PathType Leaf) -or -not(Test-Path -LiteralPath $generationDir -PathType Container)){throw 'CAT_REBASE_CHECKPOINT_SOURCE_MISSING'}
     $manifest=Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8|ConvertFrom-Json
     if([int]$manifest.project_revision -ne [int]$Project.Revision -or [string]$manifest.active_generation_id -cne $generationId -or [string]$manifest.active_source_id -cne [string]$Project.ActiveSourceId -or [string]$manifest.source_artifact_sha256 -cne [string]$Project.SourceArtifactSha256){throw 'CAT_REBASE_CHECKPOINT_SOURCE_STALE'}
-    $manifestSha=(Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $manifestSha=Get-YakuFileSha256Hex -Path $manifestPath
     $root=Join-Path $projectDir 'rebase-checkpoints';$final=Join-Path $root ([string][int]$Project.Revision)
     if(Test-Path -LiteralPath $final -PathType Container){
         $existingPath=Join-Path $final 'checkpoint.json';if(-not(Test-Path -LiteralPath $existingPath -PathType Leaf)){throw 'CAT_REBASE_CHECKPOINT_CONFLICT'}
@@ -153,7 +153,7 @@ function New-YakuCatPreRebaseCheckpoint {
         $files=New-Object System.Collections.Generic.List[object]
         foreach($file in @(Get-ChildItem -LiteralPath $generationDir -File)){
             $destination=Join-Path $stageGeneration $file.Name;[IO.File]::Copy($file.FullName,$destination,$false)
-            $files.Add([pscustomobject]@{name=[string]$file.Name;sha256=(Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant();size=[int64]$file.Length})|Out-Null
+            $files.Add([pscustomobject]@{name=[string]$file.Name;sha256=(Get-YakuFileSha256Hex -Path $destination);size=[int64]$file.Length})|Out-Null
         }
         $checkpoint=[pscustomobject]@{contract_version='cat-rebase-checkpoint-v1';checkpoint_revision=[int]$Project.Revision;rebase_id=$RebaseId;project_id=[string]$Project.Id;active_generation_id=$generationId;active_source_id=[string]$Project.ActiveSourceId;source_artifact_sha256=[string]$Project.SourceArtifactSha256;source_artifact_relative_path=[string]$(try{$Project.SourceArtifactRelativePath}catch{''});manifest_sha256=$manifestSha;generation_files=@($files.ToArray());created_at=(Get-Date).ToString('o')}
         Write-YakuJsonAtomic -Path (Join-Path $stage 'checkpoint.json') -Value $checkpoint -Depth 10
@@ -389,22 +389,22 @@ function New-YakuCatSourceUpdatePreview {
     $targetFull = [IO.Path]::GetFullPath($TargetPath)
     $extension = [IO.Path]::GetExtension($targetFull).ToLowerInvariant()
     if ($extension -ne [IO.Path]::GetExtension([string]$Project.Path).ToLowerInvariant()) { throw 'CAT_SOURCE_UPDATE_TYPE_MISMATCH' }
-    $hashBefore = (Get-FileHash -LiteralPath $targetFull -Algorithm SHA256).Hash.ToLowerInvariant()
+    $hashBefore = Get-YakuFileSha256Hex -Path $targetFull
     if ($hashBefore -eq ([string]$Project.SourceArtifactSha256).ToLowerInvariant()) { throw 'CAT_SOURCE_UPDATE_NO_CHANGES' }
     $targetProject = New-YakuCatProject -Root $Root -Path $targetFull -Settings $Settings -Direction ([string]$Project.Direction) -Register:$false
-    $hashAfter = (Get-FileHash -LiteralPath $targetFull -Algorithm SHA256).Hash.ToLowerInvariant()
+    $hashAfter = Get-YakuFileSha256Hex -Path $targetFull
     if ($hashAfter -ne $hashBefore) { throw 'CAT_SOURCE_UPDATE_CHANGED_DURING_READ' }
     $targetSourceId = $hashBefore.Substring(0,32)
     $ownedTarget = Get-YakuCatOwnedSourceArtifactPath -ProjectId ([string]$Project.Id) -Extension $extension -SourceSnapshotId $targetSourceId
     $ownedDir = Split-Path -Parent $ownedTarget
     if (-not (Test-Path -LiteralPath $ownedDir -PathType Container)) { $null = New-Item -ItemType Directory -Path $ownedDir -Force }
     if (Test-Path -LiteralPath $ownedTarget -PathType Leaf) {
-        if ((Get-FileHash -LiteralPath $ownedTarget -Algorithm SHA256).Hash.ToLowerInvariant() -ne $hashBefore) { throw 'CAT_SOURCE_UPDATE_SNAPSHOT_CONFLICT' }
+        if ((Get-YakuFileSha256Hex -Path $ownedTarget) -ne $hashBefore) { throw 'CAT_SOURCE_UPDATE_SNAPSHOT_CONFLICT' }
     } else {
         $temp = Join-Path $ownedDir ('.rebase-source-' + [guid]::NewGuid().ToString('N') + '.tmp')
         try {
             [IO.File]::Copy($targetFull,$temp,$false)
-            if ((Get-FileHash -LiteralPath $temp -Algorithm SHA256).Hash.ToLowerInvariant() -ne $hashBefore) { throw 'CAT_SOURCE_UPDATE_COPY_MISMATCH' }
+            if ((Get-YakuFileSha256Hex -Path $temp) -ne $hashBefore) { throw 'CAT_SOURCE_UPDATE_COPY_MISMATCH' }
             [IO.File]::Move($temp,$ownedTarget)
         } finally { if (Test-Path -LiteralPath $temp -PathType Leaf) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue } }
     }
@@ -432,7 +432,7 @@ function Get-YakuCatSourceUpdatePreview {
     }
     $projectDir = Split-Path -Parent (Split-Path -Parent $rebaseDir)
     $artifact = [IO.Path]::GetFullPath((Join-Path $projectDir ([string]$plan.target_artifact_relative_path).Replace('/','\')))
-    if (-not (Test-Path -LiteralPath $artifact -PathType Leaf) -or (Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash.ToLowerInvariant() -ne [string]$plan.new_source_hash) { throw 'CAT_REBASE_TARGET_INTEGRITY_FAILED' }
+    if (-not (Test-Path -LiteralPath $artifact -PathType Leaf) -or (Get-YakuFileSha256Hex -Path $artifact) -ne [string]$plan.new_source_hash) { throw 'CAT_REBASE_TARGET_INTEGRITY_FAILED' }
     $targetProject = [Management.Automation.PSSerializer]::Deserialize((Get-Content -LiteralPath $targetPath -Raw -Encoding UTF8))
     return [pscustomobject]@{ Plan=$plan; TargetProject=$targetProject; TargetArtifactPath=$artifact }
 }
