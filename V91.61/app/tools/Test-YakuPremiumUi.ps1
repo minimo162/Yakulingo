@@ -610,7 +610,15 @@ function sendJson(response, value) {
         </section></section><section id="cat-workspace" hidden><div id="cat-editor-toolbar"></div></section></main></body></html>`);
     await importPage.evaluate(() => history.replaceState(null, '', '/cat?import=1'));
     await importPage.addScriptTag({ path: premiumPath });
-    await importPage.waitForSelector('[data-premium-nav="past"]');
+    await importPage.waitForFunction(() => {
+      const past = document.querySelector('[data-premium-nav="past"]');
+      const start = document.getElementById('premium-cat-start');
+      const work = document.getElementById('premium-work-list');
+      const align = document.getElementById('cat-source-align');
+      return past && past.classList.contains('is-active') && past.getAttribute('href') === '/cat?import=1' &&
+        document.body.classList.contains('premium-mode-import') && start && start.hidden && work && work.hidden &&
+        align && !align.hidden && new URL(location.href).searchParams.get('import') === '1';
+    }, null, { timeout: 20000 });
     const importState = await importPage.evaluate(() => ({
       activePast: document.querySelector('[data-premium-nav="past"]').classList.contains('is-active'),
       href: document.querySelector('[data-premium-nav="past"]').getAttribute('href'),
