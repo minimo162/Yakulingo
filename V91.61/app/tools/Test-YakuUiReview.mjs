@@ -22,7 +22,7 @@ function mustMatch(text, pattern, code) {
 
 mustMatch(common, /function ensureUiReviewStyles\(\)/, 'UI_REVIEW_LOADER_MISSING');
 mustMatch(common, /link\[data-yaku-ui-review\]/, 'UI_REVIEW_DUPLICATE_GUARD_MISSING');
-mustMatch(common, /\/assets\/ui-review\.css\?v=20260822a/, 'UI_REVIEW_VERSIONED_STYLESHEET_MISSING');
+mustMatch(common, /\/assets\/ui-review\.css\?v=20260822b/, 'UI_REVIEW_VERSIONED_STYLESHEET_MISSING');
 mustMatch(common, /document\.head\.appendChild\(link\)/, 'UI_REVIEW_STYLESHEET_APPEND_MISSING');
 assert.doesNotThrow(() => new Function(common), 'UI_REVIEW_COMMON_JAVASCRIPT_INVALID');
 
