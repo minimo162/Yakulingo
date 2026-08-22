@@ -580,13 +580,21 @@ function Initialize-YakuCatProjectState {
     if (-not [string]::IsNullOrWhiteSpace($currentTerminologyHash)) {
         $storedTerminologyHash = [string]$Project.TerminologySnapshotHash
         if (-not [string]::IsNullOrWhiteSpace($storedTerminologyHash) -and $storedTerminologyHash -ne $currentTerminologyHash) {
+            # 語を含む行だけ古くする。語を含まない行の点検結果は用語の変化では古くならないので、
+            # Reset も stale もせず刻印だけ現行へ揃う。揃えないと Test-YakuCatSegmentQcCurrent の
+            # 比較だけが偽になり、無関係な行まで「点検が古い」で書き出しが止まる。failed の行は
+            # その点検が現行ストアの下で行われたものと言い切れないため、刻印を触らず置いておく。
+            # _docs/欠陥記録_用語スナップショットの粒度_2026-08-19.md 参照
             $currentEntries = @(Get-YakuCatTerminologyEntries -Project $Project)
             foreach ($segment in @($Project.Segments)) {
                 if ([string]$segment.QcStatus -ne 'passed' -and -not [bool]$segment.Confirmed) { continue }
                 $matches = @(Find-YakuTerminologyMatches -Text ([string]$segment.Text) -Direction ([string]$Project.Direction) -Entries $currentEntries -ProjectId ([string]$Project.Id))
-                if ($matches.Count -eq 0) { continue }
-                Reset-YakuCatSegmentQc -Segment $segment
-                $segment.State = 'stale'
+                if ($matches.Count -gt 0) {
+                    Reset-YakuCatSegmentQc -Segment $segment
+                    $segment.State = 'stale'
+                } elseif ([string]$segment.QcStatus -eq 'passed') {
+                    $segment | Add-Member -NotePropertyName QcTerminologyHash -NotePropertyValue $currentTerminologyHash -Force
+                }
             }
         }
         $Project.TerminologySnapshotHash = $currentTerminologyHash
@@ -5991,16 +5999,23 @@ function Sync-YakuCatTranslationMemoryOutbox {
 function Update-YakuCatProjectForTerminologyChange {
     param([Parameter(Mandatory=$true)]$Project, [Parameter(Mandatory=$true)]$Entry)
     $affected = 0
+    # Initialize-YakuCatProjectState の狭め込みと同じく、語を含まない passed 行は Reset せず
+    # 刻印だけ新スナップショットへ揃える。用語の変化で古くなり得ない行まで「点検が古い」に
+    # なるのを避けるためである。
+    $newSnapshotHash = Get-YakuCatTerminologySnapshotHash -Project $Project
     foreach ($segment in @($Project.Segments)) {
         $matches = @(Find-YakuTerminologyMatches -Text ([string]$segment.Text) -Direction ([string]$Project.Direction) -Entries @($Entry) -ProjectId ([string]$Project.Id))
-        if ($matches.Count -eq 0) { continue }
-        $affected++
-        if ([bool]$segment.Confirmed -or [string]$segment.QcStatus -eq 'passed') {
-            Reset-YakuCatSegmentQc -Segment $segment
-            $segment.State = 'stale'
+        if ($matches.Count -gt 0) {
+            $affected++
+            if ([bool]$segment.Confirmed -or [string]$segment.QcStatus -eq 'passed') {
+                Reset-YakuCatSegmentQc -Segment $segment
+                $segment.State = 'stale'
+            }
+        } elseif ([string]$segment.QcStatus -eq 'passed') {
+            $segment | Add-Member -NotePropertyName QcTerminologyHash -NotePropertyValue $newSnapshotHash -Force
         }
     }
-    $Project.TerminologySnapshotHash = Get-YakuCatTerminologySnapshotHash -Project $Project
+    $Project.TerminologySnapshotHash = $newSnapshotHash
     return $affected
 }
 

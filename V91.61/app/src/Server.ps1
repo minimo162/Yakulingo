@@ -2836,20 +2836,18 @@ function Invoke-YakuRoute {
                 # personal scope+advisoryを使っている。この経路のadvisoryは発明
                 # ではなく、glossary-addにある既存の製品内の先例に倣った)。
                 #
-                # advisoryにしても効かない部分がある(既存の欠陥、ここでは直さ
-                # ない): personal用語集への書き込みは、advisory/requiredを問わず
+                # advisoryで避けられるのはterminology-missing=errorだけである。
+                # personal用語集への書き込みは、advisory/requiredを問わず
                 # Get-YakuTerminologySnapshotHash(全エントリをscope/kind/
-                # enforcementで絞らずハッシュに混ぜる)を変える。Initialize-
-                # YakuCatProjectState はこのハッシュが変わると
-                # $Project.TerminologySnapshotHashを無条件に書き換えるため、
-                # 既に確認済みで点検が通っていた行のQcTerminologyHashが古い値の
-                # ままになり、Test-YakuCatSegmentQcCurrentが「点検が古い」と
-                # 判定して segment-qc-not-current が立つ——学習した語が実際に
-                # その資料へ現れるかどうかに関係なく、開いているだけの
-                # 無関係な別資料でも起きる(実測、下記の記録を参照)。CATの
-                # term-add/glossary-addも同じ書き込み経路を通るので、この変更が
-                # 新しく作った欠陥ではない。粒度を絞る修正はスコープ外
-                # (詳細: _docs/欠陥記録_用語スナップショットの粒度_2026-08-19.md)。
+                # enforcementで絞らずハッシュに混ぜる)を変える。かつてはこの
+                # ハッシュが動くたびに$Project.TerminologySnapshotHashが追従し、
+                # 語を含まない確認済み行までQcTerminologyHashの取り残しで
+                # segment-qc-not-currentになっていたが、CatProject.ps1の狭め込み
+                # (語を含む行だけstale化し、含まないpassed行は刻印を現行へ揃える)
+                # で収まるようになった。CATのterm-add/glossary-addも同じ書き込み
+                # 経路を通る。ハッシュ自体の粒度は粗いままである。この周辺を触る
+                # ときは _docs/欠陥記録_用語スナップショットの粒度_2026-08-19.md
+                # と回帰 tools/Test-YakuV9211TermSnapshotFreshness.ps1 を読むこと。
                 Enforcement='advisory'
                 Origin='palette-term-learn'
                 OriginProjectId=$originProjectId; OriginFileName='貼り付け資料'
