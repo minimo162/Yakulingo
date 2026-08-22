@@ -16,12 +16,9 @@ Microsoft 365 Copilot の画面は Edge DevTools Protocol（CDP）で操作し�
 ├── bootstrap.ps1          # 配布物をローカルへ複製・検証してから起動する
 ├── アップロード用フォルダ作成.cmd  # 共有フォルダへ上げる用のフォルダを作る
 ├── New-YakuUploadFolder.ps1        # 同上の本体。作業ツリーは変更しない
-├── current.txt            # 現行バージョン名（1行）。切替はこのファイルの書き換えのみ
 ├── 共有フォルダ配置手順.md  # 共有フォルダへの配置・更新・ロールバック手順
 ├── _docs/                 # 修正指示書・実装記録（バージョン横断で集約）
-└── V91.61/                # 現行版（既定のアップロード対象）
-    ├── YakuLingo起動.cmd  # 保守用。共有フォルダ上で直接起動する
-    └── app/
+└── app/                   # アプリ本体
 ```
 
 `app/` の中身:
@@ -46,16 +43,14 @@ Microsoft 365 Copilot の画面は Edge DevTools Protocol（CDP）で操作し�
 
 左側の「過去訳」から `/cat?import=1` を開くと、日本語PDFと英語PDFをブラウザ内で読み込み、ページ範囲の確認、文章貼り付けの代替、対応付け、グリッド上の見直しを行えます。対応を人が確認した後、「確認済みを過去訳として登録」を押した行だけを翻訳メモリへまとめて登録します。未確認・古い点検結果・空行は登録しません。
 
-## バージョン運用
+## 配布・更新運用
 
-- 新版は必ず別フォルダへ展開し、使用中のバージョンフォルダを上書きしません。
-- 切替は `current.txt` の1行を書き換えるだけです。ロールバック版を共有フォルダへ置く場合は、同梱用語・固有名詞・旧参照資産を含まない検査済みパッケージだけを明示指定します。
-- パッケージ作成時は `current.txt` と `app/config/build.txt` の両方を新バージョンへ更新します。
-- `tools/New-YakuPackage.ps1` はバージョンフォルダ直下に `manifest.json`（全ファイルのサイズとSHA-256）を生成し、`tools/Test-YakuPackage.ps1` がZIPと突合して検証します。`manifest.json` は派生物のためリポジトリには含めません。
-- ルートの `bootstrap.ps1` はバージョンフォルダの外にあるため、パッケージ更新とは別に配置します。
-- 共有フォルダへ上げるときは `アップロード用フォルダ作成.cmd` を実行します。作業ツリーを変更せず、上げてよいものだけを複製した新しいフォルダを作り、`manifest.json` を実体に合わせて作り直します。`.git` やリポジトリ用の `README.md`、利用者設定、作業ファイルは複製されません。
+- 共有フォルダも作業ツリーと同じフラット構成にし、ルート直下の `app/` を現行アプリとして扱います。版名フォルダと `current.txt` は使いません。
+- `app/config/build.txt` は manifest とローカルキャッシュを識別する build ID として維持します。フォルダ選択には使いません。
+- `app/tools/New-YakuPackage.ps1` は共有ルート直下に `manifest.json`（全配布ファイルのサイズとSHA-256）を生成し、`app/tools/Test-YakuPackage.ps1` がZIPと突合して検証します。`manifest.json` は派生物のためリポジトリには含めません。
+- 共有フォルダへ上げるときは `アップロード用フォルダ作成.cmd` を実行します。作業ツリーを変更せず、`app/` と必要なルートファイルだけを複製し、`manifest.json` を実体に合わせて作り直します。`.git`、`_docs`、リポジトリ用の `README.md`、利用者設定、作業ファイルは複製されません。
+- 更新時は生成済みフォルダの内容を共有ルートへ配置し、`manifest.json` を最後に更新します。ロールバックは、以前に保管した検査済みのフラット配布物へ同じ手順で戻します。
 - 詳細は `共有フォルダ配置手順.md` を参照してください。
-- アップロード用フォルダは既定で現行版だけを含めます。検査済みのロールバック版を併置する場合だけ `-Versions` で明示指定します。詳細は `共有フォルダ配置手順.md` を参照してください。
 
 ## 起動
 
@@ -64,7 +59,7 @@ Microsoft 365 Copilot の画面は Edge DevTools Protocol（CDP）で操作し�
 3. 画面右上が「Copilot：準備完了」になったら翻訳できます。サインインを求められた場合は「Copilot画面を開く」を押します。
 4. YakuLingoのタブを閉じると、PowerShellサーバーとYakuLingo専用Copilot Edgeを含めて完全に終了します。確認は翻訳中だけ表示され、ほかのEdgeタブは閉じません。
 
-初回起動時、`bootstrap.ps1` が現行版を `%LOCALAPPDATA%\YakuLingo\versions\<版>-<manifestハッシュ>` へ複製し、`manifest.json` で全ファイルの SHA-256 を照合してからローカルで起動します。以降アプリは共有フォルダを参照しないため、**利用者が作業中でも共有フォルダのバージョンを更新できます**（反映は次回起動時）。共有フォルダへ到達できないときは導入済みのローカル版で起動します。
+初回起動時、`bootstrap.ps1` が共有ルートの配布物を `%LOCALAPPDATA%\YakuLingo\versions\<build ID>-<manifestハッシュ>` へ複製し、`manifest.json` で全ファイルの SHA-256 を照合してからローカルで起動します。以降アプリは共有フォルダを参照しないため、**利用者が作業中でも共有フォルダを更新できます**（反映は次回起動時）。共有フォルダへ到達できないときは導入済みのローカル版で起動します。
 
 Windows + PowerShell 5.1 + Microsoft Edge が前提です。CSV 以外のファイル処理には Microsoft Excel が必要です。出力は `%USERPROFILE%\.yakulingo-ps\outputs` に作成され、元ファイルは更新しません。
 
@@ -72,6 +67,6 @@ Windows + PowerShell 5.1 + Microsoft Edge が前提です。CSV 以外のファ�
 
 - `*.ps1`、`prompts/*.txt`、`www/` 配下の HTML/CSS/JS、`config/settings.template.json` は **UTF-8 BOM付き・CRLF** で保存します。
 - Markdown は UTF-8（BOMなし）です。`.vscode/settings.json` に既定を設定しています。
-- コミット・配布前に `powershell -ExecutionPolicy Bypass -File .\V91.61\app\tools\Check-Encoding.ps1` を実行します。
-- BOM違反は `V91.61\app\tools\Repair-YakuEncoding.ps1 -WhatIfOnly` で確認し、引数なし実行で一括修復できます。
+- コミット・配布前に `powershell -ExecutionPolicy Bypass -File .\app\tools\Check-Encoding.ps1` を実行します。
+- BOM違反は `app\tools\Repair-YakuEncoding.ps1 -WhatIfOnly` で確認し、引数なし実行で一括修復できます。
 - 本リポジトリの `.gitattributes` で改行コードの自動変換を無効化しています。配布物のバイト列をそのまま保持してください。

@@ -5,14 +5,14 @@
 .DESCRIPTION
   アプリ本体を共有フォルダ上で直接実行すると、実行中ずっと共有フォルダが
   クリティカルパスに乗る（prompts/glossary の都度読込、FileWorker などの
-  別プロセス起動、build.txt の再照合）。そのため利用中のバージョンフォルダを
-  差し替えられず、N-1 世代の保持が必要になっていた。
+  別プロセス起動、build.txt の再照合）。そのため共有フォルダ上の app を
+  利用中に差し替えることが難しかった。
 
   本スクリプトは配布物をローカルへ複製してから起動する。実行中の $Root は
   他利用者が触れないローカルになるため、共有フォルダ側はいつでも更新できる。
 
-  ローカルの配置先はバージョン名と manifest ハッシュで決まるため、同じ
-  バージョン名で中身が差し替わっても別フォルダになる。使用中のフォルダを
+  ローカルの配置先は build_id と manifest ハッシュで決まるため、同じ
+  build_id で中身が差し替わっても別フォルダになる。使用中のフォルダを
   上書きすることはない。
 
 .EXAMPLE
@@ -90,42 +90,10 @@ function Get-YakuLocalRoot {
     return (Join-Path $base 'YakuLingo')
 }
 
-function Test-YakuVersionDir {
+function Test-YakuPackageRoot {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
     return (Test-Path -LiteralPath (Join-YakuPath -Base $Path -Relative 'app/Start-YakuLingo.ps1') -PathType Leaf)
-}
-
-function Read-YakuCurrentVersionName {
-    param([string]$Root)
-    $path = Join-Path $Root 'current.txt'
-    if (!(Test-Path -LiteralPath $path -PathType Leaf)) { return '' }
-    $raw = ''
-    try { $raw = [IO.File]::ReadAllText($path) } catch { return '' }
-    $line = (($raw -replace "`r", "`n") -split "`n")[0]
-    # フォルダ名として安全な文字だけを採用する（既存ランチャーと同じ方針）。
-    $clean = ''
-    foreach ($ch in $line.ToCharArray()) {
-        if ('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-'.IndexOf($ch) -ge 0) { $clean += $ch }
-    }
-    return $clean
-}
-
-function Resolve-YakuSharedVersionDir {
-    param([string]$Root)
-    $name = Read-YakuCurrentVersionName -Root $Root
-    if (-not [string]::IsNullOrWhiteSpace($name)) {
-        $candidate = Join-Path $Root $name
-        if (Test-YakuVersionDir -Path $candidate) { return $candidate }
-        Write-YakuBootstrapWarn "current.txt が指す $name を利用できません。最新のバージョンフォルダを探します。"
-    }
-    $best = $null
-    foreach ($dir in @(Get-ChildItem -LiteralPath $Root -Directory -ErrorAction SilentlyContinue)) {
-        if (-not (Test-YakuVersionDir -Path $dir.FullName)) { continue }
-        if ($null -eq $best -or $dir.LastWriteTimeUtc -gt $best.LastWriteTimeUtc) { $best = $dir }
-    }
-    if ($best) { return $best.FullName }
-    return ''
 }
 
 function Get-YakuHashHex {
@@ -215,7 +183,7 @@ function Test-YakuInstalledVersionReady {
         [string]$ExpectedManifestHash = '',
         [Parameter(Mandatory=$true)][ref]$Reason
     )
-    if (-not (Test-YakuVersionDir -Path $VersionDir)) { $Reason.Value = '起動スクリプトがありません'; return $false }
+    if (-not (Test-YakuPackageRoot -Path $VersionDir)) { $Reason.Value = '起動スクリプトがありません'; return $false }
     $marker = Get-YakuInstalledMarker -VersionDir $VersionDir
     if ($null -eq $marker -or [string]::IsNullOrWhiteSpace([string]$marker.manifest_sha256)) { $Reason.Value = '.installed が不正です'; return $false }
     $manifestPath = Join-Path $VersionDir 'manifest.json'
@@ -327,26 +295,28 @@ $versionsDir = Join-Path $localRootPath 'versions'
 if (!(Test-Path -LiteralPath $versionsDir)) { New-Item -ItemType Directory -Path $versionsDir -Force | Out-Null }
 
 $runDir = ''
-$legacyMode = $false
+$directMode = $false
 
-$sharedVersionDir = ''
-try { $sharedVersionDir = Resolve-YakuSharedVersionDir -Root $SharedRoot }
+$sharedPackageRoot = ''
+try {
+    if (Test-YakuPackageRoot -Path $SharedRoot) { $sharedPackageRoot = $SharedRoot }
+}
 catch { Write-YakuBootstrapWarn "共有フォルダを参照できません: $($_.Exception.Message)" }
 
-if ([string]::IsNullOrWhiteSpace($sharedVersionDir)) {
+if ([string]::IsNullOrWhiteSpace($sharedPackageRoot)) {
     # 共有フォルダへ到達できない場合でも、完全性を再検証できたローカル版だけで作業を継続する。
     $runDir = Get-YakuNewestInstalledVersion -VersionsDir $versionsDir
     if ([string]::IsNullOrWhiteSpace($runDir)) {
-        throw "SHARED_VERSION_NOT_FOUND: 共有フォルダに起動できるバージョンがなく、ローカルにも検証済みの版がありません。共有ルート: $SharedRoot"
+        throw "SHARED_PACKAGE_NOT_FOUND: 共有ルートに app がなく、ローカルにも検証済みの版がありません。共有ルート: $SharedRoot"
     }
     Write-YakuBootstrapWarn "共有フォルダを参照できないため、検証済みのローカル版で起動します: $(Split-Path -Leaf $runDir)"
 } else {
-    $manifestPath = Join-Path $sharedVersionDir 'manifest.json'
+    $manifestPath = Join-Path $sharedPackageRoot 'manifest.json'
     if (!(Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
-        # manifest を持たない旧パッケージ（V91.58以前）へロールバックした場合の互換動作。
-        Write-YakuBootstrapWarn "manifest.json がないため、共有フォルダ上で直接起動します（旧方式）: $(Split-Path -Leaf $sharedVersionDir)"
-        $runDir = $sharedVersionDir
-        $legacyMode = $true
+        # 開発ツリーなど manifest を持たない配置では、共有ルートの app を直接起動する。
+        Write-YakuBootstrapWarn "manifest.json がないため、共有フォルダ上で直接起動します: $sharedPackageRoot"
+        $runDir = $sharedPackageRoot
+        $directMode = $true
     } else {
         $manifest = Read-YakuManifest -Path $manifestPath
         $manifestHash = Get-YakuHashHex -Path $manifestPath
@@ -369,7 +339,7 @@ if ([string]::IsNullOrWhiteSpace($sharedVersionDir)) {
                 $readyReason = ''
                 if (-not (Test-YakuInstalledVersionReady -VersionDir $targetDir -ExpectedManifestHash $manifestHash -Reason ([ref]$readyReason))) {
                     if (Test-Path -LiteralPath $targetDir) { Remove-Item -LiteralPath $targetDir -Recurse -Force }
-                    Install-YakuVersion -SourceDir $sharedVersionDir -TargetDir $targetDir -Manifest $manifest -ManifestHash $manifestHash
+                    Install-YakuVersion -SourceDir $sharedPackageRoot -TargetDir $targetDir -Manifest $manifest -ManifestHash $manifestHash
                 }
             } finally {
                 if ($held) { $mutex.ReleaseMutex() }
@@ -389,7 +359,7 @@ $appLauncher = Join-YakuPath -Base $runDir -Relative 'app/Start-YakuLingoApp.ps1
 
 $env:YAKULINGO_SHARED_ROOT = $SharedRoot
 
-Write-YakuBootstrapInfo ("起動します: {0}{1}" -f (Split-Path -Leaf $runDir), $(if ($legacyMode) { '（共有フォルダ上・旧方式）' } else { '（ローカル）' }))
+Write-YakuBootstrapInfo ("起動します: {0}{1}" -f (Split-Path -Leaf $runDir), $(if ($directMode) { '（共有フォルダ上・直接）' } else { '（ローカル）' }))
 Write-Host ''
 
 if ($NoLaunch) { return $runDir }
