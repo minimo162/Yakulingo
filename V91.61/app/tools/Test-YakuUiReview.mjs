@@ -24,7 +24,7 @@ function mustMatch(text, pattern, code) {
 
 mustMatch(common, /function ensureUiReviewStyles\(\)/, 'UI_REVIEW_LOADER_MISSING');
 mustMatch(common, /link\[data-yaku-ui-review\]/, 'UI_REVIEW_DUPLICATE_GUARD_MISSING');
-mustMatch(common, /\/assets\/ui-review\.css\?v=20260822b/, 'UI_REVIEW_VERSIONED_STYLESHEET_MISSING');
+mustMatch(common, /\/assets\/ui-review\.css\?v=20260822c/, 'UI_REVIEW_VERSIONED_STYLESHEET_MISSING');
 mustMatch(common, /document\.head\.appendChild\(link\)/, 'UI_REVIEW_STYLESHEET_APPEND_MISSING');
 assert.doesNotThrow(() => new Function(common), 'UI_REVIEW_COMMON_JAVASCRIPT_INVALID');
 
@@ -34,12 +34,12 @@ assert.equal(cssBytes.includes(Buffer.from('\n')), true, 'UI_REVIEW_CSS_EOL_MISS
 mustMatch(eolBaseline, /^www\/assets\/ui-review\.css\tlf\r?$/m, 'UI_REVIEW_EOL_BASELINE_MISSING');
 mustMatch(
   premiumCss,
-  /:root\s*\{[\s\S]*?--premium-sidebar:\s*238px;/,
+  /:root\s*\{[^{}]*--premium-sidebar:\s*238px;/,
   'UI_REVIEW_BASE_SIDEBAR_WIDTH_MISSING'
 );
 mustMatch(
   premiumCss,
-  /@media\s*\(max-width:\s*1260px\)\s*\{[\s\S]*?:root\s*\{\s*--premium-sidebar:\s*208px;\s*\}/,
+  /@media\s*\(max-width:\s*1260px\)\s*\{\s*:root\s*\{\s*--premium-sidebar:\s*208px;\s*\}/,
   'UI_REVIEW_RESPONSIVE_SIDEBAR_WIDTH_MISSING'
 );
 mustMatch(
@@ -55,8 +55,13 @@ mustMatch(startHeadingRule, /position:\s*absolute/, 'UI_REVIEW_START_HEADING_NOT
 mustMatch(startHeadingRule, /width:\s*1px/, 'UI_REVIEW_START_HEADING_WIDTH_NOT_COLLAPSED');
 mustMatch(startHeadingRule, /height:\s*1px/, 'UI_REVIEW_START_HEADING_HEIGHT_NOT_COLLAPSED');
 mustMatch(startHeadingRule, /clip:\s*rect\(0,\s*0,\s*0,\s*0\)/, 'UI_REVIEW_START_HEADING_CLIP_MISSING');
+mustMatch(startHeadingRule, /clip-path:\s*inset\(50%\)/, 'UI_REVIEW_START_HEADING_CLIP_PATH_MISSING');
 mustMatch(startHeadingRule, /white-space:\s*nowrap/, 'UI_REVIEW_START_HEADING_NOWRAP_MISSING');
 assert.doesNotMatch(startHeadingRule, /display:\s*none/, 'UI_REVIEW_START_H1_REMOVED_FROM_ACCESSIBILITY_TREE');
+
+const chatLabelMatch = css.match(/body\.premium-cat \.premium-combined-chat-live \.palette-label\s*\{([^}]*)\}/);
+assert.ok(chatLabelMatch, 'UI_REVIEW_CHAT_LABEL_RULE_MISSING');
+mustMatch(chatLabelMatch[1], /clip-path:\s*inset\(50%\)/, 'UI_REVIEW_CHAT_LABEL_CLIP_PATH_MISSING');
 assert.doesNotMatch(css, /--premium-sidebar\s*:/, 'UI_REVIEW_SIDEBAR_OVERRIDE_PRESENT');
 
 const contracts = [
