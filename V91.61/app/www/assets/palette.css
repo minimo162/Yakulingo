@@ -283,12 +283,22 @@ body.app-palette {
 .term-learn-group { display: flex; align-items: center; gap: 6px; }
 
 /* TM候補: is-compact になると .result-actions ごと隠れる(既存仕様)。
-   覚える釦だけは行に依存しない絶対配置にし、位置を占めても高さは
-   一切増やさない(候補1が画面内に収まる幾何ゲートを崩さないため)。
+   覚える釦だけは行に依存しない絶対配置にし、新しい行を増やさない。
    テキストは右側に padding-right ぶんの空きを確保して重ならないようにする
-   （複数行に折り返しても、padding は全行へ効くので重ならない）。 */
-#palette-tm-candidate { position: relative; padding-right: 58px; }
-.palette-instant.is-compact #palette-tm-candidate { padding-right: 58px; }
+   （複数行に折り返しても、padding は全行へ効くので重ならない）。
+   空きの幅は実測で決めた。premium画面・480x640での釦の幅は「覚える」
+   65.1px/「登録中」67.0px/「エラー」63.1px、置き位置が右6pxなので必要な
+   空きは最大73.0px。従来の58pxでは「覚える」との重なりが実測13.1px残り、
+   78px(実測+5pxの余裕)に広げて0に収めた。
+   セレクタは id を2つ並べて詳細度を上げる。premium-ui.css の
+   body.premium-palette #palette-instant > div { padding:0 } がid1・class1・
+   要素2で、id1の素の#palette-tm-candidateより勝つため、is-compact が付く
+   前の描画直後の一瞬だけ padding が0になり、本文と釦が実測71.1px重なり、
+   カード実測31pxに対し釦(上4px+実測34.3px)が下端を7.3pxはみ出していた。
+   id2つのセレクタなら常に勝つ。min-height:40pxは同じ一瞬のカード高さを
+   実測より確保して、はみ出しを0にするためのもの(圧縮後のカード実測39px
+   にも1pxしか寄与しない)。 */
+#palette-instant > #palette-tm-candidate { position: relative; padding-right: 78px; min-height: 40px; }
 #palette-tm-candidate .term-learn-corner {
   position: absolute;
   top: 4px;

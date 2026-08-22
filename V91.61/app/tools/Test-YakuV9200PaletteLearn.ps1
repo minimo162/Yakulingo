@@ -55,7 +55,9 @@
       失敗)は帯の共有行(#palette-copy-status)へ全文が出ること
       (MINOR-A/B)、成功/失敗どちらの表示もしばらくすると既定の
       「覚える」へ戻ること(MINOR-C、主訳・添え候補は次の翻訳まで
-      DOMが作り直されないため)も実測する。
+      DOMが作り直されないため)も実測する。ジョブ完了直後(何も押して
+      いない時点)の主札が、premium画面の長さ設定によって黙って添え札と
+      入れ替わっていないこと(無言スワップのピン、issue #104)も見る。
 
       node/Playwright/Chromium が無い環境では緑にしない。終了コード3
       (未測定)で抜ける。「測れなかった」を赤に畳まない。
@@ -398,6 +400,13 @@ if ($LASTEXITCODE -ne 0) {
     exit $YAKU_SCREEN_UNMEASURED
 }
 
+# 無言スワップのピン(ジョブ完了直後・未選択の状態)の判定基準は、ドライバが
+# 既定で持つ題材の定数そのものを使う(試験側で文言を写経しない)。
+$gateText = [IO.File]::ReadAllText($driver, [Text.UTF8Encoding]::new($false))
+$n9200MainText = [regex]::Match($gateText, "const MAIN_TEXT = '([^']*)';").Groups[1].Value
+$n9200AltText = [regex]::Match($gateText, "const ALT_TEXT = '([^']*)';").Groups[1].Value
+$n9200DoneKind = [regex]::Match($gateText, "data-yaku-main-kind>([^<]+)<").Groups[1].Value
+
 # CoD審査 REWORK-1 NIT-B: ここも一時フォルダを残置しない(try/finally)。
 $work = Join-Path ([IO.Path]::GetTempPath()) ('yaku9200-chromium-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 $null = New-Item -ItemType Directory -Path $work -Force
@@ -438,6 +447,12 @@ Chk ([int]$o.instantRequestCountAfterTmLearnDelay -eq 2) '遅延が明けると�
 # TM候補の下端が帯の裏へ沈んでいないこと(実測: 直す前は0.25px隠れていた)。
 Chk ($null -ne $o.footerFitEmptyStatus -and [double]$o.footerFitEmptyStatus.clearance -ge -2) '即答のみの段階(帯は空文字)でもTM候補は帯に隠れていない(NEW-2の比較の基準)'
 Chk ($null -ne $o.footerFitAfterTmSuccess -and [double]$o.footerFitAfterTmSuccess.clearance -ge -2) '登録成功で帯に1行の文言が入っても、TM候補は帯に隠れていない(NEW-2)'
+
+Write-Host '  -- ジョブ完了直後の主札(無言スワップのピン、issue #104) --'
+Chk (($n9200MainText -ne '') -and ($n9200AltText -ne '') -and ($n9200DoneKind -ne '')) 'ドライバの既定定数(MAIN_TEXT/ALT_TEXT/種別)を取り出せた(前提条件)'
+Chk ([string]$o.mainPreTextAfterDone -eq $n9200MainText) 'ジョブ完了直後、主札の本文はCopilot訳そのもの(未選択での無言入れ替えが起きていない)'
+Chk ([string]$o.mainKindAfterDone -eq $n9200DoneKind) 'ジョブ完了直後、主札の種別ラベルはdoneHtmlどおり(添え札の種別に化けていない)'
+Chk ([string]$o.altSwapDecodedAfterDone -eq $n9200AltText) '添え札の入れ替えデータ(data-yaku-swap)を復号すると添え候補のテキスト'
 
 Write-Host '  -- シナリオ2/3: 主訳・添え候補の「覚える」 --'
 Chk ([bool]$o.mainLearnButtonExists) '主訳にも「覚える」釦がある'

@@ -10,9 +10,13 @@
     catFilter: 'issues',
     lastQuickSource: '',
     lastQuickArchived: '',
-    quickLength: 'brief',
+    quickLength: 'full',
     quickTone: 'business',
     quickToneRequested: false,
+    // 利用者が長さを触るまで、結果欄の描画のたびの取り直しで
+    // 勝手に主札と添え札を入れ替えない(無言スワップの防止)。
+    // 一度触ったら選択は次の翻訳以降も維持する。
+    quickLengthTouched: false,
     quickBriefApplied: false,
     quickActionBusy: false,
     toolsInvoker: null,
@@ -912,12 +916,12 @@
     var kind = textOf(one('[data-yaku-main-kind]', result));
     var mainLooksBrief = /短|簡潔/.test(kind);
     var alternate = one('.result-alt[data-yaku-swap]', result);
-    if (premiumState.quickLength === 'brief' && !mainLooksBrief && !premiumState.quickBriefApplied && alternate) {
+    if (premiumState.quickLengthTouched && premiumState.quickLength === 'brief' && !mainLooksBrief && !premiumState.quickBriefApplied && alternate) {
       premiumState.quickBriefApplied = true;
       alternate.click();
       return;
     }
-    if (premiumState.quickLength === 'full' && mainLooksBrief && alternate) {
+    if (premiumState.quickLengthTouched && premiumState.quickLength === 'full' && mainLooksBrief && alternate) {
       premiumState.quickBriefApplied = false;
       alternate.click();
     }
@@ -946,7 +950,7 @@
     layout.id = 'premium-quick-layout';
     var chat = create('section', 'premium-quick-chat');
     chat.innerHTML = '<header class="premium-quick-head"><div><h1>チャット翻訳</h1><p>文章を貼ってすぐ訳します。用途に合う簡潔な訳を返します。</p></div>' +
-      '<div class="premium-current-preset"><span id="premium-length-label">簡潔</span><i>×</i><span id="premium-tone-label">ビジネス</span></div></header>' +
+      '<div class="premium-current-preset"><span id="premium-length-label">標準</span><i>×</i><span id="premium-tone-label">ビジネス</span></div></header>' +
       '<div class="premium-quick-thread"><div id="premium-quick-history"></div><div id="premium-current-source" class="premium-current-source" hidden></div>' +
       '<div id="premium-live-result" class="premium-live-result"></div></div><div id="premium-quick-composer" class="premium-quick-composer"></div>';
     var rail = create('aside', 'premium-quick-rail');
@@ -955,7 +959,7 @@
         return '<button type="button" data-premium-prompt="' + escapeHtml(text) + '">' + escapeHtml(text) + '</button>';
       }).join('') + '</div></section>' +
       '<section><h2>今回の設定</h2><div class="premium-setting-row"><span>翻訳方向</span><strong id="premium-quick-direction">自動判定</strong></div>' +
-      '<div class="premium-setting-row"><span>長さ</span><strong id="premium-quick-length">簡潔</strong></div><div class="premium-setting-row"><span>文体</span><strong id="premium-quick-tone">ビジネス</strong></div><div id="premium-context-host"></div></section>' +
+      '<div class="premium-setting-row"><span>長さ</span><strong id="premium-quick-length">標準</strong></div><div class="premium-setting-row"><span>文体</span><strong id="premium-quick-tone">ビジネス</strong></div><div id="premium-context-host"></div></section>' +
       '<section class="premium-quick-transfer"><h2>Excelで仕上げる</h2><p>この文をセル幅に合わせる作業へ引き継ぎます。</p><button id="premium-quick-handoff" type="button">Excel翻訳へ</button></section>';
     layout.appendChild(chat);
     layout.appendChild(rail);
@@ -970,7 +974,7 @@
     var directionRow = one('.palette-direction-row', form);
     if (form && directionRow) {
       var toolbar = create('div', 'premium-compose-toolbar');
-      toolbar.innerHTML = '<span class="premium-control-label">長さ</span><div id="premium-length-mode" class="premium-segmented"><button type="button" class="is-active" data-length="brief">簡潔</button><button type="button" data-length="full">標準</button></div>' +
+      toolbar.innerHTML = '<span class="premium-control-label">長さ</span><div id="premium-length-mode" class="premium-segmented"><button type="button" data-length="brief">簡潔</button><button type="button" class="is-active" data-length="full">標準</button></div>' +
         '<span class="premium-control-label">文体</span><div id="premium-tone-mode" class="premium-segmented"><button type="button" class="is-active" data-tone="business">ビジネス</button><button type="button" data-tone="polite">丁寧</button></div>' +
         '<span class="premium-compose-hint">Enterで送信・Shift+Enterで改行</span>';
       form.insertBefore(toolbar, directionRow);
@@ -994,7 +998,8 @@
     });
     all('[data-length]').forEach(function (button) {
       button.addEventListener('click', function () {
-        premiumState.quickLength = button.getAttribute('data-length') || 'brief';
+        premiumState.quickLength = button.getAttribute('data-length') || 'full';
+        premiumState.quickLengthTouched = true;
         all('[data-length]').forEach(function (item) { item.classList.toggle('is-active', item === button); });
         var label = premiumState.quickLength === 'brief' ? '簡潔' : '標準';
         if (el('premium-length-label')) el('premium-length-label').textContent = label;
