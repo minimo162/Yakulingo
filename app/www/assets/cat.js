@@ -3385,10 +3385,31 @@
     });
     return targets;
   }
+  /* ボタンの左右のpaddingとborderの合計px。右へ流す幅（corridor）は、判定が使った
+     displayWidthPx からこの実測値を引いたものにする。CSS の数値をここへ写さない
+     （写すと片方を変えたときにもう片方が静かに腐る）。実物の要素を1回だけ計って
+     以後はキャッシュする。 */
+  var previewCellChromePxCache = null;
+  function previewCellChromePx() {
+    if (previewCellChromePxCache === null) {
+      var probe = document.createElement('button');
+      probe.type = 'button';
+      probe.className = 'cat-preview-cell';
+      probe.style.position = 'absolute';
+      probe.style.visibility = 'hidden';
+      (document.querySelector('.app-cat') || document.body).appendChild(probe);
+      var cs = window.getComputedStyle(probe);
+      previewCellChromePxCache = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0) +
+        (parseFloat(cs.borderLeftWidth) || 0) + (parseFloat(cs.borderRightWidth) || 0);
+      probe.parentNode.removeChild(probe);
+    }
+    return previewCellChromePxCache;
+  }
   function previewCellHtml(segment, layout, row, column, span) {
     var value = previewText(segment);
     var key = row + ':' + column;
     var wrap = layout ? !!layout.wrap[key] : false;
+    var shrink = layout ? !!layout.shrink[key] : false;
     var align = layout ? (layout.align[key] || '') : '';
     var style = '';
     var fit = segmentFitRisk(segment, layout, row, column, span, value.text, !!(layout && layout.bold[key]));
@@ -3406,15 +3427,29 @@
     var fitTitle = overflowRisk ? ('使える幅 ' + Math.round(fit.displayWidthPx) + 'px' + (fit.spillColumnCount > 0 ? '（右の空きセル' + fit.spillColumnCount + '個を含む）' : '')) : '';
     var combinedTitle = [placementTitle, fitTitle].filter(Boolean).join(' / ');
     var titleAttr = combinedTitle ? ' title="' + esc(combinedTitle) + '"' : '';
+    /* 右隣の空白へのはみ出し描き。Excel が左寄せ＋折返しOFF＋右隣空きで文字を
+       隣セルの上へ流すのを、見た目だけ揃える。判定（segmentFitRisk）が数えた
+       空きセルぶんの幅（displayWidthPx）からボタンの左右の余白を引いた corridor を
+       内側の span へ与え、文字はそこまで見える。右隣が占有のときは付かないので、
+       従来どおり自セルの中で切れる。ボタン自身の幅は自セルのまま（格子は動かさない）。
+       textContent は span で包んでも変わらない。 */
+    var canSpill = !!(fit.spillColumnCount > 0 && fit.measurementKnown && !wrap && !shrink &&
+      (align === '' || align === 'left') && String(value.text || '') !== '');
+    var spillFlow = '';
+    if (canSpill) {
+      var corridorPx = Math.max(0, Math.round(fit.displayWidthPx - previewCellChromePx()));
+      spillFlow = '<span class="cat-spill-flow" style="display:block;width:' + corridorPx + 'px">' + esc(value.text) + '</span>';
+    }
     return '<button type="button" class="cat-preview-cell' + (value.missing ? ' is-missing' : '') +
       (wrap ? ' is-wrap' : '') + (layout && layout.bold[key] ? ' is-bold' : '') +
       (overflowRisk ? ' is-overflow-risk' : '') +
+      (canSpill ? ' is-spill' : '') +
       (Number(segment.index) === Number(activeIndex) ? ' is-active' : '') +
       /* 常設の体裁が選択に追随するとき、印を付け替える相手をここで名指しできる
          ようにする。data-cat-qa-jump は配置つきのセルには付かないので当てにできない。 */
       '" data-cat-preview-index="' + Number(segment.index) + '"' + style + placementAction + titleAttr +
       (overflowRisk ? ' aria-label="収まり要確認: PDFで切れを確認してください"' : '') + '>' +
-      esc(value.text) + '</button>';
+      (canSpill ? spillFlow : esc(value.text)) + '</button>';
   }
   /* Word の並び。見出しは段の深さで、表は格子で出す。Excel と同じ考えで、
      原本を見た人が「どこの話か」を形で分かるようにするためのもの。
