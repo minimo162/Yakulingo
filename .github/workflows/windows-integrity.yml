@@ -19,12 +19,12 @@ jobs:
 
       - name: Check PowerShell encodings
         shell: powershell
-        run: .\V91.61\app\tools\Check-Encoding.ps1
+        run: .\app\tools\Check-Encoding.ps1
 
       - name: Test fit-first prompt contract
         shell: powershell
         run: |
-          $root = Join-Path $PWD 'V91.61\app'
+          $root = Join-Path $PWD 'app'
           . (Join-Path $root 'src\CatTranslation.ps1')
           $targets = New-YakuCatCharacterTargets -Items @([pscustomobject]@{ Index = 1; MaxChars = 24 })
           if ($targets -notmatch '(?i)space budget') { throw 'FIT_FIRST_SPACE_BUDGET_MISSING' }
@@ -49,7 +49,7 @@ jobs:
       - name: Test duplicate-cell fit policy
         shell: powershell
         run: |
-          $root = Join-Path $PWD 'V91.61\app'
+          $root = Join-Path $PWD 'app'
           . (Join-Path $root 'src\CatTranslation.ps1')
           . (Join-Path $root 'src\FitPolicy.ps1')
           if ((Resolve-YakuCatFitTargetForDuplicates -MaxCharsValues @(30, 18, 24)) -ne 18) { throw 'FIT_DUPLICATE_MINIMUM_BUDGET_MISSING' }
@@ -63,7 +63,7 @@ jobs:
       - name: Test fit-only publication candidates
         shell: powershell
         run: |
-          $root = Join-Path $PWD 'V91.61\app'
+          $root = Join-Path $PWD 'app'
           function Complete-YakuCatPublicationCandidateSet {
             param($Project, $Request, $Parsed)
             return [pscustomobject]@{ candidates=@($Parsed.Candidates); cannot_fit_reason=[string]$Parsed.CannotFitReason }
@@ -101,7 +101,7 @@ jobs:
       - name: Test adopted publication translation remeasurement
         shell: powershell
         run: |
-          $catPath = Join-Path $PWD 'V91.61\app\www\assets\cat.js'
+          $catPath = Join-Path $PWD 'app\www\assets\cat.js'
           $cat = [IO.File]::ReadAllText($catPath, [Text.Encoding]::UTF8)
           if ($cat -notmatch "(?s)function segmentFitText\(segment\).*?publication_translation.*?return publication") { throw 'FIT_REMEASURE_PUBLICATION_PRIORITY_MISSING' }
           if ($cat -notmatch "(?s)function segmentFitCapacity\(segment\).*?var text = segmentFitText\(segment\);") { throw 'FIT_REMEASURE_CAPACITY_SOURCE_MISSING' }
@@ -110,8 +110,8 @@ jobs:
 
       - name: Test local bootstrap and repair paths
         shell: powershell
-        run: .\V91.61\app\tools\Test-YakuBootstrap.ps1
+        run: .\app\tools\Test-YakuBootstrap.ps1
 
       - name: Test package language boundary
         shell: powershell
-        run: .\V91.61\app\tools\Test-YakuPackageLanguageBoundary.ps1
+        run: .\app\tools\Test-YakuPackageLanguageBoundary.ps1

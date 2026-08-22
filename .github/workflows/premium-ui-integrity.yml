@@ -27,4 +27,4 @@ jobs:
 
       - name: Test premium specialized UI
         shell: powershell
-        run: .\V91.61\app\tools\Test-YakuPremiumUi.ps1
+        run: .\app\tools\Test-YakuPremiumUi.ps1
