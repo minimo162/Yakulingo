@@ -6,11 +6,13 @@ import { fileURLToPath } from 'node:url';
 const toolsDir = path.dirname(fileURLToPath(import.meta.url));
 const appDir = path.resolve(toolsDir, '..');
 const commonPath = path.join(appDir, 'www', 'assets', 'common.js');
+const premiumCssPath = path.join(appDir, 'www', 'assets', 'premium-ui.css');
 const premiumUiPath = path.join(appDir, 'www', 'assets', 'premium-ui.js');
 const reviewCssPath = path.join(appDir, 'www', 'assets', 'ui-review.css');
 const eolBaselinePath = path.join(appDir, 'tools', 'eol-baseline.txt');
 
 const common = fs.readFileSync(commonPath, 'utf8');
+const premiumCss = fs.readFileSync(premiumCssPath, 'utf8');
 const premiumUi = fs.readFileSync(premiumUiPath, 'utf8');
 const cssBytes = fs.readFileSync(reviewCssPath);
 const css = cssBytes.toString('utf8');
@@ -27,7 +29,19 @@ mustMatch(common, /document\.head\.appendChild\(link\)/, 'UI_REVIEW_STYLESHEET_A
 assert.doesNotThrow(() => new Function(common), 'UI_REVIEW_COMMON_JAVASCRIPT_INVALID');
 
 assert.deepEqual(Array.from(cssBytes.subarray(0, 3)), [0xEF, 0xBB, 0xBF], 'UI_REVIEW_CSS_BOM_MISSING');
+assert.equal(cssBytes.includes(Buffer.from('\r\n')), false, 'UI_REVIEW_CSS_EOL_NOT_LF');
+assert.equal(cssBytes.includes(Buffer.from('\n')), true, 'UI_REVIEW_CSS_EOL_MISSING');
 mustMatch(eolBaseline, /^www\/assets\/ui-review\.css\tlf\r?$/m, 'UI_REVIEW_EOL_BASELINE_MISSING');
+mustMatch(
+  premiumCss,
+  /:root\s*\{[\s\S]*?--premium-sidebar:\s*238px;/,
+  'UI_REVIEW_BASE_SIDEBAR_WIDTH_MISSING'
+);
+mustMatch(
+  premiumCss,
+  /@media\s*\(max-width:\s*1260px\)\s*\{[\s\S]*?:root\s*\{\s*--premium-sidebar:\s*208px;\s*\}/,
+  'UI_REVIEW_RESPONSIVE_SIDEBAR_WIDTH_MISSING'
+);
 mustMatch(
   premiumUi,
   /<header class="premium-combined-heading">[\s\S]*?<h1>文章もExcelも、ひとつの画面で。<\/h1>/,
