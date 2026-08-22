@@ -6,10 +6,15 @@ import { fileURLToPath } from 'node:url';
 const toolsDir = path.dirname(fileURLToPath(import.meta.url));
 const appDir = path.resolve(toolsDir, '..');
 const commonPath = path.join(appDir, 'www', 'assets', 'common.js');
+const premiumUiPath = path.join(appDir, 'www', 'assets', 'premium-ui.js');
 const reviewCssPath = path.join(appDir, 'www', 'assets', 'ui-review.css');
+const eolBaselinePath = path.join(appDir, 'tools', 'eol-baseline.txt');
 
 const common = fs.readFileSync(commonPath, 'utf8');
-const css = fs.readFileSync(reviewCssPath, 'utf8');
+const premiumUi = fs.readFileSync(premiumUiPath, 'utf8');
+const cssBytes = fs.readFileSync(reviewCssPath);
+const css = cssBytes.toString('utf8');
+const eolBaseline = fs.readFileSync(eolBaselinePath, 'utf8');
 
 function mustMatch(text, pattern, code) {
   assert.match(text, pattern, code);
@@ -21,11 +26,29 @@ mustMatch(common, /\/assets\/ui-review\.css\?v=20260822a/, 'UI_REVIEW_VERSIONED_
 mustMatch(common, /document\.head\.appendChild\(link\)/, 'UI_REVIEW_STYLESHEET_APPEND_MISSING');
 assert.doesNotThrow(() => new Function(common), 'UI_REVIEW_COMMON_JAVASCRIPT_INVALID');
 
+assert.deepEqual(Array.from(cssBytes.subarray(0, 3)), [0xEF, 0xBB, 0xBF], 'UI_REVIEW_CSS_BOM_MISSING');
+mustMatch(eolBaseline, /^www\/assets\/ui-review\.css\tlf\r?$/m, 'UI_REVIEW_EOL_BASELINE_MISSING');
+mustMatch(
+  premiumUi,
+  /<header class="premium-combined-heading">[\s\S]*?<h1>文章もExcelも、ひとつの画面で。<\/h1>/,
+  'UI_REVIEW_START_H1_MISSING'
+);
+
+const startHeadingMatch = css.match(/body\.premium-cat \.premium-combined-heading\s*\{([^}]*)\}/);
+assert.ok(startHeadingMatch, 'UI_REVIEW_START_HEADING_RULE_MISSING');
+const startHeadingRule = startHeadingMatch[1];
+mustMatch(startHeadingRule, /position:\s*absolute/, 'UI_REVIEW_START_HEADING_NOT_VISUALLY_HIDDEN');
+mustMatch(startHeadingRule, /width:\s*1px/, 'UI_REVIEW_START_HEADING_WIDTH_NOT_COLLAPSED');
+mustMatch(startHeadingRule, /height:\s*1px/, 'UI_REVIEW_START_HEADING_HEIGHT_NOT_COLLAPSED');
+mustMatch(startHeadingRule, /clip:\s*rect\(0,\s*0,\s*0,\s*0\)/, 'UI_REVIEW_START_HEADING_CLIP_MISSING');
+mustMatch(startHeadingRule, /white-space:\s*nowrap/, 'UI_REVIEW_START_HEADING_NOWRAP_MISSING');
+assert.doesNotMatch(startHeadingRule, /display:\s*none/, 'UI_REVIEW_START_H1_REMOVED_FROM_ACCESSIBILITY_TREE');
+assert.doesNotMatch(css, /--premium-sidebar\s*:/, 'UI_REVIEW_SIDEBAR_OVERRIDE_PRESENT');
+
 const contracts = [
   [/focus-visible[\s\S]*outline:\s*3px solid var\(--yaku-ui-focus\)/, 'UI_REVIEW_FOCUS_RING_MISSING'],
   [/premium-top-actions\s*>\s*a\[href="\/cat\?view=work"\][\s\S]*display:\s*none/, 'UI_REVIEW_DUPLICATE_WORK_LINK_VISIBLE'],
   [/premium-brand small[\s\S]*premium-nav-label[\s\S]*premium-nav-item small[\s\S]*display:\s*none/, 'UI_REVIEW_SIDEBAR_HELPER_COPY_VISIBLE'],
-  [/premium-combined-heading[\s\S]*display:\s*none/, 'UI_REVIEW_START_HEADING_VISIBLE'],
   [/premium-combined-panel\s*>\s*header \.premium-panel-number[\s\S]*premium-combined-panel\s*>\s*header \.premium-eyebrow[\s\S]*premium-combined-panel\s*>\s*header p[\s\S]*display:\s*none/, 'UI_REVIEW_START_DECORATION_VISIBLE'],
   [/premium-combined-chat[\s\S]*background:\s*var\(--premium-surface\)/, 'UI_REVIEW_CHAT_CARD_NOT_NEUTRAL'],
   [/premium-combined-excel[\s\S]*background:\s*var\(--premium-surface\)/, 'UI_REVIEW_EXCEL_CARD_NOT_NEUTRAL'],
