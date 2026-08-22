@@ -1439,7 +1439,7 @@ body.premium-cat #cat-resume { display:none !important; }
    The root route is a working surface, not a launcher. The existing quick
    translator is moved into the left panel; the Excel uploader remains live
    in the right panel. */
-body.premium-cat .premium-combined-heading { max-width:1500px; margin:0 auto 18px; }
+body.premium-cat .premium-combined-heading { margin:0 auto 18px; }
 body.premium-cat .premium-combined-heading h1 {
   margin:8px 0 5px; font-size:clamp(28px,2.2vw,38px); line-height:1.2;
   letter-spacing:-.035em;
