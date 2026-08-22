@@ -68,6 +68,7 @@ tools/Test-YakuCopilotImportRegression.ps1	crlf
 tools/Test-YakuEdgeAppMode.ps1	lf
 tools/Test-YakuFeaturePruning.ps1	crlf
 tools/Test-YakuFileHashRuntime.ps1	crlf
+tools/Test-YakuNavigationPerformance.ps1	lf
 tools/Test-YakuPackage.ps1	crlf
 tools/Test-YakuPackageLanguageBoundary.ps1	lf
 tools/Test-YakuPremiumUi.ps1	lf
@@ -150,10 +151,10 @@ tools/Test-YakuV9201BatchFit.ps1	crlf
 tools/Test-YakuV9202PaletteBilingual.ps1	crlf
 tools/Test-YakuV9203PaletteContext.ps1	crlf
 tools/Test-YakuV9204CatPartialPreview.ps1	crlf
+tools/Test-YakuV9211TermSnapshotFreshness.ps1	crlf
 tools/V64-HTTP-Boundary-Test.ps1	crlf
 tools/V65-Saving-Validation-Test.ps1	crlf
 tools/Wait-YakuCopilotResponse-Watcher-Test.ps1	crlf
-tools/Test-YakuNavigationPerformance.ps1	lf
 www/assets/cat.js	lf
 www/assets/cat-workspace.css	lf
 www/assets/common.js	lf
