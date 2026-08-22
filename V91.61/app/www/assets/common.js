@@ -5,7 +5,7 @@
     if (document.querySelector('link[data-yaku-ui-review]')) return;
     var link = document.createElement('link');
     link.rel = 'stylesheet';
-    link.href = '/assets/ui-review.css?v=20260822a';
+    link.href = '/assets/ui-review.css?v=20260822b';
     link.setAttribute('data-yaku-ui-review', '');
     document.head.appendChild(link);
   }

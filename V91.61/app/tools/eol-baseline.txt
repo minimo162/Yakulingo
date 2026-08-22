@@ -166,5 +166,6 @@ www/assets/premium-ui.css	lf
 www/assets/premium-ui.js	lf
 www/assets/quick.js	lf
 www/assets/styles.css	crlf
+www/assets/ui-review.css	lf
 www/cat.html	lf
 www/palette.html	lf

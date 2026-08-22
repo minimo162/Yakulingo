@@ -1,9 +1,8 @@
-/* YakuLingo UI review layer -------------------------------------------------
+﻿/* YakuLingo UI review layer -------------------------------------------------
    Keep the existing DOM/API contracts intact. This final stylesheet removes
    duplicate explanations and preserves only operational UI. */
 
 :root {
-  --premium-sidebar: 216px;
   --yaku-ui-focus: rgba(31, 58, 95, .34);
   --yaku-ui-mobile-nav-height: 72px;
 }
@@ -69,10 +68,18 @@ body.premium-ui .premium-top-action.premium-primary-action {
 }
 
 /* Combined start -----------------------------------------------------------
-   Card titles and the controls themselves explain both tasks. Remove the
-   launcher-like heading, sequence numbers and marketing copy. */
+   Card titles and the controls themselves explain both tasks. Keep the page
+   heading for assistive technology while removing it from the visual layout. */
 body.premium-cat .premium-combined-heading {
-  display: none;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 body.premium-cat .premium-combined-grid {
