@@ -303,6 +303,19 @@ function measureGeometry(page) {
     // ジョブ完了を待つ(主訳・添えが揃う)。
     await page.waitForSelector('#palette-result [data-yaku-main-card]', { timeout: 10000 });
     await page.waitForTimeout(300);
+    // 無言スワップのピン。premium画面の長さ設定が、利用者が触るより前に
+    // 描画のたびに効き、主札と添え札の中身を黙って入れ替えていた欠陥
+    // (issue #104)を見るため、何も押していない完了直後の主札の本文・種別と
+    // 添え札の入れ替え用データをそのまま残す。判定は呼び出し側が行う。
+    out.mainPreTextAfterDone = await page.$eval('[data-yaku-main-text]', function (node) { return node.textContent; });
+    out.mainKindAfterDone = await page.$eval('[data-yaku-main-kind]', function (node) { return node.textContent; });
+    // atob は Latin-1 復号なので、ALT_TEXT が非ASCIIになった瞬間に化けて
+    // 恒久的な偽赤になる。製品の decodeAltText(YakuCommon)と同じ UTF-8 復号を
+    // ドライバ内で行う(製品コードへは結合しない)。
+    out.altSwapDecodedAfterDone = await page.$eval('.result-alt[data-yaku-swap]', function (node) {
+      var bytes = Uint8Array.from(window.atob(node.getAttribute('data-yaku-swap') || ''), function (c) { return c.charCodeAt(0); });
+      return new TextDecoder('utf-8').decode(bytes);
+    });
     out.mainLearnButtonExists = (await page.$('[data-yaku-main-card] [data-yaku-term-learn]')) !== null;
     out.altLearnButtonExists = (await page.$('.result-alt-shell [data-yaku-term-learn]')) !== null;
     // button-in-button回避: 添え札(.result-alt)は覚える釦の祖先ではない(兄弟)。
