@@ -1270,6 +1270,14 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 /* 見出しかどうかは、原本では太字で分かる。体裁で見るのだから、そこも写す。 */
 .app-cat .cat-preview-cell.is-bold { font-weight: 700; }
 .app-cat .cat-preview-cell.is-overflow-risk { box-shadow: inset 0 -3px 0 #c97900; background-image: linear-gradient(135deg, transparent 0 88%, rgba(201,121,0,.28) 88%); }
+/* 右隣空白へのはみ出し描き。Excel が左寄せ＋折返しOFF＋右隣空きで文字を罫線の上へ
+   流すのを、見た目だけ揃える。流せる幅（corridor）は実行時の計測からインラインで
+   与えるので、ここでは切り方だけを決める。右隣が占有のときは is-spill が付かず、
+   従来どおり自セルの中で切れる。pointer-events: none は、流れた先のセルの押し場を
+   奪わないため（奪うと右の狭いセルが押せなくなる。実機実測 2026-08-23）。
+   詳細度は基本ルールより1つ上の (0,3,0)。:not() は連ねない。 */
+.app-cat .cat-preview-cell.is-spill { position: relative; z-index: 1; overflow: visible; }
+.cat-spill-flow { white-space: nowrap; overflow: hidden; text-overflow: clip; pointer-events: none; }
 .app-cat .cat-protected-prompt-preview { max-height: 55vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: .8rem; border: 1px solid var(--line); background: var(--surface-muted); font-size: .8rem; }
 /* 原本の行の高さが分かっているときは、押しやすさのための下限を外す。行の高さは
    tr 側が持つ。詳細度は (0,3,0) で、上の (0,2,0) にだけ勝つ。基本ルールは上げない。 */
