@@ -576,6 +576,11 @@
   function forcePreviewRail() {
     var dock = el('cat-preview-dock');
     if (!dock) return;
+    /* The preview is visible on first use, but a deliberate "畳む" action is
+       a real preference. Do not reopen it on the next workspace refresh. */
+    var storedOpen = null;
+    try { storedOpen = window.localStorage.getItem('yaku-cat-dock-open'); } catch (_) {}
+    if (storedOpen === '0') return;
     if (dock.hidden) {
       var toggle = el('cat-preview-dock-toggle');
       if (toggle) toggle.click();

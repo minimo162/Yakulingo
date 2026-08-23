@@ -1407,6 +1407,40 @@ body.premium-palette #premium-quick-handoff { width:100%; min-height:37px; margi
   body.premium-palette .premium-compose-hint { display:none; }
 }
 
+/* Wide CAT workspace: keep the preview attached to the canvas so its
+   existing keyboard/pointer splitter remains meaningful. The right-rail
+   layout made the horizontal height control inert and hid the only collapse
+   action; a bottom dock gives the preview room to scroll while preserving
+   the editor and fit list as the primary work surface. */
+@media (min-width: 1261px) {
+  body.premium-cat #cat-workspace {
+    grid-template-columns: 306px minmax(520px,1fr);
+    grid-template-rows: auto minmax(0,1fr) auto;
+    grid-template-areas:
+      "summary summary"
+      "fit editor"
+      "preview preview";
+  }
+
+  body.premium-cat #cat-preview-dock {
+    height: var(--cat-dock-height, 280px) !important;
+    min-height: 180px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  body.premium-cat #cat-preview-dock-splitter {
+    display: block !important;
+    flex: 0 0 auto;
+  }
+
+  body.premium-cat #cat-preview-dock-close {
+    display: inline-flex !important;
+    flex: 0 0 auto;
+  }
+}
+
 /* Premium DOM bridge -------------------------------------------------------
    These selectors connect the preserved application DOM to the specialized
    shell created by premium-ui.js. */

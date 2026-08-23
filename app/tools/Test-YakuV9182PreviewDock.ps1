@@ -20,23 +20,21 @@
        ドラッグでしか動かせない仕切りは、それだけで使えない人が出る。
        矢印キー・Home・End で高さが変わること
 
-   ~~上記の (a)(c)(d)~~ **2026-08-23 に現行の画面へ合わせて書き直した。**
-   premium の作業画面では、体裁は格子の下の帯から**常設の右レール**へ変わった
-   （cat.html の下部ドックを premium-ui.js の forcePreviewRail() が強制表示し、
-   プレビュータブを選んだ状態にする）。仕切りと「畳む」の釦は常設レールには
-   置かない（premium-ui.css が両方を display:none）。だから旧門の「既定では
-   畳んでいる」「畳むで消える」「仕切りは4px・掴んで動かす・矢印キーで高さを
-   変える」は、現行の画面にはもう無い。代わりに、次の3つを固定する。
+   **2026-08-23 に、失われていた操作を実機で復元した。**
+   premium の広い作業画面では、体裁を格子の下の**常設ドック**に置く。
+   右レールでは高さを変える既存の仕切りが効かなかったため、広い画面では
+   下部へ戻し、仕切りと「畳む」を実際に表示する。次の4つを固定する。
 
-    (a) 常設レールの既定の姿。開いた資料には、体裁が右に見えていて、
-        プレビュータブを選んだ状態で出る。上部の「プレビュー」釦の
-        aria-pressed と「参考情報を隠す」の札がその状態を名乗る。
-        仕切りと「畳む」は画面に面積を持たない（置かないのが現行の作り）
-    (b) **選択が動いても組み直さない。** 従来どおり。選び方はキーボード
-        （Alt+↓）に変えた。premium の表は選択中の行だけを描くため、ほかの行の
-        訳文欄は DOM にはあっても display:none で、focus を当てても選択は
-        動かない（実測 2026-08-23）
-    (c) 対の表明。組み直せば本当にノードが外れることを、その場で示す
+    (a) 開いた資料には体裁が下に見え、プレビュータブが選ばれている。
+        上部の「プレビュー」釦の aria-pressed と「参考情報を隠す」の札が
+        その状態を名乗る
+    (b) 仕切りは4pxの row-resize で、キーボードの矢印・Home・Endでも高さを
+        変えられる（WCAG 2.2 SC 2.5.7）
+    (c) 「畳む」でドックを隠し、上部の「プレビュー」で再び開ける。明示的に
+        畳んだ状態を、次の画面更新で勝手に戻さない
+    (d) **選択が動いても組み直さない。** 従来どおり。選び方はキーボード
+        （Alt+↓）。premium の表は選択中の行だけを描くため、ほかの行の訳文欄は
+        DOM にはあっても display:none で、focus を当てても選択は動かない
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\tools\Test-YakuV9182PreviewDock.ps1
@@ -107,20 +105,29 @@ try {
         exit $YAKU_SCREEN_UNMEASURED
     }
 
-    Write-Host '(a) 常設レールの既定の姿（2026-08-23 に現行契約へ更新）' -ForegroundColor Cyan
-    # 旧門「最初は畳んである」は、常設レール化（forcePreviewRail）のときに
-    # 役目を終えた。いまの正は「開けば出ている」。畳む釦と仕切りは置かない。
-    Chk ([bool]$observed.railVisibleByDefault) '資料を開くと体裁が右に見えている'
-    Chk ([int]$observed.railState.width -gt 0 -and [int]$observed.railState.height -gt 0) ('レールに面積がある（' + [int]$observed.railState.width + 'x' + [int]$observed.railState.height + 'px）')
-    Chk ([string]$observed.railState.activeTab -eq 'preview') ('プレビュータブを選んだ状態で出る（実際 ' + [string]$observed.railState.activeTab + '）')
-    Chk ([string]$observed.railState.toggleAriaPressed -eq 'true') '上部の「プレビュー」釦が押された状態を名乗る（aria-pressed）'
-    Chk ([string]$observed.railState.inspectorToggleText -eq '参考情報を隠す') ('状態の札: ' + [string]$observed.railState.inspectorToggleText)
-    Chk ([string]$observed.railState.splitterDisplay -eq 'none') '常設レールには仕切りを置かない（display:none。旧4px仕切りの後継確認）'
-    Chk ([string]$observed.railState.closeButtonDisplay -eq 'none') '常設レールには「畳む」を置かない（display:none）'
+    Write-Host '(a) 常設ドックの既定の姿' -ForegroundColor Cyan
+    Chk ([bool]$observed.dockVisibleByDefault) '資料を開くと体裁が下に見えている'
+    Chk ([int]$observed.dockState.width -gt 0 -and [int]$observed.dockState.height -gt 0) ('ドックに面積がある（' + [int]$observed.dockState.width + 'x' + [int]$observed.dockState.height + 'px）')
+    Chk ([string]$observed.dockState.activeTab -eq 'preview') ('プレビュータブを選んだ状態で出る（実際 ' + [string]$observed.dockState.activeTab + '）')
+    Chk ([string]$observed.dockState.toggleAriaPressed -eq 'true') '上部の「プレビュー」釦が押された状態を名乗る（aria-pressed）'
+    Chk ([string]$observed.dockState.inspectorToggleText -eq '参考情報を隠す') ('状態の札: ' + [string]$observed.dockState.inspectorToggleText)
+    Chk ([string]$observed.dockState.splitterDisplay -ne 'none' -and [int]$observed.dockState.splitterHeight -eq 4 -and [string]$observed.dockState.splitterCursor -eq 'row-resize') ('仕切りが見え、4px・row-resizeである（' + [string]$observed.dockState.splitterDisplay + '/' + [int]$observed.dockState.splitterHeight + 'px/' + [string]$observed.dockState.splitterCursor + '）')
+    Chk ([string]$observed.dockState.closeButtonDisplay -ne 'none' -and [string]$observed.dockState.closeButtonText -eq '畳む') ('「畳む」が見える（' + [string]$observed.dockState.closeButtonDisplay + '/' + [string]$observed.dockState.closeButtonText + '）')
     Chk ([int]$observed.itemCount -ge 3) ('題材の3行が体裁に出る（実際 ' + [int]$observed.itemCount + ' 件）')
     Chk ([int]$observed.bodyLength -gt 50) ('中身が空でない（' + [int]$observed.bodyLength + ' 文字）')
 
-    Write-Host '(b) 選択が動いても組み直さない（選び方は Alt+↓）' -ForegroundColor Cyan
+    Write-Host '(b) 仕切りをキーボードで動かす（WCAG 2.2 SC 2.5.7）' -ForegroundColor Cyan
+    $k = $observed.keyboardResize
+    Chk ([string]$k.start -ne [string]$k.up -and [string]$k.up -ne [string]$k.down) ('矢印キーで高さが変わる: ' + [string]$k.start + ' -> ' + [string]$k.up + ' -> ' + [string]$k.down)
+    Chk ([string]$k.home -eq ([string]$observed.dockState.splitterValueMin + 'px')) ('Home でいちばん低く: ' + [string]$k.home)
+    Chk ([string]$k.end -eq ([string]$observed.dockState.splitterValueMax + 'px')) ('End でいちばん高く: ' + [string]$k.end)
+    Chk ([string]$k.aria -eq [string]$observed.dockState.splitterValueMax) ('読み上げ値も追随する: aria-valuenow=' + [string]$k.aria)
+
+    Write-Host '(c) 畳んで、上部の「プレビュー」で戻す' -ForegroundColor Cyan
+    Chk ([bool]$observed.collapse.hidden -and [string]$observed.collapse.expanded -eq 'false' -and [string]$observed.collapse.storedOpen -eq '0') '畳むとドックが隠れ、状態を保存する'
+    Chk (-not [bool]$observed.restore.hidden -and [string]$observed.restore.expanded -eq 'true' -and [string]$observed.restore.storedOpen -eq '1') 'プレビューでドックを戻せる'
+
+    Write-Host '(d) 選択が動いても組み直さない（選び方は Alt+↓）' -ForegroundColor Cyan
     Chk ([string]$observed.activeBefore -eq '0') ('最初の印は1行目（実際 ' + [string]$observed.activeBefore + '）')
     Chk ([string]$observed.activeAfter -eq '1') ('2行目へ移ると印も移る（実際 ' + [string]$observed.activeAfter + '）')
     # ここが要。**要素そのものが生き残っている＝組み直していない。**

@@ -61,20 +61,18 @@ const server = http.createServer(function (req, res) {
     await page.goto('http://127.0.0.1:' + port + '/cat?project=' + id, { waitUntil: 'networkidle' });
     await page.waitForSelector('#cat-grid-body tr', { timeout: 15000 });
 
-    /* premium の作業画面では、体裁は格子の下ではなく**常設の右レール**である。
-       起動時に cat.js の restoreDockState() が開き、さらに premium-ui.js の
-       forcePreviewRail() がプレビュータブを選んだ状態で強制表示する。
-       仕切り（#cat-preview-dock-splitter）と「畳む」（#cat-preview-dock-close）は、
-       常設レールでは置かない（premium-ui.css が両方を display:none）。
-       だから旧門の「既定では畳んでいる」「畳むで消える」「仕切りは4px・掴んで
-       動かす」は、現行の画面にはもう無い（2026-08-23 実測）。
-       ここでは、その現行契約の姿をそのまま観測して渡す。 */
+    /* premium の広い作業画面では、体裁を格子の下の**常設ドック**へ戻す。
+       右レールでは高さを変える既存の仕切りが効かず、畳む道も消えていた。
+       cat.js の restoreDockState() と premium-ui.js の初回表示はそのまま使い、
+       仕切り（#cat-preview-dock-splitter）と「畳む」（#cat-preview-dock-close）を
+       実際に見える状態にして、ポインターとキーボードの両方で高さを変えられる
+       ことを測る。 */
     await page.waitForFunction(function () {
       var dock = document.getElementById('cat-preview-dock');
       return !!dock && !dock.hidden && dock.getClientRects().length > 0;
     }, null, { timeout: 15000 });
-    observed.railVisibleByDefault = true;
-    observed.railState = await page.evaluate(function () {
+    observed.dockVisibleByDefault = true;
+    observed.dockState = await page.evaluate(function () {
       var dock = document.getElementById('cat-preview-dock');
       var rect = dock.getBoundingClientRect();
       var splitter = document.getElementById('cat-preview-dock-splitter');
@@ -87,7 +85,44 @@ const server = http.createServer(function (req, res) {
         toggleAriaPressed: document.getElementById('cat-preview-dock-toggle').getAttribute('aria-pressed'),
         inspectorToggleText: document.getElementById('cat-inspector-toggle').textContent,
         splitterDisplay: getComputedStyle(splitter).display,
-        closeButtonDisplay: getComputedStyle(closeButton).display
+        splitterHeight: Math.round(splitter.getBoundingClientRect().height),
+        splitterCursor: getComputedStyle(splitter).cursor,
+        splitterValueMin: splitter.getAttribute('aria-valuemin'),
+        splitterValueMax: splitter.getAttribute('aria-valuemax'),
+        closeButtonDisplay: getComputedStyle(closeButton).display,
+        closeButtonText: closeButton.textContent.trim()
+      };
+    });
+
+    await page.locator('#cat-preview-dock-splitter').focus();
+    const resizeStart = await page.locator('#cat-preview-dock').evaluate(function (node) { return node.style.getPropertyValue('--cat-dock-height'); });
+    await page.keyboard.press('ArrowUp');
+    const resizeUp = await page.locator('#cat-preview-dock').evaluate(function (node) { return node.style.getPropertyValue('--cat-dock-height'); });
+    await page.keyboard.press('ArrowDown');
+    const resizeDown = await page.locator('#cat-preview-dock').evaluate(function (node) { return node.style.getPropertyValue('--cat-dock-height'); });
+    await page.keyboard.press('Home');
+    const resizeHome = await page.locator('#cat-preview-dock').evaluate(function (node) { return node.style.getPropertyValue('--cat-dock-height'); });
+    await page.keyboard.press('End');
+    const resizeEnd = await page.locator('#cat-preview-dock').evaluate(function (node) { return node.style.getPropertyValue('--cat-dock-height'); });
+    observed.keyboardResize = { start: resizeStart, up: resizeUp, down: resizeDown, home: resizeHome, end: resizeEnd,
+      aria: await page.locator('#cat-preview-dock-splitter').getAttribute('aria-valuenow') };
+
+    await page.locator('#cat-preview-dock-close').click();
+    await page.waitForFunction(function () { return document.getElementById('cat-preview-dock').hidden; }, null, { timeout: 10000 });
+    observed.collapse = await page.evaluate(function () {
+      return {
+        hidden: document.getElementById('cat-preview-dock').hidden,
+        expanded: document.getElementById('cat-inspector-toggle').getAttribute('aria-expanded'),
+        storedOpen: window.localStorage.getItem('yaku-cat-dock-open')
+      };
+    });
+    await page.locator('#cat-preview-dock-toggle').click();
+    await page.waitForFunction(function () { return !document.getElementById('cat-preview-dock').hidden; }, null, { timeout: 10000 });
+    observed.restore = await page.evaluate(function () {
+      return {
+        hidden: document.getElementById('cat-preview-dock').hidden,
+        expanded: document.getElementById('cat-inspector-toggle').getAttribute('aria-expanded'),
+        storedOpen: window.localStorage.getItem('yaku-cat-dock-open')
       };
     });
 
