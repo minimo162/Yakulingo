@@ -262,9 +262,11 @@ body.premium-cat .premium-work-card footer {
   border-top: 1px solid var(--premium-hairline);
 }
 
-/* The active default filter already communicates this sentence. */
+/* Keep the next action visible: the fit list alone does not explain where
+   the actual Excel-like display check happens. */
 body.premium-cat .premium-fit-panel > header p {
-  display: none;
+  display: block;
+  line-height: 1.35;
 }
 
 /* Responsive start ---------------------------------------------------------

@@ -42,6 +42,8 @@ Assert-YakuPremiumContains $js 'function fitRowStatus' 'PREMIUM_UI_FIT_STATUS_LA
 Assert-YakuPremiumContains $js '収まり要確認' 'PREMIUM_UI_FIT_RISK_COPY_MISSING'
 Assert-YakuPremiumContains $js '未翻訳（出力を止めます）' 'PREMIUM_UI_FIT_BLOCKER_COPY_MISSING'
 Assert-YakuPremiumContains $js '収まり見込み' 'PREMIUM_UI_FIT_OK_COPY_MISSING'
+Assert-YakuPremiumContains $js 'data-premium-fit-signature' 'PREMIUM_UI_FIT_SIGNATURE_MISSING'
+Assert-YakuPremiumContains $js 'セル表示を確認' 'PREMIUM_UI_FIT_GUIDANCE_MISSING'
 Assert-YakuPremiumContains $catJs 'currentRow[\s\S]*nextRow[\s\S]*classList' 'PREMIUM_UI_ROW_SWITCH_REBUILD_GUARD_MISSING'
 Assert-YakuPremiumContains $css '-webkit-line-clamp:2' 'PREMIUM_UI_FIT_TEXT_WRAP_MISSING'
 Assert-YakuPremiumContains $css 'premium-editor-risk\.is-risk' 'PREMIUM_UI_FIT_RISK_CHIP_MISSING'

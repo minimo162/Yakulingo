@@ -522,9 +522,9 @@
     if (!el('premium-fit-panel')) {
       var panel = create('aside', 'premium-fit-panel');
       panel.id = 'premium-fit-panel';
-      panel.innerHTML = '<header><h2>確認するセル</h2><p>出力できない項目と、確認をおすすめする項目を分けて表示します。</p></header><div id="premium-fit-filter" class="premium-fit-filter" role="group" aria-label="確認対象の種類">' +
+      panel.innerHTML = '<header><h2>確認するセル</h2><p>選択後、右の「セル表示を確認」で収まりを確認します。</p></header><div id="premium-fit-filter" class="premium-fit-filter" role="group" aria-label="確認対象の種類">' +
         '<button type="button" class="is-active" data-premium-filter="blockers">出力を止める <span id="premium-fit-blockers">0</span></button><button type="button" data-premium-filter="recommended">確認をおすすめ <span id="premium-fit-recommended">0</span></button><button type="button" data-premium-filter="all">すべて <span id="premium-fit-all">0</span></button></div>' +
-        '<div id="premium-fit-list" class="premium-fit-list"></div>';
+        '<div id="premium-fit-list" class="premium-fit-list" role="region" aria-label="確認対象の一覧。スクロールして続きを表示"></div>';
       var editorLayout = el('cat-editor-layout');
       workspace.insertBefore(panel, editorLayout || workspace.lastChild);
       all('[data-premium-filter]', panel).forEach(function (button) {
@@ -692,7 +692,28 @@
     syncPremiumFilterUi();
     var host = el('premium-fit-list'); if (!host) return;
     var models = premiumModels(), filtered = models.filter(function (model) { if (premiumState.catFilter === 'blockers' || premiumState.catFilter === 'issues') return model.blocking; if (premiumState.catFilter === 'recommended' || premiumState.catFilter === 'fit') return model.recommended; return true; });
-    if (!filtered.length) { host.innerHTML = '<div class="premium-fit-empty">' + ((premiumState.catFilter === 'blockers' || premiumState.catFilter === 'issues') ? '出力を止めるセルはありません。' : premiumState.catFilter === 'recommended' || premiumState.catFilter === 'fit' ? '確認をおすすめするセルはありません。' : '該当するセルはありません。') + '</div>'; return; }
+    if (!filtered.length) {
+      var emptySignature = 'empty|' + premiumState.catFilter;
+      if (host.getAttribute('data-premium-fit-signature') !== emptySignature) {
+        host.setAttribute('data-premium-fit-signature', emptySignature);
+        host.innerHTML = '<div class="premium-fit-empty">' + ((premiumState.catFilter === 'blockers' || premiumState.catFilter === 'issues') ? '出力を止めるセルはありません。' : premiumState.catFilter === 'recommended' || premiumState.catFilter === 'fit' ? '確認をおすすめするセルはありません。' : '該当するセルはありません。') + '</div>';
+      }
+      return;
+    }
+    /* 行を選ぶだけの操作では、一覧を作り直さず active だけを同期する。
+       全置換はちらつきとフォーカス喪失を起こすため、内容が変わったときだけ行う。 */
+    var signature = 'rows|' + filtered.map(function (model) {
+      return [model.index, model.location, model.source || '', model.target || '', fitRowStatus(model), model.risk ? 'risk' : '', model.blocking ? 'blocker' : model.recommended ? 'recommended' : ''].join('\\u001f');
+    }).join('\\u001e');
+    var existingRows = all('.premium-fit-row', host);
+    if (host.getAttribute('data-premium-fit-signature') === signature && existingRows.length === filtered.length) {
+      existingRows.forEach(function (row) {
+        var model = filtered.find(function (item) { return String(item.index) === String(row.getAttribute('data-premium-row')); });
+        row.classList.toggle('is-active', !!(model && model.row && model.row.classList.contains('is-active')));
+      });
+      return;
+    }
+    host.setAttribute('data-premium-fit-signature', signature);
     host.innerHTML = filtered.map(function (model) {
       var width = model.blocking ? 100 : model.recommended ? 76 : 92;
       var status = fitRowStatus(model), fullLabel = [model.location, model.source || '原文なし', model.target || '未翻訳', status].filter(Boolean).join(' / ');
