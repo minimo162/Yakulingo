@@ -1506,6 +1506,10 @@ body.premium-cat .premium-combined-panel > header p {
 }
 body.premium-cat .premium-combined-chat-live { width:100%; min-width:0; }
 body.premium-cat .premium-combined-chat-live .palette-form { display:grid; gap:8px; }
+body.premium-cat .premium-combined-chat-live .palette-input-guidance,
+body.premium-cat .premium-combined-excel .premium-excel-guidance { margin:0; color:var(--premium-muted); font-size:14px; line-height:1.55; }
+body.premium-cat .premium-combined-chat-live .palette-input-guidance { padding:8px 10px; border-left:3px solid var(--premium-brand); border-radius:8px; background:var(--premium-brand-soft); }
+body.premium-cat .premium-combined-excel .premium-excel-guidance { margin-top:8px; }
 body.premium-cat .premium-combined-chat-live .palette-label,
 body.premium-cat .premium-combined-chat-live .palette-count,
 body.premium-cat .premium-combined-chat-live .palette-direction-select-label,

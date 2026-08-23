@@ -34,7 +34,7 @@ assert.equal(cssBytes.includes(Buffer.from('\n')), true, 'UI_REVIEW_CSS_EOL_MISS
 mustMatch(eolBaseline, /^www\/assets\/ui-review\.css\tlf\r?$/m, 'UI_REVIEW_EOL_BASELINE_MISSING');
 mustMatch(
   premiumCss,
-  /:root\s*\{[^{}]*--premium-sidebar:\s*238px;/,
+  /:root\s*\{[^{}]*--premium-sidebar:\s*206px;/,
   'UI_REVIEW_BASE_SIDEBAR_WIDTH_MISSING'
 );
 mustMatch(

@@ -339,14 +339,15 @@
   }
   function embeddedChatMarkup() {
     return '<div class="premium-combined-chat-live">' +
-      '<form id="palette-form" class="palette-form"><label for="palette-input" class="palette-label">原文（貼り付けると自動で翻訳します）</label>' +
-      '<textarea id="palette-input" class="palette-input" rows="7" placeholder="ここに文章を貼り付けてください。" spellcheck="false" autocomplete="off"></textarea>' +
+      '<form id="palette-form" class="palette-form"><label for="palette-input" class="palette-label">原文</label>' +
+      '<p id="palette-input-guidance" class="palette-input-guidance">貼り付けると自動で開始します。入力・編集した文は「今すぐ訳す」を押してください。</p>' +
+      '<textarea id="palette-input" class="palette-input" rows="7" placeholder="ここに文章を貼り付けてください。" aria-describedby="palette-input-guidance" spellcheck="false" autocomplete="off"></textarea>' +
       '<div class="palette-input-row"><span id="palette-count" class="palette-count">0字</span><span id="palette-long-notice" class="palette-long-notice" role="status" hidden></span></div>' +
       '<div class="palette-direction-row"><div class="palette-direction-field"><label for="palette-direction-select" class="palette-direction-select-label">翻訳先</label>' +
       '<select id="palette-direction-select" aria-label="翻訳先"><option value="">自動</option><option value="to_en">日本語 → 英語</option><option value="to_jp">英語 → 日本語</option></select></div>' +
       '<div class="palette-action-group"><button id="palette-submit" type="submit">今すぐ訳す</button><button id="palette-handoff" type="button" class="link-button" disabled>CATで開く</button></div>' +
       '<div class="palette-context-field"><label for="palette-context-select" class="palette-context-select-label"><span class="palette-context-label-text">参考資料（任意）</span>' +
-      '<span class="palette-context-help">過去の確定訳を候補1にします。</span></label><select id="palette-context-select" aria-label="参考資料（選ぶとその資料の確定訳を優先します）">' +
+      '<span id="palette-context-help" class="palette-context-help">選ぶと、確認済みの訳を最初に提案します。</span></label><select id="palette-context-select" aria-describedby="palette-context-help" aria-label="参考資料（選ぶとその資料の確定訳を優先します）">' +
       '<option value="" label="参考資料なし">文脈: なし</option></select></div></div></form>' +
       '<p class="palette-fineprint">数値は伏せて送ります。社名・人名と文章はそのまま送ります。</p><p id="palette-direction" class="palette-direction-note" hidden></p>' +
       '<div id="palette-instant" class="palette-instant" aria-live="polite" hidden></div><div id="palette-chips" class="palette-chips" hidden><button type="button" class="secondary-button compact" data-yaku-chip="revise">丁寧に</button></div>' +
@@ -366,7 +367,7 @@
       '<section class="premium-combined-panel premium-combined-excel" aria-labelledby="premium-combined-excel-title"><header><span class="premium-panel-number">02</span><div>' +
       '<span class="premium-eyebrow">レイアウトを保つ</span><h2 id="premium-combined-excel-title">Excelを翻訳する</h2><p>セル幅や結合セルを読み、収まる長さで翻訳します。</p></div></header>' +
       '<div id="premium-file-drop" class="premium-file-drop" role="group" aria-label="Excelファイルを選ぶ、またはドロップする">' +
-      '<div class="premium-excel-mark">X</div><div class="premium-drop-copy"><strong>Excelをここに置く</strong><span>元のファイルは変えず、翻訳済みのコピーを作ります。</span>' +
+      '<div class="premium-excel-mark">X</div><div class="premium-drop-copy"><strong>Excelをここに置く</strong><span>元のファイルは変えず、翻訳済みのコピーを作ります。</span><p id="premium-excel-guidance" class="premium-excel-guidance">1. Excelを選ぶ → 2. 翻訳方向を選ぶ → 3. 確認画面で仕上げる</p>' +
       '<div class="premium-drop-tags"><i>列幅を測定</i><i>短訳を生成</i><i>超過だけ確認</i></div></div>' +
       '<div class="premium-drop-actions"><button id="premium-file-select" type="button">Excelを選ぶ</button><small>.xlsx / .xlsm</small></div>' +
       '<input id="premium-file-input" type="file" accept=".xlsx,.xlsm" hidden></div>' +
@@ -608,7 +609,13 @@
     var detailNodes = nodes.filter(function (node) { return primaryNodes.indexOf(node) < 0; });
     primaryNodes.forEach(function (node) {
       var label = one('.cat-segment-button-label', node);
-      if (node.hasAttribute('data-cat-confirm')) { if (label) label.textContent = 'この行を確認して次へ'; node.setAttribute('aria-label', 'この行を確認して次へ'); }
+      if (node.hasAttribute('data-cat-confirm')) {
+        var canConfirm = !model || String(model.target || '').trim().length > 0;
+        if (label) label.textContent = canConfirm ? 'この行を確認して次へ' : '訳文を入力してから確認';
+        node.disabled = !canConfirm;
+        node.title = canConfirm ? 'この行を確認済みにする（Ctrl+Enter）' : '先に「未訳を翻訳」または「この行だけ訳す」で訳文を入れてください。';
+        node.setAttribute('aria-label', canConfirm ? 'この行を確認して次へ' : '訳文を入力してから確認');
+      }
       else if (node.hasAttribute('data-cat-unconfirm')) { if (label) label.textContent = '確認を取り消す'; }
       else if (node.getAttribute('data-cat-inspector') === 'qc') { if (label) label.textContent = '指摘を見る'; }
       else if (node.hasAttribute('data-cat-placement-edit')) { if (label) label.textContent = 'セル表示を確認'; }
@@ -822,7 +829,8 @@
         var originalText = textOf(original);
         proxy.textContent = /Word/.test(originalText) ? 'Wordを書き出す' : /コピー/.test(originalText) ? '訳文をコピー' : 'Excelを書き出す';
       } else if (pair[0] === 'premium-translate') {
-        proxy.textContent = /未訳はありません/.test(textOf(original)) ? '翻訳済み' : pair[2];
+        var untranslatedCount = premiumModels().filter(function (model) { return !String(model.target || '').trim(); }).length;
+        proxy.textContent = untranslatedCount > 0 ? '未訳' + untranslatedCount + '件を翻訳' : /未訳はありません/.test(textOf(original)) ? '翻訳済み' : pair[2];
       } else {
         proxy.textContent = textOf(original) || pair[2];
         proxy.classList.toggle('cat-qa-has-blockers', original.classList.contains('cat-qa-has-blockers'));

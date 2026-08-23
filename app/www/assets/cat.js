@@ -1442,7 +1442,9 @@
       var editor = '<textarea rows="1" data-cat-input="' + index + '" data-cat-project-id="' + esc(project.id) + '" data-original="' + esc(effectiveTranslation) + '"' + (publicationVariant ? ' readonly data-cat-publication-value="1"' : '') + ' lang="' + languages.target + '" spellcheck="true" aria-label="' + row + '行目のExcelに保存される訳文" aria-invalid="' + (blockingError ? 'true' : 'false') + '"' + (blockingError ? ' aria-describedby="cat-qc-list"' : '') + '>' + esc(effectiveTranslation) + '</textarea>';
       var confirmation = segment.confirmed
         ? '<button type="button" class="cat-confirm-control is-confirmed" data-cat-unconfirm="' + index + '" title="確認済み。押すと確認を取り消す（Ctrl+Shift+U）" aria-label="' + row + '行目は確認済み。押すと確認を取り消す（Ctrl+Shift+U）" aria-keyshortcuts="Control+Shift+U"><span class="cat-confirm-mark" aria-hidden="true">✓</span><span>確認済み</span></button>'
-        : '<button type="button" class="cat-confirm-control" data-cat-confirm="' + index + '" title="この行を確認済みにする（Ctrl+Enter）" aria-label="' + row + '行目を確認済みにする（Ctrl+Enter）" aria-keyshortcuts="Control+Enter"><span class="cat-confirm-mark" aria-hidden="true">–</span><span>未確認</span></button>';
+        : effectiveTranslation.trim()
+          ? '<button type="button" class="cat-confirm-control" data-cat-confirm="' + index + '" title="この行を確認済みにする（Ctrl+Enter）" aria-label="' + row + '行目を確認済みにする（Ctrl+Enter）" aria-keyshortcuts="Control+Enter"><span class="cat-confirm-mark" aria-hidden="true">–</span><span>未確認</span></button>'
+          : '<button type="button" class="cat-confirm-control" data-cat-confirm="' + index + '" disabled title="訳文を入力してから確認できます。先に「この行だけ訳す」か「未訳を翻訳」を実行してください。" aria-label="' + row + '行目は訳文を入力してから確認できます"><span class="cat-confirm-mark" aria-hidden="true">–</span><span>未確認</span></button>';
       /* 行の高さを操作の置き場にしない。行固有の操作は上部の選択行リボンへ
          移し、点検結果・修正比較は下部ドックで表示する。 */
       var extras = findings.length ? '<div class="premium-inline-findings" role="status" aria-label="このセルの指摘">' + findings.map(function (message) { return '<span>' + esc(message) + '</span>'; }).join('') + '</div>' : '';

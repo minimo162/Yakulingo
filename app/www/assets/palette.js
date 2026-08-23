@@ -97,6 +97,26 @@
     } catch (error) {}
   }
 
+  function contextSourceLabel(source) {
+    if (source === 'file') return 'Excel';
+    if (source === 'align') return '過去訳';
+    if (source === 'text') return '文章';
+    return '資料';
+  }
+
+  function contextSavedLabel(saved) {
+    var match = String(saved || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return match ? Number(match[2]) + '/' + Number(match[3]) : '';
+  }
+
+  function contextOptionLabel(row) {
+    var name = String(row && row.file_name || '資料');
+    var total = Number(row && row.total || 0), confirmed = Number(row && row.confirmed || 0);
+    var progress = total > 0 ? '確認済み' + confirmed + '/' + total : '';
+    var saved = contextSavedLabel(row && row.saved);
+    return [name, contextSourceLabel(row && row.source), progress, saved].filter(Boolean).join(' · ');
+  }
+
   /* CoD審査REWORK-1 MINOR-6: 隣の<label>が既に「文脈」と言っているので、
      選択肢側の「文脈: 」接頭辞は重複——480x640の実測幅(92px)では約6文字
      しか見えず、接頭辞だけで40px近くを失っていた。既定の「なし」
@@ -111,8 +131,9 @@
       var opt = document.createElement('option');
       opt.value = String(row.id || '');
       var name = String(row.file_name || '');
-      opt.textContent = name;
-      opt.title = name;
+      opt.textContent = contextOptionLabel(row);
+      opt.title = [name, row.source_preview || ''].filter(Boolean).join(' / ');
+      opt.setAttribute('data-context-name', name);
       contextSelect.appendChild(opt);
     });
   }
@@ -130,6 +151,7 @@
     var opt = document.createElement('option');
     opt.value = id;
     opt.textContent = name || id;
+    opt.setAttribute('data-context-name', name || id);
     if (name) opt.title = name;
     contextSelect.appendChild(opt);
   }
@@ -1219,7 +1241,7 @@
         // recent 圏外の保存文脈(appendStoredContextOption の選択肢)は contextRows に
         // 居ないため、選択肢自身から表示名を拾う。空で保存すると次回の表示が id の裸になる。
         var opt = contextSelect.options[contextSelect.selectedIndex];
-        saveContextSelection(id, row ? String(row.file_name || '') : (opt ? (opt.title || opt.textContent) : ''));
+        saveContextSelection(id, row ? String(row.file_name || '') : (opt ? (opt.getAttribute('data-context-name') || opt.title || opt.textContent) : ''));
       });
       initContextPicker();
     }
