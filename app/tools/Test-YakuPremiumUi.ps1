@@ -37,7 +37,9 @@ Assert-YakuPremiumContains $js '3ステップで仕上げる' 'PREMIUM_UI_EXCEL_
 Assert-YakuPremiumContains $js 'data-premium-stage="translate"' 'PREMIUM_UI_EXCEL_TRANSLATE_STAGE_MISSING'
 Assert-YakuPremiumContains $js 'data-premium-stage="review"' 'PREMIUM_UI_EXCEL_REVIEW_STAGE_MISSING'
 Assert-YakuPremiumContains $js 'data-premium-stage="export"' 'PREMIUM_UI_EXCEL_EXPORT_STAGE_MISSING'
-Assert-YakuPremiumContains $js '残りの確認対象' 'PREMIUM_UI_EXCEL_REMAINING_LIST_MISSING'
+Assert-YakuPremiumContains $js '確認するセル' 'PREMIUM_UI_EXCEL_REVIEW_LIST_MISSING'
+Assert-YakuPremiumContains $js '出力を止める' 'PREMIUM_UI_EXCEL_BLOCKER_FILTER_MISSING'
+Assert-YakuPremiumContains $js '確認をおすすめ' 'PREMIUM_UI_EXCEL_RECOMMENDED_FILTER_MISSING'
 Assert-YakuPremiumContains $js 'premium-output-summary' 'PREMIUM_UI_EXCEL_OUTPUT_SUMMARY_MISSING'
 Assert-YakuPremiumContains $catJs "storedOpen === null \? false : storedOpen === '1'" 'PREMIUM_UI_PREVIEW_FIRST_USE_CLOSED_MISSING'
 Assert-YakuPremiumContains $js 'premium-combined-excel' 'PREMIUM_UI_COMBINED_EXCEL_MISSING'
@@ -47,7 +49,10 @@ if ($js -match '翻訳を始める|文章もExcelも、ここからすぐに。'
 Assert-YakuPremiumContains $js 'embeddedChatMarkup\(\)' 'PREMIUM_UI_LIVE_CHAT_EMBED_MISSING'
 Assert-YakuPremiumContains $cat 'premium-ui\.js[\s\S]{0,240}?palette\.js' 'PREMIUM_UI_LIVE_CHAT_SCRIPT_ORDER_MISSING'
 Assert-YakuPremiumContains $css 'premium-combined-grid[\s\S]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)' 'PREMIUM_UI_COMBINED_EQUAL_SPLIT_MISSING'
-Assert-YakuPremiumContains $cat '<title>Excel翻訳 - YakuLingo</title>' 'PREMIUM_UI_CAT_TITLE_MISSING'Assert-YakuPremiumContains $cat '訳文（Excelに入る内容）' 'PREMIUM_UI_PLACEMENT_PUBLICATION_LABEL_MISSING'
+Assert-YakuPremiumContains $cat '<title>Excel翻訳 - YakuLingo</title>' 'PREMIUM_UI_CAT_TITLE_MISSING'
+Assert-YakuPremiumContains $cat 'Excelに保存される訳文' 'PREMIUM_UI_PLACEMENT_PUBLICATION_LABEL_MISSING'
+Assert-YakuPremiumContains $cat '詳細設定（通常は変更不要）' 'PREMIUM_UI_PLACEMENT_SETTINGS_SUMMARY_MISSING'
+Assert-YakuPremiumContains $cat '下の空白セルへの保存：' 'PREMIUM_UI_PLACEMENT_DOWN_SUMMARY_MISSING'
 Assert-YakuPremiumContains $cat '右の空白セルへ表示を広げる（表示のみ）' 'PREMIUM_UI_PLACEMENT_SPILL_COPY_MISSING'
 Assert-YakuPremiumContains $cat '例外：下の空白セルへ続きを保存' 'PREMIUM_UI_PLACEMENT_DOWN_COPY_MISSING'
 Assert-YakuPremiumContains $palette '<title>チャット翻訳 - YakuLingo</title>' 'PREMIUM_UI_CHAT_TITLE_MISSING'
@@ -362,7 +367,7 @@ function sendJson(response, value, statusCode = 200) {
       });
       const catNavPre = await combinedPage.evaluate(() => ({ view: document.body.getAttribute('data-cat-view'), href: document.querySelector('[data-premium-nav="work"]').getAttribute('href'), navigate: typeof window.YakuCat && typeof window.YakuCat.navigateStart === 'function' }));
       assert.deepStrictEqual(catNavPre, { view: 'start', href: '/cat?view=work', navigate: true }, JSON.stringify(catNavPre));
-      await combinedPage.locator('[data-premium-nav="work"]').click();
+      await combinedPage.locator('[data-premium-nav="work"]:visible').first().click();
       await combinedPage.waitForFunction(() => location.pathname === '/cat' && location.search === '?view=work' && document.body.classList.contains('premium-mode-worklist'), null, { timeout: 10000 });
       assert.deepStrictEqual(await readStartNavState(), { url: '/cat?view=work', active: 'work', startHidden: true, workHidden: false, alignVisible: false, view: 'start', identity: true });
       assert.strictEqual(combinedDocumentLoads.length, navCountBeforeStartWork, 'start -> work must not reload the document');
@@ -416,7 +421,7 @@ function sendJson(response, value, statusCode = 200) {
       await beginDelayedCatOpen();
       const busyClickLoads = combinedDocumentLoads.length;
       const busyClickDocumentLoad = combinedPage.waitForEvent('domcontentloaded');
-      await combinedPage.locator('[data-premium-nav="work"]').click();
+      await combinedPage.locator('[data-premium-nav="work"]:visible').first().click();
       await busyClickDocumentLoad;
       await combinedPage.waitForFunction(() => location.pathname === '/cat' && location.search === '?view=work' && document.body.classList.contains('premium-mode-worklist') && !!window.YakuCat && !YakuCat.isBusy() && !!document.getElementById('cat-file-loading') && document.getElementById('cat-file-loading').hidden, null, { timeout: 20000 });
       assert.ok(combinedDocumentLoads.length > busyClickLoads, 'busy start navigation must perform a native document navigation');
@@ -428,7 +433,7 @@ function sendJson(response, value, statusCode = 200) {
          the ordered app entries are the only candidates for history.go(). */
       await combinedPage.goto(baseUrl + '/', { waitUntil: 'domcontentloaded' });
       await combinedPage.waitForFunction(() => location.pathname === '/' && location.search === '' && document.body.classList.contains('premium-mode-combined-start'), null, { timeout: 10000 });
-      await combinedPage.locator('[data-premium-nav="work"]').click();
+      await combinedPage.locator('[data-premium-nav="work"]:visible').first().click();
       await combinedPage.waitForFunction(() => location.pathname === '/cat' && location.search === '?view=work' && document.body.classList.contains('premium-mode-worklist'), null, { timeout: 10000 });
       await combinedPage.evaluate(() => history.back());
       await combinedPage.waitForFunction(() => location.pathname === '/' && location.search === '' && document.body.classList.contains('premium-mode-combined-start'), null, { timeout: 10000 });
@@ -450,7 +455,7 @@ function sendJson(response, value, statusCode = 200) {
       await combinedPage.waitForTimeout(1500);
       assert.strictEqual(await combinedPage.evaluate(() => location.pathname + location.search), '/', 'delayed open must not overwrite the busy Forward destination');
 
-      await combinedPage.locator('[data-premium-nav="work"]').click();
+      await combinedPage.locator('[data-premium-nav="work"]:visible').first().click();
       await combinedPage.waitForFunction(() => location.pathname === '/cat' && location.search === '?view=work' && document.body.classList.contains('premium-mode-worklist'), null, { timeout: 10000 });
       await beginDelayedCatOpen();
       const busyBackLoads = combinedDocumentLoads.length;
@@ -550,7 +555,7 @@ function sendJson(response, value, statusCode = 200) {
       assert.strictEqual(await combinedPage.evaluate(() => location.pathname + location.search), duplicateProjectRoute, 'delayed busy operation must not overwrite duplicate-project history');
       await combinedPage.evaluate(() => history.back());
       await combinedPage.waitForFunction(() => location.pathname === '/' && location.search === '' && document.body.classList.contains('premium-mode-combined-start'), null, { timeout: 10000 });
-      await combinedPage.locator('[data-premium-nav="work"]').click();
+      await combinedPage.locator('[data-premium-nav="work"]:visible').first().click();
       await combinedPage.waitForFunction(() => location.pathname === '/cat' && location.search === '?view=work' && document.body.classList.contains('premium-mode-worklist'), null, { timeout: 10000 });
       await combinedPage.evaluate(() => history.replaceState(null, '', '/'));
       await combinedPage.evaluate(() => { const event = new PopStateEvent('popstate'); window.dispatchEvent(event); });
@@ -707,13 +712,14 @@ function sendJson(response, value, statusCode = 200) {
         return { visible: visible(node), left: box ? box.left : 0, top: box ? box.top : 0, right: box ? box.right : 0, bottom: box ? box.bottom : 0, width: box ? box.width : 0, height: box ? box.height : 0, inViewport, inWorkspace };
       };
       const regions = { summary: region('premium-work-summary'), fit: region('premium-fit-panel'), editor: region('cat-editor-layout'), preview: region('cat-preview-dock') };
+      const requiredRegionKeys = innerWidth <= 1260 ? ['summary', 'fit', 'editor'] : ['summary', 'fit', 'editor', 'preview'];
       const workspaceInViewport = !!workspaceBox && workspaceBox.left >= -1 && workspaceBox.right <= innerWidth + 1 && workspaceBox.top >= -1 && workspaceBox.bottom <= innerHeight + 1;
       return {
         viewport: { width: innerWidth, height: innerHeight },
         workspace: workspaceBox ? { left: workspaceBox.left, right: workspaceBox.right, top: workspaceBox.top, bottom: workspaceBox.bottom, width: workspaceBox.width, height: workspaceBox.height } : null,
         regions,
         previewVisible: regions.preview.visible,
-        noClip: workspaceInViewport && Object.keys(regions).every(key => regions[key].visible && regions[key].inViewport && regions[key].inWorkspace),
+        noClip: workspaceInViewport && requiredRegionKeys.every(key => regions[key].visible && regions[key].inViewport && regions[key].inWorkspace),
         overflow: document.documentElement.scrollWidth > innerWidth + 1 || document.body.scrollWidth > innerWidth + 1,
         scrollWidth: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth)
       };
@@ -723,7 +729,7 @@ function sendJson(response, value, statusCode = 200) {
     await page.waitForTimeout(80);
     const workspaceNarrow = await measureWorkspaceFrame();
     assert.ok(!workspaceWide.overflow, JSON.stringify(workspaceWide));
-    assert.ok(workspaceNarrow.noClip && workspaceNarrow.previewVisible && !workspaceNarrow.overflow, JSON.stringify(workspaceNarrow));
+    assert.ok(workspaceNarrow.noClip && !workspaceNarrow.previewVisible && !workspaceNarrow.overflow, JSON.stringify(workspaceNarrow));
     console.log('Premium CAT workspace 1912x987 frame:', JSON.stringify(workspaceWide));
     console.log('Premium CAT workspace 1200x800 frame:', JSON.stringify(workspaceNarrow));
     await page.setViewportSize({ width: 1912, height: 987 });

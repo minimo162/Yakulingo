@@ -81,6 +81,26 @@ async function closeTools(page) {
   }, null, { timeout: 10000 });
 }
 
+/* Premium places low-frequency row tools behind 「この行の詳細」. The
+   legacy fit-screen driver opens that disclosure before using the preserved
+   delegated buttons; this exercises the same user path without making the
+   product show a permanent tool strip. */
+async function openRowDetails(page) {
+
+  let details = page.locator('#premium-row-details');
+  if (!(await details.count())) {
+    await page.waitForSelector('#premium-row-details', { state: 'attached', timeout: 10000 });
+    details = page.locator('#premium-row-details');
+  }
+  const open = await details.evaluate(function (node) { return !!node.open; });
+  if (!open) await details.locator(':scope > summary').click();
+  await page.waitForFunction(function () {
+    var node = document.getElementById('premium-row-details');
+    var preview = document.getElementById('cat-preview-open');
+    return !!node && node.open && !!preview && preview.getClientRects().length > 0 && getComputedStyle(preview).display !== 'none';
+  }, null, { timeout: 10000 });
+}
+
 const types = {
   '.js': 'application/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -206,6 +226,7 @@ async function readFilterAndBadges(page) {
       out.publicationCalls = publicationCalls;
     } else {
       // ---------------------------------------------------- プレビューの印（自動spill）
+      await openRowDetails(page);
       await page.click('#cat-preview-open');
       await page.waitForSelector('#cat-preview-dialog[open]', { timeout: 10000 });
       /* セルの組み立ては資料を読み込み終えた render() のあとに走る。起動直後の
@@ -232,6 +253,7 @@ async function readFilterAndBadges(page) {
       async function runPublicationFromPreviewCell(index) {
         await page.click('#cat-preview-body .cat-preview-cell[data-cat-preview-index="' + index + '"]');
         await page.waitForSelector('#cat-placement-dialog[open]', { timeout: 10000 });
+        await page.click('#cat-placement-edit');
         await page.click('#cat-publication-open');
         await page.waitForSelector('#cat-publication-dialog[open]', { timeout: 10000 });
         const before = publicationCalls.length;
@@ -324,6 +346,7 @@ async function readFilterAndBadges(page) {
       });
       await gotoRow(7);
       await page.waitForTimeout(200);
+      await openRowDetails(page);
       await page.click('[data-cat-fit-candidates="7"]');
       await page.waitForSelector('#cat-placement-dialog[open]', { timeout: 10000 });
       await page.waitForSelector('#cat-publication-dialog[open]', { timeout: 10000 });
@@ -352,6 +375,7 @@ async function readFilterAndBadges(page) {
         const t1 = Date.now();
         out.perfFirstRenderMs = t1 - t0;
         // 右端（最終内容列そのもの、行番号300）の印を体裁プレビューで見る。
+        await openRowDetails(page);
         await page.click('#cat-preview-open');
         await page.waitForSelector('#cat-preview-dialog[open]', { timeout: 10000 });
         await page.waitForFunction(function () {

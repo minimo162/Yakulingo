@@ -477,20 +477,26 @@
   </form></dialog>
   <dialog id="cat-placement-dialog" class="confirm-dialog cat-placement-dialog" aria-labelledby="cat-placement-title">
     <form id="cat-placement-form" method="dialog">
-      <h2 id="cat-placement-title">セルの内容を確認</h2>
-      <p class="muted">原文と訳文を確認します。通常は設定を変えず、そのまま確認できます。</p>
+      <h2 id="cat-placement-title">セル表示を確認</h2>
+      <p class="muted">Excelの表示イメージと、Excelに保存される値を確認します。</p>
       <p id="cat-placement-context" class="cat-placement-context" role="status"></p>
       <input id="cat-placement-index" type="hidden">
       <div id="cat-placement-source-card" class="cat-placement-field">
-        <span class="cat-placement-field-label">原文（このセルの内容）</span>
+        <span class="cat-placement-field-label">原文（変更されません）</span>
         <p id="cat-placement-source"></p>
       </div>
       <div id="cat-placement-publication-card" class="cat-placement-field">
-        <span class="cat-placement-field-label">訳文（Excelに入る内容）</span>
+        <span class="cat-placement-field-label">Excelに保存される訳文</span>
         <p id="cat-placement-publication"></p>
       </div>
+      <section class="cat-placement-view" aria-labelledby="cat-placement-grid-title"><div class="cat-placement-grid-heading"><h3 id="cat-placement-grid-title">見え方</h3><span>右の空白セルは表示だけ</span></div><div id="cat-placement-grid" class="cat-placement-grid" role="region" aria-label="Excelの表示範囲"></div><div class="cat-placement-legend"><span><i class="is-saved"></i>緑＝Excelへ保存</span><span><i class="is-display-only"></i>青破線＝表示だけ</span><span><i class="is-empty"></i>灰＝変更なし</span></div></section>
       <p id="cat-placement-auto-note" class="cat-placement-auto-note" role="status"></p>
-      <details id="cat-placement-advanced" class="cat-placement-advanced">
+      <section id="cat-placement-settings-summary" class="cat-placement-settings-summary" aria-labelledby="cat-placement-settings-title">
+        <div><h3 id="cat-placement-settings-title">詳細設定（通常は変更不要）</h3><p>Excelの保存先を変える必要がある場合だけ「配置を変更」から編集します。</p></div>
+        <div class="cat-placement-down-summary"><span>下の空白セルへの保存：</span><strong id="cat-placement-down-status" aria-live="polite">OFF</strong></div>
+      </section>
+
+      <details id="cat-placement-advanced" class="cat-placement-advanced cat-placement-edit-only">
         <summary>セルをまたぐ設定を開く（必要なときだけ）</summary>
         <p class="muted">プレビューでは右の空白セルへ自動で続けて表示します。Excelへ書く位置を変える場合だけ設定してください。</p>
         <p class="cat-placement-slices-heading">セルごとの区切り</p>
@@ -509,7 +515,7 @@
         </div>
       </details>
       <p id="cat-placement-message" class="muted" role="status"></p>
-      <div class="dialog-actions"><button type="button" class="secondary-button" id="cat-publication-open">情報を保って短くする</button><button type="button" class="secondary-button" id="cat-placement-cancel">戻る</button><button type="submit" id="cat-placement-save">この内容で確認する</button></div>
+      <div class="dialog-actions"><button type="button" class="secondary-button cat-placement-edit-only" id="cat-publication-open">情報を保って短くする</button><button type="button" class="secondary-button" id="cat-placement-cancel">閉じる</button><button type="button" class="primary-button cat-placement-edit-only" id="cat-placement-edit">配置を変更</button><button type="submit" id="cat-placement-save" class="cat-placement-edit-only" hidden>変更を保存</button></div>
     </form>
   </dialog>
   <dialog id="cat-publication-dialog" class="confirm-dialog cat-publication-dialog" aria-labelledby="cat-publication-title">

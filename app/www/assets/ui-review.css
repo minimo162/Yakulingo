@@ -592,3 +592,9 @@ body.premium-cat .premium-fit-panel > header p {
     border-color: CanvasText;
   }
 }
+
+/* The narrow Excel workspace keeps the task switcher in the top bar. */
+@media (min-width: 821px) and (max-width: 1260px) {
+  body.premium-ui.premium-cat .premium-top-actions { flex: 0 0 auto; min-width: 94px; width: auto; }
+  body.premium-ui.premium-cat .premium-top-actions > a[href="/cat?view=work"] { display: inline-flex; flex: 0 0 auto; width: auto; }
+}
