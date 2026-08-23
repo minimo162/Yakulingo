@@ -91,6 +91,22 @@ const server = http.createServer(async function (req, res) {
   res.end('{}');
 });
 
+/* Premium hides low-frequency row tools behind the details disclosure. Open
+   it before using the preserved delegated preview button. */
+async function openRowDetails(page) {
+  let details = page.locator('#premium-row-details');
+  if (!(await details.count())) {
+    await page.waitForSelector('#premium-row-details', { state: 'attached', timeout: 10000 });
+    details = page.locator('#premium-row-details');
+  }
+  const open = await details.evaluate(function (node) { return !!node.open; });
+  if (!open) await details.locator(':scope > summary').click();
+  await page.waitForFunction(function () {
+    var node = document.getElementById('premium-row-details');
+    var preview = document.getElementById('cat-preview-open');
+    return !!node && node.open && !!preview && preview.getClientRects().length > 0 && getComputedStyle(preview).display !== 'none';
+  }, null, { timeout: 10000 });
+}
 (async function () {
   const out = { errors: [], console: [], viewport: viewport };
   let browser = null;
@@ -102,8 +118,8 @@ const server = http.createServer(async function (req, res) {
     page.on('console', function (message) { if (message.type() === 'error') out.console.push(message.text()); });
     await page.goto('http://127.0.0.1:' + server.address().port + '/cat?project=' + encodeURIComponent(payload.main.id), { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#cat-grid-body tr[data-cat-row]', { timeout: 20000 });
-
-    // 「体裁で見る」はツールバーに直接見えているので、そのまま押す。
+    // Open the delegated preview action through the visible details disclosure.
+    await openRowDetails(page);
     await page.click('#cat-preview-open');
     await page.waitForSelector('#cat-preview-dialog[open]', { timeout: 10000 });
     await page.waitForFunction(function () {

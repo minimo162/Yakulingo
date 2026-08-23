@@ -728,6 +728,20 @@ function sendJson(response, value, statusCode = 200) {
     await page.setViewportSize({ width: 1200, height: 800 });
     await page.waitForTimeout(80);
     const workspaceNarrow = await measureWorkspaceFrame();
+    const narrowWorkspaceTypography = await page.evaluate(() => {
+      const workspace = document.getElementById('cat-workspace');
+      const visible = node => {
+        if (!node) return false;
+        const style = getComputedStyle(node), box = node.getBoundingClientRect();
+        return !node.hidden && style.display !== 'none' && style.visibility !== 'hidden' && box.width > 0 && box.height > 0;
+      };
+      const directText = node => Array.from(node.childNodes).some(child => child.nodeType === Node.TEXT_NODE && child.textContent.trim());
+      const nodes = workspace ? Array.from(workspace.querySelectorAll('*')).filter(node => visible(node) && directText(node) && node.getAttribute('aria-hidden') !== 'true' && !node.matches('.cat-source-text,textarea[data-cat-input]') && !node.closest('.cat-source-text')) : [];
+      const values = nodes.map(node => ({ text: node.textContent.trim().slice(0, 40), font: parseFloat(getComputedStyle(node).fontSize) })).filter(item => Number.isFinite(item.font)).sort((a, b) => a.font - b.font);
+      return { minFont: values.length ? values[0].font : 0, lowest: values.slice(0, 12) };
+    });
+    assert.ok(narrowWorkspaceTypography.minFont >= 14, JSON.stringify(narrowWorkspaceTypography));
+    console.log('Premium CAT workspace 1200x800 typography:', JSON.stringify(narrowWorkspaceTypography));
     assert.ok(!workspaceWide.overflow, JSON.stringify(workspaceWide));
     assert.ok(workspaceNarrow.noClip && !workspaceNarrow.previewVisible && !workspaceNarrow.overflow, JSON.stringify(workspaceNarrow));
     console.log('Premium CAT workspace 1912x987 frame:', JSON.stringify(workspaceWide));
