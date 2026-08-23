@@ -1907,9 +1907,27 @@ body.premium-cat #cat-workspace .cat-preview-sheet p,
 body.premium-cat #cat-workspace .cat-preview-flow p,
 body.premium-cat #cat-workspace .cat-preview-grid,
 body.premium-cat #cat-workspace .cat-preview-grid th,
-body.premium-cat #cat-workspace .cat-preview-grid td { font-size: 13px; }
+body.premium-cat #cat-workspace .cat-preview-grid td { font-size: 14px; }
 body.premium-cat #cat-workspace .cat-preview-sheet h3,
 body.premium-cat #cat-workspace .cat-preview-flow h3 { font-size: 15px; }
+/* The dialog is outside #cat-workspace, so the old compact premium rule
+   otherwise leaves its grid at 8px. Keep the real column widths, but make the
+   coordinate labels and cell hit targets readable at the same size as the
+   permanent dock. */
+body.premium-cat #cat-preview-dialog .cat-preview-grid,
+body.premium-cat #cat-preview-dialog .cat-preview-grid th,
+body.premium-cat #cat-preview-dialog .cat-preview-grid td { font-size: 14px; }
+body.premium-cat #cat-preview-dialog .cat-preview-grid th { padding: 5px 8px; }
+body.premium-cat #cat-preview-dialog .cat-preview-grid .cat-preview-cell { min-height: 2.15rem; padding: 5px 8px; }
+body.premium-cat #cat-preview-dialog #cat-preview-note,
+body.premium-cat #cat-preview-dialog #cat-preview-dock-note { display: block; line-height: 1.55; }
+body.premium-cat #cat-workspace .cat-preview-dock-note,
+body.premium-cat #cat-workspace #cat-preview-dock-note { line-height: 1.45; }
+body.premium-cat #cat-placement-dialog .cat-placement-context { margin-top: 12px; }
+body.premium-cat #cat-placement-dialog .cat-placement-choice { margin-top: 14px; padding: 12px 14px; border-color: var(--premium-hairline); background: var(--premium-soft); }
+body.premium-cat #cat-placement-dialog .cat-placement-choice-title { font-size: 15px; }
+body.premium-cat #cat-placement-dialog .cat-placement-choice-note { max-width: none; font-size: 13px; line-height: 1.55; }
+body.premium-cat #cat-placement-dialog .cat-placement-slice-title { margin-bottom: 5px; color: var(--premium-muted); font-size: 13px; }
 body.premium-cat #cat-workspace > .premium-work-summary > #cat-export-blocked,
 body.premium-cat #cat-workspace > .premium-work-summary > #cat-mask-notice { font-size: 13px; }
 body.premium-cat #cat-workspace > #cat-output-row,

@@ -3418,7 +3418,7 @@
       style = ' style="width:' + previewColumnPx(layout, column, span) + 'px' +
         (align === 'center' ? ';text-align:center' : align === 'right' ? ';text-align:right' : '') + '"';
     }
-    var placementTitle = previewSide === 'target' && segment.placement_root_index !== undefined ? 'セルごとの区切りを調整' : '';
+    var placementTitle = previewSide === 'target' && segment.placement_root_index !== undefined ? 'このセルの配置を調整' : '';
     var placementAction = previewSide === 'target' && segment.placement_root_index !== undefined
       ? ' data-cat-placement-edit="' + Number(segment.placement_root_index) + '"'
       : ' data-cat-qa-jump="' + Number(segment.index) + '"';
@@ -3587,6 +3587,33 @@
     }
     return html || '<p class="muted">まだ行がありません。</p>';
   }
+  /* 格子は原本の列幅を保つため、長い文はセル内で省略されることがある。
+     省略された文字を「見えない」と誤解させないよう、現在選択中のセルは
+     格子の外へ全文を出す。位置（番地）と内容を同じ札にまとめることで、
+     プレビューの空白や短い列幅の意味も画面上で判断できる。 */
+  function previewSelectionSummary(side) {
+    var segment = (project && project.segments || []).find(function (item) { return Number(item.index) === Number(activeIndex); });
+    if (!segment) return '';
+    var location = String(segment.location || '').replace(/\s*,\s*/g, ' ').trim();
+    var value = side === 'source'
+      ? String(segment.source || '')
+      : String(segment.publication_translation || segment.translation || segment.source || '');
+    value = value.replace(/\s+/g, ' ').trim();
+    if (!value) value = '（空欄）';
+    return (location ? location + '：' : '') + value + (side === 'target' && !String(segment.translation || '').trim() ? '（訳文未入力）' : '');
+  }
+  function previewSelectionNote(side, missing) {
+    var summary = previewSelectionSummary(side);
+    var note = summary ? '選択中 ' + summary + '。' : '';
+    if (side === 'target') {
+      note += '訳文セルを押すと、このセルの配置を調整できます。';
+      if (missing) note += ' 薄い字は、訳文がまだ無いところです。';
+    } else if (summary) {
+      note += '原文表示では、セルを押すと作業行へ移ります。';
+    }
+    return note;
+  }
+
   function renderPreview() {
     setPreviewMode(previewMode);
     document.querySelectorAll('[data-cat-preview-side]').forEach(function (button) {
@@ -3594,9 +3621,7 @@
     });
     var all = (project && project.segments) || [];
     var missing = all.filter(function (segment) { return !String(segment.translation || '').trim(); }).length;
-    el('cat-preview-note').textContent = previewSide === 'target'
-      ? '訳文セルを押すと、セル配置の調整と「情報を保って短くする候補」を使えます。' + (missing ? ' 薄い字は、訳文がまだ無いところです。' : '')
-      : '';
+    el('cat-preview-note').textContent = previewSelectionNote(previewSide, missing);
     el('cat-preview-body').innerHTML = buildPreview();
     var active = el('cat-preview-body').querySelector('.is-active');
     if (active && active.scrollIntoView) active.scrollIntoView({ block: 'center' });
@@ -3714,20 +3739,24 @@
     document.querySelectorAll('[data-cat-dock-side]').forEach(function (button) {
       button.setAttribute('aria-pressed', String(button.getAttribute('data-cat-dock-side') === dockSide));
     });
+    updatePreviewDockNote();
+    el('cat-preview-dock-body').innerHTML = buildPreviewFor(dockSide);
+    syncDockActive(true);
+  }
+
+  function updatePreviewDockNote() {
     var missing = ((project && project.segments) || []).filter(function (segment) {
       return !String(segment.translation || '').trim();
     }).length;
-    el('cat-preview-dock-note').textContent = dockSide === 'target' && missing
-      ? '薄い字は、訳文がまだ無いところです。'
-      : '';
-    el('cat-preview-dock-body').innerHTML = buildPreviewFor(dockSide);
-    syncDockActive(true);
+    var note = el('cat-preview-dock-note');
+    if (note) note.textContent = previewSelectionNote(dockSide, missing);
   }
 
   function syncDockActive(center) {
     if (!dockOpen) return;
     var host = el('cat-preview-dock-body');
     if (!host) return;
+    updatePreviewDockNote();
     var next = host.querySelector('[data-cat-preview-index="' + Number(activeIndex) + '"]');
     var current = host.querySelector('.is-active');
     if (current === next) return;
@@ -3840,7 +3869,8 @@
     host.innerHTML = existing.map(function (text, sliceIndex) {
       var original = sliceIndex < base.length ? base[sliceIndex] : null;
       var label = original ? ((original.sheet || '') + ' ' + (original.address || '')) : ('下の空白 ' + (sliceIndex - base.length + 1) + 'セル目');
-      return '<label>' + esc(label + '（' + (sliceIndex + 1) + '）') + '<textarea data-cat-placement-slice="' + sliceIndex + '">' + esc(text) + '</textarea></label>';
+      var accessibleLabel = label + '（' + (sliceIndex + 1) + '）';
+      return '<label><span class="cat-placement-slice-title">' + esc(accessibleLabel) + '</span><textarea data-cat-placement-slice="' + sliceIndex + '" aria-label="' + esc(accessibleLabel) + '">' + esc(text) + '</textarea></label>';
     }).join('');
   }
   function openPlacementEditor(index) {
@@ -3848,6 +3878,13 @@
     var placement = segment && segment.placement;
     if (!placement || !(placement.destinations || []).length) { status('この行には調整できるセル配置がありません。', true); return false; }
     el('cat-placement-index').value = String(index);
+    var context = el('cat-placement-context');
+    if (context) {
+      var contextLocation = String(segment.location || '').replace(/\s*,\s*/g, ' ').trim();
+      var destinationCount = (placement.destinations || []).filter(function (destination) { return String(destination.mode || '') !== 'use_confirmed_empty'; }).length;
+      var destinationLabel = destinationCount === 1 ? '1つの欄に表示します。' : destinationCount + 'つの欄に分けて表示します。';
+      context.textContent = (contextLocation ? '対象セル：' + contextLocation : '対象セルの配置') + ' ／ ' + destinationLabel;
+    }
     placementEditorDestinations = (placement.destinations || []).slice();
     var downDestinations = placementEditorDestinations.filter(function (destination) { return String(destination.mode || '') === 'use_confirmed_empty'; });
     el('cat-placement-down').value = String(downDestinations.length);
@@ -3857,8 +3894,13 @@
     el('cat-placement-spill').value = String(spillCount);
     var baseDestinationCount = placementEditorDestinations.length - downDestinations.length;
     var excelPlacement = !!(project && ['xlsx', 'xlsm'].indexOf(project.document_format) >= 0);
-    el('cat-placement-spill-row').hidden = baseDestinationCount !== 1 || !excelPlacement;
+    var spillVisible = baseDestinationCount === 1 && excelPlacement;
+    var spillGroup = el('cat-placement-spill-group');
+    var downGroup = el('cat-placement-down-group');
+    el('cat-placement-spill-row').hidden = !spillVisible;
+    if (spillGroup) spillGroup.hidden = !spillVisible;
     el('cat-placement-down-row').hidden = !excelPlacement;
+    if (downGroup) downGroup.hidden = !excelPlacement;
     el('cat-placement-down-note').hidden = !excelPlacement;
     el('cat-placement-message').textContent = '現在の掲載訳: ' + String(segment.publication_translation || segment.translation || '');
     el('cat-placement-dialog').showModal();
@@ -4989,7 +5031,18 @@
         else { previewPdfSide = pdfSide; document.querySelectorAll('[data-cat-pdf-side]').forEach(function (item) { item.setAttribute('aria-pressed', String(item === button)); }); }
         return;
       }
-      if (button.hasAttribute('data-cat-placement-edit')) { return openPlacementEditor(button.getAttribute('data-cat-placement-edit')); }
+      if (button.hasAttribute('data-cat-placement-edit')) {
+        var placementIndex = Number(button.getAttribute('data-cat-placement-edit'));
+        /* プレビューから別セルを押したときも、配置画面の対象行と背後の
+           「選択中」札を同じセルへ揃える。未保存の訳文があれば先にflushし、
+           保存できなかった場合は別セルの配置を開かない。 */
+        if (placementIndex !== Number(activeIndex)) {
+          return activateIndex(placementIndex, false).then(function () {
+            if (Number(activeIndex) === placementIndex) openPlacementEditor(placementIndex);
+          });
+        }
+        return openPlacementEditor(placementIndex);
+      }
       if (button.hasAttribute('data-cat-fit-candidates')) { return openFitPublicationFlow(button.getAttribute('data-cat-fit-candidates')); }
       if (button.hasAttribute('data-cat-qa-jump')) return jumpFromQa(button.getAttribute('data-cat-qa-jump'));
       if (button.hasAttribute('data-cat-doc-finding-jump')) return jumpFromQa(button.getAttribute('data-cat-doc-finding-jump'));
