@@ -33,6 +33,11 @@ foreach ($html in @($cat, $palette)) {
     Assert-YakuPremiumCount $html '/assets/premium-ui.js' 1 'PREMIUM_UI_JS_REFERENCE_INVALID'
 }
 Assert-YakuPremiumContains $js 'premium-combined-chat' 'PREMIUM_UI_COMBINED_CHAT_MISSING'
+Assert-YakuPremiumContains $js 'palette-input-guidance' 'PREMIUM_UI_INPUT_GUIDANCE_MISSING'
+Assert-YakuPremiumContains $js 'premium-excel-guidance' 'PREMIUM_UI_EXCEL_GUIDANCE_MISSING'
+Assert-YakuPremiumContains $js 'untranslatedCount' 'PREMIUM_UI_TRANSLATE_COUNT_LABEL_MISSING'
+Assert-YakuPremiumContains $js '訳文を入力してから確認' 'PREMIUM_UI_EMPTY_ROW_CONFIRM_COPY_MISSING'
+Assert-YakuPremiumContains $catJs 'disabled title="訳文を入力してから確認' 'PREMIUM_UI_EMPTY_ROW_CONFIRM_GUARD_MISSING'
 Assert-YakuPremiumContains $js '3ステップで仕上げる' 'PREMIUM_UI_EXCEL_STAGE_TITLE_MISSING'
 Assert-YakuPremiumContains $js 'data-premium-stage="translate"' 'PREMIUM_UI_EXCEL_TRANSLATE_STAGE_MISSING'
 Assert-YakuPremiumContains $js 'data-premium-stage="review"' 'PREMIUM_UI_EXCEL_REVIEW_STAGE_MISSING'
@@ -338,6 +343,13 @@ function sendJson(response, value, statusCode = 200) {
       assert.strictEqual(recentRequestCount, 2, 'YakuCat.refreshRecent must issue exactly one new recent request: ' + recentRequestCount);
       const recentCountAfterRefresh = recentRequestCount;
       const combinedWide = await measureCombined();
+      const combinedGuidance = await combinedPage.evaluate(() => {
+        const visible = node => { const box = node && node.getBoundingClientRect(); return !!node && !!box && box.width > 0 && box.height > 0 && getComputedStyle(node).display !== 'none'; };
+        const chat = document.getElementById('palette-input-guidance');
+        const excel = document.getElementById('premium-excel-guidance');
+        return { chat: { visible: visible(chat), text: chat ? chat.textContent.trim() : '' }, excel: { visible: visible(excel), text: excel ? excel.textContent.trim() : '' } };
+      });
+      assert.ok(combinedGuidance.chat.visible && combinedGuidance.chat.text.includes('\u8cbc\u308a\u4ed8\u3051\u308b\u3068\u81ea\u52d5\u3067\u958b\u59cb') && combinedGuidance.chat.text.includes('\u4eca\u3059\u3050\u8a33\u3059') && combinedGuidance.excel.visible && combinedGuidance.excel.text.includes('\u7ffb\u8a33\u65b9\u5411\u3092\u9078\u3076'), JSON.stringify(combinedGuidance));
       assert.ok(combinedWide.mode && combinedWide.title === '\u7ffb\u8a33 - YakuLingo' && combinedWide.chat.visible && combinedWide.excel.visible && combinedWide.splitDelta <= 2 && combinedWide.input.visible && combinedWide.input.form === 'palette-form' && combinedWide.input.font >= 18 && combinedWide.quickButton.visible && combinedWide.quickButton.font >= 16 && combinedWide.quickButton.height >= 50 && combinedWide.excelButton.visible && combinedWide.excelButton.font >= 16 && combinedWide.excelButton.height >= 50 && combinedWide.fileDropVisible && !combinedWide.legacyFileLaneVisible && combinedWide.minFont >= 13 && combinedWide.bodyFont >= 17 && combinedWide.sidebarRecent.noHorizontalOverflow && !combinedWide.overflow, JSON.stringify(combinedWide));
       await combinedPage.locator('#palette-input').fill('\u58f2\u4e0a\u304c\u5897\u52a0\u3057\u307e\u3057\u305f\u3002');
       await combinedPage.waitForTimeout(100);
