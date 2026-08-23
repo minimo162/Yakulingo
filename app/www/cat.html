@@ -477,25 +477,39 @@
   </form></dialog>
   <dialog id="cat-placement-dialog" class="confirm-dialog cat-placement-dialog" aria-labelledby="cat-placement-title">
     <form id="cat-placement-form" method="dialog">
-      <h2 id="cat-placement-title">このセルの配置を調整</h2>
-      <p class="muted">文章の内容は変えず、セルの境界だけを調整します。各欄を上からつないだ内容が現在の訳文と同じになるようにしてください。</p>
+      <h2 id="cat-placement-title">セルの内容を確認</h2>
+      <p class="muted">原文と訳文を確認します。通常は設定を変えず、そのまま確認できます。</p>
       <p id="cat-placement-context" class="cat-placement-context" role="status"></p>
       <input id="cat-placement-index" type="hidden">
-      <div id="cat-placement-slices" class="cat-placement-slices"></div>
-      <div id="cat-placement-spill-group" class="cat-placement-choice">
-        <label id="cat-placement-spill-row"><span class="cat-placement-choice-title">1. 右の空白セルへ表示を広げる</span>
-          <select id="cat-placement-spill"><option value="0">使わない</option><option value="1">右1セル</option><option value="2">右2セル</option><option value="3">右3セル</option></select>
-        </label>
-        <p id="cat-placement-spill-note" class="muted cat-placement-choice-note">右セルへ値は書きません。空白・非表示・結合を静的に確認し、実際に収まったかはPDFで目視します。</p>
+      <div id="cat-placement-source-card" class="cat-placement-field">
+        <span class="cat-placement-field-label">原文（このセルの内容）</span>
+        <p id="cat-placement-source"></p>
       </div>
-      <div id="cat-placement-down-group" class="cat-placement-choice">
-        <label id="cat-placement-down-row"><span class="cat-placement-choice-title">2. 下の空白セルへ続きを書く</span>
-          <select id="cat-placement-down"><option value="0">使わない</option><option value="1">下1セル</option><option value="2">下2セル</option><option value="3">下3セル</option></select>
-        </label>
-        <p id="cat-placement-down-note" class="muted cat-placement-choice-note">選んだセルは保存時と出力直前に実際のExcelで空白と安全性を確認します。基準訳や翻訳メモリは変わりません。</p>
+      <div id="cat-placement-publication-card" class="cat-placement-field">
+        <span class="cat-placement-field-label">訳文（Excelに入る内容）</span>
+        <p id="cat-placement-publication"></p>
       </div>
+      <p id="cat-placement-auto-note" class="cat-placement-auto-note" role="status"></p>
+      <details id="cat-placement-advanced" class="cat-placement-advanced">
+        <summary>セルをまたぐ設定を開く（必要なときだけ）</summary>
+        <p class="muted">プレビューでは右の空白セルへ自動で続けて表示します。Excelへ書く位置を変える場合だけ設定してください。</p>
+        <p class="cat-placement-slices-heading">セルごとの区切り</p>
+        <div id="cat-placement-slices" class="cat-placement-slices"></div>
+        <div id="cat-placement-spill-group" class="cat-placement-choice">
+          <label id="cat-placement-spill-row"><span class="cat-placement-choice-title">右の空白セルへExcelの表示を広げる</span>
+            <select id="cat-placement-spill"><option value="0">使わない</option><option value="1">右1セル</option><option value="2">右2セル</option><option value="3">右3セル</option></select>
+          </label>
+          <p id="cat-placement-spill-note" class="muted cat-placement-choice-note">右セルには値を書かず、表示だけを広げます。必要なときはPDFで確認します。</p>
+        </div>
+        <div id="cat-placement-down-group" class="cat-placement-choice">
+          <label id="cat-placement-down-row"><span class="cat-placement-choice-title">下の空白セルへExcelの続きを書く</span>
+            <select id="cat-placement-down"><option value="0">使わない</option><option value="1">下1セル</option><option value="2">下2セル</option><option value="3">下3セル</option></select>
+          </label>
+          <p id="cat-placement-down-note" class="muted cat-placement-choice-note">選んだセルは保存時と出力直前に、実際のExcelで空白と安全性を確認します。</p>
+        </div>
+      </details>
       <p id="cat-placement-message" class="muted" role="status"></p>
-      <div class="dialog-actions"><button type="button" class="secondary-button" id="cat-publication-open">情報を保って短くする候補</button><button type="button" class="secondary-button" id="cat-placement-cancel">戻る</button><button type="submit" id="cat-placement-save">この配置で確認する</button></div>
+      <div class="dialog-actions"><button type="button" class="secondary-button" id="cat-publication-open">情報を保って短くする</button><button type="button" class="secondary-button" id="cat-placement-cancel">戻る</button><button type="submit" id="cat-placement-save">この内容で確認する</button></div>
     </form>
   </dialog>
   <dialog id="cat-publication-dialog" class="confirm-dialog cat-publication-dialog" aria-labelledby="cat-publication-title">

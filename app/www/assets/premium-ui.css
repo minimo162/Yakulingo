@@ -1924,6 +1924,13 @@ body.premium-cat #cat-preview-dialog #cat-preview-dock-note { display: block; li
 body.premium-cat #cat-workspace .cat-preview-dock-note,
 body.premium-cat #cat-workspace #cat-preview-dock-note { line-height: 1.45; }
 body.premium-cat #cat-placement-dialog .cat-placement-context { margin-top: 12px; }
+body.premium-cat #cat-placement-dialog .cat-placement-field { margin-top: 12px; padding: 12px 14px; border-color: var(--premium-hairline); background: var(--premium-soft); }
+body.premium-cat #cat-placement-dialog .cat-placement-field-label,
+body.premium-cat #cat-placement-dialog .cat-placement-slices-heading { color: var(--premium-muted); font-size: 13px; }
+body.premium-cat #cat-placement-dialog .cat-placement-field p { margin: 0; font-size: 15px; line-height: 1.55; }
+body.premium-cat #cat-placement-dialog .cat-placement-auto-note { margin-top: 12px; padding: 10px 14px; border-left-width: 3px; line-height: 1.55; }
+body.premium-cat #cat-placement-dialog .cat-placement-advanced { margin-top: 14px; }
+body.premium-cat #cat-placement-dialog .cat-placement-advanced > summary { padding: 10px 0; }
 body.premium-cat #cat-placement-dialog .cat-placement-choice { margin-top: 14px; padding: 12px 14px; border-color: var(--premium-hairline); background: var(--premium-soft); }
 body.premium-cat #cat-placement-dialog .cat-placement-choice-title { font-size: 15px; }
 body.premium-cat #cat-placement-dialog .cat-placement-choice-note { max-width: none; font-size: 13px; line-height: 1.55; }

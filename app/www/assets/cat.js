@@ -3111,11 +3111,12 @@
       var to = previewCellRef('x, ' + parts[1]);
       if (to && to.column > lastContentColumn) lastContentColumn = to.column;
     });
+    var previewLastColumn = Math.min(YAKU_PREVIEW_MAX_COLUMN, lastContentColumn + YAKU_PREVIEW_AUTO_SPILL_COLUMNS);
     found.__prepared = {
       defaultWidth: Number(found.default_width) || 8.43,
       defaultHeight: Number(found.default_height) || 18.75,
       widths: widths, heights: heights, wrap: wrap, shrink: shrink, align: align, bold: bold, spans: spans, covered: covered,
-      hidden: hidden, occupied: occupied, lastContentColumn: lastContentColumn,
+      hidden: hidden, occupied: occupied, lastContentColumn: lastContentColumn, previewLastColumn: previewLastColumn, contentMapKnown: !!((found.occupied_cells || []).length || (found.formula_cells || []).length || (found.merges || []).length),
       unknownWidthColumns: (found.unknown_width_columns || []).map(function (range) {
         return { min: Number(range.min), max: Number(range.max) };
       })
@@ -3150,17 +3151,23 @@
      止めるのは次のいずれか。
        - 占有セル・数式セル・非表示列・結合・未知幅列（src/CatProject.ps1 の
          Get-YakuCatRightSpillDisplayRegion が宣言スピルを検証する条件と同じ）
-       - シートの最終内容列（layout.lastContentColumn、previewLayout が1回だけ
-         求める）を超えたとき。最終内容列より右は「右へ無限の余白」であって、
-         収まりの根拠にする使える幅ではない（上のコメントと同じ理由）
+       - 通常の収まり判定では、シートの最終内容列（layout.lastContentColumn、
+         previewLayout が1回だけ求める）を超えたとき。プレビュー描画だけは
+         実際に格子へ出す空白列をpreviewLimitとして明示的に渡す。
      Excel 自身の列数上限（XFD＝16384）は、その最終内容列の値そのものが壊れて
      いた場合の物理的な歯止めとして残す（2枚目の網）。 */
   var YAKU_PREVIEW_MAX_COLUMN = 16384;
-  function autoSpillColumns(layout, row, column, span) {
+  /* 原本の最終内容列より右も、既定幅の空白セルを3列だけ格子に出す。
+     Excelの右隣セルへ文字が流れる見え方を確認できる範囲に限定し、
+     16384列を歩き続けることはしない。 */
+  var YAKU_PREVIEW_AUTO_SPILL_COLUMNS = 3;
+  function autoSpillColumns(layout, row, column, span, previewLimit) {
     if (!layout) return [];
     var count = (span && span.columns) || 1;
     var next = column + count, result = [];
     var bound = Math.min(YAKU_PREVIEW_MAX_COLUMN, Number(layout.lastContentColumn) || 0);
+    var previewBound = Math.min(YAKU_PREVIEW_MAX_COLUMN, Number(previewLimit) || 0);
+    if (previewBound > bound) bound = previewBound;
     while (next <= bound) {
       if (!previewColumnsHaveKnownWidth(layout, next, 1)) break;
       if (layout.hidden[next]) break;
@@ -3243,7 +3250,7 @@
      宣言セルは検証済みの空セルなので、自動計算に必ず含まれるはずである
      （届いていれば自動計算のほうが必ず勝つ）。自動が届かない例外だけ、
      従来の経路（元の計算そのまま）へ落ちる。 */
-  function segmentFitRisk(segment, layout, row, column, span, text, bold) {
+  function segmentFitRisk(segment, layout, row, column, span, text, bold, previewLimit) {
     var key = row + ':' + column;
     var wrap = layout ? !!layout.wrap[key] : false;
     var shrink = layout ? !!layout.shrink[key] : false;
@@ -3255,7 +3262,7 @@
     if (layout && measurementKnown && !wrap && !shrink) {
       /* 中央寄せ・右寄せは左右にはみ出すため、自動の右スピルは対象にしない
          （空か左寄せのセルだけ）。 */
-      var autoColumns = (align === '' || align === 'left') ? autoSpillColumns(layout, row, column, span) : [];
+      var autoColumns = (align === '' || align === 'left') ? autoSpillColumns(layout, row, column, span, previewLimit) : [];
       if (autoColumns.length) {
         autoColumns.forEach(function (col) { displayWidth += previewColumnPx(layout, col, null); });
         spillColumnCount = autoColumns.length; spillSource = 'auto';
@@ -3298,6 +3305,19 @@
     if (!layout) return { risk: false };
     var key = ref.row + ':' + ref.column;
     return segmentFitRisk(segment, layout, ref.row, ref.column, layout.spans[key] || null, segmentFitText(segment), !!layout.bold[key]);
+  }
+  /* プレビュー専用の収まり判定。保存・一括候補の判定は未知の右側を根拠にしないが、
+     プレビューは実際に描いている格子の右へ3列だけ空白を出して見せる。 */
+  function previewSegmentFitRiskInfo(segment) {
+    if (!segment || segment.kind !== 'cell' || !String(segment.translation || '').trim()) return { risk: false, spillColumnCount: 0 };
+    var ref = previewCellRef(segment.location);
+    if (!ref) return { risk: false, spillColumnCount: 0 };
+    var layout = previewLayout(ref.sheet);
+    if (!layout) return { risk: false, spillColumnCount: 0 };
+    var key = ref.row + ':' + ref.column;
+    var previewLimit = Number(layout.previewLastColumn) || 0;
+    if (!layout.contentMapKnown) previewLimit = Math.max(previewLimit, ref.column + YAKU_PREVIEW_AUTO_SPILL_COLUMNS);
+    return segmentFitRisk(segment, layout, ref.row, ref.column, layout.spans[key] || null, segmentFitText(segment), !!layout.bold[key], previewLimit);
   }
   /* 「収める候補」を作れる行の条件（1クリック導線の行ボタンと、「まとめて収める」の
      対象選定の両方がここを呼ぶ。判定を2箇所に増やさない）。配置先（placement.
@@ -3412,18 +3432,18 @@
     var shrink = layout ? !!layout.shrink[key] : false;
     var align = layout ? (layout.align[key] || '') : '';
     var style = '';
-    var fit = segmentFitRisk(segment, layout, row, column, span, value.text, !!(layout && layout.bold[key]));
+    var fit = segmentFitRisk(segment, layout, row, column, span, value.text, !!(layout && layout.bold[key]), layout ? Number(layout.previewLastColumn) || 0 : 0);
     var overflowRisk = fit.risk;
     if (layout) {
       style = ' style="width:' + previewColumnPx(layout, column, span) + 'px' +
         (align === 'center' ? ';text-align:center' : align === 'right' ? ';text-align:right' : '') + '"';
     }
-    var placementTitle = previewSide === 'target' && segment.placement_root_index !== undefined ? 'このセルの配置を調整' : '';
+    var placementTitle = previewSide === 'target' && segment.placement_root_index !== undefined ? 'セルの内容を確認' : '';
     var placementAction = previewSide === 'target' && segment.placement_root_index !== undefined
       ? ' data-cat-placement-edit="' + Number(segment.placement_root_index) + '"'
       : ' data-cat-qa-jump="' + Number(segment.index) + '"';
     /* 判定の物差し（何pxで測ったか）は行側に必ず出す（利用者判断）。既存の
-       title（セルごとの区切りを調整）とは1つの title へ両方書く。 */
+       title（セルの内容を確認）とは1つの title へ両方書く。 */
     var fitTitle = overflowRisk ? ('使える幅 ' + Math.round(fit.displayWidthPx) + 'px' + (fit.spillColumnCount > 0 ? '（右の空きセル' + fit.spillColumnCount + '個を含む）' : '')) : '';
     var combinedTitle = [placementTitle, fitTitle].filter(Boolean).join(' / ');
     var titleAttr = combinedTitle ? ' title="' + esc(combinedTitle) + '"' : '';
@@ -3555,10 +3575,15 @@
       /* 元の体裁（列幅・折り返し・結合）。原本から読んだものがあれば使う。
          無ければ今までどおり均等幅で出す（体裁は足しであって前提ではない）。 */
       var layout = previewLayout(sheet.name);
+      if (layout && !layout.contentMapKnown && sheet.maxColumn > 0) {
+        layout.previewLastColumn = Math.min(YAKU_PREVIEW_MAX_COLUMN, Math.max(Number(layout.previewLastColumn) || 0, sheet.maxColumn + YAKU_PREVIEW_AUTO_SPILL_COLUMNS));
+      }
+      var previewMaxColumn = sheet.maxColumn;
+      if (layout && Number(layout.previewLastColumn) > previewMaxColumn) previewMaxColumn = Number(layout.previewLastColumn);
       var rows = '';
       for (var row = 1; row <= sheet.maxRow; row++) {
         var cells = '<th scope="row">' + row + '</th>';
-        for (var column = 1; column <= sheet.maxColumn; column++) {
+        for (var column = 1; column <= previewMaxColumn; column++) {
           if (layout && layout.covered[row + ':' + column]) continue;
           var segment = grid[row + ':' + column];
           var span = (layout && layout.spans[row + ':' + column]) || null;
@@ -3570,9 +3595,9 @@
       /* 幅を効かせるには table-layout: fixed と colgroup が要る。auto のままだと
          中身の長さが勝ち、Excel なら切れるはずの文字で列が広がる。 */
       var group = '<col style="width:2.6rem">';
-      for (var g = 1; g <= sheet.maxColumn; g++) group += '<col style="width:' + (layout ? previewColumnPx(layout, g, null) : 120) + 'px">';
+      for (var g = 1; g <= previewMaxColumn; g++) group += '<col style="width:' + (layout ? previewColumnPx(layout, g, null) : 120) + 'px">';
       var head = '<th scope="col"><span class="sr-only">行番号</span></th>';
-      for (var c = 1; c <= sheet.maxColumn; c++) {
+      for (var c = 1; c <= previewMaxColumn; c++) {
         var letters = '', n = c;
         while (n > 0) { var mod = (n - 1) % 26; letters = String.fromCharCode(65 + mod) + letters; n = Math.floor((n - mod) / 26); }
         head += '<th scope="col">' + letters + '</th>';
@@ -3606,7 +3631,7 @@
     var summary = previewSelectionSummary(side);
     var note = summary ? '選択中 ' + summary + '。' : '';
     if (side === 'target') {
-      note += '訳文セルを押すと、このセルの配置を調整できます。';
+      note += '訳文セルを押すと、原文とExcelに入る訳文を確認できます。';
       if (missing) note += ' 薄い字は、訳文がまだ無いところです。';
     } else if (summary) {
       note += '原文表示では、セルを押すと作業行へ移ります。';
@@ -3869,7 +3894,7 @@
     host.innerHTML = existing.map(function (text, sliceIndex) {
       var original = sliceIndex < base.length ? base[sliceIndex] : null;
       var label = original ? ((original.sheet || '') + ' ' + (original.address || '')) : ('下の空白 ' + (sliceIndex - base.length + 1) + 'セル目');
-      var accessibleLabel = label + '（' + (sliceIndex + 1) + '）';
+      var accessibleLabel = label + '（訳文' + (sliceIndex + 1) + '）';
       return '<label><span class="cat-placement-slice-title">' + esc(accessibleLabel) + '</span><textarea data-cat-placement-slice="' + sliceIndex + '" aria-label="' + esc(accessibleLabel) + '">' + esc(text) + '</textarea></label>';
     }).join('');
   }
@@ -3878,17 +3903,21 @@
     var placement = segment && segment.placement;
     if (!placement || !(placement.destinations || []).length) { status('この行には調整できるセル配置がありません。', true); return false; }
     el('cat-placement-index').value = String(index);
+    var contextLocation = String(segment.location || '').replace(/\s*,\s*/g, ' ').trim();
+    var sourceNode = el('cat-placement-source');
+    var publicationNode = el('cat-placement-publication');
+    if (sourceNode) sourceNode.textContent = String(segment.source || '（原文なし）');
+    if (publicationNode) publicationNode.textContent = String(segment.publication_translation || segment.translation || '（訳文なし）');
     var context = el('cat-placement-context');
     if (context) {
-      var contextLocation = String(segment.location || '').replace(/\s*,\s*/g, ' ').trim();
-      var destinationCount = (placement.destinations || []).filter(function (destination) { return String(destination.mode || '') !== 'use_confirmed_empty'; }).length;
-      var destinationLabel = destinationCount === 1 ? '1つの欄に表示します。' : destinationCount + 'つの欄に分けて表示します。';
-      context.textContent = (contextLocation ? '対象セル：' + contextLocation : '対象セルの配置') + ' ／ ' + destinationLabel;
+      context.textContent = contextLocation ? '対象セル：' + contextLocation : '対象セルの配置';
     }
     placementEditorDestinations = (placement.destinations || []).slice();
     var downDestinations = placementEditorDestinations.filter(function (destination) { return String(destination.mode || '') === 'use_confirmed_empty'; });
     el('cat-placement-down').value = String(downDestinations.length);
     renderPlacementSliceEditors(downDestinations.length);
+    var advanced = el('cat-placement-advanced');
+    if (advanced) advanced.open = false;
     var spillRegion = (placement.display_regions || []).find(function (region) { return region.mode === 'spill_right_display_only'; });
     var spillCount = spillRegion && spillRegion.cells ? spillRegion.cells.length : 0;
     el('cat-placement-spill').value = String(spillCount);
@@ -3902,7 +3931,18 @@
     el('cat-placement-down-row').hidden = !excelPlacement;
     if (downGroup) downGroup.hidden = !excelPlacement;
     el('cat-placement-down-note').hidden = !excelPlacement;
-    el('cat-placement-message').textContent = '現在の掲載訳: ' + String(segment.publication_translation || segment.translation || '');
+    var autoNote = el('cat-placement-auto-note');
+    if (autoNote) {
+      var fit = previewSegmentFitRiskInfo(segment);
+      if (downDestinations.length > 0 || baseDestinationCount > 1) {
+        autoNote.textContent = '現在の設定では、訳文を複数のセルへ分けて保存します。詳細設定を開くと内容を確認できます。';
+      } else {
+        autoNote.textContent = fit && fit.spillColumnCount > 0
+          ? 'プレビューでは右の空白セルへ自動で続けて表示します。Excelの値は対象セルにだけ保存します。'
+          : 'この訳文は対象セルに保存します。収まりはPDFで確認します。';
+      }
+    }
+    el('cat-placement-message').textContent = '';
     el('cat-placement-dialog').showModal();
     var first = el('cat-placement-slices').querySelector('textarea'); if (first) YakuCommon.focus(first);
     return true;

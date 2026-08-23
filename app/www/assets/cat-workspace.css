@@ -1227,6 +1227,43 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
   color: var(--accent-text);
   font-weight: 700;
 }
+.cat-placement-field {
+  margin-top: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle);
+}
+.cat-placement-field-label,
+.cat-placement-slices-heading {
+  display: block;
+  margin-bottom: var(--space-0);
+  color: var(--accent-text);
+  font-size: var(--font-meta);
+  font-weight: 700;
+}
+.cat-placement-field p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.cat-placement-auto-note {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-1) var(--space-2);
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+}
+.cat-placement-advanced {
+  margin-top: var(--space-2);
+  border-top: 1px solid var(--line);
+}
+.cat-placement-advanced > summary {
+  padding: var(--space-1) 0;
+  color: var(--accent-text);
+  cursor: pointer;
+  font-weight: 700;
+}
+.cat-placement-advanced > p { margin: 0 0 var(--space-1); }
 .cat-placement-choice {
   display: grid;
   gap: var(--space-0);
