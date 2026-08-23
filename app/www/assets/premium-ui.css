@@ -2165,6 +2165,54 @@ body.premium-cat .premium-inline-findings { display: none; }
   body.premium-cat .premium-row-details-content { max-width: calc(100vw - 330px); }
 }
 
+/* Review contract: keep visible CAT utility labels at a 14px floor at 1200px.
+   Repeat the workspace scope so this wins over the desktop compact selectors
+   without changing the wider 1912px composition. */
+@media (min-width: 821px) and (max-width: 1260px) {
+  body.premium-cat #cat-workspace .premium-summary-kicker,
+  body.premium-cat #cat-workspace .premium-summary-title p,
+  body.premium-cat #cat-workspace .premium-summary-progress strong,
+  body.premium-cat #cat-workspace .premium-summary-progress strong span,
+  body.premium-cat #cat-workspace #premium-fit-percent,
+  body.premium-cat #cat-workspace .premium-summary-progress > span,
+  body.premium-cat #cat-workspace .premium-summary-stats span,
+  body.premium-cat #cat-workspace .premium-stage-number,
+  body.premium-cat #cat-workspace .premium-stage-nav strong,
+  body.premium-cat #cat-workspace .premium-stage-nav small,
+  body.premium-cat #cat-workspace .premium-output-summary,
+  body.premium-cat #cat-workspace .premium-summary-link,
+  body.premium-cat #cat-workspace .premium-fit-panel > header p,
+  body.premium-cat #cat-workspace .premium-fit-row small,
+  body.premium-cat #cat-workspace .premium-fit-row em,
+  body.premium-cat #cat-workspace .premium-fit-row-state,
+  body.premium-cat #cat-workspace .premium-fit-empty,
+  body.premium-cat #cat-workspace .premium-editor-intro span:first-child,
+  body.premium-cat #cat-workspace .premium-editor-risk,
+  body.premium-cat #cat-workspace .cat-location-main,
+  body.premium-cat #cat-workspace .cat-state,
+  body.premium-cat #cat-workspace .cat-fit-risk-badge,
+  body.premium-cat #cat-workspace .cat-confirm-control,
+  body.premium-cat #cat-workspace #cat-grid-body .cat-col-no,
+  body.premium-cat #cat-workspace #cat-grid-body .cat-col-loc,
+  body.premium-cat #cat-workspace #cat-grid-body .cat-change-badge,
+  body.premium-cat #cat-workspace #cat-grid-body .cat-review-note-badge,
+  body.premium-cat #cat-workspace #cat-grid-body .cat-location-kind,
+  body.premium-cat #cat-workspace #cat-grid-body .cat-origin,
+  body.premium-cat #cat-workspace #cat-grid-body .cat-fit-risk-badge,
+  body.premium-cat #cat-workspace #cat-grid-body .cat-confirm-control,
+  body.premium-cat #cat-workspace .premium-row-actions .cat-segment-button-label,
+  body.premium-cat #cat-workspace .premium-row-actions .cat-op-key,
+  body.premium-cat #cat-workspace .premium-row-actions .cat-segment-status,
+  body.premium-cat #cat-workspace .cat-segment-actions .cat-segment-button-label,
+  body.premium-cat #cat-workspace .cat-segment-actions .cat-op-key,
+  body.premium-cat #cat-workspace .cat-segment-actions .cat-segment-status,
+  body.premium-cat #cat-workspace .premium-canonical-detail,
+  body.premium-cat #cat-workspace .cat-publication-badge,
+  body.premium-cat #cat-workspace .cat-save-state,
+  body.premium-cat #cat-workspace .cat-source-lock {
+    font-size: 14px;
+  }
+}
 /* Cell display dialog ----------------------------------------------------- */
 body.premium-cat #cat-placement-dialog { width: min(1440px, calc(100vw - 80px)); max-width: 1440px; }
 body.premium-cat .cat-placement-dialog > form { display: grid; grid-template-columns: minmax(280px, .72fr) minmax(560px, 1.6fr); column-gap: 22px; padding: 0 26px 22px; }
