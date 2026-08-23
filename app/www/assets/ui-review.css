@@ -48,6 +48,20 @@ body.premium-ui .premium-sidebar-rule {
   margin-block: 14px 12px;
 }
 
+/* Recent-work cards must follow the sidebar width. Grid items otherwise keep
+   their max-content width and expose a horizontal scrollbar before the title
+   ellipsis can take effect. */
+body.premium-ui .premium-sidebar-recent {
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+body.premium-ui .premium-recent-item {
+  min-width: 0;
+  overflow: hidden;
+}
+
 body.premium-ui .premium-topbar {
   padding-inline: clamp(18px, 2.2vw, 30px);
 }
