@@ -496,16 +496,16 @@
         <p class="cat-placement-slices-heading">セルごとの区切り</p>
         <div id="cat-placement-slices" class="cat-placement-slices"></div>
         <div id="cat-placement-spill-group" class="cat-placement-choice">
-          <label id="cat-placement-spill-row"><span class="cat-placement-choice-title">右の空白セルへExcelの表示を広げる</span>
-            <select id="cat-placement-spill"><option value="0">使わない</option><option value="1">右1セル</option><option value="2">右2セル</option><option value="3">右3セル</option></select>
+          <label id="cat-placement-spill-row"><span class="cat-placement-choice-title">右の空白セルへ表示を広げる（表示のみ）</span>
+            <select id="cat-placement-spill" hidden aria-hidden="true"><option value="0">自動（推奨）</option><option value="1">右1セル</option><option value="2">右2セル</option><option value="3">右3セル</option></select>
           </label>
-          <p id="cat-placement-spill-note" class="muted cat-placement-choice-note">右セルには値を書かず、表示だけを広げます。必要なときはPDFで確認します。</p>
+          <p id="cat-placement-spill-note" class="muted cat-placement-choice-note">右の空白セルはプレビューの表示だけに使います。Excelの値は対象セルにだけ保存し、必要な範囲は自動で判断します。確認はPDFで行います。</p>
         </div>
         <div id="cat-placement-down-group" class="cat-placement-choice">
-          <label id="cat-placement-down-row"><span class="cat-placement-choice-title">下の空白セルへExcelの続きを書く</span>
+          <label id="cat-placement-down-row"><span class="cat-placement-choice-title">例外：下の空白セルへ続きを保存</span>
             <select id="cat-placement-down"><option value="0">使わない</option><option value="1">下1セル</option><option value="2">下2セル</option><option value="3">下3セル</option></select>
           </label>
-          <p id="cat-placement-down-note" class="muted cat-placement-choice-note">選んだセルは保存時と出力直前に、実際のExcelで空白と安全性を確認します。</p>
+          <p id="cat-placement-down-note" class="muted cat-placement-choice-note">通常は使いません。選んだセルへ保存する前に、実際のExcelで空白・結合・数式・印刷結果を確認します。基準訳や翻訳メモリは変わりません。</p>
         </div>
       </details>
       <p id="cat-placement-message" class="muted" role="status"></p>

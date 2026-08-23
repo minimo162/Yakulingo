@@ -3840,10 +3840,10 @@
       try { window.localStorage.setItem('yaku-cat-dock-layout-v2', '1'); } catch (_) {}
     }
     setDockHeight(height, false);
-    /* 初回は補助情報の存在に気づけるように開く。明示的に畳んだあとだけ、
+    /* 初回はExcel翻訳の主作業に集中できるよう閉じる。利用者が一度開いたあとは、
        ひとつの保存値（yaku-cat-dock-open）を尊重する。旧 inspector-hidden は
        競合を避けるためここでは読まない。 */
-    setDockOpen(storedOpen === null ? true : storedOpen === '1', false);
+    setDockOpen(storedOpen === null ? false : storedOpen === '1', false);
   }
 
   function bindDockSplitter() {

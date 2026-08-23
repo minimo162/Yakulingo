@@ -1998,3 +1998,108 @@ body.premium-palette #palette-submit {
 }
 body.premium-palette #palette-result .result-alt { min-height: 58px; }
 body.premium-palette #palette-result .result-alt-body { font-size: 16px; }
+
+/* Excel translation focus flow -------------------------------------------- */
+body.premium-cat .premium-work-summary {
+  grid-template-rows: auto auto auto;
+  align-items: stretch;
+}
+body.premium-cat .premium-summary-title { align-self: start; }
+body.premium-cat .premium-summary-kicker {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--premium-brand);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .08em;
+}
+body.premium-cat .premium-stage-nav {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--premium-hairline);
+}
+body.premium-cat .premium-stage-nav button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 6px 11px;
+  border: 1px solid var(--premium-hairline);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--premium-ink);
+  text-align: left;
+}
+body.premium-cat .premium-stage-nav button:hover:not(:disabled) { border-color: var(--premium-brand); background: var(--premium-brand-soft); }
+body.premium-cat .premium-stage-nav button.is-current { border-color: var(--premium-brand); box-shadow: inset 3px 0 0 var(--premium-brand); }
+body.premium-cat .premium-stage-nav button.is-complete { border-color: #cfe7d8; background: #f5fbf7; }
+body.premium-cat .premium-stage-nav button:disabled { cursor: default; opacity: .56; }
+body.premium-cat .premium-stage-number {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--premium-tint);
+  color: var(--premium-muted);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 24px;
+  text-align: center;
+}
+body.premium-cat .premium-stage-nav button.is-current .premium-stage-number { background: var(--premium-brand); color: #fff; }
+body.premium-cat .premium-stage-nav button.is-complete .premium-stage-number { background: var(--premium-green); color: #fff; }
+body.premium-cat .premium-stage-nav button > span:last-child { min-width: 0; }
+body.premium-cat .premium-stage-nav strong,
+body.premium-cat .premium-stage-nav small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.premium-cat .premium-stage-nav strong { font-size: 13px; font-weight: 680; }
+body.premium-cat .premium-stage-nav small { margin-top: 2px; color: var(--premium-muted); font-size: 13px; }
+body.premium-cat .premium-output-summary {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: var(--premium-soft);
+  color: var(--premium-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+body.premium-cat .premium-output-summary > span { min-width: 0; }
+body.premium-cat .premium-summary-link {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 1px solid var(--premium-line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--premium-brand);
+  font-size: 13px;
+  font-weight: 650;
+}
+body.premium-cat .premium-summary-link:disabled { cursor: default; opacity: .55; }
+body.premium-cat .premium-fit-row.is-risk .premium-fit-row-state { color: var(--premium-red); }
+body.premium-cat .premium-work-summary > #cat-export-blocked,
+body.premium-cat .premium-work-summary > #cat-mask-notice { display: none !important; }
+body.premium-cat #cat-workspace .premium-summary-title p,
+body.premium-cat #cat-workspace .premium-summary-progress strong { font-size: 13px; }
+
+/* At 1200px, keep the confirmation list and editor readable after the preview
+   is intentionally closed on first visit. */
+@media (min-width: 1081px) and (max-width: 1260px) {
+  body.premium-cat #cat-workspace:has(#cat-preview-dock[hidden]) {
+    grid-template-columns: 270px minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas: "summary summary" "fit editor";
+  }
+}
+@media (max-width: 820px) {
+  body.premium-cat .premium-stage-nav { grid-template-columns: 1fr; }
+  body.premium-cat .premium-output-summary { align-items: flex-start; flex-direction: column; }
+}

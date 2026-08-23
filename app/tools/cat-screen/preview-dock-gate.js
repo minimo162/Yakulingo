@@ -69,9 +69,15 @@ const server = http.createServer(function (req, res) {
        ことを測る。 */
     await page.waitForFunction(function () {
       var dock = document.getElementById('cat-preview-dock');
+      return !!dock && dock.hidden;
+    }, null, { timeout: 15000 });
+    observed.dockVisibleByDefault = false;
+    observed.dockHiddenByDefault = true;
+    await page.locator('#cat-preview-dock-toggle').click();
+    await page.waitForFunction(function () {
+      var dock = document.getElementById('cat-preview-dock');
       return !!dock && !dock.hidden && dock.getClientRects().length > 0;
     }, null, { timeout: 15000 });
-    observed.dockVisibleByDefault = true;
     observed.dockState = await page.evaluate(function () {
       var dock = document.getElementById('cat-preview-dock');
       var rect = dock.getBoundingClientRect();

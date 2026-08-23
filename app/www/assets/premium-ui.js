@@ -174,7 +174,7 @@
       '<div class="premium-top-actions"><a href="/cat?view=work">作業一覧</a>' +
       '<button id="premium-translate" type="button" class="premium-top-action" hidden>未訳を翻訳</button>' +
       '<button id="premium-qa" type="button" class="premium-top-action" hidden>点検結果</button>' +
-      '<button id="premium-tools" type="button" class="premium-top-text-button" hidden>詳細ツール</button>' +
+      '<button id="premium-tools" type="button" class="premium-top-text-button" hidden>その他</button>' +
       '<button id="premium-export" type="button" class="premium-top-action premium-primary-action" hidden>Excelを書き出す</button>' +
       '<button id="premium-new-chat" type="button" class="premium-top-action" hidden>＋ 新しい会話</button></div>';
     return topbar;
@@ -508,9 +508,9 @@
     if (!el('premium-work-summary')) {
       var summary = create('section', 'premium-work-summary');
       summary.id = 'premium-work-summary';
-      summary.innerHTML = '<div class="premium-summary-title"><h1>セル幅に合わせて、短く正確に仕上げる</h1><p id="premium-summary-context"></p></div>' +
-        '<div class="premium-summary-progress"><div><strong><span id="premium-fit-count">0</span> / <span id="premium-total-count">0</span>セルが収まりました</strong><span id="premium-fit-percent">0%</span></div><i><b id="premium-fit-progress"></b></i></div>' +
-        '<div class="premium-summary-stats"><div class="is-done"><b id="premium-fit-done">0</b><span>収まり済み</span></div><div class="is-alert"><b id="premium-fit-left">0</b><span>要調整</span></div><div><b id="premium-untranslated">0</b><span>未翻訳</span></div></div>';
+      summary.innerHTML = '<div class="premium-summary-title"><span class="premium-summary-kicker">Excel翻訳</span><h1>3ステップで仕上げる</h1><p id="premium-summary-context"></p></div>' +
+        '<div class="premium-summary-progress"><div><strong><span id="premium-fit-count">0</span> / <span id="premium-total-count">0</span>行を確認済み</strong><span id="premium-fit-percent">0%</span></div><i><b id="premium-fit-progress"></b></i></div>' +
+        '<div class="premium-summary-stats"><div class="is-done"><b id="premium-fit-done">0</b><span>確認済み</span></div><div class="is-alert"><b id="premium-fit-left">0</b><span>残り</span></div><div><b id="premium-untranslated">0</b><span>未翻訳</span></div></div><nav id="premium-stage-nav" class="premium-stage-nav" aria-label="Excel翻訳の進み方"><button type="button" data-premium-stage="translate"><span class="premium-stage-number">1</span><span><strong>翻訳する</strong><small id="premium-stage-translate-note">未訳を翻訳</small></span></button><button type="button" data-premium-stage="review"><span class="premium-stage-number">2</span><span><strong>残りを確認する</strong><small id="premium-stage-review-note">確認対象を表示</small></span></button><button type="button" data-premium-stage="export"><span class="premium-stage-number">3</span><span><strong>Excelへ出力する</strong><small id="premium-stage-export-note">出力条件を確認</small></span></button></nav><div id="premium-output-summary" class="premium-output-summary" role="status"><span id="premium-output-summary-text">出力条件を確認しています…</span><button type="button" id="premium-output-summary-open" class="premium-summary-link">条件を見る</button></div>';
       workspace.insertBefore(summary, workspace.firstChild);
       ['cat-output-help', 'cat-output-reason', 'cat-export-blocked', 'cat-mask-notice'].forEach(function (id) {
         var node = el(id);
@@ -520,8 +520,8 @@
     if (!el('premium-fit-panel')) {
       var panel = create('aside', 'premium-fit-panel');
       panel.id = 'premium-fit-panel';
-      panel.innerHTML = '<header><h2>セル一覧</h2><p>調整が必要なセルを優先</p></header><div id="premium-fit-filter" class="premium-fit-filter">' +
-        '<button type="button" class="is-active" data-premium-filter="issues">要調整</button><button type="button" data-premium-filter="fit">収まり済み</button><button type="button" data-premium-filter="all">すべて</button></div>' +
+      panel.innerHTML = '<header><h2>残りの確認対象</h2><p>未確認・点検・体裁を優先</p></header><div id="premium-fit-filter" class="premium-fit-filter">' +
+        '<button type="button" class="is-active" data-premium-filter="issues">残り</button><button type="button" data-premium-filter="fit">体裁</button><button type="button" data-premium-filter="all">すべて</button></div>' +
         '<div id="premium-fit-list" class="premium-fit-list"></div>';
       var editorLayout = el('cat-editor-layout');
       workspace.insertBefore(panel, editorLayout || workspace.lastChild);
@@ -529,7 +529,7 @@
         button.addEventListener('click', function () {
           premiumState.catFilter = button.getAttribute('data-premium-filter') || 'issues';
           all('[data-premium-filter]', panel).forEach(function (item) { item.classList.toggle('is-active', item === button); });
-          var originalKey = premiumState.catFilter === 'issues' ? 'fit' : 'all';
+          var originalKey = premiumState.catFilter === 'issues' ? 'all' : premiumState.catFilter === 'fit' ? 'fit' : 'all';
           var original = one('[data-cat-filter="' + originalKey + '"]');
           if (original) original.click();
           window.setTimeout(refreshWorkspaceUi, 80);
@@ -549,6 +549,7 @@
     }
     moveRowActions();
     forcePreviewRail();
+    bindStageActions();
   }
   function removeExcelWorkspaceUi() {
     var workspace = el('cat-workspace');
@@ -576,17 +577,54 @@
   function forcePreviewRail() {
     var dock = el('cat-preview-dock');
     if (!dock) return;
-    /* The preview is visible on first use, but a deliberate "畳む" action is
-       a real preference. Do not reopen it on the next workspace refresh. */
+    /* The preview stays closed on first use. A deliberate "開く" action is
+       a real preference, so do not reopen it on the next workspace refresh. */
     var storedOpen = null;
     try { storedOpen = window.localStorage.getItem('yaku-cat-dock-open'); } catch (_) {}
-    if (storedOpen === '0') return;
+    if (storedOpen !== '1') return;
     if (dock.hidden) {
       var toggle = el('cat-preview-dock-toggle');
       if (toggle) toggle.click();
     }
     var preview = one('[data-cat-inspector="preview"]');
     if (preview && preview.getAttribute('aria-selected') !== 'true') preview.click();
+  }
+  function runPremiumStage(stage) {
+    if (stage === 'translate') {
+      var translate = el('cat-translate');
+      if (translate && !translate.disabled) translate.click();
+      return;
+    }
+    if (stage === 'export') {
+      var exportButton = el('cat-export');
+      if (exportButton && !exportButton.disabled) exportButton.click();
+      else stage = 'review';
+    }
+    if (stage !== 'review') return;
+    /* 「残り」は未確認・点検・体裁を一つの一覧で見るため、元の表は
+       いったん全件に戻し、左の専用一覧で絞り込む。 */
+    var filter = one('[data-cat-filter="all"]');
+    if (filter) filter.click();
+    window.setTimeout(function () {
+      var first = one('#premium-fit-list .premium-fit-row');
+      if (first) first.click();
+      else {
+        var editor = el('cat-editor-layout');
+        if (editor && editor.scrollIntoView) editor.scrollIntoView({ block: 'start', behavior: reducedMotion() ? 'auto' : 'smooth' });
+      }
+    }, 60);
+  }
+  function bindStageActions() {
+    all('[data-premium-stage]').forEach(function (button) {
+      if (button.getAttribute('data-bound') === '1') return;
+      button.setAttribute('data-bound', '1');
+      button.addEventListener('click', function () { if (!button.disabled) runPremiumStage(button.getAttribute('data-premium-stage')); });
+    });
+    var summary = el('premium-output-summary-open');
+    if (summary && summary.getAttribute('data-bound') !== '1') {
+      summary.setAttribute('data-bound', '1');
+      summary.addEventListener('click', function () { runPremiumStage('export'); });
+    }
   }
   function rowModel(row) {
     var input = one('textarea[data-cat-input]', row);
@@ -596,7 +634,7 @@
     var risk = !!one('.cat-fit-risk-badge,[data-cat-fit-candidates]', row);
     var reviewed = row.getAttribute('data-cat-confirmed') === '1';
     var index = row.getAttribute('data-cat-row') || '';
-    var riskLabel = textOf(one('.cat-fit-risk-badge', row)) || (risk ? '要調整' : reviewed ? '確認済み' : '収まり済み');
+    var riskLabel = textOf(one('.cat-fit-risk-badge', row)) || (risk ? '体裁' : reviewed ? '確認済み' : '確認が必要');
     return { row: row, index: index, location: location, source: source, target: target, risk: risk, reviewed: reviewed, riskLabel: riskLabel };
   }
   function renderFitRows() {
@@ -604,22 +642,51 @@
     if (!host) return;
     var models = all('#cat-grid-body [data-cat-row]').map(rowModel);
     var filtered = models.filter(function (model) {
-      if (premiumState.catFilter === 'issues') return model.risk;
-      if (premiumState.catFilter === 'fit') return !model.risk && !!model.target;
+      if (premiumState.catFilter === 'issues') return !model.reviewed || model.risk;
+      if (premiumState.catFilter === 'fit') return model.risk;
       return true;
     });
     if (!filtered.length) {
       var totalRiskNode = one('[data-cat-count="fit"]');
       var totalRisk = totalRiskNode ? Number(totalRiskNode.textContent || 0) : 0;
-      host.innerHTML = '<div class="premium-fit-empty">' + (premiumState.catFilter === 'issues' && totalRisk ? '要調整セルを表示しています…' : '該当するセルはありません。') + '</div>';
+      host.innerHTML = '<div class="premium-fit-empty">' + (premiumState.catFilter === 'issues' && totalRisk ? '残りの確認対象を表示しています…' : '該当するセルはありません。') + '</div>';
       return;
     }
     host.innerHTML = filtered.map(function (model) {
-      var width = model.risk ? 100 : 92;
+      var width = model.risk ? 100 : model.reviewed ? 92 : 68;
       return '<button type="button" class="premium-fit-row' + (model.row.classList.contains('is-active') ? ' is-active' : '') + (model.risk ? ' is-risk' : '') + '" data-premium-row="' + escapeHtml(model.index) + '">' +
         '<span class="premium-fit-row-main"><small>' + escapeHtml(model.location) + '</small><strong>' + escapeHtml(model.source || '原文なし') + '</strong><em>' + escapeHtml(model.target || '未翻訳') + '</em></span>' +
-        '<span class="premium-fit-row-state">' + escapeHtml(model.riskLabel) + '</span><i><b style="width:' + width + '%"></b></i></button>';
+        '<span class="premium-fit-row-state">' + escapeHtml(model.risk ? '体裁' : model.reviewed ? '確認済み' : '確認が必要') + '</span><i><b style="width:' + width + '%"></b></i></button>';
     }).join('');
+  }
+  function updatePremiumStageState(total, actionable, risk, reviewed, untranslated, remaining) {
+    var exportButton = el('cat-export');
+    var exportBlocked = !exportButton || !!exportButton.disabled;
+    var outputReason = textOf(el('cat-export-blocked')) || textOf(el('cat-output-reason'));
+    var outputText = el('premium-output-summary-text');
+    if (outputText) outputText.textContent = !exportButton ? '出力条件を確認しています…' : exportBlocked
+      ? ('出力できません。' + (outputReason || '残りの確認対象を確認してください。'))
+      : 'Excelへ出力できます。原本は変更せず、訳文入りのコピーを作ります。';
+    remaining = Number.isFinite(remaining) ? remaining : Math.max(actionable, risk);
+    var currentStage = untranslated > 0 ? 'translate' : (remaining > 0 ? 'review' : 'export');
+    var stageNotes = {
+      translate: untranslated > 0 ? untranslated + '行が未翻訳です' : '未訳はありません',
+      review: remaining > 0 ? '確認が必要な' + remaining + '行' + (risk > 0 ? '、体裁' + risk + '件' : '') : '確認済みです',
+      export: exportBlocked ? '条件を確認すると出力できます' : 'そのまま出力できます'
+    };
+    ['translate', 'review', 'export'].forEach(function (stage, index) {
+      var button = one('[data-premium-stage="' + stage + '"]');
+      if (!button) return;
+      button.classList.toggle('is-current', stage === currentStage);
+      button.classList.toggle('is-complete', index < ['translate', 'review', 'export'].indexOf(currentStage));
+      if (stage === 'translate') button.disabled = !!(el('cat-translate') && el('cat-translate').disabled);
+      if (stage === 'review') button.disabled = total === 0;
+      if (stage === 'export') button.disabled = exportBlocked;
+      var note = el('premium-stage-' + stage + '-note');
+      if (note) note.textContent = stageNotes[stage];
+    });
+    var outputOpen = el('premium-output-summary-open');
+    if (outputOpen) { outputOpen.textContent = exportBlocked ? '残りを確認する' : '出力を開く'; outputOpen.disabled = !exportButton; }
   }
   function refreshWorkspaceUi() {
     if (!document.body.classList.contains('premium-mode-workspace')) return;
@@ -629,16 +696,21 @@
     var riskNode = one('[data-cat-count="fit"]');
     var total = totalNode ? Number(totalNode.textContent || 0) : all('#cat-grid-body [data-cat-row]').length;
     var risk = riskNode ? Number(riskNode.textContent || 0) : all('#cat-grid-body .cat-fit-risk-badge').length;
+    var actionableNode = one('[data-cat-count="actionable"]');
+    var reviewedNode = one('[data-cat-count="reviewed"]');
+    var actionable = actionableNode ? Number(actionableNode.textContent || 0) : 0;
+    var reviewed = reviewedNode ? Number(reviewedNode.textContent || 0) : Math.max(0, total - actionable);
+    var remaining = all('#cat-grid-body [data-cat-row]').map(rowModel).filter(function (model) { return !model.reviewed || model.risk; }).length;
     var untranslated = 0;
     all('#cat-grid-body textarea[data-cat-input]').forEach(function (input) { if (!String(input.value || '').trim()) untranslated++; });
-    var fit = Math.max(0, total - risk - untranslated);
-    var percent = total ? Math.round(100 * fit / total) : 0;
-    if (el('premium-fit-count')) el('premium-fit-count').textContent = fit;
+
+    var percent = total ? Math.round(100 * reviewed / total) : 0;
+    if (el('premium-fit-count')) el('premium-fit-count').textContent = reviewed;
     if (el('premium-total-count')) el('premium-total-count').textContent = total;
     if (el('premium-fit-percent')) el('premium-fit-percent').textContent = percent + '%';
     if (el('premium-fit-progress')) el('premium-fit-progress').style.width = percent + '%';
-    if (el('premium-fit-done')) el('premium-fit-done').textContent = fit;
-    if (el('premium-fit-left')) el('premium-fit-left').textContent = risk;
+    if (el('premium-fit-done')) el('premium-fit-done').textContent = reviewed;
+    if (el('premium-fit-left')) el('premium-fit-left').textContent = remaining;
     if (el('premium-untranslated')) el('premium-untranslated').textContent = untranslated;
     var title = textOf(el('cat-toolbar-title'));
     var direction = textOf(el('cat-toolbar-direction'));
@@ -651,10 +723,11 @@
       if (el('premium-active-location')) el('premium-active-location').textContent = model.location || '選択中のセル';
       var riskBadge = el('premium-editor-risk');
       if (riskBadge) {
-        riskBadge.textContent = model.risk ? '要調整' : '収まり済み';
+        riskBadge.textContent = model.risk ? '体裁を確認' : model.reviewed ? '確認済み' : '確認が必要';
         riskBadge.classList.toggle('is-fit', !model.risk);
       }
     }
+    updatePremiumStageState(total, actionable, risk, reviewed, untranslated, remaining);
     renderFitRows();
     syncTopActionStates();
   }
