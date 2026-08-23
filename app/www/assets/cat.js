@@ -1292,7 +1292,13 @@
       host.setAttribute('role', 'toolbar'); host.setAttribute('aria-label', '選択中の行の操作');
       actions.appendChild(host);
     }
-    var dynamic = host.querySelector(':scope > .cat-segment-actions-dynamic');
+    /* 行を移るたびに同じ操作リボンを更新する。古い版の画面や、保存完了と
+       行移動が同時に走った場合に一時的な重複ホストが残っても、先頭だけを
+       正本として使い、残りを捨てる。残すと前の行の分割ボタンが見え続ける。 */
+    var dynamicNodes = host.querySelectorAll('.cat-segment-actions-dynamic'), dynamic = dynamicNodes.length ? dynamicNodes[0] : null, dynamicIndex;
+    for (dynamicIndex = 1; dynamicIndex < dynamicNodes.length; dynamicIndex++) {
+      if (dynamicNodes[dynamicIndex].parentNode) dynamicNodes[dynamicIndex].parentNode.removeChild(dynamicNodes[dynamicIndex]);
+    }
     if (!dynamic) {
       dynamic = document.createElement('span');
       dynamic.className = 'cat-segment-actions-dynamic';
@@ -1458,7 +1464,7 @@
         '<td class="cat-col-loc"><span class="cat-card-label">場所</span><span class="cat-location-main" title="' + esc(segment.location || '本文') + '">' + esc(segment.location || '本文') + '</span><span class="cat-location-kind">' + esc(kind) + '</span>' + (Number(segment.split_parts || 0) > 1 ? '<span class="cat-repetition" title="この行は1つのセル（段落）を手で分けたものです。書き出すときは、同じ組の行を繋いで元の1つへ戻します。Alt+M でも元へ戻せます。">分けた行 ' + Number(segment.split_part) + '/' + Number(segment.split_parts) + '</span>' : '') + (Number(segment.repetition_count || 1) > 1 ? '<span class="cat-repetition" title="この原文は資料の中に ' + segment.repetition_count + ' 行あります。確認済みにすると、まだ訳が入っていない同じ原文の行へ同じ訳を入れます。">同じ原文×' + segment.repetition_count + '</span>' : '') +
         /* 判定の物差し（何pxで測ったか）はここにも出す（利用者判断）。押す前の
            画面に必ず出す、という決まり（未確認行数と同じ流儀）に合わせる。 */
-        (fitInfo.risk ? '<span class="cat-fit-risk-badge" title="使える幅 ' + Math.round(fitInfo.displayWidthPx) + 'px' + (fitInfo.spillColumnCount > 0 ? '（右の空きセル' + fitInfo.spillColumnCount + '個を含む）' : '') + '。PDFで文字が切れていないか確認してください。">収まらない見込み</span>' : '') +
+        (fitInfo.risk ? '<span class="cat-fit-risk-badge" title="使える幅 ' + Math.round(fitInfo.displayWidthPx) + 'px' + (fitInfo.spillColumnCount > 0 ? '（右の空きセル' + fitInfo.spillColumnCount + '個を含む）' : '') + '。PDFで文字が切れていないか確認してください。">収まり要確認</span>' : '') +
         (origin ? '<span class="cat-origin">' + esc(origin) + '</span>' : '') + '</td>' +
         /* 行の作りは、開いていても閉じていても同じ（原文｜訳文）。以前は開いた行だけ
            上下2段のカードに化けていたが、行を移るたびに表がずれて、いま何行目かを
@@ -1929,7 +1935,23 @@
     return flush().then(function () {
       var segment = (project.segments || []).find(function (item) { return Number(item.index) === Number(index); });
       if (!segment) return;
-      activeIndex = Number(segment.index); activeSegmentId = String(segment.segment_id || ''); renderRows();
+      activeIndex = Number(segment.index); activeSegmentId = String(segment.segment_id || '');
+      var body = el('cat-grid-body'), currentRow = body && body.querySelector('tr.is-active'), nextRow = body && body.querySelector('tr[data-cat-row="' + Number(segment.index) + '"]');
+      /* 行を移るだけなら一覧の全DOMを作り直さない。以前は body.innerHTML を
+         毎回置き換えていたため、エディタが一瞬消えて点滅し、入力欄の選択も
+         失われていた。絞り込みで対象行がDOMに無い場合だけ従来の再描画へ戻す。 */
+      if (currentRow && nextRow && currentRow !== nextRow) {
+        currentRow.classList.remove('is-active');
+        nextRow.classList.add('is-active');
+        renderSegmentActions(segment);
+        renderInspector();
+        /* Premium側の「この行の詳細」は、操作リボンからノードを移して
+           保持している。行DOMを作り直さない切替でも同じ更新フックを即時に
+           通し、前の行のボタンが詳細欄へ残らないようにする。 */
+        window.dispatchEvent(new CustomEvent('yaku-cat-rows-rendered'));
+      } else {
+        renderRows();
+      }
       if (focus !== false) window.setTimeout(focusActive, 0);
     }).catch(function (error) { status('変更を保存できなかったため、行を移動しませんでした。' + error.message, true); });
   }
@@ -5614,7 +5636,7 @@
   function getPremiumSnapshot() {
     return project ? (project.segments || []).map(function (segment) {
       var effective = segmentEffectiveTranslation(segment), state = segmentState(segment), views = qcFindingViews(segment), blockingError = segmentHasBlockingError(segment), warning = views.some(function (view) { return qcFindingSeverity(view) === 'warning'; }), fit = segmentFitRiskInfo(segment), saveFailed = !!segment.save_failed || dirty.has(dirtyKey(project.id, Number(segment.index))), stale = state === 'stale', blocking = blockingError || !effective.trim() || stale || saveFailed, recommended = !blocking && (!segment.confirmed || warning || !!fit.risk || segmentHasReviewNotes(segment));
-      return { index: String(segment.index), location: String(segment.location || ''), source: String(segment.source || ''), target: effective.trim(), canonical: String(segment.translation || '').trim(), publicationVariant: segmentHasPublicationVariant(segment), state: state, reviewed: !!segment.confirmed, risk: !!fit.risk, warning: warning, blocking: blocking, saveFailed: saveFailed, qcError: blockingError, stale: stale, recommended: recommended, reason: !effective.trim() ? '未翻訳' : saveFailed ? '保存失敗' : blockingError ? '点検エラー' : stale ? '再点検' : fit.risk ? '体裁' : warning ? '指摘' : !segment.confirmed ? '未確認' : '確認済み' };
+      return { index: String(segment.index), location: String(segment.location || ''), source: String(segment.source || ''), target: effective.trim(), canonical: String(segment.translation || '').trim(), publicationVariant: segmentHasPublicationVariant(segment), state: state, reviewed: !!segment.confirmed, risk: !!fit.risk, warning: warning, blocking: blocking, saveFailed: saveFailed, qcError: blockingError, stale: stale, recommended: recommended, reason: !effective.trim() ? '未翻訳' : saveFailed ? '保存失敗' : blockingError ? '点検エラー' : stale ? '再点検' : fit.risk ? '収まり要確認' : warning ? '指摘あり' : !segment.confirmed ? '未確認' : '収まり見込み' };
     }) : [];
   }
   window.YakuCat = {

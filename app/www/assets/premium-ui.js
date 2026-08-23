@@ -670,8 +670,18 @@
     var canonical = String(row.getAttribute('data-cat-canonical-translation') || '').trim(), risk = !!one('.cat-fit-risk-badge,[data-cat-fit-candidates]', row), reviewed = row.getAttribute('data-cat-confirmed') === '1', index = row.getAttribute('data-cat-row') || '', state = row.getAttribute('data-yaku-cat-state') || '';
     var warning = row.getAttribute('data-cat-qc-warning') === '1', saveFailed = row.classList.contains('cat-unsaved') || row.classList.contains('cat-dirty') || row.getAttribute('data-cat-save-failed') === '1', qcError = row.getAttribute('data-cat-blocking') === '1' && !!one('.premium-inline-findings,.cat-qc-findings', row);
     var blocking = row.getAttribute('data-cat-blocking') === '1' || !effective || saveFailed, stale = state === 'stale', recommended = !blocking && (row.getAttribute('data-cat-recommended') === '1' || warning || risk || !reviewed);
-    var reason = !effective ? '未翻訳' : saveFailed ? '保存失敗' : qcError ? '点検エラー' : stale ? '再点検' : risk ? '体裁' : warning ? '指摘' : !reviewed ? '未確認' : '確認済み';
+    var reason = !effective ? '未翻訳' : saveFailed ? '保存失敗' : qcError ? '点検エラー' : stale ? '再点検' : risk ? '収まり要確認' : warning ? '指摘あり' : !reviewed ? '未確認' : '収まり見込み';
     return { row: row, index: index, location: location, source: source, target: effective, canonical: canonical, risk: risk, reviewed: reviewed, warning: warning, blocking: blocking, saveFailed: saveFailed, qcError: qcError, stale: stale, recommended: recommended, reason: reason };
+  }
+  function fitRowStatus(model) {
+    if (!model) return '';
+    if (model.blocking) {
+      /* 原文・訳文の「未翻訳」と、出力を止める理由を同じ短語で
+         並べると、何を直すべきか分からない。空欄だけは状態を一段
+         具体化し、他のブロッカーは既存の理由を保つ。 */
+      return !String(model.target || '').trim() ? '未翻訳（出力を止めます）' : (model.reason || '要対応');
+    }
+    return model.risk ? '収まり要確認' : '収まり見込み';
   }
   function syncPremiumFilterUi() {
     var panel = el('premium-fit-panel');
@@ -685,9 +695,10 @@
     if (!filtered.length) { host.innerHTML = '<div class="premium-fit-empty">' + ((premiumState.catFilter === 'blockers' || premiumState.catFilter === 'issues') ? '出力を止めるセルはありません。' : premiumState.catFilter === 'recommended' || premiumState.catFilter === 'fit' ? '確認をおすすめするセルはありません。' : '該当するセルはありません。') + '</div>'; return; }
     host.innerHTML = filtered.map(function (model) {
       var width = model.blocking ? 100 : model.recommended ? 76 : 92;
-      return '<button type="button" class="premium-fit-row' + (model.row && model.row.classList.contains('is-active') ? ' is-active' : '') + (model.blocking ? ' is-blocker' : model.recommended ? ' is-recommended' : '') + '" data-premium-row="' + escapeHtml(model.index) + '">' +
-        '<span class="premium-fit-row-main"><small>' + escapeHtml(model.location) + '</small><strong>' + escapeHtml(model.source || '原文なし') + '</strong><em>' + escapeHtml(model.target || '未翻訳') + '</em></span>' +
-        '<span class="premium-fit-row-state">' + escapeHtml(model.reason) + '</span><i><b style="width:' + width + '%"></b></i></button>';
+      var status = fitRowStatus(model), fullLabel = [model.location, model.source || '原文なし', model.target || '未翻訳', status].filter(Boolean).join(' / ');
+      return '<button type="button" class="premium-fit-row' + (model.row && model.row.classList.contains('is-active') ? ' is-active' : '') + (model.risk ? ' is-risk' : '') + (model.blocking ? ' is-blocker' : model.recommended ? ' is-recommended' : '') + '" data-premium-row="' + escapeHtml(model.index) + '" title="' + escapeHtml(fullLabel) + '" aria-label="' + escapeHtml(fullLabel) + '">' +
+        '<span class="premium-fit-row-main"><small title="' + escapeHtml(model.location) + '">' + escapeHtml(model.location) + '</small><strong title="' + escapeHtml(model.source || '原文なし') + '">' + escapeHtml(model.source || '原文なし') + '</strong><em title="' + escapeHtml(model.target || '未翻訳') + '">' + escapeHtml(model.target || '未翻訳') + '</em></span>' +
+        '<span class="premium-fit-row-state">' + escapeHtml(status) + '</span><i><b style="width:' + width + '%"></b></i></button>';
     }).join('');
   }
   function updatePremiumStageState(total, counts, reviewed, untranslated) {
@@ -713,7 +724,7 @@
     if (el('premium-fit-count')) el('premium-fit-count').textContent = reviewed; if (el('premium-total-count')) el('premium-total-count').textContent = total; if (el('premium-fit-percent')) el('premium-fit-percent').textContent = (total ? Math.round(100 * reviewed / total) : 0) + '%'; if (el('premium-fit-progress')) el('premium-fit-progress').style.width = (total ? Math.round(100 * reviewed / total) : 0) + '%'; if (el('premium-fit-done')) el('premium-fit-done').textContent = reviewed; if (el('premium-fit-left')) el('premium-fit-left').textContent = counts.blockers; if (el('premium-recommended-count')) el('premium-recommended-count').textContent = counts.recommended; if (el('premium-untranslated')) el('premium-untranslated').textContent = untranslated;
     if (el('premium-fit-blockers')) el('premium-fit-blockers').textContent = counts.blockers; if (el('premium-fit-recommended')) el('premium-fit-recommended').textContent = counts.recommended; if (el('premium-fit-all')) el('premium-fit-all').textContent = total;
     var title = textOf(el('cat-toolbar-title')), direction = textOf(el('cat-toolbar-direction')); if (el('premium-summary-context')) el('premium-summary-context').textContent = [title, direction].filter(Boolean).join(' ・ ');
-    var active = one('#cat-grid-body tr.is-active'); if (active) { var model = rowModel(active), cell = model.location.match(/(?:^|[,!\s])([A-Z]{1,3}\d+)$/i); if (el('premium-active-cell')) el('premium-active-cell').textContent = cell ? cell[1].toUpperCase() : ((Number(model.index) + 1) + '行目'); if (el('premium-active-location')) el('premium-active-location').textContent = model.location || '選択中のセル'; var riskBadge = el('premium-editor-risk'); if (riskBadge) { riskBadge.textContent = model.blocking ? model.reason : model.recommended ? '確認をおすすめ' : '確認済み'; riskBadge.classList.toggle('is-fit', !model.blocking); } }
+    var active = one('#cat-grid-body tr.is-active'); if (active) { var model = rowModel(active), cell = model.location.match(/(?:^|[,!\s])([A-Z]{1,3}\d+)$/i); if (el('premium-active-cell')) el('premium-active-cell').textContent = cell ? cell[1].toUpperCase() : ((Number(model.index) + 1) + '行目'); if (el('premium-active-location')) el('premium-active-location').textContent = model.location || '選択中のセル'; var riskBadge = el('premium-editor-risk'); if (riskBadge) { riskBadge.textContent = fitRowStatus(model); riskBadge.classList.toggle('is-fit', !model.blocking && !model.risk); riskBadge.classList.toggle('is-risk', !!model.risk); } }
     updatePremiumStageState(total, counts, reviewed, untranslated); preparePremiumRowActions(); renderFitRows(); syncTopActionStates();
   }
   function cancelPremiumRowWait() {
