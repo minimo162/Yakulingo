@@ -1768,6 +1768,9 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
   flex: 0 0 auto;
   min-height: 36px;
   padding: 4px var(--space-2);
+  /* 見出し・切替・釦・注記の総幅がdock幅を超えるため折り返す（issue #112実測）。 */
+  flex-wrap: wrap;
+  row-gap: 2px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -1776,6 +1779,27 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
   min-height: 0;
   padding: 0 var(--space-2) var(--space-1);
 }
+
+/* 未翻訳時の注記は見出し行に詰め込まれると潰れたため、全幅の2行目へ落とす（issue #112実測 69×81px）。 */
+#cat-preview-dock-note {
+  flex-basis: 100%;
+  min-width: 0;
+}
+
+/* スクロール可能なことが画面から分かるように。スクロールバーが不可視だと中身が
+   切れて見えるだけで続きがあると分からない（issue #112実測）。
+   標準のscrollbar-width/scrollbar-colorを併記するとChromiumはoverlay扱いになり
+   常時描画も7pxの空間占有もしないため、::-webkit-scrollbarだけをスタイルして
+   古典バーにする。 */
+.cat-bottom-dock-bar::-webkit-scrollbar,
+.cat-bottom-dock-bar .cat-inspector-tabs::-webkit-scrollbar,
+.cat-preview-dock-body::-webkit-scrollbar { height: 7px; width: 7px; }
+.cat-bottom-dock-bar::-webkit-scrollbar-thumb,
+.cat-bottom-dock-bar .cat-inspector-tabs::-webkit-scrollbar-thumb,
+.cat-preview-dock-body::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 4px; }
+.cat-bottom-dock-bar::-webkit-scrollbar-track,
+.cat-bottom-dock-bar .cat-inspector-tabs::-webkit-scrollbar-track,
+.cat-preview-dock-body::-webkit-scrollbar-track { background: transparent; }
 
 /* The document list is an explicit overlay, never a permanent third column. */
 @media (min-width: 1320px) {
