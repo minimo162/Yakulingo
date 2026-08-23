@@ -7,7 +7,9 @@
     recentStatus: 'loading',
     recentError: '',
     recentRetrying: false,
-    catFilter: 'issues',
+    catFilter: 'blockers',
+    catFilterTouched: false,
+    catInspectorInitialized: false,
     lastQuickSource: '',
     lastQuickArchived: '',
     quickLength: 'full',
@@ -171,7 +173,7 @@
     topbar.innerHTML =
       '<div class="premium-topbar-left"><span id="premium-top-product" class="premium-top-product"></span><span class="premium-top-separator"></span>' +
       '<strong id="premium-top-context" class="premium-top-context"></strong></div>' +
-      '<div class="premium-top-actions"><a href="/cat?view=work">作業一覧</a>' +
+      '<div class="premium-top-actions"><a href="/cat?view=work" data-premium-nav="work">作業一覧</a>' +
       '<button id="premium-translate" type="button" class="premium-top-action" hidden>未訳を翻訳</button>' +
       '<button id="premium-qa" type="button" class="premium-top-action" hidden>点検結果</button>' +
       '<button id="premium-tools" type="button" class="premium-top-text-button" hidden>その他</button>' +
@@ -510,34 +512,32 @@
       summary.id = 'premium-work-summary';
       summary.innerHTML = '<div class="premium-summary-title"><span class="premium-summary-kicker">Excel翻訳</span><h1>3ステップで仕上げる</h1><p id="premium-summary-context"></p></div>' +
         '<div class="premium-summary-progress"><div><strong><span id="premium-fit-count">0</span> / <span id="premium-total-count">0</span>行を確認済み</strong><span id="premium-fit-percent">0%</span></div><i><b id="premium-fit-progress"></b></i></div>' +
-        '<div class="premium-summary-stats"><div class="is-done"><b id="premium-fit-done">0</b><span>確認済み</span></div><div class="is-alert"><b id="premium-fit-left">0</b><span>残り</span></div><div><b id="premium-untranslated">0</b><span>未翻訳</span></div></div><nav id="premium-stage-nav" class="premium-stage-nav" aria-label="Excel翻訳の進み方"><button type="button" data-premium-stage="translate"><span class="premium-stage-number">1</span><span><strong>翻訳する</strong><small id="premium-stage-translate-note">未訳を翻訳</small></span></button><button type="button" data-premium-stage="review"><span class="premium-stage-number">2</span><span><strong>残りを確認する</strong><small id="premium-stage-review-note">確認対象を表示</small></span></button><button type="button" data-premium-stage="export"><span class="premium-stage-number">3</span><span><strong>Excelへ出力する</strong><small id="premium-stage-export-note">出力条件を確認</small></span></button></nav><div id="premium-output-summary" class="premium-output-summary" role="status"><span id="premium-output-summary-text">出力条件を確認しています…</span><button type="button" id="premium-output-summary-open" class="premium-summary-link">条件を見る</button></div>';
+        '<div class="premium-summary-stats"><div class="is-done"><b id="premium-fit-done">0</b><span>確認済み</span></div><div class="is-alert"><b id="premium-fit-left">0</b><span>出力を止める</span></div><div class="is-recommended"><b id="premium-recommended-count">0</b><span>確認をおすすめ</span></div><div><b id="premium-untranslated">0</b><span>未翻訳</span></div></div>' +
+        '<nav id="premium-stage-nav" class="premium-stage-nav" aria-label="Excel翻訳の進み方"><button type="button" data-premium-stage="translate"><span class="premium-stage-number">1</span><span><strong>未訳を翻訳する</strong><small id="premium-stage-translate-note">未訳を翻訳</small></span></button><button type="button" data-premium-stage="review"><span class="premium-stage-number">2</span><span><strong>残りを確認する</strong><small id="premium-stage-review-note">出力を止める0件</small></span></button><button type="button" data-premium-stage="export"><span class="premium-stage-number">3</span><span><strong>Excelへ出力する</strong><small id="premium-stage-export-note">出力条件を確認</small></span></button></nav>' +
+        '<div id="premium-output-summary" class="premium-output-summary" role="status"><span id="premium-output-summary-text">出力条件を確認しています…</span><button type="button" id="premium-output-summary-open" class="premium-summary-link">条件を見る</button></div>';
       workspace.insertBefore(summary, workspace.firstChild);
-      ['cat-output-help', 'cat-output-reason', 'cat-export-blocked', 'cat-mask-notice'].forEach(function (id) {
-        var node = el(id);
-        if (node) summary.appendChild(node);
-      });
+      ['cat-output-help', 'cat-output-reason', 'cat-export-blocked', 'cat-mask-notice'].forEach(function (id) { var node = el(id); if (node) summary.appendChild(node); });
     }
     if (!el('premium-fit-panel')) {
       var panel = create('aside', 'premium-fit-panel');
       panel.id = 'premium-fit-panel';
-      panel.innerHTML = '<header><h2>残りの確認対象</h2><p>未確認・点検・体裁を優先</p></header><div id="premium-fit-filter" class="premium-fit-filter">' +
-        '<button type="button" class="is-active" data-premium-filter="issues">残り</button><button type="button" data-premium-filter="fit">体裁</button><button type="button" data-premium-filter="all">すべて</button></div>' +
+      panel.innerHTML = '<header><h2>確認するセル</h2><p>出力できない項目と、確認をおすすめする項目を分けて表示します。</p></header><div id="premium-fit-filter" class="premium-fit-filter" role="group" aria-label="確認対象の種類">' +
+        '<button type="button" class="is-active" data-premium-filter="blockers">出力を止める <span id="premium-fit-blockers">0</span></button><button type="button" data-premium-filter="recommended">確認をおすすめ <span id="premium-fit-recommended">0</span></button><button type="button" data-premium-filter="all">すべて <span id="premium-fit-all">0</span></button></div>' +
         '<div id="premium-fit-list" class="premium-fit-list"></div>';
       var editorLayout = el('cat-editor-layout');
       workspace.insertBefore(panel, editorLayout || workspace.lastChild);
       all('[data-premium-filter]', panel).forEach(function (button) {
         button.addEventListener('click', function () {
-          premiumState.catFilter = button.getAttribute('data-premium-filter') || 'issues';
+          premiumState.catFilterTouched = true;
+          premiumState.catFilter = button.getAttribute('data-premium-filter') || 'blockers';
           all('[data-premium-filter]', panel).forEach(function (item) { item.classList.toggle('is-active', item === button); });
-          var originalKey = premiumState.catFilter === 'issues' ? 'all' : premiumState.catFilter === 'fit' ? 'fit' : 'all';
-          var original = one('[data-cat-filter="' + originalKey + '"]');
+          var original = one('[data-cat-filter="all"]');
           if (original) original.click();
           window.setTimeout(refreshWorkspaceUi, 80);
         });
       });
     }
-    var editorPane = el('cat-editor-pane');
-    var gridWrap = el('cat-grid-wrap');
+    var editorPane = el('cat-editor-pane'), gridWrap = el('cat-grid-wrap');
     if (editorPane && gridWrap && !el('premium-editor-intro')) {
       var intro = create('div', 'premium-editor-intro');
       intro.id = 'premium-editor-intro';
@@ -548,188 +548,166 @@
       editorPane.insertBefore(actions, gridWrap);
     }
     moveRowActions();
+    preparePremiumRowActions();
     forcePreviewRail();
     bindStageActions();
   }
   function removeExcelWorkspaceUi() {
-    var workspace = el('cat-workspace');
-    var editorLayout = el('cat-editor-layout');
-    var summary = el('premium-work-summary');
-    ['cat-output-help', 'cat-output-reason', 'cat-export-blocked', 'cat-mask-notice'].forEach(function (id) {
-      var node = el(id);
-      if (node && summary && summary.contains(node) && workspace) {
-        workspace.insertBefore(node, editorLayout || workspace.firstChild);
-      }
-    });
-    var actions = el('cat-segment-actions');
-    var legacyActions = el('cat-actions');
+    var workspace = el('cat-workspace'), editorLayout = el('cat-editor-layout'), summary = el('premium-work-summary');
+    ['cat-output-help', 'cat-output-reason', 'cat-export-blocked', 'cat-mask-notice'].forEach(function (id) { var node = el(id); if (node && summary && summary.contains(node) && workspace) workspace.insertBefore(node, editorLayout || workspace.firstChild); });
+    var actions = el('cat-segment-actions'), legacyActions = el('cat-actions');
     if (actions && legacyActions && actions.parentNode !== legacyActions) legacyActions.appendChild(actions);
-    ['premium-work-summary', 'premium-fit-panel', 'premium-editor-intro', 'premium-row-actions'].forEach(function (id) {
-      var node = el(id);
-      if (node && node.parentNode) node.parentNode.removeChild(node);
-    });
+    ['premium-work-summary', 'premium-fit-panel', 'premium-editor-intro', 'premium-row-actions'].forEach(function (id) { var node = el(id); if (node && node.parentNode) node.parentNode.removeChild(node); });
   }
   function moveRowActions() {
-    var host = el('premium-row-actions');
-    var actions = el('cat-segment-actions');
+    var host = el('premium-row-actions'), actions = el('cat-segment-actions');
     if (host && actions && actions.parentNode !== host) host.appendChild(actions);
   }
-  function forcePreviewRail() {
+  function syncPremiumInspectorRail() {
     var dock = el('cat-preview-dock');
     if (!dock) return;
-    /* The preview stays closed on first use. A deliberate "開く" action is
-       a real preference, so do not reopen it on the next workspace refresh. */
-    var storedOpen = null;
-    try { storedOpen = window.localStorage.getItem('yaku-cat-dock-open'); } catch (_) {}
-    if (storedOpen !== '1') return;
-    if (dock.hidden) {
-      var toggle = el('cat-preview-dock-toggle');
-      if (toggle) toggle.click();
+    var bar = one('.cat-bottom-dock-bar', dock);
+    if (!bar) return;
+    var heading = el('premium-inspector-heading');
+    if (!heading) { heading = create('span', 'premium-inspector-heading'); heading.id = 'premium-inspector-heading'; bar.insertBefore(heading, bar.firstChild); }
+    var qcTab = el('cat-tab-qc'), isQc = !!(qcTab && qcTab.getAttribute('aria-selected') === 'true');
+    heading.textContent = isQc ? '確認欄' : '参考情報';
+    heading.setAttribute('aria-label', isQc ? '確認欄。指摘があるときだけ表示' : '選択中の行の参考情報');
+    var note = el('premium-inspector-note');
+    if (!note) { note = create('span', 'premium-inspector-note'); note.id = 'premium-inspector-note'; bar.insertBefore(note, bar.querySelector('.cat-inspector-tabs') || null); }
+    note.textContent = isQc ? '指摘があるときだけ表示' : '';
+    var close = el('cat-preview-dock-close'); if (close) close.textContent = isQc ? '閉じる' : '畳む';
+    dock.setAttribute('aria-label', isQc ? '確認欄' : '選択中の行の情報');
+  }
+  function forcePreviewRail() {
+    /* Premium Excel uses an explicit, temporary "指摘を見る" rail. A saved
+       preview-open preference must never reopen that rail during refresh. */
+    if (premiumState.catInspectorInitialized) return;
+    premiumState.catInspectorInitialized = true;
+    var dock = el('cat-preview-dock'), close = el('cat-preview-dock-close');
+    if (dock && !dock.hidden && close) close.click();
+    syncPremiumInspectorRail();
+  }
+  function preparePremiumRowActions() {
+    var host = el('premium-row-actions'), actions = el('cat-segment-actions');
+    if (!host || !actions) return;
+    var primary = one('.premium-row-primary', host), disclosure = one('.premium-row-details', host), detailContent;
+    if (!primary) { primary = create('div', 'premium-row-primary'); host.appendChild(primary); }
+    if (!disclosure) { disclosure = create('details', 'premium-row-details'); disclosure.id = 'premium-row-details'; disclosure.innerHTML = '<summary>この行の詳細</summary><div class="premium-row-details-content"></div>'; host.appendChild(disclosure); }
+    detailContent = one('.premium-row-details-content', disclosure);
+    var row = one('#cat-grid-body tr.is-active'), model = row ? rowModel(row) : null;
+    var nodes = Array.prototype.slice.call(actions.children).filter(function (node) { return node !== primary && node !== disclosure && !node.classList.contains('cat-segment-actions-dynamic'); });
+    var dynamic = one(':scope > .cat-segment-actions-dynamic', actions);
+    if (dynamic) nodes = nodes.concat(Array.prototype.slice.call(dynamic.children).filter(function (node) { return !node.classList.contains('sr-only'); }));
+    if (!nodes.length && (primary.children.length || detailContent.children.length)) { host.hidden = !row || actions.hidden; return; }
+    var signature = (model ? model.index : '') + '|' + nodes.map(function (node) { return node.outerHTML; }).join('|') + '|' + (model ? model.canonical : '');
+    if (host.getAttribute('data-premium-action-signature') === signature) return;
+    host.setAttribute('data-premium-action-signature', signature);
+    primary.innerHTML = ''; detailContent.innerHTML = '';
+    var primaryNodes = nodes.filter(function (node) { return node.hasAttribute('data-cat-confirm') || node.hasAttribute('data-cat-unconfirm') || node.getAttribute('data-cat-inspector') === 'qc' || node.hasAttribute('data-cat-placement-edit'); });
+    var detailNodes = nodes.filter(function (node) { return primaryNodes.indexOf(node) < 0; });
+    primaryNodes.forEach(function (node) {
+      var label = one('.cat-segment-button-label', node);
+      if (node.hasAttribute('data-cat-confirm')) { if (label) label.textContent = 'この行を確認して次へ'; node.setAttribute('aria-label', 'この行を確認して次へ'); }
+      else if (node.hasAttribute('data-cat-unconfirm')) { if (label) label.textContent = '確認を取り消す'; }
+      else if (node.getAttribute('data-cat-inspector') === 'qc') { if (label) label.textContent = '指摘を見る'; }
+      else if (node.hasAttribute('data-cat-placement-edit')) { if (label) label.textContent = 'セル表示を確認'; }
+      primary.appendChild(node);
+    });
+    detailNodes.forEach(function (node) { detailContent.appendChild(node); });
+    if (model && model.canonical && model.canonical !== model.target) {
+      var canonical = create('p', 'premium-canonical-detail'); canonical.innerHTML = '<strong>基準訳</strong><span>' + escapeHtml(model.canonical) + '</span>'; detailContent.insertBefore(canonical, detailContent.firstChild);
     }
-    var preview = one('[data-cat-inspector="preview"]');
-    if (preview && preview.getAttribute('aria-selected') !== 'true') preview.click();
+    disclosure.hidden = !detailNodes.length && !(model && model.canonical && model.canonical !== model.target);
+    host.hidden = !row || actions.hidden;
+  }
+  function runPremiumOutputAction() {
+    var models = premiumModels(), saveFailed = models.some(function (model) { return model.saveFailed; });
+    if (!saveFailed) return runPremiumStage('export');
+    var api = window.YakuCat;
+    if (api && typeof api.resave === 'function') {
+      return Promise.resolve(api.resave()).then(function () { refreshWorkspaceUi(); }, function () { refreshWorkspaceUi(); });
+    }
+    return runPremiumStage('export');
   }
   function runPremiumStage(stage) {
-    if (stage === 'translate') {
-      var translate = el('cat-translate');
-      if (translate && !translate.disabled) translate.click();
-      return;
-    }
-    if (stage === 'export') {
-      var exportButton = el('cat-export');
-      if (exportButton && !exportButton.disabled) exportButton.click();
-      else stage = 'review';
-    }
+    if (stage === 'translate') { var translate = el('cat-translate'); if (translate && !translate.disabled) translate.click(); return; }
+    if (stage === 'export') { var exportButton = el('cat-export'); if (exportButton && !exportButton.disabled) exportButton.click(); else stage = 'review'; }
     if (stage !== 'review') return;
-    /* 「残り」は未確認・点検・体裁を一つの一覧で見るため、元の表は
-       いったん全件に戻し、左の専用一覧で絞り込む。 */
-    var filter = one('[data-cat-filter="all"]');
-    if (filter) filter.click();
-    window.setTimeout(function () {
-      var first = one('#premium-fit-list .premium-fit-row');
-      if (first) first.click();
-      else {
-        var editor = el('cat-editor-layout');
-        if (editor && editor.scrollIntoView) editor.scrollIntoView({ block: 'start', behavior: reducedMotion() ? 'auto' : 'smooth' });
-      }
-    }, 60);
+    var models = premiumModels(), hasBlockers = models.some(function (model) { return model.blocking; });
+    premiumState.catFilter = hasBlockers ? 'blockers' : 'recommended';
+    var button = one('[data-premium-filter="' + premiumState.catFilter + '"]'); if (button) button.click();
+    var filter = one('[data-cat-filter="all"]'); if (filter) filter.click();
+    window.setTimeout(function () { var first = one('#premium-fit-list .premium-fit-row'); if (first) first.click(); else { var editor = el('cat-editor-layout'); if (editor && editor.scrollIntoView) editor.scrollIntoView({ block: 'start', behavior: reducedMotion() ? 'auto' : 'smooth' }); } }, 60);
   }
   function bindStageActions() {
-    all('[data-premium-stage]').forEach(function (button) {
-      if (button.getAttribute('data-bound') === '1') return;
-      button.setAttribute('data-bound', '1');
-      button.addEventListener('click', function () { if (!button.disabled) runPremiumStage(button.getAttribute('data-premium-stage')); });
-    });
+    all('[data-premium-stage]').forEach(function (button) { if (button.getAttribute('data-bound') === '1') return; button.setAttribute('data-bound', '1'); button.addEventListener('click', function () { if (!button.disabled) runPremiumStage(button.getAttribute('data-premium-stage')); }); });
     var summary = el('premium-output-summary-open');
-    if (summary && summary.getAttribute('data-bound') !== '1') {
-      summary.setAttribute('data-bound', '1');
-      summary.addEventListener('click', function () { runPremiumStage('export'); });
-    }
+    if (summary && summary.getAttribute('data-bound') !== '1') { summary.setAttribute('data-bound', '1'); summary.addEventListener('click', function () { runPremiumOutputAction(); }); }
+  }
+  function premiumModels() {
+    var domModels = all('#cat-grid-body [data-cat-row]').map(rowModel), snapshot = window.YakuCat && typeof window.YakuCat.getPremiumSnapshot === 'function' ? window.YakuCat.getPremiumSnapshot() : [];
+    if (!Array.isArray(snapshot) || !snapshot.length) return domModels;
+    var domByIndex = {};
+    domModels.forEach(function (model) { domByIndex[String(model.index)] = model; });
+    return snapshot.map(function (model) {
+      var current = domByIndex[String(model.index)];
+      if (current) return current;
+      model.row = null;
+      return model;
+    });
   }
   function rowModel(row) {
-    var input = one('textarea[data-cat-input]', row);
-    var location = textOf(one('.cat-location-main', row)) || textOf(one('.cat-col-loc', row));
-    var source = textOf(one('.cat-source-text', row));
-    var target = input ? String(input.value || '').trim() : '';
-    var risk = !!one('.cat-fit-risk-badge,[data-cat-fit-candidates]', row);
-    var reviewed = row.getAttribute('data-cat-confirmed') === '1';
-    var index = row.getAttribute('data-cat-row') || '';
-    var riskLabel = textOf(one('.cat-fit-risk-badge', row)) || (risk ? '体裁' : reviewed ? '確認済み' : '確認が必要');
-    return { row: row, index: index, location: location, source: source, target: target, risk: risk, reviewed: reviewed, riskLabel: riskLabel };
+    var input = one('textarea[data-cat-input]', row), location = textOf(one('.cat-location-main', row)) || textOf(one('.cat-col-loc', row)), source = textOf(one('.cat-source-text', row)), target = input ? String(input.value || '').trim() : '';
+    var variant = row.getAttribute('data-cat-publication-variant') === '1', effective = variant ? String(row.getAttribute('data-cat-effective-value') || target).trim() : target;
+    var canonical = String(row.getAttribute('data-cat-canonical-translation') || '').trim(), risk = !!one('.cat-fit-risk-badge,[data-cat-fit-candidates]', row), reviewed = row.getAttribute('data-cat-confirmed') === '1', index = row.getAttribute('data-cat-row') || '', state = row.getAttribute('data-yaku-cat-state') || '';
+    var warning = row.getAttribute('data-cat-qc-warning') === '1', saveFailed = row.classList.contains('cat-unsaved') || row.classList.contains('cat-dirty') || row.getAttribute('data-cat-save-failed') === '1', qcError = row.getAttribute('data-cat-blocking') === '1' && !!one('.premium-inline-findings,.cat-qc-findings', row);
+    var blocking = row.getAttribute('data-cat-blocking') === '1' || !effective || saveFailed, stale = state === 'stale', recommended = !blocking && (row.getAttribute('data-cat-recommended') === '1' || warning || risk || !reviewed);
+    var reason = !effective ? '未翻訳' : saveFailed ? '保存失敗' : qcError ? '点検エラー' : stale ? '再点検' : risk ? '体裁' : warning ? '指摘' : !reviewed ? '未確認' : '確認済み';
+    return { row: row, index: index, location: location, source: source, target: effective, canonical: canonical, risk: risk, reviewed: reviewed, warning: warning, blocking: blocking, saveFailed: saveFailed, qcError: qcError, stale: stale, recommended: recommended, reason: reason };
+  }
+  function syncPremiumFilterUi() {
+    var panel = el('premium-fit-panel');
+    if (!panel) return;
+    all('[data-premium-filter]', panel).forEach(function (button) { button.classList.toggle('is-active', button.getAttribute('data-premium-filter') === premiumState.catFilter); });
   }
   function renderFitRows() {
-    var host = el('premium-fit-list');
-    if (!host) return;
-    var models = all('#cat-grid-body [data-cat-row]').map(rowModel);
-    var filtered = models.filter(function (model) {
-      if (premiumState.catFilter === 'issues') return !model.reviewed || model.risk;
-      if (premiumState.catFilter === 'fit') return model.risk;
-      return true;
-    });
-    if (!filtered.length) {
-      var totalRiskNode = one('[data-cat-count="fit"]');
-      var totalRisk = totalRiskNode ? Number(totalRiskNode.textContent || 0) : 0;
-      host.innerHTML = '<div class="premium-fit-empty">' + (premiumState.catFilter === 'issues' && totalRisk ? '残りの確認対象を表示しています…' : '該当するセルはありません。') + '</div>';
-      return;
-    }
+    syncPremiumFilterUi();
+    var host = el('premium-fit-list'); if (!host) return;
+    var models = premiumModels(), filtered = models.filter(function (model) { if (premiumState.catFilter === 'blockers' || premiumState.catFilter === 'issues') return model.blocking; if (premiumState.catFilter === 'recommended' || premiumState.catFilter === 'fit') return model.recommended; return true; });
+    if (!filtered.length) { host.innerHTML = '<div class="premium-fit-empty">' + ((premiumState.catFilter === 'blockers' || premiumState.catFilter === 'issues') ? '出力を止めるセルはありません。' : premiumState.catFilter === 'recommended' || premiumState.catFilter === 'fit' ? '確認をおすすめするセルはありません。' : '該当するセルはありません。') + '</div>'; return; }
     host.innerHTML = filtered.map(function (model) {
-      var width = model.risk ? 100 : model.reviewed ? 92 : 68;
-      return '<button type="button" class="premium-fit-row' + (model.row.classList.contains('is-active') ? ' is-active' : '') + (model.risk ? ' is-risk' : '') + '" data-premium-row="' + escapeHtml(model.index) + '">' +
+      var width = model.blocking ? 100 : model.recommended ? 76 : 92;
+      return '<button type="button" class="premium-fit-row' + (model.row && model.row.classList.contains('is-active') ? ' is-active' : '') + (model.blocking ? ' is-blocker' : model.recommended ? ' is-recommended' : '') + '" data-premium-row="' + escapeHtml(model.index) + '">' +
         '<span class="premium-fit-row-main"><small>' + escapeHtml(model.location) + '</small><strong>' + escapeHtml(model.source || '原文なし') + '</strong><em>' + escapeHtml(model.target || '未翻訳') + '</em></span>' +
-        '<span class="premium-fit-row-state">' + escapeHtml(model.risk ? '体裁' : model.reviewed ? '確認済み' : '確認が必要') + '</span><i><b style="width:' + width + '%"></b></i></button>';
+        '<span class="premium-fit-row-state">' + escapeHtml(model.reason) + '</span><i><b style="width:' + width + '%"></b></i></button>';
     }).join('');
   }
-  function updatePremiumStageState(total, actionable, risk, reviewed, untranslated, remaining) {
-    var exportButton = el('cat-export');
-    var exportBlocked = !exportButton || !!exportButton.disabled;
-    var outputReason = textOf(el('cat-export-blocked')) || textOf(el('cat-output-reason'));
-    var outputText = el('premium-output-summary-text');
-    if (outputText) outputText.textContent = !exportButton ? '出力条件を確認しています…' : exportBlocked
-      ? ('出力できません。' + (outputReason || '残りの確認対象を確認してください。'))
-      : 'Excelへ出力できます。原本は変更せず、訳文入りのコピーを作ります。';
-    remaining = Number.isFinite(remaining) ? remaining : Math.max(actionable, risk);
-    var currentStage = untranslated > 0 ? 'translate' : (remaining > 0 ? 'review' : 'export');
-    var stageNotes = {
-      translate: untranslated > 0 ? untranslated + '行が未翻訳です' : '未訳はありません',
-      review: remaining > 0 ? '確認が必要な' + remaining + '行' + (risk > 0 ? '、体裁' + risk + '件' : '') : '確認済みです',
-      export: exportBlocked ? '条件を確認すると出力できます' : 'そのまま出力できます'
-    };
-    ['translate', 'review', 'export'].forEach(function (stage, index) {
-      var button = one('[data-premium-stage="' + stage + '"]');
-      if (!button) return;
-      button.classList.toggle('is-current', stage === currentStage);
-      button.classList.toggle('is-complete', index < ['translate', 'review', 'export'].indexOf(currentStage));
-      if (stage === 'translate') button.disabled = !!(el('cat-translate') && el('cat-translate').disabled);
-      if (stage === 'review') button.disabled = total === 0;
-      if (stage === 'export') button.disabled = exportBlocked;
-      var note = el('premium-stage-' + stage + '-note');
-      if (note) note.textContent = stageNotes[stage];
-    });
-    var outputOpen = el('premium-output-summary-open');
-    if (outputOpen) { outputOpen.textContent = exportBlocked ? '残りを確認する' : '出力を開く'; outputOpen.disabled = !exportButton; }
+  function updatePremiumStageState(total, counts, reviewed, untranslated) {
+    var exportButton = el('cat-export'), exportBlocked = !exportButton || !!exportButton.disabled, outputText = el('premium-output-summary-text'), saveFailed = counts.saveFailed > 0;
+    var blockerParts = [];
+    if (counts.untranslated > 0) blockerParts.push('未翻訳' + counts.untranslated + '件');
+    if (counts.qc > 0) blockerParts.push('自動点検エラー' + counts.qc + '件');
+    if (counts.stale > 0) blockerParts.push('再点検' + counts.stale + '件');
+    if (counts.saveFailed > 0) blockerParts.push('保存失敗' + counts.saveFailed + '件');
+    var blockerSentence = blockerParts.length ? blockerParts.join('、') + 'が出力を止めています。' : '出力条件を確認してください。';
+    if (outputText) outputText.textContent = !exportButton ? '出力条件を確認しています…' : saveFailed ? '保存できていない変更があるため、出力できません。再保存してから出力してください。' : exportBlocked ? 'まだExcelへ出力できません。' + blockerSentence : 'Excelへ出力できます。出力を止める項目は0件です。確認をおすすめする項目が' + counts.recommended + '件ありますが、出力は止まりません。';
+    var currentStage = untranslated > 0 ? 'translate' : counts.blockers > 0 ? 'review' : 'export', stageNotes = { translate: untranslated > 0 ? untranslated + '件が未翻訳です' : '未訳はありません', review: '出力を止める' + counts.blockers + '件・確認をおすすめ' + counts.recommended + '件', export: exportBlocked ? '出力条件を確認してください' : '出力できます' };
+    ['translate', 'review', 'export'].forEach(function (stage, index) { var button = one('[data-premium-stage="' + stage + '"]'); if (!button) return; button.classList.toggle('is-current', stage === currentStage); button.classList.toggle('is-complete', index < ['translate', 'review', 'export'].indexOf(currentStage)); if (stage === 'translate') button.disabled = !!(el('cat-translate') && el('cat-translate').disabled); if (stage === 'review') button.disabled = total === 0; if (stage === 'export') button.disabled = exportBlocked; var note = el('premium-stage-' + stage + '-note'); if (note) note.textContent = stageNotes[stage]; });
+    var outputOpen = el('premium-output-summary-open'); if (outputOpen) { outputOpen.textContent = saveFailed ? '再保存する' : exportBlocked ? '出力を止める' + counts.blockers + '件を見る' : 'Excelへ出力する'; outputOpen.disabled = !exportButton; }
   }
   function refreshWorkspaceUi() {
     if (!document.body.classList.contains('premium-mode-workspace')) return;
-    ensureWorkspaceUi();
-    moveRowActions();
-    var totalNode = one('[data-cat-count="all"]');
-    var riskNode = one('[data-cat-count="fit"]');
-    var total = totalNode ? Number(totalNode.textContent || 0) : all('#cat-grid-body [data-cat-row]').length;
-    var risk = riskNode ? Number(riskNode.textContent || 0) : all('#cat-grid-body .cat-fit-risk-badge').length;
-    var actionableNode = one('[data-cat-count="actionable"]');
-    var reviewedNode = one('[data-cat-count="reviewed"]');
-    var actionable = actionableNode ? Number(actionableNode.textContent || 0) : 0;
-    var reviewed = reviewedNode ? Number(reviewedNode.textContent || 0) : Math.max(0, total - actionable);
-    var remaining = all('#cat-grid-body [data-cat-row]').map(rowModel).filter(function (model) { return !model.reviewed || model.risk; }).length;
-    var untranslated = 0;
-    all('#cat-grid-body textarea[data-cat-input]').forEach(function (input) { if (!String(input.value || '').trim()) untranslated++; });
-
-    var percent = total ? Math.round(100 * reviewed / total) : 0;
-    if (el('premium-fit-count')) el('premium-fit-count').textContent = reviewed;
-    if (el('premium-total-count')) el('premium-total-count').textContent = total;
-    if (el('premium-fit-percent')) el('premium-fit-percent').textContent = percent + '%';
-    if (el('premium-fit-progress')) el('premium-fit-progress').style.width = percent + '%';
-    if (el('premium-fit-done')) el('premium-fit-done').textContent = reviewed;
-    if (el('premium-fit-left')) el('premium-fit-left').textContent = remaining;
-    if (el('premium-untranslated')) el('premium-untranslated').textContent = untranslated;
-    var title = textOf(el('cat-toolbar-title'));
-    var direction = textOf(el('cat-toolbar-direction'));
-    if (el('premium-summary-context')) el('premium-summary-context').textContent = [title, direction].filter(Boolean).join(' ・ ');
-    var active = one('#cat-grid-body tr.is-active');
-    if (active) {
-      var model = rowModel(active);
-      var cell = model.location.match(/(?:^|[,!\s])([A-Z]{1,3}\d+)$/i);
-      if (el('premium-active-cell')) el('premium-active-cell').textContent = cell ? cell[1].toUpperCase() : ((Number(model.index) + 1) + '行目');
-      if (el('premium-active-location')) el('premium-active-location').textContent = model.location || '選択中のセル';
-      var riskBadge = el('premium-editor-risk');
-      if (riskBadge) {
-        riskBadge.textContent = model.risk ? '体裁を確認' : model.reviewed ? '確認済み' : '確認が必要';
-        riskBadge.classList.toggle('is-fit', !model.risk);
-      }
-    }
-    updatePremiumStageState(total, actionable, risk, reviewed, untranslated, remaining);
-    renderFitRows();
-    syncTopActionStates();
+    ensureWorkspaceUi(); moveRowActions();
+    var models = premiumModels(), totalNode = one('[data-cat-count="all"]'), total = totalNode ? Number(totalNode.textContent || 0) : models.length;
+    var reviewed = models.filter(function (model) { return model.reviewed; }).length, untranslated = models.filter(function (model) { return !model.target; }).length;
+    var counts = { blockers: models.filter(function (model) { return model.blocking; }).length, recommended: models.filter(function (model) { return model.recommended; }).length, untranslated: untranslated, qc: models.filter(function (model) { return model.qcError; }).length, stale: models.filter(function (model) { return model.stale; }).length, saveFailed: models.filter(function (model) { return model.saveFailed; }).length };
+    if (!premiumState.catFilterTouched && premiumState.catFilter === 'blockers' && counts.blockers === 0) premiumState.catFilter = counts.recommended > 0 ? 'recommended' : 'all';
+    if (el('premium-fit-count')) el('premium-fit-count').textContent = reviewed; if (el('premium-total-count')) el('premium-total-count').textContent = total; if (el('premium-fit-percent')) el('premium-fit-percent').textContent = (total ? Math.round(100 * reviewed / total) : 0) + '%'; if (el('premium-fit-progress')) el('premium-fit-progress').style.width = (total ? Math.round(100 * reviewed / total) : 0) + '%'; if (el('premium-fit-done')) el('premium-fit-done').textContent = reviewed; if (el('premium-fit-left')) el('premium-fit-left').textContent = counts.blockers; if (el('premium-recommended-count')) el('premium-recommended-count').textContent = counts.recommended; if (el('premium-untranslated')) el('premium-untranslated').textContent = untranslated;
+    if (el('premium-fit-blockers')) el('premium-fit-blockers').textContent = counts.blockers; if (el('premium-fit-recommended')) el('premium-fit-recommended').textContent = counts.recommended; if (el('premium-fit-all')) el('premium-fit-all').textContent = total;
+    var title = textOf(el('cat-toolbar-title')), direction = textOf(el('cat-toolbar-direction')); if (el('premium-summary-context')) el('premium-summary-context').textContent = [title, direction].filter(Boolean).join(' ・ ');
+    var active = one('#cat-grid-body tr.is-active'); if (active) { var model = rowModel(active), cell = model.location.match(/(?:^|[,!\s])([A-Z]{1,3}\d+)$/i); if (el('premium-active-cell')) el('premium-active-cell').textContent = cell ? cell[1].toUpperCase() : ((Number(model.index) + 1) + '行目'); if (el('premium-active-location')) el('premium-active-location').textContent = model.location || '選択中のセル'; var riskBadge = el('premium-editor-risk'); if (riskBadge) { riskBadge.textContent = model.blocking ? model.reason : model.recommended ? '確認をおすすめ' : '確認済み'; riskBadge.classList.toggle('is-fit', !model.blocking); } }
+    updatePremiumStageState(total, counts, reviewed, untranslated); preparePremiumRowActions(); renderFitRows(); syncTopActionStates();
   }
   function cancelPremiumRowWait() {
     if (!premiumRowWait) return;
@@ -932,6 +910,9 @@
 
     document.addEventListener('click', interceptCatStartNavigation);
     document.addEventListener('click', function (event) {
+      if (event.target.closest && (event.target.closest('[data-cat-inspector]') || event.target.closest('#cat-preview-dock-close'))) window.setTimeout(syncPremiumInspectorRail, 0);
+    });
+    document.addEventListener('click', function (event) {
       var row = event.target.closest('[data-premium-row]');
       if (row) { openPremiumRow(row.getAttribute('data-premium-row')); return; }
       if (document.body.classList.contains('premium-tools-open') && !event.target.closest('#cat-editor-toolbar,#premium-tools')) {
@@ -945,6 +926,7 @@
     });
     window.addEventListener('pagehide', cancelPremiumRowWait);
     window.addEventListener('popstate', function () { cancelPremiumRowWait(); syncCatMode(); });
+    window.addEventListener('yaku-cat-rows-rendered', function () { refreshWorkspaceUi(); });
 
     var refresh = debounce(function () { syncCatMode(); refreshWorkspaceUi(); renderWorkCards(); }, 90);
     /* Observe only legacy application nodes. Observing #cat-workspace also sees

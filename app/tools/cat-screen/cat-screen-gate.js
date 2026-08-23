@@ -68,6 +68,18 @@ const http = require('http');
 const path = require('path');
 const { chromium } = require('playwright');
 
+async function openPremiumRowDetails(page) {
+  const details = page.locator('#premium-row-details');
+  if (!(await details.count())) return;
+  const isOpen = await details.evaluate(function (node) { return !!node.open; });
+  if (!isOpen) await details.locator(':scope > summary').click();
+  await page.waitForFunction(function () {
+    var node = document.querySelector('#premium-row-details');
+    var preview = document.querySelector('#cat-preview-open');
+    return !!(node && node.open && preview && preview.getClientRects().length > 0);
+  }, null, { timeout: 10000 });
+}
+
 /* 9185 は同じ本物の CAT 画面を、幅の消費だけに絞って開く。既存の総合門へ
    題材を足すと、関係ない操作の失敗で幅の回帰が読めなくなるため、運転席だけを
    共用する。 */
@@ -138,6 +150,7 @@ if (process.argv[2] === '--width-preview') {
         };
       });
       // Preview is directly visible in the toolbar; the retired "その他" menu is gone.
+      await openPremiumRowDetails(page);
       await page.click('#cat-preview-open');
       await page.waitForSelector('#cat-preview-dialog[open]', { timeout: 10000 });
       await page.waitForSelector('#cat-preview-body .cat-preview-cell[data-cat-preview-index="2"]', { timeout: 20000 });
@@ -422,7 +435,7 @@ async function setTools(page, open) {
     });
     function splitButtons() {
       return page.evaluate(function () {
-        return Array.from(document.querySelectorAll('[data-cat-split-at]')).map(function (b) {
+        return Array.from(document.querySelectorAll('[data-cat-split-at]')).filter(function (b) { return b.getClientRects().length > 0; }).map(function (b) {
           return { index: b.getAttribute('data-cat-split-at'), text: b.textContent, keys: b.getAttribute('aria-keyshortcuts') };
         });
       });
@@ -584,6 +597,7 @@ async function setTools(page, open) {
        選択行リボンとして見せる）。詳細ツールの幕が降りていると押せないので、
        先に閉じておく。 */
     await setTools(page, false);
+    await openPremiumRowDetails(page);
     await page.click('#cat-preview-open');
     await page.waitForSelector('#cat-preview-dialog[open]', { timeout: 10000 });
     await page.waitForTimeout(250);
@@ -633,6 +647,7 @@ async function setTools(page, open) {
       });
     });
     // The preview control remains directly visible for cell-placement previews too.
+    await openPremiumRowDetails(page);
     await page.click('#cat-preview-open');
     await page.waitForSelector('#cat-preview-dialog[open]', { timeout: 10000 });
     await page.waitForTimeout(250);

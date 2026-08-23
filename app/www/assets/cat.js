@@ -967,7 +967,20 @@
     if (origin === 'translation-memory') return '翻訳メモリから';
     return '';
   }
-  function segmentState(segment) { return segment.status || segment.state || (segment.translation ? 'machine_draft' : 'untranslated'); }
+  function segmentEffectiveTranslation(segment) {
+    if (!segment) return '';
+    /* publication_translation is also populated as a mirror of the canonical
+       value on ordinary rows. Only an explicit publication variant changes
+       what Excel receives; otherwise placement/split projections must keep
+       their own destination or joined translation. */
+    var publication = String(segment.publication_translation || '');
+    return segment.has_publication_variant && publication ? publication : String(segment.translation || '');
+  }
+  function segmentHasPublicationVariant(segment) {
+    if (!segment) return false;
+    return !!segment.has_publication_variant && segmentEffectiveTranslation(segment) !== String(segment.translation || '');
+  }
+  function segmentState(segment) { return segment.status || segment.state || (segmentEffectiveTranslation(segment) ? 'machine_draft' : 'untranslated'); }
   function reviewNotesOf(segment) { return segment && Array.isArray(segment.review_notes) ? segment.review_notes : []; }
   function unresolvedReviewNotes(segment) { return reviewNotesOf(segment).filter(function (note) { return String(note.state || '') === 'open'; }); }
   function segmentHasReviewNotes(segment) { return unresolvedReviewNotes(segment).length > 0; }
@@ -1287,7 +1300,7 @@
     }
     if (!segment) { dynamic.innerHTML = ''; appendStaticSegmentActions(host); host.hidden = true; return; }
     host.hidden = false;
-    var index = Number(segment.index), hasTranslation = String(segment.translation || '').trim().length > 0;
+    var index = Number(segment.index), effectiveTranslation = segmentEffectiveTranslation(segment), hasTranslation = effectiveTranslation.trim().length > 0;
     var all = (project && project.segments) || [], next = all.find(function (item) { return Number(item.index) === index + 1; });
     var mergeLosesTranslation = !!(hasTranslation || (next && String(next.translation || '').trim()));
     var splitLosesTranslation = hasTranslation;
@@ -1309,6 +1322,7 @@
     if (segment.can_revise) html += '<details class="cat-segment-revise"><summary>基準訳を直す</summary><form class="revise-form" data-cat-revise="' + index + '"><label class="revise-label">直す指示</label><div class="revise-row"><input class="revise-input" type="text" placeholder="例：「increase」を「rise」に変える"><button class="secondary-button" type="submit">修正案を作る</button></div></form></details>';
     if (segment.prior_source || segment.prior_translation) html += '<button type="button" class="cat-segment-button secondary-button" data-cat-inspector="context" title="前回資料との差を表示" aria-label="前回資料との差を表示">' + segmentActionIcon('i-eye', '前回との差') + '</button>';
     if (qcMessages(segment).length) html += '<button type="button" class="cat-segment-button secondary-button" data-cat-inspector="qc" title="この行の点検結果を表示" aria-label="この行の点検結果を表示">' + segmentActionIcon('i-check', '点検結果') + '</button>';
+    if (segment.kind === 'cell' && segment.placement && (segment.placement.destinations || []).length) html += '<button type="button" class="cat-segment-button secondary-button" data-cat-placement-edit="' + index + '" title="セルの表示範囲を確認・変更" aria-label="セル表示を確認">' + segmentActionIcon('i-eye', 'セル表示を確認') + '</button>';
     /* 収まらない見込みの行から、配置ダイアログを経由せず「収める候補」へ1クリックで
        進む導線（既存の配置ダイアログ＋既存の cat-publication-open を自動で発火する。
        新しいAPIは作らない）。調整できるセル配置（placement.destinations）が無い行は
@@ -1387,7 +1401,7 @@
     el('cat-grid-wrap').hidden = shown.length === 0;
     body.innerHTML = shown.map(function (segment) {
       var index = Number(segment.index), row = index + 1, state = segmentState(segment), isActive = current && Number(current.index) === index;
-      var findings = qcMessages(segment), findingId = 'cat-qc-' + index, origin = referenceOriginLabel(segment) || originLabel(segment.origin), ops = '';
+      var findings = qcMessages(segment), findingViews = qcFindingViews(segment), findingId = 'cat-qc-' + index, origin = referenceOriginLabel(segment) || originLabel(segment.origin), ops = '';
       var nextSegment = all.find(function (candidate) { return Number(candidate.index) === index + 1; });
       var mergeLosesTranslation = !!(String(segment.translation || '').trim() || (nextSegment && String(nextSegment.translation || '').trim()));
       var splitLosesTranslation = !!String(segment.translation || '').trim();
@@ -1421,16 +1435,19 @@
          memoQ の表は訳文セルをその場で直す作り（"type or edit the translation in
          the cell on the right"／未確認でも自動保存）で、押して開く段は無い。
          開いている行だけは、下に操作と点検結果を出す。 */
-      var blockingError = segmentHasBlockingError(segment);
-      var editor = '<textarea rows="1" data-cat-input="' + index + '" data-cat-project-id="' + esc(project.id) + '" data-original="' + esc(segment.translation || '') + '" lang="' + languages.target + '" spellcheck="true" aria-label="' + row + '行目の訳文" aria-invalid="' + (blockingError ? 'true' : 'false') + '"' + (blockingError ? ' aria-describedby="cat-qc-list"' : '') + '>' + esc(segment.translation || '') + '</textarea>';
+      var effectiveTranslation = segmentEffectiveTranslation(segment), publicationVariant = segmentHasPublicationVariant(segment), blockingError = segmentHasBlockingError(segment), blockingReason = blockingError || !effectiveTranslation.trim() || String(state) === 'stale';
+      var warningFinding = findingViews.some(function (view) { return qcFindingSeverity(view) === 'warning'; });
+      var recommendedReason = !blockingReason && (!segment.confirmed || warningFinding || !!fitInfo.risk || segmentHasReviewNotes(segment));
+      var unsavedChange = !!segment.save_failed || dirty.has(dirtyKey(project && project.id, Number(segment.index)));
+      var editor = '<textarea rows="1" data-cat-input="' + index + '" data-cat-project-id="' + esc(project.id) + '" data-original="' + esc(effectiveTranslation) + '"' + (publicationVariant ? ' readonly data-cat-publication-value="1"' : '') + ' lang="' + languages.target + '" spellcheck="true" aria-label="' + row + '行目のExcelに保存される訳文" aria-invalid="' + (blockingError ? 'true' : 'false') + '"' + (blockingError ? ' aria-describedby="cat-qc-list"' : '') + '>' + esc(effectiveTranslation) + '</textarea>';
       var confirmation = segment.confirmed
         ? '<button type="button" class="cat-confirm-control is-confirmed" data-cat-unconfirm="' + index + '" title="確認済み。押すと確認を取り消す（Ctrl+Shift+U）" aria-label="' + row + '行目は確認済み。押すと確認を取り消す（Ctrl+Shift+U）" aria-keyshortcuts="Control+Shift+U"><span class="cat-confirm-mark" aria-hidden="true">✓</span><span>確認済み</span></button>'
         : '<button type="button" class="cat-confirm-control" data-cat-confirm="' + index + '" title="この行を確認済みにする（Ctrl+Enter）" aria-label="' + row + '行目を確認済みにする（Ctrl+Enter）" aria-keyshortcuts="Control+Enter"><span class="cat-confirm-mark" aria-hidden="true">–</span><span>未確認</span></button>';
       /* 行の高さを操作の置き場にしない。行固有の操作は上部の選択行リボンへ
          移し、点検結果・修正比較は下部ドックで表示する。 */
-      var extras = '';
+      var extras = findings.length ? '<div class="premium-inline-findings" role="status" aria-label="このセルの指摘">' + findings.map(function (message) { return '<span>' + esc(message) + '</span>'; }).join('') + '</div>' : '';
       var change = changeLabel(segment), reviewNoteCount = unresolvedReviewNotes(segment).length;
-      return '<tr class="' + (isActive ? 'is-active' : '') + '" data-cat-row="' + index + '" data-cat-segment-id="' + esc(segment.segment_id || '') + '" data-cat-confirmed="' + (segment.confirmed ? '1' : '0') + '" data-yaku-cat-state="' + esc(state) + '">' +
+      return '<tr class="' + (isActive ? 'is-active' : '') + '" data-cat-row="' + index + '" data-cat-segment-id="' + esc(segment.segment_id || '') + '" data-cat-confirmed="' + (segment.confirmed ? '1' : '0') + '" data-yaku-cat-state="' + esc(state) + '" data-cat-effective-value="' + esc(effectiveTranslation) + '" data-cat-canonical-translation="' + esc(segment.translation || '') + '" data-cat-publication-variant="' + (publicationVariant ? '1' : '0') + '" data-cat-blocking="' + (blockingReason ? '1' : '0') + '" data-cat-recommended="' + (recommendedReason ? '1' : '0') + '" data-cat-qc-warning="' + (warningFinding ? '1' : '0') + '" data-cat-save-failed="' + (unsavedChange ? '1' : '0') + '">' +
         '<td class="cat-col-no"><span class="cat-card-label">行番号・状態</span>' + row + '<span class="cat-state cat-state-' + esc(state) + '" title="' + esc(stateTitle(state)) + '">' + stateIcon(state) + '<span>' + esc(stateLabel(state)) + '</span></span>' + ((change && isActive) ? '<span class="cat-change-badge cat-change-' + esc(changeGroup(segment)) + '" title="' + esc(changeTitle(segment)) + '">' + esc(change) + '</span>' : '') + (reviewNoteCount ? '<span class="cat-review-note-badge" title="未解決の作業メモ ' + reviewNoteCount + '件">メモ ' + reviewNoteCount + '</span>' : '') + '</td>' +
         /* 場所は幅が狭く、長いシート名だと番地まで届かない（実測 2026-08-13、
            窓 1760px: 「2026年3月期 連結決算サマリー, AB123」は 366px 必要なのに
@@ -1446,8 +1463,8 @@
            見失う。市販の CAT（memoQ・Trados・Phrase）はどれも表の形を保ったまま
            その場で直す。上下2段は memoQ でも「横表示」という別の表示であって既定では
            ない（Läubli et al. arXiv:2011.05978 が速いとしたのもこの表示のこと）。 */
-        '<td class="cat-source"><span class="cat-card-label">原文</span><span class="cat-source-text" lang="' + languages.source + '">' + esc(segment.source) + '</span></td>' +
-         '<td class="cat-target"><span class="cat-card-label">訳文</span>' + editor + extras + '</td>' +
+        '<td class="cat-source"><span class="cat-card-label">原文（変更されません）</span><span class="cat-source-lock">変更不可</span><span class="cat-source-text" lang="' + languages.source + '">' + esc(segment.source) + '</span></td>' +
+         '<td class="cat-target"><span class="cat-card-label">Excelに保存される訳文</span><span class="cat-publication-meta">' + (publicationVariant ? '<span class="cat-publication-badge">Excel用に調整済み</span>' : '') + (segment.confirmed ? '<span class="cat-save-state is-confirmed">確認済み</span>' : (effectiveTranslation.trim() ? '<span class="cat-save-state">未確認（出力を止めません）</span>' : '<span class="cat-save-state is-blocked">未翻訳（出力を止めます）</span>')) + (unsavedChange ? '<span class="cat-save-state is-failed">保存できていません</span>' : '<span class="cat-save-state is-autosaved">自動保存済み</span>') + '</span>' + editor + extras + '</td>' +
          '<td class="cat-col-confirm"><span class="cat-card-label">状態</span>' + confirmation + '</td></tr>';
     }).join('');
     renderSegmentActions(current);
@@ -1473,6 +1490,7 @@
     }
     el('cat-candidates').hidden = false;
     if (current) candidates(Number(current.index)); else { el('cat-candidate-count').textContent = '0'; el('cat-candidates-list').innerHTML = '<p class="muted">行がありません。左の「すべて」を押すと、全部の行が表示されます。</p>'; }
+    window.dispatchEvent(new CustomEvent('yaku-cat-rows-rendered'));
   }
 
   /* 押せないボタンには「してください」、押せるボタンには「こうなります」を書く。
@@ -3040,7 +3058,7 @@
     return { sheet: match[1] || 'Sheet', column: column, row: Number(match[3]), address: letters + match[3] };
   }
   function previewText(segment) {
-    var target = String(segment.translation || '');
+    var target = segmentEffectiveTranslation(segment);
     if (previewSide === 'source') return { text: String(segment.source || ''), missing: false };
     if (target.trim()) return { text: target, missing: false };
     return { text: String(segment.source || ''), missing: true };
@@ -3882,7 +3900,70 @@
       if (event.key === 'End') { setDockHeight(600, true); event.preventDefault(); }
     });
   }
-  var placementEditorDestinations = [];
+  var placementEditorDestinations = [], placementInvoker = null;
+  function placementCellRef(value, fallbackSheet) {
+    if (!value) return null;
+    var address = typeof value === 'string' ? value : String(value.address || '');
+    var match = address.match(/\$?([A-Z]{1,3})\$?(\d+)/i);
+    if (!match) return null;
+    var letters = match[1].toUpperCase(), column = 0;
+    for (var i = 0; i < letters.length; i++) column = column * 26 + (letters.charCodeAt(i) - 64);
+    return { sheet: typeof value === 'object' && value.sheet ? String(value.sheet) : String(fallbackSheet || 'Sheet'), column: column, row: Number(match[2]), address: letters + match[2] };
+  }
+  function placementColumnName(column) {
+    var name = '';
+    for (var n = Number(column); n > 0; n = Math.floor((n - 1) / 26)) name = String.fromCharCode(65 + ((n - 1) % 26)) + name;
+    return name;
+  }
+  function renderPlacementGrid(segment) {
+    var host = el('cat-placement-grid');
+    if (!host || !segment) return;
+    var placement = segment.placement || {}, destinations = placement.destinations || [], anchor = placementCellRef(destinations[0], String(segment.location || '').split(/[,!]/)[0]);
+    if (!anchor) anchor = previewCellRef(String(segment.location || '').replace(/\s*!\s*/, ', '));
+    host.innerHTML = '';
+    if (!anchor) { host.textContent = 'Excelの表示範囲を取得できません。'; return; }
+    var displayOnly = {};
+    (placement.display_regions || []).forEach(function (region) {
+      if (region.mode !== 'spill_right_display_only') return;
+      (region.cells || []).forEach(function (cell) { var ref = placementCellRef(cell, anchor.sheet); if (ref) displayOnly[ref.address] = true; });
+    });
+    var startColumn = Math.max(1, anchor.column - 1), endColumn = Math.max(anchor.column + 3, startColumn + 4), startRow = Math.max(1, anchor.row - 1), endRow = anchor.row + 1;
+    var table = document.createElement('div'); table.className = 'cat-placement-grid-table'; table.setAttribute('role', 'grid');
+    var header = document.createElement('div'); header.className = 'cat-placement-grid-row cat-placement-grid-header'; header.setAttribute('role', 'row');
+    var corner = document.createElement('span'); corner.className = 'cat-placement-grid-corner'; corner.setAttribute('role', 'columnheader'); header.appendChild(corner);
+    for (var column = startColumn; column <= endColumn; column++) { var h = document.createElement('span'); h.setAttribute('role', 'columnheader'); h.textContent = placementColumnName(column); header.appendChild(h); }
+    table.appendChild(header);
+    for (var rowNumber = startRow; rowNumber <= endRow; rowNumber++) {
+      var rowNode = document.createElement('div'); rowNode.className = 'cat-placement-grid-row'; rowNode.setAttribute('role', 'row');
+      var rowHeader = document.createElement('span'); rowHeader.className = 'cat-placement-grid-row-number'; rowHeader.setAttribute('role', 'rowheader'); rowHeader.textContent = String(rowNumber); rowNode.appendChild(rowHeader);
+      for (var col = startColumn; col <= endColumn; col++) {
+        var address = placementColumnName(col) + rowNumber, cell = document.createElement('span'); cell.className = 'cat-placement-grid-cell'; cell.setAttribute('role', 'gridcell'); cell.setAttribute('aria-label', anchor.sheet + ' ' + address);
+        if (address === anchor.address) { cell.classList.add('is-saved'); cell.innerHTML = '<small>Excelへ保存</small><strong>' + esc(segmentEffectiveTranslation(segment)) + '</strong>'; }
+        else if (displayOnly[address]) { cell.classList.add('is-display-only'); cell.innerHTML = '<small>' + address + '・表示のみ</small>'; }
+        else { cell.classList.add('is-empty'); }
+        rowNode.appendChild(cell);
+      }
+      table.appendChild(rowNode);
+    }
+    host.appendChild(table);
+  }
+  function syncPlacementSettingsSummary() {
+    var status = el('cat-placement-down-status'), down = el('cat-placement-down'), count = Number(down && down.value || 0);
+    if (!status) return;
+    status.textContent = count > 0 ? 'ON' : 'OFF';
+    status.classList.toggle('is-on', count > 0);
+  }
+  function setPlacementDialogMode(mode) {
+    var dialog = el('cat-placement-dialog'), editing = String(mode || 'view') === 'edit';
+    if (!dialog) return;
+    dialog.setAttribute('data-mode', editing ? 'edit' : 'view');
+    var advanced = el('cat-placement-advanced'), editButton = el('cat-placement-edit'), saveButton = el('cat-placement-save'), publicationButton = el('cat-publication-open');
+    if (advanced) { advanced.hidden = !editing; advanced.open = editing; }
+    if (editButton) editButton.hidden = editing;
+    if (saveButton) { saveButton.hidden = !editing; saveButton.textContent = '変更を保存'; }
+    if (publicationButton) publicationButton.hidden = !editing;
+    syncPlacementSettingsSummary();
+  }
   function renderPlacementSliceEditors(downCount) {
     var host = el('cat-placement-slices');
     var base = placementEditorDestinations.filter(function (destination) { return String(destination.mode || 'replace_source_block') !== 'use_confirmed_empty'; });
@@ -3904,13 +3985,16 @@
     if (!placement || !(placement.destinations || []).length) { status('この行には調整できるセル配置がありません。', true); return false; }
     el('cat-placement-index').value = String(index);
     var contextLocation = String(segment.location || '').replace(/\s*,\s*/g, ' ').trim();
+    placementInvoker = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
     var sourceNode = el('cat-placement-source');
     var publicationNode = el('cat-placement-publication');
     if (sourceNode) sourceNode.textContent = String(segment.source || '（原文なし）');
-    if (publicationNode) publicationNode.textContent = String(segment.publication_translation || segment.translation || '（訳文なし）');
+    if (publicationNode) publicationNode.textContent = String(segmentEffectiveTranslation(segment) || '（訳文なし）');
+    renderPlacementGrid(segment);
     var context = el('cat-placement-context');
     if (context) {
-      context.textContent = contextLocation ? '対象セル：' + contextLocation : '対象セルの配置';
+      var contextParts = contextLocation.split(/\s+/);
+      context.textContent = contextParts.length > 1 ? '保存先：' + contextParts.join(' ') : (contextLocation ? '保存先：' + contextLocation : '保存先：Excelの対象セル');
     }
     placementEditorDestinations = (placement.destinations || []).slice();
     var downDestinations = placementEditorDestinations.filter(function (destination) { return String(destination.mode || '') === 'use_confirmed_empty'; });
@@ -3943,8 +4027,9 @@
       }
     }
     el('cat-placement-message').textContent = '';
+    setPlacementDialogMode('view');
     el('cat-placement-dialog').showModal();
-    var first = el('cat-placement-slices').querySelector('textarea'); if (first) YakuCommon.focus(first);
+    var closeButton = el('cat-placement-cancel'); if (closeButton) YakuCommon.focus(closeButton);
     return true;
   }
   /* 収まらない見込みの行から1クリックで「収める候補」へ。既存の配置ダイアログ
@@ -3958,6 +4043,7 @@
   }
   function savePlacement(event) {
     event.preventDefault();
+    if (!el('cat-placement-dialog') || el('cat-placement-dialog').getAttribute('data-mode') !== 'edit') return;
     var index = Number(el('cat-placement-index').value);
     var segment = (project && project.segments || []).find(function (item) { return Number(item.index) === index; });
     var slices = Array.prototype.map.call(el('cat-placement-slices').querySelectorAll('[data-cat-placement-slice]'), function (input) { return input.value; });
@@ -4953,8 +5039,10 @@
     el('cat-preview-pdf-check').addEventListener('click', checkPdfPublicationText);
     el('cat-preview-pdf-accept').addEventListener('click', acceptPdfVisualReview);
     el('cat-placement-form').addEventListener('submit', savePlacement);
+    el('cat-placement-edit').addEventListener('click', function () { setPlacementDialogMode('edit'); var first = el('cat-placement-slices').querySelector('textarea'); if (first) YakuCommon.focus(first); });
     el('cat-placement-cancel').addEventListener('click', function () { el('cat-placement-dialog').close(); });
-    el('cat-placement-down').addEventListener('change', function () { renderPlacementSliceEditors(Number(this.value || 0)); });
+    el('cat-placement-dialog').addEventListener('close', function () { if (placementInvoker && placementInvoker.isConnected) YakuCommon.focus(placementInvoker); placementInvoker = null; });
+    el('cat-placement-down').addEventListener('change', function () { renderPlacementSliceEditors(Number(this.value || 0)); syncPlacementSettingsSummary(); });
     el('cat-publication-open').addEventListener('click', openPublicationCandidates);
     el('cat-publication-close').addEventListener('click', function () { el('cat-publication-dialog').close(); });
     el('cat-publication-generate').addEventListener('click', generatePublicationCandidates);
@@ -5521,12 +5609,20 @@
     if (workMode) { showPicker(false, true); return; }
     showPicker();
   }
+  function getPremiumSnapshot() {
+    return project ? (project.segments || []).map(function (segment) {
+      var effective = segmentEffectiveTranslation(segment), state = segmentState(segment), views = qcFindingViews(segment), blockingError = segmentHasBlockingError(segment), warning = views.some(function (view) { return qcFindingSeverity(view) === 'warning'; }), fit = segmentFitRiskInfo(segment), saveFailed = !!segment.save_failed || dirty.has(dirtyKey(project.id, Number(segment.index))), stale = state === 'stale', blocking = blockingError || !effective.trim() || stale || saveFailed, recommended = !blocking && (!segment.confirmed || warning || !!fit.risk || segmentHasReviewNotes(segment));
+      return { index: String(segment.index), location: String(segment.location || ''), source: String(segment.source || ''), target: effective.trim(), canonical: String(segment.translation || '').trim(), publicationVariant: segmentHasPublicationVariant(segment), state: state, reviewed: !!segment.confirmed, risk: !!fit.risk, warning: warning, blocking: blocking, saveFailed: saveFailed, qcError: blockingError, stale: stale, recommended: recommended, reason: !effective.trim() ? '未翻訳' : saveFailed ? '保存失敗' : blockingError ? '点検エラー' : stale ? '再点検' : fit.risk ? '体裁' : warning ? '指摘' : !segment.confirmed ? '未確認' : '確認済み' };
+    }) : [];
+  }
   window.YakuCat = {
     isBusy: function () { return busy; },
     getRecentSnapshot: function () { return recentSnapshot; },
     getRecent: function () { return loadRecent(); },
     refreshRecent: function () { return loadRecent(true); },
-    navigateStart: navigateStart
+    navigateStart: navigateStart,
+    getPremiumSnapshot: getPremiumSnapshot,
+    resave: function () { return flush(); }
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
