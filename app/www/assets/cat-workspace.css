@@ -1219,6 +1219,64 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 .cat-placement-slices { display: grid; gap: var(--space-2); max-height: 54vh; overflow: auto; }
 .cat-placement-slices label { display: grid; gap: var(--space-0); font-weight: 700; }
 .cat-placement-slices textarea { min-height: 5rem; resize: vertical; font: inherit; }
+.cat-placement-context {
+  margin-block: var(--space-1) var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: 700;
+}
+.cat-placement-field {
+  margin-top: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle);
+}
+.cat-placement-field-label,
+.cat-placement-slices-heading {
+  display: block;
+  margin-bottom: var(--space-0);
+  color: var(--accent-text);
+  font-size: var(--font-meta);
+  font-weight: 700;
+}
+.cat-placement-field p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.cat-placement-auto-note {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-1) var(--space-2);
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+}
+.cat-placement-advanced {
+  margin-top: var(--space-2);
+  border-top: 1px solid var(--line);
+}
+.cat-placement-advanced > summary {
+  padding: var(--space-1) 0;
+  color: var(--accent-text);
+  cursor: pointer;
+  font-weight: 700;
+}
+.cat-placement-advanced > p { margin: 0 0 var(--space-1); }
+.cat-placement-choice {
+  display: grid;
+  gap: var(--space-0);
+  margin-top: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle);
+}
+.cat-placement-choice[hidden] { display: none; }
+.cat-placement-choice label { display: grid; gap: var(--space-0); font-weight: 700; }
+.cat-placement-choice-title, .cat-placement-slice-title { display: block; }
+.cat-placement-choice-note { margin: 0; }
 .cat-source-update-dialog { width: min(70rem, 94vw); }
 .cat-source-update-list { display: grid; gap: var(--space-2); max-height: 58vh; overflow: auto; }
 .cat-source-update-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) minmax(0,1fr); gap: var(--space-1); border: 1px solid var(--line); padding: var(--space-1); }

@@ -70,8 +70,8 @@ $N9196CatHtmlPath = Join-Path $N9196Www 'cat.html'
 $N9196CatJs = [IO.File]::ReadAllText($N9196CatJsPath, [Text.Encoding]::UTF8)
 $N9196CatHtml = [IO.File]::ReadAllText($N9196CatHtmlPath, [Text.Encoding]::UTF8)
 
-Assert-N9196 ($N9196CatJs.Contains('function autoSpillColumns(layout, row, column, span)')) 'autoSpillColumns が実在する'
-Assert-N9196 ($N9196CatJs.Contains('function segmentFitRisk(segment, layout, row, column, span, text, bold)')) 'segmentFitRisk（共有判定）が実在する'
+Assert-N9196 ($N9196CatJs -match 'function autoSpillColumns\(layout, row, column, span(?:, previewLimit)?\)') 'autoSpillColumns が実在する（プレビューだけ任意の上限を渡せる）'
+Assert-N9196 ($N9196CatJs -match 'function segmentFitRisk\(segment, layout, row, column, span, text, bold(?:, previewLimit)?\)') 'segmentFitRisk（共有判定）が実在する（プレビューだけ任意の上限を渡せる）'
 Assert-N9196 ($N9196CatJs.Contains('function segmentFitRiskInfo(segment)')) 'segmentFitRiskInfo（絞り込み・行の印の入口）が実在する'
 Assert-N9196 ($N9196CatJs.Contains('function segmentFitCapacity(segment)')) 'segmentFitCapacity（max_charsの実幅由来）が実在する'
 

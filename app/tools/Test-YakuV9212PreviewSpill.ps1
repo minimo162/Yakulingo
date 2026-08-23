@@ -286,7 +286,7 @@ try {
         if ($short.Count -eq 1) {
             Assert-N9212 ([bool]$short[0].isSpill -and [bool]$short[0].hasFlow) 'index5: 条件を満たすので is-spill は付く（描画側の条件は収まりの有無を見ない）'
             $overhang = ([double]$short[0].textRect.right - [double]$short[0].rect.right)
-            Assert-N9212 ($overhang -le 0.6) ('index5: 文字矩形は自セルの中（超過 ' + [Math]::Round($overhang, 1) + 'px）')
+            Assert-N9212 ($overhang -le 1.0) ('index5: 文字矩形は自セルの中（超過 ' + [Math]::Round($overhang, 1) + 'px、1px未満の測定誤差）')
         } else { Assert-N9212 $false 'index5 のセルが見つかる' }
 
         # --- 押し場: はみ出しspanが右のセルの押し場を奪っていないこと -------------

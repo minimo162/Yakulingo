@@ -106,7 +106,7 @@ try {
     }
 
     Write-Host '(a) 常設ドックの既定の姿' -ForegroundColor Cyan
-    Chk ([bool]$observed.dockVisibleByDefault) '資料を開くと体裁が下に見えている'
+    Chk ([bool]$observed.dockHiddenByDefault -and -not [bool]$observed.dockVisibleByDefault) '初回は体裁を閉じ、必要なときだけ開ける'
     Chk ([int]$observed.dockState.width -gt 0 -and [int]$observed.dockState.height -gt 0) ('ドックに面積がある（' + [int]$observed.dockState.width + 'x' + [int]$observed.dockState.height + 'px）')
     Chk ([string]$observed.dockState.activeTab -eq 'preview') ('プレビュータブを選んだ状態で出る（実際 ' + [string]$observed.dockState.activeTab + '）')
     Chk ([string]$observed.dockState.toggleAriaPressed -eq 'true') '上部の「プレビュー」釦が押された状態を名乗る（aria-pressed）'
