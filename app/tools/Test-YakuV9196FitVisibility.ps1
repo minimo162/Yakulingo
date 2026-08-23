@@ -132,7 +132,13 @@ Assert-N9196 ($N9196CatJs -match "busy && \(button\.id === 'cat-confirm-bulk'.*d
 # フォールバック（REWORK-1 MAJOR-3/4: 実測側の20字下限は外し、8..99へ
 # クランプしてから送る。生の値とクランプの理由（basis）を状態行が正直に言う）。
 Assert-N9196 ($N9196CatJs.Contains('var measuredCapacity = segmentFitCapacity(segment);')) 'generatePublicationCandidates が segmentFitCapacity を先に試す'
-Assert-N9196 ($N9196CatJs.Contains("var maxChars = measuredCapacity ? measuredCapacity.maxChars : Math.max(20, Math.floor(String(segment.translation || '').length * 0.8));")) '実測できないときだけ従来の0.8倍（20字下限つき）へ落ちる'
+# 2026-08-22（#106 flatten, 28600d1）に算出部は generatePublicationCandidates から
+# computeFitBudget へ純粋抽出された。フォールバック式の字面はそちらへ移っただけで、
+# 意味論は変わっていない（currentText = segmentFitText(segment)。訳文が無ければ
+# 原文で代行する点だけが旧ピンの String(segment.translation||'') との違いで、
+# 層が引けない行で訳文が入っているというこの試験の題材では同じ値になる）。
+# 「従来の0.8倍・20字下限」の振る舞いそのものは、実機部の fallback 断言が見る。
+Assert-N9196 ($N9196CatJs.Contains('var maxChars = measuredCapacity ? measuredCapacity.maxChars : Math.max(20, Math.floor(currentText.length * 0.8));')) '実測できないときだけ従来の0.8倍（20字下限つき）へ落ちる（computeFitBudget のフォールバック）'
 Assert-N9196 ($N9196CatJs.Contains('var raw = Math.floor(text.length * Math.max(0, fit.displayWidthPx - 8) / fit.textWidthPx);')) 'segmentFitCapacity は生の容量（20字下限を掛けない）をまず出す'
 Assert-N9196 (-not ($N9196CatJs -match 'Math\.max\(20,\s*Math\.floor\(text\.length')) '実測側には20字下限を掛けていない（実容量8〜11字の行に「20字」と出ていた誤りの再発防止）'
 Assert-N9196 ($N9196CatJs.Contains('return { raw: raw, maxChars: Math.min(99, Math.max(8, raw)), basis: basis };')) 'segmentFitCapacity がサーバの使える窓[8,99]へクランプしてから返す'
@@ -364,7 +370,14 @@ Assert-N9196 ($null -ne $N9196Result -and @($N9196Result.errors).Count -eq 0 -an
 
 if ($null -ne $N9196Result) {
     $N9196Cells = @($N9196Result.previewCells)
-    function Get-N9196Cell { param([int]$Index) return @($N9196Cells | Where-Object { [int]$_.index -eq $Index }) }
+    function Get-N9196Cell {
+        param([int]$Index)
+        # 戻り値は ,@(...) で包む。包まないと一致が1個のとき関数の外へ解かれて
+        # スカラーになり、PS 5.1 の PSCustomObject には .Count が無いため
+        # 「印が1個ある」の比較が黙って偽になる（V9212 の同名の手当てと同じ。
+        # 実測: $cell.Count は空、@($cell).Count なら 1。2026-08-23）。
+        return ,@($N9196Cells | Where-Object { [int]$_.index -eq $Index })
+    }
 
     # --- 自動spill幅 --------------------------------------------------------
     # 註: 整数キーの [ordered]@{} は使わない。System.Collections.Specialized.

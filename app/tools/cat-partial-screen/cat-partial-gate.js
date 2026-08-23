@@ -229,6 +229,25 @@ const server = http.createServer(async function (req, res) {
 
 (async function () {
   const out = { errors: [], console: [] };
+
+  /* premium の作業画面では、旧帯（#cat-editor-toolbar）は premium-ui.css が
+     display:none にしており、「詳細ツール」（上部の #premium-tools）から開いた
+     ときだけ見える。開いているあいだは帯の外に幕（body.premium-tools-open::after）
+     が降りるので、帯の外を押す前には必ず閉じる。利用者の道すがらそのまま
+     （2026-08-23 実測。page.click は不可視要素で30秒待つため、旧手順のままだと
+     ここで時間切れになっていた）。 */
+  async function setTools(open) {
+    const isOpen = await page.evaluate(function () {
+      return document.body.classList.contains('premium-tools-open');
+    });
+    if (isOpen === open) return;
+    await page.click('#premium-tools');
+    await page.waitForFunction(function (want) {
+      var toolbar = document.getElementById('cat-editor-toolbar');
+      return document.body.classList.contains('premium-tools-open') === want &&
+        (!!toolbar && toolbar.getClientRects().length > 0) === want;
+    }, open, { timeout: 10000 });
+  }
   await new Promise(function (r) { server.listen(0, '127.0.0.1', r); });
   const port = server.address().port;
   const browser = await chromium.launch();
@@ -262,7 +281,11 @@ const server = http.createServer(async function (req, res) {
     });
 
     await page.waitForFunction(function () { var b = document.getElementById('cat-translate'); return b && !b.disabled; }, null, { timeout: 10000 });
-    await page.click('#cat-translate');
+    /* 押すのは上部帯の代理釦（未訳を翻訳）。#cat-translate 自体は詳細ツールの
+       中にあって普段は見えない（premium-ui.css）。代理釦は syncTopActionStates
+       が元の釦の disabled を写しており、setupTopActionProxies が click を
+       代理で渡す。元の釦が押せる状態は上の1行が見ている。 */
+    await page.click('#premium-translate');
 
     // tick0 (index=0のみ)が反映されるのを待つ。
     await page.waitForFunction(function () {
@@ -313,7 +336,17 @@ const server = http.createServer(async function (req, res) {
     // ここでのDOM要素同一性の喪失は想定どおり——だから(d)のDOM同一性
     // 検証(tick前後の要素参照比較)より後で行う。見るのは、作り直された
     // 後の行にも先出しの内容（値・印）が残っていること。
-    await page.click('[data-cat-filter="all"]');
+    /* 絞り込みの釦は詳細ツール（#premium-tools）の中にあるが、開いているあいだ
+       は帯の外に幕が降りて working 中の画面が触れなくなる上、開閉の手間を
+       窓の中に入れるとジョブが先へ進んでしまう。見るのは「押すと
+       redrawAfterFlush→renderRows()が走る」ことであって当たり判定ではないので、
+       実際の釦へ JS で click を送る（委譲リスナーは通常の釦と同じ道を通る。
+       2026-08-23 実測）。 */
+    await page.evaluate(function () {
+      var b = document.querySelector('[data-cat-filter="all"]');
+      if (!b) throw new Error('filter all not found');
+      b.click();
+    });
     await page.waitForFunction(function () {
       var b = document.querySelector('[data-cat-filter="all"]');
       return !!(b && b.getAttribute('aria-pressed') === 'true');
@@ -340,7 +373,7 @@ const server = http.createServer(async function (req, res) {
     await page.goto('http://127.0.0.1:' + port + '/cat?project=' + encodeURIComponent(projectCancel.id), { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#cat-workspace:not([hidden])', { timeout: 10000 });
     await page.waitForFunction(function () { var b = document.getElementById('cat-translate'); return b && !b.disabled; }, null, { timeout: 10000 });
-    await page.click('#cat-translate');
+    await page.click('#premium-translate');
     await page.waitForFunction(function () {
       var input = document.querySelector('[data-cat-row="0"] textarea[data-cat-input]');
       return !!(input && input.value === 'Translated cancel zero.');
@@ -358,6 +391,9 @@ const server = http.createServer(async function (req, res) {
     // jobContextはcancelledでもnullにならない（MINOR-2のため）。page.gotoで
     // 再読み込みするとjobContext自体が消えて再現しないので、実際にダイアログを
     // 開いて同じページ内で切り替える（cat-mask-gate.jsの資料切り替えと同じ作法）。
+    /* 資料名の切替口（#cat-doc-switch）も詳細ツールの中にある。開いてから押す
+       （2026-08-23）。 */
+    await setTools(true);
     await page.click('#cat-doc-switch');
     const switchTargetId = String(projectSwitchTarget.id);
     const switchChoiceSelector = '#cat-doc-dialog-list [data-cat-doc-open="' + switchTargetId + '"]';
