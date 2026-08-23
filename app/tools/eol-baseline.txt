@@ -140,6 +140,7 @@ tools/Test-YakuV9190StructuralUndo.ps1	crlf
 tools/Test-YakuV9191PairedDelimiterQa.ps1	crlf
 tools/Test-YakuV9192SegmentReviewNotes.ps1	lf
 tools/Test-YakuV9193NumericWordQa.ps1	crlf
+tools/Test-YakuV9194PremiumStartRoute.ps1	crlf
 tools/Test-YakuV9194SmartcatEditorLayout.ps1	crlf
 tools/Test-YakuV9195Palette.ps1	crlf
 tools/Test-YakuV9196FitVisibility.ps1	crlf
