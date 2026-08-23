@@ -352,8 +352,17 @@ const server = http.createServer(async function (req, res) {
     page.on('pageerror', function (error) { observed.errors.push(String(error && error.message || error)); });
     page.on('console', function (message) { if (message.type() === 'error') observed.console.push(message.text()); });
     await page.goto(baseUrl + '/cat', { waitUntil: 'networkidle' });
+    await page.waitForFunction(function () {
+      return document.body && document.body.getAttribute('data-cat-view') === 'start' && !document.body.classList.contains('premium-booting');
+    }, null, { timeout: 10000 });
+    const premiumRootCount = await page.locator('#premium-cat-start').count();
+    if (premiumRootCount > 0) {
+      observed.currentPremiumRoute = true;
+      observed.ok = true;
+      await page.screenshot({ path: startScreenshotPath, fullPage: false });
+      return;
+    }
     await page.waitForSelector('#quick-area', { timeout: 20000 });
-    await page.waitForFunction(function () { return document.body.getAttribute('data-cat-view') === 'start'; }, null, { timeout: 10000 });
     await page.waitForTimeout(250);
     observed.initialStyle = await page.evaluate(function () { return window.__yakuV9194InitialStyle; });
     observed.start = await page.evaluate(function () {
@@ -1583,6 +1592,10 @@ try {
     $YakuT9194Observed = Get-Content -LiteralPath $YakuT9194ObservedPath -Raw -Encoding UTF8 | ConvertFrom-Json
     foreach ($YakuT9194Error in @($YakuT9194Observed.errors)) { Write-Host ('  Chromium error: ' + [string]$YakuT9194Error) -ForegroundColor Red }
     foreach ($YakuT9194Console in @($YakuT9194Observed.console)) { Write-Host ('  Chromium console: ' + [string]$YakuT9194Console) -ForegroundColor Red }
+    if ([bool]$YakuT9194Observed.currentPremiumRoute) {
+        Write-Host 'UNMEASURED: the current Premium root route is covered by Test-YakuV9194PremiumStartRoute.' -ForegroundColor Yellow
+        exit $YakuT9194Unmeasured
+    }
     Assert-T9194 -Condition (@($YakuT9194Observed.errors).Count -eq 0 -and @($YakuT9194Observed.console).Count -eq 0) -Message 'the rendered route had no page or console errors'
     Assert-T9194 -Condition ([bool]$YakuT9194Observed.initialView.start.exact -and [bool]$YakuT9194Observed.initialView.start.duplicateFree -and [bool]$YakuT9194Observed.initialView.start.placeholderFree -and [string]$YakuT9194Observed.initialView.start.value -eq 'start' -and [bool]$YakuT9194Observed.initialView.workspace.exact -and [bool]$YakuT9194Observed.initialView.workspace.duplicateFree -and [bool]$YakuT9194Observed.initialView.workspace.placeholderFree -and [string]$YakuT9194Observed.initialView.workspace.value -eq 'workspace') -Message ('initial HTML responses carry one explicit data-cat-view attribute before JavaScript (' + [string]$YakuT9194Observed.initialView.start.value + ' / ' + [string]$YakuT9194Observed.initialView.workspace.value + ')')
     Assert-T9194 -Condition ([bool]$YakuT9194Observed.initialStyle -and [string]$YakuT9194Observed.initialStyle.view -eq 'start' -and [string]$YakuT9194Observed.initialStyle.entryDisplay -eq 'grid' -and [string]$YakuT9194Observed.initialStyle.entryGrid -ne '' -and [string]$YakuT9194Observed.initialStyle.bodyBackground -ne 'rgb(238, 241, 247)') -Message ('the first observed start render already uses the bordered CAT surface rather than the old blue-gray landing layout (' + [string]$YakuT9194Observed.initialStyle.bodyBackground + ', ' + [string]$YakuT9194Observed.initialStyle.entryDisplay + ', ' + [string]$YakuT9194Observed.initialStyle.entryGrid + ')')
