@@ -284,6 +284,8 @@ function sendJson(response, value, statusCode = 200) {
         const input = document.getElementById('palette-input');
         const quickButton = document.getElementById('palette-submit');
         const excelButton = document.getElementById('premium-file-select');
+        const recent = document.getElementById('premium-sidebar-recent');
+        const recentItems = recent ? Array.from(recent.querySelectorAll('.premium-recent-item')) : [];
         const textNodes = Array.from(document.querySelectorAll('.premium-combined-grid h2,.premium-combined-grid p,.premium-combined-grid button,.premium-combined-grid select')).filter(node => visible(node) && !node.classList.contains('sr-only') && node.textContent.trim());
         const fonts = textNodes.map(node => parseFloat(getComputedStyle(node).fontSize)).filter(Number.isFinite);
         return {
@@ -300,6 +302,13 @@ function sendJson(response, value, statusCode = 200) {
           excelButton: { visible: visible(excelButton), font: excelButton ? parseFloat(getComputedStyle(excelButton).fontSize) : 0, height: excelButton ? excelButton.getBoundingClientRect().height : 0 },
           fileDropVisible: visible(document.getElementById('premium-file-drop')),
           legacyFileLaneVisible: visible(document.getElementById('cat-file-area')),
+          sidebarRecent: {
+            visible: visible(recent),
+            clientWidth: recent ? recent.clientWidth : 0,
+            scrollWidth: recent ? recent.scrollWidth : 0,
+            itemWidths: recentItems.map(node => ({ clientWidth: node.clientWidth, scrollWidth: node.scrollWidth })),
+            noHorizontalOverflow: !!recent && recent.scrollWidth <= recent.clientWidth + 1 && recentItems.every(node => node.scrollWidth <= node.clientWidth + 1)
+          },
           overflow: document.documentElement.scrollWidth > innerWidth + 1 || document.body.scrollWidth > innerWidth + 1
         };
       });
@@ -315,7 +324,7 @@ function sendJson(response, value, statusCode = 200) {
       assert.strictEqual(recentRequestCount, 2, 'YakuCat.refreshRecent must issue exactly one new recent request: ' + recentRequestCount);
       const recentCountAfterRefresh = recentRequestCount;
       const combinedWide = await measureCombined();
-      assert.ok(combinedWide.mode && combinedWide.title === '\u7ffb\u8a33 - YakuLingo' && combinedWide.chat.visible && combinedWide.excel.visible && combinedWide.splitDelta <= 2 && combinedWide.input.visible && combinedWide.input.form === 'palette-form' && combinedWide.input.font >= 18 && combinedWide.quickButton.visible && combinedWide.quickButton.font >= 16 && combinedWide.quickButton.height >= 50 && combinedWide.excelButton.visible && combinedWide.excelButton.font >= 16 && combinedWide.excelButton.height >= 50 && combinedWide.fileDropVisible && !combinedWide.legacyFileLaneVisible && combinedWide.minFont >= 13 && combinedWide.bodyFont >= 17 && !combinedWide.overflow, JSON.stringify(combinedWide));
+      assert.ok(combinedWide.mode && combinedWide.title === '\u7ffb\u8a33 - YakuLingo' && combinedWide.chat.visible && combinedWide.excel.visible && combinedWide.splitDelta <= 2 && combinedWide.input.visible && combinedWide.input.form === 'palette-form' && combinedWide.input.font >= 18 && combinedWide.quickButton.visible && combinedWide.quickButton.font >= 16 && combinedWide.quickButton.height >= 50 && combinedWide.excelButton.visible && combinedWide.excelButton.font >= 16 && combinedWide.excelButton.height >= 50 && combinedWide.fileDropVisible && !combinedWide.legacyFileLaneVisible && combinedWide.minFont >= 13 && combinedWide.bodyFont >= 17 && combinedWide.sidebarRecent.noHorizontalOverflow && !combinedWide.overflow, JSON.stringify(combinedWide));
       await combinedPage.locator('#palette-input').fill('\u58f2\u4e0a\u304c\u5897\u52a0\u3057\u307e\u3057\u305f\u3002');
       await combinedPage.waitForTimeout(100);
       assert.notStrictEqual(await combinedPage.locator('#palette-count').textContent(), '0\u5b57');
