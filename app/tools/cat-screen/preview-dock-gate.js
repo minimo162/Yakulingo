@@ -61,33 +61,33 @@ const server = http.createServer(function (req, res) {
     await page.goto('http://127.0.0.1:' + port + '/cat?project=' + id, { waitUntil: 'networkidle' });
     await page.waitForSelector('#cat-grid-body tr', { timeout: 15000 });
 
-    observed.hiddenByDefault = await page.$eval('#cat-preview-dock', function (el) { return el.hidden; });
-    observed.toggleLabelClosed = await page.$eval('#cat-preview-dock-toggle', function (el) { return el.textContent.trim(); });
-
-    // 開く。details の中にあるので、まず開く。
-    await page.evaluate(function () {
-      const d = document.querySelector('.cat-more-actions'); if (d) d.open = true;
-      document.getElementById('cat-preview-dock-toggle').click();
-    });
-    await page.waitForTimeout(300);
-
-    observed.hiddenAfterToggle = await page.$eval('#cat-preview-dock', function (el) { return el.hidden; });
-    observed.toggleLabelOpen = await page.$eval('#cat-preview-dock-toggle', function (el) { return el.textContent.trim(); });
-    observed.bodyLength = await page.$eval('#cat-preview-dock-body', function (el) { return el.innerHTML.length; });
-    observed.itemCount = await page.$$eval('#cat-preview-dock-body [data-cat-preview-index]', function (els) { return els.length; });
-
-    // 仕切りの姿。Smartcat の実測は 4px・全幅・row-resize。
-    observed.splitter = await page.$eval('#cat-preview-dock-splitter', function (el) {
-      const cs = getComputedStyle(el);
+    /* premium の作業画面では、体裁は格子の下ではなく**常設の右レール**である。
+       起動時に cat.js の restoreDockState() が開き、さらに premium-ui.js の
+       forcePreviewRail() がプレビュータブを選んだ状態で強制表示する。
+       仕切り（#cat-preview-dock-splitter）と「畳む」（#cat-preview-dock-close）は、
+       常設レールでは置かない（premium-ui.css が両方を display:none）。
+       だから旧門の「既定では畳んでいる」「畳むで消える」「仕切りは4px・掴んで
+       動かす」は、現行の画面にはもう無い（2026-08-23 実測）。
+       ここでは、その現行契約の姿をそのまま観測して渡す。 */
+    await page.waitForFunction(function () {
+      var dock = document.getElementById('cat-preview-dock');
+      return !!dock && !dock.hidden && dock.getClientRects().length > 0;
+    }, null, { timeout: 15000 });
+    observed.railVisibleByDefault = true;
+    observed.railState = await page.evaluate(function () {
+      var dock = document.getElementById('cat-preview-dock');
+      var rect = dock.getBoundingClientRect();
+      var splitter = document.getElementById('cat-preview-dock-splitter');
+      var closeButton = document.getElementById('cat-preview-dock-close');
+      var activeTab = document.querySelector('.cat-bottom-dock-bar [data-cat-inspector][aria-selected="true"]');
       return {
-        role: el.getAttribute('role'),
-        ariaOrientation: el.getAttribute('aria-orientation'),
-        tabindex: el.getAttribute('tabindex'),
-        height: Math.round(el.getBoundingClientRect().height),
-        cursor: cs.cursor,
-        valuemin: el.getAttribute('aria-valuemin'),
-        valuemax: el.getAttribute('aria-valuemax'),
-        valuenow: el.getAttribute('aria-valuenow')
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+        activeTab: activeTab ? activeTab.getAttribute('data-cat-inspector') : null,
+        toggleAriaPressed: document.getElementById('cat-preview-dock-toggle').getAttribute('aria-pressed'),
+        inspectorToggleText: document.getElementById('cat-inspector-toggle').textContent,
+        splitterDisplay: getComputedStyle(splitter).display,
+        closeButtonDisplay: getComputedStyle(closeButton).display
       };
     });
 
@@ -98,13 +98,20 @@ const server = http.createServer(function (req, res) {
        組み直しても同じ HTML が出るので、その表明はどちらでも緑になる（空振り）。
        **要素そのものが生き残っているか**で見る。innerHTML を入れ直すと、
        前に掴んでいたノードは文書から外れる（isConnected が false になる）。 */
+    /* **選び方はキーボード（Alt+↓）。** premium の表は選択中の行だけを描くため、
+       ほかの行の訳文欄は DOM にはあっても display:none で、focus を当てても
+       選択は動かない（2026-08-23 実測）。 */
     const before = await page.evaluate(function () {
       const body = document.getElementById('cat-preview-dock-body');
       const active = body.querySelector('.is-active');
       window.__yakuDockProbe = body.firstElementChild;
       return { index: active ? active.getAttribute('data-cat-preview-index') : null };
     });
-    await page.evaluate(function () { document.querySelectorAll('[data-cat-input]')[1].focus(); });
+    await page.keyboard.down('Alt'); await page.keyboard.press('ArrowDown'); await page.keyboard.up('Alt');
+    await page.waitForFunction(function () {
+      var tr = document.querySelector('#cat-grid-body tr.is-active');
+      return !!(tr && tr.getAttribute('data-cat-row') === '1');
+    }, null, { timeout: 10000 });
     await page.waitForTimeout(300);
     const after = await page.evaluate(function () {
       const body = document.getElementById('cat-preview-dock-body');
@@ -120,7 +127,7 @@ const server = http.createServer(function (req, res) {
     observed.activeAfter = after.index;
     observed.nodesSurvived = after.probeStillConnected && after.probeIsStillFirst;
 
-    /* 対の表明。**組み直すと本当にノードが入れ替わることを、その場で示す。**
+    /* 対の表明。**組み直すと本当にノードは入れ替わることを、その場で示す。**
        これが無いと「isConnected はいつも true」という実装でも上が緑になる。 */
     observed.rebuildDetaches = await page.evaluate(function () {
       const body = document.getElementById('cat-preview-dock-body');
@@ -129,25 +136,9 @@ const server = http.createServer(function (req, res) {
       return !(probe && probe.isConnected);
     });
 
-    /* **掴めない人のための道（WCAG 2.2 SC 2.5.7）。** 矢印キーで高さが変わること。 */
-    const heights = await page.evaluate(async function () {
-      const sp = document.getElementById('cat-preview-dock-splitter');
-      const dock = document.getElementById('cat-preview-dock');
-      const read = function () { return dock.style.getPropertyValue('--cat-dock-height'); };
-      const send = function (key, shift) { sp.dispatchEvent(new KeyboardEvent('keydown', { key: key, shiftKey: !!shift, bubbles: true })); };
-      const start = read();
-      send('ArrowUp'); const up = read();
-      send('ArrowDown'); send('ArrowDown'); const down = read();
-      send('Home'); const home = read();
-      send('End'); const end = read();
-      return { start: start, up: up, down: down, home: home, end: end, aria: sp.getAttribute('aria-valuenow') };
-    });
-    observed.keyboardResize = heights;
-
-    // 畳めること。
-    await page.evaluate(function () { document.getElementById('cat-preview-dock-close').click(); });
-    await page.waitForTimeout(200);
-    observed.hiddenAfterClose = await page.$eval('#cat-preview-dock', function (el) { return el.hidden; });
+    // 中身の確認は最後に。上の対の表明が本文を入れ替えたあとであるため。
+    observed.bodyLength = await page.$eval('#cat-preview-dock-body', function (el) { return el.innerHTML.length; });
+    observed.itemCount = await page.$$eval('#cat-preview-dock-body [data-cat-preview-index]', function (els) { return els.length; });
 
     observed.ok = true;
   } catch (error) {

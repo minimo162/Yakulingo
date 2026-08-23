@@ -47,6 +47,40 @@ const perfProject = payload.perf;
 const mainProjectJson = JSON.stringify(mainProject);
 const perfProjectJson = perfProject ? JSON.stringify(perfProject) : '';
 
+/* 絞り込みの釦（data-cat-filter）は #cat-editor-toolbar の中にあり、premium の
+   作業画面では premium-ui.css がこの帯を display:none にする。利用者は上部の
+   「詳細ツール」（#premium-tools）で開いてから触る。その道すがらをなぞる。
+   （旧ドライバは button.hidden を力技で外して押していたが、隠れているのは
+   hidden 属性ではなく祖先の display:none なので効かず、30秒の時間切れになって
+   いた。2026-08-23 実測。） */
+async function openTools(page) {
+  const needOpen = await page.evaluate(function () {
+    var invoker = document.getElementById('premium-tools');
+    return !document.body.classList.contains('premium-tools-open') && !!invoker && !invoker.hidden;
+  });
+  if (!needOpen) return;
+  await page.click('#premium-tools');
+  await page.waitForFunction(function () {
+    var toolbar = document.getElementById('cat-editor-toolbar');
+    return document.body.classList.contains('premium-tools-open') &&
+      !!toolbar && toolbar.getClientRects().length > 0;
+  }, null, { timeout: 10000 });
+}
+
+/* 詳細ツールを開いているあいだは、帯の外に半透明の幕（premium-ui.css の
+   body.premium-tools-open::after）が降りて、帯の外の釦を押せなくなる。
+   絞り込みを押し終えたら Esc で閉じて、画面の本体へ手を戻す。 */
+async function closeTools(page) {
+  const isOpen = await page.evaluate(function () {
+    return document.body.classList.contains('premium-tools-open');
+  });
+  if (!isOpen) return;
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(function () {
+    return !document.body.classList.contains('premium-tools-open');
+  }, null, { timeout: 10000 });
+}
+
 const types = {
   '.js': 'application/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -121,6 +155,7 @@ const server = http.createServer(async function (req, res) {
 /* 絞り込み・行の印を読む。1912x987・1380x900の両方の窓で同じ手順を回すため
    関数にする（MINOR-6d）。 */
 async function readFilterAndBadges(page) {
+  await openTools(page);
   const filterBefore = await page.evaluate(function () {
     var button = document.querySelector('[data-cat-filter="fit"]');
     var count = document.querySelector('[data-cat-count="fit"]');
@@ -132,7 +167,9 @@ async function readFilterAndBadges(page) {
       return { row: row ? Number(row.getAttribute('data-cat-row')) : -1, title: badge.getAttribute('title') || '' };
     });
   });
-  await page.evaluate(function () { var b = document.querySelector('[data-cat-filter="fit"]'); if (b) b.hidden = false; });
+  /* hidden を外す旧手当ては削除した。詳細ツールを開いているので、釦は
+     利用者と同じ条件で見えている。隠れたままなら、それは製品側の問題として
+     そのまま時間切れに落とす（緑偽装の禁止）。 */
   await page.click('[data-cat-filter="fit"]');
   await page.waitForTimeout(250);
   const filterAfter = await page.evaluate(function () {
@@ -144,6 +181,7 @@ async function readFilterAndBadges(page) {
   });
   await page.click('[data-cat-filter="all"]');
   await page.waitForTimeout(200);
+  await closeTools(page);
   return { filterBefore: filterBefore, badges: badges, filterAfter: filterAfter };
 }
 
@@ -170,6 +208,12 @@ async function readFilterAndBadges(page) {
       // ---------------------------------------------------- プレビューの印（自動spill）
       await page.click('#cat-preview-open');
       await page.waitForSelector('#cat-preview-dialog[open]', { timeout: 10000 });
+      /* セルの組み立ては資料を読み込み終えた render() のあとに走る。起動直後の
+         決め打ち待ちではまだ空で、あとの押す手順だけが通る非対称な赤になって
+         いた（2026-08-23 実測）。V9212 の運転席と同じく、出るまで待つ。 */
+      await page.waitForFunction(function () {
+        return document.querySelectorAll('#cat-preview-body .cat-preview-cell').length > 0;
+      }, null, { timeout: 20000 });
       await page.waitForTimeout(250);
       out.previewCells = await page.evaluate(function () {
         return Array.from(document.querySelectorAll('#cat-preview-body .cat-preview-cell')).map(function (cell) {
@@ -244,20 +288,41 @@ async function readFilterAndBadges(page) {
 
       // -------------------------------------------------------------- 行の1クリック導線
       /* index=7 の行（scenario "row-action"）を選び、選択行リボンにボタンが
-         出るか・押すと配置ダイアログ＋公開候補の両方が開くかを見る。 */
-      await page.focus('#cat-grid-body tr[data-cat-row="7"] textarea[data-cat-input]');
-      await page.waitForTimeout(200);
+         出るか・押すと配置ダイアログ＋公開候補の両方が開くかを見る。
+         選び方はキーボード（Alt+↑/↓）。premium の表は選択中の行だけを描くため、
+         ほかの行の訳文欄は DOM にはあっても display:none で、focus を当てても
+         選択は動かない（2026-08-23 実測）。絞り込みを触ったあとは選択行が
+         0行目とは限らないので、いまの選択を読みながら目的の行まで歩く。 */
+      async function activeRowNow() {
+        return await page.evaluate(function () {
+          var tr = document.querySelector('#cat-grid-body tr.is-active');
+          return tr ? Number(tr.getAttribute('data-cat-row')) : -1;
+        });
+      }
+      async function gotoRow(target) {
+        for (var guard = 0; guard < 40; guard++) {
+          const current = await activeRowNow();
+          if (current === target) { await page.waitForTimeout(150); return; }
+          await page.keyboard.down('Alt'); await page.keyboard.press(current < target ? 'ArrowDown' : 'ArrowUp'); await page.keyboard.up('Alt');
+          await page.waitForFunction(function (pair) {
+            var tr = document.querySelector('#cat-grid-body tr.is-active');
+            return !!tr && Number(tr.getAttribute('data-cat-row')) !== pair[0];
+          }, [current, target], { timeout: 10000 });
+          await page.waitForTimeout(100);
+        }
+        throw new Error('row ' + target + ' not reached');
+      }
+      await gotoRow(7);
       out.rowActionButton = await page.evaluate(function () {
         var button = document.querySelector('[data-cat-fit-candidates="7"]');
         return { exists: !!button, visible: !!(button && button.getClientRects().length > 0) };
       });
       // 訳が空の行（index=11）には出ないことも、同じ選択→観察の手順で見る。
-      await page.focus('#cat-grid-body tr[data-cat-row="11"] textarea[data-cat-input]');
-      await page.waitForTimeout(200);
+      await gotoRow(11);
       out.untranslatedRowActionButton = await page.evaluate(function () {
         return !!document.querySelector('[data-cat-fit-candidates="11"]');
       });
-      await page.focus('#cat-grid-body tr[data-cat-row="7"] textarea[data-cat-input]');
+      await gotoRow(7);
       await page.waitForTimeout(200);
       await page.click('[data-cat-fit-candidates="7"]');
       await page.waitForSelector('#cat-placement-dialog[open]', { timeout: 10000 });
@@ -280,12 +345,18 @@ async function readFilterAndBadges(page) {
       if (perfProject) {
         const t0 = Date.now();
         await page.goto('http://127.0.0.1:' + server.address().port + '/cat?project=' + encodeURIComponent(perfProject.id), { waitUntil: 'domcontentloaded' });
-        await page.waitForSelector('#cat-grid-body tr[data-cat-row="300"]', { timeout: 30000 });
+        /* premium の表は選択中の行だけを描く（ほかの行は display:none）。
+           「見える」を待つと永遠に来ないので、描き切ったことの合図としては
+           最終行が DOM に載ることを見る（attached）。 */
+        await page.waitForSelector('#cat-grid-body tr[data-cat-row="300"]', { state: 'attached', timeout: 30000 });
         const t1 = Date.now();
         out.perfFirstRenderMs = t1 - t0;
         // 右端（最終内容列そのもの、行番号300）の印を体裁プレビューで見る。
         await page.click('#cat-preview-open');
         await page.waitForSelector('#cat-preview-dialog[open]', { timeout: 10000 });
+        await page.waitForFunction(function () {
+          return document.querySelectorAll('#cat-preview-body .cat-preview-cell').length > 0;
+        }, null, { timeout: 20000 });
         await page.waitForTimeout(250);
         out.perfPreviewCells = await page.evaluate(function () {
           return Array.from(document.querySelectorAll('#cat-preview-body .cat-preview-cell')).map(function (cell) {

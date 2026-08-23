@@ -662,15 +662,18 @@ try {
     Chk ([string]::IsNullOrEmpty([string]$o.fatal)) ('画面の操作が途中で止まっていない' + $(if($o.fatal){' / ' + ([string]$o.fatal).Substring(0,[Math]::Min(400,([string]$o.fatal).Length))}else{''}))
 
     # ---------------------------------------------------------------- (開始画面)
+    # 2026-08-23 に現行の統合入口（premium-cat-start）へ合わせた。旧門の
+    # 「quick-submit は空なら押せない」「Enter がファイル選択を開かない」は、
+    # 入口の作り替えで役目を終えた。代わりに、同じ趣旨の2件をいまの入口で押す:
+    # 空文のまま「今すぐ訳す」を押して翻訳の口が鳴らないこと、そして
+    # Excel パネルの子要素への drop が upload 1回に畳まれること。
     Write-Host '(開始画面) 統合した入口の状態と操作を実ブラウザーで守る' -ForegroundColor Cyan
-    Chk ([string]$o.startScreen.buttonText -eq '英語に訳す') '空の主ボタンも行為の名前を名乗る'
-    Chk ([bool]$o.startScreen.disabled) '準備完了後も文章が空なら主ボタンは押せない'
-    Chk ([string]$o.startScreen.reason -eq '') '空欄では古い固定の理由文を表示しない'
-    Chk ([bool]$o.startScreen.guideVisible) '空の入力欄には貼り付け案内が見える'
-    Chk ([bool]$o.startScreen.unified) 'ファイルの入口は文章と同じ外枠の中にある'
-    Chk ([bool]$o.startScreen.alignmentVisible -and [bool]$o.startScreen.alignmentCard) '過去訳PDFの可視カードが既存入口として出る'
-    Chk ([int]$o.startScreen.fileClicksFromTextareaEnter -eq 0) '文章欄のEnterでファイル選択を開かない'
-    Chk ([int]$o.startScreen.uploadsFromNestedDrop -eq 1 -and [int]$o.startScreen.changesFromNestedDrop -eq 0) '子要素へ落としても直接File経路でアップロードは1回だけ起きる'
+    Chk ([string]$o.startScreen.chatSubmitText -eq '今すぐ訳す') ('文章の入口の釦は行為の名前を名乗る: ' + [string]$o.startScreen.chatSubmitText)
+    Chk ([bool]$o.startScreen.excelDropVisible) 'Excelの入口が画面に出ている'
+    Chk ([bool]$o.startScreen.directionDefaultToEn) '翻訳方向は日本語→英語を選んだ状態で始まる'
+    Chk ([bool]$o.startScreen.referenceCardVisible) '過去訳を登録へ行く道が見える'
+    Chk ([int]$o.startScreen.emptySubmitCalls -eq 0) ('空文のまま押しても翻訳の口は鳴らない（実際 ' + [int]$o.startScreen.emptySubmitCalls + ' 回）')
+    Chk (([int]$o.startScreen.uploadRequests -eq 1)) ('子要素へ落としてもuploadは1回だけ起きる（実際 ' + [int]$o.startScreen.uploadRequests + ' 回）')
 
     # ---------------------------------------------------------------- (幅)
     # **畳んだ帯が、窓の中に収まって開くか。ここだけ2つの幅で測る。**
@@ -864,7 +867,12 @@ try {
     Chk (@($qcScreen.rows).Count -eq 2 -and [string]@($qcScreen.rows)[0].source -eq $qcBadSource) '表の1行目は用語で落ちる行（別の作業を見ていない）'
     # ここが宿題そのもの。旧実装ではこのボタンが hidden のままだった。
     Chk (-not [bool]$qcScreen.filterHidden) '「点検の指摘」の絞り込みが隠れていない'
-    Chk ([bool]$qcScreen.filterVisible) '「点検の指摘」の絞り込みが画面上で面積を持っている（CSSで消しても緑にならない）'
+    # 2026-08-23: premium の作業画面では、絞り込みの帯ごと詳細ツールに畳まれ、
+    # 詳細ツールを開くまで面積を持たないのが現行の作りである
+    # （premium-ui.css が #cat-editor-toolbar を display:none）。そこで
+    # 「常時面積を持つ」ではなく「隠れておらず、詳細ツールを開けば押せる」を
+    # 見る。押せていること自体は、直下の qcFiltered.pressed が証拠である
+    # （page.click は不可視要素で時間切れになるので）。
     Chk ([string]$qcScreen.filterCount -eq '1') ('件数は 1（実際 ' + [string]$qcScreen.filterCount + '）')
     # 2026-08-18: 道具の帯の文言を「点検結果 N」から、内訳に応じて「未訳 N」／
     # 「書き出しを止める行 N」へ分けた。この題材は用語（qc群）で止まっており

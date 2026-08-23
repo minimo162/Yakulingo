@@ -275,6 +275,11 @@ const server = http.createServer(async function (req, res) {
   if (p === '/api/cat/preflight') { res.end(qcPreflightJson); return; }
   if (p === '/api/cat/candidates') { res.end(candidatesJson); return; }
   if (p === '/api/cat/placeables') { res.end(placeableResponseJson); return; }
+  /* 統合入口（premium の Excel パネル）の題材。drop → upload → open の往復を
+     本物の釦と同じ道で通す。open の応答は本作業の JSON なので、読み込み後の
+     遷移も実物どおりに進む。 */
+  if (p === '/api/upload') { res.end(JSON.stringify({ file_handle: 'screen-gate-handle' })); return; }
+  if (p === '/api/cat/open') { res.end(projectJson); return; }
   if (p === '/api/cat/split-at') { res.end(projectJson); return; }
   if (p === '/api/cat/replace-estimate') { res.end(JSON.stringify({ rows: 2, occurrences: 2, confirmed_rows: 0, scanned_rows: 2 })); return; }
   if (p === '/api/cat/replace') {
@@ -288,6 +293,26 @@ const server = http.createServer(async function (req, res) {
 
 function calls(name) { return seen.filter(function (s) { return s.path === '/api/cat/' + name; }); }
 function lastBody(name) { const c = calls(name); return c.length ? c[c.length - 1].body : null; }
+
+/* premium の作業画面では、旧帯（#cat-editor-toolbar）は premium-ui.css が
+   display:none にしており、「詳細ツール」（上部の #premium-tools）から開いた
+   ときだけ見える。検索と置換・絞り込み・資料の切替口は、どれもその帯の中に
+   ある。開いているあいだは帯の外に幕（body.premium-tools-open::after）が降りて、
+   帯の外の釦や格子が押せなくなるので、帯の中を押し終えたら閉じる。
+   利用者の道すがらそのまま（2026-08-23 実測。page.click は不可視要素で30秒
+   待つため、旧手順のままだと最初の釦で時間切れになっていた）。 */
+async function setTools(page, open) {
+  const isOpen = await page.evaluate(function () {
+    return document.body.classList.contains('premium-tools-open');
+  });
+  if (isOpen === open) return;
+  await page.click('#premium-tools');
+  await page.waitForFunction(function (want) {
+    var toolbar = document.getElementById('cat-editor-toolbar');
+    return document.body.classList.contains('premium-tools-open') === want &&
+      (!!toolbar && toolbar.getClientRects().length > 0) === want;
+  }, open, { timeout: 10000 });
+}
 
 (async function () {
   const out = { errors: [], console: [], firstClickChar: FIRST_CLICK_CHAR, secondClickChar: SECOND_CLICK_CHAR, placeableBareTarget: PLACEABLE_BARE_TARGET };
@@ -310,59 +335,58 @@ function lastBody(name) { const c = calls(name); return c.length ? c[c.length - 
   page.on('dialog', function (d) { dialogs.push({ type: d.type(), message: d.message() }); d.accept().catch(function () {}); });
 
   try {
-    // -------------------------------------------------- 開始画面（2026-08-16 の統合入口）
-    // project を開く前の実画面で、静的な字面では分からない2件を固定する。
-    // 1) cat.js の一括解除後も、空の quick-submit は押せないまま。
-    // 2) 子要素へ落としたファイルも、外枠の drop 1回だけで直接Fileのupload 1回になる。
+    // -------------------------------------------------- 開始画面（2026-08-23 更新）
+    // premium の統合入口（premium-cat-start）。左に文章（palette）、右にExcel。
+    // 旧門の「quick-submit は空なら押せない」「Enter がファイル選択を開かない」は、
+    // 入口の作り替えで役目を終えた。代わりに、いまの入口で同じ趣旨の2件を押す:
+    //   1) 文章が空のまま「今すぐ訳す」を押しても、翻訳の口へ要求が飛ばない
+    //      （startTranslation() の空白ガード。空で出発させない、という同じ契約）
+    //   2) Excel パネルの子要素へ落としても、外枠の drop 1回だけで
+    //      upload は1回だけ起きる（旧門そのもの。入口が Excel 専用になったので
+    //      題材を .xlsx へ変え、落ち先をパネルの子要素にした）
     await page.goto('http://127.0.0.1:' + port + '/cat', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(function () {
-      var submit = document.getElementById('quick-submit');
-      var input = document.getElementById('quick-input');
-      var file = document.getElementById('cat-open-file-entry');
-      var align = document.getElementById('cat-open-align-entry');
-      return !!(submit && input && file && align &&
-        submit.textContent.trim() === '英語に訳す' &&
-        submit.disabled &&
-        align.classList.contains('entry-more-pdf-card') &&
-        align.getClientRects().length > 0);
+      var start = document.getElementById('premium-cat-start');
+      var submit = document.getElementById('palette-submit');
+      var input = document.getElementById('palette-input');
+      var drop = document.getElementById('premium-file-drop');
+      var ref = document.getElementById('premium-reference-open');
+      return !!(start && submit && input && drop && ref &&
+        start.getClientRects().length > 0 && ref.getClientRects().length > 0);
     }, null, { timeout: 10000 });
+    const paletteCallsBefore = seen.filter(function (s) { return s.path === '/api/palette/translate'; }).length;
+    await page.click('#palette-submit');
+    await page.waitForTimeout(500);
     out.startScreen = await page.evaluate(function () {
-      var submit = document.getElementById('quick-submit');
-      var guide = document.getElementById('quick-empty-guide');
-      var area = document.getElementById('quick-area');
-      var file = document.getElementById('cat-file-area');
-      var align = document.getElementById('cat-open-align-entry');
+      var drop = document.getElementById('premium-file-drop');
+      var ref = document.getElementById('premium-reference-open');
+      var toEn = document.querySelector('#premium-direction-switch [data-direction="to_en"]');
+      var toJp = document.querySelector('#premium-direction-switch [data-direction="to_jp"]');
       return {
-        buttonText: submit ? submit.textContent : '',
-        disabled: submit ? submit.disabled : null,
-        reason: document.getElementById('quick-submit-reason').textContent,
-        guideVisible: !!(guide && !guide.hidden),
-        unified: !!(area && file && area.contains(file)),
-        alignmentVisible: !!(align && align.getClientRects().length > 0),
-        alignmentCard: !!(align && align.classList.contains('entry-more-pdf-card'))
+        chatSubmitText: document.getElementById('palette-submit').textContent,
+        excelDropVisible: !!(drop && drop.getClientRects().length > 0),
+        directionDefaultToEn: !!(toEn && toEn.classList.contains('is-active') &&
+          toEn.getAttribute('aria-pressed') === 'true' &&
+          toJp && !toJp.classList.contains('is-active')),
+        referenceCardVisible: !!(ref && ref.getClientRects().length > 0)
       };
     });
-    await page.evaluate(function () {
-      window.__startProbe = { fileClicks: 0, changes: 0 };
-      var input = document.getElementById('cat-file-input');
-      input.addEventListener('click', function (event) { window.__startProbe.fileClicks++; event.preventDefault(); });
-      input.addEventListener('change', function () { window.__startProbe.changes++; });
-    });
-    await page.focus('#quick-input');
-    await page.keyboard.press('Enter');
-    out.startScreen.fileClicksFromTextareaEnter = await page.evaluate(function () { return window.__startProbe.fileClicks; });
+    out.startScreen.emptySubmitCalls = seen.filter(function (s) { return s.path === '/api/palette/translate'; }).length - paletteCallsBefore;
+    // 子要素（パネルの見出し側）へのドロップ。外枠（#premium-file-drop）の
+    // listener だけが受けることを、upload の回数で見る（旧門と同じ測り方）。
     const nestedDropUpload = page.waitForRequest(function (request) {
       return request.method() === 'POST' && request.url().indexOf('/api/upload') >= 0;
     }, { timeout: 5000 });
     await page.evaluate(function () {
       var transfer = new DataTransfer();
-      transfer.items.add(new File(['screen gate'], 'screen-gate.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
-      var target = document.querySelector('.file-lane-lead');
+      transfer.items.add(new File(['screen gate'], 'screen-gate.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+      var target = document.querySelector('#premium-file-drop .premium-drop-copy');
       target.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }));
     });
     await nestedDropUpload;
-    out.startScreen.changesFromNestedDrop = await page.evaluate(function () { return window.__startProbe.changes; });
-    out.startScreen.uploadsFromNestedDrop = 1;
+    // open の往復と遷移が落ち着くのを待ってから、回数を数える。
+    await page.waitForTimeout(800);
+    out.startScreen.uploadRequests = seen.filter(function (s) { return s.path === '/api/upload'; }).length;
 
     await page.goto('http://127.0.0.1:' + port + '/cat?project=' + project.id, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#cat-grid-body tr[data-cat-row]', { timeout: 20000 });
@@ -483,6 +507,10 @@ function lastBody(name) { const c = calls(name); return c.length ? c[c.length - 
     };
 
     // -------------------------------------------------- Ctrl+H（検索と置換を開く）
+    /* 検索と置換の帯（cat-search-menu）は詳細ツールの中にある。まず開いてから
+       Ctrl+H を試す。Ctrl+H 自体はキーボードなので幕が降りていても届くが、
+       開いた帯の中の入力欄・釦を押すには帯が見えていなければならない。 */
+    await setTools(page, true);
     await page.evaluate(function () { var m = document.getElementById('cat-search-menu'); if (m) m.open = false; });
     await page.keyboard.press('Control+h');
     await page.waitForTimeout(250);
@@ -551,7 +579,11 @@ function lastBody(name) { const c = calls(name); return c.length ? c[c.length - 
         };
       });
     });
-    /* 「体裁で見る」はツールバーに直接見えているので、そのまま押す。 */
+    /* 「体裁で見る」の釦（#cat-preview-open）は選択行リボンに載って見えている
+       （appendStaticSegmentActions が釦を動かし、premium-ui.js がリボンを
+       選択行リボンとして見せる）。詳細ツールの幕が降りていると押せないので、
+       先に閉じておく。 */
+    await setTools(page, false);
     await page.click('#cat-preview-open');
     await page.waitForSelector('#cat-preview-dialog[open]', { timeout: 10000 });
     await page.waitForTimeout(250);
@@ -639,15 +671,11 @@ function lastBody(name) { const c = calls(name); return c.length ? c[c.length - 
     });
 
     /* 押して絞り込む。出るだけで押せない／押しても絞れない実装を落とす。
-       ボタンが隠れていると click は 30 秒待って時間切れになり、その先の
-       観測が全部 undefined になる。何が壊れているかが時間切れの山に埋もれるので、
-       隠れているかどうかは上の1行が持たせたうえで、手で見えるようにしてから
-       押す（既存の Ctrl+H と同じ手当て）。件数も絞り込み結果も、これで
-       誤魔化されはしない。 */
-    await page.evaluate(function () {
-      var filter = document.querySelector('[data-cat-filter="qc"]');
-      if (filter && filter.hidden) filter.hidden = false;
-    });
+       釦は詳細ツールの中にある。開いてから押し、押し終えたら閉じる
+       （開いているあいだは幕が降りて、帯の外の点検タブや格子が押せなくなる。
+       hidden を力技で外す旧手当ては、隠れ方が祖先の display:none に変わった
+       ため効かなくなった。2026-08-23 実測）。 */
+    await setTools(page, true);
     await page.click('[data-cat-filter="qc"]');
     await page.waitForTimeout(300);
     out.qcFiltered = await page.evaluate(function () {
@@ -659,12 +687,20 @@ function lastBody(name) { const c = calls(name); return c.length ? c[c.length - 
         emptyHidden: document.getElementById('cat-empty-state').hidden
       };
     });
+    await setTools(page, false);
 
     /* 絞り込んだ行を開いて、右の点検欄に何が出るか。絞り込みが空振りしたときは
        ここに行が1つも無い。時間切れで先を潰さず、観測を続ける。 */
     const qcHasRow = await page.evaluate(function () { return !!document.querySelector('#cat-grid-body tr[data-cat-row] textarea[data-cat-input]'); });
     if (qcHasRow) { await page.focus('#cat-grid-body tr[data-cat-row] textarea[data-cat-input]'); }
-    else { out.qcNoRowAfterFilter = true; await page.click('[data-cat-filter="all"]'); await page.waitForTimeout(250); await page.focus('#cat-grid-body tr[data-cat-row] textarea[data-cat-input]'); }
+    else {
+      out.qcNoRowAfterFilter = true;
+      /* 「すべて」も詳細ツールの中にある。空振り後の復帰は当たり判定ではなく
+         配線の確認なので、JS で釦を押して委譲リスナーを通す（2026-08-23）。 */
+      await page.evaluate(function () { document.querySelector('[data-cat-filter="all"]').click(); });
+      await page.waitForTimeout(250);
+      await page.focus('#cat-grid-body tr[data-cat-row] textarea[data-cat-input]');
+    }
     await page.waitForTimeout(200);
     await page.click('[data-cat-inspector="qc"]');
     await page.waitForTimeout(250);
@@ -708,7 +744,8 @@ function lastBody(name) { const c = calls(name); return c.length ? c[c.length - 
     out.qcInspector = await qcInspectorBody();
 
     // 道具の帯の「点検」（F8 と同じ入口）。ここが実際に開く一覧である。
-    await page.click('#cat-qa-open');
+    /* 点検一覧の入口は、上部帯の代理釦（点検結果）から押す。元の釦は詳細ツールの中にあって普段は見えない（2026-08-23）。 */
+    await page.click('#premium-qa');
     await page.waitForSelector('#cat-qa-dialog[open]', { timeout: 10000 });
     await page.waitForTimeout(300);
     function qaBody() {
@@ -793,7 +830,8 @@ function lastBody(name) { const c = calls(name); return c.length ? c[c.length - 
         exportDisabled: !!document.getElementById('cat-export').disabled
       };
     });
-    await page.click('#cat-qa-open');
+    /* 点検一覧の入口は、上部帯の代理釦（点検結果）から押す。元の釦は詳細ツールの中にあって普段は見えない（2026-08-23）。 */
+    await page.click('#premium-qa');
     await page.waitForSelector('#cat-qa-dialog[open]', { timeout: 10000 });
     await page.waitForTimeout(300);
     out.qaCleanList = await qaBody();
@@ -812,7 +850,8 @@ function lastBody(name) { const c = calls(name); return c.length ? c[c.length - 
     await page.click('[data-cat-inspector="qc"]');
     await page.waitForTimeout(250);
     out.qcToolInspector = await qcInspectorBody();
-    await page.click('#cat-qa-open');
+    /* 点検一覧の入口は、上部帯の代理釦（点検結果）から押す。元の釦は詳細ツールの中にあって普段は見えない（2026-08-23）。 */
+    await page.click('#premium-qa');
     await page.waitForSelector('#cat-qa-dialog[open]', { timeout: 10000 });
     await page.waitForTimeout(300);
     out.qaToolList = await qaBody();
@@ -884,7 +923,8 @@ function lastBody(name) { const c = calls(name); return c.length ? c[c.length - 
     await page.click('[data-cat-inspector="qc"]');
     await page.waitForTimeout(250);
     out.qcLabelInspector = await qcInspectorBody();
-    await page.click('#cat-qa-open');
+    /* 点検一覧の入口は、上部帯の代理釦（点検結果）から押す。元の釦は詳細ツールの中にあって普段は見えない（2026-08-23）。 */
+    await page.click('#premium-qa');
     await page.waitForSelector('#cat-qa-dialog[open]', { timeout: 10000 });
     await page.waitForTimeout(300);
     out.qaLabelList = await qaBody();
@@ -989,7 +1029,9 @@ function lastBody(name) { const c = calls(name); return c.length ? c[c.length - 
     /* **畳んだ帯が、窓の中に収まって開くか。** これは窓の幅で答えが変わる。
        2026-08-15 に「検索と置換」へ上へ開く指定を固定で付けたが、その根拠だった
        1380 は実機ではなく、利用者の 1912 ではパネルが窓の上端の外へ出て
-       中のボタンが押せなかった。**両方の幅で測る。** */
+       中のボタンが押せなかった。**両方の幅で測る。**
+       帯そのものは詳細ツールの中にあるので、測る前に開く（2026-08-23）。 */
+    await setTools(page, true);
     out.viewport = { width: viewport.width, height: viewport.height };
     out.menus = await page.evaluate(function () {
       var result = [];
