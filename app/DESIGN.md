@@ -6,6 +6,8 @@ YakuLingo is an Excel-first translation tool that creates translations which fit
 
 The primary flow is deliberately limited to opening an Excel workbook, translating untranslated cells, correcting only cells that need review, and writing a translated Excel copy. Translation memory, terminology, QC, and layout measurement support that flow without becoming permanent work panes. Word, text, and CSV compatibility are auxiliary capabilities and do not determine the main UI information architecture.
 
+YakuLingo also provides a deliberately lightweight transient text translator for casual translation. It is a separate surface and does not participate in Excel project state, translation memory, terminology, QC, or review workflows. The product relationship is intentionally asymmetric: Excel translation remains the default and primary experience; text translation is a small auxiliary entry point for paste, translate, and copy.
+
 ## Architecture
 
 ```text
