@@ -46,8 +46,10 @@ function Assert-Status { param($Response, [int]$Expected, [string]$Name); if ([i
 try {
     $exe = Join-Path $PSHOME 'powershell.exe'
     if (!(Test-Path -LiteralPath $exe)) { $exe = 'powershell.exe' }
-    $scriptPath = Join-Path $root 'Start-YakuLingo.ps1'
-    $args = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -Port {1} -NoBrowser -UseMockTranslator' -f $scriptPath, $Port
+    # HTTP境界そのものを測る。Start-YakuLingo.ps1 の起動前ファイル検査が
+    # 別の既知不一致で止まっても、この境界試験まで未測定にしない。
+    $scriptPath = Join-Path $root 'src\Server.ps1'
+    $args = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -Port {1}' -f $scriptPath, $Port
     $server = Start-Process -FilePath $exe -ArgumentList $args -PassThru -WindowStyle Hidden
 
     $deadline = (Get-Date).AddSeconds(20)
@@ -73,13 +75,16 @@ try {
     Assert-Status (Invoke-YakuBoundaryRequest -Url ($base + 'api/ready-state')) 403 'missing token'
     Assert-Status (Invoke-YakuBoundaryRequest -Url ($base + 'api/ready-state') -Headers @{ 'X-Yaku-Session'='wrong' }) 403 'wrong token'
     Assert-Status (Invoke-YakuBoundaryRequest -Url ($base + 'api/ready-state') -Headers @{ 'X-Yaku-Session'=$token } -HostOverride 'evil.example') 403 'wrong Host'
+    $localhost = Invoke-YakuBoundaryRequest -Url $base -HostOverride ('localhost:' + [string]$info.port)
+    Assert-Status $localhost 403 'localhost Host remains outside the boundary'
+    if ($localhost.Text -notmatch ('http://127\.0\.0\.1:' + [regex]::Escape([string]$info.port) + '/')) { throw ('localhost recovery URL missing: ' + $localhost.Text) }
     Assert-Status (Invoke-YakuBoundaryRequest -Url ($base + 'api/ready-state') -Headers @{ 'X-Yaku-Session'=$token; Origin='https://evil.example' }) 403 'wrong Origin'
     Assert-Status (Invoke-YakuBoundaryRequest -Url ($base + 'api/ready-state') -Headers @{ 'X-Yaku-Session'=$token; 'Sec-Fetch-Site'='cross-site' }) 403 'cross-site fetch'
     Assert-Status (Invoke-YakuBoundaryRequest -Url ($base + 'api/ready-state') -Headers $goodHeaders) 200 'valid token'
     Assert-Status (Invoke-YakuBoundaryRequest -Url ($base + 'api/cancel-translation') -Method POST -Headers $goodHeaders -ContentType 'application/x-www-form-urlencoded' -Body 'job_id=x') 403 'simple form POST'
     Assert-Status (Invoke-YakuBoundaryRequest -Url ($base + 'shutdown') -Method POST -Headers $goodHeaders -ContentType 'application/json; charset=UTF-8' -Body '{}') 200 'valid shutdown'
 
-    Write-Host 'V64 HTTP boundary tests passed: 8 cases.' -ForegroundColor Green
+    Write-Host 'V64 HTTP boundary tests passed: 9 cases.' -ForegroundColor Green
 } finally {
     if ($server) {
         try { $server.WaitForExit(5000) | Out-Null } catch {}

@@ -4572,8 +4572,8 @@ function Invoke-YakuMockCopilotPrompt {
     if ($contractMatch.Success -and $Prompt -match 'Reply in this exact plain-text contract' -and $Prompt -match 'FULL_TEXT:' -and $Prompt -match 'BRIEF_TEXT:') {
         return "FULL_TEXT:`nYAKULINGO_OK`nBRIEF_TEXT:`nYAKULINGO_OK`n$endMarker"
     }
-    if ($Prompt -match '===INPUT_TEXT===|SOURCE_ITEMS_BEGIN') {
-        $m = [regex]::Match($Prompt, '(?s)(?:===INPUT_TEXT===|SOURCE_ITEMS_BEGIN)\s*(.*?)\s*(?:===END_INPUT_TEXT===|SOURCE_ITEMS_END)')
+    if ($Prompt -match '===INPUT_TEXT(?::[a-fA-F0-9]{32})?===|SOURCE_ITEMS_BEGIN') {
+        $m = [regex]::Match($Prompt, '(?s)(?:===INPUT_TEXT(?::[a-fA-F0-9]{32})?===|SOURCE_ITEMS_BEGIN)\s*(.*?)\s*(?:===END_INPUT_TEXT(?::[a-fA-F0-9]{32})?===|SOURCE_ITEMS_END)')
         $section = if ($m.Success) { [string]$m.Groups[1].Value } else { [string]$Prompt }
         $items = New-Object System.Collections.Generic.List[object]
         $currentId = $null
@@ -4598,7 +4598,7 @@ function Invoke-YakuMockCopilotPrompt {
             $idValue = if ($null -ne $currentId) { [int]$currentId } else { [int]$currentNumber }
             $items.Add([pscustomobject]@{ Id=$idValue; HasId=($null -ne $currentId); Number=[int]$currentNumber; Text=(($buf.ToArray()) -join "`n").Trim() }) | Out-Null
         }
-        $toEn = ($Prompt -match 'Japanese to concise natural business English|Japanese to English')
+        $toEn = ($Prompt -match 'Japanese to concise natural business English|Japanese to English|Task:\s*Translate every item into .*business English')
         $prefix = if ($toEn) { '[EN] ' } else { '[JP] ' }
         $out = New-Object System.Collections.Generic.List[string]
         foreach ($item in @($items.ToArray())) {
@@ -4631,7 +4631,7 @@ function Invoke-YakuMockCopilotPrompt {
             }
         }
         if ($null -ne $currentId) { $items.Add([pscustomobject]@{ Id=[int]$currentId; Number=[int]$currentNumber; Text=(($buf.ToArray()) -join "`n").Trim() }) | Out-Null }
-        $prefix = if ($Prompt -match 'Japanese to concise natural business English|Japanese to English') { '[EN] ' } else { '[JP] ' }
+        $prefix = if ($Prompt -match 'Japanese to concise natural business English|Japanese to English|Task:\s*Translate every item into .*business English') { '[EN] ' } else { '[JP] ' }
         $out = New-Object System.Collections.Generic.List[string]
         foreach ($item in @($items.ToArray())) {
             $translated = if ($prefix -eq '[EN] ') { $prefix + 'Mock translation ' + [string]$item.Number } else { $prefix + [string]$item.Text }

@@ -1583,6 +1583,12 @@ function Convert-YakuTranslationJobResultJson {
             }
         }
     }
+    $workerProgressRows = New-Object System.Collections.Generic.List[object]
+    $workerProgressRaw = $null
+    try { $workerProgressRaw = $State['worker_progress'] } catch { $workerProgressRaw = $null }
+    foreach ($workerProgressRow in $workerProgressRaw) {
+        if ($null -ne $workerProgressRow) { $workerProgressRows.Add($workerProgressRow) | Out-Null }
+    }
     return ([ordered]@{
         jobId = [string]$State['id']
         mode = $mode
@@ -1594,7 +1600,7 @@ function Convert-YakuTranslationJobResultJson {
         kind = [string]$State['kind']
         phase = [string]$State['phase']
         stage = [string]$(try { $State['stage'] } catch { '' })
-        worker_progress = @($(try { $State['worker_progress'] } catch { @() }))
+        worker_progress = @($workerProgressRows.ToArray())
         unique_done = [int]$State['unique_done']
         unique_total = [int]$State['unique_total']
         updated_at = [string]$State['updated_at']
@@ -2196,7 +2202,13 @@ function Invoke-YakuRoute {
 
     try { Assert-YakuRequestBoundary -Request $req -Path $path -Method $method }
     catch [System.UnauthorizedAccessException] {
-        Send-YakuTextResponse -Context $Context -Text 'Forbidden' -StatusCode 403 -ContentType 'text/plain; charset=utf-8'
+        $boundaryMessage = 'Forbidden'
+        $requestHost = [string]$req.Headers['Host']
+        $localhostHost = 'localhost:' + [string]$script:ActivePort
+        if ($_.Exception.Message -eq 'INVALID_HOST' -and [string]::Equals($requestHost, $localhostHost, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $boundaryMessage = 'このアプリは http://127.0.0.1:' + [string]$script:ActivePort + '/ で開いてください。'
+        }
+        Send-YakuTextResponse -Context $Context -Text $boundaryMessage -StatusCode 403 -ContentType 'text/plain; charset=utf-8'
         return
     }
     # 期限切れアップロードの掃除は、アップロードを受け付ける直前だけ行う。
