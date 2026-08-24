@@ -4,41 +4,47 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const app = path.resolve(here, '..');
-const html = fs.readFileSync(path.join(app, 'www', 'cat.html'), 'utf8');
-const js = fs.readFileSync(path.join(app, 'www', 'assets', 'premium-ui.js'), 'utf8');
-const css = fs.readFileSync(path.join(app, 'www', 'assets', 'premium-ui.css'), 'utf8');
+const cat = fs.readFileSync(path.join(app, 'www', 'cat.html'), 'utf8');
+const quick = fs.readFileSync(path.join(app, 'www', 'quick.html'), 'utf8');
+const quickJs = fs.readFileSync(path.join(app, 'www', 'assets', 'quick-page.js'), 'utf8');
+const premiumJs = fs.readFileSync(path.join(app, 'www', 'assets', 'premium-ui.js'), 'utf8');
+const premiumCss = fs.readFileSync(path.join(app, 'www', 'assets', 'premium-ui.css'), 'utf8');
+const server = fs.readFileSync(path.join(app, 'src', 'Server.ps1'), 'utf8');
 const design = fs.readFileSync(path.join(app, 'DESIGN.md'), 'utf8');
 
 const failures = [];
-function expect(condition, message) { if (!condition) failures.push(message); }
-function count(text, pattern) { return (text.match(pattern) || []).length; }
+const expect = (condition, message) => { if (!condition) failures.push(message); };
+const count = (text, pattern) => (text.match(pattern) || []).length;
 
-expect(count(html, /id="premium-file-input"/g) === 1, 'Excel start must expose exactly one primary file input');
-expect(html.includes('<h1 id="premium-start-title">Excelを翻訳</h1>'), 'Excel-first start heading is missing');
-expect(html.includes('Excelファイルをここにドロップ'), 'Excel drop instruction is missing');
-expect(!html.includes('/assets/palette.js') && !html.includes('/assets/palette.css'), 'Palette UI must not be embedded in the Excel route');
-expect(!html.includes('文章もExcelも、ひとつの画面で'), 'Combined text/Excel message must be removed');
+expect(count(cat, /id="premium-file-input"/g) === 1, 'Excel start must expose exactly one file input');
+expect(cat.includes('<h1 id="premium-start-title">Excelを翻訳</h1>'), 'Excel start heading is missing');
+expect(cat.includes('href="/quick">文章を翻訳</a>'), 'Excel header must link to quick translation');
+expect(!cat.includes('id="quick-input"') && !cat.includes('/assets/quick.js'), 'Quick translation must not be embedded in Excel');
+for (const legacy of ['class="shell"', 'class="hero"', 'class="tab-panel"', 'id="cat-doc-dialog"', 'id="cat-preview-dock"', 'id="cat-inspector-toggle"']) {
+  expect(!cat.includes(legacy), `Legacy Excel surface remains: ${legacy}`);
+}
+expect(count(cat, /id="premium-cell-list-pane"/g) === 1, 'The cell list must be unique');
+expect(cat.includes('id="premium-row-actions"'), 'Selected-cell actions must remain explicit');
+expect(cat.includes('id="cat-preview-dialog"'), 'Excel display confirmation dialog must remain available');
 
-expect(html.includes('id="premium-cell-list-pane"'), 'The single cell list must be explicit in cat.html');
-expect(html.includes('data-premium-filter="untranslated"'), 'Untranslated filter is missing');
-expect(html.includes('data-premium-filter="review"'), 'Review filter is missing');
-expect(html.includes('data-premium-filter="all"'), 'All filter is missing');
-expect(html.includes('id="premium-row-actions"'), 'Selected-cell action region must be explicit in cat.html');
-expect(html.includes('id="premium-export"'), 'The single visible Excel export proxy is missing');
+expect(quick.includes('href="/quick" aria-current="page">文章を翻訳</a>'), 'Quick mode must be independently selected');
+expect(quick.includes('id="quick-page-input"') && quick.includes('id="quick-page-output"'), 'Quick mode must have source and target panes');
+expect(quick.includes('id="quick-page-submit"') && quick.includes('id="quick-page-copy"'), 'Quick translate and copy actions are missing');
+expect(!quick.includes('premium-file-input') && !quick.includes('翻訳メモリ') && !quick.includes('点検一覧') && !quick.includes('最近の作業'), 'Quick mode must not carry Excel project state');
+expect(quickJs.includes("YakuCommon.post('/api/palette/translate'"), 'Quick mode must reuse the isolated transient backend');
+expect(quickJs.includes("event.ctrlKey||event.metaKey"), 'Quick mode must support Ctrl/Cmd+Enter');
+expect(quickJs.includes("YakuCommon.post('/api/cancel-translation'"), 'Quick mode must support cancellation');
 
-expect(!js.includes('3ステップで仕上げる'), 'Explanatory three-step navigation must not be generated');
-expect(!js.includes('確認するセル'), 'A second permanent confirmation list must not be generated');
-expect(!js.includes("create('section', 'premium-cat-start')"), 'The start DOM must not be reconstructed in JavaScript');
-expect(js.includes("premiumState.catFilter = untranslated > 0 ? 'untranslated'"), 'Cell filter must follow live workbook state');
-expect(js.includes("label.textContent = 'Excel表示を確認'"), 'A flagged cell must expose Excel display confirmation');
-
-expect(css.includes('grid-template-columns: minmax(300px, 34%) minmax(0,1fr)'), 'Desktop workspace must use the two-pane layout');
-expect(css.includes('@media (max-width: 1260px)'), 'The 1200px responsive contract is missing');
-expect(css.includes('#cat-preview-dock:not([hidden])'), 'Preview must remain conditional rather than permanent');
-expect(design.includes('YakuLingo is an Excel-first translation tool'), 'Product intent was not updated');
+expect(server.includes("$path -in @('/', '/cat')"), 'Excel route must remain the default');
+expect(server.includes("$path -in @('/quick', '/palette')"), 'Quick route and palette compatibility route must be separate');
+expect(server.includes("PageName 'quick.html'"), 'Quick route must render quick.html');
+expect(premiumJs.includes("var shell = el('excel-app')"), 'Premium Excel must bind to the explicit Excel root');
+expect(!premiumJs.includes('function forcePreviewRail') && !premiumJs.includes('premium-legacy-hero'), 'Legacy mounting and forced inspector code must be removed');
+expect(premiumCss.includes('@media(max-width:1200px)') || premiumCss.includes('@media (max-width: 1200px)'), '1200px mode switch contract is missing');
+expect(design.includes('deliberately lightweight transient text translator'), 'Auxiliary quick translation intent is undocumented');
 
 if (failures.length) {
   failures.forEach((failure) => console.error(`not ok - ${failure}`));
   process.exit(1);
 }
-console.log('ok - Excel-first UI contract');
+console.log('ok - Excel-first and isolated quick translation contract');
