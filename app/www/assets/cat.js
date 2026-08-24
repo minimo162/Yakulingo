@@ -581,6 +581,7 @@
          この行に実際に描かれるボタンだからである（下の renderRows を参照）。 */
       , 'label-not-in-glossary': '用語集に無い短いラベルです。訳が長いと列からはみ出すことがあります。この訳でよければ「そのほかの操作」の「このセルの訳を今後も自動で使う」で登録しておくと、次からも同じ訳になります。書き出しは止まりません。'
       , 'paired-delimiter-mismatch': '対応する開き括弧・閉じ括弧の組み合わせが合っていません。訳文の記号を見比べてください。書き出しは止まりません。'
+      , 'fit-overflow': '意味を保ったまま指定幅へ収められませんでした。書き出しは止まりません。あふれを許容するか、意訳してよいか判断してください。'
     };
     return qcFindingViews(segment).map(function (view) { return labels[view.code] || '自動点検で気になる点が見つかりました。左の原文と見比べてください。'; });
   }
@@ -656,7 +657,7 @@
      error と同じ赤で出すと
      「押せるのに押せない」と読め、tool と同じにすると自分で対処できることが
      伝わらない。色は表示だけの話で、止める条件はサーバの Severity が決める。 */
-  var QC_WARNING_CODES = ['numeric-value-mismatch', 'numeric-value-extra', 'numeric-value-order-mismatch', 'numeric-sign-missing', 'numeric-scale-mismatch', 'currency-mismatch', 'accounting-polarity-mismatch', 'label-not-in-glossary', 'paired-delimiter-mismatch'];
+  var QC_WARNING_CODES = ['numeric-value-mismatch', 'numeric-value-extra', 'numeric-value-order-mismatch', 'numeric-sign-missing', 'numeric-scale-mismatch', 'currency-mismatch', 'accounting-polarity-mismatch', 'label-not-in-glossary', 'paired-delimiter-mismatch', 'fit-overflow'];
   var QC_PREVIEW_BLOCKING_CODES = ['structure-validation-error', 'terminology-check-unavailable', 'validation-unavailable'];
   function qcGroup(code) {
     if (QC_TOOL_TROUBLE_CODES.indexOf(code) >= 0) return 'tool';

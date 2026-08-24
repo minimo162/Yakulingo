@@ -1226,6 +1226,7 @@ function Start-YakuTranslationJob {
                                 masked = [string]$entry.MaskedTranslation
                                 source = [string](Get-YakuFileItemOriginalText -Item $entry)
                                 terminology = @($entry.Terminology)
+                                fit_overflow = $(if($catContext.ContainsKey('FitOverflows') -and $catContext.FitOverflows.ContainsKey([int]$entry.Index)){$catContext.FitOverflows[[int]$entry.Index]}else{$null})
                             })
                         }
                     }
@@ -3995,6 +3996,7 @@ function Invoke-YakuRoute {
                             $segs[$i].TerminologyGeneration = @($pair.terminology)
                             $segs[$i] | Add-Member -NotePropertyName State -NotePropertyValue 'machine_draft' -Force
                             Reset-YakuCatSegmentQc -Segment $segs[$i] -KeepState
+                            $fitOverflow=$null;try{$fitOverflow=$pair.fit_overflow}catch{};$segs[$i]|Add-Member -NotePropertyName FitOverflow -NotePropertyValue $fitOverflow -Force
                         }
                         try { $candidate | Add-Member -NotePropertyName 'GlossaryCandidates' -NotePropertyValue (Measure-YakuCatGlossaryCandidates -Root $root -Project $candidate -Settings $innerSettings) -Force } catch {}
                     }

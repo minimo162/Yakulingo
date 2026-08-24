@@ -560,6 +560,7 @@ function Initialize-YakuCatProjectState {
         if (-not ($segment.PSObject.Properties.Name -contains 'QcContractVersion')) { $segment | Add-Member -NotePropertyName QcContractVersion -NotePropertyValue '' -Force }
         if (-not ($segment.PSObject.Properties.Name -contains 'QcTerminologyHash')) { $segment | Add-Member -NotePropertyName QcTerminologyHash -NotePropertyValue '' -Force }
         if (-not ($segment.PSObject.Properties.Name -contains 'QcFindings')) { $segment | Add-Member -NotePropertyName QcFindings -NotePropertyValue @() -Force }
+        if (-not ($segment.PSObject.Properties.Name -contains 'FitOverflow')) { $segment | Add-Member -NotePropertyName FitOverflow -NotePropertyValue $null -Force }
         if (-not ($segment.PSObject.Properties.Name -contains 'ReferenceUsage')) { $segment | Add-Member -NotePropertyName ReferenceUsage -NotePropertyValue $null -Force }
         if (-not ($segment.PSObject.Properties.Name -contains 'ReferenceEvents')) { $segment | Add-Member -NotePropertyName ReferenceEvents -NotePropertyValue @() -Force }
         if (-not ($segment.PSObject.Properties.Name -contains 'TerminologyUsages')) { $segment | Add-Member -NotePropertyName TerminologyUsages -NotePropertyValue @() -Force }
@@ -968,6 +969,7 @@ function Invoke-YakuCatSegmentValidation {
         $findings.Add([pscustomobject]@{ Code='invalid-or-source-fallback'; Severity='error' }) | Out-Null
     }
     if ($target -match '\[\[(?:N|P)\d+\]\]') { $findings.Add([pscustomobject]@{ Code='placeholder-residue'; Severity='error' }) | Out-Null }
+    if($null -ne $(try{$Segment.FitOverflow}catch{$null})){$findings.Add([pscustomobject]@{Code='fit-overflow';Severity='warning'})|Out-Null}
     $pairedDelimiter = Find-YakuCatPairedDelimiterMismatch -Text $target
     if ($null -ne $pairedDelimiter) {
         $findings.Add([pscustomobject]@{ Code='paired-delimiter-mismatch'; Severity='warning'; Detail=([string]$pairedDelimiter.Reason) }) | Out-Null
@@ -2925,6 +2927,7 @@ function Save-YakuCatProject {
                     qc_contract_version = [string]$_.QcContractVersion
                     qc_terminology_hash = [string]$_.QcTerminologyHash
                     qc_findings = @($_.QcFindings)
+                    fit_overflow = $(try{$_.FitOverflow}catch{$null})
                     confirmed = [bool]$_.Confirmed
                     joined = [bool]$_.Joined
                     kind = [string]$_.Kind
@@ -3374,6 +3377,7 @@ function Restore-YakuCatProject {
                 QcContractVersion = [string]$s.qc_contract_version
                 QcTerminologyHash = [string]$s.qc_terminology_hash
                 QcFindings = @($s.qc_findings)
+                FitOverflow = $(try{$s.fit_overflow}catch{$null})
                 Confirmed = [bool]$s.confirmed
                 Joined = [bool]$s.joined
                 Kind = [string]$s.kind
