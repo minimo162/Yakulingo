@@ -141,8 +141,8 @@
           <p class="muted">同じ資料の日本語版と英語版を読み込み、対応する文を確認します。確認済みにしただけでは候補にならず、翻訳メモリへ登録した訳だけが次の資料から候補として出ます。</p>
           <p class="muted">PDFファイル自体は送らず、選んだページから取り出した日本語と英語の文をCopilotへ送って対応を探します。</p>
           <div class="align-file-row">
-            <div class="field-label">日本語版のPDF<button type="button" id="cat-align-source-file-open" class="secondary-button" aria-label="日本語版のPDFを選ぶ">ファイルを選ぶ<input id="cat-align-source-file" type="file" accept=".pdf" hidden></button><span id="cat-align-source-file-name" class="align-file-name muted"></span></div>
-            <div class="field-label">英語版のPDF<button type="button" id="cat-align-target-file-open" class="secondary-button" aria-label="英語版のPDFを選ぶ">ファイルを選ぶ<input id="cat-align-target-file" type="file" accept=".pdf" hidden></button><span id="cat-align-target-file-name" class="align-file-name muted"></span></div>
+            <div class="field-label">日本語版（PDF / Excel）<button type="button" id="cat-align-source-file-open" class="secondary-button" aria-label="日本語版（PDF / Excel）を選ぶ">ファイルを選ぶ<input id="cat-align-source-file" type="file" accept=".pdf,.xlsx,.xlsm" hidden></button><span id="cat-align-source-file-name" class="align-file-name muted"></span></div>
+            <div class="field-label">英語版（PDF / Excel）<button type="button" id="cat-align-target-file-open" class="secondary-button" aria-label="英語版（PDF / Excel）を選ぶ">ファイルを選ぶ<input id="cat-align-target-file" type="file" accept=".pdf,.xlsx,.xlsm" hidden></button><span id="cat-align-target-file-name" class="align-file-name muted"></span></div>
           </div>
           <p id="cat-align-file-status" class="muted" role="status" aria-live="polite"></p>
           <!-- 範囲を選べるようにする。資料まるごとは Copilot への往復が3桁になり
@@ -163,7 +163,7 @@
               <details><summary>ページの冒頭を見る</summary><div id="cat-align-target-pages" class="align-page-list"></div></details>
             </div>
           </div>
-          <details id="cat-align-paste"><summary>PDFが無い（文章を貼り付ける）</summary>
+          <details id="cat-align-paste"><summary>ファイルが無い（文章を貼り付ける）</summary>
             <label class="field-label" for="cat-align-source">日本語版<textarea id="cat-align-source" rows="5"></textarea></label>
             <label class="field-label" for="cat-align-target">英語版<textarea id="cat-align-target" rows="5"></textarea></label>
           </details>

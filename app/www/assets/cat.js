@@ -6,6 +6,7 @@
      同じ文字列を持つ。 */
   var paletteHandoffStorageKey = 'yaku.palette.handoff';
   var ready = false, busy = false, project = null, pendingDirection = null, uploaded = null, directFilePath = '';
+  var alignExcelHandles = { source: '', target: '' };
   var recentSnapshot = null, recentRequest = null, recentRequestOwner = false;
   var dirty = new Map(), saveChain = Promise.resolve(), jobTimer = null, jobContext = null, candidateSeq = 0;
   var deleteTarget = null, preflightScope = null, jobSerial = 0, viewEpoch = 0, outputScope = null;
@@ -4932,6 +4933,33 @@
     function readPdfInto(input, side, label) {
       var file = input.files && input.files[0];
       if (!file) return;
+      if (/\.(xlsx|xlsm)$/i.test(String(file.name || ''))) {
+        var statusNode = el('cat-align-file-status');
+        statusNode.hidden = false; statusNode.textContent = label + 'のExcelを読み込んでいます…';
+        el('cat-align-ranges').hidden = true;
+        YakuCommon.upload('/api/upload', file).then(function (data) {
+          if (!data || !data.file_handle) throw new Error('Excelを受け付けられませんでした。');
+          alignExcelHandles[side] = String(data.file_handle);
+          el('cat-align-' + side + '-file-name').textContent = file.name;
+          if (!el('cat-align-name').value.trim()) el('cat-align-name').value = file.name.replace(/\.(xlsx|xlsm)$/i, '');
+          if (!alignExcelHandles.source || !alignExcelHandles.target) {
+            statusNode.textContent = 'もう一方のExcelファイルを選んでください。'; updateAlignEstimate(); return null;
+          }
+          statusNode.textContent = '2つのExcelから対訳候補を抽出しています…';
+          return YakuCommon.post('/api/cat/align-files', { source_file_handle:alignExcelHandles.source, target_file_handle:alignExcelHandles.target });
+        }).then(function (data) {
+          if (!data) return;
+          el('cat-align-source').value = String(data.source_text || '');
+          el('cat-align-target').value = String(data.target_text || '');
+          statusNode.textContent = '日本語 ' + Number(data.source_count || 0) + '件 / 英語 ' + Number(data.target_count || 0) + '件を取得しました。';
+          updateAlignEstimate();
+        }).catch(function (error) {
+          alignExcelHandles[side] = '';
+          statusNode.textContent = label + 'を読めませんでした。' + (error && error.message ? error.message : '');
+          updateAlignEstimate();
+        });
+        return;
+      }
       /* 選んだファイル名は、押した直後にボタンの下へ日本語で出す。素の
          <input type="file"> は既定のボタン文言が英語（Choose File）のことが
          あり、選んだあとの状態も画面のどこにも出ていなかった（2026-08-18）。 */

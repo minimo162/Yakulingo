@@ -2514,6 +2514,37 @@ function Invoke-YakuRoute {
         }
         return
     }
+    if ($method -eq 'POST' -and $path -eq '/api/cat/align-files') {
+        try {
+            $settings = Read-YakuSettings -Root $script:YakuRoot
+            $payload = Read-YakuRequestJson -Request $req -MaxBytes 65536
+            $sourceIncoming = Resolve-YakuIncomingFile -Payload ([ordered]@{ file_handle=[string]$payload['source_file_handle'] }) -Settings $settings
+            $targetIncoming = Resolve-YakuIncomingFile -Payload ([ordered]@{ file_handle=[string]$payload['target_file_handle'] }) -Settings $settings
+            foreach ($incoming in @($sourceIncoming,$targetIncoming)) {
+                $extension = [IO.Path]::GetExtension([string]$incoming.Path).ToLowerInvariant()
+                if ($extension -notin @('.xlsx','.xlsm')) { throw 'CAT_ALIGN_EXCEL_REQUIRED: 日本語版と英語版のExcelファイルを選んでください。' }
+            }
+            $sourceExtract = Get-YakuFileTextBlocks -Path ([string]$sourceIncoming.Path) -Direction 'to_en' -Settings $settings
+            $targetExtract = Get-YakuFileTextBlocks -Path ([string]$targetIncoming.Path) -Direction 'to_jp' -Settings $settings
+            $sourceLines = New-Object System.Collections.Generic.List[string]
+            foreach ($block in @($sourceExtract.Blocks)) { $line = ([string]$block.Text).Trim(); if ($line) { [void]$sourceLines.Add($line) } }
+            $targetLines = New-Object System.Collections.Generic.List[string]
+            foreach ($block in @($targetExtract.Blocks)) { $line = ([string]$block.Text).Trim(); if ($line) { [void]$targetLines.Add($line) } }
+            if ($sourceLines.Count -eq 0 -or $targetLines.Count -eq 0) { throw 'CAT_ALIGN_EXCEL_EMPTY: 対訳に使える文章をExcelから取得できませんでした。' }
+            $response = [ordered]@{
+                source_text=($sourceLines.ToArray() -join "`r`n")
+                target_text=($targetLines.ToArray() -join "`r`n")
+                source_count=$sourceLines.Count
+                target_count=$targetLines.Count
+                source_name=[IO.Path]::GetFileName([string]$sourceIncoming.Path)
+                target_name=[IO.Path]::GetFileName([string]$targetIncoming.Path)
+            }
+            Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Depth 5 -Compress) -ContentType 'application/json; charset=utf-8'
+        } catch {
+            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ error=(Convert-YakuExceptionToUserMessage $_) } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
+        }
+        return
+    }
     if ($method -eq 'POST' -and $path -eq '/api/file-info') {
         try {
             $settings = Read-YakuSettings -Root $script:YakuRoot
