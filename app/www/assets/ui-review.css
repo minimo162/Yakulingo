@@ -141,30 +141,6 @@ body.premium-cat .premium-combined-panel h2 {
   letter-spacing: -.025em;
 }
 
-/* Keep the form label for assistive technology without repeating the
-   placeholder visually. */
-body.premium-cat .premium-combined-chat-live .palette-label {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  clip-path: inset(50%);
-  white-space: nowrap;
-  border: 0;
-}
-
-body.premium-cat .premium-combined-chat-live #palette-input {
-  min-height: 220px;
-}
-
-/* Keyboard hints are useful after a result exists, not on an empty screen. */
-body.premium-cat .premium-combined-chat-live #palette-result:empty + .palette-footer {
-  display: none;
-}
-
 body.premium-cat .premium-combined-excel .premium-excel-mark,
 body.premium-cat .premium-combined-excel .premium-drop-tags {
   display: none;
@@ -181,12 +157,6 @@ body.premium-cat .premium-combined-excel .premium-file-drop {
 body.premium-cat .premium-combined-excel .premium-drop-actions {
   grid-column: auto;
   align-self: center;
-}
-
-body.premium-cat .premium-combined-chat-live #palette-input,
-body.premium-cat .premium-combined-excel .premium-file-drop,
-body.premium-cat .premium-combined-excel-options > section {
-  transition: border-color .16s ease, box-shadow .16s ease, background .16s ease;
 }
 
 body.premium-cat .premium-combined-excel .premium-file-drop:focus-within {
@@ -262,13 +232,6 @@ body.premium-cat .premium-work-card footer {
   border-top: 1px solid var(--premium-hairline);
 }
 
-/* Keep the next action visible: the fit list alone does not explain where
-   the actual Excel-like display check happens. */
-body.premium-cat .premium-fit-panel > header p {
-  display: block;
-  line-height: 1.35;
-}
-
 /* Responsive start ---------------------------------------------------------
    The viewport breakpoint includes the sidebar. Keep two columns at the
    tested 1200px width and collapse before either task becomes cramped. */
@@ -293,18 +256,6 @@ body.premium-cat .premium-fit-panel > header p {
 
   body.premium-cat .premium-combined-panel h2 {
     font-size: 23px;
-  }
-
-  body.premium-cat .premium-combined-chat-live #palette-input {
-    min-height: 190px;
-    padding: 16px;
-    font-size: 17px;
-  }
-
-  body.premium-cat .premium-combined-chat-live .palette-direction-row,
-  body.premium-cat .premium-combined-excel-options,
-  body.premium-cat .premium-combined-excel .premium-file-drop {
-    grid-template-columns: minmax(0, 1fr);
   }
 
   body.premium-cat .premium-combined-excel .premium-file-drop {
@@ -520,12 +471,6 @@ body.premium-cat .premium-fit-panel > header p {
   body.premium-ui .premium-top-text-button,
   body.premium-ui .premium-top-action {
     min-height: 44px;
-  }
-
-  body.premium-ui .premium-main > .shell,
-  body.premium-ui .premium-main > .palette-shell {
-    padding-bottom: calc(var(--yaku-ui-mobile-nav-height) + 12px + env(safe-area-inset-bottom));
-    box-sizing: border-box;
   }
 
   body.premium-ui .premium-toast,

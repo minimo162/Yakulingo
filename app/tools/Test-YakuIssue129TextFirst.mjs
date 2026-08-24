@@ -46,7 +46,7 @@ check(css.includes('@media(max-width:900px)')&&css.includes('grid-template-colum
 check(readme.includes('起動すると')&&readme.includes('**テキスト翻訳**'),'README does not describe the text-first entry');
 check(!readme.includes('表示条件は短くする目安'),'README still documents display conditions');
 check(design.includes('Text translation does not collect display conditions'),'DESIGN does not remove display conditions');
-check(build==='V91.62','build id is not V91.62');
+check(build==='V91.63','build id is not V91.63');
 
 if(failures.length){for(const failure of failures)console.error('not ok - '+failure);process.exit(1)}
 console.log('ok - Issue #129 text-first UI contract');
