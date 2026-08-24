@@ -2492,9 +2492,10 @@ body.premium-cat.premium-mode-workspace #cat-preview-dock-splitter { display: no
 }
 
 /* Issue #125: the two product modes share only the top-level switch and tokens. */
+body.premium-cat .premium-topbar{grid-template-columns:auto minmax(120px,1fr) auto auto auto}
 .premium-mode-nav{display:flex;align-items:center;justify-content:center;gap:4px;padding:4px;background:#eef0f6;border-radius:11px}
 .premium-mode-nav a{padding:8px 14px;border-radius:8px;color:#596174;text-decoration:none;font-weight:700;white-space:nowrap}
 .premium-mode-nav a[aria-current="page"]{background:#fff;color:#4338ca;box-shadow:0 1px 3px rgba(16,24,40,.12)}
 .premium-excel-surface{min-width:0}
 body.premium-cat .excel-screen{min-width:0}
-@media(max-width:1200px){.premium-topbar{grid-template-columns:minmax(170px,1fr) auto minmax(260px,1fr);gap:12px}.premium-mode-nav a{padding:7px 10px}.premium-top-actions{min-width:0}.premium-top-actions>*{white-space:nowrap}}
+@media(max-width:1200px){body.premium-cat .premium-topbar{display:flex;flex-wrap:wrap;gap:10px;padding-block:8px}.premium-mode-nav{margin-inline:auto}.premium-mode-nav a{padding:7px 10px}.premium-top-actions{min-width:0;margin-left:auto}.premium-top-actions>*{white-space:nowrap}}
