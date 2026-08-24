@@ -123,6 +123,7 @@
             <button type="button" class="is-active" aria-pressed="true" data-direction="to_en">日本語 → 英語</button>
             <button type="button" aria-pressed="false" data-direction="to_jp">英語 → 日本語</button>
           </div>
+          <div class="premium-start-secondary"><a id="cat-open-align-entry" class="secondary-button" href="/cat?import=1">過去の日英版から対訳を作る</a><p>Copilotで対応候補を作り、検証・確定した対訳だけを次のExcelへ再利用します。</p></div>
           <section class="premium-start-recent" aria-labelledby="premium-start-recent-title">
             <div><h2 id="premium-start-recent-title">最近の作業</h2><a href="/cat?view=work" data-premium-nav="work">すべて見る</a></div>
             <div id="premium-start-recent-list"><p class="premium-sidebar-loading">読み込んでいます…</p></div>
@@ -140,8 +141,8 @@
           <p class="muted">同じ資料の日本語版と英語版を読み込み、対応する文を確認します。確認済みにしただけでは候補にならず、翻訳メモリへ登録した訳だけが次の資料から候補として出ます。</p>
           <p class="muted">PDFファイル自体は送らず、選んだページから取り出した日本語と英語の文をCopilotへ送って対応を探します。</p>
           <div class="align-file-row">
-            <div class="field-label">日本語版のPDF<button type="button" id="cat-align-source-file-open" class="secondary-button" aria-label="日本語版のPDFを選ぶ">ファイルを選ぶ<input id="cat-align-source-file" type="file" accept=".pdf" hidden></button><span id="cat-align-source-file-name" class="align-file-name muted"></span></div>
-            <div class="field-label">英語版のPDF<button type="button" id="cat-align-target-file-open" class="secondary-button" aria-label="英語版のPDFを選ぶ">ファイルを選ぶ<input id="cat-align-target-file" type="file" accept=".pdf" hidden></button><span id="cat-align-target-file-name" class="align-file-name muted"></span></div>
+            <div class="field-label">日本語版（PDF / Excel）<button type="button" id="cat-align-source-file-open" class="secondary-button" aria-label="日本語版（PDF / Excel）を選ぶ">ファイルを選ぶ<input id="cat-align-source-file" type="file" accept=".pdf,.xlsx,.xlsm" hidden></button><span id="cat-align-source-file-name" class="align-file-name muted"></span></div>
+            <div class="field-label">英語版（PDF / Excel）<button type="button" id="cat-align-target-file-open" class="secondary-button" aria-label="英語版（PDF / Excel）を選ぶ">ファイルを選ぶ<input id="cat-align-target-file" type="file" accept=".pdf,.xlsx,.xlsm" hidden></button><span id="cat-align-target-file-name" class="align-file-name muted"></span></div>
           </div>
           <p id="cat-align-file-status" class="muted" role="status" aria-live="polite"></p>
           <!-- 範囲を選べるようにする。資料まるごとは Copilot への往復が3桁になり
@@ -162,7 +163,7 @@
               <details><summary>ページの冒頭を見る</summary><div id="cat-align-target-pages" class="align-page-list"></div></details>
             </div>
           </div>
-          <details id="cat-align-paste"><summary>PDFが無い（文章を貼り付ける）</summary>
+          <details id="cat-align-paste"><summary>ファイルが無い（文章を貼り付ける）</summary>
             <label class="field-label" for="cat-align-source">日本語版<textarea id="cat-align-source" rows="5"></textarea></label>
             <label class="field-label" for="cat-align-target">英語版<textarea id="cat-align-target" rows="5"></textarea></label>
           </details>
@@ -280,6 +281,7 @@
 
         <p id="cat-output-help" class="sr-only"></p><p id="cat-output-reason" class="sr-only" role="status"></p><p id="cat-export-blocked" class="cat-export-blocked" role="status"></p><p id="cat-mask-notice" class="cat-mask-notice" role="status"></p>
 
+        <section id="premium-apply-summary" class="premium-apply-summary" aria-labelledby="premium-apply-title"><div><span class="premium-eyebrow">確定済み対訳の適用結果</span><h2 id="premium-apply-title">過去訳を適用しました</h2><p id="premium-apply-context"></p></div><dl><div><dt>適用</dt><dd id="premium-applied-count">0件</dd></div><div><dt>未訳</dt><dd id="premium-unresolved-count">0件</dd></div><div><dt>要確認</dt><dd id="premium-conflict-count">0件</dd></div></dl><div class="premium-apply-actions"><button id="premium-summary-export" type="button">訳文入りExcelを作る</button><button id="premium-summary-unresolved" type="button" class="secondary-button">未訳・競合を見る</button></div></section>
         <div id="cat-editor-layout" class="cat-editor-layout">
 
           <aside id="premium-cell-list-pane" class="premium-cell-list-pane" aria-labelledby="premium-cell-list-title">

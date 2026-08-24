@@ -70,3 +70,10 @@ Windows + PowerShell 5.1 + Microsoft Edge が前提です。CSV 以外のファ�
 - コミット・配布前に `powershell -ExecutionPolicy Bypass -File .\app\tools\Check-Encoding.ps1` を実行します。
 - BOM違反は `app\tools\Repair-YakuEncoding.ps1 -WhatIfOnly` で確認し、引数なし実行で一括修復できます。
 - 本リポジトリの `.gitattributes` で改行コードの自動変換を無効化しています。配布物のバイト列をそのまま保持してください。
+
+
+## 文章翻訳とExcel再適用
+
+文章翻訳は、用途、フォント、文字サイズ、列幅、行数、折り返し、目標文字数を必要なときだけ指定し、自然・短い・最短の案を作れます。表示条件は短くする目安で、Excelでの厳密な収まりを保証しません。
+
+Excel翻訳は、過去の日英版からCopilot支援で作成し、人が確定した対訳だけを決定的に再適用します。一意な完全一致または安全な正規化一致だけを入れ、未登録・競合・変更された原文は日本語のまま残します。未訳は文章翻訳へ送り、採用訳をExcel作業へ戻せます。

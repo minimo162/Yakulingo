@@ -2514,6 +2514,37 @@ function Invoke-YakuRoute {
         }
         return
     }
+    if ($method -eq 'POST' -and $path -eq '/api/cat/align-files') {
+        try {
+            $settings = Read-YakuSettings -Root $script:YakuRoot
+            $payload = Read-YakuRequestJson -Request $req -MaxBytes 65536
+            $sourceIncoming = Resolve-YakuIncomingFile -Payload ([ordered]@{ file_handle=[string]$payload['source_file_handle'] }) -Settings $settings
+            $targetIncoming = Resolve-YakuIncomingFile -Payload ([ordered]@{ file_handle=[string]$payload['target_file_handle'] }) -Settings $settings
+            foreach ($incoming in @($sourceIncoming,$targetIncoming)) {
+                $extension = [IO.Path]::GetExtension([string]$incoming.Path).ToLowerInvariant()
+                if ($extension -notin @('.xlsx','.xlsm')) { throw 'CAT_ALIGN_EXCEL_REQUIRED: 日本語版と英語版のExcelファイルを選んでください。' }
+            }
+            $sourceExtract = Get-YakuFileTextBlocks -Path ([string]$sourceIncoming.Path) -Direction 'to_en' -Settings $settings
+            $targetExtract = Get-YakuFileTextBlocks -Path ([string]$targetIncoming.Path) -Direction 'to_jp' -Settings $settings
+            $sourceLines = New-Object System.Collections.Generic.List[string]
+            foreach ($block in @($sourceExtract.Blocks)) { $line = ([string]$block.Text).Trim(); if ($line) { [void]$sourceLines.Add($line) } }
+            $targetLines = New-Object System.Collections.Generic.List[string]
+            foreach ($block in @($targetExtract.Blocks)) { $line = ([string]$block.Text).Trim(); if ($line) { [void]$targetLines.Add($line) } }
+            if ($sourceLines.Count -eq 0 -or $targetLines.Count -eq 0) { throw 'CAT_ALIGN_EXCEL_EMPTY: 対訳に使える文章をExcelから取得できませんでした。' }
+            $response = [ordered]@{
+                source_text=($sourceLines.ToArray() -join "`r`n")
+                target_text=($targetLines.ToArray() -join "`r`n")
+                source_count=$sourceLines.Count
+                target_count=$targetLines.Count
+                source_name=[IO.Path]::GetFileName([string]$sourceIncoming.Path)
+                target_name=[IO.Path]::GetFileName([string]$targetIncoming.Path)
+            }
+            Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Depth 5 -Compress) -ContentType 'application/json; charset=utf-8'
+        } catch {
+            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ error=(Convert-YakuExceptionToUserMessage $_) } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
+        }
+        return
+    }
     if ($method -eq 'POST' -and $path -eq '/api/file-info') {
         try {
             $settings = Read-YakuSettings -Root $script:YakuRoot
@@ -2717,22 +2748,15 @@ function Invoke-YakuRoute {
         # 注文チップ(丁寧に)。既存のジョブ機構(Kind revise)へそのまま乗せる。
         # Translation.ps1 側は一切変更しない。
         #
-        # 「短く」(Kind shorten)は配線しない(2026-08-18、実機検証で判明)。
-        # Invoke-YakuTextTranslation は単位換算(Convert-YakuNumericUnits)を
-        # 先に済ませてからマスクするのに対し、Invoke-YakuTextShorten は
-        # 換算前の生の原文をマスクする(Translation.ps1:2258)。同じ原文でも
-        # 2つの関数が異なるトークン対応表を作るため、短くする側が現訳の
-        # [[N#]]を取り違える。実測: 「売上高は1兆3,150億円です。」→短くした
-        # 結果が ¥1 billion(誤り)。「1,234億円」→10倍ずれ。エンジン側
-        # (Translation.ps1)の変更はスコープ外なので、仕様の逃げ道どおり
-        # 「短く」を落とす。「丁寧に」(revise)はマスク表の作り方が翻訳時と
-        # 同一なので問題ない。
+        # 短縮・言い換えは、翻訳時と同じ数値マスクを保持した現訳を
+        # Kind revise へ渡す。Kind shorten の換算前マスク経路は使わない。
+        # 操作名と表示条件は下で固定語彙・数値範囲へ制限する。
         try {
             $settings = Read-YakuSettings -Root $script:YakuRoot
             $payload = Read-YakuRequestJson -Request $req -MaxBytes 262144
             $chip = [string]$payload['chip']
-            if ($chip -eq 'shorten') { throw 'PALETTE_CHIP_SHORTEN_REMOVED: 短くする機能はマスクの対応がずれるため、この画面では使えません。' }
-            if ($chip -ne 'revise') { throw 'PALETTE_CHIP_INVALID: この操作は利用できません。' }
+            $allowedChips = @('revise','shorten','shorter','rephrase','heading','table')
+            if ($allowedChips -notcontains $chip) { throw 'PALETTE_CHIP_INVALID: この操作は利用できません。' }
             $sourceText = [string]$payload['source_text']
             # マスク後の現訳。呼び出し元(palette.js)は、直前のジョブ結果 JSON の
             # masked_translation をそのまま送り返す決まりで、実値入りの表示文字列を
@@ -2745,9 +2769,43 @@ function Invoke-YakuRoute {
             try { if (@('to_en','to_jp') -contains [string]$payload['direction']) { $direction = [string]$payload['direction'] } } catch {}
             $style = 'full'
             try { if ([string]$payload['style'] -eq 'brief') { $style = 'brief' } } catch {}
-            # 「丁寧に」は固定の指示で直す。パレットは見比べて直す画面ではなく
-            # 貼って即使う画面なので、自由記述の指示欄は置かない。
-            $instruction = 'もう少し丁寧な言い回しにしてください。事実や数値は変えないでください。'
+            # 操作は固定語彙からだけ選ぶ。自由記述命令は受け付けず、表示条件は
+            # 上限を検証したメタデータとしてだけプロンプトへ追加する。
+            $instruction = switch ($chip) {
+                'shorten' { '意味を保ったまま短くしてください。' }
+                'shorter' { '意味保持の限界までさらに短くしてください。見出しまたは狭いセルで使える簡潔さを優先してください。' }
+                'rephrase' { '意味、事実関係、語調を保ったまま別の自然な表現へ言い換えてください。' }
+                'heading' { '見出しとして短く明確な表現にしてください。' }
+                'table' { '表またはExcelセルで読みやすい簡潔な表現にしてください。' }
+                default { 'もう少し丁寧な言い回しにしてください。' }
+            }
+            $instruction += ' 数字、単位、日付、社名、製品名、その他の固有名詞を欠落・変更・追加しないでください。'
+            $display = $null
+            try { $display = $payload['display_context'] } catch {}
+            $conditions = New-Object System.Collections.Generic.List[string]
+            if ($null -ne $display) {
+                $purpose = [string]$display['purpose']
+                if (@('body','heading','table','excel_cell') -contains $purpose) { [void]$conditions.Add(('用途=' + $purpose)) }
+                $length = [string]$display['length']
+                if (@('natural','short','very_short','shortest') -contains $length) { [void]$conditions.Add(('短さ=' + $length)) }
+                $fontName = (([string]$display['font_name']) -replace '[\r\n\t]', ' ').Trim()
+                if ($fontName.Length -gt 80) { $fontName = $fontName.Substring(0,80) }
+                if ($fontName) { [void]$conditions.Add(('フォント=' + $fontName)) }
+                foreach ($pair in @(@('font_size_pt',6,72,'pt'),@('column_width',1,255,'列幅'),@('line_count',1,50,'行'),@('target_chars',1,3000,'文字'),@('shorten_percent',1,90,'%'))) {
+                    $number = 0.0
+                    if ([double]::TryParse(([string]$display[$pair[0]]), [ref]$number) -and $number -ge $pair[1] -and $number -le $pair[2]) {
+                        [void]$conditions.Add(($pair[3] + '=' + $number))
+                    }
+                }
+                [void]$conditions.Add(('折返し=' + $(if ([bool]$display['wrap']) { 'あり' } else { 'なし' })))
+                if ([bool]$display['merged']) { [void]$conditions.Add('結合セル=あり') }
+                $preserve = (([string]$display['preserve_terms']) -replace '[\r\n\t]', ' ').Trim()
+                if ($preserve.Length -gt 300) { $preserve = $preserve.Substring(0,300) }
+                if ($preserve) { [void]$conditions.Add(('維持する固有名詞=' + $preserve)) }
+            }
+            if ($conditions.Count -gt 0) {
+                $instruction += ' 次の表示条件は厳密な収まり保証ではなく、短さを調整する目安として使ってください: ' + (($conditions.ToArray()) -join ' / ')
+            }
             $reviseBody = [ordered]@{ source_text=$sourceText; current_text=$currentText; instruction=$instruction; direction=$direction; style=$style }
             $state = Start-YakuTranslationJob -InputText '' -Settings $settings -Kind 'revise' -ReviseJson ($reviseBody | ConvertTo-Json -Compress)
             Send-YakuTextResponse -Context $Context -Text ([ordered]@{ job_id=[string]$state['id'] } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'

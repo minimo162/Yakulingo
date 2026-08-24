@@ -6,6 +6,7 @@
      同じ文字列を持つ。 */
   var paletteHandoffStorageKey = 'yaku.palette.handoff';
   var ready = false, busy = false, project = null, pendingDirection = null, uploaded = null, directFilePath = '';
+  var alignExcelHandles = { source: '', target: '' };
   var recentSnapshot = null, recentRequest = null, recentRequestOwner = false;
   var dirty = new Map(), saveChain = Promise.resolve(), jobTimer = null, jobContext = null, candidateSeq = 0;
   var deleteTarget = null, preflightScope = null, jobSerial = 0, viewEpoch = 0, outputScope = null;
@@ -696,48 +697,10 @@
     return recentSnapshot;
   }
   function applyRecentSnapshot(data) {
-    /* 消す手段が「開いてから、そのほか → 管理」の奥にしかなく、要らない作業が
-       溜まっていくだけだった（2026-08-12、利用者の指摘）。一覧のその場で消せる。
-       消すのは途中保存だけで、元のファイルには触らない。 */
-    var failed = !!(data && data.error);
-    var items = data && Array.isArray(data.projects) ? data.projects : [];
-    el('cat-resume').hidden = !items.length;
-    resumeItems = items;
-    if (failed) {
-      el('cat-resume').hidden = false;
-      el('cat-resume-list').innerHTML = '<div class="alert alert-error" data-cat-recent-error>途中まで進めた作業の一覧を読み込めませんでした。<button type="button" class="link-button" data-cat-recent-retry>再読み込み</button></div>';
-      el('cat-resume-more').hidden = true;
-      var retry = el('cat-resume-list').querySelector('[data-cat-recent-retry]');
-      if (retry) retry.addEventListener('click', function () { retry.disabled = true; loadRecent(true); });
-      return recentSnapshot;
-    }
-    if (items.length <= RESUME_VISIBLE) resumeExpanded = false;
-    /* /recent は一覧を読むだけの経路であり、表示名を作るために各資料を
-       resume してはいけない。resume は作業状態を開く操作なので、一覧を
-       開いただけで現在の資料やロック状態を変えてしまう（2026-08-17）。
-       API が読み取り専用の source_preview を返す場合だけ使い、無い資料は
-       保存時刻を見出しにする。現在開いている資料だけは、既に画面にある
-       segments から原文を使える。 */
-    var fallbackNames = {}, previewNames = {};
-    items.forEach(function (item) {
-      if (!isGenericPastedName(item.file_name) || item.display_name) return;
-      var preview = shortDocumentPreview(item.source_preview || item.source_text || item.first_source || item.preview);
-      if (!preview && project && String(project.id || '') === String(item.id || '')) preview = firstDocumentSource(project);
-      if (preview) {
-        var previewKey = preview, previewCount = (previewNames[previewKey] || 0) + 1;
-        previewNames[previewKey] = previewCount;
-        item.display_name = previewCount === 1 ? preview : previewCount + ': ' + preview;
-        return;
-      }
-      var saved = savedLabel(item.saved), base = '貼り付け' + (saved ? ' ' + saved : ''), candidate = base;
-      var suffix = String(item.id || '').slice(-6);
-      if (fallbackNames[base]) candidate = base + (suffix ? '・' + suffix : '・' + (fallbackNames[base] + 1));
-      fallbackNames[base] = (fallbackNames[base] || 0) + 1;
-      item.display_name = candidate;
-    });
-    ++resumePreviewSeq;
-    renderRecent();
-    return recentSnapshot;
+    /* PR #126 removed the legacy resume DOM. CAT owns and publishes the snapshot;
+       premium-ui is the only renderer. */
+    var items=data&&Array.isArray(data.projects)?data.projects:[];resumeItems=items;
+    if(items.length<=RESUME_VISIBLE)resumeExpanded=false;return recentSnapshot;
   }
   /* palette.js is embedded in CAT and asks for the same list to populate its
      context selector. Keep that second consumer on the CAT-owned snapshot,
@@ -1353,7 +1316,7 @@
     closePlaceablePicker();
     clearCandidateDetail('候補を読み込んでいます…');
     candidateSeq++;
-    el('cat-candidates').hidden = true;
+    if (el('cat-candidates')) el('cat-candidates').hidden = true;
     chooseInitialActive();
     var shown = visibleSegments(), current = activeSegment();
     renderNavigation(); renderInspector(); renderSearchTools();
@@ -1496,7 +1459,7 @@
       jobContext.partialRows.forEach(function (partialRow) { applyPartialPreviewRow(partialRow, true); });
       body.querySelectorAll('textarea[data-cat-input]').forEach(autoGrow);
     }
-    el('cat-candidates').hidden = false;
+    if (el('cat-candidates')) el('cat-candidates').hidden = false;
     if (current) candidates(Number(current.index)); else { el('cat-candidate-count').textContent = '0'; el('cat-candidates-list').innerHTML = '<p class="muted">行がありません。左の「すべて」を押すと、全部の行が表示されます。</p>'; }
     window.dispatchEvent(new CustomEvent('yaku-cat-rows-rendered'));
   }
@@ -2434,7 +2397,7 @@
   var filterSeq = 0;
   function redrawAfterFlush() {
     var seq = ++filterSeq;
-    return flush().then(function () { if (seq === filterSeq && project) { candidateSeq++; el('cat-candidates').hidden = true; renderRows(); } }).catch(function (error) { status('変更を保存できなかったため、表示を切り替えませんでした。' + error.message, true); });
+    return flush().then(function () { if (seq === filterSeq && project) { candidateSeq++; if (el('cat-candidates')) el('cat-candidates').hidden = true; renderRows(); } }).catch(function (error) { status('変更を保存できなかったため、表示を切り替えませんでした。' + error.message, true); });
   }
   function candidates(index) {
     clearCandidateDetail('候補を読み込んでいます…');
@@ -2454,7 +2417,7 @@
       candidateDetailRequestIndex = Number(index);
       candidateDetailRequestProjectId = requestScope.id;
       candidateDetailRequestRevision = requestScope.revision;
-      var panel = el('cat-candidates'); panel.hidden = false;
+      var panel = el('cat-candidates'); if (!panel) return; panel.hidden = false;
       el('cat-candidate-count').textContent = String(terms.length + items.length);
       el('cat-terms-list').innerHTML = terms.length ? terms.map(function (item, termIndex) {
         var termNumber = termIndex + 1;
@@ -4970,6 +4933,33 @@
     function readPdfInto(input, side, label) {
       var file = input.files && input.files[0];
       if (!file) return;
+      if (/\.(xlsx|xlsm)$/i.test(String(file.name || ''))) {
+        var statusNode = el('cat-align-file-status');
+        statusNode.hidden = false; statusNode.textContent = label + 'のExcelを読み込んでいます…';
+        el('cat-align-ranges').hidden = true;
+        YakuCommon.upload('/api/upload', file).then(function (data) {
+          if (!data || !data.file_handle) throw new Error('Excelを受け付けられませんでした。');
+          alignExcelHandles[side] = String(data.file_handle);
+          el('cat-align-' + side + '-file-name').textContent = file.name;
+          if (!el('cat-align-name').value.trim()) el('cat-align-name').value = file.name.replace(/\.(xlsx|xlsm)$/i, '');
+          if (!alignExcelHandles.source || !alignExcelHandles.target) {
+            statusNode.textContent = 'もう一方のExcelファイルを選んでください。'; updateAlignEstimate(); return null;
+          }
+          statusNode.textContent = '2つのExcelから対訳候補を抽出しています…';
+          return YakuCommon.post('/api/cat/align-files', { source_file_handle:alignExcelHandles.source, target_file_handle:alignExcelHandles.target });
+        }).then(function (data) {
+          if (!data) return;
+          el('cat-align-source').value = String(data.source_text || '');
+          el('cat-align-target').value = String(data.target_text || '');
+          statusNode.textContent = '日本語 ' + Number(data.source_count || 0) + '件 / 英語 ' + Number(data.target_count || 0) + '件を取得しました。';
+          updateAlignEstimate();
+        }).catch(function (error) {
+          alignExcelHandles[side] = '';
+          statusNode.textContent = label + 'を読めませんでした。' + (error && error.message ? error.message : '');
+          updateAlignEstimate();
+        });
+        return;
+      }
       /* 選んだファイル名は、押した直後にボタンの下へ日本語で出す。素の
          <input type="file"> は既定のボタン文言が英語（Choose File）のことが
          あり、選んだあとの状態も画面のどこにも出ていなかった（2026-08-18）。 */

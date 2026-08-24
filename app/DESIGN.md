@@ -2,11 +2,13 @@
 
 ## Product intent
 
-YakuLingo is an Excel-first translation tool that creates translations which fit the existing workbook layout with minimal manual work.
+YakuLingo has two first-class responsibilities: a lightweight short-text translator optimized for headings and Excel cells, and deterministic reuse of confirmed bilingual assets in Excel.
 
-The primary flow is deliberately limited to opening an Excel workbook, translating untranslated cells, correcting only cells that need review, and writing a translated Excel copy. Translation memory, terminology, QC, and layout measurement support that flow without becoming permanent work panes. Word, text, and CSV compatibility are auxiliary capabilities and do not determine the main UI information architecture.
+The text surface is independent of Excel project state. It accepts optional display conditions (purpose, font, point size, column width, line count, wrapping, merged-cell status, target length, and shortening level). Those conditions guide wording and shortening; they are never presented as a pixel-accurate Excel fit guarantee. Numbers, units, dates, and proper nouns remain preservation constraints. Excel can hand a selected cell and available display metadata to this surface and receive the adopted translation back.
 
-YakuLingo also provides a deliberately lightweight transient text translator for casual translation. It is a separate surface and does not participate in Excel project state, translation memory, terminology, QC, or review workflows. The product relationship is intentionally asymmetric: Excel translation remains the default and primary experience; text translation is a small auxiliary entry point for paste, translate, and copy.
+The Excel surface first applies confirmed translation-memory entries by exact or safe normalized match and presents an application summary. Missing, ambiguous, changed, formula, numeric, date, protected, or structurally unsafe cells remain untouched. Users inspect only unresolved or conflicting rows, optionally hand them to the text surface, and write a non-destructive translated copy.
+
+Bilingual asset generation and reuse are separate trust boundaries. Copilot may use document context, neighboring content, headings, numeric/unit evidence, and 1:1, 1:N, or N:1 relations to propose alignments. Deterministic validation and explicit confirmation create translation-memory records. Reapplication never uses AI similarity to write a cell; only confirmed, uniquely resolved records may be applied.
 
 ## Architecture
 
@@ -74,3 +76,12 @@ Marking a segment reviewed is the user's intent to add that segment to translati
 An empty termbase or translation memory is a normal first-run state, not an error. The UI explains how each resource grows at the point where its empty candidate list appears. Application updates preserve user terminology, translation memory, legacy personal-glossary migration data, projects, and existing reference traces.
 
 Numeric masking and deterministic notation conversions such as `億円` to `oku` are application rules, not seed terminology. They remain available in an otherwise empty reusable-language state.
+
+
+## Bilingual asset lifecycle
+
+1. Import the official Japanese and English versions from the Excel start screen.
+2. Build structural candidates, then use Copilot for contextual alignment.
+3. Retain IDs, confidence, rationale, and relation cardinality; reject numeric, unit, proper-noun, duplicate-ID, empty/formula-cell, and existing-memory conflicts deterministically.
+4. Confirm only valid pairs into translation memory. Terminology remains separate.
+5. Apply unique exact or safe-normalized matches to a new workbook; leave missing and ambiguous text unchanged.
