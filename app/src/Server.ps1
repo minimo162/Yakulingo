@@ -2126,7 +2126,7 @@ function Serve-YakuStaticFile {
 function Serve-YakuAppPage {
     param(
         [Parameter(Mandatory=$true)]$Context,
-        [Parameter(Mandatory=$true)][ValidateSet('cat.html','palette.html')][string]$PageName,
+        [Parameter(Mandatory=$true)][ValidateSet('cat.html','quick.html','palette.html')][string]$PageName,
         # 開いた瞬間の状態。?project= で来たと分かっているなら、始める画面を
         # 一度も描かずに確認作業として開く。付けないと、貼り付け欄が一瞬出てから
         # 入れ替わり、画面が点滅して見える（2026-08-13、利用者の指摘）。
@@ -2245,21 +2245,19 @@ function Invoke-YakuRoute {
         Clear-YakuExpiredUploads
     }
 
-    # 通常の翻訳面は1つだけにする。/quick・/cat・/palette は古いブックマークを
-    # 壊さないため受け付けるが、プロジェクト等を指定しない限り画面側で / へ寄せる。
-    # / の左で文章を訳し、右でExcelを読み込む。別の開始画面は返さない。
-    if ($method -eq 'GET' -and $path -in @('/', '/quick', '/cat', '/palette')) {
-        # ?project= で来たなら、始める画面を一度も描かずに確認作業として開く。
-        # QueryString は使わない（日本語が CP932 で化ける。Get-YakuQueryValue の説明を参照）。
-        # ここは16進のIDしか見ないが、例外を作ると次の人が真似る。
+    # Excel翻訳を製品の既定面に保ち、文章翻訳は独立した一時利用面へ分ける。
+    # /quick と /cat は同じDOMを返さない。旧 /palette は軽量文章翻訳へ寄せる。
+    if ($method -eq 'GET' -and $path -in @('/', '/cat')) {
         $wantedProject = ''
         try { $wantedProject = [string](Get-YakuQueryValue -Request $req -Name 'project') } catch {}
         $initialView = if ($wantedProject -match '^[a-f0-9]{32}$') { 'workspace' } else { '' }
-        # ?import=1 のときだけ WebAssembly を許す。PDF の解析に要る。
-        # 普段の作業では script-src 'self' のままにしておく。
         $wantsImport = $false
         try { $wantsImport = ([string](Get-YakuQueryValue -Request $req -Name 'import') -eq '1') } catch {}
         Serve-YakuAppPage -Context $Context -PageName 'cat.html' -InitialView $initialView -AllowWasm:$wantsImport
+        return
+    }
+    if ($method -eq 'GET' -and $path -in @('/quick', '/palette')) {
+        Serve-YakuAppPage -Context $Context -PageName 'quick.html'
         return
     }
     if ($method -eq 'GET' -and $path.StartsWith('/assets/')) {
