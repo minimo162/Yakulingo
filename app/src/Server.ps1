@@ -2533,6 +2533,34 @@ function Invoke-YakuRoute {
     #     いずれも「保存済みの資料を開き直す」という既存の意味の範囲内で
     #     あり、パレット固有の新しい状態は増やさない。
     # ---------------------------------------------------------------------
+    if ($method -eq 'GET' -and $path -eq '/api/palette/abbreviations') {
+        try { Send-YakuTextResponse -Context $Context -Text ((Get-YakuBriefAbbreviationPreferences) | ConvertTo-Json -Depth 8 -Compress) -ContentType 'application/json; charset=utf-8' }
+        catch { Send-YakuTextResponse -Context $Context -Text ([ordered]@{ error=(Convert-YakuExceptionToUserMessage $_) } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400 }
+        return
+    }
+    if ($method -eq 'POST' -and $path -eq '/api/palette/abbreviations') {
+        try {
+            $payload = Read-YakuRequestJson -Request $req -MaxBytes 65536
+            $entries = @(); try { $entries = @($payload['entries']) } catch { $entries = @() }
+            $preferences = Save-YakuBriefAbbreviationPreferences -Enabled ([bool]$payload['enabled']) -Entries $entries
+            Write-YakuLog "Quick abbreviation preferences saved. enabled=$([bool]$preferences.enabled) entries=$(@($preferences.entries).Count)" 'INFO'
+            Send-YakuTextResponse -Context $Context -Text ($preferences | ConvertTo-Json -Depth 8 -Compress) -ContentType 'application/json; charset=utf-8'
+        } catch { Send-YakuTextResponse -Context $Context -Text ([ordered]@{ error=(Convert-YakuExceptionToUserMessage $_) } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400 }
+        return
+    }
+    if ($method -eq 'POST' -and $path -eq '/api/palette/metric') {
+        try {
+            $payload = Read-YakuRequestJson -Request $req -MaxBytes 8192
+            $eventName = ([string]$payload['event']) -replace '[^a-z0-9_-]', ''
+            if ([string]::IsNullOrWhiteSpace($eventName)) { throw 'PALETTE_METRIC_INVALID' }
+            $elapsedMs = [Math]::Max(0, [Math]::Min(3600000, [int64]$payload['elapsed_ms']))
+            $inputLength = [Math]::Max(0, [Math]::Min(1000000, [int]$payload['input_length']))
+            $variantCount = [Math]::Max(0, [Math]::Min(20, [int]$payload['variant_count']))
+            Write-YakuLog "Quick translation timing. event=$eventName elapsedMs=$elapsedMs inputChars=$inputLength variants=$variantCount" 'INFO'
+            Send-YakuTextResponse -Context $Context -Text '{"ok":true}' -ContentType 'application/json; charset=utf-8'
+        } catch { Send-YakuTextResponse -Context $Context -Text '{"ok":false}' -ContentType 'application/json; charset=utf-8' -StatusCode 400 }
+        return
+    }
     if ($method -eq 'POST' -and $path -eq '/api/palette/instant') {
         # Copilot を呼ばない即答。手元(TM完全一致・個人用語集)だけを引く。
         # 引けなくても翻訳は成立する（コーパス/TMは足しであって前提ではない）。
