@@ -4290,6 +4290,12 @@ function Clean-YakuCopilotAnswer {
             $text = Remove-YakuMarkdownEscapes -Text $text
         }
     } catch {}
+    $text = $text.Replace(([string][char]13 + [char]10), [string][char]10).Replace([string][char]13, [string][char]10)
+    $assistantMatches = [regex]::Matches($text, '(?im)^\s*Copilot said:\s*$')
+    if ($assistantMatches.Count -gt 0) {
+        $boundary = $assistantMatches[$assistantMatches.Count - 1]
+        $text = $text.Substring($boundary.Index + $boundary.Length)
+    }
     if ($RequestId -and -not $PreserveEndMarker) {
         $escaped = [regex]::Escape($RequestId)
         $text = [regex]::Replace($text, "(?im)^\s*Request\s*ID\s*:\s*$escaped\s*$", '')
@@ -4332,8 +4338,19 @@ function Get-YakuNumberedMainTailSalvageText {
     } else {
         [regex]::Escape('YAKULINGO_END:' + $RequestId)
     }
+    $assistantMatches = [regex]::Matches($tail, '(?im)^\s*Copilot said:\s*$')
+    if ($assistantMatches.Count -gt 0) {
+        $assistantBoundary = $assistantMatches[$assistantMatches.Count - 1]
+        $assistantTail = $tail.Substring($assistantBoundary.Index + $assistantBoundary.Length).Trim()
+        $assistantEnds = [regex]::Matches($assistantTail, $endPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if ($assistantEnds.Count -gt 0) {
+            $lastAssistantEnd = $assistantEnds[$assistantEnds.Count - 1]
+            $candidate = $assistantTail.Substring(0, $lastAssistantEnd.Index + $lastAssistantEnd.Length).Trim()
+        }
+    }
+
     $id1 = $tail.LastIndexOf('[[ID:1]]', [System.StringComparison]::OrdinalIgnoreCase)
-    if ($id1 -ge 0) {
+    if ($id1 -ge 0 -and [string]::IsNullOrWhiteSpace($candidate)) {
         $afterId1 = $tail.Substring($id1)
         $endMatches = [regex]::Matches($afterId1, $endPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
         if ($endMatches.Count -gt 0) {
@@ -5352,6 +5369,10 @@ return YakuCopilotDom.sendButtonCandidates().map(c => ({
         }
     }
     $waitOk = (Get-YakuObjectPropertyValue -Object $waitResult -Name 'ok' -Default $false) -eq $true
+    if (-not $waitOk -and $AnswerFormat -eq 'numbered' -and -not [string]::IsNullOrWhiteSpace($answer)) {
+        Write-YakuLog 'Copilot numbered wait failure recovered from a validated mainTail answer.' 'WARN'
+        $waitOk = $true
+    }
     if (-not $waitOk) {
         Write-YakuLog "Copilot wait failed. $(Get-YakuCopilotWaitSummary -Result $waitResult)" 'WARN'
         $waitReason = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $waitResult -Name 'reason' -Default '')

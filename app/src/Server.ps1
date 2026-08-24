@@ -1192,6 +1192,7 @@ function Start-YakuTranslationJob {
                         BatchOrdinal = 0; TotalBatches = 0; MaxRetryDepth = 0
                         CacheHits = 0; TranslatedSoFar = 0; UniqueTotal = [Math]::Max(1, $items.Count)
                         CopilotCalls = 0; CompletedMap = @{}
+                        JobId = [string]$JobState['id']
                         OnBatchCompleted = $onCatBatchCompleted
                     }
                     # 送る前に伏せる。ここが抜けていたため、CAT の「残りを訳す」は

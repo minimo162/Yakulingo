@@ -3,5 +3,6 @@ Compress each PipelineDraft to max_chars without losing meaning, numeric tokens,
 Return numbered items then YAKULINGO_END:{request_id}.
 {numeric_rules}
 {terminology_rules}
+{character_targets}
 {pipeline_data}
 {source_list}
