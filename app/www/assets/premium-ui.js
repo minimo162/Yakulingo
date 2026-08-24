@@ -176,7 +176,7 @@
     var detail = el('copilot-status-detail');
     var open = el('copilot-window-open');
     var retry = el('copilot-prepare-retry');
-    if (status) {
+    if (status && !status.closest('#premium-copilot-slot')) {
       var row = create('div', 'premium-copilot-status');
       row.appendChild(status);
       slot.appendChild(row);
@@ -199,8 +199,6 @@
       main.appendChild(topbar);
       main.appendChild(root);
     }
-    var legacyHero = one('.hero,.palette-header', root);
-    if (legacyHero) legacyHero.classList.add('premium-legacy-hero');
     moveCopilotControls(app);
     return { app: app, main: main, topbar: topbar };
   }
@@ -449,7 +447,6 @@
     }
     moveRowActions();
     preparePremiumRowActions();
-    forcePreviewRail();
   }
 
   function removeExcelWorkspaceUi() {
@@ -461,31 +458,6 @@
   function moveRowActions() {
     var host = el('premium-row-actions'), actions = el('cat-segment-actions');
     if (host && actions && actions.parentNode !== host) host.appendChild(actions);
-  }
-  function syncPremiumInspectorRail() {
-    var dock = el('cat-preview-dock');
-    if (!dock) return;
-    var bar = one('.cat-bottom-dock-bar', dock);
-    if (!bar) return;
-    var heading = el('premium-inspector-heading');
-    if (!heading) { heading = create('span', 'premium-inspector-heading'); heading.id = 'premium-inspector-heading'; bar.insertBefore(heading, bar.firstChild); }
-    var qcTab = el('cat-tab-qc'), isQc = !!(qcTab && qcTab.getAttribute('aria-selected') === 'true');
-    heading.textContent = isQc ? '確認欄' : '参考情報';
-    heading.setAttribute('aria-label', isQc ? '確認欄。指摘があるときだけ表示' : '選択中の行の参考情報');
-    var note = el('premium-inspector-note');
-    if (!note) { note = create('span', 'premium-inspector-note'); note.id = 'premium-inspector-note'; bar.insertBefore(note, bar.querySelector('.cat-inspector-tabs') || null); }
-    note.textContent = isQc ? '指摘があるときだけ表示' : '';
-    var close = el('cat-preview-dock-close'); if (close) close.textContent = isQc ? '閉じる' : '畳む';
-    dock.setAttribute('aria-label', isQc ? '確認欄' : '選択中の行の情報');
-  }
-  function forcePreviewRail() {
-    /* Premium Excel uses an explicit, temporary "指摘を見る" rail. A saved
-       preview-open preference must never reopen that rail during refresh. */
-    if (premiumState.catInspectorInitialized) return;
-    premiumState.catInspectorInitialized = true;
-    var dock = el('cat-preview-dock'), close = el('cat-preview-dock-close');
-    if (dock && !dock.hidden && close) close.click();
-    syncPremiumInspectorRail();
   }
   function preparePremiumRowActions() {
     var host = el('premium-row-actions'), actions = el('cat-segment-actions');
@@ -846,7 +818,7 @@
     if (YakuCat.navigateStart(key === 'work' ? 'work' : 'translate')) event.preventDefault();
   }
   function setupCat() {
-    var shell = one('main.shell');
+    var shell = el('excel-app');
     if (!shell || document.body.hasAttribute(PREMIUM_FLAG)) return;
     document.body.setAttribute(PREMIUM_FLAG, '1');
     mountPremiumFrame(shell, 'translate', 'premium-cat');
@@ -858,9 +830,6 @@
     setupTopActionProxies();
 
     document.addEventListener('click', interceptCatStartNavigation);
-    document.addEventListener('click', function (event) {
-      if (event.target.closest && (event.target.closest('[data-cat-inspector]') || event.target.closest('#cat-preview-dock-close'))) window.setTimeout(syncPremiumInspectorRail, 0);
-    });
     document.addEventListener('click', function (event) {
       var row = event.target.closest('[data-premium-row]');
       if (row) { openPremiumRow(row.getAttribute('data-premium-row')); return; }
