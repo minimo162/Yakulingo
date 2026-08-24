@@ -983,22 +983,31 @@ function ConvertTo-YakuCatAcronymNumericQcText {
     return $text
 }
 function Test-YakuCatAcronymInconsistent {
-    param([Parameter(Mandatory=$true)]$Project,[Parameter(Mandatory=$true)]$Segment)
+    param([Parameter(Mandatory=$true)]$Project,[Parameter(Mandatory=$true)]$Segment,[AllowNull()]$AcronymIndex)
+    if($null -eq $AcronymIndex){$AcronymIndex=New-YakuCatAcronymUsageIndex -Project $Project}
     $current=@(Get-YakuCatAcronymUsages -Source ([string]$Segment.Text) -Target ([string]$Segment.Translation))
     foreach($usage in $current){
-        foreach($other in @($Project.Segments)){
-            if([string]$other.SegmentId -eq [string]$Segment.SegmentId){continue}
-            foreach($candidate in @(Get-YakuCatAcronymUsages -Source ([string]$other.Text) -Target ([string]$other.Translation))){
-                if([string]$candidate.Key -eq [string]$usage.Key -and [string]$candidate.Value -ne [string]$usage.Value){return $true}
-            }
-        }
+        if($AcronymIndex.ContainsKey([string]$usage.Key) -and [int]$AcronymIndex[[string]$usage.Key].Count -gt 1){return $true}
     }
     return $false
+}
+function New-YakuCatAcronymUsageIndex {
+    param([Parameter(Mandatory=$true)]$Project)
+    $index=@{}
+    foreach($segment in @($Project.Segments)){
+        foreach($usage in @(Get-YakuCatAcronymUsages -Source ([string]$segment.Text) -Target ([string]$segment.Translation))){
+            $key=[string]$usage.Key
+            if(-not $index.ContainsKey($key)){$index[$key]=New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)}
+            $null=$index[$key].Add([string]$usage.Value)
+        }
+    }
+    return $index
 }
 function Invoke-YakuCatSegmentValidation {
     param(
         [Parameter(Mandatory=$true)]$Project,
-        [Parameter(Mandatory=$true)]$Segment
+        [Parameter(Mandatory=$true)]$Segment,
+        [AllowNull()]$AcronymIndex
     )
     $findings = New-Object System.Collections.Generic.List[object]
     $source = [string]$Segment.Text
@@ -1009,7 +1018,7 @@ function Invoke-YakuCatSegmentValidation {
     }
     if ($target -match '\[\[(?:N|P)\d+\]\]') { $findings.Add([pscustomobject]@{ Code='placeholder-residue'; Severity='error' }) | Out-Null }
     if($null -ne $(try{$Segment.FitOverflow}catch{$null})){$findings.Add([pscustomobject]@{Code='fit-overflow';Severity='warning'})|Out-Null}
-    if(Test-YakuCatAcronymInconsistent -Project $Project -Segment $Segment){$findings.Add([pscustomobject]@{Code='acronym-inconsistency';Severity='warning';Detail='同じ原語に別の略し方が使われています。'})|Out-Null}
+    if(Test-YakuCatAcronymInconsistent -Project $Project -Segment $Segment -AcronymIndex $AcronymIndex){$findings.Add([pscustomobject]@{Code='acronym-inconsistency';Severity='warning';Detail='同じ原語に別の略し方が使われています。'})|Out-Null}
     $pairedDelimiter = Find-YakuCatPairedDelimiterMismatch -Text $target
     if ($null -ne $pairedDelimiter) {
         $findings.Add([pscustomobject]@{ Code='paired-delimiter-mismatch'; Severity='warning'; Detail=([string]$pairedDelimiter.Reason) }) | Out-Null
@@ -1298,6 +1307,7 @@ function Get-YakuCatOutputEligibility {
     # ここで捨てていた内訳を渡せば、案内先が実際に開く。**点検を走らせる時機は
     # 1ミリも変えない。既に走っている結果を捨てるのをやめるだけ**である。
     $unconfirmed = 0
+    $acronymIndex = New-YakuCatAcronymUsageIndex -Project $Project
     $qcFailureRows = [ordered]@{}
     $qcRows = New-Object System.Collections.Generic.List[object]
     foreach ($segment in @($Project.Segments)) {
@@ -1321,7 +1331,7 @@ function Get-YakuCatOutputEligibility {
         $unconfirmed++
         $probe = Copy-YakuCatProjectSegmentForProbe -Segment $segment
         $verdict = $null
-        try { $verdict = Invoke-YakuCatSegmentValidation -Project $Project -Segment $probe } catch { $verdict = $null }
+        try { $verdict = Invoke-YakuCatSegmentValidation -Project $Project -Segment $probe -AcronymIndex $acronymIndex } catch { $verdict = $null }
         # 同じ行が同じ種別で2件落ちても、行数は1と数える。利用者が開く行の数だから。
         $seenCodes = New-Object System.Collections.Generic.List[string]
         # 止めない種別（Severity='warning'）。**別の入れ物に分ける。**

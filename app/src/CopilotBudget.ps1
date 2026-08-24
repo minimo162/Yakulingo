@@ -53,6 +53,7 @@ $script:YakuCopilotCallWindowHours = 1
 # 画面では直近3時間も示す。送信のたびに1時間より前を捨てると、その値を
 # 後から復元できない。警告の集計窓とは分け、軽い時刻行を24時間だけ保持する。
 $script:YakuCopilotCallRetentionHours = 24
+$script:YakuCopilotBudgetLockTimeoutMilliseconds = 30000
 
 function Get-YakuCopilotCallLogPath {
     $dir = Get-YakuSubDir 'logs'
@@ -71,14 +72,19 @@ function Add-YakuCopilotCall {
     $mutex = $null;$locked = $false
     try {
         $mutex = New-Object System.Threading.Mutex($false,'Local\YakuLingo-CopilotBudget')
-        try{$locked=$mutex.WaitOne(5000)}catch [Threading.AbandonedMutexException]{$locked=$true}
-        if(-not $locked){return 0}
+        $lockTimeout=[Math]::Max(1,[int]$script:YakuCopilotBudgetLockTimeoutMilliseconds)
+        try{$locked=$mutex.WaitOne($lockTimeout)}catch [Threading.AbandonedMutexException]{$locked=$true}
+        if(-not $locked){
+            try{Write-YakuLog "Copilot call count skipped: budget lock timeout. waitedMs=$lockTimeout" 'WARN'}catch{}
+            return 0
+        }
         $path = Get-YakuCopilotCallLogPath
         # 時刻だけ。ASCII の固定長で書く。CP932 と UTF-8 の取り違えが
         # 起きる余地を残さない（2026-08-07 に3時間失った失敗）。
         [IO.File]::AppendAllText($path, $now.ToString('yyyy-MM-ddTHH:mm:ss') + "`n", [Text.UTF8Encoding]::new($false))
         return (Get-YakuCopilotCallCount -Now $now)
     } catch {
+        try{Write-YakuLog ("Copilot call count skipped: budget record failed. reason="+$_.Exception.Message) 'WARN'}catch{}
         return 0
     } finally {
         if($locked){try{$mutex.ReleaseMutex()}catch{}}
