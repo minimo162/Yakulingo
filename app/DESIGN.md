@@ -1,12 +1,12 @@
-﻿# DESIGN.md — YakuLingo V64
+﻿# DESIGN.md — YakuLingo V91.62
 
 ## Product intent
 
-YakuLingo has two first-class responsibilities: a lightweight short-text translator optimized for headings and Excel cells, and deterministic reuse of confirmed bilingual assets in Excel.
+YakuLingo has one default entry and one clearly separated supporting workflow. The default entry is **text translation**: a lightweight two-pane surface for pasting text, explicitly starting translation, reviewing the result, optionally shortening or rephrasing it, and copying it. **Excel translation** remains one top-level action away and deterministically reuses confirmed bilingual assets before users fill unresolved cells and write a non-destructive workbook copy.
 
-The text surface is independent of Excel project state. It accepts optional display conditions (purpose, font, point size, column width, line count, wrapping, merged-cell status, target length, and shortening level). Those conditions guide wording and shortening; they are never presented as a pixel-accurate Excel fit guarantee. Numbers, units, dates, and proper nouns remain preservation constraints. Excel can hand a selected cell and available display metadata to this surface and receive the adopted translation back.
+Text translation does not collect display conditions. Font, point size, column width, row count, wrapping, merged-cell state, target length, shortening percentage, and free-form preserved-term fields are outside its responsibility. Result adjustments are explicit one-shot actions based on the current masked translation; the first translation never starts a second Copilot request automatically. Numbers and units remain protected by the existing masking and preservation contracts, while company names, person names, and the text itself remain covered by the disclosure shown in the UI.
 
-The Excel surface first applies confirmed translation-memory entries by exact or safe normalized match and presents an application summary. Missing, ambiguous, changed, formula, numeric, date, protected, or structurally unsafe cells remain untouched. Users inspect only unresolved or conflicting rows, optionally hand them to the text surface, and write a non-destructive translated copy.
+Excel may hand the text surface only the source text, cell identity, return URL, and the index needed to return an adopted translation. Layout metadata is not copied into the text UI or prompt. Saved Excel project URLs remain rooted at `/cat`.
 
 Bilingual asset generation and reuse are separate trust boundaries. Copilot may use document context, neighboring content, headings, numeric/unit evidence, and 1:1, 1:N, or N:1 relations to propose alignments. Deterministic validation and explicit confirmation create translation-memory records. Reapplication never uses AI similarity to write a cell; only confirmed, uniquely resolved records may be applied.
 
@@ -37,16 +37,16 @@ Normal operation never persists source text, translated text, or full prompts. F
 
 ## Interaction and accessibility
 
-- The start screen has one primary entry: an Excel drop target with an equivalent file-picker button.
-- The workspace has one cell list and one selected-cell editor. Its filters are `未訳 / 要確認 / すべて`.
-- The primary actions are derived from actual state: translate untranslated cells, review flagged cells, and write Excel.
-- Layout preview is closed initially and opens from a selected cell that needs visual confirmation.
-- Progress, import, save, and output conditions use labeled status/live regions.
-- Warning completion uses a persistent alert, `_INCOMPLETE` name, and visually distinct download button.
+- `/` and `/quick` open text translation; `/cat` opens Excel translation and preserves project/import query parameters.
+- The header exposes exactly two product modes: `テキスト翻訳` and `Excel翻訳`. The current mode uses `aria-current` plus visible background, border, and text changes.
+- Text translation keeps language selection, source, target, copy, explicit translate, cancel, retry, and post-result rewrite actions in one focused surface.
+- Translation starts only from the button or `Ctrl+Enter`; no paste/input event and no completed first result triggers another Copilot request.
+- At 900px and below the source and target panes stack in source-to-target order. Keyboard focus has a visible outline, and disabled controls retain readable text.
+- The Excel workspace retains its cell list, selected-cell editor, status/live regions, output preflight, and non-destructive write workflow.
 
 ## Visual principles
 
-- Quiet, Excel-first start screen and a focused two-pane workspace.
+- Quiet, text-first start screen with large adjacent source and target panes; a focused Excel workspace remains separate.
 - One indigo primary action; outlined secondary actions.
 - The same cell is never shown in multiple permanent lists.
 - Candidates, translation memory, terminology, history, preview, and advanced tools appear only on demand.
@@ -85,3 +85,4 @@ Numeric masking and deterministic notation conversions such as `億円` to `oku`
 3. Retain IDs, confidence, rationale, and relation cardinality; reject numeric, unit, proper-noun, duplicate-ID, empty/formula-cell, and existing-memory conflicts deterministically.
 4. Confirm only valid pairs into translation memory. Terminology remains separate.
 5. Apply unique exact or safe-normalized matches to a new workbook; leave missing and ambiguous text unchanged.
+
