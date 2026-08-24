@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 82791)
-Total output lines: 4373
-
 ﻿[CmdletBinding()]
 param(
     [int]$Port = 8765,
@@ -2486,7 +2483,145 @@ function Invoke-YakuRoute {
             # エクスプローラーに打ち込む必要があった（2026-08-08 に判明）。
             $output = ''
             $catId = ''
-            try { $catId = [string]$payload['project_id'] } catch {…2791 tokens truncated…(復元しない)へ倒す。
+            try { $catId = [string]$payload['project_id'] } catch {}
+            if (-not [string]::IsNullOrWhiteSpace($catId)) {
+                $catProject = Get-YakuCatProject -Id $catId
+                if ($null -eq $catProject) { throw '作業中のファイルが見つかりません。' }
+                try { $output = [string]$catProject.LastOutputPath } catch { $output = '' }
+                if ([string]::IsNullOrWhiteSpace($output)) { throw 'まだファイルを作っていません。先に「社内確認用のファイルを作る」を押してください。' }
+            }
+            else {
+                Update-YakuTranslationJobs
+                if ([string]::IsNullOrWhiteSpace($jobId) -or -not $script:YakuTranslateJobs.ContainsKey($jobId)) { throw (Get-YakuTranslationJobMissingMessage -JobId $jobId) }
+                $output = Get-YakuJobOutputPath -State $script:YakuTranslateJobs[$jobId]
+            }
+            if ([string]::IsNullOrWhiteSpace($output)) { throw '出力ファイルが見つかりません。' }
+            try { Start-Process -FilePath 'explorer.exe' -ArgumentList ('/select,"' + $output + '"') | Out-Null } catch { Start-Process -FilePath (Split-Path -Parent $output) | Out-Null }
+            Send-YakuTextResponse -Context $Context -Text (New-YakuAlertHtml -Kind success -Message '出力フォルダを開きました。')
+        } catch {
+            Send-YakuTextResponse -Context $Context -Text (New-YakuAlertHtml -Kind error -Message (Convert-YakuExceptionToUserMessage $_)) -StatusCode 400
+        }
+        return
+    }
+    if ($method -eq 'POST' -and $path -eq '/api/upload') {
+        try {
+            $settings = Read-YakuSettings -Root $script:YakuRoot
+            $upload = Save-YakuBinaryUpload -Request $req -Settings $settings
+            $response = [ordered]@{ file_handle=[string]$upload.Handle; file_name=[string]$upload.OriginalName; file_size=[int64]$upload.Size; expires_at=([datetime]$upload.ExpiresAt).ToString('s') }
+            Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 201
+        } catch {
+            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ error=(Convert-YakuExceptionToUserMessage $_); error_code='UPLOAD_FAILED' } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
+        }
+        return
+    }
+    if ($method -eq 'POST' -and $path -eq '/api/cat/align-files') {
+        try {
+            $settings = Read-YakuSettings -Root $script:YakuRoot
+            $payload = Read-YakuRequestJson -Request $req -MaxBytes 65536
+            $sourceIncoming = Resolve-YakuIncomingFile -Payload ([ordered]@{ file_handle=[string]$payload['source_file_handle'] }) -Settings $settings
+            $targetIncoming = Resolve-YakuIncomingFile -Payload ([ordered]@{ file_handle=[string]$payload['target_file_handle'] }) -Settings $settings
+            foreach ($incoming in @($sourceIncoming,$targetIncoming)) {
+                $extension = [IO.Path]::GetExtension([string]$incoming.Path).ToLowerInvariant()
+                if ($extension -notin @('.xlsx','.xlsm')) { throw 'CAT_ALIGN_EXCEL_REQUIRED: 日本語版と英語版のExcelファイルを選んでください。' }
+            }
+            $sourceExtract = Get-YakuFileTextBlocks -Path ([string]$sourceIncoming.Path) -Direction 'to_en' -Settings $settings
+            $targetExtract = Get-YakuFileTextBlocks -Path ([string]$targetIncoming.Path) -Direction 'to_jp' -Settings $settings
+            $sourceLines = New-Object System.Collections.Generic.List[string]
+            foreach ($block in @($sourceExtract.Blocks)) { $line = ([string]$block.Text).Trim(); if ($line) { [void]$sourceLines.Add($line) } }
+            $targetLines = New-Object System.Collections.Generic.List[string]
+            foreach ($block in @($targetExtract.Blocks)) { $line = ([string]$block.Text).Trim(); if ($line) { [void]$targetLines.Add($line) } }
+            if ($sourceLines.Count -eq 0 -or $targetLines.Count -eq 0) { throw 'CAT_ALIGN_EXCEL_EMPTY: 対訳に使える文章をExcelから取得できませんでした。' }
+            $response = [ordered]@{
+                source_text=($sourceLines.ToArray() -join "`r`n")
+                target_text=($targetLines.ToArray() -join "`r`n")
+                source_count=$sourceLines.Count
+                target_count=$targetLines.Count
+                source_name=[IO.Path]::GetFileName([string]$sourceIncoming.Path)
+                target_name=[IO.Path]::GetFileName([string]$targetIncoming.Path)
+            }
+            Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Depth 5 -Compress) -ContentType 'application/json; charset=utf-8'
+        } catch {
+            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ error=(Convert-YakuExceptionToUserMessage $_) } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
+        }
+        return
+    }
+    if ($method -eq 'POST' -and $path -eq '/api/file-info') {
+        try {
+            $settings = Read-YakuSettings -Root $script:YakuRoot
+            $payload = Read-YakuRequestJson -Request $req
+            $incoming = Resolve-YakuIncomingFile -Payload $payload -Settings $settings
+            $info = Get-YakuFileInfo -Path ([string]$incoming.Path) -Settings $settings
+            $info | Add-Member -NotePropertyName FileHandle -NotePropertyValue ([string]$incoming.Handle) -Force
+            Send-YakuTextResponse -Context $Context -Text ($info | ConvertTo-Json -Depth 30 -Compress) -ContentType 'application/json; charset=utf-8'
+        } catch {
+            $payload = [ordered]@{ error=(Convert-YakuExceptionToUserMessage $_) }
+            Send-YakuTextResponse -Context $Context -Text ($payload | ConvertTo-Json -Depth 10 -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
+        }
+        return
+    }
+    # ---------------------------------------------------------------------
+    # パレット（お手軽翻訳）。貼ったら即訳が出る小窓画面 /palette 専用の口。
+    # 既存の /api/cat/* ・ /api/jobs/* とは独立させる——パレット自身は
+    # CAT作業(project)を一切作らない。
+    #
+    # ただし /api/palette/instant の文脈ポインタ(context_project_id)は
+    # 既存のCAT状態機械へ**読み取り目的で**触れる(CoD審査REWORK-1
+    # MINOR-3: この註が「状態機械には触れない」と言い切っていたのは実装と
+    # 食い違っていた——実装を採る、CLAUDE.md)。実際に起きる副作用:
+    #   - Get-YakuCatProject: 副作用なし(純粋な辞書引き)
+    #   - Restore-YakuCatProject: ディスクへ書く(旧transientのproject.json
+    #     移行)・$script:YakuCatProjectsへ登録・TM outboxの同期・batch
+    #     checkpointの取り込みを行う(CatProject.ps1、Restore実装内)。
+    #     いずれも「保存済みの資料を開き直す」という既存の意味の範囲内で
+    #     あり、パレット固有の新しい状態は増やさない。
+    # ---------------------------------------------------------------------
+    if ($method -eq 'POST' -and $path -eq '/api/palette/instant') {
+        # Copilot を呼ばない即答。手元(TM完全一致・個人用語集)だけを引く。
+        # 引けなくても翻訳は成立する（コーパス/TMは足しであって前提ではない）。
+        try {
+            $payload = Read-YakuRequestJson -Request $req -MaxBytes 65536
+            $text = [string]$payload['text']
+            if ([string]::IsNullOrWhiteSpace($text)) {
+                Send-YakuTextResponse -Context $Context -Text '{"direction":"","tm":null,"terms":[],"project_hit":null}' -ContentType 'application/json; charset=utf-8'
+                return
+            }
+            $directionIntent = 'auto'
+            try { if (@('auto','to_en','to_jp') -contains [string]$payload['direction_intent']) { $directionIntent = [string]$payload['direction_intent'] } } catch {}
+            $decision = Resolve-YakuDirectionDecision -Text $text -Intent $directionIntent
+            # 即答は参考情報であって関門ではない。曖昧でも 409 にはせず、
+            # 見込みの方向 (suggested_direction) のまま TM・用語を引く。
+            $direction = $(if ([bool]$decision.RequiresConfirmation) { [string]$decision.SuggestedDirection } else { [string]$decision.Resolved })
+            if ($direction -ne 'to_en' -and $direction -ne 'to_jp') { $direction = 'to_en' }
+
+            # パレットの文脈ポインタ(v1)。選ばれていれば /api/cat/recent 由来の
+            # プロジェクトIDが乗る(localStorageに置くのはid・表示名のみ、
+            # 本文は保存しない)。32桁16進以外・実在しない・読み込めない、
+            # いずれも黙って「文脈なし」へフォールバックする(壊れていても
+            # 翻訳自体は止めない、コーパスは足しであって前提ではない)。
+            # NIT: 判定は小文字16進限定([a-f0-9])。GUIDの生成側([guid]::
+            # NewGuid().ToString('N'))は常に小文字なので実害は無いが、
+            # Get-YakuCatProjectDiskRevision等の既存の姉妹関数は
+            # [a-fA-F0-9](大文字も許す)を使っており、判定条件がここだけ
+            # 非対称である。直さない(挙動を変える理由が無い)——記録だけ残す。
+            $contextProjectId = ''
+            try { $contextProjectId = [string]$payload['context_project_id'] } catch {}
+            $contextProject = $null
+            if ($contextProjectId -match '^[a-f0-9]{32}$') {
+                try {
+                    # まず稼働中(メモリ)を見る——CAT側で開いたままの資料が
+                    # 大半なので、貼り付けごとの通常経路はディスクへ触らない。
+                    # メモリに無ければ保存済みを読み込む(Restore、
+                    # /api/cat/resumeと同じ二段構え)が、この経路は直列の
+                    # 待ち受け1本を丸ごと止める(CoD審査REWORK-1 MINOR-4:
+                    # 実測600行で約1.9〜2.0秒)。件数はmanifest(project.json)
+                    # だけで安価に分かるので、大きい資料はここで諦める
+                    # ——「開いたまま」の通常経路(メモリ命中)は件数に
+                    # 関わらず常に効く。閾値300は実測の線形外挿(600行で
+                    # 約2000ms→300行で概算1000ms)を根拠にした値で、
+                    # 「貼り付けごとに1回、UIを丸ごと止めてよい上限」として
+                    # 選んだ——調整の余地がある1定数として置く。件数が
+                    # 読めない(manifestが無い・壊れている)ときは安全側
+                    # (復元しない)へ倒す。
                     $contextProject = Get-YakuCatProject -Id $contextProjectId
                     if ($null -eq $contextProject) {
                         $diskSegmentCount = Get-YakuCatProjectDiskSegmentCount -Id $contextProjectId
