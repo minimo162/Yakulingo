@@ -47,7 +47,7 @@ Assert-YakuUi ($html -match 'id="cat-preview-dialog"') 'PREMIUM_UI_EXCEL_DISPLAY
 Assert-YakuUi ($html -notmatch 'id="quick-input"|/assets/quick\.js') 'PREMIUM_UI_QUICK_SURFACE_EMBEDDED'
 Assert-YakuUi ($html -notmatch 'class="shell"|class="hero"|class="tab-panel"|id="cat-doc-dialog"') 'PREMIUM_UI_LEGACY_CAT_SURFACE_REMAINS'
 Assert-YakuUi ($js -notmatch 'function forcePreviewRail|premium-legacy-hero') 'PREMIUM_UI_LEGACY_MOUNT_REMAINS'
-Assert-YakuUi ($design -match 'YakuLingo is an Excel-first translation tool') 'PREMIUM_UI_PRODUCT_INTENT_STALE'
+Assert-YakuUi ($design -match 'YakuLingo has two first-class responsibilities') 'PREMIUM_UI_PRODUCT_INTENT_STALE'
 
 $node = Get-Command node -ErrorAction SilentlyContinue
 if ($node) {
