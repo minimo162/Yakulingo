@@ -28,7 +28,14 @@
   （行は動くので関数名で探すこと）。事前翻訳が効く理由は上限ではなく、
   **同じ原文へ同じ訳を返すこと**（何ページ訳しても去年と同じ注記に同じ英文が入る。
   Copilot は呼ぶたびに言い回しが揺れる）と、**往復が1回減って速いこと**の2つ）
-- **数値が抜けた訳は警告ではなく欠陥。** 意図した省略かを利用者に判断させない
+- **CATの数値意味系findingは必ず見えるwarningにする。**
+  `numeric-value-mismatch` `numeric-value-extra` `numeric-value-order-mismatch`
+  `numeric-sign-missing` `numeric-scale-mismatch` `currency-mismatch`
+  `accounting-polarity-mismatch` `numeric-validation-error` は確認・書き出しを
+  止めない。`numeric-validation-error` は点検不能という道具の不調分類を保つが、
+  数値・単位の警告として利用者へ示す。日本語の数値を意味の等しい英語数詞へした
+  表記はwarningを出さない。placeholder residue・structure・terminology等の
+  欠陥は従来どおりerrorとして扱う。外部送信前の数値token監査と数値マスクは維持する。
 - **用語集の完全一致（cell-exact）は外さない。** 用語の一貫性ではなくレイアウトの保証
 - **チュートリアル・ツアー・設定画面は退役済みで、復活させない。** 初見の案内は
   起動画面そのものが担う。対応するルート、アセット、退役したデスクトップ設定API（`/api/desktop/preferences` など）、管理者導線は配布物に含めない
@@ -39,8 +46,9 @@
   実装は最初から3つを積んでいた。出典 `_docs/決定_実装優先と固有名詞マスク_2026-08-14.md`）
   - `segment-untranslated` — 訳文が空の行がある → 出さない
   - `segment-qc-failed` — `Invoke-YakuCatSegmentValidation` の error が1件以上 → 出さない。
-    **数値だけではない。** `currency-mismatch` `structure-integrity` `structure-validation-error`
-    `terminology-conflict` `terminology-forbidden` `terminology-missing` も error である
+    数値意味系findingはwarningなのでここでは止めない。`placeholder-residue`
+    `structure-integrity` `structure-validation-error` `terminology-conflict`
+    `terminology-forbidden` `terminology-missing` など、errorの欠陥は従来どおり対象である
   - `segment-qc-not-current` — 確定済みだが用語スナップショットが変わり、点検が古い → 出さない
   - **未確認は止めない。** 代わりに何行未確認かを、押す前の画面とファイルの中の
     両方に必ず書く。点検は確定時にしか走らないので、未確認の行は出力時に写しへ

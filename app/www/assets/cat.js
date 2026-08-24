@@ -1182,6 +1182,7 @@
      コピーに入れます。」と、起きることのほうを書いていた）。 */
   function outputGuidance() {
     var left = Math.max(0, Number(project.total) - Number(project.confirmed));
+    if (dirty.size > 0) return '保存できていない編集があります。もう一度保存してからお使いください。';
     if (Number(project.untranslated) > 0) return '「Copilotで未訳を翻訳」で、未訳' + project.untranslated + '行を訳してください。';
     if (project.export_blocked) return '検査結果を確認し、必要な行を直してください。';
     if (left > 0) return 'まだ確認していない' + left + '行も、そのまま入ります。';
@@ -1317,9 +1318,13 @@
     }).then(function (packet) {
       if (!packet || packet.stale || !scopeIsCurrent(packet.scope, true) || !packet.data || String(packet.data.id || '') !== projectId) return packet && packet.data;
       project = packet.data;
-      if (input.isConnected && input.value === value) {
-        input.setAttribute('data-original', value); dirty.delete(key);
-        var savedRow = input.closest('[data-cat-row]'); if (savedRow) { savedRow.classList.remove('cat-dirty'); savedRow.classList.remove('cat-unsaved'); }
+      var currentInput = Array.from(document.querySelectorAll('[data-cat-input]')).find(function (candidate) {
+        return String(candidate.getAttribute('data-cat-project-id') || '') === projectId && Number(candidate.getAttribute('data-cat-input')) === index;
+      });
+      if (!currentInput || currentInput.value === value) {
+        dirty.delete(key);
+        if (currentInput) currentInput.setAttribute('data-original', value);
+        var savedRow = currentInput ? currentInput.closest('[data-cat-row]') : null; if (savedRow) { savedRow.classList.remove('cat-dirty'); savedRow.classList.remove('cat-unsaved'); }
       } else {
         dirty.set(key, true);
       }
@@ -1429,7 +1434,7 @@
     var stageLabels = { draft: '下訳', compress: '幅へ圧縮', select: '候補を選抜', back_reconstruct: '意味を逆照合', back_judge: '意味差を判定', retry: '意味差を修正', abbreviate: '略語で再調整' };
     var workerStateLabels = { waiting: '待機', done: '完了', requeued: '再試行待ち', error: '停止' };
     var stage = String(data.stage || '');
-    var workers = Array.isArray(data.worker_progress) ? data.worker_progress : [];
+    var workers = Array.isArray(data.worker_progress) ? data.worker_progress.filter(function (worker) { return worker && typeof worker === 'object'; }) : [];
     var workerLine = workers.length ? ('<div class="job-workers" aria-label="Copilot workerの進行">' + workers.map(function (worker) {
       var state = String(worker.state || 'waiting'), ids = Array.isArray(worker.items) ? worker.items : [];
       return '<span class="job-worker job-worker-' + esc(state) + '"><strong>W' + (Number(worker.worker) + 1) + '</strong> ' + esc(state === 'running' ? (ids.length ? ('行 ' + ids.join(', ')) : '処理中') : (workerStateLabels[state] || state)) + '</span>';
@@ -1462,8 +1467,9 @@
     var partialQuery = partialAfter > 0 ? ('?partial_after=' + partialAfter) : '';
     YakuCommon.json('/api/jobs/' + encodeURIComponent(id) + partialQuery).then(function (data) {
       if (!jobContext || jobContext.token !== token) return;
-      applyPartialPreview(data);
-      el('cat-job').innerHTML = jobHtml(id, data, startedAt);
+      /* 終端応答だけに載った先出し行も失わない。ただし先出し表示の不調で
+         完了・停止そのものを隠さないよう、終端判定とは分離する。 */
+      try { applyPartialPreview(data); } catch (_) {}
       if (['done','completed_with_warnings'].indexOf(data.mode) >= 0) {
         /* apply後の応答（プロジェクトのJSON）にはマスク件数が無い。消える前の
            このポーリング応答だけが持っているので、ここで拾っておく。まとめ翻訳・
@@ -1472,10 +1478,15 @@
         setJobTitle('✔ 翻訳が終わりました'); finishJob(id, token); return;
       }
       if (data.mode === 'cancelled') { setJobTitle(''); setBusy(false); el('cat-job').innerHTML = ''; status('翻訳をやめました。ここまでにできた訳文は保存されています。「Copilotで未訳を翻訳」を押すと続きから再開できます。'); return; }
-      if (['error','failed'].indexOf(data.mode) >= 0) { setJobTitle(''); setBusy(false); status(data.detail || '翻訳が途中で止まりました。ここまでにできた訳文は保存されています。もう一度「Copilotで未訳を翻訳」を押すと、続きから再開します。', true); return; }
-      setJobTitle(Math.round(Number(data.progress) || 0) + '% 翻訳中');
-      jobTimer = window.setTimeout(function () { pollJob(id, token, 0); }, 1000);
-    }).catch(function () {
+      if (['error','failed','interrupted'].indexOf(data.mode) >= 0) { setJobTitle(''); setBusy(false); status(data.detail || '翻訳が途中で止まりました。ここまでにできた訳文は保存されています。もう一度「Copilotで未訳を翻訳」を押すと、続きから再開します。', true); return; }
+      try {
+        el('cat-job').innerHTML = jobHtml(id, data, startedAt);
+        setJobTitle(Math.round(Number(data.progress) || 0) + '% 翻訳中');
+        jobTimer = window.setTimeout(function () { pollJob(id, token, 0); }, 1000);
+      } catch (error) {
+        setJobTitle(''); setBusy(false); status(error && error.message ? error.message : '画面を更新できませんでした。', true);
+      }
+    }, function () {
       /* 一瞬の通信断でエラーにすると、サーバ側では翻訳が続いているのに利用者が
          やり直してしまう。Copilotの利用回数を二重に使うので、必ず待つ。 */
       if (!jobContext || jobContext.token !== token) return;
@@ -3491,7 +3502,8 @@
     refreshRecent: function () { return loadRecent(true); },
     navigateStart: navigateStart,
     getPremiumSnapshot: getPremiumSnapshot,
-    resave: function () { return flush(); }
+    resave: function () { return flush(); },
+    explainOutput: function () { var message = outputGuidance(); if (message) status(message, true); return message; }
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();

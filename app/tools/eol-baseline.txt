@@ -149,6 +149,7 @@ tools/Test-YakuV9204CatPartialPreview.ps1	crlf
 tools/Test-YakuV9211TermSnapshotFreshness.ps1	crlf
 tools/Test-YakuV9214AgenticFitReview.ps1	crlf
 tools/Test-YakuV9215ParallelFit.ps1	crlf
+tools/Test-YakuV9216CatReliability.ps1	crlf
 tools/V64-HTTP-Boundary-Test.ps1	crlf
 tools/V65-Saving-Validation-Test.ps1	crlf
 tools/Wait-YakuCopilotResponse-Watcher-Test.ps1	crlf

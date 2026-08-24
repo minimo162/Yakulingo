@@ -3910,7 +3910,7 @@ function ConvertTo-YakuCatProjectJson {
         word_inventory = $(try {
             [ordered]@{
                 draft_structure_eligible = [bool]$Project.WordInventory.DraftStructureEligible
-                unsupported_reasons = @($Project.WordInventory.UnsupportedReasons)
+                unsupported_reasons = @($Project.WordInventory.UnsupportedReasons | Where-Object { $null -ne $_ })
                 supported_blocks = [int]$Project.WordInventory.SupportedBlockCount
                 total_blocks = [int]$Project.WordInventory.TotalBlockCount
             }
