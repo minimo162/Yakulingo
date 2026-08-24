@@ -3784,6 +3784,7 @@ function ConvertTo-YakuCatProjectJson {
              state       = [string]$segs[$i].State
              qc_status   = [string]$segs[$i].QcStatus
              qc_findings = @($segs[$i].QcFindings)
+             fit_overflow = $(try { $segs[$i].FitOverflow } catch { $null })
              review_notes = @($(try { $segs[$i].ReviewNotes | ForEach-Object { ConvertTo-YakuCatReviewNoteJsonValue -Note $_ } } catch { @() }))
              # 未確定行を写しに掛けた結果、または保存済みの確認行へ advisory として
              # 足した種別と重大度。実セグメントには残らない（残すと点検の履歴が嘘になる）ので、

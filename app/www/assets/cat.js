@@ -583,7 +583,7 @@
       , 'paired-delimiter-mismatch': '対応する開き括弧・閉じ括弧の組み合わせが合っていません。訳文の記号を見比べてください。書き出しは止まりません。'
       , 'fit-overflow': '意味を保ったまま指定幅へ収められませんでした。書き出しは止まりません。あふれを許容するか、意訳してよいか判断してください。'
     };
-    return qcFindingViews(segment).map(function (view) { return labels[view.code] || '自動点検で気になる点が見つかりました。左の原文と見比べてください。'; });
+    return qcFindingViews(segment).map(function (view) { if (view.code === 'fit-overflow' && segment.fit_overflow) { return '意味を保ったまま指定幅へ収められませんでした。目標 ' + Number(segment.fit_overflow.max_chars || 0) + ' 字、必要 ' + Number(segment.fit_overflow.need_chars || 0) + ' 字です。あふれを許容するか、意訳してよいか判断してください。書き出しは止まりません。'; } return labels[view.code] || '自動点検で気になる点が見つかりました。左の原文と見比べてください。'; });
   }
   function qcCodeOf(finding) { return String((finding && (finding.code || finding.Code)) || '').toLowerCase().replace(/_/g, '-'); }
   /* この行の指摘は2つの出どころから来る。
