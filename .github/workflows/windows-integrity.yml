@@ -21,30 +21,27 @@ jobs:
         shell: powershell
         run: .\app\tools\Check-Encoding.ps1
 
-      - name: Test fit-first prompt contract
+      - name: Test agentic fit prompt contract
         shell: powershell
         run: |
           $root = Join-Path $PWD 'app'
           . (Join-Path $root 'src\CatTranslation.ps1')
-          $targets = New-YakuCatCharacterTargets -Items @([pscustomobject]@{ Index = 1; MaxChars = 24 })
-          if ($targets -notmatch '(?i)space budget') { throw 'FIT_FIRST_SPACE_BUDGET_MISSING' }
-          if ($targets -notmatch '(?i)compress the wording') { throw 'FIT_FIRST_COMPACTION_MISSING' }
-          if ($targets -notmatch '(?i)stay at or below') { throw 'FIT_FIRST_TARGET_MISSING' }
-          if ($targets -notmatch '(?i)exceed it only as a last resort') { throw 'FIT_FIRST_FALLBACK_TOO_WEAK' }
-          if ((Get-YakuCatPromptContractVersion) -ne 'cat-fit-first-v1-terminology') { throw 'FIT_FIRST_CONTRACT_VERSION_MISMATCH' }
-          foreach ($name in @('cat_translate_to_en.txt','cat_translate_to_jp.txt')) {
-            $text = [IO.File]::ReadAllText((Join-Path $root ('prompts\' + $name)), [Text.Encoding]::UTF8)
-            if ($text -notmatch '(?i)space budget') { throw "FIT_FIRST_TEMPLATE_SPACE_BUDGET_MISSING: $name" }
-            if ($text -notmatch '(?i)shorten the wording, not the meaning') { throw "FIT_FIRST_TEMPLATE_COMPACTION_MISSING: $name" }
-            if ($text -notmatch '(?i)no target') { throw "FIT_FIRST_TEMPLATE_NORMAL_FALLBACK_MISSING: $name" }
-            if ($text -notmatch '(?i)primary layout goal') { throw "FIT_FIRST_TEMPLATE_PRIMARY_GOAL_MISSING: $name" }
-            if ($text -notmatch '(?i)grammatical role') { throw "FIT_FIRST_TEMPLATE_FRAGMENT_PRESERVATION_MISSING: $name" }
-            if ($text -notmatch '(?i)full sentence merely to sound polished') { throw "FIT_FIRST_TEMPLATE_ANTI_EXPANSION_MISSING: $name" }
-            if ($text -notmatch '(?i)internal final fit pass') { throw "FIT_FIRST_TEMPLATE_FINAL_FIT_PASS_MISSING: $name" }
-            if ($text -notmatch '(?i)visible character count') { throw "FIT_FIRST_TEMPLATE_LENGTH_CHECK_MISSING: $name" }
-            if ($text -notmatch '(?i)rewrite it more compactly and repeat until it fits') { throw "FIT_FIRST_TEMPLATE_RETRY_MISSING: $name" }
-            if ($text -match '(?i)Do not abbreviate, summarize, compress, merge, omit, or add information\.') { throw "FIT_FIRST_TEMPLATE_GLOBAL_COMPACTION_BAN: $name" }
+          if ((Get-YakuCatPromptContractVersion) -ne 'cat-agentic-fit-v2-terminology') { throw 'AGENTIC_FIT_CONTRACT_VERSION_MISMATCH' }
+          foreach ($command in @('Measure-YakuCatFitBaseline','Split-YakuCatCompressionResult','Test-YakuCatCompressionCandidate','Invoke-YakuCatPipelineBatch')) {
+            if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw ('AGENTIC_FIT_COMMAND_MISSING: ' + $command) }
           }
+          $targets = New-YakuCatCharacterTargets -Items @([pscustomobject]@{ Index=1; MaxChars=24 })
+          foreach ($rule in @('headline style','Never invent','report the required length')) {
+            if ($targets -notmatch [regex]::Escape($rule)) { throw ('AGENTIC_FIT_STYLE_RULE_MISSING: ' + $rule) }
+          }
+          foreach ($name in @('cat_fit_compress_to_en.txt','cat_fit_select_to_en.txt','cat_fit_back_reconstruct.txt','cat_fit_back_judge_to_en.txt')) {
+            $text = [IO.File]::ReadAllText((Join-Path $root ('prompts\' + $name)), [Text.Encoding]::UTF8)
+            if ($text -notmatch 'YAKULINGO_END') { throw ('AGENTIC_FIT_END_MARKER_MISSING: ' + $name) }
+          }
+          $compress = [IO.File]::ReadAllText((Join-Path $root 'prompts\cat_fit_compress_to_en.txt'), [Text.Encoding]::UTF8)
+          if ($compress -notmatch 'dropped=<none or description>' -or $compress -notmatch 'need_chars=<0 or required count>') { throw 'AGENTIC_FIT_SURRENDER_METADATA_MISSING' }
+          $draft = [IO.File]::ReadAllText((Join-Path $root 'prompts\cat_translate_to_en.txt'), [Text.Encoding]::UTF8)
+          if ($draft -notmatch 'full-draft stage' -or $draft -match 'primary layout goal') { throw 'AGENTIC_FIT_DRAFT_STILL_FIT_FIRST' }
 
       - name: Test duplicate-cell fit policy
         shell: powershell
