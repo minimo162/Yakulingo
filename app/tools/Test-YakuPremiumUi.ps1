@@ -42,7 +42,11 @@ Assert-YakuUi ($js -match "label\.textContent = 'Excel表示を確認'") 'PREMIU
 # Responsive and disclosure contracts.
 Assert-YakuUi ($css -match 'grid-template-columns:\s*minmax\(300px, 34%\)\s+minmax\(0,1fr\)') 'PREMIUM_UI_TWO_PANE_MISSING'
 Assert-YakuUi ($css -match '@media \(max-width: 1260px\)') 'PREMIUM_UI_1200_CONTRACT_MISSING'
-Assert-YakuUi ($css -match '#cat-preview-dock:not\(\[hidden\]\)') 'PREMIUM_UI_CONDITIONAL_PREVIEW_MISSING'
+Assert-YakuUi ($html -notmatch 'id="cat-preview-dock"') 'PREMIUM_UI_LEGACY_PREVIEW_DOCK_REMAINS'
+Assert-YakuUi ($html -match 'id="cat-preview-dialog"') 'PREMIUM_UI_EXCEL_DISPLAY_DIALOG_MISSING'
+Assert-YakuUi ($html -notmatch 'id="quick-input"|/assets/quick\.js') 'PREMIUM_UI_QUICK_SURFACE_EMBEDDED'
+Assert-YakuUi ($html -notmatch 'class="shell"|class="hero"|class="tab-panel"|id="cat-doc-dialog"') 'PREMIUM_UI_LEGACY_CAT_SURFACE_REMAINS'
+Assert-YakuUi ($js -notmatch 'function forcePreviewRail|premium-legacy-hero') 'PREMIUM_UI_LEGACY_MOUNT_REMAINS'
 Assert-YakuUi ($design -match 'YakuLingo is an Excel-first translation tool') 'PREMIUM_UI_PRODUCT_INTENT_STALE'
 
 $node = Get-Command node -ErrorAction SilentlyContinue
