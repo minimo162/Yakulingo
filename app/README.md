@@ -219,4 +219,3 @@ Japanese numeric units are converted deterministically before batching: 億円/�
 - The shared root now carries `bootstrap.ps1`, which copies this package to `%LOCALAPPDATA%\YakuLingo\versions\<version>-<manifest hash>`, verifies every file against the manifest, and runs it locally. The shared folder can then be updated while users are working.
 - `tools\Create-Desktop-Shortcut.ps1` targets the shared `.cmd` (via `YAKULINGO_SHARED_ROOT` when available) and uses a local working directory to avoid the cmd.exe UNC warning.
 - Added `tools\Test-YakuBootstrap.ps1` covering install, reuse, update, tamper detection, offline fallback, direct flat-layout startup, and rejection of obsolete nested version folders.
-
