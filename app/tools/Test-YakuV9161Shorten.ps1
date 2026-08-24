@@ -19,6 +19,7 @@ Chk ($js -match 'requestToken\+\+' -and $js -match 'cancelCurrent\(true\)') 'las
 Chk ($js -match '1200' -and $html -match 'quick-auto-translate') 'debounced auto translation is optional'
 Chk ($js -match "event\.key==='ArrowDown'" -and $js -match 'ctrlKey') 'keyboard length navigation is wired'
 Chk ($html -match 'quick-target-chars' -and $js -match '✓ 収まる') 'target character count reports fit'
+Chk ($js -match 'rewriteSelection' -and $js -match "key.toLowerCase\(\)==='r'") 'Ctrl+R rewrites only a safely identified selection'
 Chk ($server -match '/api/palette/metric' -and $server -match 'Quick translation timing') 'send-to-display timing is logged'
 Chk ($server -match '/api/palette/abbreviations' -and $html -match 'quick-abbreviations-editor') 'user abbreviation editor is persisted by the server'
 if($script:fail -gt 0){throw "V91.64 quick UX regression failed: $script:fail"}
