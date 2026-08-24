@@ -1,5 +1,5 @@
 ﻿function Get-YakuCatPromptContractVersion {
-    return 'cat-fit-first-v1-terminology'
+    return 'cat-agentic-fit-v2-terminology'
 }
 
 function Test-YakuCatPromptTerminologyEligible {
