@@ -777,6 +777,18 @@ function Save-YakuCopilotTargetRuntimeCache {
         [Parameter(Mandatory=$true)][string]$TargetId
     )
     if ([string]::IsNullOrWhiteSpace($TargetId)) { return }
+    if (Test-YakuCopilotWorkerContext) {
+        $pinnedTargetId = ''
+        try { $pinnedTargetId = [string]$script:YakuCopilotTargetCache.TargetId } catch {}
+        if (-not [string]::IsNullOrWhiteSpace($pinnedTargetId) -and $pinnedTargetId -ne $TargetId) {
+            throw "COPILOT_WORKER_TARGET_OWNERSHIP_VIOLATION: worker=$($script:YakuWorkerIndex) pinned=$pinnedTargetId requested=$TargetId"
+        }
+        # A worker owns one top-level window for its whole runspace lifetime.
+        # Keep that pin in memory and never let a worker overwrite the process-wide
+        # runtime cache used by the main session.
+        $script:YakuCopilotTargetCache = [pscustomobject]@{ Port=$Port; TargetId=$TargetId }
+        return
+    }
     $script:YakuCopilotTargetCache = [pscustomobject]@{ Port=$Port; TargetId=$TargetId }
     $record = [ordered]@{ port=$Port; targetId=$TargetId; savedAt=(Get-Date).ToUniversalTime().ToString('o') }
     try {
@@ -791,6 +803,10 @@ function Save-YakuCopilotTargetRuntimeCache {
     }
 }
 
+function Test-YakuCopilotWorkerContext {
+    return ($null -ne (Get-Variable -Name YakuWorkerIndex -Scope Script -ErrorAction SilentlyContinue))
+}
+
 function Get-YakuCopilotCachedTarget {
     param(
         [Parameter(Mandatory=$true)][int]$Port,
@@ -802,7 +818,7 @@ function Get-YakuCopilotCachedTarget {
         $cache = $script:YakuCopilotTargetCache
         if ($cache -and [int]$cache.Port -eq $Port) { $targetId = [string]$cache.TargetId }
     } catch { $targetId = '' }
-    if ([string]::IsNullOrWhiteSpace($targetId)) {
+    if ([string]::IsNullOrWhiteSpace($targetId) -and -not (Test-YakuCopilotWorkerContext)) {
         try {
             $path = Get-YakuCopilotTargetRuntimeCachePath
             if (Test-Path -LiteralPath $path -PathType Leaf) {
@@ -1289,6 +1305,12 @@ function Get-YakuCopilotPage {
     if ($page) {
         Write-YakuLog "Using known Copilot target during navigation. targetId=$($page.id) url=$($page.url)" 'DEBUG'
         return (Save-YakuCopilotPageTarget -Port $Port -Page $page)
+    }
+
+    if (Test-YakuCopilotWorkerContext) {
+        $pinnedTargetId = ''
+        try { $pinnedTargetId = [string]$script:YakuCopilotTargetCache.TargetId } catch {}
+        throw "COPILOT_WORKER_TARGET_LOST: worker=$($script:YakuWorkerIndex) targetId=$pinnedTargetId"
     }
 
     $page = Select-YakuSingleCdpTarget -Targets $pages -RequireCopilotUrl
@@ -4158,6 +4180,7 @@ function Set-YakuCopilotProgressPhase {
         $ProgressState['detail'] = $displayDetail
         $ProgressState['progress'] = [int][Math]::Max($current, [Math]::Min(99, [Math]::Max(0, $displayProgress)))
         $ProgressState['updated_at'] = (Get-Date).ToString('s')
+        $ProgressState['alive_at'] = (Get-Date).ToString('s')
         try { Write-YakuProgressStateFile -ProgressState $ProgressState } catch {}
     } catch {}
 }
@@ -4191,6 +4214,9 @@ function Wait-YakuCopilotResponse {
     $notBusyNoOutputSlices = 0
 
     while ((Get-Date) -lt $deadline) {
+        if ($ProgressState) {
+            try { $ProgressState['alive_at'] = (Get-Date).ToString('s') } catch {}
+        }
         try { $null = Assert-YakuCopilotPageTrusted -Page $Page -Stage 'response-read' }
         catch {
             $trustError = [string]$_.Exception.Message

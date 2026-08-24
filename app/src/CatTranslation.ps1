@@ -419,9 +419,14 @@ function Get-YakuCatCopilotMaxWorkers {
 function Set-YakuCatPipelineStageProgress {
     param([AllowNull()]$ProgressState,[string]$Stage,[AllowNull()]$WorkerStates)
     if($null -eq $ProgressState){return}
-    $snapshot=New-Object System.Collections.Generic.List[object]
+    $latest=@{}
     foreach($worker in @($WorkerStates)){
         if($null -eq $worker){continue}
+        $latest[[int]$(try{$worker['worker']}catch{0})]=$worker
+    }
+    $snapshot=New-Object System.Collections.Generic.List[object]
+    foreach($workerIndex in @($latest.Keys|Sort-Object)){
+        $worker=$latest[$workerIndex]
         $snapshot.Add([ordered]@{
             worker=[int]$(try{$worker['worker']}catch{0})
             state=[string]$(try{$worker['state']}catch{'waiting'})
@@ -445,6 +450,22 @@ function Split-YakuCatWorkerPackets {
     }
     return $packets.ToArray()
 }
+function Merge-YakuCatParallelResults {
+    param([Parameter(Mandatory=$true)][object[]]$Results,$Warnings,[Parameter(Mandatory=$true)][hashtable]$Parent)
+    $map=@{};$errors=New-Object System.Collections.Generic.List[string]
+    $successfulPackets=@{}
+    foreach($result in @($Results)){if([string]::IsNullOrWhiteSpace([string]$result.Error)){$successfulPackets[[int]$result.Packet]=$true}}
+    foreach($result in @($Results|Sort-Object Packet)){
+        if(-not [string]::IsNullOrWhiteSpace([string]$result.Error)){
+            if(-not $successfulPackets.ContainsKey([int]$result.Packet)){$errors.Add([string]$result.Error)|Out-Null}
+            continue
+        }
+        foreach($warning in @($result.Warnings)){try{$Warnings.Add($warning)|Out-Null}catch{}}
+        foreach($key in @($result.Map.Keys)){$map[[int]$key]=[string]$result.Map[$key]}
+        try{$Parent.CopilotCalls=[int]$Parent.CopilotCalls+[int]$result.Context.CopilotCalls}catch{}
+    }
+    return [pscustomobject]@{Map=$map;Errors=@($errors.ToArray())}
+}
 function Invoke-YakuCatParallelPipelineBatch {
     param($Root,[object[]]$Items,$Settings,[string]$Direction,[int]$MaxChars,$Warnings,$ProgressState,[hashtable]$Parent,[int]$Depth,[string]$Reason,[string]$Stage,[object[]]$Pages)
     $workerCount=[Math]::Min(@($Pages).Count,$Items.Count)
@@ -458,7 +479,7 @@ function Invoke-YakuCatParallelPipelineBatch {
     $handles=New-Object System.Collections.Generic.List[object]
     $cancelPath='';try{$cancelPath=[string]$ProgressState['cancel_path']}catch{}
     $workerScript={
-        param($Root,$Settings,$Page,$Queue,$Packets,$Results,$Attempts,$WorkerState,$WorkerIndex,$Direction,$MaxChars,$Depth,$Reason,$AmountNotation,$JobId)
+        param($Root,$Settings,$Page,$Queue,$Packets,$Results,$Attempts,$WorkerState,$WorkerLease,$WorkerIndex,$Direction,$MaxChars,$Depth,$Reason,$AmountNotation,$JobId)
         $ErrorActionPreference='Stop';$script:YakuRoot=$Root;$script:YakuWorkerIndex=$WorkerIndex
         . (Join-Path $Root 'src\SrcModules.ps1')
         foreach($yakuSrcModule in $script:YakuSrcModuleFiles){. (Join-Path $Root (Join-Path 'src' $yakuSrcModule))}
@@ -467,7 +488,7 @@ function Invoke-YakuCatParallelPipelineBatch {
         $packetIndex=-1
         while($Queue.TryDequeue([ref]$packetIndex)){
             $packet=$Packets[$packetIndex]
-            $WorkerState['state']='running';$WorkerState['packet']=$packetIndex;$WorkerState['items']=@($packet.Ids);$WorkerState['updated_at']=(Get-Date).ToString('s')
+            $WorkerState['state']='running';$WorkerState['packet']=$packetIndex;$WorkerState['items']=@($packet.Ids);$WorkerState['updated_at']=(Get-Date).ToString('s');$WorkerState['alive_at']=(Get-Date).ToString('s')
             $localWarnings=New-Object System.Collections.Generic.List[object]
             $localContext=@{Workflow='cat';AmountNotation=$AmountNotation;PromptContractVersion=(Get-YakuCatPromptContractVersion);BatchOrdinal=0;TotalBatches=1;MaxRetryDepth=0;CacheHits=0;TranslatedSoFar=0;UniqueTotal=[Math]::Max(1,@($packet.Items).Count);CopilotCalls=0;CompletedMap=@{};JobId=$JobId}
             try{
@@ -476,7 +497,8 @@ function Invoke-YakuCatParallelPipelineBatch {
                 $WorkerState['state']='done'
             }catch{
                 $errorMessage=[string]$_.Exception.Message
-                if([string]$WorkerState['state'] -eq 'lease_expired'){
+                if([bool]$WorkerLease['abandoned']){
+                    $WorkerState['state']='abandoned'
                     $WorkerState['packet']=-1;$WorkerState['items']=@();$WorkerState['updated_at']=(Get-Date).ToString('s')
                     break
                 }
@@ -496,15 +518,16 @@ function Invoke-YakuCatParallelPipelineBatch {
     }
     try{
         $startWorker={
-            param([int]$WorkerIndex,$State)
+            param([int]$WorkerIndex,$State,$Lease)
             $ps=[powershell]::Create()
-            $null=$ps.AddScript($workerScript.ToString()).AddArgument($Root).AddArgument($Settings).AddArgument($Pages[$WorkerIndex]).AddArgument($queue).AddArgument($packets).AddArgument($results).AddArgument($attempts).AddArgument($State).AddArgument($WorkerIndex).AddArgument($Direction).AddArgument($MaxChars).AddArgument($Depth).AddArgument($Reason).AddArgument([string]$Parent.AmountNotation).AddArgument([string]$Parent.JobId)
-            return [pscustomobject]@{PowerShell=$ps;Async=$ps.BeginInvoke();Worker=$WorkerIndex;Abandoned=$false}
+            $null=$ps.AddScript($workerScript.ToString()).AddArgument($Root).AddArgument($Settings).AddArgument($Pages[$WorkerIndex]).AddArgument($queue).AddArgument($packets).AddArgument($results).AddArgument($attempts).AddArgument($State).AddArgument($Lease).AddArgument($WorkerIndex).AddArgument($Direction).AddArgument($MaxChars).AddArgument($Depth).AddArgument($Reason).AddArgument([string]$Parent.AmountNotation).AddArgument([string]$Parent.JobId)
+            return [pscustomobject]@{PowerShell=$ps;Async=$ps.BeginInvoke();Worker=$WorkerIndex;Abandoned=$false;Lease=$Lease;State=$State}
         }
         for($workerIndex=0;$workerIndex -lt $workerCount;$workerIndex++){
-            $state=[hashtable]::Synchronized(@{worker=$workerIndex;state='waiting';packet=-1;items=@();updated_at=(Get-Date).ToString('s');cancel_path=$cancelPath;state_path=''})
+            $state=[hashtable]::Synchronized(@{worker=$workerIndex;state='waiting';packet=-1;items=@();updated_at=(Get-Date).ToString('s');alive_at=(Get-Date).ToString('s');cancel_path=$cancelPath;state_path=''})
+            $lease=[hashtable]::Synchronized(@{abandoned=$false})
             $states.Add($state)|Out-Null
-            $handles.Add((& $startWorker $workerIndex $state))|Out-Null
+            $handles.Add((& $startWorker $workerIndex $state $lease))|Out-Null
         }
         Set-YakuCatPipelineStageProgress -ProgressState $ProgressState -Stage $Stage -WorkerStates $states.ToArray()
         $heartbeatSeconds=180;try{$heartbeatSeconds=[int]$Settings.worker_heartbeat_timeout_seconds}catch{}
@@ -514,17 +537,19 @@ function Invoke-YakuCatParallelPipelineBatch {
             foreach($state in @($states.ToArray())){
                 if([string]$state['state'] -ne 'running'){continue}
                 $heartbeat=[datetime]::MinValue
-                if([datetime]::TryParse([string]$state['updated_at'],[ref]$heartbeat) -and (Get-Date)-$heartbeat -gt [timespan]::FromSeconds($heartbeatSeconds)){
+                if([datetime]::TryParse([string]$state['alive_at'],[ref]$heartbeat) -and (Get-Date)-$heartbeat -gt [timespan]::FromSeconds($heartbeatSeconds)){
                     $staleWorker=[int]$state['worker'];$stalePacket=[int]$state['packet']
                     $staleHandle=@($handles.ToArray()|Where-Object{[int]$_.Worker -eq $staleWorker -and -not [bool]$_.Abandoned -and -not $_.Async.IsCompleted}|Select-Object -Last 1)
                     $leaseAttempt=$(if($stalePacket -ge 0){$attempts.AddOrUpdate($stalePacket,1,[Func[int,int,int]]{param($key,$value) $value+1})}else{2})
                     if($stalePacket -ge 0 -and $leaseAttempt -le 1 -and $staleHandle.Count -eq 1){
-                        $state['state']='lease_expired';$staleHandle[0].Abandoned=$true
+                        $state['state']='lease_expired';$staleHandle[0].Abandoned=$true;$staleHandle[0].Lease['abandoned']=$true
                         try{$staleHandle[0].PowerShell.Stop()}catch{}
                         $queue.Enqueue($stalePacket)
                         Write-YakuLog ('CAT worker lease expired; packet requeued. worker='+$staleWorker+' packet='+$stalePacket+' stage='+$Stage) 'WARN'
-                        $state['state']='waiting';$state['packet']=-1;$state['items']=@();$state['updated_at']=(Get-Date).ToString('s')
-                        $handles.Add((& $startWorker $staleWorker $state))|Out-Null
+                        $replacementState=[hashtable]::Synchronized(@{worker=$staleWorker;state='waiting';packet=-1;items=@();updated_at=(Get-Date).ToString('s');alive_at=(Get-Date).ToString('s');cancel_path=$cancelPath;state_path=''})
+                        $replacementLease=[hashtable]::Synchronized(@{abandoned=$false})
+                        $states.Add($replacementState)|Out-Null
+                        $handles.Add((& $startWorker $staleWorker $replacementState $replacementLease))|Out-Null
                         continue
                     }
                     foreach($handle in @($handles.ToArray())){try{$handle.PowerShell.Stop()}catch{}}
@@ -534,20 +559,28 @@ function Invoke-YakuCatParallelPipelineBatch {
             Set-YakuCatPipelineStageProgress -ProgressState $ProgressState -Stage $Stage -WorkerStates $states.ToArray()
         }
         foreach($handle in @($handles.ToArray())){try{$null=$handle.PowerShell.EndInvoke($handle.Async)}catch{if(-not [bool]$handle.Abandoned){throw}}}
-        $map=@{};$errors=New-Object System.Collections.Generic.List[string]
-        foreach($result in @($results.ToArray()|Sort-Object Packet)){
-            foreach($warning in @($result.Warnings)){try{$Warnings.Add($warning)|Out-Null}catch{}}
-            if(-not [string]::IsNullOrWhiteSpace([string]$result.Error)){$errors.Add([string]$result.Error)|Out-Null;continue}
-            foreach($key in @($result.Map.Keys)){$map[[int]$key]=[string]$result.Map[$key]}
-            try{$Parent.CopilotCalls=[int]$Parent.CopilotCalls+[int]$result.Context.CopilotCalls}catch{}
-        }
-        if($errors.Count){throw ('CAT_PARALLEL_STAGE_FAILED: '+(($errors.ToArray()|Select-Object -Unique)-join ' | '))}
+        $merged=Merge-YakuCatParallelResults -Results @($results.ToArray()) -Warnings $Warnings -Parent $Parent
+        $map=$merged.Map
+        if(@($merged.Errors).Count){throw ('CAT_PARALLEL_STAGE_FAILED: '+((@($merged.Errors)|Select-Object -Unique)-join ' | '))}
         $Parent.BatchOrdinal=[int]$Parent.BatchOrdinal+$packets.Count
         $Parent.TranslatedSoFar=[int]$Parent.TranslatedSoFar+$map.Count
         return $map
     }finally{
         foreach($handle in @($handles.ToArray())){try{$handle.PowerShell.Dispose()}catch{}}
         Set-YakuCatPipelineStageProgress -ProgressState $ProgressState -Stage $Stage -WorkerStates @()
+    }
+}
+function Get-YakuCatFitWorkerPagesOrSerial {
+    param($Settings,[int]$WorkerCount,[Parameter(Mandatory=$true)][hashtable]$Context)
+    if($WorkerCount -le 1){return @()}
+    try{
+        $pages=@(New-YakuCopilotWorkerPages -Settings $Settings -Count $WorkerCount)
+        $Context.WorkerPages=$pages
+        return $pages
+    }catch{
+        $null=$Context.Remove('WorkerPages')
+        Write-YakuLog ('Copilot worker window preparation failed; continuing serially. reason='+$_.Exception.Message) 'WARN'
+        return @()
     }
 }
 function Invoke-YakuCatPipelineBatch {
@@ -760,13 +793,10 @@ function Invoke-YakuCatTranslationItems {
     if($Direction -ne 'to_en' -or @($Items|Where-Object{$null -ne $_.MaxChars}).Count -eq 0){
         return Invoke-YakuTranslationBatchItems -Root $Root -Items $Items -Settings $Settings -Direction $Direction -MaxChars $MaxChars -Warnings $Warnings -ProgressState $ProgressState -Context $Context -Depth $Depth -Reason $Reason
     }
-    $workerPages=$null
+    $workerPages=@()
     try{
     $workerCount=[Math]::Min((Get-YakuCatCopilotMaxWorkers -Settings $Settings),$Items.Count)
-    if($workerCount -gt 1){
-        $workerPages=@(New-YakuCopilotWorkerPages -Settings $Settings -Count $workerCount)
-        $Context.WorkerPages=$workerPages
-    }
+    $workerPages=@(Get-YakuCatFitWorkerPagesOrSerial -Settings $Settings -WorkerCount $workerCount -Context $Context)
     $candidateCount=Get-YakuCatFitCandidateCount -Settings $Settings
     Initialize-YakuCatFitProgress -Items $Items -CandidateCount $candidateCount -MaxChars $MaxChars -Context $Context
     $draftItems=New-Object System.Collections.Generic.List[object]
