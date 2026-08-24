@@ -1,0 +1,5 @@
+﻿Selection only. Request ID: {request_id}
+Choose one PipelineCandidates entry using fidelity and readability only; deterministic fit/numeric/term filters already passed. Return chosen text verbatim as numbered items then YAKULINGO_END:{request_id}.
+{numeric_rules}
+{pipeline_data}
+{source_list}

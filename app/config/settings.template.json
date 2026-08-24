@@ -13,6 +13,7 @@
   "worker_heartbeat_timeout_seconds": 180,
   "max_retries": 3,
   "glossary_prompt_limit": 48,
+  "cat_fit_candidate_count": 3,
   "browser_display_mode": "foreground",
   "edge_window_size": "1280,900",
   "edge_debug_port": 9433,

@@ -1,0 +1,5 @@
+﻿Fidelity decision only. Request ID: {request_id}
+Compare protected Japanese with PipelineClaims reconstructed from English alone. If faithful output PipelineSelected verbatim; otherwise output RETRY_REQUIRED: followed by PipelineSelected. Return numbered items then YAKULINGO_END:{request_id}.
+{numeric_rules}
+{pipeline_data}
+{source_list}
