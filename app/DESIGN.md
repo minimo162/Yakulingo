@@ -85,4 +85,3 @@ Numeric masking and deterministic notation conversions such as `億円` to `oku`
 3. Retain IDs, confidence, rationale, and relation cardinality; reject numeric, unit, proper-noun, duplicate-ID, empty/formula-cell, and existing-memory conflicts deterministically.
 4. Confirm only valid pairs into translation memory. Terminology remains separate.
 5. Apply unique exact or safe-normalized matches to a new workbook; leave missing and ambiguous text unchanged.
-
