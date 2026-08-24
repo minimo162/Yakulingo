@@ -2,7 +2,9 @@
 
 ## Product intent
 
-YakuLingo is a local translation tool with two experiences: Quick Translation for transient understanding and drafting, and Document Translation for source/target review, terminology control, translation-memory reuse, QC, and DRAFT output. Quick Translation never reads or writes reusable language assets. Document Translation exposes the provenance of every reusable candidate and requires human confirmation before a segment becomes translation memory.
+YakuLingo is an Excel-first translation tool that creates translations which fit the existing workbook layout with minimal manual work.
+
+The primary flow is deliberately limited to opening an Excel workbook, translating untranslated cells, correcting only cells that need review, and writing a translated Excel copy. Translation memory, terminology, QC, and layout measurement support that flow without becoming permanent work panes. Word, text, and CSV compatibility are auxiliary capabilities and do not determine the main UI information architecture.
 
 ## Architecture
 
@@ -31,18 +33,19 @@ Normal operation never persists source text, translated text, or full prompts. F
 
 ## Interaction and accessibility
 
-- The text/file switch uses `tablist`, `tab`, and `tabpanel` roles.
-- Left/Right and Home/End move and activate tabs; selected tabs own `tabindex=0`.
-- Progress uses a labeled progressbar and live regions.
-- File picker and direct path are mutually exclusive.
-- A file-info response produces selectable sheet chips; the actual request sends a JSON array, so characters such as `|` remain part of the sheet name.
+- The start screen has one primary entry: an Excel drop target with an equivalent file-picker button.
+- The workspace has one cell list and one selected-cell editor. Its filters are `未訳 / 要確認 / すべて`.
+- The primary actions are derived from actual state: translate untranslated cells, review flagged cells, and write Excel.
+- Layout preview is closed initially and opens from a selected cell that needs visual confirmation.
+- Progress, import, save, and output conditions use labeled status/live regions.
 - Warning completion uses a persistent alert, `_INCOMPLETE` name, and visually distinct download button.
 
 ## Visual principles
 
-- Quiet, text-first, spacious single-column layout.
+- Quiet, Excel-first start screen and a focused two-pane workspace.
 - One indigo primary action; outlined secondary actions.
-- Results use a white surface with subtle borders; metadata uses small pills.
+- The same cell is never shown in multiple permanent lists.
+- Candidates, translation memory, terminology, history, preview, and advanced tools appear only on demand.
 - Diagnostics and settings never displace the main translation form.
 - Security and completeness warnings must remain visually prominent and must not use the normal-success treatment.
 
