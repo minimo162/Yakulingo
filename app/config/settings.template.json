@@ -11,6 +11,7 @@
   "request_timeout": 240,
   "extract_timeout_seconds": 300,
   "worker_heartbeat_timeout_seconds": 180,
+  "cat_copilot_max_workers": 4,
   "max_retries": 3,
   "glossary_prompt_limit": 48,
   "cat_fit_candidate_count": 3,

@@ -100,6 +100,9 @@ function Get-YakuSettingsSchema {
         request_timeout                   = @{ Type='int';  Default=240; Min=30; Max=1800 }
         extract_timeout_seconds           = @{ Type='int';  Default=300; Min=60; Max=3600 }
         worker_heartbeat_timeout_seconds  = @{ Type='int';  Default=180; Min=30; Max=3600 }
+        # fitの段内Copilot worker。実測済みは4まで。8は誤設定時の安全上限で、
+        # 8並行を品質・安定性確認済みという意味ではない。
+        cat_copilot_max_workers           = @{ Type='int';  Default=4; Min=1; Max=8 }
         max_retries                       = @{ Type='int';  Default=3; Min=0; Max=10 }
         # 金額の書き方。訳の種類ではなく書き方なので、毎回選ばせず設定で持つ。
         # 外部公表は billion、社内資料の一部が oku（利用者 2026-08-08）。

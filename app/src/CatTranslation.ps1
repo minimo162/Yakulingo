@@ -296,7 +296,7 @@ function New-YakuCatPipelineData {
     $records=New-Object System.Collections.Generic.List[object]
     foreach($item in @($Items)){
         $record=[ordered]@{item=[int]$item.Index}
-        foreach($name in @('PipelineDraft','PipelineCandidates','PipelineClaims','PipelineSelected')){
+        foreach($name in @('PipelineDraft','PipelineCandidates','PipelineClaims','PipelineSelected','PipelineCandidateCount')){
             if($item.PSObject.Properties.Name -contains $name){$record[$name]=[string]$item.$name}
         }
         if($null -ne $item.MaxChars){$record.max_chars=[int]$item.MaxChars}
@@ -324,6 +324,16 @@ function Measure-YakuCatFitBaseline {
     return [pscustomobject]@{Targeted=$targeted;Overflow=$overflow;OverflowRate=$(if($targeted){[Math]::Round($overflow/[double]$targeted,4)}else{0});ExcessWidths=@($widths.ToArray())}
 }
 function Split-YakuCatCompressionResult { param([string]$Text);$m=' ⟦YAKU_FIT⟧ ';$p=$Text.LastIndexOf($m,[StringComparison]::Ordinal);if($p -lt 0){return [pscustomobject]@{Translation=$Text.Trim();Dropped='unreported';NeedChars=0}};$z=$Text.Substring($p+$m.Length);$d='unreported';$n=0;if($z -match '(?i)dropped\s*=\s*([^;]+)'){$d=$matches[1].Trim()};if($z -match '(?i)need_chars\s*=\s*(\d+)'){$n=[int]$matches[1]};[pscustomobject]@{Translation=$Text.Substring(0,$p).Trim();Dropped=$d;NeedChars=$n} }
+function Split-YakuCatCompressionCandidates {
+    param([AllowNull()][string]$Text,[int]$Limit=3)
+    $results=New-Object System.Collections.Generic.List[object]
+    foreach($part in @(([string]$Text)-split '\s*⟦YAKU_ALT⟧\s*')){
+        if([string]::IsNullOrWhiteSpace($part)){continue}
+        $results.Add((Split-YakuCatCompressionResult $part))|Out-Null
+        if($results.Count -ge [Math]::Max(1,$Limit)){break}
+    }
+    return $results.ToArray()
+}
 function Test-YakuCatCompressionCandidate {
     param([Parameter(Mandatory=$true)]$Item,[AllowEmptyString()][string]$Translation)
     if([string]::IsNullOrWhiteSpace($Translation) -or $Translation.Length -gt [int]$Item.MaxChars){return $false}
@@ -337,6 +347,22 @@ function Test-YakuCatCompressionCandidate {
         $targetMatches=[string]::Equals($Translation.Trim(),([string]$term.preferred).Trim(),[StringComparison]::Ordinal)
         if($sourceMatches -and -not $targetMatches){return $false}
     }
+    return $true
+}
+function Test-YakuCatAcronymCandidate {
+    param([Parameter(Mandatory=$true)]$Item,[AllowEmptyString()][string]$Translation)
+    if(Test-YakuCatCompressionCandidate -Item $Item -Translation $Translation){return $true}
+    if([string]::IsNullOrWhiteSpace($Translation) -or $Translation.Length -gt [int]$Item.MaxChars){return $false}
+    $source=[string]$Item.OriginalText;$normalized=$Translation
+    $pairs=@(
+        @('上期','(?i)\b(?:1H|H1)\b'),@('下期','(?i)\b(?:2H|H2)\b'),
+        @('前年同期比','(?i)\bYoY\b'),@('前四半期比','(?i)\bQoQ\b'),@('前月比','(?i)\bMoM\b')
+    )
+    $used=$false
+    foreach($pair in $pairs){if($source.Contains([string]$pair[0]) -and $normalized -match [string]$pair[1]){$normalized=[regex]::Replace($normalized,[string]$pair[1],'');$used=$true}}
+    if(-not $used){return $false}
+    try{$numeric=Test-YakuNumericMaskIntegrity -MaskedSource ([string]$Item.Text) -Translated $normalized -Location ('cat-fit-acronym-'+$Item.Index);if(-not [bool]$numeric.Ok){return $false}}catch{return $false}
+    foreach($term in @($Item.Terminology)){if([string]$term.enforcement -ne 'cell_exact'){continue};if([string]::Equals($source.Trim(),([string]$term.source).Trim(),[StringComparison]::Ordinal) -and -not [string]::Equals($Translation.Trim(),([string]$term.preferred).Trim(),[StringComparison]::Ordinal)){return $false}}
     return $true
 }
 function Get-YakuCatFitCandidateCount {
@@ -373,20 +399,177 @@ function Get-YakuCatPromptSafePipelineItems {
 function Initialize-YakuCatFitProgress {
     param([object[]]$Items,[int]$CandidateCount,[int]$MaxChars,[hashtable]$Context)
     $targets=@($Items|Where-Object{$null -ne $_.MaxChars})
-    $later=$CandidateCount+4
+    # Candidate generation is one Copilot call for 1..3 alternatives.  The
+    # longest path after the draft is compress, select, back-check (2 calls),
+    # retry, retry back-check (2), abbreviation, and abbreviation back-check
+    # (2).  Keep one stable denominator even when later stages are skipped.
+    $later=10
     $Context.BatchOrdinal=0;$Context.TranslatedSoFar=0
     $Context.UniqueTotal=[Math]::Max(1,$Items.Count+($targets.Count*$later))
     $draftBatches=@(Split-YakuFileTranslationItems -Items $Items -MaxChars $MaxChars).Count
     $targetBatches=$(if($targets.Count){@(Split-YakuFileTranslationItems -Items $targets -MaxChars $MaxChars).Count}else{0})
     $Context.TotalBatches=[Math]::Max(1,$draftBatches+($targetBatches*$later))
 }
+function Get-YakuCatCopilotMaxWorkers {
+    param([Parameter(Mandatory=$true)]$Settings)
+    $count=4
+    try{if($null -ne $Settings.cat_copilot_max_workers){$count=[int]$Settings.cat_copilot_max_workers}}catch{}
+    return [Math]::Max(1,[Math]::Min(8,$count))
+}
+function Set-YakuCatPipelineStageProgress {
+    param([AllowNull()]$ProgressState,[string]$Stage,[AllowNull()]$WorkerStates)
+    if($null -eq $ProgressState){return}
+    $snapshot=New-Object System.Collections.Generic.List[object]
+    foreach($worker in @($WorkerStates)){
+        if($null -eq $worker){continue}
+        $snapshot.Add([ordered]@{
+            worker=[int]$(try{$worker['worker']}catch{0})
+            state=[string]$(try{$worker['state']}catch{'waiting'})
+            items=@($(try{$worker['items']}catch{@()}))
+        })|Out-Null
+    }
+    $ProgressState['stage']=$Stage
+    $ProgressState['worker_progress']=@($snapshot.ToArray())
+    $ProgressState['updated_at']=(Get-Date).ToString('s')
+    try{Write-YakuProgressStateFile -ProgressState $ProgressState}catch{}
+}
+function Split-YakuCatWorkerPackets {
+    param([Parameter(Mandatory=$true)][object[]]$Items,[Parameter(Mandatory=$true)][int]$Workers)
+    $packetTarget=[Math]::Max(1,[Math]::Min($Items.Count,$Workers*2))
+    $packetSize=[Math]::Max(1,[int][Math]::Ceiling($Items.Count/[double]$packetTarget))
+    $packets=New-Object System.Collections.Generic.List[object]
+    for($offset=0;$offset -lt $Items.Count;$offset+=$packetSize){
+        $last=[Math]::Min($Items.Count-1,$offset+$packetSize-1)
+        $packetItems=@($Items[$offset..$last])
+        $packets.Add([pscustomobject]@{Items=$packetItems;Ids=@($packetItems|ForEach-Object{[int]$_.Index})})|Out-Null
+    }
+    return $packets.ToArray()
+}
+function Invoke-YakuCatParallelPipelineBatch {
+    param($Root,[object[]]$Items,$Settings,[string]$Direction,[int]$MaxChars,$Warnings,$ProgressState,[hashtable]$Parent,[int]$Depth,[string]$Reason,[string]$Stage,[object[]]$Pages)
+    $workerCount=[Math]::Min(@($Pages).Count,$Items.Count)
+    if($workerCount -le 1){return $null}
+    $packets=@(Split-YakuCatWorkerPackets -Items $Items -Workers $workerCount)
+    $queue=New-Object 'System.Collections.Concurrent.ConcurrentQueue[int]'
+    for($packetIndex=0;$packetIndex -lt $packets.Count;$packetIndex++){$queue.Enqueue($packetIndex)}
+    $attempts=New-Object 'System.Collections.Concurrent.ConcurrentDictionary[int,int]'
+    $results=New-Object 'System.Collections.Concurrent.ConcurrentBag[object]'
+    $states=New-Object System.Collections.Generic.List[object]
+    $handles=New-Object System.Collections.Generic.List[object]
+    $cancelPath='';try{$cancelPath=[string]$ProgressState['cancel_path']}catch{}
+    $workerScript={
+        param($Root,$Settings,$Page,$Queue,$Packets,$Results,$Attempts,$WorkerState,$WorkerIndex,$Direction,$MaxChars,$Depth,$Reason,$AmountNotation,$JobId)
+        $ErrorActionPreference='Stop';$script:YakuRoot=$Root;$script:YakuWorkerIndex=$WorkerIndex
+        . (Join-Path $Root 'src\SrcModules.ps1')
+        foreach($yakuSrcModule in $script:YakuSrcModuleFiles){. (Join-Path $Root (Join-Path 'src' $yakuSrcModule))}
+        $port=Get-YakuCdpPort -Settings $Settings
+        $script:YakuCopilotTargetCache=[pscustomobject]@{Port=[int]$port;TargetId=[string]$Page.id}
+        $packetIndex=-1
+        while($Queue.TryDequeue([ref]$packetIndex)){
+            $packet=$Packets[$packetIndex]
+            $WorkerState['state']='running';$WorkerState['packet']=$packetIndex;$WorkerState['items']=@($packet.Ids);$WorkerState['updated_at']=(Get-Date).ToString('s')
+            $localWarnings=New-Object System.Collections.Generic.List[object]
+            $localContext=@{Workflow='cat';AmountNotation=$AmountNotation;PromptContractVersion=(Get-YakuCatPromptContractVersion);BatchOrdinal=0;TotalBatches=1;MaxRetryDepth=0;CacheHits=0;TranslatedSoFar=0;UniqueTotal=[Math]::Max(1,@($packet.Items).Count);CopilotCalls=0;CompletedMap=@{};JobId=$JobId}
+            try{
+                $map=Invoke-YakuTranslationBatchItems -Root $Root -Items @($packet.Items) -Settings $Settings -Direction $Direction -MaxChars $MaxChars -Warnings $localWarnings -ProgressState $WorkerState -Context $localContext -Depth $Depth -Reason $Reason
+                $Results.Add([pscustomobject]@{Packet=$packetIndex;Map=$map;Warnings=@($localWarnings.ToArray());Context=$localContext;Error=''})
+                $WorkerState['state']='done'
+            }catch{
+                $errorMessage=[string]$_.Exception.Message
+                if([string]$WorkerState['state'] -eq 'lease_expired'){
+                    $WorkerState['packet']=-1;$WorkerState['items']=@();$WorkerState['updated_at']=(Get-Date).ToString('s')
+                    break
+                }
+                $retryable=(-not (Test-YakuCopilotLimitError -Message $errorMessage)) -and -not ($_.Exception -is [System.OperationCanceledException])
+                $attempt=$Attempts.AddOrUpdate([int]$packetIndex,1,[Func[int,int,int]]{param($key,$value) $value+1})
+                if($retryable -and $attempt -le 1){
+                    $Queue.Enqueue([int]$packetIndex)
+                    $WorkerState['state']='requeued'
+                    Write-YakuLog ('CAT worker packet requeued. packet='+$packetIndex+' attempt='+$attempt+' reason='+$errorMessage) 'WARN'
+                }else{
+                    $Results.Add([pscustomobject]@{Packet=$packetIndex;Map=@{};Warnings=@($localWarnings.ToArray());Context=$localContext;Error=$errorMessage})
+                    $WorkerState['state']='error';$WorkerState['error']=$errorMessage
+                }
+            }
+            $WorkerState['packet']=-1;$WorkerState['items']=@();$WorkerState['updated_at']=(Get-Date).ToString('s')
+        }
+    }
+    try{
+        $startWorker={
+            param([int]$WorkerIndex,$State)
+            $ps=[powershell]::Create()
+            $null=$ps.AddScript($workerScript.ToString()).AddArgument($Root).AddArgument($Settings).AddArgument($Pages[$WorkerIndex]).AddArgument($queue).AddArgument($packets).AddArgument($results).AddArgument($attempts).AddArgument($State).AddArgument($WorkerIndex).AddArgument($Direction).AddArgument($MaxChars).AddArgument($Depth).AddArgument($Reason).AddArgument([string]$Parent.AmountNotation).AddArgument([string]$Parent.JobId)
+            return [pscustomobject]@{PowerShell=$ps;Async=$ps.BeginInvoke();Worker=$WorkerIndex;Abandoned=$false}
+        }
+        for($workerIndex=0;$workerIndex -lt $workerCount;$workerIndex++){
+            $state=[hashtable]::Synchronized(@{worker=$workerIndex;state='waiting';packet=-1;items=@();updated_at=(Get-Date).ToString('s');cancel_path=$cancelPath;state_path=''})
+            $states.Add($state)|Out-Null
+            $handles.Add((& $startWorker $workerIndex $state))|Out-Null
+        }
+        Set-YakuCatPipelineStageProgress -ProgressState $ProgressState -Stage $Stage -WorkerStates $states.ToArray()
+        $heartbeatSeconds=180;try{$heartbeatSeconds=[int]$Settings.worker_heartbeat_timeout_seconds}catch{}
+        while(@($handles.ToArray()|Where-Object{-not $_.Async.IsCompleted}).Count -gt 0){
+            Start-Sleep -Milliseconds 300
+            if(Test-YakuCancellationRequested -ProgressState $ProgressState){foreach($handle in @($handles.ToArray())){try{$handle.PowerShell.Stop()}catch{}};throw [System.OperationCanceledException]::new('翻訳をキャンセルしました。')}
+            foreach($state in @($states.ToArray())){
+                if([string]$state['state'] -ne 'running'){continue}
+                $heartbeat=[datetime]::MinValue
+                if([datetime]::TryParse([string]$state['updated_at'],[ref]$heartbeat) -and (Get-Date)-$heartbeat -gt [timespan]::FromSeconds($heartbeatSeconds)){
+                    $staleWorker=[int]$state['worker'];$stalePacket=[int]$state['packet']
+                    $staleHandle=@($handles.ToArray()|Where-Object{[int]$_.Worker -eq $staleWorker -and -not [bool]$_.Abandoned -and -not $_.Async.IsCompleted}|Select-Object -Last 1)
+                    $leaseAttempt=$(if($stalePacket -ge 0){$attempts.AddOrUpdate($stalePacket,1,[Func[int,int,int]]{param($key,$value) $value+1})}else{2})
+                    if($stalePacket -ge 0 -and $leaseAttempt -le 1 -and $staleHandle.Count -eq 1){
+                        $state['state']='lease_expired';$staleHandle[0].Abandoned=$true
+                        try{$staleHandle[0].PowerShell.Stop()}catch{}
+                        $queue.Enqueue($stalePacket)
+                        Write-YakuLog ('CAT worker lease expired; packet requeued. worker='+$staleWorker+' packet='+$stalePacket+' stage='+$Stage) 'WARN'
+                        $state['state']='waiting';$state['packet']=-1;$state['items']=@();$state['updated_at']=(Get-Date).ToString('s')
+                        $handles.Add((& $startWorker $staleWorker $state))|Out-Null
+                        continue
+                    }
+                    foreach($handle in @($handles.ToArray())){try{$handle.PowerShell.Stop()}catch{}}
+                    throw "COPILOT_WORKER_HEARTBEAT_TIMEOUT: worker=$staleWorker stage=$Stage"
+                }
+            }
+            Set-YakuCatPipelineStageProgress -ProgressState $ProgressState -Stage $Stage -WorkerStates $states.ToArray()
+        }
+        foreach($handle in @($handles.ToArray())){try{$null=$handle.PowerShell.EndInvoke($handle.Async)}catch{if(-not [bool]$handle.Abandoned){throw}}}
+        $map=@{};$errors=New-Object System.Collections.Generic.List[string]
+        foreach($result in @($results.ToArray()|Sort-Object Packet)){
+            foreach($warning in @($result.Warnings)){try{$Warnings.Add($warning)|Out-Null}catch{}}
+            if(-not [string]::IsNullOrWhiteSpace([string]$result.Error)){$errors.Add([string]$result.Error)|Out-Null;continue}
+            foreach($key in @($result.Map.Keys)){$map[[int]$key]=[string]$result.Map[$key]}
+            try{$Parent.CopilotCalls=[int]$Parent.CopilotCalls+[int]$result.Context.CopilotCalls}catch{}
+        }
+        if($errors.Count){throw ('CAT_PARALLEL_STAGE_FAILED: '+(($errors.ToArray()|Select-Object -Unique)-join ' | '))}
+        $Parent.BatchOrdinal=[int]$Parent.BatchOrdinal+$packets.Count
+        $Parent.TranslatedSoFar=[int]$Parent.TranslatedSoFar+$map.Count
+        return $map
+    }finally{
+        foreach($handle in @($handles.ToArray())){try{$handle.PowerShell.Dispose()}catch{}}
+        Set-YakuCatPipelineStageProgress -ProgressState $ProgressState -Stage $Stage -WorkerStates @()
+    }
+}
 function Invoke-YakuCatPipelineBatch {
     param($Root,[object[]]$Items,$Settings,[string]$Direction,[int]$MaxChars,$Warnings,$ProgressState,[hashtable]$Parent,[int]$Depth=0,[string]$Reason='normal')
     $sendItems=@(Get-YakuCatPromptSafePipelineItems -Items $Items -Warnings $Warnings -Context $Parent)
     if($sendItems.Count -eq 0){return @{}}
-    $context=@{Workflow='cat';AmountNotation=$Parent.AmountNotation;PromptContractVersion=(Get-YakuCatPromptContractVersion);BatchOrdinal=[int]$Parent.BatchOrdinal;TotalBatches=[int]$Parent.TotalBatches;MaxRetryDepth=0;CacheHits=0;TranslatedSoFar=[int]$Parent.TranslatedSoFar;UniqueTotal=[int]$Parent.UniqueTotal;CopilotCalls=[int]$Parent.CopilotCalls;CompletedMap=@{}}
-    $map=Invoke-YakuTranslationBatchItems -Root $Root -Items $sendItems -Settings $Settings -Direction $Direction -MaxChars $MaxChars -Warnings $Warnings -ProgressState $ProgressState -Context $context -Depth $Depth -Reason $Reason
-    foreach($name in @('BatchOrdinal','TotalBatches','TranslatedSoFar','UniqueTotal','CopilotCalls')){$Parent[$name]=$context[$name]}
+    $stage=Get-YakuCatPipelineStage $sendItems
+    Set-YakuCatPipelineStageProgress -ProgressState $ProgressState -Stage $stage -WorkerStates @()
+    $stageSw=[Diagnostics.Stopwatch]::StartNew();$map=$null
+    if($Parent.ContainsKey('WorkerPages') -and @($Parent.WorkerPages).Count -gt 1 -and $sendItems.Count -gt 1){
+        $map=Invoke-YakuCatParallelPipelineBatch -Root $Root -Items $sendItems -Settings $Settings -Direction $Direction -MaxChars $MaxChars -Warnings $Warnings -ProgressState $ProgressState -Parent $Parent -Depth $Depth -Reason $Reason -Stage $stage -Pages @($Parent.WorkerPages)
+    }
+    if($null -eq $map){
+        $context=@{Workflow='cat';AmountNotation=$Parent.AmountNotation;PromptContractVersion=(Get-YakuCatPromptContractVersion);BatchOrdinal=[int]$Parent.BatchOrdinal;TotalBatches=[int]$Parent.TotalBatches;MaxRetryDepth=0;CacheHits=0;TranslatedSoFar=[int]$Parent.TranslatedSoFar;UniqueTotal=[int]$Parent.UniqueTotal;CopilotCalls=[int]$Parent.CopilotCalls;CompletedMap=@{}}
+        $map=Invoke-YakuTranslationBatchItems -Root $Root -Items $sendItems -Settings $Settings -Direction $Direction -MaxChars $MaxChars -Warnings $Warnings -ProgressState $ProgressState -Context $context -Depth $Depth -Reason $Reason
+        foreach($name in @('BatchOrdinal','TotalBatches','TranslatedSoFar','UniqueTotal','CopilotCalls')){$Parent[$name]=$context[$name]}
+    }
+    $stageSw.Stop()
+    if(-not $Parent.ContainsKey('FitStageTimings')){$Parent.FitStageTimings=@{}}
+    if(-not $Parent.FitStageTimings.ContainsKey($stage)){$Parent.FitStageTimings[$stage]=[ordered]@{calls=0;elapsed_ms=0}}
+    $Parent.FitStageTimings[$stage].calls=[int]$Parent.FitStageTimings[$stage].calls+1
+    $Parent.FitStageTimings[$stage].elapsed_ms=[int64]$Parent.FitStageTimings[$stage].elapsed_ms+[int64]$stageSw.ElapsedMilliseconds
     return $map
 }
 function Get-YakuCatSelectedCompressionMeta {
@@ -408,7 +591,7 @@ function Write-YakuCatFitMetrics {
             $null=[IO.Directory]::CreateDirectory($directory)
             $Context.FitMetricsPath=Join-Path $directory ($jobId+'.json')
         }
-        $record=[ordered]@{format_version=1;job_id=[string]$Context.JobId;status=$Status;updated_at=(Get-Date).ToUniversalTime().ToString('o');baseline=$Context.FitBaseline;result=$(if($Context.ContainsKey('FitResult')){$Context.FitResult}else{$null});backcheck_retries=$(if($Context.ContainsKey('FitBackCheckRetries')){[int]$Context.FitBackCheckRetries}else{0});backcheck_skipped=$(if($Context.ContainsKey('FitBackCheckSkipped')){[int]$Context.FitBackCheckSkipped.Count}else{0});retry_unverified=$(if($Context.ContainsKey('FitRetryUnverified')){[int]$Context.FitRetryUnverified.Count}else{0})}
+        $record=[ordered]@{format_version=2;job_id=[string]$Context.JobId;status=$Status;updated_at=(Get-Date).ToUniversalTime().ToString('o');workers=$(if($Context.ContainsKey('WorkerPages')){@($Context.WorkerPages).Count}else{1});stage_timings=$(if($Context.ContainsKey('FitStageTimings')){$Context.FitStageTimings}else{@{}});baseline=$Context.FitBaseline;result=$(if($Context.ContainsKey('FitResult')){$Context.FitResult}else{$null});backcheck_retries=$(if($Context.ContainsKey('FitBackCheckRetries')){[int]$Context.FitBackCheckRetries}else{0});backcheck_skipped=$(if($Context.ContainsKey('FitBackCheckSkipped')){[int]$Context.FitBackCheckSkipped.Count}else{0});backcheck_failed=$(if($Context.ContainsKey('FitBackCheckStatus')){@($Context.FitBackCheckStatus.Values|Where-Object{$_ -eq 'failed'}).Count}else{0})}
         Write-YakuJsonAtomic -Path ([string]$Context.FitMetricsPath) -Value $record -Depth 8
     }catch{try{Write-YakuLog ('CAT fit metrics write failed. reason='+[string]$_.Exception.Message) 'WARN'}catch{}}
 }
@@ -425,7 +608,7 @@ function New-YakuCatPrompt {
     )
     $sourceList=New-YakuFileSourceList -Items $Items
     $stage=Get-YakuCatPipelineStage $Items
-    $templateName=if($Direction -eq 'to_jp' -and $stage -eq 'back_reconstruct'){'cat_fit_back_reconstruct.txt'}elseif($Direction -eq 'to_en' -and $stage -eq 'compress'){'cat_fit_compress_to_en.txt'}elseif($Direction -eq 'to_en' -and $stage -eq 'select'){'cat_fit_select_to_en.txt'}elseif($Direction -eq 'to_en' -and $stage -eq 'back_judge'){'cat_fit_back_judge_to_en.txt'}elseif($Direction -eq 'to_en'){'cat_translate_to_en.txt'}else{'cat_translate_to_jp.txt'}
+    $templateName=if($Direction -eq 'to_jp' -and $stage -eq 'back_reconstruct'){'cat_fit_back_reconstruct.txt'}elseif($Direction -eq 'to_en' -and $stage -in @('compress','retry')){'cat_fit_compress_to_en.txt'}elseif($Direction -eq 'to_en' -and $stage -eq 'abbreviate'){'cat_fit_abbreviate_to_en.txt'}elseif($Direction -eq 'to_en' -and $stage -eq 'select'){'cat_fit_select_to_en.txt'}elseif($Direction -eq 'to_en' -and $stage -eq 'back_judge'){'cat_fit_back_judge_to_en.txt'}elseif($Direction -eq 'to_en'){'cat_translate_to_en.txt'}else{'cat_translate_to_jp.txt'}
     $template = Get-YakuPromptTemplate -Root $Root -Name $templateName
     $vars = @{
         source_list = $sourceList
@@ -449,19 +632,19 @@ function Invoke-YakuCatFitCandidateGeneration {
     param($Root,[object[]]$Items,$Draft,$Settings,[int]$MaxChars,$Warnings,$ProgressState,[hashtable]$Context,[int]$CandidateCount)
     $lists=@{};$metadata=@{}
     foreach($item in @($Items)){$lists[[int]$item.Index]=New-Object System.Collections.Generic.List[string];$metadata[[int]$item.Index]=@{}}
-    for($round=0;$round -lt $CandidateCount;$round++){
-        $request=New-Object System.Collections.Generic.List[object]
-        foreach($item in @($Items)){
-            $copy=Copy-YakuCatPipelineItem $item
-            $copy|Add-Member -NotePropertyName PipelineStage -NotePropertyValue 'compress' -Force
-            $copy|Add-Member -NotePropertyName PipelineDraft -NotePropertyValue ([string]$Draft[[int]$item.Index]) -Force
-            $request.Add($copy)|Out-Null
-        }
-        $map=Invoke-YakuCatPipelineBatch $Root $request.ToArray() $Settings 'to_en' $MaxChars $Warnings $ProgressState $Context
-        foreach($item in @($Items)){
-            $id=[int]$item.Index
-            if(-not $map.ContainsKey($id)){continue}
-            $parsed=Split-YakuCatCompressionResult ([string]$map[$id])
+    $request=New-Object System.Collections.Generic.List[object]
+    foreach($item in @($Items)){
+        $copy=Copy-YakuCatPipelineItem $item
+        $copy|Add-Member -NotePropertyName PipelineStage -NotePropertyValue 'compress' -Force
+        $copy|Add-Member -NotePropertyName PipelineDraft -NotePropertyValue ([string]$Draft[[int]$item.Index]) -Force
+        $copy|Add-Member -NotePropertyName PipelineCandidateCount -NotePropertyValue $CandidateCount -Force
+        $request.Add($copy)|Out-Null
+    }
+    $map=Invoke-YakuCatPipelineBatch $Root $request.ToArray() $Settings 'to_en' $MaxChars $Warnings $ProgressState $Context
+    foreach($item in @($Items)){
+        $id=[int]$item.Index
+        if(-not $map.ContainsKey($id)){continue}
+        foreach($parsed in @(Split-YakuCatCompressionCandidates -Text ([string]$map[$id]) -Limit $CandidateCount)){
             if((Test-YakuCatCompressionCandidate $item $parsed.Translation) -and -not $lists[$id].Contains($parsed.Translation)){
                 $lists[$id].Add($parsed.Translation)|Out-Null
                 $metadata[$id][[string]$parsed.Translation]=$parsed
@@ -475,7 +658,7 @@ function Invoke-YakuCatFitSelection {
     $selectedMeta=@{};$request=New-Object System.Collections.Generic.List[object]
     foreach($item in @($Items)){
         $id=[int]$item.Index
-        if($Candidates.Lists[$id].Count -eq 0){continue}
+        if($Candidates.Lists[$id].Count -le 1){continue}
         $copy=Copy-YakuCatPipelineItem $item
         $copy|Add-Member -NotePropertyName PipelineStage -NotePropertyValue 'select' -Force
         $copy|Add-Member -NotePropertyName PipelineDraft -NotePropertyValue ([string]$Draft[$id]) -Force
@@ -487,7 +670,7 @@ function Invoke-YakuCatFitSelection {
         $id=[int]$item.Index
         if($Candidates.Lists[$id].Count -eq 0){continue}
         $chosen=[string]$Candidates.Lists[$id][0]
-        if($map.ContainsKey($id) -and $Candidates.Lists[$id].Contains([string]$map[$id])){$chosen=[string]$map[$id]}
+        if($Candidates.Lists[$id].Count -gt 1 -and $map.ContainsKey($id) -and $Candidates.Lists[$id].Contains([string]$map[$id])){$chosen=[string]$map[$id]}
         $Final[$id]=$chosen
         $selectedMeta[$id]=Get-YakuCatSelectedCompressionMeta -Metadata $Candidates.Metadata -Index $id -Translation $chosen
     }
@@ -521,19 +704,22 @@ function Invoke-YakuCatFitBackCheck {
     }
     $results=$(if($judge.Count){Invoke-YakuCatPipelineBatch $Root $judge.ToArray() $Settings 'to_en' $MaxChars $Warnings $ProgressState $Context}else{@{}})
     $retry=@{}
-    foreach($id in @($results.Keys)){if(Test-YakuCatBackJudgeRequiresRetry ([string]$results[$id])){$retry[[int]$id]=$true}}
+    if(-not $Context.ContainsKey('FitBackCheckStatus')){$Context.FitBackCheckStatus=@{}}
+    foreach($id in @($results.Keys)){if(Test-YakuCatBackJudgeRequiresRetry ([string]$results[$id])){$retry[[int]$id]=$true;$Context.FitBackCheckStatus[[int]$id]='retry'}else{$Context.FitBackCheckStatus[[int]$id]='passed'}}
     return $retry
 }
 function Invoke-YakuCatFitRetry {
     param($Root,[object[]]$Items,$Draft,[hashtable]$Retry,$Settings,[int]$MaxChars,$Warnings,$ProgressState,[hashtable]$Context,[hashtable]$Final,[hashtable]$SelectedMeta)
-    if($Retry.Count -eq 0){return}
+    $updated=@{}
+    if($Retry.Count -eq 0){return $updated}
     $request=New-Object System.Collections.Generic.List[object]
     foreach($item in @($Items)){
         $id=[int]$item.Index
         if(-not $Retry.ContainsKey($id)){continue}
         $copy=Copy-YakuCatPipelineItem $item
-        $copy|Add-Member -NotePropertyName PipelineStage -NotePropertyValue 'compress' -Force
+        $copy|Add-Member -NotePropertyName PipelineStage -NotePropertyValue 'retry' -Force
         $copy|Add-Member -NotePropertyName PipelineDraft -NotePropertyValue ([string]$Draft[$id]) -Force
+        $copy|Add-Member -NotePropertyName PipelineCandidateCount -NotePropertyValue 1 -Force
         $request.Add($copy)|Out-Null
     }
     $map=Invoke-YakuCatPipelineBatch $Root $request.ToArray() $Settings 'to_en' $MaxChars $Warnings $ProgressState $Context
@@ -542,11 +728,29 @@ function Invoke-YakuCatFitRetry {
         if(-not $map.ContainsKey($id)){continue}
         $parsed=Split-YakuCatCompressionResult ([string]$map[$id])
         if(-not (Test-YakuCatCompressionCandidate $item $parsed.Translation)){continue}
-        $Final[$id]=$parsed.Translation;$SelectedMeta[$id]=$parsed
-        if(-not $Context.ContainsKey('FitRetryUnverified')){$Context.FitRetryUnverified=@{}}
-        $Context.FitRetryUnverified[$id]=$true
-        Add-YakuWarning -Warnings $Warnings -Category 'fit-backcheck-unverified' -Location ('ID '+$id) -Message '逆照合で作り直した訳です。再走後の逆照合は行っていないため、意味と限定をご確認ください。'
+        $Final[$id]=$parsed.Translation;$SelectedMeta[$id]=$parsed;$updated[$id]=$true
     }
+    return $updated
+}
+function Invoke-YakuCatFitAbbreviation {
+    param($Root,[object[]]$Items,[hashtable]$Final,$Settings,[int]$MaxChars,$Warnings,$ProgressState,[hashtable]$Context,[hashtable]$SelectedMeta)
+    $request=New-Object System.Collections.Generic.List[object]
+    foreach($item in @($Items)){
+        $id=[int]$item.Index
+        $copy=Copy-YakuCatPipelineItem $item
+        $copy|Add-Member -NotePropertyName PipelineStage -NotePropertyValue 'abbreviate' -Force
+        $copy|Add-Member -NotePropertyName PipelineDraft -NotePropertyValue ([string]$Final[$id]) -Force
+        $request.Add($copy)|Out-Null
+    }
+    $map=$(if($request.Count){Invoke-YakuCatPipelineBatch $Root $request.ToArray() $Settings 'to_en' $MaxChars $Warnings $ProgressState $Context}else{@{}})
+    $updated=@{}
+    foreach($item in @($Items)){
+        $id=[int]$item.Index;if(-not $map.ContainsKey($id)){continue}
+        $parsed=Split-YakuCatCompressionResult ([string]$map[$id])
+        if(-not (Test-YakuCatAcronymCandidate -Item $item -Translation $parsed.Translation)){continue}
+        $Final[$id]=$parsed.Translation;$SelectedMeta[$id]=$parsed;$updated[$id]=$true
+    }
+    return $updated
 }
 function Invoke-YakuCatTranslationItems {
     param([string]$Root,[object[]]$Items,$Settings,[ValidateSet('to_en','to_jp')][string]$Direction,[int]$MaxChars,$Warnings,$ProgressState,[hashtable]$Context,[int]$Depth=0,[string]$Reason='normal',[ValidateSet('oku','billion')][string]$Notation='oku')
@@ -555,6 +759,13 @@ function Invoke-YakuCatTranslationItems {
     $Context.Workflow='cat';$Context.AmountNotation=$Notation;$Context.PromptContractVersion=Get-YakuCatPromptContractVersion
     if($Direction -ne 'to_en' -or @($Items|Where-Object{$null -ne $_.MaxChars}).Count -eq 0){
         return Invoke-YakuTranslationBatchItems -Root $Root -Items $Items -Settings $Settings -Direction $Direction -MaxChars $MaxChars -Warnings $Warnings -ProgressState $ProgressState -Context $Context -Depth $Depth -Reason $Reason
+    }
+    $workerPages=$null
+    try{
+    $workerCount=[Math]::Min((Get-YakuCatCopilotMaxWorkers -Settings $Settings),$Items.Count)
+    if($workerCount -gt 1){
+        $workerPages=@(New-YakuCopilotWorkerPages -Settings $Settings -Count $workerCount)
+        $Context.WorkerPages=$workerPages
     }
     $candidateCount=Get-YakuCatFitCandidateCount -Settings $Settings
     Initialize-YakuCatFitProgress -Items $Items -CandidateCount $candidateCount -MaxChars $MaxChars -Context $Context
@@ -565,15 +776,49 @@ function Invoke-YakuCatTranslationItems {
     Write-YakuCatFitMetrics -Root $Root -Context $Context -Status 'baseline'
     $final=@{};foreach($id in @($draft.Keys)){$final[[int]$id]=[string]$draft[$id]}
     $overflowItems=@($Items|Where-Object{$null -ne $_.MaxChars -and $draft.ContainsKey([int]$_.Index) -and ([string]$draft[[int]$_.Index]).Length -gt [int]$_.MaxChars})
-    $fitOverflows=@{};$retry=@{};$selectedMeta=@{}
+    $fitOverflows=@{};$retry=@{};$selectedMeta=@{};$fitPipeline=@{}
     if($overflowItems.Count){
         $candidates=Invoke-YakuCatFitCandidateGeneration $Root $overflowItems $draft $Settings $MaxChars $Warnings $ProgressState $Context $candidateCount
         $selectedMeta=Invoke-YakuCatFitSelection $Root $overflowItems $draft $candidates $Settings $MaxChars $Warnings $ProgressState $Context $final
         $retry=Invoke-YakuCatFitBackCheck $Root $overflowItems $final $Settings $MaxChars $Warnings $ProgressState $Context
         $Context.FitBackCheckRetries=$retry.Count
-        Invoke-YakuCatFitRetry $Root $overflowItems $draft $retry $Settings $MaxChars $Warnings $ProgressState $Context $final $selectedMeta
+        $retried=Invoke-YakuCatFitRetry -Root $Root -Items $overflowItems -Draft $draft -Retry $retry -Settings $Settings -MaxChars $MaxChars -Warnings $Warnings -ProgressState $ProgressState -Context $Context -Final $final -SelectedMeta $selectedMeta
+        if($retried.Count){
+            $retryItems=@($overflowItems|Where-Object{$retried.ContainsKey([int]$_.Index)})
+            $retryFailed=Invoke-YakuCatFitBackCheck $Root $retryItems $final $Settings $MaxChars $Warnings $ProgressState $Context
+            foreach($id in @($retried.Keys)){
+                if($retryFailed.ContainsKey([int]$id)){
+                    Add-YakuWarning -Warnings $Warnings -Category 'fit-backcheck-failed' -Location ('ID '+$id) -Message '作り直した訳を再び逆照合しましたが、意味差が残りました。候補訳を原文と見比べてください。'
+                    $Context.FitBackCheckStatus[[int]$id]='failed'
+                }else{$Context.FitBackCheckStatus[[int]$id]='retry-passed'}
+            }
+        }
+        $abbreviationItems=@($overflowItems|Where-Object{$final.ContainsKey([int]$_.Index) -and ([string]$final[[int]$_.Index]).Length -gt [int]$_.MaxChars})
+        $abbreviated=@{}
+        if($abbreviationItems.Count){
+            $beforeAbbreviation=@{};foreach($item in $abbreviationItems){$beforeAbbreviation[[int]$item.Index]=[string]$final[[int]$item.Index]}
+            $abbreviated=Invoke-YakuCatFitAbbreviation $Root $abbreviationItems $final $Settings $MaxChars $Warnings $ProgressState $Context $selectedMeta
+            if($abbreviated.Count){
+                $abbreviationCheckItems=@($abbreviationItems|Where-Object{$abbreviated.ContainsKey([int]$_.Index)})
+                $abbreviationFailed=Invoke-YakuCatFitBackCheck $Root $abbreviationCheckItems $final $Settings $MaxChars $Warnings $ProgressState $Context
+                foreach($id in @($abbreviated.Keys)){
+                    if($abbreviationFailed.ContainsKey([int]$id)){
+                        $final[[int]$id]=[string]$beforeAbbreviation[[int]$id]
+                        $abbreviated.Remove([int]$id)
+                        Add-YakuWarning -Warnings $Warnings -Category 'fit-abbreviation-rejected' -Location ('ID '+$id) -Message '略語候補は逆照合で意味差が見つかったため採用しませんでした。'
+                    }else{$Context.FitBackCheckStatus[[int]$id]='abbreviation-passed'}
+                }
+            }
+        }
         foreach($item in @($overflowItems)){
             $id=[int]$item.Index
+            $fitPipeline[$id]=[ordered]@{
+                candidate_count=[int]$candidates.Lists[$id].Count
+                selected=$(if($selectedMeta.ContainsKey($id)){[string]$final[$id]}else{''})
+                retried=[bool]$retried.ContainsKey($id)
+                backcheck=[string]$(if($Context.ContainsKey('FitBackCheckStatus') -and $Context.FitBackCheckStatus.ContainsKey($id)){$Context.FitBackCheckStatus[$id]}else{'not-run'})
+                abbreviation_used=[bool]$abbreviated.ContainsKey($id)
+            }
             if($final.ContainsKey($id) -and ([string]$final[$id]).Length -le [int]$item.MaxChars){continue}
             $need=$(if($final.ContainsKey($id)){([string]$final[$id]).Length}else{([string]$draft[$id]).Length})
             $meta=$(if($selectedMeta.ContainsKey($id)){$selectedMeta[$id]}else{$null})
@@ -583,10 +828,15 @@ function Invoke-YakuCatTranslationItems {
             Add-YakuWarning -Warnings $Warnings -Category 'fit-overflow' -Location ('ID '+$id) -Details @{MaxChars=[int]$item.MaxChars;NeedChars=$need;Dropped=$dropped} -Message ('意味を保ったまま幅へ収められませんでした。目標 '+[int]$item.MaxChars+' 字、必要 '+$need+' 字です。')
         }
     }
-    $Context.FitOverflows=$fitOverflows;$Context.FitResult=Measure-YakuCatFitBaseline $Items $final
+    $Context.FitOverflows=$fitOverflows;$Context.FitPipeline=$fitPipeline;$Context.FitResult=Measure-YakuCatFitBaseline $Items $final
     Write-YakuCatFitMetrics -Root $Root -Context $Context -Status 'completed'
     if($Context.ContainsKey('CompletedMap')){foreach($id in @($final.Keys)){$Context.CompletedMap[[int]$id]=$final[$id]}}
     if($Context.OnBatchCompleted){& $Context.OnBatchCompleted $Items $final}
     # Machine drafts stay project-local. CatProject registers TM only after review and current QC.
     return $final
+    }finally{
+        if($workerPages){try{$null=Close-YakuCopilotWorkerPages -Settings $Settings -Pages $workerPages}catch{try{Write-YakuLog ('CAT worker cleanup failed. reason='+[string]$_.Exception.Message) 'WARN'}catch{}}}
+        try{$Context.Remove('WorkerPages')}catch{}
+        Set-YakuCatPipelineStageProgress -ProgressState $ProgressState -Stage '' -WorkerStates @()
+    }
 }

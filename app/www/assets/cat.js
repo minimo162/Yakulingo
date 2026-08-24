@@ -582,6 +582,7 @@
       , 'label-not-in-glossary': '用語集に無い短いラベルです。訳が長いと列からはみ出すことがあります。この訳でよければ「そのほかの操作」の「このセルの訳を今後も自動で使う」で登録しておくと、次からも同じ訳になります。書き出しは止まりません。'
       , 'paired-delimiter-mismatch': '対応する開き括弧・閉じ括弧の組み合わせが合っていません。訳文の記号を見比べてください。書き出しは止まりません。'
       , 'fit-overflow': '意味を保ったまま指定幅へ収められませんでした。書き出しは止まりません。あふれを許容するか、意訳してよいか判断してください。'
+      , 'acronym-inconsistency': '同じ原語に別の略し方が使われています。資料内で表記をそろえてください。書き出しは止まりません。'
     };
     return qcFindingViews(segment).map(function (view) { if (view.code === 'fit-overflow' && segment.fit_overflow) { return '意味を保ったまま指定幅へ収められませんでした。目標 ' + Number(segment.fit_overflow.max_chars || 0) + ' 字、必要 ' + Number(segment.fit_overflow.need_chars || 0) + ' 字です。あふれを許容するか、意訳してよいか判断してください。書き出しは止まりません。'; } return labels[view.code] || '自動点検で気になる点が見つかりました。左の原文と見比べてください。'; });
   }
@@ -657,7 +658,7 @@
      error と同じ赤で出すと
      「押せるのに押せない」と読め、tool と同じにすると自分で対処できることが
      伝わらない。色は表示だけの話で、止める条件はサーバの Severity が決める。 */
-  var QC_WARNING_CODES = ['numeric-value-mismatch', 'numeric-value-extra', 'numeric-value-order-mismatch', 'numeric-sign-missing', 'numeric-scale-mismatch', 'currency-mismatch', 'accounting-polarity-mismatch', 'label-not-in-glossary', 'paired-delimiter-mismatch', 'fit-overflow'];
+  var QC_WARNING_CODES = ['numeric-value-mismatch', 'numeric-value-extra', 'numeric-value-order-mismatch', 'numeric-sign-missing', 'numeric-scale-mismatch', 'currency-mismatch', 'accounting-polarity-mismatch', 'label-not-in-glossary', 'paired-delimiter-mismatch', 'fit-overflow', 'acronym-inconsistency'];
   var QC_PREVIEW_BLOCKING_CODES = ['structure-validation-error', 'terminology-check-unavailable', 'validation-unavailable'];
   function qcGroup(code) {
     if (QC_TOOL_TROUBLE_CODES.indexOf(code) >= 0) return 'tool';
@@ -1028,7 +1029,7 @@
        fallbackへ戻す。後から切り替えると、ボタンだけ「残り」なのに一覧が
        0件のまま次の操作まで残る。 */
     var optionalFilterCounts = {};
-    ['qc','repetition','review_notes','fit'].forEach(function (name) { optionalFilterCounts[name] = all.filter(stateFilters[name]).length; });
+    ['qc','repetition','review_notes'].forEach(function (name) { optionalFilterCounts[name] = all.filter(stateFilters[name]).length; });
     syncOptionalStateFilters(optionalFilterCounts);
     /* 行を作り直すと、一覧が指していた訳文欄は消える。浮いたままにしない。 */
     closePlaceablePicker();
@@ -1118,6 +1119,16 @@
       /* 行の高さを操作の置き場にしない。行固有の操作は上部の選択行リボンへ
          移し、点検結果・修正比較は下部ドックで表示する。 */
       var extras = findings.length ? '<div class="premium-inline-findings" role="status" aria-label="このセルの指摘">' + findings.map(function (message) { return '<span>' + esc(message) + '</span>'; }).join('') + '</div>' : '';
+      var fitPipeline = segment.fit_pipeline || null;
+      if (fitPipeline) {
+        var fitParts = [];
+        if (Number(fitPipeline.candidate_count || 0) > 0) fitParts.push('圧縮案' + Number(fitPipeline.candidate_count) + 'つ' + (Number(fitPipeline.candidate_count) > 1 ? 'から選抜' : 'を採用'));
+        if (fitPipeline.retried) fitParts.push('意味差を修正して再照合');
+        if (fitPipeline.abbreviation_used) fitParts.push('略語で再調整');
+        if (String(fitPipeline.backcheck || '') === 'passed' || /-passed$/.test(String(fitPipeline.backcheck || ''))) fitParts.push('逆照合を通過');
+        else if (String(fitPipeline.backcheck || '') === 'failed') fitParts.push('逆照合で意味差あり');
+        if (fitParts.length) extras += '<div class="cat-fit-summary" role="status">' + esc(fitParts.join('・')) + '</div>';
+      }
       var change = changeLabel(segment), reviewNoteCount = unresolvedReviewNotes(segment).length;
       return '<tr class="' + (isActive ? 'is-active' : '') + '" data-cat-row="' + index + '" data-cat-segment-id="' + esc(segment.segment_id || '') + '" data-cat-confirmed="' + (segment.confirmed ? '1' : '0') + '" data-yaku-cat-state="' + esc(state) + '" data-cat-effective-value="' + esc(effectiveTranslation) + '" data-cat-canonical-translation="' + esc(segment.translation || '') + '" data-cat-blocking="' + (blockingReason ? '1' : '0') + '" data-cat-recommended="' + (recommendedReason ? '1' : '0') + '" data-cat-qc-warning="' + (warningFinding ? '1' : '0') + '" data-cat-save-failed="' + (unsavedChange ? '1' : '0') + '">' +
         '<td class="cat-col-no"><span class="cat-card-label">行番号・状態</span>' + row + '<span class="cat-state cat-state-' + esc(state) + '" title="' + esc(stateTitle(state)) + '">' + stateIcon(state) + '<span>' + esc(stateLabel(state)) + '</span></span>' + ((change && isActive) ? '<span class="cat-change-badge cat-change-' + esc(changeGroup(segment)) + '" title="' + esc(changeTitle(segment)) + '">' + esc(change) + '</span>' : '') + (reviewNoteCount ? '<span class="cat-review-note-badge" title="未解決の作業メモ ' + reviewNoteCount + '件">メモ ' + reviewNoteCount + '</span>' : '') + '</td>' +
@@ -1415,9 +1426,18 @@
     var partialLine = partialExpectedTotal > 0
       ? ('<br><span class="job-partial-progress">訳了 ' + (Number(data.partial_total) || 0) + '/' + partialExpectedTotal + ' 行(先出し)</span>')
       : '';
+    var stageLabels = { draft: '下訳', compress: '幅へ圧縮', select: '候補を選抜', back_reconstruct: '意味を逆照合', back_judge: '意味差を判定', retry: '意味差を修正', abbreviate: '略語で再調整' };
+    var workerStateLabels = { waiting: '待機', done: '完了', requeued: '再試行待ち', error: '停止' };
+    var stage = String(data.stage || '');
+    var workers = Array.isArray(data.worker_progress) ? data.worker_progress : [];
+    var workerLine = workers.length ? ('<div class="job-workers" aria-label="Copilot workerの進行">' + workers.map(function (worker) {
+      var state = String(worker.state || 'waiting'), ids = Array.isArray(worker.items) ? worker.items : [];
+      return '<span class="job-worker job-worker-' + esc(state) + '"><strong>W' + (Number(worker.worker) + 1) + '</strong> ' + esc(state === 'running' ? (ids.length ? ('行 ' + ids.join(', ')) : '処理中') : (workerStateLabels[state] || state)) + '</span>';
+    }).join('') + '</div>') : '';
     return '<div class="job-loading"><div class="job-loading-inner">' +
-      '<div class="job-topline"><div class="job-phase">' + esc(data.label || data.phase || '翻訳しています') + '</div><div class="job-percent">' + percent + '%</div></div>' +
+      '<div class="job-topline"><div class="job-phase">' + esc(stage ? (stageLabels[stage] || stage) : (data.label || data.phase || '翻訳しています')) + '</div><div class="job-percent">' + percent + '%</div></div>' +
       '<div class="job-progress-line" role="progressbar" aria-label="翻訳の進み具合" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + percent + '"><span class="job-progress-bar" style="width:' + percent + '%"></span></div>' +
+      workerLine +
       '<div class="job-bottomline"><div class="job-meta">' + (detail ? esc(detail) : 'Copilotの返事を待っています。') +
       '<br><span class="job-elapsed">' + esc(elapsedLabel(startedAt)) + '</span>' + partialLine + '</div>' +
       '<button type="button" class="secondary-button job-cancel" data-yaku-cancel-job="' + esc(id) + '">翻訳をやめる</button></div>' +
@@ -2584,6 +2604,12 @@
       resizeTimer = window.setTimeout(applyDocsPaneDefault, 150);
     });
   }
+  /* The compact workspace still updates this title dynamically.  These
+     constants were accidentally dropped when the duplicated legacy workspace
+     was removed, leaving the entire CAT bootstrap to fail before rendering. */
+  var QA_BUTTON_TITLE_DEFAULT = '数字・単位・用語などの自動点検の結果です。押すと一覧を表示します（F8）';
+  var QA_BUTTON_TITLE_EMPTY = '訳文が空の行の数です。押すと一覧を表示します（F8）';
+  var QA_BUTTON_TITLE_BLOCKING = '書き出しを止める指摘のある行の数です。押すと一覧を表示します（F8）';
   function updateQaButton() {
     var button = el('cat-qa-open');
     if (!button) return;
