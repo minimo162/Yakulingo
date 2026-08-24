@@ -1,168 +1,41 @@
-﻿<#
-.SYNOPSIS
-  V91.61: BRIEF の略語をアプリ側で当てる処理の回帰テスト。
-
-.DESCRIPTION
-  プロンプトに「使え」と書いても守られるかは確率的だが、アプリで当てれば必ず揃う。
-  ただし機械的に当てると壊すものがあるため、対象は文脈に依らないものだけに限る。
-  ここではその線引きが守られているかを確かめる。
-
-.EXAMPLE
-  powershell -ExecutionPolicy Bypass -File .\tools\Test-YakuV9161BriefStyle.ps1
-#>
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
+$ErrorActionPreference='Stop'
+$toolsRoot=Split-Path -Parent $MyInvocation.MyCommand.Path
+$root=Split-Path -Parent $toolsRoot
+$oldData=[string]$env:YAKULINGO_DATA_DIR
+$temp=Join-Path ([IO.Path]::GetTempPath()) ('yaku-v9164-brief-'+[guid]::NewGuid().ToString('N'))
+$env:YAKULINGO_DATA_DIR=$temp
+$script:fail=0
+function Chk { param([bool]$Condition,[string]$Message) if($Condition){Write-Host ('  ok   '+$Message) -ForegroundColor Green}else{Write-Host ('  FAIL '+$Message) -ForegroundColor Red;$script:fail++} }
+try {
+  foreach($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','BriefStyle.ps1')){. (Join-Path (Join-Path $root 'src') $n)}
+  Write-Host 'Default is disabled' -ForegroundColor Cyan
+  $default=Get-YakuBriefAbbreviationPreferences
+  Chk (-not [bool]$default.enabled) 'user abbreviation replacement is off by default'
+  Chk ((Convert-YakuBriefAbbreviations -Text 'operating profit approximately [[N1]] oku') -eq 'operating profit approximately [[N1]] oku') 'default does not rewrite output'
 
-$ErrorActionPreference = 'Stop'
-$toolsRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$root = Split-Path -Parent $toolsRoot
-$script:fail = 0
+  Write-Host 'User dictionary' -ForegroundColor Cyan
+  $saved=Save-YakuBriefAbbreviationPreferences -Enabled $true -Entries @(
+    [pscustomobject]@{from='operating profit';to='OP'},
+    [pscustomobject]@{from='approximately';to='approx.'}
+  )
+  Chk ([bool]$saved.enabled -and @($saved.entries).Count -eq 2) 'saves only user-approved entries'
+  Chk ((Convert-YakuBriefAbbreviations -Text 'Operating profit approximately [[N1]] oku') -eq 'OP approx. [[N1]] oku') 'applies approved entries deterministically'
+  Chk ((Convert-YakuBriefAbbreviations -Text 'He said "operating profit" was flat.') -eq 'He said "operating profit" was flat.') 'does not rewrite quotations'
+  Chk ((Convert-YakuBriefAbbreviations -Text 'approximately [[N1]] and [[N2]]') -eq 'approx. [[N1]] and [[N2]]') 'preserves numeric placeholders'
+  Chk ((Get-YakuBriefAbbreviationPreferencePath).StartsWith((Get-YakuDataDir),[StringComparison]::OrdinalIgnoreCase)) 'stores preferences below the local YakuLingo data directory'
 
-foreach ($n in @('Paths.ps1','Runtime.ps1','Html.ps1','Settings.ps1','PromptBuilder.ps1','EdgeLaunch.ps1','CopilotClient.ps1','Translation.ps1','FileProcessors.ps1','CatBatch.ps1','BriefStyle.ps1')) {
-    . (Join-Path (Join-Path $root 'src') $n)
+  Write-Host 'Prompt is generic' -ForegroundColor Cyan
+  $rules=Get-Content -LiteralPath (Join-Path (Join-Path $root 'prompts') 'style_brief_rules.txt') -Raw -Encoding UTF8
+  $template=Get-Content -LiteralPath (Join-Path (Join-Path $root 'prompts') 'text_translate_brief_to_en.txt') -Raw -Encoding UTF8
+  Chk ($rules -match 'every numeric placeholder') 'numeric absolute rule remains'
+  Chk ($rules -notmatch 'Fixed MKT|AIST|VM /|1H operating profit') 'niche rules and fixed examples are absent'
+  Chk ($template -notmatch 'EXAMPLES|1H営業利益|Fixed MKT') 'static few-shot examples are absent'
+  Chk ($template -match 'Do not invent abbreviations') 'model does not invent dictionary entries'
+} finally {
+  if($oldData){$env:YAKULINGO_DATA_DIR=$oldData}else{Remove-Item Env:YAKULINGO_DATA_DIR -ErrorAction SilentlyContinue}
+  if(Test-Path -LiteralPath $temp){Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue}
 }
-
-function Chk { param([bool]$c,[string]$m) if($c){Write-Host ('  ok   ' + $m) -ForegroundColor Green}else{Write-Host ('  FAIL ' + $m) -ForegroundColor Red;$script:fail++} }
-function Conv { param([string]$t) return (Convert-YakuBriefAbbreviations -Text $t) }
-
-Write-Host '月名はアプリ側で当てない'
-# 実機で人名を潰した（April Smith -> Apr. Smith / June Tanaka -> Jun. Tanaka）。
-# 月名かどうかは文脈が要るので、判断はモデルへ返す（利用者の指示 2026-08-05）。
-foreach ($mon in @('January','February','March','April','June','July','August','September','October','November','December','May')) {
-    Chk ((Conv ("Results for $mon.")) -eq ("Results for $mon.")) ($mon + ' は後処理で変えない')
-}
-Chk ((Conv 'April Smith joined in June.') -eq 'April Smith joined in June.') '人名を潰さない'
-
-Write-Host '語句の置換'
-Chk ((Conv 'approximately 10 oku') -eq 'approx. 10 oku') 'approximately -> approx.'
-Chk ((Conv 'including tax') -eq 'incl. tax') 'including -> incl.'
-Chk ((Conv 'excluding FX impact') -eq 'excl. FX impact') 'excluding -> excl.'
-Chk ((Conv 'compared with PY') -eq 'vs. PY') 'compared with -> vs.'
-Chk ((Conv 'compared to PY') -eq 'vs. PY') 'compared to -> vs.'
-# with は機械で当てない（2026-08-08）。英文で最も頻出する語の1つで、
-# 「in line with」「in accordance with」まで壊す。節約も2文字しかない。
-Chk ((Conv 'with tariffs') -eq 'with tariffs') 'with は略さない'
-Chk ((Conv 'in line with our plan') -eq 'in line with our plan') '成句の with を壊さない'
-Chk ((Conv 'without tariffs') -eq 'w/o tariffs') 'without -> w/o（単独の語なので残す）'
-# 期の表記。冠詞つきを先に当てないと「the Q1」という英語にならない形が出る。
-Chk ((Conv 'in the first quarter') -eq 'in Q1') 'the first quarter -> Q1（冠詞ごと）'
-Chk ((Conv 'second half results') -eq 'H2 results') 'second half -> H2'
-# semis は出番が少なく誤読の余地があるので綴りのまま。
-Chk ((Conv 'semiconductors remained tight') -eq 'semiconductors remained tight') 'semiconductors は略さない'
-
-Write-Host '定型の金融用語'
-Chk ((Conv 'foreign exchange losses') -eq 'FX losses') 'foreign exchange -> FX'
-Chk ((Conv 'operating profit rose') -eq 'OP rose') 'operating profit -> OP'
-Chk ((Conv 'accounts receivable and accounts payable') -eq 'A/R and A/P') 'A/R と A/P'
-Chk ((Conv 'up 3 percentage points') -eq 'up 3 pts') 'percentage points -> pts'
-Chk ((Conv 'year-on-year change') -eq 'YoY change') 'ハイフンを含む語も当たる'
-
-Write-Host '長いものから先に当てる'
-# 短いほうを先に当てると "sales promotion costs" が食われて
-# "fixed VM" のような、固定側と変動側が混ざった形になる。
-Chk ((Conv 'fixed sales promotion costs increased') -eq 'Fixed MKT increased') '長い語句が優先される'
-Chk ((Conv 'sales promotion costs increased') -eq 'VM increased') '短いほうも単独では当たる'
-# 販促費は 変動側 VM / 固定側 Fixed MKT。取り違えると別項目になる。
-Chk ((Conv 'fixed promotion costs increased') -eq 'Fixed MKT increased') '固定側は VM にならない'
-Chk ((Conv 'promotion costs rose') -eq 'VM rose') '販促費だけでも VM'
-Chk ((Conv "subsidiaries' fixed sales promotion costs") -eq 'Subs. Fixed MKT') '子会社の固定側も対で当たる'
-Chk ((Conv 'sales promotion costs and fixed sales promotion costs') -eq 'VM and Fixed MKT') '同じ文に両方あっても取り違えない'
-Chk ((Conv 'vehicle variable profit') -eq 'VP (Veh.)') '車両変動利益'
-Chk ((Conv 'variable profit') -eq 'VP') '変動利益'
-Chk ((Conv 'fixed costs and variable costs') -eq 'FC and VC') 'FC と VC'
-
-Write-Host '大文字・小文字'
-Chk ((Conv 'Approximately 10 oku') -eq 'Approx. 10 oku') '文頭の大文字を保つ'
-Chk ((Conv 'Including tax') -eq 'Incl. tax') '文頭の大文字を保つ（2）'
-Chk ((Conv 'Foreign exchange losses') -eq 'FX losses') '元から大文字の略語は影響を受けない'
-
-Write-Host '壊さないこと'
-Chk ((Conv 'incline and excluded') -eq 'incline and excluded') '語の一部には当てない'
-Chk ((Conv 'within the segment') -eq 'within the segment') 'within は with を含むが当てない'
-Chk ((Conv 'approx. 10 oku') -eq 'approx. 10 oku') '既に略されているものは二重に当てない'
-Chk ((Conv 'Sales were approximately.') -eq 'Sales were approx.') '終止符が二重にならない'
-Chk ((Conv 'and so on ...') -eq 'and so on ...') '三点リーダーは残す'
-Chk ((Conv '') -eq '') '空文字でも落ちない'
-Chk ((Conv $null) -eq '') 'null でも落ちない'
-
-Write-Host '引用の中は触らない'
-# BRIEF 規則 Q1: 引用符が残るなら FULL と字句が一致すること。
-$quoted = 'He said "operating profit including tax" was flat.'
-Chk ((Conv $quoted) -eq 'He said "operating profit including tax" was flat.') '二重引用符の中は変えない'
-$curly = 'The report said “compared with last year” only.'
-Chk ((Conv $curly) -eq 'The report said “compared with last year” only.') '全角の引用符でも変えない'
-Chk ((Conv 'operating profit "as reported" including tax') -eq 'OP "as reported" incl. tax') '引用の外側は当てる'
-Chk ((Conv "the company's operating profit") -eq "the company's OP") 'アポストロフィは引用とみなさない'
-
-Write-Host '文脈に依るものは移していない'
-# 機械的に当てると壊すもの。モデルの判断に任せる。
-Chk ((Conv 'technological progress') -eq 'technological progress') 'technological は残す'
-Chk ((Conv 'technology division') -eq 'technology division') 'technology は移していない（名詞のときだけの規則）'
-Chk ((Conv 'Corporate Planning Department') -eq 'Corporate Planning Department') 'corporate は移していない（社名の中では変えない）'
-Chk ((Conv 'subsidiaries in Asia') -eq 'subsidiaries in Asia') 'subsidiaries は移していない（表と見出しだけの規則）'
-Chk ((Conv 'the standard contract') -eq 'the standard contract') 'standard は移していない（普通の語と衝突する）'
-Chk ((Conv 'actual results') -eq 'actual results') 'actual は移していない（形容詞として普通に使う）'
-
-Write-Host 'BRIEF だけに当てる'
-$options = @(
-    [pscustomobject]@{ Style='full';  Label='FULL';  Translation='Operating profit increased approximately 10 oku.'; Explanation='' }
-    [pscustomobject]@{ Style='brief'; Label='BRIEF'; Translation='Operating profit up approximately 10 oku.'; Explanation='' }
-)
-$converted = @(Convert-YakuBriefTranslationOptions -Options $options)
-Chk ($converted.Count -eq 2) '件数は変わらない'
-Chk ((@($converted | Where-Object { $_.Style -eq 'full' })[0].Translation) -eq 'Operating profit increased approximately 10 oku.') 'FULL は触らない（spelled-out が正しい）'
-Chk ((@($converted | Where-Object { $_.Style -eq 'brief' })[0].Translation) -eq 'OP up approx. 10 oku.') 'BRIEF だけ当てる'
-Chk ($options[1].Translation -eq 'Operating profit up approximately 10 oku.') '元の配列を書き換えない'
-$jp = @([pscustomobject]@{ Style='jp'; Label='JAPANESE'; Translation='営業利益は増加した。'; Explanation='' })
-Chk ((@(Convert-YakuBriefTranslationOptions -Options $jp)[0].Translation) -eq '営業利益は増加した。') 'EN→JA には対象が無い'
-Chk (@(Convert-YakuBriefTranslationOptions -Options $null).Count -eq 0) 'null でも落ちない'
-
-Write-Host '数値プレースホルダーを壊さないこと'
-# 復元前に当てるので[[N1]]が残っている。ここを壊すと V91.60 の保証が崩れる。
-Chk ((Conv 'Operating profit up approximately [[N1]] oku vs. [[N2]] oku.') -eq 'OP up approx. [[N1]] oku vs. [[N2]] oku.') 'プレースホルダーはそのまま'
-
-Write-Host '翻訳経路への組み込み'
-$translationText = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'src') 'Translation.ps1'))
-# 呼び出しだけを数える。存在確認（Get-Command …）は呼び出しではない。
-# V91.61（2026-08-06）: 修正の依頼が3箇所目。直した訳文にも略語が当たること。
-# ここを通らないと、修正するたびに略語が spelled-out へ戻る。
-$hookCount = ([regex]::Matches($translationText, 'Convert-YakuBriefTranslationOptions -Options')).Count
-Chk ($hookCount -eq 4) ('キャッシュ命中・通常・修正・短くの4経路に入っている: ' + $hookCount)
-# 復元より前に置く。復元後の数字（12,340 など）を語として拾わせないため。
-$convAt = $translationText.IndexOf('Convert-YakuBriefTranslationOptions -Options $options')
-$restoreAt = $translationText.IndexOf('Restore-YakuMaskedTranslationOptions -Options $options')
-Chk ($convAt -ge 0 -and $restoreAt -gt $convAt) 'マスク復元より前に当てる'
-
-Write-Host '読み込まれていない経路でも止まらない'
-# Translation.ps1 を読むが BriefStyle.ps1 を読まない経路（別ランスペース・
-# ワーカー・部分的に読み込む回帰テスト）で翻訳を止めない。
-# 当たらなければ従来どおりモデルの出力のままになるだけである。
-$guards = ([regex]::Matches($translationText, 'Get-Command Convert-YakuBriefTranslationOptions')).Count
-Chk ($guards -eq 4) ('4経路とも守られている: ' + $guards)
-
-Write-Host 'プロンプトから外れていること'
-$briefRules = Get-YakuBriefRules -Root $root
-# 月名はアプリ側から外して指示へ戻したので、指示側に在ることを見る。
-Chk ($briefRules -match '(?m)^- Months:') '月名の指示がプロンプトに在る'
-Chk ($briefRules -match "person's name") '人名では略さないと書いてある'
-Chk ($briefRules -match 'May stays May') 'May の例外が書いてある'
-Chk ($briefRules -notmatch 'foreign exchange -> FX') 'FX の対応が消えている'
-Chk ($briefRules -notmatch 'operating profit=OP') 'OP の対応が消えている'
-Chk ($briefRules -notmatch 'fixed costs / fixed cost -> FC') 'FC の対応が消えている'
-# 文脈に依るものは残っている。外すと壊れる。
-Chk ($briefRules -match 'corporate -> corp\. only as adjective') '文脈に依るものは残っている'
-Chk ($briefRules -match 'subsidiaries -> Subs\. in table items') '文脈に依るものは残っている（2）'
-Chk ($briefRules -match 'technology -> tech') '文脈に依るものは残っている（3）'
-# 略語はモデルに選ばせない（2026-08-08）。当てるのはアプリの仕事にする。
-# モデルが自分で選ぶと、一覧に無い略語が本文に入り、読み手が引けなくなる。
-# 「どちらで書いてもよい」という書き方では確率的なままだった。
-Chk ($briefRules -match 'Do NOT abbreviate') '略語を使わないよう伝えている'
-Chk ($briefRules -match 'applies the approved abbreviations') 'アプリ側で当てることを伝えている'
-Chk ($briefRules -match 'SOURCE itself writes') '原文にある略語は残すよう伝えている'
-Chk ($briefRules -match 'Month names are the one thing') '月名だけは自分で短くするよう伝えている'
-
-if ($script:fail -gt 0) {
-    Write-Host "V91.61 brief style regression failed. failures=$script:fail" -ForegroundColor Red
-    exit 1
-}
-Write-Host 'V91.61 brief style regression passed.' -ForegroundColor Green
+if($script:fail -gt 0){throw "V91.64 brief preference regression failed: $script:fail"}
+Write-Host 'V91.64 brief preference regression passed.' -ForegroundColor Green

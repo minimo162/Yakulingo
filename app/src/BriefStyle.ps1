@@ -154,6 +154,58 @@ $script:YakuBriefAbbreviationRules = @(
         Sort-Object -Property @{ Expression = { ([string]$_.From).Length }; Descending = $true }, @{ Expression = { [string]$_.From } }
 )
 
+
+function Get-YakuBriefAbbreviationPreferencePath {
+    return (Join-Path (Get-YakuDataDir) 'brief-abbreviations.json')
+}
+
+function Get-YakuBriefAbbreviationPreferences {
+    $defaults = @($script:YakuBriefAbbreviationRules | ForEach-Object { [pscustomobject]@{ from=[string]$_.From; to=[string]$_.To } })
+    $result = [pscustomobject]@{ enabled=$false; entries=$defaults }
+    try {
+        $path = Get-YakuBriefAbbreviationPreferencePath
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $result }
+        $saved = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        $entries = New-Object System.Collections.Generic.List[object]
+        foreach ($entry in @($saved.entries)) {
+            $from = ([string]$entry.from).Trim(); $to = ([string]$entry.to).Trim()
+            if ($from -and $to) { [void]$entries.Add([pscustomobject]@{ from=$from; to=$to }) }
+        }
+        return [pscustomobject]@{ enabled=[bool]$saved.enabled; entries=@($entries.ToArray()) }
+    } catch {
+        try { Write-YakuLog "Brief abbreviation preferences could not be read; disabled. error=$($_.Exception.Message)" 'WARN' } catch {}
+        return $result
+    }
+}
+
+function Save-YakuBriefAbbreviationPreferences {
+    param([bool]$Enabled, [AllowEmptyCollection()][object[]]$Entries)
+    $validated = New-Object System.Collections.Generic.List[object]
+    if (@($Entries).Count -gt 200) { throw 'BRIEF_ABBREVIATION_TOO_MANY: 略語は200件まで登録できます。' }
+    foreach ($entry in @($Entries)) {
+        $from = ([string]$entry.from).Trim(); $to = ([string]$entry.to).Trim()
+        if (-not $from -or -not $to -or $from.Length -gt 80 -or $to.Length -gt 80 -or $from -match "[\r\n]" -or $to -match "[\r\n]") {
+            throw 'BRIEF_ABBREVIATION_INVALID: 略語は改行を含まない80文字以内で指定してください。'
+        }
+        [void]$validated.Add([pscustomobject]@{ from=$from; to=$to })
+    }
+    $payload = [pscustomobject]@{ enabled=[bool]$Enabled; entries=@($validated.ToArray()) }
+    $path = Get-YakuBriefAbbreviationPreferencePath
+    $tmp = $path + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+    try {
+        [System.IO.File]::WriteAllText($tmp, ($payload | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding($true)))
+        Move-Item -LiteralPath $tmp -Destination $path -Force
+    } finally { if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue } }
+    return $payload
+}
+
+function Get-YakuEnabledBriefAbbreviationRules {
+    $preferences = Get-YakuBriefAbbreviationPreferences
+    if (-not [bool]$preferences.enabled) { return @() }
+    return @(@($preferences.entries) | ForEach-Object { @{ From=[string]$_.from; To=[string]$_.to } } |
+        Sort-Object -Property @{ Expression = { ([string]$_.From).Length }; Descending = $true }, @{ Expression = { [string]$_.From } })
+}
+
 function Get-YakuBriefAbbreviationRules {
     # 一覧を見せるためだけの入口。何を機械的に当てているかを確かめられるようにする。
     return @($script:YakuBriefAbbreviationRules)
@@ -177,7 +229,9 @@ function Convert-YakuBriefAbbreviationSegment {
     param([AllowNull()][string]$Text)
     if ([string]::IsNullOrEmpty($Text)) { return '' }
     $result = [string]$Text
-    foreach ($rule in $script:YakuBriefAbbreviationRules) {
+    $activeRules = @(Get-YakuEnabledBriefAbbreviationRules)
+    if ($activeRules.Count -eq 0) { return $result }
+    foreach ($rule in $activeRules) {
         $from = [string]$rule.From
         $to = [string]$rule.To
         # 語境界で囲む。"including" が "excluding" の一部を食わないようにするため。

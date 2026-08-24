@@ -58,6 +58,7 @@
         <section class="quick-pane quick-target-pane" aria-labelledby="quick-target-title">
           <div class="quick-pane-head">
             <span id="quick-target-title">訳文</span>
+            <label class="quick-target-control">目標 <input id="quick-target-chars" type="number" min="1" max="3000" inputmode="numeric" placeholder="文字数"> 文字</label>
             <button id="quick-page-copy" type="button" class="quick-secondary-button" disabled>コピー</button>
           </div>
           <div id="quick-variants" class="quick-variants" aria-label="翻訳案" hidden></div>
@@ -82,7 +83,7 @@
       </div>
 
       <div class="quick-submit-row">
-        <span id="quick-page-direction-note" role="status">翻訳方向は自動で判定します</span>
+        <div class="quick-speed-controls"><label><input id="quick-auto-translate" type="checkbox"> 入力停止後に自動翻訳</label><span id="quick-page-direction-note" role="status">翻訳方向は自動で判定します</span></div>
         <div class="quick-submit-actions">
           <button id="quick-page-cancel" type="button" class="quick-ghost-button" hidden>中止</button>
           <button id="quick-page-retry" type="button" class="quick-secondary-button" hidden>再試行</button>
@@ -90,6 +91,8 @@
         </div>
       </div>
     </form>
+    <div id="quick-shortcuts" class="quick-shortcuts" role="dialog" aria-modal="true" aria-labelledby="quick-shortcuts-title" hidden><div><button type="button" data-close-shortcuts aria-label="閉じる">×</button><h2 id="quick-shortcuts-title">キーボード操作</h2><dl><dt>Ctrl+Enter</dt><dd>翻訳</dd><dt>Ctrl+↑ / ↓</dt><dd>長さを切り替え</dd><dt>Ctrl+1〜5</dt><dd>候補を直接選択</dd><dt>Ctrl+Shift+C</dt><dd>訳文をコピー</dd><dt>Ctrl+R</dt><dd>選択範囲だけ言い換え</dd><dt>Ctrl+Z</dt><dd>直前の案へ戻す</dd><dt>?</dt><dd>この一覧を表示</dd></dl></div></div>
+    <details class="quick-abbreviation-settings"><summary>略語辞書</summary><div class="quick-abbreviation-panel"><label><input id="quick-abbreviations-enabled" type="checkbox"> 自分の略語辞書を短い案へ適用する</label><p>1行に「元の語 = 略語」。既定ではオフです。ここで保存した内容だけを決定的に置換します。</p><textarea id="quick-abbreviations-editor" rows="7" spellcheck="false" placeholder="operating income = OP"></textarea><div><span id="quick-abbreviations-status" role="status"></span><button id="quick-abbreviations-save" type="button" class="quick-secondary-button">保存</button></div></div></details>
     <p class="quick-privacy">数値は伏せて送ります。社名・人名と文章はMicrosoft 365 Copilotへそのまま送ります。</p>
   </main>
 </body>
