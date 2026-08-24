@@ -13,7 +13,7 @@ Chk ((Test-YakuShortenResult -MaskedCurrentText $cur -Shortened ("Net sales [[N2
 $js=Get-Content -LiteralPath (Join-Path (Join-Path $root 'www/assets') 'quick-page.js') -Raw -Encoding UTF8
 $html=Get-Content -LiteralPath (Join-Path (Join-Path $root 'www') 'quick.html') -Raw -Encoding UTF8
 $server=Get-Content -LiteralPath (Join-Path (Join-Path $root 'src') 'Server.ps1') -Raw -Encoding UTF8
-Chk ($js -match 'stagePlan=.*標準.*短め.*簡潔.*最短') 'four length states are declared'
+Chk ($js -match 'stagePlan=.*FULL.*標準.*BRIEF.*最短') 'four length states are declared'
 Chk ($js -match 'prefetch\(' -and $js -match '/api/palette/chip') 'short variants are prefetched after first display'
 Chk ($js -match 'requestToken\+\+' -and $js -match 'cancelCurrent\(true\)') 'last input wins and stale work is cancelled'
 Chk ($js -match '1200' -and $html -match 'quick-auto-translate') 'debounced auto translation is optional'
