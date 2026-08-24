@@ -1,0 +1,4 @@
+﻿Reconstruction only. Request ID: {request_id}
+Without seeing Japanese, reconstruct in Japanese every fact, qualifier, scope, condition, negation, number, sign, unit, and relationship conveyed by each English item. Return numbered items then YAKULINGO_END:{request_id}.
+{numeric_rules}
+{source_list}
