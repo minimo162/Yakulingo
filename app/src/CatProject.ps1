@@ -196,6 +196,7 @@ function Reset-YakuCatSegmentQc {
     $Segment | Add-Member -NotePropertyName QcContractVersion -NotePropertyValue '' -Force
     $Segment | Add-Member -NotePropertyName QcTerminologyHash -NotePropertyValue '' -Force
     $Segment | Add-Member -NotePropertyName QcFindings -NotePropertyValue @() -Force
+    $Segment | Add-Member -NotePropertyName FitOverflow -NotePropertyValue $null -Force
     $Segment | Add-Member -NotePropertyName Confirmed -NotePropertyValue $false -Force
     if (-not $KeepState -and [string]$Segment.State -eq 'reviewed') {
         $Segment.State = if ([string]::IsNullOrWhiteSpace([string]$Segment.Translation)) { 'untranslated' } elseif ([string]$Segment.Origin -eq 'manual') { 'human_edited' } else { 'machine_draft' }
