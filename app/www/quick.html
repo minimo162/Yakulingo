@@ -29,6 +29,10 @@
   <p id="copilot-status-detail" class="quick-copilot-detail" role="status" aria-live="polite" hidden></p>
 
   <main class="quick-main">
+    <section class="quick-promise" aria-labelledby="quick-promise-title">
+      <p id="quick-promise-title">数字は送らない。訳はAIが推敲する。</p>
+        <span>貼る → 数字を隠す → 訳す → コピー</span>
+    </section>
     <div id="quick-handoff-note" class="quick-handoff-note" hidden>
       <strong>Excelから引き継ぎました</strong><span id="quick-handoff-cell"></span>
     </div>
@@ -58,21 +62,17 @@
         <section class="quick-pane quick-target-pane" aria-labelledby="quick-target-title">
           <div class="quick-pane-head">
             <span id="quick-target-title">訳文</span>
-            <label class="quick-target-control">目標 <input id="quick-target-chars" type="number" min="1" max="3000" inputmode="numeric" placeholder="文字数"> 文字</label>
+            <fieldset id="quick-notation" class="quick-notation" aria-label="金額の書き方"><legend>金額</legend><label><input type="radio" name="quick-notation" value="oku" checked> oku</label><label><input type="radio" name="quick-notation" value="billion"> billion</label></fieldset>
             <button id="quick-page-copy" type="button" class="quick-secondary-button" disabled>コピー</button>
           </div>
-          <div id="quick-variants" class="quick-variants" aria-label="翻訳案" hidden></div>
           <div class="quick-output-wrap">
-            <textarea id="quick-page-output" rows="14" readonly placeholder="訳文がここに表示されます"></textarea>
+            <textarea id="quick-page-output" rows="14" placeholder="短い訳がここに表示されます"></textarea>
             <div id="quick-page-progress" class="quick-progress" role="status" aria-live="polite" hidden></div>
           </div>
-          <div id="quick-result-meta" class="quick-result-meta" hidden><span id="quick-result-count"></span></div>
+          <div id="quick-result-meta" class="quick-result-meta" hidden><span id="quick-result-count"></span><strong id="quick-review-badge"></strong></div>
           <div id="quick-rewrite-actions" class="quick-rewrite-actions" aria-label="訳文を調整" hidden>
-            <button type="button" class="quick-secondary-button" data-quick-chip="shorten">短くする</button>
-            <button type="button" class="quick-secondary-button" data-quick-chip="shorter">さらに短く</button>
-            <button type="button" class="quick-secondary-button" data-quick-chip="rephrase">意味を保って言い換える</button>
-            <button type="button" class="quick-secondary-button" data-quick-chip="heading">見出し向け</button>
-            <button type="button" class="quick-secondary-button" data-quick-chip="table">表・セル向け</button>
+            <button type="button" class="quick-secondary-button" data-quick-chip="shorter">もっと短く</button>
+            <button type="button" class="quick-secondary-button" data-quick-chip="full">全文で</button>
             <button id="quick-page-undo" type="button" class="quick-ghost-button" disabled>直前の案へ戻す</button>
           </div>
           <div class="quick-pane-foot quick-target-foot">
@@ -91,8 +91,7 @@
         </div>
       </div>
     </form>
-    <div id="quick-shortcuts" class="quick-shortcuts" role="dialog" aria-modal="true" aria-labelledby="quick-shortcuts-title" hidden><div><button type="button" data-close-shortcuts aria-label="閉じる">×</button><h2 id="quick-shortcuts-title">キーボード操作</h2><dl><dt>Ctrl+Enter</dt><dd>翻訳</dd><dt>Ctrl+↑ / ↓</dt><dd>長さを切り替え</dd><dt>Ctrl+1〜5</dt><dd>候補を直接選択</dd><dt>Ctrl+Shift+C</dt><dd>訳文をコピー</dd><dt>Ctrl+R</dt><dd>選択範囲だけ言い換え</dd><dt>Ctrl+Z</dt><dd>直前の案へ戻す</dd><dt>?</dt><dd>この一覧を表示</dd></dl></div></div>
-    <details class="quick-abbreviation-settings"><summary>略語辞書</summary><div class="quick-abbreviation-panel"><label><input id="quick-abbreviations-enabled" type="checkbox"> 自分の略語辞書を短い案へ適用する</label><p>1行に「元の語 = 略語」。既定ではオフです。ここで保存した内容だけを決定的に置換します。</p><textarea id="quick-abbreviations-editor" rows="7" spellcheck="false" placeholder="operating income = OP"></textarea><div><span id="quick-abbreviations-status" role="status"></span><button id="quick-abbreviations-save" type="button" class="quick-secondary-button">保存</button></div></div></details>
+    <div id="quick-shortcuts" class="quick-shortcuts" role="dialog" aria-modal="true" aria-labelledby="quick-shortcuts-title" hidden><div><button type="button" data-close-shortcuts aria-label="閉じる">×</button><h2 id="quick-shortcuts-title">キーボード操作</h2><dl><dt>Ctrl+Enter</dt><dd>翻訳</dd><dt>Ctrl+Shift+C</dt><dd>訳文をコピー</dd><dt>Ctrl+Z</dt><dd>直前の案へ戻す</dd><dt>?</dt><dd>この一覧を表示</dd></dl></div></div>
     <p class="quick-privacy">数値は伏せて送ります。社名・人名と文章はMicrosoft 365 Copilotへそのまま送ります。</p>
   </main>
 </body>

@@ -1219,6 +1219,11 @@
     el('cat-current-progress').textContent = workName(project.source, project.direction) + '・全' + project.total + '行のうち' + project.confirmed + '行を確認済み・残り' + Math.max(0, project.total - project.confirmed) + '行';
     el('cat-toolbar-title').textContent = project.file_name || '貼り付けた文章';
     el('cat-toolbar-direction').textContent = directionMark(project.direction);
+    var notationControl = el('cat-notation'); if (notationControl) notationControl.hidden = false;
+    document.querySelectorAll('[name="cat-notation"]').forEach(function (radio) { radio.checked = radio.value === String(project.amount_notation || 'oku'); });
+    el('cat-translate').textContent = '残りを訳す';
+    el('cat-tm-pretranslate').textContent = '確定済み対訳から入力';
+    el('cat-tm-pretranslate').title = '確定済み対訳の完全一致を未訳の行へ先に入れます';
     el('cat-current-kicker').textContent = isAlignment ? '過去訳の対応確認' : '現在の確認作業';
     el('cat-align-review-guide').hidden = !isAlignment;
     /* 見出しは役割と実際の言語を一緒に持つ。thead は密度を守るため視覚的に
@@ -3037,6 +3042,7 @@
     /* 同じ口へ寄せる。畳んで一覧へ戻すのではなく、その場で選ばせる。
        打ちかけの訳文は先に保存してから開く（開いたあと入れ替わるため）。 */
     bindIf('cat-switch-project', 'click', function () { if (!busy) window.location.assign('/cat?view=work'); });
+    document.querySelectorAll('[name="cat-notation"]').forEach(function (radio) { radio.addEventListener('change', function () { if (!this.checked || !project || busy) return; mutate('notation', { notation: this.value }, '金額の書き方を切り替えています…').then(function () { status('金額の書き方を切り替えました。再翻訳はしていません。'); }); }); });
     bindIf('cat-translate', 'click', translate); bindIf('cat-export', 'click', openExportPreflight);
     bindIf('cat-export-reviewed', 'click', exportReviewed);
     bindIf('cat-qa-open', 'click', openQaList);
@@ -3312,18 +3318,6 @@
         return;
       }
       if (placeablePicker.open && event.key === 'Escape') { event.preventDefault(); closePlaceablePicker(); return; }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') { event.preventDefault(); YakuCommon.focus(el('cat-search')); el('cat-search').select(); return; }
-      /* 検索と置換。memoQ・Phrase・Trados・XTM のどれも Ctrl+H である。
-         開くだけで、押すのは中の「置き換える」ボタン。 */
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'h' && !el('cat-workspace').hidden) {
-        event.preventDefault();
-        var replaceMenu = el('cat-search-menu');
-        if (replaceMenu) { replaceMenu.open = true; }
-        var selected = String(window.getSelection ? window.getSelection().toString() : '');
-        if (selected) { el('cat-search').value = selected; redrawAfterFlush(); }
-        YakuCommon.focus(el('cat-search')); el('cat-search').select();
-        return;
-      }
       /* 点検一覧。Trados の検証（F8）に合わせる。 */
       if (event.key === 'F8' && !el('cat-workspace').hidden) { event.preventDefault(); openQaList(); return; }
       /* 資料の切り替え。作業画面から離れずに開く。 */
@@ -3348,23 +3342,6 @@
         event.preventDefault();
         var undoButton = document.querySelector('[data-cat-unconfirm="' + activeIndex + '"]');
         if (undoButton) { undoButton.click(); } else { status('この行はまだ確認済みではありません。'); }
-        return;
-      }
-      if (event.altKey && !event.ctrlKey && !event.metaKey && (event.key.toLowerCase() === 'm' || event.key.toLowerCase() === 'k')) {
-        event.preventDefault();
-        var joinButton = document.querySelector('[data-cat-' + (event.key.toLowerCase() === 'm' ? 'merge' : 'split') + '="' + activeIndex + '"]');
-        if (joinButton) { joinButton.click(); }
-        else { status(event.key.toLowerCase() === 'm' ? 'この行は次の行とつなげられません。' : 'この行は分けられません。'); }
-        return;
-      }
-      /* 原文の途中で分ける。Alt+M / Alt+K と同じ並びに置く。市販CATも同じ場所に
-         割り当てている（memoQ Ctrl+T / Phrase Ctrl+E）。ブラウザが握る組み合わせは
-         避けるので Alt にそろえる。 */
-      if (event.altKey && !event.ctrlKey && !event.metaKey && event.key.toLowerCase() === 's') {
-        event.preventDefault();
-        var splitAtButton = document.querySelector('[data-cat-split-at="' + activeIndex + '"]');
-        if (splitAtButton) { splitAtButton.click(); }
-        else { status('この行は原文の途中では分けられません。つなげた行は、先に Alt+K で元に戻してください。'); }
         return;
       }
       if (!(event.ctrlKey || event.metaKey)) return;

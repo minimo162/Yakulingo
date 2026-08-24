@@ -614,6 +614,10 @@ function Test-YakuCatBackJudgeRequiresRetry {
     param([string]$Text)
     return [bool]($Text -match '(?i)^\s*RETRY_REQUIRED\s*:')
 }
+function Test-YakuCatBackJudgePassed {
+    param([string]$Text)
+    return [bool]($Text -match '(?i)^\s*PASS\s*$')
+}
 function Write-YakuCatFitMetrics {
     param([string]$Root,[hashtable]$Context,[ValidateSet('baseline','completed')][string]$Status)
     try{
@@ -641,7 +645,7 @@ function New-YakuCatPrompt {
     )
     $sourceList=New-YakuFileSourceList -Items $Items
     $stage=Get-YakuCatPipelineStage $Items
-    $templateName=if($Direction -eq 'to_jp' -and $stage -eq 'back_reconstruct'){'cat_fit_back_reconstruct.txt'}elseif($Direction -eq 'to_en' -and $stage -in @('compress','retry')){'cat_fit_compress_to_en.txt'}elseif($Direction -eq 'to_en' -and $stage -eq 'abbreviate'){'cat_fit_abbreviate_to_en.txt'}elseif($Direction -eq 'to_en' -and $stage -eq 'select'){'cat_fit_select_to_en.txt'}elseif($Direction -eq 'to_en' -and $stage -eq 'back_judge'){'cat_fit_back_judge_to_en.txt'}elseif($Direction -eq 'to_en'){'cat_translate_to_en.txt'}else{'cat_translate_to_jp.txt'}
+    $templateName=if($stage -eq 'readability'){'text_readability_review.txt'}elseif($Direction -eq 'to_jp' -and $stage -eq 'back_reconstruct'){'cat_fit_back_reconstruct.txt'}elseif($Direction -eq 'to_en' -and $stage -in @('compress','retry')){'cat_fit_compress_to_en.txt'}elseif($Direction -eq 'to_en' -and $stage -eq 'abbreviate'){'cat_fit_abbreviate_to_en.txt'}elseif($Direction -eq 'to_en' -and $stage -eq 'select'){'cat_fit_select_to_en.txt'}elseif($Direction -eq 'to_en' -and $stage -eq 'back_judge'){'cat_fit_back_judge_to_en.txt'}elseif($Direction -eq 'to_en'){'cat_translate_to_en.txt'}else{'cat_translate_to_jp.txt'}
     $template = Get-YakuPromptTemplate -Root $Root -Name $templateName
     $vars = @{
         source_list = $sourceList
@@ -732,13 +736,27 @@ function Invoke-YakuCatFitBackCheck {
         $copy=Copy-YakuCatPipelineItem $item
         $copy|Add-Member -NotePropertyName PipelineStage -NotePropertyValue 'back_judge' -Force
         $copy|Add-Member -NotePropertyName PipelineClaims -NotePropertyValue ([string]$claims[$id]) -Force
-        $copy|Add-Member -NotePropertyName PipelineSelected -NotePropertyValue ([string]$Final[$id]) -Force
+        # 判定役へ英訳を見せない。原文と、英訳だけから逆構成した意味との差だけを渡す。
+        $copy.PSObject.Properties.Remove('PipelineSelected')
         $judge.Add($copy)|Out-Null
     }
     $results=$(if($judge.Count){Invoke-YakuCatPipelineBatch $Root $judge.ToArray() $Settings 'to_en' $MaxChars $Warnings $ProgressState $Context}else{@{}})
+    # 逆構成または判定の応答が欠けた行は「通過」ではない。全行を再確認対象で
+    # 初期化し、明示的な PASS を受け取った行だけ外す。
     $retry=@{}
     if(-not $Context.ContainsKey('FitBackCheckStatus')){$Context.FitBackCheckStatus=@{}}
-    foreach($id in @($results.Keys)){if(Test-YakuCatBackJudgeRequiresRetry ([string]$results[$id])){$retry[[int]$id]=$true;$Context.FitBackCheckStatus[[int]$id]='retry'}else{$Context.FitBackCheckStatus[[int]$id]='passed'}}
+    foreach($item in @($Items)){
+        $id=[int]$item.Index
+        if(-not $Final.ContainsKey($id)){continue}
+        $retry[$id]=$true
+        $Context.FitBackCheckStatus[$id]='retry'
+    }
+    foreach($id in @($results.Keys)){
+        $numericId=[int]$id
+        if(-not (Test-YakuCatBackJudgePassed ([string]$results[$id]))){continue}
+        $retry.Remove($numericId)
+        $Context.FitBackCheckStatus[$numericId]='passed'
+    }
     return $retry
 }
 function Invoke-YakuCatFitRetry {

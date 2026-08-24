@@ -33,6 +33,7 @@ $script:YakuSrcModuleFiles = @(
     'FileProcessors.ps1',
     'CatBatch.ps1',
     'CatTranslation.ps1',
+    'ProductSpines.ps1',
     'FitPolicy.ps1',
     'BriefStyle.ps1',
     'CellSegments.ps1',

@@ -2361,7 +2361,8 @@ function Invoke-YakuTextTranslationRequests {
         [switch]$SkipFreshChatWait,
         [AllowNull()]$ProgressState,
         [AllowNull()]$Warnings,
-        [ValidateSet('default','none')][string]$CachePolicy = 'default'
+        [ValidateSet('default','none')][string]$CachePolicy = 'default',
+        [ValidateSet('full','brief')][string]$Mode = 'brief'
     )
     if ($Direction -ne 'to_en') {
         return (Invoke-YakuSingleTranslationBatch -Root $Root -InputText $InputText -Settings $Settings -Direction $Direction -StyleReference $StyleReference -SkipFreshChatWait:$SkipFreshChatWait -ProgressState $ProgressState -Warnings $Warnings -CachePolicy $CachePolicy)
@@ -2381,7 +2382,7 @@ function Invoke-YakuTextTranslationRequests {
     $results = @(
         Invoke-YakuSingleTranslationBatch -Root $Root -InputText $InputText -Settings $Settings -Direction $Direction `
             -StyleReference $StyleReference -SkipFreshChatWait:$SkipFreshChatWait -ProgressState $ProgressState `
-            -Warnings $Warnings -CachePolicy $CachePolicy -Mode 'full'
+            -Warnings $Warnings -CachePolicy $CachePolicy -Mode $Mode
     )
     $sw.Stop()
 
@@ -2439,7 +2440,8 @@ function Invoke-YakuTextTranslation {
         [AllowNull()][string]$DirectionOverride = '',
         # Quick はその場限りの翻訳であり、CATの確認済み履歴は参照しない。
         [ValidateSet('display','none')][string]$ReferencePolicy = 'display',
-        [ValidateSet('default','none')][string]$CachePolicy = 'default'
+        [ValidateSet('default','none')][string]$CachePolicy = 'default',
+        [ValidateSet('full','brief')][string]$Mode = 'brief'
     )
     if ([string]::IsNullOrWhiteSpace($InputText)) {
         return [pscustomobject]@{ Error='翻訳するテキストを入力してください。' }
@@ -2517,7 +2519,7 @@ function Invoke-YakuTextTranslation {
             $detail = "入力 $($batch.CharCount)字"
             Set-YakuTranslationProgress -ProgressState $ProgressState -Mode 'working' -Label ($batchPrefix + '準備中') -Progress $startPct -Detail $detail -Phase 'preparing'
             $batchStyleReference = [string]$styleReference
-            $br = Invoke-YakuTextTranslationRequests -Root $Root -InputText ([string]$batch.Text) -Settings $Settings -Direction $direction -StyleReference $batchStyleReference -SkipFreshChatWait:($i -gt 0) -ProgressState $ProgressState -Warnings $warnings -CachePolicy $CachePolicy
+            $br = Invoke-YakuTextTranslationRequests -Root $Root -InputText ([string]$batch.Text) -Settings $Settings -Direction $direction -StyleReference $batchStyleReference -SkipFreshChatWait:($i -gt 0) -ProgressState $ProgressState -Warnings $warnings -CachePolicy $CachePolicy -Mode $Mode
             $batchResults += [pscustomobject]@{
                 Index = $batch.Index
                 Total = $batch.Total

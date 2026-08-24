@@ -3920,6 +3920,7 @@ function ConvertTo-YakuCatProjectJson {
         active_source_id = $(try { [string]$Project.ActiveSourceId } catch { '' })
         source_artifact_sha256 = $(try { [string]$Project.SourceArtifactSha256 } catch { '' })
         direction  = [string]$Project.Direction
+        amount_notation = (Get-YakuCatProjectAmountNotation -Project $Project)
         terminology_snapshot_hash = [string]$Project.TerminologySnapshotHash
         abbreviation_registry_hash = $(if(Get-Command Get-YakuCatAbbreviationRegistryHash -ErrorAction SilentlyContinue){Get-YakuCatAbbreviationRegistryHash -Project $Project}else{''})
         tm_pending = $(try { [int]$Project.TmPendingCount } catch { 0 })
@@ -4076,6 +4077,42 @@ function Get-YakuCatTranslationMemoryExactMatch {
     return $null
 }
 
+function New-YakuCatConfirmedPairExactLookup {
+    param(
+        [AllowNull()][object[]]$Entries,
+        [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
+        [AllowNull()][string]$ProjectId
+    )
+    $normalize = {
+        param([AllowNull()][string]$Value)
+        $valueText = ([string]$Value).Normalize([Text.NormalizationForm]::FormKC).Trim()
+        return (($valueText -replace '\s+', ' ').ToLowerInvariant())
+    }
+    $buckets = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
+    foreach ($entry in @($Entries)) {
+        if (-not (Test-YakuTerminologyProvenance -Entry $entry) -or -not [bool]$entry.active -or [string]$entry.kind -ne 'cell_exact') { continue }
+        if ([string]$entry.scope -eq 'project' -and -not [string]::Equals([string]$entry.project_id,$ProjectId,[StringComparison]::OrdinalIgnoreCase)) { continue }
+        $sourceLanguage = if ($Direction -eq 'to_en') {$entry.ja} else {$entry.en}
+        $targetLanguage = if ($Direction -eq 'to_en') {$entry.en} else {$entry.ja}
+        if ([string]::IsNullOrWhiteSpace([string]$targetLanguage.preferred)) { continue }
+        foreach ($alias in @(ConvertTo-YakuTerminologyTextList -Values (@([string]$sourceLanguage.preferred)+@($sourceLanguage.allowed)))) {
+            $key = & $normalize $alias
+            if ([string]::IsNullOrWhiteSpace($key)) { continue }
+            if (-not $buckets.ContainsKey($key)) { $buckets[$key] = New-Object System.Collections.Generic.List[object] }
+            $buckets[$key].Add([pscustomobject]@{Source=[string]$alias;Target=[string]$targetLanguage.preferred;ScopeWeight=$(if([string]$entry.scope -eq 'project'){2}else{1});ReferenceId=[string]$entry.reference_id}) | Out-Null
+        }
+    }
+    $lookup = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
+    foreach ($key in @($buckets.Keys)) {
+        $matches = @($buckets[$key].ToArray())
+        $weight = [int](($matches | Measure-Object ScopeWeight -Maximum).Maximum)
+        $top = @($matches | Where-Object {[int]$_.ScopeWeight -eq $weight})
+        $targets = @($top | ForEach-Object {& $normalize ([string]$_.Target)} | Sort-Object -Unique)
+        $lookup[$key] = [pscustomobject]@{Conflict=($targets.Count -gt 1);Hit=$top[0]}
+    }
+    return [pscustomobject]@{Lookup=$lookup;Normalize=$normalize}
+}
+
 function Get-YakuCatTranslationMemoryPretranslatePlan {
     <#
       事前翻訳（pre-translate）の対象を作る。埋めはしない。数えるためにも使う。
@@ -4131,6 +4168,9 @@ function Get-YakuCatTranslationMemoryPretranslatePlan {
         return [pscustomobject]@{ Rows = @(); UniqueTexts = 0; MemoryUnavailable = $false }
     }
     $lookup = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([System.StringComparer]::Ordinal)
+    $confirmedPairEntries = @()
+    try { $confirmedPairEntries = @(Get-YakuCatTerminologyEntries -Project $Project) } catch { $confirmedPairEntries = @() }
+    $confirmedPairs = New-YakuCatConfirmedPairExactLookup -Entries $confirmedPairEntries -Direction $direction -ProjectId ([string]$Project.Id)
     $unavailable = $false
     $segs = @($Project.Segments)
     for ($i = 0; $i -lt $segs.Count; $i++) {
@@ -4139,13 +4179,31 @@ function Get-YakuCatTranslationMemoryPretranslatePlan {
         $text = [string]$segs[$i].Text
         if ([string]::IsNullOrWhiteSpace($text)) { continue }
         if (-not $lookup.ContainsKey($text)) {
+            $pairKey = & $confirmedPairs.Normalize $text
+            $pair = if ($confirmedPairs.Lookup.ContainsKey($pairKey)) {$confirmedPairs.Lookup[$pairKey]} else {$null}
+            # cell-exact はレイアウト契約であり、競合を「TM が読めない」に畳んで
+            # Copilot へ流してはいけない。TM の有無より先に必ず判定する。
+            if ($null -ne $pair -and [bool]$pair.Conflict) { throw 'TERMINOLOGY_CELL_EXACT_CONFLICT' }
             $found = $null
-            try { $found = Get-YakuCatTranslationMemoryExactMatch -Text $text -Direction $direction -Path $Path }
+            try {
+                $found = Get-YakuCatTranslationMemoryExactMatch -Text $text -Direction $direction -Path $Path
+            }
             catch {
                 # 1件で落ちるなら残りも落ちる。読めない相手を全行ぶん叩き直さない。
                 $unavailable = $true
                 try { Write-YakuLog ('Translation memory pre-translate unavailable: ' + $_.Exception.Message) 'WARN' } catch {}
-                break
+                # cell-exact はTMとは別の確定済み対訳源。TMが壊れていても、こちらの
+                # 有効な完全一致は失わない。どちらも無い行だけで打ち切る。
+                if ($null -eq $pair) { break }
+            }
+            $legacy = if ($null -ne $pair) {$pair.Hit} else {$null}
+            if ($null -ne $legacy) {
+                if ($null -ne $found -and
+                    (& $confirmedPairs.Normalize ([string]$found.Target)) -ne (& $confirmedPairs.Normalize ([string]$legacy.Target))) {
+                    throw 'TERMINOLOGY_CELL_EXACT_CONFLICT'
+                }
+                # cell-exact を確定済み対訳として同じ事前代入へ統合し、TM より優先する。
+                $found = [pscustomobject]@{ Source=[string]$legacy.Source; Target=[string]$legacy.Target; Exact=$true; Origin='legacy-glossary-confirmed-pair'; ReferenceId=[string]$legacy.ReferenceId }
             }
             $lookup[$text] = $found
         }
@@ -4194,6 +4252,7 @@ function Invoke-YakuCatTranslationMemoryPass {
     $plan = $null
     try { $plan = Get-YakuCatTranslationMemoryPretranslatePlan -Project $Project -Path $Path }
     catch {
+        if ([string]$_.Exception.Message -match 'TERMINOLOGY_CELL_EXACT_CONFLICT') { throw }
         # 翻訳メモリを引く所は計画側で受け止めてあるので、通常ここへは来ない。
         # 引く以外（行の走査そのもの）が落ちたときの受け皿である。翻訳メモリは
         # 足しであって前提ではないので、ここでも作業は止めない。

@@ -930,6 +930,7 @@ function Start-YakuTranslationJob {
         [AllowNull()][string]$TextDirectionOverride = '',
         # 短いメールなどは、確認作業や翻訳メモリを作らず、その場で訳して終える。
         [ValidateSet('text','revise','shorten','cat')][string]$Kind = 'text',
+        [ValidateSet('full','brief')][string]$TextMode = 'brief',
         [ValidateSet('default','none')][string]$CachePolicy = 'default',
         [ValidateSet('display','none')][string]$ReferencePolicy = 'display',
         # V91.61（2026-08-06）: 修正の依頼。原文・現訳・指示・文体を JSON で運ぶ。
@@ -994,6 +995,7 @@ function Start-YakuTranslationJob {
             [Parameter(Mandatory=$true)][string]$Kind,
             [AllowNull()][string]$InputText,
             [AllowNull()][string]$TextDirectionOverride,
+            [Parameter(Mandatory=$true)][ValidateSet('full','brief')][string]$TextMode,
             [Parameter(Mandatory=$true)][string]$SettingsJson,
             [Parameter(Mandatory=$true)][string]$ExpectedBuildId,
             [Parameter(Mandatory=$true)]$JobState,
@@ -1343,7 +1345,19 @@ function Start-YakuTranslationJob {
                     $result = [pscustomobject]@{ Error = $message; Prompt = ''; Direction = 'to_en' }
                 }
             } else {
-                $result = Invoke-YakuTextTranslation -Root $Root -InputText $InputText -Settings $settings -ProgressState $JobState -DirectionOverride $TextDirectionOverride -ReferencePolicy $ReferencePolicy -CachePolicy $CachePolicy
+                $result = Invoke-YakuTextTranslation -Root $Root -InputText $InputText -Settings $settings -ProgressState $JobState -DirectionOverride $TextDirectionOverride -ReferencePolicy $ReferencePolicy -CachePolicy $CachePolicy -Mode $TextMode
+            }
+            # 初回だけでなく「もっと短く」「全文で」の結果も、その訳文そのものを
+            # 点検する。古い訳のバッジを新しい訳へ持ち越さない。
+            if ($Kind -ne 'cat' -and $result -and -not $result.Error -and @($result.Options).Count -gt 0 -and
+                ($result.PSObject.Properties.Name -contains 'SourceText')) {
+                try {
+                    $review = Invoke-YakuTextAgenticReview -Root $Root -SourceText ([string]$result.SourceText) -Option @($result.Options)[0] -Settings $settings -Direction ([string]$result.Direction) -ProgressState $JobState
+                    $result | Add-Member -NotePropertyName AgenticReview -NotePropertyValue $review -Force
+                } catch {
+                    try { Write-YakuLog ('Text agentic review unavailable. reason=' + [string]$_.Exception.Message) 'WARN' } catch {}
+                    $result | Add-Member -NotePropertyName AgenticReview -NotePropertyValue ([pscustomobject]@{Passed=$false;Badge='AIの点検を完了できませんでした';Numeric=$false;Short=$false;Meaning=$false;Readability=$false;ReadabilityDetail='点検を完了できませんでした。'}) -Force
+                }
             }
             if ([string]$JobState['mode'] -eq 'cancelled') { return }
             $JobState['result_json'] = ($result | ConvertTo-Json -Depth 80 -Compress)
@@ -1404,7 +1418,7 @@ function Start-YakuTranslationJob {
             $ps = [powershell]::Create()
             $ps.Runspace = $runspace
         }
-        [void]$ps.AddScript($worker.ToString()).AddArgument($root).AddArgument($Kind).AddArgument($InputText).AddArgument($TextDirectionOverride).AddArgument($settingsJson).AddArgument($script:YakuBuildId).AddArgument($state).AddArgument($ReviseJson).AddArgument($CatJson).AddArgument($CachePolicy).AddArgument($ReferencePolicy)
+        [void]$ps.AddScript($worker.ToString()).AddArgument($root).AddArgument($Kind).AddArgument($InputText).AddArgument($TextDirectionOverride).AddArgument($TextMode).AddArgument($settingsJson).AddArgument($script:YakuBuildId).AddArgument($state).AddArgument($ReviseJson).AddArgument($CatJson).AddArgument($CachePolicy).AddArgument($ReferencePolicy)
         $async = $ps.BeginInvoke()
         # Publish only after BeginInvoke succeeds (transactional start).
         $script:YakuTranslateJobs[$jobId] = $state
@@ -1498,6 +1512,9 @@ function Convert-YakuTranslationJobResultJson {
     $paletteDirection = ''
     $paletteMaskedTranslation = ''
     $paletteStyle = ''
+    $paletteReviewBadge = ''
+    $paletteReviewPassed = $false
+    $paletteReviewAxes = $null
     # CATの翻訳完了時にもマスク件数を見せるため（マスク件数見える化
     # 2026-08-18）。#63のパレット拡張と同じやり方で、既にある戻り値へ
     # 足すだけにする。対応表(Map)は運ばない。件数だけ。
@@ -1551,6 +1568,17 @@ function Convert-YakuTranslationJobResultJson {
                         if ($null -ne $firstPaletteOption) {
                             $paletteMaskedTranslation = [string]$firstPaletteOption.MaskedTranslation
                             $paletteStyle = [string]$firstPaletteOption.Style
+                        }
+                    }
+                    if ($typedResult.PSObject.Properties.Name -contains 'AgenticReview' -and $null -ne $typedResult.AgenticReview) {
+                        $paletteReviewBadge = [string]$typedResult.AgenticReview.Badge
+                        $paletteReviewPassed = [bool]$typedResult.AgenticReview.Passed
+                        $paletteReviewAxes = [ordered]@{
+                            numeric=[bool]$typedResult.AgenticReview.Numeric
+                            short=[bool]$typedResult.AgenticReview.Short
+                            meaning=[bool]$typedResult.AgenticReview.Meaning
+                            readability=[bool]$typedResult.AgenticReview.Readability
+                            detail=[string]$typedResult.AgenticReview.ReadabilityDetail
                         }
                     }
                 } catch { $paletteSourceText = ''; $paletteDirection = ''; $paletteMaskedTranslation = ''; $paletteStyle = '' }
@@ -1620,6 +1648,9 @@ function Convert-YakuTranslationJobResultJson {
         direction = $paletteDirection
         masked_translation = $paletteMaskedTranslation
         style = $paletteStyle
+        review_badge = $paletteReviewBadge
+        review_passed = $paletteReviewPassed
+        review_axes = $paletteReviewAxes
         masked_count = $catMaskedCount
         partial_total = $partialTotal
         partial_expected_total = $partialExpectedTotal
@@ -2573,9 +2604,23 @@ function Invoke-YakuRoute {
             $elapsedMs = [Math]::Max(0, [Math]::Min(3600000, [int64]$payload['elapsed_ms']))
             $inputLength = [Math]::Max(0, [Math]::Min(1000000, [int]$payload['input_length']))
             $variantCount = [Math]::Max(0, [Math]::Min(20, [int]$payload['variant_count']))
-            Write-YakuLog "Quick translation timing. event=$eventName elapsedMs=$elapsedMs inputChars=$inputLength variants=$variantCount" 'INFO'
+            $editedChars = [Math]::Max(0, [Math]::Min(1000000, [int]$payload['edited_chars']))
+            $notation = $(if ([string]$payload['notation'] -eq 'billion') { 'billion' } else { 'oku' })
+            Write-YakuLog "Quick translation timing. event=$eventName elapsedMs=$elapsedMs inputChars=$inputLength variants=$variantCount editedChars=$editedChars notation=$notation" 'INFO'
             Send-YakuTextResponse -Context $Context -Text '{"ok":true}' -ContentType 'application/json; charset=utf-8'
         } catch { Send-YakuTextResponse -Context $Context -Text '{"ok":false}' -ContentType 'application/json; charset=utf-8' -StatusCode 400 }
+        return
+    }
+    if ($method -eq 'POST' -and $path -eq '/api/palette/notation') {
+        try {
+            $payload = Read-YakuRequestJson -Request $req -MaxBytes 262144
+            $notation = $(if ([string]$payload['notation'] -eq 'billion') { 'billion' } else { 'oku' })
+            $direction = $(if ([string]$payload['direction'] -eq 'to_jp') { 'to_jp' } else { 'to_en' })
+            $translated = Convert-YakuTranslationNotationLocal -Root $script:YakuRoot -SourceText ([string]$payload['source_text']) -MaskedTranslation ([string]$payload['masked_translation']) -Direction $direction -Notation $notation
+            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ translation=$translated; notation=$notation } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+        } catch {
+            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ error=(Convert-YakuExceptionToUserMessage $_) } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
+        }
         return
     }
     if ($method -eq 'POST' -and $path -eq '/api/palette/instant') {
@@ -2712,6 +2757,8 @@ function Invoke-YakuRoute {
         try {
             $settings = Read-YakuSettings -Root $script:YakuRoot
             $payload = Read-YakuRequestJson -Request $req -MaxBytes 262144
+            $paletteNotation = $(if ([string]$payload['notation'] -eq 'billion') { 'billion' } else { 'oku' })
+            $settings | Add-Member -NotePropertyName amount_notation -NotePropertyValue $paletteNotation -Force
             $text = ([string]$payload['text']).Trim()
             if ([string]::IsNullOrWhiteSpace($text)) { throw 'PALETTE_TEXT_EMPTY: 翻訳する原文を入力してください。' }
             # 確認作業(CAT)の1回の依頼と同じ上限を使う。ここを超える文章は、
@@ -2757,8 +2804,10 @@ function Invoke-YakuRoute {
         try {
             $settings = Read-YakuSettings -Root $script:YakuRoot
             $payload = Read-YakuRequestJson -Request $req -MaxBytes 262144
+            $paletteNotation = $(if ([string]$payload['notation'] -eq 'billion') { 'billion' } else { 'oku' })
+            $settings | Add-Member -NotePropertyName amount_notation -NotePropertyValue $paletteNotation -Force
             $chip = [string]$payload['chip']
-            $allowedChips = @('revise','shorten','shorter','rephrase','heading','table')
+            $allowedChips = @('full','revise','shorten','shorter','rephrase','heading','table')
             if ($allowedChips -notcontains $chip) { throw 'PALETTE_CHIP_INVALID: この操作は利用できません。' }
             $sourceText = [string]$payload['source_text']
             # マスク後の現訳。呼び出し元(palette.js)は、直前のジョブ結果 JSON の
@@ -2772,6 +2821,12 @@ function Invoke-YakuRoute {
             try { if (@('to_en','to_jp') -contains [string]$payload['direction']) { $direction = [string]$payload['direction'] } } catch {}
             $style = 'full'
             try { if ([string]$payload['style'] -eq 'brief') { $style = 'brief' } } catch {}
+            if ($chip -eq 'full') {
+                # BRIEF の現訳から意味を推測して膨らませず、原文から FULL を作り直す。
+                $state = Start-YakuTranslationJob -InputText $sourceText -Settings $settings -Kind 'text' -TextDirectionOverride $direction -TextMode 'full'
+                Send-YakuTextResponse -Context $Context -Text ([ordered]@{ job_id=[string]$state['id'] } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+                return
+            }
             # 操作は固定語彙からだけ選ぶ。自由記述命令や表示条件は受け付けない。
             $instruction = switch ($chip) {
                 'shorten' { '意味を保ったまま短くしてください。' }
@@ -3100,7 +3155,7 @@ function Invoke-YakuRoute {
             }
             if ($null -eq $project) { throw '取り込んだファイルが見つかりません。もう一度「取り込んで確認を始める」を押してください。' }
 
-            $revisionActions = @('delete','glossary','merge','split','split-at','structure-undo','review-note-add','review-note-state','glossary-add','term-add','term-deactivate','term-insert','term-exception','tm-delete','tm-register','tm-register-bulk','confirm','confirm-bulk','replace','replace-undo','tm-pretranslate','review-start','copilot-review-start','copilot-review-apply','finding-decision','pdf-review-apply','coverage-decision','final-review-decision','source-update-preview','source-update-decision','source-update-apply','segment','translate','apply','preflight','export','export-reviewed','personal-glossary-list','personal-glossary-remove')
+            $revisionActions = @('delete','glossary','merge','split','split-at','structure-undo','review-note-add','review-note-state','glossary-add','term-add','term-deactivate','term-insert','term-exception','tm-delete','tm-register','tm-register-bulk','confirm','confirm-bulk','replace','replace-undo','tm-pretranslate','notation','review-start','copilot-review-start','copilot-review-apply','finding-decision','pdf-review-apply','coverage-decision','final-review-decision','source-update-preview','source-update-decision','source-update-apply','segment','translate','apply','preflight','export','export-reviewed','personal-glossary-list','personal-glossary-remove')
             $receiptActions = @('source-update-apply')
             if ($receiptActions -contains $action -and [string]::IsNullOrWhiteSpace([string]$payload['idempotency_key'])) {
                 throw 'CAT_IDEMPOTENCY_KEY_REQUIRED: この更新には操作識別子が必要です。'
@@ -3751,12 +3806,27 @@ function Invoke-YakuRoute {
                     $body | Add-Member -NotePropertyName replace_undo_restored -NotePropertyValue ([int]$commit.Result.Restored) -Force
                     Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 8 -Compress) -ContentType 'application/json; charset=utf-8'
                 }
+                'notation' {
+                    $notation = $(if ([string]$payload['notation'] -eq 'billion') { 'billion' } else { 'oku' })
+                    $mutation = {
+                        param($candidate,$innerRoot,$innerNotation)
+                        return (Set-YakuCatProjectAmountNotationLocal -Project $candidate -Root $innerRoot -Notation $innerNotation)
+                    }
+                    $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($script:YakuRoot,$notation)
+                    $project = $commit.Project
+                    $body = (ConvertTo-YakuCatProjectJson -Project $project) | ConvertFrom-Json
+                    $body | Add-Member -NotePropertyName notation_changed_rows -NotePropertyValue ([int]$commit.Result) -Force
+                    Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 8 -Compress) -ContentType 'application/json; charset=utf-8'
+                }
                 'tm-pretranslate-estimate' {
                     # 押す前に対象行数を告げる（一括確定と同じ作法）。数えるだけで
                     # 何も書き換えない。翻訳メモリが読めなければ 0 を返し、
                     # 翻訳はこれまでどおり Copilot へ送る。
                     $plan = $null
-                    try { $plan = Get-YakuCatTranslationMemoryPretranslatePlan -Project $project } catch { $plan = $null }
+                    try { $plan = Get-YakuCatTranslationMemoryPretranslatePlan -Project $project } catch {
+                        if ([string]$_.Exception.Message -match 'TERMINOLOGY_CELL_EXACT_CONFLICT') { throw }
+                        $plan = $null
+                    }
                     $planRows = 0; $planUnique = 0; $planUnavailable = $true
                     if ($null -ne $plan) {
                         $planRows = @($plan.Rows).Count; $planUnique = [int]$plan.UniqueTexts
