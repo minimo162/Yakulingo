@@ -17,14 +17,11 @@
   <title>Excel翻訳 - YakuLingo</title>
   <link rel="stylesheet" href="/assets/styles.css">
   <link rel="stylesheet" href="/assets/cat-workspace.css">
-  <link rel="stylesheet" href="/assets/palette.css">
   <link rel="stylesheet" href="/assets/premium-ui.css">
   <script src="/assets/common.js" defer></script>
   <script src="/assets/quick.js" defer></script>
   <script src="/assets/cat.js" defer></script>
   <script src="/assets/premium-ui.js" defer></script>
-  <!-- rootの左右画面に実際のチャット翻訳を置く。premium-uiがDOMを作った後に結線する。 -->
-  <script src="/assets/palette.js" defer></script>
 </head>
 <body class="app-cat premium-booting" data-cat-view="__YAKU_VIEW__">
     <!-- 行の状態を示す記号。輪郭が5つとも違うので、白黒でも色覚特性でも区別できる。
@@ -50,6 +47,24 @@
            左右から中へ向かう矢印で、幅に収める操作を表す。 -->
       <symbol id="i-fit" viewBox="0 0 16 16"><path d="M1.8 8h4.4M9.8 8h4.4" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M6.6 5.6L4.4 8l2.2 2.4M9.4 5.6L11.6 8l-2.2 2.4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     </svg>
+  <div id="premium-app" class="premium-app">
+    <div class="premium-main">
+      <header id="premium-topbar" class="premium-topbar">
+        <a class="premium-brand premium-top-brand" href="/cat" aria-label="YakuLingo Excel翻訳">
+          <span class="premium-logo" aria-hidden="true">Y</span>
+          <span><strong>YakuLingo</strong><small>Excelレイアウト翻訳</small></span>
+        </a>
+        <div class="premium-topbar-left"><span id="premium-top-product" class="premium-top-product"></span><span class="premium-top-separator"></span><strong id="premium-top-context" class="premium-top-context"></strong></div>
+        <div id="premium-copilot-slot" class="premium-copilot-slot"></div>
+        <div class="premium-top-actions">
+          <a href="/cat?view=work" data-premium-nav="work">作業を切り替える</a>
+          <button id="premium-translate" type="button" class="premium-top-action" hidden>未訳を翻訳</button>
+          <button id="premium-qa" type="button" class="premium-top-action" hidden>要確認</button>
+          <button id="premium-tools" type="button" class="premium-top-text-button" hidden>その他</button>
+          <span id="premium-export-status" class="premium-export-status" role="status"></span>
+          <button id="premium-export" type="button" class="premium-top-action premium-primary-action" hidden>Excelを書き出す</button>
+        </div>
+      </header>
   <main class="shell">
     <header class="hero">
       <div class="brand-block"><a class="brand home-link" href="/">YakuLingo</a><span class="version-label">翻訳</span></div>
@@ -89,6 +104,27 @@
            DeepL も入口は1つで、空の入力領域の中に資料の取り込みを書いている
            （実測 2026-08-16 1912x987: 入力欄の器は角丸16px・内側24px・影 none）。 -->
       <section id="cat-picker" class="cat-picker" aria-labelledby="cat-page-title">
+        <section id="premium-cat-start" class="premium-cat-start" aria-labelledby="premium-start-title">
+          <header class="premium-excel-start-heading">
+            <span class="premium-eyebrow">Excelレイアウト翻訳</span>
+            <h1 id="premium-start-title">Excelを翻訳</h1>
+            <p>既存のセル幅とレイアウトに収まる訳を作ります。</p>
+          </header>
+          <div id="premium-file-drop" class="premium-file-drop premium-excel-only-drop" role="group" aria-label="Excelファイルをここにドロップ、またはファイルを選ぶ">
+            <div class="premium-excel-mark" aria-hidden="true">X</div>
+            <div class="premium-drop-copy"><strong>Excelファイルをここにドロップ</strong><span>.xlsx / .xlsm</span></div>
+            <div class="premium-drop-actions"><button id="premium-file-select" type="button">ファイルを選ぶ</button></div>
+            <input id="premium-file-input" type="file" accept=".xlsx,.xlsm" hidden>
+          </div>
+          <div id="premium-direction-switch" class="premium-direction-switch premium-start-direction" role="group" aria-label="翻訳方向">
+            <button type="button" class="is-active" aria-pressed="true" data-direction="to_en">日本語 → 英語</button>
+            <button type="button" aria-pressed="false" data-direction="to_jp">英語 → 日本語</button>
+          </div>
+          <section class="premium-start-recent" aria-labelledby="premium-start-recent-title">
+            <div><h2 id="premium-start-recent-title">最近の作業</h2><a href="/cat?view=work" data-premium-nav="work">すべて見る</a></div>
+            <div id="premium-start-recent-list"><p class="premium-sidebar-loading">読み込んでいます…</p></div>
+          </section>
+        </section>
         <div id="cat-entry-body" class="entry-body">
           <!-- 主役の新しい翻訳を先に置く。最近の作業と過去訳登録は
                右の補助ペインへまとめ、視線と読み上げの順序を揃える。 -->
@@ -320,6 +356,18 @@
 
         <div id="cat-editor-layout" class="cat-editor-layout">
 
+          <aside id="premium-cell-list-pane" class="premium-cell-list-pane" aria-labelledby="premium-cell-list-title">
+            <header>
+              <div><h2 id="premium-cell-list-title">セル一覧</h2><span id="premium-cell-list-count" role="status"></span></div>
+              <div id="premium-cell-filters" class="premium-cell-filters" role="group" aria-label="表示するセル">
+                <button type="button" class="is-active" aria-pressed="true" data-premium-filter="untranslated">未訳 <span id="premium-filter-untranslated">0</span></button>
+                <button type="button" aria-pressed="false" data-premium-filter="review">要確認 <span id="premium-filter-review">0</span></button>
+                <button type="button" aria-pressed="false" data-premium-filter="all">すべて <span id="premium-filter-all">0</span></button>
+              </div>
+            </header>
+            <div id="premium-cell-list" class="premium-cell-list" role="listbox" aria-label="翻訳対象セル"></div>
+          </aside>
+
           <!-- 原文の数字を訳文へ入れる一覧（Ctrl+D）。表の中ではなく外に置く。
                行は絞り込みや保存のたびに作り直されるので、表の中へ差し込むと
                開いたそばから消える。位置は訳文欄の下へ cat.js が寄せる。 -->
@@ -344,6 +392,8 @@
           </aside>
 
           <section id="cat-editor-pane" class="cat-editor-pane" aria-label="原文と訳文の確認">
+            <div id="premium-editor-intro" class="premium-editor-intro"><div><span id="premium-active-cell">セル</span><strong id="premium-active-location"></strong></div><em id="premium-editor-risk" class="premium-editor-risk"></em></div>
+            <div id="premium-row-actions" class="premium-row-actions"></div>
             <section id="cat-align-review-guide" class="cat-align-review-guide" aria-labelledby="cat-align-review-title" hidden>
               <div>
                 <strong id="cat-align-review-title">過去訳の対応候補を確認します</strong>
@@ -431,6 +481,8 @@
               </section>
     </section>
   </main>
+    </div>
+  </div>
   <dialog id="cat-export-dialog" class="confirm-dialog cat-export-dialog"><form method="dialog"><h2 id="cat-export-title">取り出す前のご確認</h2><p id="cat-export-mode"></p><p id="cat-export-name" class="muted"></p><div id="cat-export-checks" role="status"></div><p class="cat-human-review-note">自動で点検しているのは、数字・単位・通貨・見出しの形・登録した用語の写しちがいだけです。訳の中身は見ていません。</p><p id="cat-export-notice" class="draft-warning">原本はそのままで、訳文を入れたコピーを作ります。名前の先頭に「DRAFT_」が付きます。</p><fieldset class="cat-final-review-option"><legend>確認記録（任意）</legend><label><input id="cat-export-final-review" type="checkbox"> 残っている指摘と、この出力内容を確認した記録を残す</label><p class="muted">組織上の承認や正式版を意味するものではありません。内容が変わると記録は自動的に失効します。</p><label for="cat-export-final-reason">確認した内容・判断理由</label><textarea id="cat-export-final-reason" rows="2" maxlength="1000" disabled></textarea></fieldset><div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>戻って確認する</button><button id="cat-export-qa" type="button" class="secondary-button" hidden>点検一覧を開く</button><button id="cat-export-confirm" value="export">これで取り出す</button></div></form></dialog>
   <!-- 出す前に、資料ぜんぶの指摘を1枚で見る（市販CATの検証パネルに相当）。
        memoQ・Trados は書き出し前にこの一覧を見て、行へ飛んで直す作りになっている。

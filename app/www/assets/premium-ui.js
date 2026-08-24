@@ -7,7 +7,7 @@
     recentStatus: 'loading',
     recentError: '',
     recentRetrying: false,
-    catFilter: 'blockers',
+    catFilter: 'untranslated',
     catFilterTouched: false,
     catInspectorInitialized: false,
     lastQuickSource: '',
@@ -142,32 +142,6 @@
     }
   }
 
-  function logoMarkup() {
-    return '<span class="premium-logo" aria-hidden="true">Y</span>' +
-      '<span><strong>YakuLingo</strong><small>レイアウトを守る翻訳</small></span>';
-  }
-  function navMarkup(active) {
-    var items = [
-      { key: 'translate', href: '/', icon: '訳', title: '翻訳', note: '文章もExcelもここで' },
-      { key: 'past', href: '/cat?import=1', icon: '↔', title: '過去訳', note: '確認済みを再利用' },
-      { key: 'work', href: '/cat?view=work', icon: '◴', title: '作業一覧', note: '保存済みの作業' }
-    ];
-    return items.map(function (item) {
-      return '<a class="premium-nav-item' + (active === item.key ? ' is-active' : '') + '" href="' + item.href + '" data-premium-nav="' + item.key + '">' +
-        '<span class="premium-nav-icon">' + item.icon + '</span><span><strong>' + item.title + '</strong><small>' + item.note + '</small></span></a>';
-    }).join('');
-  }
-  function buildSidebar(active) {
-    var sidebar = create('aside', 'premium-sidebar');
-    sidebar.innerHTML =
-      '<a class="premium-brand" href="/">' + logoMarkup() + '</a>' +
-      '<p class="premium-nav-label">メニュー</p><nav class="premium-nav">' + navMarkup(active) + '</nav>' +
-      '<div class="premium-sidebar-rule"></div>' +
-      '<div class="premium-recent-heading"><span>最近の作業</span><span id="premium-recent-count">0件</span></div>' +
-      '<div id="premium-sidebar-recent" class="premium-sidebar-recent"><p class="premium-sidebar-loading">読み込んでいます…</p></div>' +
-      '<div class="premium-sidebar-bottom"><div id="premium-copilot-slot"></div></div>';
-    return sidebar;
-  }
   function buildTopbar() {
     var topbar = create('header', 'premium-topbar');
     topbar.innerHTML =
@@ -213,19 +187,22 @@
   }
   function mountPremiumFrame(root, active, bodyClass) {
     document.body.classList.add('premium-ui', bodyClass);
-    var app = create('div', 'premium-app');
-    var sidebar = buildSidebar(active);
-    var main = create('div', 'premium-main');
-    var topbar = buildTopbar();
-    root.parentNode.insertBefore(app, root);
-    app.appendChild(sidebar);
-    app.appendChild(main);
-    main.appendChild(topbar);
-    main.appendChild(root);
+    var app = el('premium-app');
+    var main = one('.premium-main', app || document);
+    var topbar = el('premium-topbar');
+    if (!app || !main || !topbar) {
+      app = create('div', 'premium-app');
+      main = create('div', 'premium-main');
+      topbar = buildTopbar();
+      root.parentNode.insertBefore(app, root);
+      app.appendChild(main);
+      main.appendChild(topbar);
+      main.appendChild(root);
+    }
     var legacyHero = one('.hero,.palette-header', root);
     if (legacyHero) legacyHero.classList.add('premium-legacy-hero');
-    moveCopilotControls(sidebar);
-    return { app: app, sidebar: sidebar, main: main, topbar: topbar };
+    moveCopilotControls(app);
+    return { app: app, main: main, topbar: topbar };
   }
 
   function normalizeRecent(data) {
@@ -304,77 +281,32 @@
     return direction + ' ・ ' + (item.remaining ? 'あと' + item.remaining + '行' : '確認完了');
   }
   function renderSidebarRecent() {
-    var host = el('premium-sidebar-recent');
+    var hosts = [el('premium-sidebar-recent'), el('premium-start-recent-list')].filter(Boolean);
     var count = el('premium-recent-count');
-    if (!host) return;
+    if (!hosts.length) return;
     if (premiumState.recentStatus === 'error') {
       if (count) count.textContent = '読込失敗';
-      host.innerHTML = recentErrorMarkup();
-      bindRecentRetry(host);
+      hosts.forEach(function (host) { host.innerHTML = recentErrorMarkup(); bindRecentRetry(host); });
       return;
     }
     var rows = premiumState.recent.slice(0, 3);
     if (count) count.textContent = rows.length + '件';
     if (!rows.length) {
-      host.innerHTML = '<p class="premium-sidebar-empty">保存済みの作業はまだありません。</p>';
+      hosts.forEach(function (host) { host.innerHTML = '<p class="premium-sidebar-empty">保存済みの作業はまだありません。</p>'; });
       return;
     }
-    host.innerHTML = rows.map(function (item) {
+    var markup = rows.map(function (item) {
       return '<a class="premium-recent-item" href="/cat?project=' + encodeURIComponent(item.id) + '"><strong title="' + escapeHtml(item.fileName) + '">' +
         escapeHtml(item.fileName) + '</strong><span>' + escapeHtml(recentMeta(item)) + '</span><i><b style="width:' + item.percent + '%"></b></i></a>';
     }).join('');
+    hosts.forEach(function (host) { host.innerHTML = markup; });
   }
 
   /* Excel start and saved work ------------------------------------------- */
-  function visualStepsMarkup() {
-    return '<div class="premium-start-visual">' +
-      '<div class="premium-visual-step"><span class="premium-step-number">1</span><strong>セル幅を読む</strong>' +
-      '<div class="premium-mini-sheet"><span></span><span></span><span class="is-source">長期的な信頼性</span><span class="is-over">Long-Term Reliability…</span><span></span><span></span></div></div>' +
-      '<span class="premium-flow-arrow">›</span>' +
-      '<div class="premium-visual-step"><span class="premium-step-number">2</span><strong>意味を保って短く</strong>' +
-      '<div class="premium-compare"><p class="is-long">Long-Term Reliability Assurance</p><p class="is-short">Long-Term Reliability</p></div></div>' +
-      '<span class="premium-flow-arrow">›</span>' +
-      '<div class="premium-visual-step is-result"><span class="premium-step-number">3</span><strong>収まる訳だけ反映</strong>' +
-      '<div class="premium-result-cell"><span>✓ 収まりました</span><b>Long-Term Reliability</b><small>2px余り・基準訳は保持</small></div></div></div>';
-  }
-  function embeddedChatMarkup() {
-    return '<div class="premium-combined-chat-live">' +
-      '<form id="palette-form" class="palette-form"><label for="palette-input" class="palette-label">原文</label>' +
-      '<p id="palette-input-guidance" class="palette-input-guidance">貼り付けると自動で開始します。入力・編集した文は「今すぐ訳す」を押してください。</p>' +
-      '<textarea id="palette-input" class="palette-input" rows="7" placeholder="ここに文章を貼り付けてください。" aria-describedby="palette-input-guidance" spellcheck="false" autocomplete="off"></textarea>' +
-      '<div class="palette-input-row"><span id="palette-count" class="palette-count">0字</span><span id="palette-long-notice" class="palette-long-notice" role="status" hidden></span></div>' +
-      '<div class="palette-direction-row"><div class="palette-direction-field"><label for="palette-direction-select" class="palette-direction-select-label">翻訳先</label>' +
-      '<select id="palette-direction-select" aria-label="翻訳先"><option value="">自動</option><option value="to_en">日本語 → 英語</option><option value="to_jp">英語 → 日本語</option></select></div>' +
-      '<div class="palette-action-group"><button id="palette-submit" type="submit">今すぐ訳す</button><button id="palette-handoff" type="button" class="link-button" disabled>CATで開く</button></div>' +
-      '<div class="palette-context-field"><label for="palette-context-select" class="palette-context-select-label"><span class="palette-context-label-text">参考資料（任意）</span>' +
-      '<span id="palette-context-help" class="palette-context-help">選ぶと、確認済みの訳を最初に提案します。</span></label><select id="palette-context-select" aria-describedby="palette-context-help" aria-label="参考資料（選ぶとその資料の確定訳を優先します）">' +
-      '<option value="" label="参考資料なし">文脈: なし</option></select></div></div></form>' +
-      '<p class="palette-fineprint">数値は伏せて送ります。社名・人名と文章はそのまま送ります。</p><p id="palette-direction" class="palette-direction-note" hidden></p>' +
-      '<div id="palette-instant" class="palette-instant" aria-live="polite" hidden></div><div id="palette-chips" class="palette-chips" hidden><button type="button" class="secondary-button compact" data-yaku-chip="revise">丁寧に</button></div>' +
-      '<div id="palette-result" class="palette-result" aria-live="polite"></div><div class="palette-footer"><p id="palette-copy-status" class="palette-copy-status" role="status" aria-live="polite"></p>' +
-      '<p class="palette-hint">候補は<kbd>1</kbd>〜<kbd>9</kbd>で選んでコピー。<kbd>Enter</kbd>で<span id="palette-hint-target">既定候補</span>をコピー。</p></div></div>';
-  }
   function buildCatStart(picker) {
-    if (!picker || el('premium-cat-start')) return;
-    var start = create('section', 'premium-cat-start');
-    start.id = 'premium-cat-start';
-    start.innerHTML =
-      '<header class="premium-combined-heading"><div><span class="premium-eyebrow">翻訳ワークスペース</span><h1>文章もExcelも、ひとつの画面で。</h1>' +
-      '<p>左は文章を貼ってそのまま翻訳。右はExcelを選んで、セル幅に合わせて翻訳します。</p></div></header>' +
-      '<div class="premium-combined-grid"><section class="premium-combined-panel premium-combined-chat" aria-labelledby="premium-combined-chat-title">' +
-      '<header><span class="premium-panel-number">01</span><div><span class="premium-eyebrow">チャット翻訳</span><h2 id="premium-combined-chat-title">文章をすぐ訳す</h2>' +
-      '<p>メールやチャット、短い資料を貼り付けて、その場で訳します。</p></div></header>' + embeddedChatMarkup() + '</section>' +
-      '<section class="premium-combined-panel premium-combined-excel" aria-labelledby="premium-combined-excel-title"><header><span class="premium-panel-number">02</span><div>' +
-      '<span class="premium-eyebrow">レイアウトを保つ</span><h2 id="premium-combined-excel-title">Excelを翻訳する</h2><p>セル幅や結合セルを読み、収まる長さで翻訳します。</p></div></header>' +
-      '<div id="premium-file-drop" class="premium-file-drop" role="group" aria-label="Excelファイルを選ぶ、またはドロップする">' +
-      '<div class="premium-excel-mark">X</div><div class="premium-drop-copy"><strong>Excelをここに置く</strong><span>元のファイルは変えず、翻訳済みのコピーを作ります。</span><p id="premium-excel-guidance" class="premium-excel-guidance">1. Excelを選ぶ → 2. 翻訳方向を選ぶ → 3. 確認画面で仕上げる</p>' +
-      '<div class="premium-drop-tags"><i>列幅を測定</i><i>短訳を生成</i><i>超過だけ確認</i></div></div>' +
-      '<div class="premium-drop-actions"><button id="premium-file-select" type="button">Excelを選ぶ</button><small>.xlsx / .xlsm</small></div>' +
-      '<input id="premium-file-input" type="file" accept=".xlsx,.xlsm" hidden></div>' +
-      '<div class="premium-combined-excel-options"><section><h3>翻訳方向</h3><div id="premium-direction-switch" class="premium-direction-switch" role="group" aria-label="翻訳方向">' +
-      '<button type="button" class="is-active" aria-pressed="true" data-direction="to_en">日本語 → 英語</button><button type="button" aria-pressed="false" data-direction="to_jp">英語 → 日本語</button></div></section>' +
-      '<section><h3>確認済みの過去訳を使う</h3><p>日英PDFから登録した訳を、次のExcelで再利用できます。</p><button id="premium-reference-open" type="button" class="premium-secondary-action">過去訳を登録</button></section></div></section></div>';
-    picker.appendChild(start);
+    var start = el('premium-cat-start');
+    if (!picker || !start || start.getAttribute('data-bound') === '1') return;
+    start.setAttribute('data-bound', '1');
 
     var direction = 'to_en';
     all('#premium-direction-switch button').forEach(function (button) {
@@ -401,11 +333,6 @@
       });
     }
     if (fileInput) fileInput.addEventListener('change', function () { if (this.files && this.files[0]) openExcelFile(this.files[0], direction); });
-    var reference = el('premium-reference-open');
-    if (reference) reference.addEventListener('click', function () {
-      var original = el('cat-open-align-entry');
-      if (original) original.click();
-    });
   }
   function openExcelFile(file, direction) {
     if (!file) return;
@@ -507,59 +434,30 @@
   /* Focused Excel work surface ------------------------------------------- */
   function ensureWorkspaceUi() {
     var workspace = el('cat-workspace');
-    if (!workspace) return;
-    if (!el('premium-work-summary')) {
-      var summary = create('section', 'premium-work-summary');
-      summary.id = 'premium-work-summary';
-      summary.innerHTML = '<div class="premium-summary-title"><span class="premium-summary-kicker">Excel翻訳</span><h1>3ステップで仕上げる</h1><p id="premium-summary-context"></p></div>' +
-        '<div class="premium-summary-progress"><div><strong><span id="premium-fit-count">0</span> / <span id="premium-total-count">0</span>行を確認済み</strong><span id="premium-fit-percent">0%</span></div><i><b id="premium-fit-progress"></b></i></div>' +
-        '<div class="premium-summary-stats"><div class="is-done"><b id="premium-fit-done">0</b><span>確認済み</span></div><div class="is-alert"><b id="premium-fit-left">0</b><span>出力を止める</span></div><div class="is-recommended"><b id="premium-recommended-count">0</b><span>確認をおすすめ</span></div><div><b id="premium-untranslated">0</b><span>未翻訳</span></div></div>' +
-        '<nav id="premium-stage-nav" class="premium-stage-nav" aria-label="Excel翻訳の進み方"><button type="button" data-premium-stage="translate"><span class="premium-stage-number">1</span><span><strong>未訳を翻訳する</strong><small id="premium-stage-translate-note">未訳を翻訳</small></span></button><button type="button" data-premium-stage="review"><span class="premium-stage-number">2</span><span><strong>残りを確認する</strong><small id="premium-stage-review-note">出力を止める0件</small></span></button><button type="button" data-premium-stage="export"><span class="premium-stage-number">3</span><span><strong>Excelへ出力する</strong><small id="premium-stage-export-note">出力条件を確認</small></span></button></nav>' +
-        '<div id="premium-output-summary" class="premium-output-summary" role="status"><span id="premium-output-summary-text">出力条件を確認しています…</span><button type="button" id="premium-output-summary-open" class="premium-summary-link">条件を見る</button></div>';
-      workspace.insertBefore(summary, workspace.firstChild);
-      ['cat-output-help', 'cat-output-reason', 'cat-export-blocked', 'cat-mask-notice'].forEach(function (id) { var node = el(id); if (node) summary.appendChild(node); });
-    }
-    if (!el('premium-fit-panel')) {
-      var panel = create('aside', 'premium-fit-panel');
-      panel.id = 'premium-fit-panel';
-      panel.innerHTML = '<header><h2>確認するセル</h2><p>選択後、右の「セル表示を確認」で収まりを確認します。</p></header><div id="premium-fit-filter" class="premium-fit-filter" role="group" aria-label="確認対象の種類">' +
-        '<button type="button" class="is-active" data-premium-filter="blockers">出力を止める <span id="premium-fit-blockers">0</span></button><button type="button" data-premium-filter="recommended">確認をおすすめ <span id="premium-fit-recommended">0</span></button><button type="button" data-premium-filter="all">すべて <span id="premium-fit-all">0</span></button></div>' +
-        '<div id="premium-fit-list" class="premium-fit-list" role="region" aria-label="確認対象の一覧。スクロールして続きを表示"></div>';
-      var editorLayout = el('cat-editor-layout');
-      workspace.insertBefore(panel, editorLayout || workspace.lastChild);
+    var panel = el('premium-cell-list-pane');
+    if (!workspace || !panel) return;
+    if (panel.getAttribute('data-bound') !== '1') {
+      panel.setAttribute('data-bound', '1');
       all('[data-premium-filter]', panel).forEach(function (button) {
         button.addEventListener('click', function () {
           premiumState.catFilterTouched = true;
-          premiumState.catFilter = button.getAttribute('data-premium-filter') || 'blockers';
-          all('[data-premium-filter]', panel).forEach(function (item) { item.classList.toggle('is-active', item === button); });
-          var original = one('[data-cat-filter="all"]');
-          if (original) original.click();
-          window.setTimeout(refreshWorkspaceUi, 80);
+          premiumState.catFilter = button.getAttribute('data-premium-filter') || 'untranslated';
+          syncPremiumFilterUi();
+          renderFitRows();
         });
       });
-    }
-    var editorPane = el('cat-editor-pane'), gridWrap = el('cat-grid-wrap');
-    if (editorPane && gridWrap && !el('premium-editor-intro')) {
-      var intro = create('div', 'premium-editor-intro');
-      intro.id = 'premium-editor-intro';
-      intro.innerHTML = '<div><span id="premium-active-cell">セル</span><strong id="premium-active-location"></strong></div><em id="premium-editor-risk" class="premium-editor-risk"></em>';
-      editorPane.insertBefore(intro, gridWrap);
-      var actions = create('div', 'premium-row-actions');
-      actions.id = 'premium-row-actions';
-      editorPane.insertBefore(actions, gridWrap);
     }
     moveRowActions();
     preparePremiumRowActions();
     forcePreviewRail();
-    bindStageActions();
   }
+
   function removeExcelWorkspaceUi() {
-    var workspace = el('cat-workspace'), editorLayout = el('cat-editor-layout'), summary = el('premium-work-summary');
-    ['cat-output-help', 'cat-output-reason', 'cat-export-blocked', 'cat-mask-notice'].forEach(function (id) { var node = el(id); if (node && summary && summary.contains(node) && workspace) workspace.insertBefore(node, editorLayout || workspace.firstChild); });
-    var actions = el('cat-segment-actions'), legacyActions = el('cat-actions');
+    var actions = el('cat-segment-actions');
+    var legacyActions = el('cat-actions');
     if (actions && legacyActions && actions.parentNode !== legacyActions) legacyActions.appendChild(actions);
-    ['premium-work-summary', 'premium-fit-panel', 'premium-editor-intro', 'premium-row-actions'].forEach(function (id) { var node = el(id); if (node && node.parentNode) node.parentNode.removeChild(node); });
   }
+
   function moveRowActions() {
     var host = el('premium-row-actions'), actions = el('cat-segment-actions');
     if (host && actions && actions.parentNode !== host) host.appendChild(actions);
@@ -618,7 +516,10 @@
       }
       else if (node.hasAttribute('data-cat-unconfirm')) { if (label) label.textContent = '確認を取り消す'; }
       else if (node.getAttribute('data-cat-inspector') === 'qc') { if (label) label.textContent = '指摘を見る'; }
-      else if (node.hasAttribute('data-cat-placement-edit')) { if (label) label.textContent = 'セル表示を確認'; }
+      else if (node.hasAttribute('data-cat-placement-edit')) {
+        if (label) label.textContent = 'Excel表示を確認';
+        node.hidden = !model || (!model.risk && !model.warning);
+      }
       primary.appendChild(node);
     });
     detailNodes.forEach(function (node) { detailContent.appendChild(node); });
@@ -641,11 +542,11 @@
     if (stage === 'translate') { var translate = el('cat-translate'); if (translate && !translate.disabled) translate.click(); return; }
     if (stage === 'export') { var exportButton = el('cat-export'); if (exportButton && !exportButton.disabled) exportButton.click(); else stage = 'review'; }
     if (stage !== 'review') return;
-    var models = premiumModels(), hasBlockers = models.some(function (model) { return model.blocking; });
-    premiumState.catFilter = hasBlockers ? 'blockers' : 'recommended';
+    premiumState.catFilter = 'review';
+    premiumState.catFilterTouched = true;
     var button = one('[data-premium-filter="' + premiumState.catFilter + '"]'); if (button) button.click();
     var filter = one('[data-cat-filter="all"]'); if (filter) filter.click();
-    window.setTimeout(function () { var first = one('#premium-fit-list .premium-fit-row'); if (first) first.click(); else { var editor = el('cat-editor-layout'); if (editor && editor.scrollIntoView) editor.scrollIntoView({ block: 'start', behavior: reducedMotion() ? 'auto' : 'smooth' }); } }, 60);
+    window.setTimeout(function () { var first = one('#premium-cell-list .premium-cell-row'); if (first) first.click(); }, 60);
   }
   function bindStageActions() {
     all('[data-premium-stage]').forEach(function (button) { if (button.getAttribute('data-bound') === '1') return; button.setAttribute('data-bound', '1'); button.addEventListener('click', function () { if (!button.disabled) runPremiumStage(button.getAttribute('data-premium-stage')); }); });
@@ -684,64 +585,71 @@
     return model.risk ? '収まり要確認' : '収まり見込み';
   }
   function syncPremiumFilterUi() {
-    var panel = el('premium-fit-panel');
+    var panel = el('premium-cell-list-pane');
     if (!panel) return;
-    all('[data-premium-filter]', panel).forEach(function (button) { button.classList.toggle('is-active', button.getAttribute('data-premium-filter') === premiumState.catFilter); });
+    all('[data-premium-filter]', panel).forEach(function (button) {
+      var active = button.getAttribute('data-premium-filter') === premiumState.catFilter;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
   }
   function renderFitRows() {
     syncPremiumFilterUi();
-    var host = el('premium-fit-list'); if (!host) return;
-    var models = premiumModels(), filtered = models.filter(function (model) { if (premiumState.catFilter === 'blockers' || premiumState.catFilter === 'issues') return model.blocking; if (premiumState.catFilter === 'recommended' || premiumState.catFilter === 'fit') return model.recommended; return true; });
+    var host = el('premium-cell-list');
+    if (!host) return;
+    var models = premiumModels();
+    var untranslated = models.filter(function (model) { return !model.target; }).length;
+    var review = models.filter(function (model) { return !!model.target && (model.blocking || model.recommended); }).length;
+    if (el('premium-filter-untranslated')) el('premium-filter-untranslated').textContent = untranslated;
+    if (el('premium-filter-review')) el('premium-filter-review').textContent = review;
+    if (el('premium-filter-all')) el('premium-filter-all').textContent = models.length;
+    if (el('premium-cell-list-count')) el('premium-cell-list-count').textContent = models.length + '件';
+
+    var filtered = models.filter(function (model) {
+      if (premiumState.catFilter === 'untranslated') return !model.target;
+      if (premiumState.catFilter === 'review') return !!model.target && (model.blocking || model.recommended);
+      return true;
+    });
+    if (!filtered.length && premiumState.catFilter === 'untranslated') {
+      premiumState.catFilter = review > 0 ? 'review' : 'all';
+      syncPremiumFilterUi();
+      return renderFitRows();
+    }
     if (!filtered.length) {
-      var emptySignature = 'empty|' + premiumState.catFilter;
-      if (host.getAttribute('data-premium-fit-signature') !== emptySignature) {
-        host.setAttribute('data-premium-fit-signature', emptySignature);
-        host.innerHTML = '<div class="premium-fit-empty">' + ((premiumState.catFilter === 'blockers' || premiumState.catFilter === 'issues') ? '出力を止めるセルはありません。' : premiumState.catFilter === 'recommended' || premiumState.catFilter === 'fit' ? '確認をおすすめするセルはありません。' : '該当するセルはありません。') + '</div>';
-      }
+      host.innerHTML = '<p class="premium-cell-empty">' + (premiumState.catFilter === 'review' ? '要確認のセルはありません。' : '該当するセルはありません。') + '</p>';
       return;
     }
-    /* 行を選ぶだけの操作では、一覧を作り直さず active だけを同期する。
-       全置換はちらつきとフォーカス喪失を起こすため、内容が変わったときだけ行う。 */
-    var signature = 'rows|' + filtered.map(function (model) {
-      return [model.index, model.location, model.source || '', model.target || '', fitRowStatus(model), model.risk ? 'risk' : '', model.blocking ? 'blocker' : model.recommended ? 'recommended' : ''].join('\\u001f');
-    }).join('\\u001e');
-    var existingRows = all('.premium-fit-row', host);
-    if (host.getAttribute('data-premium-fit-signature') === signature && existingRows.length === filtered.length) {
-      existingRows.forEach(function (row) {
-        var model = filtered.find(function (item) { return String(item.index) === String(row.getAttribute('data-premium-row')); });
-        row.classList.toggle('is-active', !!(model && model.row && model.row.classList.contains('is-active')));
-      });
-      return;
-    }
-    host.setAttribute('data-premium-fit-signature', signature);
     host.innerHTML = filtered.map(function (model) {
-      var width = model.blocking ? 100 : model.recommended ? 76 : 92;
-      var status = fitRowStatus(model), fullLabel = [model.location, model.source || '原文なし', model.target || '未翻訳', status].filter(Boolean).join(' / ');
-      return '<button type="button" class="premium-fit-row' + (model.row && model.row.classList.contains('is-active') ? ' is-active' : '') + (model.risk ? ' is-risk' : '') + (model.blocking ? ' is-blocker' : model.recommended ? ' is-recommended' : '') + '" data-premium-row="' + escapeHtml(model.index) + '" title="' + escapeHtml(fullLabel) + '" aria-label="' + escapeHtml(fullLabel) + '">' +
-        '<span class="premium-fit-row-main"><small title="' + escapeHtml(model.location) + '">' + escapeHtml(model.location) + '</small><strong title="' + escapeHtml(model.source || '原文なし') + '">' + escapeHtml(model.source || '原文なし') + '</strong><em title="' + escapeHtml(model.target || '未翻訳') + '">' + escapeHtml(model.target || '未翻訳') + '</em></span>' +
-        '<span class="premium-fit-row-state">' + escapeHtml(status) + '</span><i><b style="width:' + width + '%"></b></i></button>';
+      var status = !model.target ? '未訳' : model.blocking || model.recommended ? '要確認' : model.reviewed ? '確認済み' : '下訳';
+      var active = !!(model.row && model.row.classList.contains('is-active'));
+      var label = [model.location, model.source || '原文なし', model.target || '未訳', status].join(' / ');
+      return '<button type="button" role="option" aria-selected="' + (active ? 'true' : 'false') + '" class="premium-cell-row' + (active ? ' is-active' : '') + '" data-premium-row="' + escapeHtml(model.index) + '" aria-label="' + escapeHtml(label) + '">' +
+        '<span class="premium-cell-location">' + escapeHtml(model.location || ((Number(model.index) + 1) + '行目')) + '</span>' +
+        '<strong>' + escapeHtml(model.source || '原文なし') + '</strong>' +
+        '<span class="premium-cell-target">' + escapeHtml(model.target || '訳文なし') + '</span>' +
+        '<em class="premium-cell-state is-' + (status === '未訳' ? 'untranslated' : status === '要確認' ? 'review' : status === '確認済み' ? 'reviewed' : 'draft') + '">' + status + '</em></button>';
     }).join('');
   }
+
   function updatePremiumStageState(total, counts, reviewed, untranslated) {
-    var exportButton = el('cat-export'), exportBlocked = !exportButton || !!exportButton.disabled, outputText = el('premium-output-summary-text'), saveFailed = counts.saveFailed > 0;
-    var blockerParts = [];
-    if (counts.untranslated > 0) blockerParts.push('未翻訳' + counts.untranslated + '件');
-    if (counts.qc > 0) blockerParts.push('自動点検エラー' + counts.qc + '件');
-    if (counts.stale > 0) blockerParts.push('再点検' + counts.stale + '件');
-    if (counts.saveFailed > 0) blockerParts.push('保存失敗' + counts.saveFailed + '件');
-    var blockerSentence = blockerParts.length ? blockerParts.join('、') + 'が出力を止めています。' : '出力条件を確認してください。';
-    if (outputText) outputText.textContent = !exportButton ? '出力条件を確認しています…' : saveFailed ? '保存できていない変更があるため、出力できません。再保存してから出力してください。' : exportBlocked ? 'まだExcelへ出力できません。' + blockerSentence : 'Excelへ出力できます。出力を止める項目は0件です。確認をおすすめする項目が' + counts.recommended + '件ありますが、出力は止まりません。';
-    var currentStage = untranslated > 0 ? 'translate' : counts.blockers > 0 ? 'review' : 'export', stageNotes = { translate: untranslated > 0 ? untranslated + '件が未翻訳です' : '未訳はありません', review: '出力を止める' + counts.blockers + '件・確認をおすすめ' + counts.recommended + '件', export: exportBlocked ? '出力条件を確認してください' : '出力できます' };
-    ['translate', 'review', 'export'].forEach(function (stage, index) { var button = one('[data-premium-stage="' + stage + '"]'); if (!button) return; button.classList.toggle('is-current', stage === currentStage); button.classList.toggle('is-complete', index < ['translate', 'review', 'export'].indexOf(currentStage)); if (stage === 'translate') button.disabled = !!(el('cat-translate') && el('cat-translate').disabled); if (stage === 'review') button.disabled = total === 0; if (stage === 'export') button.disabled = exportBlocked; var note = el('premium-stage-' + stage + '-note'); if (note) note.textContent = stageNotes[stage]; });
-    var outputOpen = el('premium-output-summary-open'); if (outputOpen) { outputOpen.textContent = saveFailed ? '再保存する' : exportBlocked ? '出力を止める' + counts.blockers + '件を見る' : 'Excelへ出力する'; outputOpen.disabled = !exportButton; }
+    var exportButton = el('cat-export');
+    var status = el('premium-export-status');
+    if (!status) return;
+    if (!exportButton) status.textContent = '出力条件を確認中';
+    else if (counts.saveFailed > 0) status.textContent = '保存失敗 ' + counts.saveFailed + '件';
+    else if (untranslated > 0) status.textContent = '未訳 ' + untranslated + '件のため出力できません';
+    else if (counts.qc > 0 || counts.stale > 0) status.textContent = '未解決エラー ' + (counts.qc + counts.stale) + '件';
+    else if (counts.recommended > 0) status.textContent = '要確認 ' + counts.recommended + '件（出力可能）';
+    else status.textContent = exportButton.disabled ? '出力条件を確認してください' : '出力できます';
   }
+
   function refreshWorkspaceUi() {
     if (!document.body.classList.contains('premium-mode-workspace')) return;
     ensureWorkspaceUi(); moveRowActions();
     var models = premiumModels(), totalNode = one('[data-cat-count="all"]'), total = totalNode ? Number(totalNode.textContent || 0) : models.length;
     var reviewed = models.filter(function (model) { return model.reviewed; }).length, untranslated = models.filter(function (model) { return !model.target; }).length;
     var counts = { blockers: models.filter(function (model) { return model.blocking; }).length, recommended: models.filter(function (model) { return model.recommended; }).length, untranslated: untranslated, qc: models.filter(function (model) { return model.qcError; }).length, stale: models.filter(function (model) { return model.stale; }).length, saveFailed: models.filter(function (model) { return model.saveFailed; }).length };
-    if (!premiumState.catFilterTouched && premiumState.catFilter === 'blockers' && counts.blockers === 0) premiumState.catFilter = counts.recommended > 0 ? 'recommended' : 'all';
+    if (!premiumState.catFilterTouched) premiumState.catFilter = untranslated > 0 ? 'untranslated' : counts.recommended > 0 ? 'review' : 'all';
     if (el('premium-fit-count')) el('premium-fit-count').textContent = reviewed; if (el('premium-total-count')) el('premium-total-count').textContent = total; if (el('premium-fit-percent')) el('premium-fit-percent').textContent = (total ? Math.round(100 * reviewed / total) : 0) + '%'; if (el('premium-fit-progress')) el('premium-fit-progress').style.width = (total ? Math.round(100 * reviewed / total) : 0) + '%'; if (el('premium-fit-done')) el('premium-fit-done').textContent = reviewed; if (el('premium-fit-left')) el('premium-fit-left').textContent = counts.blockers; if (el('premium-recommended-count')) el('premium-recommended-count').textContent = counts.recommended; if (el('premium-untranslated')) el('premium-untranslated').textContent = untranslated;
     if (el('premium-fit-blockers')) el('premium-fit-blockers').textContent = counts.blockers; if (el('premium-fit-recommended')) el('premium-fit-recommended').textContent = counts.recommended; if (el('premium-fit-all')) el('premium-fit-all').textContent = total;
     var title = textOf(el('cat-toolbar-title')), direction = textOf(el('cat-toolbar-direction')); if (el('premium-summary-context')) el('premium-summary-context').textContent = [title, direction].filter(Boolean).join(' ・ ');
@@ -864,7 +772,8 @@
         var untranslatedCount = premiumModels().filter(function (model) { return !String(model.target || '').trim(); }).length;
         proxy.textContent = untranslatedCount > 0 ? '未訳' + untranslatedCount + '件を翻訳' : /未訳はありません/.test(textOf(original)) ? '翻訳済み' : pair[2];
       } else {
-        proxy.textContent = textOf(original) || pair[2];
+        var reviewCount = premiumModels().filter(function (model) { return !!model.target && (model.blocking || model.recommended); }).length;
+        proxy.textContent = reviewCount > 0 ? '要確認 ' + reviewCount + '件' : '要確認なし';
         proxy.classList.toggle('cat-qa-has-blockers', original.classList.contains('cat-qa-has-blockers'));
       }
     });
@@ -921,8 +830,8 @@
       renderWorkCards();
     } else if (combinedStart) {
       setActiveNav('translate');
-      setTopbar('翻訳', '文章とExcelをひとつの画面で', {});
-      document.title = '翻訳 - YakuLingo';
+      setTopbar('Excelレイアウト翻訳', 'Excelを翻訳', {});
+      document.title = 'Excelを翻訳 - YakuLingo';
     }
   }
   function interceptCatStartNavigation(event) {
