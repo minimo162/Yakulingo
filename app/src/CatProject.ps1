@@ -197,6 +197,7 @@ function Reset-YakuCatSegmentQc {
     $Segment | Add-Member -NotePropertyName QcTerminologyHash -NotePropertyValue '' -Force
     $Segment | Add-Member -NotePropertyName QcFindings -NotePropertyValue @() -Force
     $Segment | Add-Member -NotePropertyName FitOverflow -NotePropertyValue $null -Force
+    $Segment | Add-Member -NotePropertyName FitPipeline -NotePropertyValue $null -Force
     $Segment | Add-Member -NotePropertyName Confirmed -NotePropertyValue $false -Force
     if (-not $KeepState -and [string]$Segment.State -eq 'reviewed') {
         $Segment.State = if ([string]::IsNullOrWhiteSpace([string]$Segment.Translation)) { 'untranslated' } elseif ([string]$Segment.Origin -eq 'manual') { 'human_edited' } else { 'machine_draft' }
@@ -562,6 +563,7 @@ function Initialize-YakuCatProjectState {
         if (-not ($segment.PSObject.Properties.Name -contains 'QcTerminologyHash')) { $segment | Add-Member -NotePropertyName QcTerminologyHash -NotePropertyValue '' -Force }
         if (-not ($segment.PSObject.Properties.Name -contains 'QcFindings')) { $segment | Add-Member -NotePropertyName QcFindings -NotePropertyValue @() -Force }
         if (-not ($segment.PSObject.Properties.Name -contains 'FitOverflow')) { $segment | Add-Member -NotePropertyName FitOverflow -NotePropertyValue $null -Force }
+        if (-not ($segment.PSObject.Properties.Name -contains 'FitPipeline')) { $segment | Add-Member -NotePropertyName FitPipeline -NotePropertyValue $null -Force }
         if (-not ($segment.PSObject.Properties.Name -contains 'ReferenceUsage')) { $segment | Add-Member -NotePropertyName ReferenceUsage -NotePropertyValue $null -Force }
         if (-not ($segment.PSObject.Properties.Name -contains 'ReferenceEvents')) { $segment | Add-Member -NotePropertyName ReferenceEvents -NotePropertyValue @() -Force }
         if (-not ($segment.PSObject.Properties.Name -contains 'TerminologyUsages')) { $segment | Add-Member -NotePropertyName TerminologyUsages -NotePropertyValue @() -Force }
@@ -957,6 +959,42 @@ function ConvertTo-YakuCatSegmentPlaceablesJson {
     } | ConvertTo-Json -Depth 4 -Compress)
 }
 
+function Get-YakuCatAcronymUsages {
+    param([AllowNull()][string]$Source,[AllowNull()][string]$Target)
+    $items=New-Object System.Collections.Generic.List[object]
+    $rules=@(
+        @('上期','上期','(?i)\b(1H|H1)\b'),@('下期','下期','(?i)\b(2H|H2)\b'),
+        @('前年同期比','前年同期比','(?i)\b(YoY|Y/Y)\b'),@('前四半期比','前四半期比','(?i)\b(QoQ|Q/Q)\b'),@('前月比','前月比','(?i)\b(MoM|M/M)\b')
+    )
+    foreach($rule in $rules){
+        if(-not ([string]$Source).Contains([string]$rule[1])){continue}
+        $match=[regex]::Match([string]$Target,[string]$rule[2])
+        if($match.Success){$items.Add([pscustomobject]@{Key=[string]$rule[0];Value=$match.Value.ToUpperInvariant()})|Out-Null}
+    }
+    return $items.ToArray()
+}
+function ConvertTo-YakuCatAcronymNumericQcText {
+    param([Parameter(Mandatory=$true)]$Segment,[string]$Source,[string]$Target)
+    $used=$false;try{$used=[bool]$Segment.FitPipeline.abbreviation_used}catch{$used=$false}
+    if(-not $used){return $Target}
+    $text=$Target
+    if($Source.Contains('上期')){$text=[regex]::Replace($text,'(?i)\b(?:1H|H1)\b','H')}
+    if($Source.Contains('下期')){$text=[regex]::Replace($text,'(?i)\b(?:2H|H2)\b','H')}
+    return $text
+}
+function Test-YakuCatAcronymInconsistent {
+    param([Parameter(Mandatory=$true)]$Project,[Parameter(Mandatory=$true)]$Segment)
+    $current=@(Get-YakuCatAcronymUsages -Source ([string]$Segment.Text) -Target ([string]$Segment.Translation))
+    foreach($usage in $current){
+        foreach($other in @($Project.Segments)){
+            if([string]$other.SegmentId -eq [string]$Segment.SegmentId){continue}
+            foreach($candidate in @(Get-YakuCatAcronymUsages -Source ([string]$other.Text) -Target ([string]$other.Translation))){
+                if([string]$candidate.Key -eq [string]$usage.Key -and [string]$candidate.Value -ne [string]$usage.Value){return $true}
+            }
+        }
+    }
+    return $false
+}
 function Invoke-YakuCatSegmentValidation {
     param(
         [Parameter(Mandatory=$true)]$Project,
@@ -971,6 +1009,7 @@ function Invoke-YakuCatSegmentValidation {
     }
     if ($target -match '\[\[(?:N|P)\d+\]\]') { $findings.Add([pscustomobject]@{ Code='placeholder-residue'; Severity='error' }) | Out-Null }
     if($null -ne $(try{$Segment.FitOverflow}catch{$null})){$findings.Add([pscustomobject]@{Code='fit-overflow';Severity='warning'})|Out-Null}
+    if(Test-YakuCatAcronymInconsistent -Project $Project -Segment $Segment){$findings.Add([pscustomobject]@{Code='acronym-inconsistency';Severity='warning';Detail='同じ原語に別の略し方が使われています。'})|Out-Null}
     $pairedDelimiter = Find-YakuCatPairedDelimiterMismatch -Text $target
     if ($null -ne $pairedDelimiter) {
         $findings.Add([pscustomobject]@{ Code='paired-delimiter-mismatch'; Severity='warning'; Detail=([string]$pairedDelimiter.Reason) }) | Out-Null
@@ -1004,7 +1043,7 @@ function Invoke-YakuCatSegmentValidation {
     if (-not [string]::IsNullOrWhiteSpace($target) -and -not $isVerbatimRegisteredTerm) {
         try {
             $normalizedSource = Get-YakuCatSegmentNormalizedSource -Project $Project -Segment $Segment
-            $targetForNumericQc = ConvertTo-YakuCatQcEquivalentTimeText -Source $source -Target $target -Direction ([string]$Project.Direction)
+            $targetForNumericQc = ConvertTo-YakuCatQcEquivalentTimeText -Source $source -Target (ConvertTo-YakuCatAcronymNumericQcText -Segment $Segment -Source $source -Target $target) -Direction ([string]$Project.Direction)
             # ここからは canonical fact の値・単位・符号だけを CAT の正本として
             # 比較する。外部送受信の token/mask 監査（Translation.ps1）は別契約で
             # あり、ここへ戻して二重に判定しない。
@@ -2929,6 +2968,7 @@ function Save-YakuCatProject {
                     qc_terminology_hash = [string]$_.QcTerminologyHash
                     qc_findings = @($_.QcFindings)
                     fit_overflow = $(try{$_.FitOverflow}catch{$null})
+                    fit_pipeline = $(try{$_.FitPipeline}catch{$null})
                     confirmed = [bool]$_.Confirmed
                     joined = [bool]$_.Joined
                     kind = [string]$_.Kind
@@ -3379,6 +3419,7 @@ function Restore-YakuCatProject {
                 QcTerminologyHash = [string]$s.qc_terminology_hash
                 QcFindings = @($s.qc_findings)
                 FitOverflow = $(try{$s.fit_overflow}catch{$null})
+                FitPipeline = $(try{$s.fit_pipeline}catch{$null})
                 Confirmed = [bool]$s.confirmed
                 Joined = [bool]$s.joined
                 Kind = [string]$s.kind
@@ -3785,6 +3826,7 @@ function ConvertTo-YakuCatProjectJson {
              qc_status   = [string]$segs[$i].QcStatus
              qc_findings = @($segs[$i].QcFindings)
              fit_overflow = $(try { $segs[$i].FitOverflow } catch { $null })
+             fit_pipeline = $(try { $segs[$i].FitPipeline } catch { $null })
              review_notes = @($(try { $segs[$i].ReviewNotes | ForEach-Object { ConvertTo-YakuCatReviewNoteJsonValue -Note $_ } } catch { @() }))
              # 未確定行を写しに掛けた結果、または保存済みの確認行へ advisory として
              # 足した種別と重大度。実セグメントには残らない（残すと点検の履歴が嘘になる）ので、

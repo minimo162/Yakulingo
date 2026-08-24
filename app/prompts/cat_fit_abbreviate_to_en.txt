@@ -1,0 +1,8 @@
+﻿Abbreviation pass only. Request ID: {request_id}
+PipelineDraft did not fit max_chars after meaning-preserving compression. Propose one shorter translation using standard financial or business abbreviations only when the source itself supports them. Do not invent facts, digits, periods, or units. Preserve every numeric token and required cell_exact term. Append:  ⟦YAKU_FIT⟧ dropped=<none or description>; need_chars=<0 or required count>
+Return numbered items then YAKULINGO_END:{request_id}.
+{numeric_rules}
+{terminology_rules}
+{character_targets}
+{pipeline_data}
+{source_list}

@@ -1228,6 +1228,7 @@ function Start-YakuTranslationJob {
                                 source = [string](Get-YakuFileItemOriginalText -Item $entry)
                                 terminology = @($entry.Terminology)
                                 fit_overflow = $(if($catContext.ContainsKey('FitOverflows') -and $catContext.FitOverflows.ContainsKey([int]$entry.Index)){$catContext.FitOverflows[[int]$entry.Index]}else{$null})
+                                fit_pipeline = $(if($catContext.ContainsKey('FitPipeline') -and $catContext.FitPipeline.ContainsKey([int]$entry.Index)){$catContext.FitPipeline[[int]$entry.Index]}else{$null})
                             })
                         }
                     }
@@ -1592,6 +1593,8 @@ function Convert-YakuTranslationJobResultJson {
         html = $html
         kind = [string]$State['kind']
         phase = [string]$State['phase']
+        stage = [string]$(try { $State['stage'] } catch { '' })
+        worker_progress = @($(try { $State['worker_progress'] } catch { @() }))
         unique_done = [int]$State['unique_done']
         unique_total = [int]$State['unique_total']
         updated_at = [string]$State['updated_at']
@@ -3998,6 +4001,7 @@ function Invoke-YakuRoute {
                             $segs[$i] | Add-Member -NotePropertyName State -NotePropertyValue 'machine_draft' -Force
                             Reset-YakuCatSegmentQc -Segment $segs[$i] -KeepState
                             $fitOverflow=$null;try{$fitOverflow=$pair.fit_overflow}catch{};$segs[$i]|Add-Member -NotePropertyName FitOverflow -NotePropertyValue $fitOverflow -Force
+                            $fitPipeline=$null;try{$fitPipeline=$pair.fit_pipeline}catch{};$segs[$i]|Add-Member -NotePropertyName FitPipeline -NotePropertyValue $fitPipeline -Force
                         }
                         try { $candidate | Add-Member -NotePropertyName 'GlossaryCandidates' -NotePropertyValue (Measure-YakuCatGlossaryCandidates -Root $root -Project $candidate -Settings $innerSettings) -Force } catch {}
                     }

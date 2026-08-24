@@ -66,25 +66,29 @@ function Assert-YakuCatProtectedItems {}
 function Assert-YakuCatProtectedItemsMatchOriginal {}
 $script:metricStatuses=New-Object System.Collections.Generic.List[string]
 function Write-YakuCatFitMetrics { param($Root,$Context,$Status) $script:metricStatuses.Add([string]$Status)|Out-Null }
+$alt=' '+[char]0x27E6+'YAKU_ALT'+[char]0x27E7+' '
 $script:compressRound=0
+$script:backJudgeRound=0
+$script:stageCounts=@{}
 function Invoke-YakuTranslationBatchItems {
     param($Root,$Items,$Settings,$Direction,$MaxChars,$Warnings,$ProgressState,$Context,$Depth,$Reason)
     $Context.BatchOrdinal=[int]$Context.BatchOrdinal+1
     $Context.TranslatedSoFar=[int]$Context.TranslatedSoFar+$Items.Count
     $stage=Get-YakuCatPipelineStage $Items
+    if(-not $script:stageCounts.ContainsKey($stage)){$script:stageCounts[$stage]=0}
+    $script:stageCounts[$stage]=[int]$script:stageCounts[$stage]+1
     $map=@{}
     foreach($item in @($Items)){
         $value=switch($stage){
             'draft' {'Long draft [[N1]]'}
             'compress' {
                 $script:compressRound++
-                if($script:compressRound -eq 1){'First [[N1]]'+$marker+'dropped=first; need_chars=0'}
-                elseif($script:compressRound -eq 2){'Best [[N1]]'+$marker+'dropped=chosen; need_chars=0'}
-                else{'Retry [[N1]]'+$marker+'dropped=retry; need_chars=0'}
+                'First [[N1]]'+$marker+'dropped=first; need_chars=0'+$alt+'Best [[N1]]'+$marker+'dropped=chosen; need_chars=0'
             }
+            'retry' {'Retry [[N1]]'+$marker+'dropped=retry; need_chars=0'}
             'select' {'Best [[N1]]'}
             'back_reconstruct' {'claim [[N1]]'}
-            'back_judge' {'  RETRY_REQUIRED: Best [[N1]]'}
+            'back_judge' {$script:backJudgeRound++;if($script:backJudgeRound -eq 1){'  RETRY_REQUIRED: Best [[N1]]'}else{'PASS'}}
         }
         $map[[int]$item.Index]=[string]$value
     }
@@ -96,7 +100,14 @@ $pipelineItem=[pscustomobject]@{Index=1;Text='source [[N1]]';MaskedText='source 
 $pipelineSettings=[pscustomobject]@{cat_fit_candidate_count=2}
 $pipelineResult=Invoke-YakuCatTranslationItems -Root $root -Items @($pipelineItem) -Settings $pipelineSettings -Direction 'to_en' -MaxChars 1000 -Warnings $pipelineWarnings -Context $pipelineContext
 Check ($pipelineResult[1] -eq 'Retry [[N1]]') 'full pipeline accepts numbered retry prefix and replaces the selected candidate once'
-Check (@($pipelineWarnings|Where-Object{$_.Category -eq 'fit-backcheck-unverified'}).Count -eq 1) 'retry replacement leaves a distinct back-check advisory'
+Check ($script:compressRound -eq 1 -and $script:stageCounts['select'] -eq 1 -and $script:stageCounts['retry'] -eq 1) 'candidate alternatives use one compression call and one selection call'
+Check ($script:backJudgeRound -eq 2 -and $pipelineContext.FitBackCheckStatus[1] -eq 'retry-passed') 'retry replacement is back-checked again before acceptance'
+Check (@($pipelineWarnings|Where-Object{$_.Category -in @('fit-backcheck-unverified','fit-backcheck-failed')}).Count -eq 0) 'verified retry does not leave a stale back-check warning'
+$oneList=New-Object System.Collections.Generic.List[string];$oneList.Add('Only [[N1]]')|Out-Null
+$oneCandidates=[pscustomobject]@{Lists=@{1=$oneList};Metadata=@{1=@{'Only [[N1]]'=[pscustomobject]@{Dropped='none'}}}}
+$oneFinal=@{};$selectBefore=[int]$script:stageCounts['select']
+$null=Invoke-YakuCatFitSelection $root @($pipelineItem) @{1='draft'} $oneCandidates $pipelineSettings 1000 $pipelineWarnings $null $pipelineContext $oneFinal
+Check ($oneFinal[1] -eq 'Only [[N1]]' -and [int]$script:stageCounts['select'] -eq $selectBefore) 'one valid candidate skips the selection agent'
 Check (($script:metricStatuses -join ',') -eq 'baseline,completed') 'job metrics records baseline and result phases'
 $clientText=[IO.File]::ReadAllText((Join-Path $root 'src\CopilotClient.ps1'))
 Check ($clientText.Contains('Copilot numbered wait failure recovered') -and $clientText.Contains('$waitOk = $true')) 'validated numbered salvage overrides the stale watcher failure'

@@ -3,6 +3,7 @@ Start-YakuLingoApp.ps1	lf
 config/settings.template.json	lf
 prompts/cat_fit_back_judge_to_en.txt	lf
 prompts/cat_fit_back_reconstruct.txt	lf
+prompts/cat_fit_abbreviate_to_en.txt	lf
 prompts/cat_fit_compress_to_en.txt	lf
 prompts/cat_fit_select_to_en.txt	lf
 prompts/cat_translate_to_en.txt	lf
@@ -57,6 +58,7 @@ tools/Extract-YakuCellGlossary.ps1	crlf
 tools/Import-YakuCellGlossary.ps1	crlf
 tools/Invoke-YakuSweep.ps1	crlf
 tools/Measure-YakuUiFloor.ps1	crlf
+tools/Measure-YakuCopilotConcurrency.ps1	crlf
 tools/New-YakuPackage.ps1	crlf
 tools/Open-Copilot-Login.ps1	crlf
 tools/Prepare-Copilot.ps1	lf
@@ -146,6 +148,7 @@ tools/Test-YakuV9201BatchFit.ps1	crlf
 tools/Test-YakuV9204CatPartialPreview.ps1	crlf
 tools/Test-YakuV9211TermSnapshotFreshness.ps1	crlf
 tools/Test-YakuV9214AgenticFitReview.ps1	crlf
+tools/Test-YakuV9215ParallelFit.ps1	crlf
 tools/V64-HTTP-Boundary-Test.ps1	crlf
 tools/V65-Saving-Validation-Test.ps1	crlf
 tools/Wait-YakuCopilotResponse-Watcher-Test.ps1	crlf

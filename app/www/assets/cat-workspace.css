@@ -436,6 +436,13 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
   min-width: max-content;
 }
 
+.job-workers { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.job-worker { display: inline-flex; gap: 4px; align-items: center; padding: 3px 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: var(--font-meta); }
+.job-worker-running { border-color: var(--accent); color: var(--text); background: var(--accent-soft); }
+.job-worker-done { color: var(--success); }
+.job-worker-error { color: var(--danger); border-color: var(--danger); }
+.cat-fit-summary { margin-top: 6px; color: var(--muted); font-size: var(--font-meta); }
+
 /* 資料名と訳す向きは1行に並べる。別々の行にすると、器であるツールバーが
    窓の18%（実測159px）を占め、そのぶん一覧の行数が減る。 */
 .cat-toolbar-document strong,
@@ -2853,6 +2860,3 @@ body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr[data-cat-row] textare
     margin-top: 8px;
   }
 }
-
-
-

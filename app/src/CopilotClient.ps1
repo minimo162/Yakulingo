@@ -28,6 +28,7 @@ function Write-YakuLog {
         $dir = Get-YakuSubDir 'logs'
         $path = Join-Path $dir 'yakulingo.log'
         $safeMessage = Protect-YakuLogMessage -Message $Message
+        try { if ($null -ne $script:YakuWorkerIndex -and [int]$script:YakuWorkerIndex -ge 0) { $safeMessage = ('worker=' + [string][int]$script:YakuWorkerIndex + ' ' + $safeMessage) } } catch {}
         $line = '{0} [{1}] {2}' -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss.fff'), $Level, $safeMessage
         $mutex = New-Object System.Threading.Mutex($false, 'Local\YakuLingo-LogWrite')
         $locked = $false
@@ -1457,6 +1458,113 @@ function Close-YakuSurplusCopilotTargets {
             else { Write-YakuLog "Closed surplus tab. targetId=$targetId url=$targetUrl" 'INFO' }
         }
     }
+}
+
+function New-YakuCopilotWorkerPages {
+    <#
+      1つの専用Edgeプロファイル内に、Copilot workerごとの最上位ウィンドウを作る。
+      同じウィンドウの背面タブはvisibilityState=hiddenになって応答本文を読めないため、
+      Target.createTarget(newWindow=true)を使う。ここで作ったworker 1以降は、呼び出し側が
+      Close-YakuCopilotWorkerPagesで必ず閉じる。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Settings,
+        [Parameter(Mandatory=$true)][int]$Count,
+        [int]$ReadyTimeoutSeconds = 180
+    )
+    if ($Count -lt 1 -or $Count -gt 8) { throw 'Copilot worker数は1～8にしてください。' }
+    $port = Get-YakuCdpPort -Settings $Settings
+    $url = Get-YakuCopilotUrl -Settings $Settings
+    $port = Start-YakuCopilotEdge -Port $port -DisplayMode ([string]$Settings.browser_display_mode) -Url $url -WindowSize ([string]$Settings.edge_window_size)
+    $pages = New-Object System.Collections.Generic.List[object]
+    $createdIds = New-Object System.Collections.Generic.List[string]
+    try {
+        $pages.Add((Get-YakuCopilotPage -Port $port -Url $url)) | Out-Null
+        if ($Count -gt 1) {
+            $browserWs = Get-YakuCdpBrowserWebSocketUrl -Port $port
+            if ([string]::IsNullOrWhiteSpace($browserWs)) { throw 'Copilot worker用のブラウザ接続を取得できませんでした。' }
+            for ($worker = 1; $worker -lt $Count; $worker++) {
+                $created = Invoke-YakuCdpMethod -WebSocketUrl $browserWs -Method 'Target.createTarget' -Params @{ url=$url; newWindow=$true; background=$false } -TimeoutSeconds 30
+                $targetId = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object (Get-YakuObjectPropertyValue -Object $created -Name 'result' -Default $null) -Name 'targetId' -Default '')
+                if ([string]::IsNullOrWhiteSpace($targetId)) { throw "Copilot worker=$worker のウィンドウを作れませんでした。" }
+                $createdIds.Add($targetId) | Out-Null
+                $page = $null
+                $deadline = (Get-Date).AddSeconds([Math]::Max(10,$ReadyTimeoutSeconds))
+                while ((Get-Date) -lt $deadline) {
+                    Start-Sleep -Milliseconds 500
+                    $page = @(Get-YakuCdpPages -Port $port | Where-Object { $_ -and [string]$_.id -eq $targetId } | Select-Object -First 1)
+                    if ($page.Count -gt 0) { $page = $page[0]; break }
+                    $page = $null
+                }
+                if ($null -eq $page) { throw "Copilot worker=$worker のターゲットを取得できませんでした。" }
+                # 汎用ready waitはeval失敗時に既定ページを取り直す。worker準備でそれを
+                # 使うと、複数workerが同じ入力欄を掴むため、targetIdを固定して待つ。
+                $readyDeadline = (Get-Date).AddSeconds($ReadyTimeoutSeconds)
+                $readyState = $null
+                while ((Get-Date) -lt $readyDeadline) {
+                    try {
+                        $readyState = Get-YakuCopilotState -Page $page -TimeoutSeconds 8
+                        if ((Get-YakuObjectPropertyValue -Object $readyState -Name 'inputReady' -Default $false) -eq $true) { break }
+                    } catch {
+                        $sameTarget = @(Get-YakuCdpPages -Port $port | Where-Object { $_ -and [string]$_.id -eq $targetId } | Select-Object -First 1)
+                        if ($sameTarget.Count -gt 0) { $page = $sameTarget[0] }
+                    }
+                    Start-Sleep -Milliseconds 500
+                }
+                if ($null -eq $readyState -or (Get-YakuObjectPropertyValue -Object $readyState -Name 'inputReady' -Default $false) -ne $true) { throw "Copilot worker=$worker の入力欄が準備できませんでした。" }
+                $pages.Add($page) | Out-Null
+            }
+
+            # 完全に覆われた窓はEdge 151でもhiddenになるため、各窓を48pxずつずらす。
+            try { $null = Set-YakuEdgeWindowVisibility -Mode foreground } catch {}
+            for ($worker = 0; $worker -lt $pages.Count; $worker++) {
+                try {
+                    $window = Invoke-YakuCdpMethod -WebSocketUrl $browserWs -Method 'Browser.getWindowForTarget' -Params @{ targetId=[string]$pages[$worker].id } -TimeoutSeconds 10
+                    $windowResult = Get-YakuObjectPropertyValue -Object $window -Name 'result' -Default $null
+                    $windowId = [int](Get-YakuObjectPropertyValue -Object $windowResult -Name 'windowId' -Default 0)
+                    $bounds = Get-YakuObjectPropertyValue -Object $windowResult -Name 'bounds' -Default $null
+                    if ($windowId -gt 0 -and [string](Get-YakuObjectPropertyValue -Object $bounds -Name 'windowState' -Default '') -ne 'minimized') {
+                        $null = Invoke-YakuCdpMethod -WebSocketUrl $browserWs -Method 'Browser.setWindowBounds' -Params @{ windowId=$windowId; bounds=@{ left=([int](Get-YakuObjectPropertyValue -Object $bounds -Name 'left' -Default 0)+(48*$worker)); top=([int](Get-YakuObjectPropertyValue -Object $bounds -Name 'top' -Default 0)+(48*$worker)); windowState='normal' } } -TimeoutSeconds 10
+                    }
+                } catch { Write-YakuLog "Copilot worker window offset failed. worker=$worker reason=$($_.Exception.Message)" 'WARN' }
+            }
+        }
+        for ($worker = 0; $worker -lt $pages.Count; $worker++) {
+            $visibility = ''
+            try { $visibility = ConvertTo-YakuCompactJson (Invoke-YakuCdpEval -Page $pages[$worker] -Expression '({state:document.visibilityState,width:innerWidth,height:innerHeight})' -TimeoutSeconds 15) } catch { $visibility = 'eval-failed:' + $_.Exception.Message }
+            $level = if ($visibility -match 'hidden') { 'WARN' } else { 'INFO' }
+            Write-YakuLog "Copilot worker page ready. worker=$worker targetId=$([string]$pages[$worker].id) visibility=$visibility" $level
+        }
+        return $pages.ToArray()
+    } catch {
+        $browserWs = Get-YakuCdpBrowserWebSocketUrl -Port $port
+        foreach ($targetId in @($createdIds.ToArray())) {
+            try { if (-not [string]::IsNullOrWhiteSpace($browserWs)) { $null = Invoke-YakuCdpMethod -WebSocketUrl $browserWs -Method 'Target.closeTarget' -Params @{ targetId=$targetId } -TimeoutSeconds 8 } } catch {}
+        }
+        throw
+    }
+}
+
+function Close-YakuCopilotWorkerPages {
+    param([Parameter(Mandatory=$true)]$Settings,[AllowNull()]$Pages)
+    $list = @($Pages)
+    if ($list.Count -le 1) { return 0 }
+    $port = Get-YakuCdpPort -Settings $Settings
+    $browserWs = Get-YakuCdpBrowserWebSocketUrl -Port $port
+    $closed = 0
+    for ($worker = 1; $worker -lt $list.Count; $worker++) {
+        $page = $list[$worker]
+        $targetId = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $page -Name 'id' -Default '')
+        $targetUrl = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $page -Name 'url' -Default '')
+        if ([string]::IsNullOrWhiteSpace($targetId) -or $targetUrl -match '^https?://(?:127\.0\.0\.1|localhost)') { continue }
+        try {
+            if ([string]::IsNullOrWhiteSpace($browserWs)) { throw 'browser websocket unavailable' }
+            $null = Invoke-YakuCdpMethod -WebSocketUrl $browserWs -Method 'Target.closeTarget' -Params @{ targetId=$targetId } -TimeoutSeconds 8
+            $closed++
+        } catch { Write-YakuLog "Copilot worker page close failed. worker=$worker targetId=$targetId reason=$($_.Exception.Message)" 'WARN' }
+    }
+    Write-YakuLog "Copilot worker pages closed. closed=$closed/$($list.Count-1)" 'INFO'
+    return $closed
 }
 
 function Restore-YakuCopilotTabVisibility {
