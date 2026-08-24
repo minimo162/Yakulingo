@@ -4370,4 +4370,3 @@ try {
     Exit-YakuSingleInstance
     Write-Host 'YakuLingo server stopped.'
 }
-
