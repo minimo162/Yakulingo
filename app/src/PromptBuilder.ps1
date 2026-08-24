@@ -673,82 +673,18 @@ function Get-YakuNumericRulesSection {
 }
 
 function Get-YakuBriefConditionalSections {
-    <#
-      電文体の雛形のうち、原文に手掛かりが無ければ出さない節を返す。
-
-      なぜ「消す」ではなく「条件で出す」なのか:
-
-        規則を1節ずつ外して同じ原文を実機へ投げ、出力が変わるかを測った
-        （scratchpad/Ablate-Brief.ps1、5事例）。結果は次のとおり:
-
-          EXAMPLES                946字  5/5 で出力が変わる
-          WORDING                 738字  2/5
-          ABBREVIATIONS         1,684字  1/5
-          B1-B7                 1,765字  0/5
-          WHAT YOU ARE WRITING    802字  0/5
-
-        いちばん小さい節が全部を担い、大きい2節は測れる効果が無かった。
-        しかし 5事例で 0/5 なのは「効かない」証拠ではなく、
-        「その5事例では引き金を引かなかった」だけである。
-        引用の規則は引用の原文でしか効かず、月名は月が出る原文でしか効かない。
-
-        したがって規則そのものは残し、**引き金が原文に無いときだけ出さない**。
-        Get-YakuNumericRulesSection が数値の規則で先に採っている形と同じ。
-        素の一文なら 1,500字強が落ちるが、失われる規則は1つも無い。
-
-      差し込み口は、直前の行の末尾に置いてある。
-      値は自分の改行を先頭に持つ。空のときに空行が残らないようにするため。
-    #>
     param([AllowNull()][string]$InputText)
     $t = [string]$InputText
     $nl = [Environment]::NewLine
-    $v = @{
-        brief_angle_rule     = ''
-        brief_quotation_rule = ''
-        brief_months_rule    = ''
-        brief_signed_rule    = ''
-        brief_extra_examples = ''
-    }
-    $examples = @()
-
-    # 全角山括弧。原文に山括弧の見出しが無ければ、往復の作法を説く必要が無い。
-    if ($t -match '[<>＜＞]') {
-        $v.brief_angle_rule = $nl + '- Never output half-width < or >. Use FULL-WIDTH ＜ and ＞ for angle-bracket headings; the caller restores them.'
-    }
-
-    # 引用。話法の規則は、引用符か発言の動詞がある原文でしか出番が無い。
-    # 実測では、引用の事例を外すと電文体そのものが崩れた（文に戻った）ので、
-    # 引き金を引いたときは規則と事例の両方を出す。
+    $v = @{ brief_angle_rule=''; brief_quotation_rule=''; brief_months_rule=''; brief_signed_rule=''; brief_extra_examples='' }
+    if ($t -match '[<>＜＞]') { $v.brief_angle_rule = $nl + '- Use full-width ＜ and ＞ for angle-bracket headings.' }
     if ($t -match '[「」『』"“”]|述べ|語っ|表明|コメント|発言|と説明|と話|インタビュー') {
-        $v.brief_quotation_rule = $nl + (@(
-            'B6. Quotations. For speech, attributed quotes and quote-like headlines you must pick one of exactly two forms:'
-            '    (a) Keep the quotation marks. Then the quoted words are translated faithfully and are NOT compressed: no dropped articles, no abbreviations, no noun-stacking inside the marks.'
-            '    (b) Remove the quotation marks and use indirect speech, keeping who said it and the reporting verb. Then compress freely.'
-            '    Quotation marks around compressed wording are wrong, because they claim the person said those words. Prefer (b) in this register.'
-            '    Short quoted terms, product names, programmes and places with no speech reading are not speech: keep their marks and follow B1-B5.'
-        ) -join $nl)
-        $examples += (@(
-            '社長は生産現場の連携が不可欠であり、フィジカルAIを推進していくと述べた。'
-            '-> Mfg.-site collaboration essential; he intends to advance physical AI.'
-            '   NOT "...; intends to advance." (the subject must stay recoverable)'
-        ) -join $nl)
+        $v.brief_quotation_rule = $nl + '- For speech, either preserve the quoted wording faithfully or use indirect speech while retaining attribution and reporting verb.'
     }
-
-    # 月名。数値は差し替え済みなので「1月」は「[[N1]]月」になる。月の字だけを見る。
-    if ($t -match '月') {
-        $v.brief_months_rule = $nl + '- Months: Jan. Feb. Mar. Apr. Jun. Jul. Aug. Sep. Oct. Nov. Dec.; May stays May. Abbreviate only a calendar month. A person, company, product or place name keeps the full word (April Smith, June Tanaka, March & Co.). If unsure, leave it spelled out.'
-    }
-
-    # 符号付きの内訳。増減要因の表記が無ければ出さない。
+    if ($t -match '月') { $v.brief_months_rule = $nl + '- Abbreviate a month only when it is clearly a calendar date; keep names spelled out.' }
     if ($t -match '内訳|増減要因|要因は|[▲△]|[＋+]\s*[0-9０-９\[]|[(（][0-9０-９]') {
-        $v.brief_signed_rule = $nl + '- Signed breakdowns: term + one space + source sign and figure + unit. No "impact", no "of", no colon, no up/down. Only a sentence-level period change may read "subject up/down X YoY". If unsure, keep +X / (X).'
-        $examples += (@(
-            '第4四半期の変動利益は前年同期比xxx億円の減益。内訳は数量(xxx)、関税(xxx)、構成+xxx。'
-            '-> Q4 VP down xxx oku YoY. Breakdown: vol. (xxx); tariffs (xxx); mix +xxx.'
-        ) -join $nl)
+        $v.brief_signed_rule = $nl + '- Preserve every signed breakdown figure and its sign; do not convert breakdown signs into up/down wording.'
     }
-
-    if ($examples.Count -gt 0) { $v.brief_extra_examples = $nl + $nl + (@($examples) -join ($nl + $nl)) }
     return $v
 }
 
