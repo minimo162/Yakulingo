@@ -1628,7 +1628,8 @@
     /* Edgeでは、ドロップした FileList を hidden input.files へ代入してから
        change を発火する経路が安定しない。ドロップ時は File を直接渡し、
        ファイル選択ダイアログのときだけ input.files を読む。 */
-    var file = fileOverride || (el('cat-file-input').files && el('cat-file-input').files[0]);
+    var fileInput = el('cat-file-input');
+    var file = fileOverride || (fileInput && fileInput.files && fileInput.files[0]);
     if (file) {
       if (!file.size) return Promise.reject(new Error('空のファイルは取り込めません。'));
       if (file.size > YakuCommon.maxUploadBytes) return Promise.reject(new Error('ファイルが大きすぎます。取り込めるのは ' + Math.round(YakuCommon.maxUploadBytes / 1048576) + 'MB までですが、このファイルは ' + (file.size / 1048576).toFixed(1) + 'MB あります。資料を分けてからお試しください。'));
@@ -4819,6 +4820,11 @@
     window.addEventListener('resize', regrow);
   }
 
+  function bindIf(id, eventName, handler) {
+    var node = el(id);
+    if (node) node.addEventListener(eventName, handler);
+  }
+
   function bind() {
     trackToolbarHeight();
     /* 資料単位の管理は資料オーバーレイへ移す。トップ帯は翻訳・出力・点検と、
@@ -4864,33 +4870,33 @@
     /* 帯の操作。role="tablist" の作法どおり、左右の矢印でも移れるようにする。 */
     /* 資料の切り替え。左上の資料名と、折りたたみの中の項目の両方から同じ口を開く。
        以前の「ほかの資料に切り替える」は作業画面を畳んで一覧へ戻していた。 */
-    el('cat-doc-switch').addEventListener('click', openDocDialog);
+    bindIf('cat-doc-switch', 'click', function () { window.location.assign('/cat?view=work'); });
     /* 左の資料一覧。開閉と、その中からの切り替え。 */
-    el('cat-docs-toggle').addEventListener('click', function () {
+    bindIf('cat-docs-toggle', 'click', function () {
       applyDocsPane(!el('cat-editor-layout').classList.contains('is-docs-open'), true);
     });
-    el('cat-docs-import').addEventListener('click', function () { showPicker(); YakuCommon.focus(el('cat-open-file-entry')); });
-    el('cat-align-next-document').addEventListener('click', function () { showPicker(); YakuCommon.focus(el('cat-open-file-entry')); });
-    el('cat-docs-pane-list').addEventListener('click', function (event) {
+    bindIf('cat-docs-import', 'click', function () { window.location.assign('/cat'); });
+    bindIf('cat-align-next-document', 'click', function () { window.location.assign('/cat'); });
+    bindIf('cat-docs-pane-list', 'click', function (event) {
       var choice = event.target.closest ? event.target.closest('[data-cat-doc-open]') : null;
       if (!choice || choice.disabled) return;
       var id = choice.getAttribute('data-cat-doc-open');
       flush().then(function () { resume(id); }).catch(function (error) { status(error.message, true); });
     });
-    el('cat-doc-dialog-close').addEventListener('click', function () { el('cat-doc-dialog').close(); });
-    el('cat-doc-dialog-import').addEventListener('click', function () {
+    bindIf('cat-doc-dialog-close', 'click', function () { el('cat-doc-dialog').close(); });
+    bindIf('cat-doc-dialog-import', 'click', function () {
       el('cat-doc-dialog').close();
       showPicker();
       YakuCommon.focus(el('cat-open-file-entry'));
     });
     /* 貼り付けも同じ扱いの入口になったので、ここから始められるようにする。
        開始画面へ戻して、貼り付け欄へ焦点を置くだけでよい。 */
-    el('cat-doc-dialog-paste').addEventListener('click', function () {
+    bindIf('cat-doc-dialog-paste', 'click', function () {
       el('cat-doc-dialog').close();
       showPicker();
       YakuCommon.focus(el('quick-input'));
     });
-    el('cat-doc-dialog-list').addEventListener('click', function (event) {
+    bindIf('cat-doc-dialog-list', 'click', function (event) {
       var choice = event.target.closest ? event.target.closest('[data-cat-doc-open]') : null;
       if (!choice || choice.disabled) return;
       var id = choice.getAttribute('data-cat-doc-open');
@@ -4938,9 +4944,9 @@
     /* 「Word・Excelを取り込む」は、ファイル選択をそのまま開く。押しても欄が
        開くだけだったころは、そこにもう一度「選ぶ」があり、さらに「取り込んで
        確認を始める」を押す必要があった（2026-08-13、利用者の指摘）。 */
-    el('cat-open-file-entry').addEventListener('click', function () { directFilePath = ''; el('cat-file-input').value = ''; el('cat-file-input').click(); });
+    bindIf('cat-open-file-entry', 'click', function () { directFilePath = ''; el('cat-file-input').value = ''; el('cat-file-input').click(); });
     /* 選んだ時点で取り込みを始める。押す回数を3回から1回にする。 */
-    el('cat-file-input').addEventListener('change', function () {
+    bindIf('cat-file-input', 'change', function () {
       uploaded = null;
       directFilePath = '';
       if (this.files.length) openSource('file', 'auto');
@@ -4953,7 +4959,7 @@
     /* 過去の日英資料の入口。PDF を読むには WebAssembly が要り、それは
        ?import=1 で開いた画面にしか許していない（普段の作業では CSP を
        'self' のままにするため）。押したらその画面へ移る。 */
-    el('cat-open-align-entry').addEventListener('click', function () {
+    bindIf('cat-open-align-entry', 'click', function () {
       if (document.querySelector('meta[name="yaku-import"]') &&
           document.querySelector('meta[name="yaku-import"]').getAttribute('content') === '1') { showStart('align'); return; }
       if (window.YakuInstant && window.YakuInstant.preserveDraft) window.YakuInstant.preserveDraft();
@@ -4990,12 +4996,12 @@
         status.textContent = label + 'を読めませんでした。' + (error && error.message ? error.message : '');
       });
     }
-    el('cat-align-source-file').addEventListener('change', function () { readPdfInto(this, 'source', '日本語版'); });
-    el('cat-align-target-file').addEventListener('change', function () { readPdfInto(this, 'target', '英語版'); });
+    bindIf('cat-align-source-file', 'change', function () { readPdfInto(this, 'source', '日本語版'); });
+    bindIf('cat-align-target-file', 'change', function () { readPdfInto(this, 'target', '英語版'); });
     /* ボタンは既定の見た目を持たない素の file input を隠して押す
        （cat-open-file-entry と同じ配線）。 */
-    el('cat-align-source-file-open').addEventListener('click', function () { el('cat-align-source-file').click(); });
-    el('cat-align-target-file-open').addEventListener('click', function () { el('cat-align-target-file').click(); });
+    bindIf('cat-align-source-file-open', 'click', function () { el('cat-align-source-file').click(); });
+    bindIf('cat-align-target-file-open', 'click', function () { el('cat-align-target-file').click(); });
     ['source', 'target'].forEach(function (side) {
       ['from', 'to'].forEach(function (end) {
         ['input', 'change'].forEach(function (eventName) {
@@ -5003,22 +5009,22 @@
         });
       });
     });
-    el('cat-align-source').addEventListener('input', updateAlignEstimate);
-    el('cat-align-target').addEventListener('input', updateAlignEstimate);
-    el('cat-align-open').addEventListener('click', function () { var epoch = viewEpoch; setBusy(true); YakuCommon.postText('/api/cat/align', { source_text: el('cat-align-source').value, target_text: el('cat-align-target').value, file_name: el('cat-align-name').value }).then(function (html) { startJobHtml(html, { type: 'align', name: el('cat-align-name').value, viewEpoch: epoch }); }).catch(function (error) { setBusy(false); status(error.message, true); }); });
+    bindIf('cat-align-source', 'input', updateAlignEstimate);
+    bindIf('cat-align-target', 'input', updateAlignEstimate);
+    bindIf('cat-align-open', 'click', function () { var epoch = viewEpoch; setBusy(true); YakuCommon.postText('/api/cat/align', { source_text: el('cat-align-source').value, target_text: el('cat-align-target').value, file_name: el('cat-align-name').value }).then(function (html) { startJobHtml(html, { type: 'align', name: el('cat-align-name').value, viewEpoch: epoch }); }).catch(function (error) { setBusy(false); status(error.message, true); }); });
     /* 同じ口へ寄せる。畳んで一覧へ戻すのではなく、その場で選ばせる。
        打ちかけの訳文は先に保存してから開く（開いたあと入れ替わるため）。 */
-    el('cat-switch-project').addEventListener('click', function () { if (busy) return; flush().then(openDocDialog).catch(function (error) { status(error.message, true); }); });
-    el('cat-translate').addEventListener('click', translate); el('cat-export').addEventListener('click', openExportPreflight);
-    if (el('cat-preview-open-dock')) el('cat-preview-open-dock').addEventListener('click', openPreview);
-    el('cat-export-reviewed').addEventListener('click', exportReviewed);
-    el('cat-qa-open').addEventListener('click', openQaList);
-    el('cat-document-review-run').addEventListener('click', runDocumentReview);
-    el('cat-copilot-review-preview').addEventListener('click', previewCopilotDocumentReview);
-    el('cat-qa-report-download').addEventListener('click', downloadQaReport);
-    el('cat-document-finding-search').addEventListener('input',function(){var needle=String(this.value||'').trim().toLowerCase();document.querySelectorAll('#cat-document-findings .cat-document-finding').forEach(function(item){item.hidden=!!needle&&item.textContent.toLowerCase().indexOf(needle)<0;});});
-    el('cat-copilot-review-run').addEventListener('click', runCopilotDocumentReview);
-    el('cat-document-review-lenses').addEventListener('click', function (event) { var button = event.target.closest('[data-cat-coverage-key]'); if (button) acceptDocumentCoverage(button.getAttribute('data-cat-coverage-key'), button); });
+    bindIf('cat-switch-project', 'click', function () { if (!busy) window.location.assign('/cat?view=work'); });
+    bindIf('cat-translate', 'click', translate); bindIf('cat-export', 'click', openExportPreflight);
+    if (el('cat-preview-open-dock')) bindIf('cat-preview-open-dock', 'click', openPreview);
+    bindIf('cat-export-reviewed', 'click', exportReviewed);
+    bindIf('cat-qa-open', 'click', openQaList);
+    bindIf('cat-document-review-run', 'click', runDocumentReview);
+    bindIf('cat-copilot-review-preview', 'click', previewCopilotDocumentReview);
+    bindIf('cat-qa-report-download', 'click', downloadQaReport);
+    bindIf('cat-document-finding-search', 'input',function(){var needle=String(this.value||'').trim().toLowerCase();document.querySelectorAll('#cat-document-findings .cat-document-finding').forEach(function(item){item.hidden=!!needle&&item.textContent.toLowerCase().indexOf(needle)<0;});});
+    bindIf('cat-copilot-review-run', 'click', runCopilotDocumentReview);
+    bindIf('cat-document-review-lenses', 'click', function (event) { var button = event.target.closest('[data-cat-coverage-key]'); if (button) acceptDocumentCoverage(button.getAttribute('data-cat-coverage-key'), button); });
     /* 畳んだ帯（.cat-toolbar-menu）の開く向きを、開くたびに空きで決める。
 
        2026-08-15 に「検索と置換」へ is-drop-up を**固定で**付けていた。根拠は
@@ -5050,59 +5056,54 @@
         document.querySelectorAll('.cat-toolbar-menu[open]').forEach(syncToolbarMenuDirection);
     });
 
-    el('cat-preview-open').addEventListener('click', openPreview);
-    el('cat-preview-dock-toggle').addEventListener('click', function () {
-      inspectorTab = 'preview';
-      setDockOpen(true, true);
-      renderInspector();
-    });
-    el('cat-preview-dock-close').addEventListener('click', function () { setDockOpen(false, true); });
-    bindDockSplitter();
-    restoreDockState();
-    el('cat-preview-pdf-update').addEventListener('click', updatePdfPreview);
-    el('cat-preview-pdf-check').addEventListener('click', checkPdfPublicationText);
-    el('cat-preview-pdf-accept').addEventListener('click', acceptPdfVisualReview);
-    el('cat-placement-form').addEventListener('submit', savePlacement);
-    el('cat-placement-edit').addEventListener('click', function () { setPlacementDialogMode('edit'); var first = el('cat-placement-slices').querySelector('textarea'); if (first) YakuCommon.focus(first); });
-    el('cat-placement-cancel').addEventListener('click', function () { el('cat-placement-dialog').close(); });
-    el('cat-placement-dialog').addEventListener('close', function () { if (placementInvoker && placementInvoker.isConnected) YakuCommon.focus(placementInvoker); placementInvoker = null; });
-    el('cat-placement-down').addEventListener('change', function () { renderPlacementSliceEditors(Number(this.value || 0)); syncPlacementSettingsSummary(); });
-    el('cat-publication-open').addEventListener('click', openPublicationCandidates);
-    el('cat-publication-close').addEventListener('click', function () { el('cat-publication-dialog').close(); });
-    el('cat-publication-generate').addEventListener('click', generatePublicationCandidates);
-    el('cat-publication-regenerate').addEventListener('click', regeneratePublicationCandidates);
-    el('cat-fit-batch-start').addEventListener('click', beginFitBatchQueue);
-    el('cat-fit-batch-abort').addEventListener('click', abortFitBatchQueue);
-    el('cat-fit-batch-close').addEventListener('click', function () { el('cat-fit-batch-dialog').close(); });
-    el('cat-fit-batch-filter').addEventListener('click', function () { el('cat-fit-batch-dialog').close(); currentFilter = 'fit'; redrawAfterFlush(); });
+    bindIf('cat-preview-open', 'click', openPreview);
+    bindIf('cat-preview-dock-toggle', 'click', openPreview);
+    /* The permanent legacy inspector dock no longer exists. Excel display opens
+       only in the explicit preview dialog. */
+    bindIf('cat-preview-pdf-update', 'click', updatePdfPreview);
+    bindIf('cat-preview-pdf-check', 'click', checkPdfPublicationText);
+    bindIf('cat-preview-pdf-accept', 'click', acceptPdfVisualReview);
+    bindIf('cat-placement-form', 'submit', savePlacement);
+    bindIf('cat-placement-edit', 'click', function () { setPlacementDialogMode('edit'); var first = el('cat-placement-slices').querySelector('textarea'); if (first) YakuCommon.focus(first); });
+    bindIf('cat-placement-cancel', 'click', function () { el('cat-placement-dialog').close(); });
+    bindIf('cat-placement-dialog', 'close', function () { if (placementInvoker && placementInvoker.isConnected) YakuCommon.focus(placementInvoker); placementInvoker = null; });
+    bindIf('cat-placement-down', 'change', function () { renderPlacementSliceEditors(Number(this.value || 0)); syncPlacementSettingsSummary(); });
+    bindIf('cat-publication-open', 'click', openPublicationCandidates);
+    bindIf('cat-publication-close', 'click', function () { el('cat-publication-dialog').close(); });
+    bindIf('cat-publication-generate', 'click', generatePublicationCandidates);
+    bindIf('cat-publication-regenerate', 'click', regeneratePublicationCandidates);
+    bindIf('cat-fit-batch-start', 'click', beginFitBatchQueue);
+    bindIf('cat-fit-batch-abort', 'click', abortFitBatchQueue);
+    bindIf('cat-fit-batch-close', 'click', function () { el('cat-fit-batch-dialog').close(); });
+    bindIf('cat-fit-batch-filter', 'click', function () { el('cat-fit-batch-dialog').close(); currentFilter = 'fit'; redrawAfterFlush(); });
     /* 実行中はESCでも閉じさせない。止めたいときは必ず「中止」を押させる
        （閉じただけで裏へ回る、という曖昧な状態を作らない）。 */
-    el('cat-fit-batch-dialog').addEventListener('cancel', function (event) { if (fitBatchQueue && fitBatchQueue.running) event.preventDefault(); });
-    el('cat-abbreviation-form').addEventListener('submit', function (event) {
+    bindIf('cat-fit-batch-dialog', 'cancel', function (event) { if (fitBatchQueue && fitBatchQueue.running) event.preventDefault(); });
+    bindIf('cat-abbreviation-form', 'submit', function (event) {
       event.preventDefault();
       return post('abbreviation-register', { full_form: el('cat-abbreviation-full').value, abbreviation: el('cat-abbreviation-short').value, meaning: el('cat-abbreviation-meaning').value, scope: 'document', first_use_rule: el('cat-abbreviation-first').value, abbreviation_registry_hash: String(project.abbreviation_registry_hash || '') }, true).then(function (data) {
         project = data;
         el('cat-abbreviation-form').reset(); publicationCandidateSet = null; el('cat-publication-candidates').innerHTML = ''; el('cat-publication-status').textContent = '略語を承認しました。候補を作り直すと使用できます。';
       }).catch(function (error) { el('cat-publication-status').textContent = error.message; });
     });
-    el('cat-publication-candidates').addEventListener('change', function (event) {
+    bindIf('cat-publication-candidates', 'change', function (event) {
       var checkbox = event.target.closest('[data-publication-reviewed]'); if (!checkbox) return;
       var candidateId = checkbox.getAttribute('data-publication-reviewed') || '';
       var button = Array.prototype.find.call(el('cat-publication-candidates').querySelectorAll('[data-publication-apply]'), function (item) { return item.getAttribute('data-publication-apply') === candidateId; });
       if (button) button.disabled = !checkbox.checked;
     });
-    el('cat-publication-candidates').addEventListener('click', function (event) {
+    bindIf('cat-publication-candidates', 'click', function (event) {
       var button = event.target.closest('[data-publication-apply]'); if (button && !button.disabled) applyPublicationCandidate(button.getAttribute('data-publication-apply'));
     });
-    el('cat-source-update-open').addEventListener('click', function () { el('cat-source-update-file').value='';el('cat-source-update-file').click(); });
-    el('cat-source-update-file').addEventListener('change', function () { var file=this.files&&this.files[0];if(file)startSourceUpdate(file); });
-    el('cat-source-update-close').addEventListener('click', function () { el('cat-source-update-dialog').close(); });
-    el('cat-source-update-apply').addEventListener('click', applySourceUpdate);
-    el('cat-preview-dialog').addEventListener('close', function () {
+    bindIf('cat-source-update-open', 'click', function () { el('cat-source-update-file').value='';el('cat-source-update-file').click(); });
+    bindIf('cat-source-update-file', 'change', function () { var file=this.files&&this.files[0];if(file)startSourceUpdate(file); });
+    bindIf('cat-source-update-close', 'click', function () { el('cat-source-update-dialog').close(); });
+    bindIf('cat-source-update-apply', 'click', applySourceUpdate);
+    bindIf('cat-preview-dialog', 'close', function () {
       clearPreviewPdfState();
     });
-    el('cat-export-qa').addEventListener('click', openQaList);
-    el('cat-export-final-review').addEventListener('change', function () {
+    bindIf('cat-export-qa', 'click', openQaList);
+    bindIf('cat-export-final-review', 'change', function () {
       var box = this; el('cat-export-final-reason').disabled = !box.checked; if (!box.checked) return;
       var scope = currentScope(); if (!scope) { box.checked = false; el('cat-export-final-reason').disabled = true; return; }
       post('final-review-readiness', { render_id: previewRenderId || '' }, false, scope).then(function (readiness) {
@@ -5114,8 +5115,8 @@
         YakuCommon.focus(el('cat-export-final-reason'));
       }).catch(function (error) { box.checked = false; el('cat-export-final-reason').disabled = true; status(error.message, true); });
     });
-    el('cat-export-confirm').addEventListener('click', function (event) { if (el('cat-export-final-review').checked && !String(el('cat-export-final-reason').value || '').trim()) { event.preventDefault(); status('確認記録を残す場合は、確認した内容や判断理由を入力してください。', true); YakuCommon.focus(el('cat-export-final-reason')); } });
-    el('cat-danger-zone').addEventListener('toggle', function () { if (this.open) loadPersonalGlossary(); });
+    bindIf('cat-export-confirm', 'click', function (event) { if (el('cat-export-final-review').checked && !String(el('cat-export-final-reason').value || '').trim()) { event.preventDefault(); status('確認記録を残す場合は、確認した内容や判断理由を入力してください。', true); YakuCommon.focus(el('cat-export-final-reason')); } });
+    bindIf('cat-danger-zone', 'toggle', function () { if (this.open) loadPersonalGlossary(); });
     /* 下部ドックは畳める。閉じると、原文と訳文が高さを使う。次に開いたときも
        同じ状態にする（市販CATでも補助ペインの開閉は覚える）。 */
     (function () {
@@ -5487,20 +5488,20 @@
       var pick = picks[Number(event.key) - 1];
       if (pick) { if (pick.hasAttribute('data-cat-term-insert')) insertTerm(pick); else insertReference(pick); }
     });
-    el('cat-search').addEventListener('input', redrawAfterFlush);
+    bindIf('cat-search', 'input', redrawAfterFlush);
     /* 検索の掛け方を変えたら、表も置換の帯も引き直す。置換後の文字列だけは
        表を絞らないので、帯の行数だけを数え直す。 */
-    el('cat-search-case').addEventListener('change', function () { searchCase = !!this.checked; redrawAfterFlush(); });
-    el('cat-search-regex').addEventListener('change', function () { searchRegex = !!this.checked; redrawAfterFlush(); });
-    el('cat-replace-input').addEventListener('input', function () { if (project) renderSearchTools(); });
+    bindIf('cat-search-case', 'change', function () { searchCase = !!this.checked; redrawAfterFlush(); });
+    bindIf('cat-search-regex', 'change', function () { searchRegex = !!this.checked; redrawAfterFlush(); });
+    bindIf('cat-replace-input', 'input', function () { if (project) renderSearchTools(); });
     document.querySelector('[data-cat-term-cancel]').addEventListener('click', function () { el('cat-term-dialog').close(); });
     document.querySelector('[data-cat-term-exception-cancel]').addEventListener('click', function () { el('cat-term-exception-dialog').close(); });
-    el('cat-next-qc').addEventListener('click', goToNextQc);
-    el('cat-copy-again').addEventListener('click', function () { YakuCommon.copyText(el('cat-text-output-value').value, el('cat-text-output-value'), el('cat-status')); });
-    el('cat-text-output-close').addEventListener('click', closeTextOutput);
-    el('cat-select-all').addEventListener('click', function () { el('cat-text-output-value').focus(); el('cat-text-output-value').select(); status('全文を選択しました。Ctrl+Cでコピーできます。'); });
-    el('cat-open-folder').addEventListener('click', function () { if (!outputScope || !project || outputScope.id !== String(project.id || '')) { status('この作業の出力をもう一度作成してください。', true); return; } YakuCommon.post('/api/open-output', { project_id: outputScope.id }).then(function () { status('フォルダを開きました。'); }).catch(function (error) { status(error.message, true); }); });
-    el('cat-delete').addEventListener('click', function () {
+    bindIf('cat-next-qc', 'click', goToNextQc);
+    bindIf('cat-copy-again', 'click', function () { YakuCommon.copyText(el('cat-text-output-value').value, el('cat-text-output-value'), el('cat-status')); });
+    bindIf('cat-text-output-close', 'click', closeTextOutput);
+    bindIf('cat-select-all', 'click', function () { el('cat-text-output-value').focus(); el('cat-text-output-value').select(); status('全文を選択しました。Ctrl+Cでコピーできます。'); });
+    bindIf('cat-open-folder', 'click', function () { if (!outputScope || !project || outputScope.id !== String(project.id || '')) { status('この作業の出力をもう一度作成してください。', true); return; } YakuCommon.post('/api/open-output', { project_id: outputScope.id }).then(function () { status('フォルダを開きました。'); }).catch(function (error) { status(error.message, true); }); });
+    bindIf('cat-delete', 'click', function () {
       if (busy || !project) return;
       flush().then(function () {
         deleteTarget = currentScope(); if (!deleteTarget) return;
@@ -5508,13 +5509,13 @@
         var dialog = el('cat-delete-dialog'); dialog.returnValue = 'cancel'; dialog.showModal();
       }).catch(function (error) { status(error.message, true); });
     });
-    el('cat-export-dialog').addEventListener('close', function () {
+    bindIf('cat-export-dialog', 'close', function () {
       var scope = preflightScope; preflightScope = null;
       if (this.returnValue !== 'export' || !scope) return;
       if (!scopeIsCurrent(scope, true)) { status('出力前の確認後に作業内容が変わったため、もう一度確認してください。', true); return; }
       exportProject();
     });
-    el('cat-delete-dialog').addEventListener('close', function () {
+    bindIf('cat-delete-dialog', 'close', function () {
       var target = deleteTarget; deleteTarget = null;
       if (this.returnValue !== 'delete' || !target) return;
       /* 一覧から消すときは、その作業を開いていない。開いている作業を消すときだけ
@@ -5529,13 +5530,13 @@
         showPicker(); status('翻訳作業と途中保存を消しました。元のファイルは残っています。');
       }).catch(function (error) { setBusy(false); if (target.fromList || (project && String(project.id || '') === target.id)) status(error.message, true); });
     });
-    el('cat-resume-more').addEventListener('click', function () {
+    bindIf('cat-resume-more', 'click', function () {
       resumeExpanded = !resumeExpanded;
       renderRecent();
       if (!resumeExpanded) YakuCommon.focus(el('cat-resume-more'));
     });
     /* 一覧のその場で消す。押した瞬間に消さず、同じ確認の窓を通す。 */
-    el('cat-resume-list').addEventListener('click', function (event) {
+    bindIf('cat-resume-list', 'click', function (event) {
       var drop = event.target.closest('[data-cat-resume-drop]');
       if (!drop || busy) return;
       event.preventDefault(); event.stopPropagation();
