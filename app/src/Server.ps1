@@ -2717,16 +2717,9 @@ function Invoke-YakuRoute {
         # 注文チップ(丁寧に)。既存のジョブ機構(Kind revise)へそのまま乗せる。
         # Translation.ps1 側は一切変更しない。
         #
-        # 「短く」(Kind shorten)は配線しない(2026-08-18、実機検証で判明)。
-        # Invoke-YakuTextTranslation は単位換算(Convert-YakuNumericUnits)を
-        # 先に済ませてからマスクするのに対し、Invoke-YakuTextShorten は
-        # 換算前の生の原文をマスクする(Translation.ps1:2258)。同じ原文でも
-        # 2つの関数が異なるトークン対応表を作るため、短くする側が現訳の
-        # [[N#]]を取り違える。実測: 「売上高は1兆3,150億円です。」→短くした
-        # 結果が ¥1 billion(誤り)。「1,234億円」→10倍ずれ。エンジン側
-        # (Translation.ps1)の変更はスコープ外なので、仕様の逃げ道どおり
-        # 「短く」を落とす。「丁寧に」(revise)はマスク表の作り方が翻訳時と
-        # 同一なので問題ない。
+        # 短縮・言い換えは、翻訳時と同じ数値マスクを保持した現訳を
+        # Kind revise へ渡す。Kind shorten の換算前マスク経路は使わない。
+        # 操作名と表示条件は下で固定語彙・数値範囲へ制限する。
         try {
             $settings = Read-YakuSettings -Root $script:YakuRoot
             $payload = Read-YakuRequestJson -Request $req -MaxBytes 262144
