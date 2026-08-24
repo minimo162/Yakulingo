@@ -10,8 +10,6 @@
   <!-- 書き戻しで実際にセルへ設定される書体。体裁プレビューの幅は、これで測る。
        2026-08-17 まで測定側は 14.7px Calibri 固定で、書く側は Arial / MS Pゴシック
        だった。Arial のほうが広いので、判定は「収まる」と言い過ぎる側へ外れていた。 -->
-  <meta name="yaku-output-font" content="__YAKU_OUTPUT_FONT__">
-  <meta name="yaku-output-font-jp" content="__YAKU_OUTPUT_FONT_JP__">
   <!-- 過去の対訳の取り込みで来たかどうか。1 のときだけ WebAssembly が使える。 -->
   <meta name="yaku-import" content="__YAKU_IMPORT__">
   <title>Excel翻訳 - YakuLingo</title>
@@ -195,7 +193,7 @@
             <span id="cat-save-status" class="cat-save-status" role="status" aria-live="polite">保存済み</span>
           </div>
           <label class="cat-toolbar-search" for="cat-search"><span>検索</span><input id="cat-search" type="search" placeholder="原文・訳文を検索"></label>
-         <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">Copilotで未訳を翻訳</button><button id="cat-tm-pretranslate" type="button" class="secondary-button" title="翻訳メモリの完全一致を未訳の行へ先に入れます">翻訳メモリから未訳を入力</button><button id="cat-export" type="button" class="secondary-button">訳文をコピー</button><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みだけコピー</button><button id="cat-qa-open" type="button" class="secondary-button" title="数字・単位・用語などの自動点検の結果です。押すと一覧を表示します（F8）">点検結果</button><button id="cat-preview-open" type="button" class="secondary-button">体裁で見る</button><button id="cat-switch-project" type="button" class="link-button">資料を切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>候補を訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>D</kbd></dt><dd>原文の数字を一覧に出す</dd></div><div><dt><kbd>1～9</kbd></dt><dd>数字をカーソル位置へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></dt><dd>原文を訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd></dt><dd>確認を取り消す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>M</kbd> / <kbd>Alt</kbd>+<kbd>K</kbd></dt><dd>前後の行をつなぐ・戻す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>S</kbd></dt><dd>原文の途中で行を分ける</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>H</kbd></dt><dd>検索と置換</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>K</kbd></dt><dd>過去訳を探す</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>[</kbd></dt><dd>資料一覧を開く・畳む</dd></div><div><dt><kbd>F7</kbd></dt><dd>資料を切り替える</dd></div><div><dt><kbd>F8</kbd></dt><dd>点検</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や参考情報から訳文欄へ戻す</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
+         <div id="cat-actions" class="cat-actions"><button id="cat-translate" type="button">Copilotで未訳を翻訳</button><button id="cat-tm-pretranslate" type="button" class="secondary-button" title="翻訳メモリの完全一致を未訳の行へ先に入れます">翻訳メモリから未訳を入力</button><button id="cat-export" type="button" class="secondary-button">訳文をコピー</button><button id="cat-export-reviewed" type="button" class="secondary-button">確認済みだけコピー</button><button id="cat-qa-open" type="button" class="secondary-button" title="数字・単位・用語などの自動点検の結果です。押すと一覧を表示します（F8）">点検結果</button><button id="cat-switch-project" type="button" class="link-button">資料を切り替える</button><details class="cat-key-help"><summary>キーボード操作</summary><dl><div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>確認して次へ</dd></div><div><dt><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></dt><dd>前後の行</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>1～9</kbd></dt><dd>候補を訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>D</kbd></dt><dd>原文の数字を一覧に出す</dd></div><div><dt><kbd>1～9</kbd></dt><dd>数字をカーソル位置へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></dt><dd>原文を訳文へ入れる</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd></dt><dd>確認を取り消す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>M</kbd> / <kbd>Alt</kbd>+<kbd>K</kbd></dt><dd>前後の行をつなぐ・戻す</dd></div><div><dt><kbd>Alt</kbd>+<kbd>S</kbd></dt><dd>原文の途中で行を分ける</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>検索</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>H</kbd></dt><dd>検索と置換</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>K</kbd></dt><dd>過去訳を探す</dd></div><div><dt><kbd>Ctrl</kbd>+<kbd>[</kbd></dt><dd>資料一覧を開く・畳む</dd></div><div><dt><kbd>F7</kbd></dt><dd>資料を切り替える</dd></div><div><dt><kbd>F8</kbd></dt><dd>点検</dd></div><div><dt><kbd>Esc</kbd></dt><dd>検索欄や参考情報から訳文欄へ戻す</dd></div></dl></details><details id="cat-danger-zone" class="cat-danger-zone"><summary>登録した訳と、この作業の管理</summary>
           <section aria-labelledby="cat-personal-glossary-title">
             <h3 id="cat-personal-glossary-title">今後も使う訳</h3>
             <p class="muted">取り消しても、訳した文章は残ります。</p>
@@ -224,7 +222,6 @@
               <!-- 収まりの見える化。実測した使える幅（自セル＋右の空きセル）にPDFで
                    文字が入りきらない見込みの行だけを表示する。書き出しは止めない、
                    知らせるだけ（点検の指摘と同じ、0件なら出さない）。 -->
-              <button type="button" data-cat-filter="fit" aria-pressed="false" title="実測した使える幅にPDFで文字が入りきらない見込みの行だけを表示します（最終確認はPDFで）" hidden>収まらない見込み <span data-cat-count="fit">0</span></button>
               <button type="button" data-cat-filter="reviewed" aria-pressed="false">確認済み <span data-cat-count="reviewed">0</span></button>
               <button type="button" data-cat-filter="all" aria-pressed="false">すべて <span data-cat-count="all">0</span></button>
             </div>
@@ -271,7 +268,6 @@
             <!-- まとめて収める。収まらない見込みで配置調整できる行をまとめて処理し、
                  短縮候補を先回りして作る（生成のみ。適用は行ごとの比較確認のまま、
                  まとめて適用は作らない）。0件なら隠す（点検の指摘などと同じ扱い）。 -->
-            <button id="cat-fit-batch-open" type="button" class="secondary-button compact" hidden></button>
             <!-- 左の資料一覧も畳める。Crowdin の Ctrl+[ に合わせる。 -->
             <button id="cat-docs-toggle" type="button" class="link-button" aria-expanded="false" aria-controls="cat-docs-pane" aria-keyshortcuts="Control+[" title="資料の一覧を出す・隠す（Ctrl+[）">資料一覧</button>
             <!-- 右の参考情報は畳める。市販CATでも横のペインは閉じられる。 -->
@@ -355,102 +351,7 @@
        Excel はセルの位置、Word・貼り付けた文章は段落の順で並べる。
        元のファイルは開かないし、作らない。画面が既に持っている行だけで組む。 -->
   <!-- 資料の切り替え。作業画面に居たまま開き、選ぶとその場で入れ替わる。
-       一覧へ戻ってから選び直す往復をなくすためのもの。 -->
-  
-
-  <dialog id="cat-preview-dialog" class="confirm-dialog cat-preview-dialog"><form method="dialog">
-    <h2>体裁で見る</h2>
-    <div class="cat-preview-tabs" role="tablist" aria-label="確認方法">
-      <button type="button" role="tab" data-cat-preview-mode="layout" aria-selected="true">Excelへの配置</button>
-      <button type="button" role="tab" data-cat-preview-mode="pdf" aria-selected="false">印刷結果PDF</button>
-    </div>
-    <section id="cat-preview-layout-panel" role="tabpanel"><div class="cat-preview-controls">
-      <div class="cat-state-filters" role="group" aria-label="見るもの">
-        <button type="button" data-cat-preview-side="target" aria-pressed="true">訳文</button>
-        <button type="button" data-cat-preview-side="source" aria-pressed="false">原文</button>
-      </div>
-      <span id="cat-preview-note" class="muted" role="status" aria-live="polite"></span>
-    </div>
-    <div id="cat-preview-body" class="cat-preview-body"></div></section>
-    <section id="cat-preview-pdf-panel" role="tabpanel" hidden>
-      <p>原本の印刷設定を使った原文PDFと訳文PDFを切り替えて確認できます。訳文が収まり、原文との対応に問題がないかを最終的に目で確認してください。</p>
-      <div class="cat-state-filters" role="group" aria-label="PDFで見るもの"><button type="button" data-cat-pdf-side="target" aria-pressed="true">訳文PDF</button><button type="button" data-cat-pdf-side="source" aria-pressed="false">原文PDF</button></div>
-      <div class="cat-preview-pdf-actions"><button type="button" id="cat-preview-pdf-update">PDFを作成・更新</button><button type="button" id="cat-preview-pdf-check" class="secondary-button" hidden>掲載文字を照合</button><button type="button" id="cat-preview-pdf-accept" class="secondary-button" hidden>PDFを目で確認した</button><span id="cat-preview-pdf-status" class="muted" role="status"></span></div>
-      <iframe id="cat-preview-pdf-frame" title="印刷結果PDF" hidden></iframe>
-    </section>
-    <div class="dialog-actions"><button value="cancel" class="secondary-button" autofocus>閉じる</button></div>
-  </form></dialog>
-  <dialog id="cat-placement-dialog" class="confirm-dialog cat-placement-dialog" aria-labelledby="cat-placement-title">
-    <form id="cat-placement-form" method="dialog">
-      <h2 id="cat-placement-title">セル表示を確認</h2>
-      <p class="muted">Excelの表示イメージと、Excelに保存される値を確認します。</p>
-      <p id="cat-placement-context" class="cat-placement-context" role="status"></p>
-      <input id="cat-placement-index" type="hidden">
-      <div id="cat-placement-source-card" class="cat-placement-field">
-        <span class="cat-placement-field-label">原文（変更されません）</span>
-        <p id="cat-placement-source"></p>
-      </div>
-      <div id="cat-placement-publication-card" class="cat-placement-field">
-        <span class="cat-placement-field-label">Excelに保存される訳文</span>
-        <p id="cat-placement-publication"></p>
-      </div>
-      <section class="cat-placement-view" aria-labelledby="cat-placement-grid-title"><div class="cat-placement-grid-heading"><h3 id="cat-placement-grid-title">見え方</h3><span>右の空白セルは表示だけ</span></div><div id="cat-placement-grid" class="cat-placement-grid" role="region" aria-label="Excelの表示範囲"></div><div class="cat-placement-legend"><span><i class="is-saved"></i>緑＝Excelへ保存</span><span><i class="is-display-only"></i>青破線＝表示だけ</span><span><i class="is-empty"></i>灰＝変更なし</span></div></section>
-      <p id="cat-placement-auto-note" class="cat-placement-auto-note" role="status"></p>
-      <section id="cat-placement-settings-summary" class="cat-placement-settings-summary" aria-labelledby="cat-placement-settings-title">
-        <div><h3 id="cat-placement-settings-title">詳細設定（通常は変更不要）</h3><p>Excelの保存先を変える必要がある場合だけ「配置を変更」から編集します。</p></div>
-        <div class="cat-placement-down-summary"><span>下の空白セルへの保存：</span><strong id="cat-placement-down-status" aria-live="polite">OFF</strong></div>
-      </section>
-
-      <details id="cat-placement-advanced" class="cat-placement-advanced cat-placement-edit-only">
-        <summary>セルをまたぐ設定を開く（必要なときだけ）</summary>
-        <p class="muted">プレビューでは右の空白セルへ自動で続けて表示します。Excelへ書く位置を変える場合だけ設定してください。</p>
-        <p class="cat-placement-slices-heading">セルごとの区切り</p>
-        <div id="cat-placement-slices" class="cat-placement-slices"></div>
-        <div id="cat-placement-spill-group" class="cat-placement-choice">
-          <label id="cat-placement-spill-row"><span class="cat-placement-choice-title">右の空白セルへ表示を広げる（表示のみ）</span>
-            <select id="cat-placement-spill" hidden aria-hidden="true"><option value="0">自動（推奨）</option><option value="1">右1セル</option><option value="2">右2セル</option><option value="3">右3セル</option></select>
-          </label>
-          <p id="cat-placement-spill-note" class="muted cat-placement-choice-note">右の空白セルはプレビューの表示だけに使います。Excelの値は対象セルにだけ保存し、必要な範囲は自動で判断します。確認はPDFで行います。</p>
-        </div>
-        <div id="cat-placement-down-group" class="cat-placement-choice">
-          <label id="cat-placement-down-row"><span class="cat-placement-choice-title">例外：下の空白セルへ続きを保存</span>
-            <select id="cat-placement-down"><option value="0">使わない</option><option value="1">下1セル</option><option value="2">下2セル</option><option value="3">下3セル</option></select>
-          </label>
-          <p id="cat-placement-down-note" class="muted cat-placement-choice-note">通常は使いません。選んだセルへ保存する前に、実際のExcelで空白・結合・数式・印刷結果を確認します。基準訳や翻訳メモリは変わりません。</p>
-        </div>
-      </details>
-      <p id="cat-placement-message" class="muted" role="status"></p>
-      <div class="dialog-actions"><button type="button" class="secondary-button cat-placement-edit-only" id="cat-publication-open">情報を保って短くする</button><button type="button" class="secondary-button" id="cat-placement-cancel">閉じる</button><button type="button" class="primary-button cat-placement-edit-only" id="cat-placement-edit">配置を変更</button><button type="submit" id="cat-placement-save" class="cat-placement-edit-only" hidden>変更を保存</button></div>
-    </form>
-  </dialog>
-  <dialog id="cat-publication-dialog" class="confirm-dialog cat-publication-dialog" aria-labelledby="cat-publication-title">
-    <h2 id="cat-publication-title">Excelに入れる訳の候補</h2>
-    <p class="muted">基準訳は変更しません。原文・基準訳・候補を見比べ、情報が欠けていないと判断できる場合だけ採用してください。</p>
-    <input id="cat-publication-index" type="hidden">
-    <div class="cat-publication-compare"><section><h3 id="cat-publication-source-heading">原文</h3><p id="cat-publication-source"></p></section><section><h3 id="cat-publication-canonical-heading">内容を確認する訳</h3><p id="cat-publication-canonical"></p></section></div>
-    <p id="cat-publication-status" class="muted" role="status"></p>
-    <!-- 文字目標の出所（実幅／目安の0.8倍）。数字を言うときは根拠を添える
-         決まりに合わせる（収まりの見える化）。 -->
-    <p id="cat-publication-maxchars-note" class="muted" role="status"></p>
-    <div id="cat-publication-candidates"></div>
-    <details><summary>この資料で使ってよい略語を登録</summary><form id="cat-abbreviation-form"><label>正式名称<input id="cat-abbreviation-full" type="text" required></label><label>略語<input id="cat-abbreviation-short" type="text" required></label><label>意味<input id="cat-abbreviation-meaning" type="text" required></label><label>初出の扱い<select id="cat-abbreviation-first"><option value="define_first">初出では正式名称も示す</option><option value="source_defined_only">原文で定義済みの場合だけ使う</option><option value="none">定義不要</option></select></label><button type="submit" class="secondary-button">この資料で承認する</button></form></details>
-    <div class="dialog-actions"><button type="button" class="secondary-button" id="cat-publication-close">閉じる</button><button type="button" class="secondary-button" id="cat-publication-regenerate" hidden>作り直す</button><button type="button" id="cat-publication-generate">候補を作る</button></div>
-  </dialog>
-  <!-- まとめて収める。1ボタン+確認1回で、対象行ぜんぶの短縮候補を順番に先回り
-       生成する。適用は作らない（行ごとの比較確認は cat-publication-dialog の
-       ままで、ここでは何もExcelへ入れない）。 -->
-  <dialog id="cat-fit-batch-dialog" class="confirm-dialog" aria-labelledby="cat-fit-batch-title">
-    <h2 id="cat-fit-batch-title">まとめて収める</h2>
-    <p id="cat-fit-batch-confirm" class="muted" role="status"></p>
-    <p id="cat-fit-batch-progress" class="muted" role="status" aria-live="polite" hidden></p>
-    <p id="cat-fit-batch-summary" class="muted" role="status" hidden></p>
-    <div class="dialog-actions">
-      <button type="button" class="secondary-button" id="cat-fit-batch-filter" hidden>収まらない見込みだけ表示して確認する</button>
-      <button type="button" class="secondary-button" id="cat-fit-batch-abort" hidden>中止</button>
-      <button type="button" class="secondary-button" id="cat-fit-batch-close">閉じる</button>
-      <button type="button" id="cat-fit-batch-start">開始</button>
-    </div>
-  </dialog>
+       一覧へ戻ってから選び直す往復をなくすためのもの。 -->\n  
   <dialog id="cat-source-update-dialog" class="confirm-dialog cat-source-update-dialog" aria-labelledby="cat-source-update-title">
     <h2 id="cat-source-update-title">原文ファイルの差し替え内容</h2>
     <p id="cat-source-update-summary" class="muted" role="status"></p>
@@ -490,3 +391,5 @@
   </form></dialog>
 </body>
 </html>
+
+

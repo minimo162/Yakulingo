@@ -9,7 +9,6 @@
     recentRetrying: false,
     catFilter: 'untranslated',
     catFilterTouched: false,
-    catInspectorInitialized: false,
     lastQuickSource: '',
     lastQuickArchived: '',
     quickLength: 'full',
@@ -279,16 +278,13 @@
     return direction + ' ・ ' + (item.remaining ? 'あと' + item.remaining + '行' : '確認完了');
   }
   function renderSidebarRecent() {
-    var hosts = [el('premium-sidebar-recent'), el('premium-start-recent-list')].filter(Boolean);
-    var count = el('premium-recent-count');
+    var hosts = [el('premium-start-recent-list')].filter(Boolean);
     if (!hosts.length) return;
     if (premiumState.recentStatus === 'error') {
-      if (count) count.textContent = '読込失敗';
       hosts.forEach(function (host) { host.innerHTML = recentErrorMarkup(); bindRecentRetry(host); });
       return;
     }
     var rows = premiumState.recent.slice(0, 3);
-    if (count) count.textContent = rows.length + '件';
     if (!rows.length) {
       hosts.forEach(function (host) { host.innerHTML = '<p class="premium-sidebar-empty">保存済みの作業はまだありません。</p>'; });
       return;
@@ -476,9 +472,9 @@
     if (host.getAttribute('data-premium-action-signature') === signature) return;
     host.setAttribute('data-premium-action-signature', signature);
     primary.innerHTML = ''; detailContent.innerHTML = '';
-    var primaryNodes = nodes.filter(function (node) { return node.hasAttribute('data-cat-confirm') || node.hasAttribute('data-cat-unconfirm') || node.getAttribute('data-cat-inspector') === 'qc' || node.hasAttribute('data-cat-placement-edit'); });
+    var primaryNodes = nodes.filter(function (node) { return node.hasAttribute('data-cat-confirm') || node.hasAttribute('data-cat-unconfirm'); });
     var detailNodes = nodes.filter(function (node) { return primaryNodes.indexOf(node) < 0; });
-    if(model&&!one('[data-premium-quick-handoff]',primary)){var q=create('button','secondary-button');q.type='button';q.setAttribute('data-premium-quick-handoff','1');q.textContent='文章翻訳で補う';q.addEventListener('click',function(){var x={index:model.index,source:model.source,location:model.location,cell:model.location,return_url:location.pathname+location.search};if(model.row){x.column_width=model.row.getAttribute('data-cat-column-width')||'';x.row_height=model.row.getAttribute('data-cat-row-height')||'';x.font_name=model.row.getAttribute('data-cat-font-name')||'';x.font_size=model.row.getAttribute('data-cat-font-size')||'';x.wrap=model.row.getAttribute('data-cat-wrap')!=='0';x.merged=model.row.getAttribute('data-cat-merged')==='1'}try{sessionStorage.setItem('yakuQuickHandoff',JSON.stringify(x))}catch(_){}location.assign('/quick?from=excel')});primary.appendChild(q)}
+    if(model&&!one('[data-premium-quick-handoff]',primary)){var q=create('button','secondary-button');q.type='button';q.setAttribute('data-premium-quick-handoff','1');q.textContent='文章翻訳で補う';q.addEventListener('click',function(){var x={index:model.index,source:model.source,location:model.location,cell:model.location,return_url:location.pathname+location.search};try{sessionStorage.setItem('yakuQuickHandoff',JSON.stringify(x))}catch(_){}location.assign('/quick?from=excel')});primary.appendChild(q)}
     primaryNodes.forEach(function (node) {
       var label = one('.cat-segment-button-label', node);
       if (node.hasAttribute('data-cat-confirm')) {
@@ -489,11 +485,6 @@
         node.setAttribute('aria-label', canConfirm ? 'この行を確認して次へ' : '訳文を入力してから確認');
       }
       else if (node.hasAttribute('data-cat-unconfirm')) { if (label) label.textContent = '確認を取り消す'; }
-      else if (node.getAttribute('data-cat-inspector') === 'qc') { if (label) label.textContent = '指摘を見る'; }
-      else if (node.hasAttribute('data-cat-placement-edit')) {
-        if (label) label.textContent = 'Excel表示を確認';
-        node.hidden = !model || (!model.risk && !model.warning);
-      }
       primary.appendChild(node);
     });
     detailNodes.forEach(function (node) { detailContent.appendChild(node); });
@@ -524,8 +515,6 @@
   }
   function bindStageActions() {
     all('[data-premium-stage]').forEach(function (button) { if (button.getAttribute('data-bound') === '1') return; button.setAttribute('data-bound', '1'); button.addEventListener('click', function () { if (!button.disabled) runPremiumStage(button.getAttribute('data-premium-stage')); }); });
-    var summary = el('premium-output-summary-open');
-    if (summary && summary.getAttribute('data-bound') !== '1') { summary.setAttribute('data-bound', '1'); summary.addEventListener('click', function () { runPremiumOutputAction(); }); }
   }
   function premiumModels() {
     var domModels = all('#cat-grid-body [data-cat-row]').map(rowModel), snapshot = window.YakuCat && typeof window.YakuCat.getPremiumSnapshot === 'function' ? window.YakuCat.getPremiumSnapshot() : [];
@@ -541,12 +530,12 @@
   }
   function rowModel(row) {
     var input = one('textarea[data-cat-input]', row), location = textOf(one('.cat-location-main', row)) || textOf(one('.cat-col-loc', row)), source = textOf(one('.cat-source-text', row)), target = input ? String(input.value || '').trim() : '';
-    var variant = row.getAttribute('data-cat-publication-variant') === '1', effective = variant ? String(row.getAttribute('data-cat-effective-value') || target).trim() : target;
-    var canonical = String(row.getAttribute('data-cat-canonical-translation') || '').trim(), risk = !!one('.cat-fit-risk-badge,[data-cat-fit-candidates]', row), reviewed = row.getAttribute('data-cat-confirmed') === '1', index = row.getAttribute('data-cat-row') || '', state = row.getAttribute('data-yaku-cat-state') || '';
+    var effective = target;
+    var canonical = String(row.getAttribute('data-cat-canonical-translation') || '').trim(), reviewed = row.getAttribute('data-cat-confirmed') === '1', index = row.getAttribute('data-cat-row') || '', state = row.getAttribute('data-yaku-cat-state') || '';
     var warning = row.getAttribute('data-cat-qc-warning') === '1', saveFailed = row.classList.contains('cat-unsaved') || row.classList.contains('cat-dirty') || row.getAttribute('data-cat-save-failed') === '1', qcError = row.getAttribute('data-cat-blocking') === '1' && !!one('.premium-inline-findings,.cat-qc-findings', row);
-    var blocking = row.getAttribute('data-cat-blocking') === '1' || !effective || saveFailed, stale = state === 'stale', recommended = !blocking && (row.getAttribute('data-cat-recommended') === '1' || warning || risk || !reviewed);
-    var reason = !effective ? '未翻訳' : saveFailed ? '保存失敗' : qcError ? '点検エラー' : stale ? '再点検' : risk ? '収まり要確認' : warning ? '指摘あり' : !reviewed ? '未確認' : '収まり見込み';
-    return { row: row, index: index, location: location, source: source, target: effective, canonical: canonical, risk: risk, reviewed: reviewed, warning: warning, blocking: blocking, saveFailed: saveFailed, qcError: qcError, stale: stale, recommended: recommended, reason: reason };
+    var blocking = row.getAttribute('data-cat-blocking') === '1' || !effective || saveFailed, stale = state === 'stale', recommended = !blocking && (row.getAttribute('data-cat-recommended') === '1' || warning || !reviewed);
+    var reason = !effective ? '未翻訳' : saveFailed ? '保存失敗' : qcError ? '点検エラー' : stale ? '再点検' : warning ? '指摘あり' : !reviewed ? '未確認' : '確認済み';
+    return { row: row, index: index, location: location, source: source, target: effective, canonical: canonical, reviewed: reviewed, warning: warning, blocking: blocking, saveFailed: saveFailed, qcError: qcError, stale: stale, recommended: recommended, reason: reason };
   }
   function fitRowStatus(model) {
     if (!model) return '';
@@ -556,7 +545,7 @@
          具体化し、他のブロッカーは既存の理由を保つ。 */
       return !String(model.target || '').trim() ? '未翻訳（出力を止めます）' : (model.reason || '要対応');
     }
-    return model.risk ? '収まり要確認' : '収まり見込み';
+    return model.reviewed ? '確認済み' : '未確認';
   }
   function syncPremiumFilterUi() {
     var panel = el('premium-cell-list-pane');
@@ -625,10 +614,7 @@
     var counts = { blockers: models.filter(function (model) { return model.blocking; }).length, recommended: models.filter(function (model) { return model.recommended; }).length, untranslated: untranslated, qc: models.filter(function (model) { return model.qcError; }).length, stale: models.filter(function (model) { return model.stale; }).length, saveFailed: models.filter(function (model) { return model.saveFailed; }).length };
     var applied=models.filter(function(m){return!!m.target}).length;if(el('premium-applied-count'))el('premium-applied-count').textContent=applied+'件';if(el('premium-unresolved-count'))el('premium-unresolved-count').textContent=untranslated+'件';if(el('premium-conflict-count'))el('premium-conflict-count').textContent=counts.recommended+'件';if(el('premium-apply-context'))el('premium-apply-context').textContent=untranslated?'確定済み対訳がないセルは日本語のままです。必要なセルだけ文章翻訳で補えます。':'未訳はありません。要確認だけ確認してExcelを作れます。';var usb=el('premium-summary-unresolved');if(usb)usb.textContent='未訳・競合'+(untranslated+counts.recommended)+'件を見る';
     if (!premiumState.catFilterTouched) premiumState.catFilter = untranslated > 0 ? 'untranslated' : counts.recommended > 0 ? 'review' : 'all';
-    if (el('premium-fit-count')) el('premium-fit-count').textContent = reviewed; if (el('premium-total-count')) el('premium-total-count').textContent = total; if (el('premium-fit-percent')) el('premium-fit-percent').textContent = (total ? Math.round(100 * reviewed / total) : 0) + '%'; if (el('premium-fit-progress')) el('premium-fit-progress').style.width = (total ? Math.round(100 * reviewed / total) : 0) + '%'; if (el('premium-fit-done')) el('premium-fit-done').textContent = reviewed; if (el('premium-fit-left')) el('premium-fit-left').textContent = counts.blockers; if (el('premium-recommended-count')) el('premium-recommended-count').textContent = counts.recommended; if (el('premium-untranslated')) el('premium-untranslated').textContent = untranslated;
-    if (el('premium-fit-blockers')) el('premium-fit-blockers').textContent = counts.blockers; if (el('premium-fit-recommended')) el('premium-fit-recommended').textContent = counts.recommended; if (el('premium-fit-all')) el('premium-fit-all').textContent = total;
-    var title = textOf(el('cat-toolbar-title')), direction = textOf(el('cat-toolbar-direction')); if (el('premium-summary-context')) el('premium-summary-context').textContent = [title, direction].filter(Boolean).join(' ・ ');
-    var active = one('#cat-grid-body tr.is-active'); if (active) { var model = rowModel(active), cell = model.location.match(/(?:^|[,!\s])([A-Z]{1,3}\d+)$/i); if (el('premium-active-cell')) el('premium-active-cell').textContent = cell ? cell[1].toUpperCase() : ((Number(model.index) + 1) + '行目'); if (el('premium-active-location')) el('premium-active-location').textContent = model.location || '選択中のセル'; var riskBadge = el('premium-editor-risk'); if (riskBadge) { riskBadge.textContent = fitRowStatus(model); riskBadge.classList.toggle('is-fit', !model.blocking && !model.risk); riskBadge.classList.toggle('is-risk', !!model.risk); } }
+    var active = one('#cat-grid-body tr.is-active'); if (active) { var model = rowModel(active), cell = model.location.match(/(?:^|[,!\s])([A-Z]{1,3}\d+)$/i); if (el('premium-active-cell')) el('premium-active-cell').textContent = cell ? cell[1].toUpperCase() : ((Number(model.index) + 1) + '行目'); if (el('premium-active-location')) el('premium-active-location').textContent = model.location || '選択中のセル'; var stateBadge = el('premium-editor-risk'); if (stateBadge) { stateBadge.textContent = fitRowStatus(model); stateBadge.classList.toggle('is-fit', !model.blocking && model.reviewed); stateBadge.classList.toggle('is-risk', !!model.blocking); } }
     updatePremiumStageState(total, counts, reviewed, untranslated); preparePremiumRowActions(); renderFitRows(); syncTopActionStates(); consumeQuickReturn();
   }
   function consumeQuickReturn(){var r='';try{r=sessionStorage.getItem('yakuQuickReturn')||''}catch(_){}if(!r)return;var d;try{d=JSON.parse(r)}catch(_){try{sessionStorage.removeItem('yakuQuickReturn')}catch(__){}return}var row=one('#cat-grid-body [data-cat-row="'+String(d.index||'')+'"]'),i=row&&one('textarea[data-cat-input]',row);if(!i)return;i.value=String(d.translation||'');i.dispatchEvent(new Event('input',{bubbles:true}));i.dispatchEvent(new Event('change',{bubbles:true}));try{sessionStorage.removeItem('yakuQuickReturn')}catch(_){}showToast('文章翻訳の訳文をExcel作業へ戻しました。')}
@@ -857,215 +843,13 @@
     [el('cat-grid-body'), el('cat-editor-toolbar')].forEach(function (node) {
       if (node) new MutationObserver(refresh).observe(node, { childList: true, subtree: true, attributes: true, characterData: true });
     });
-    var resumeList = el('cat-resume-list');
-    if (resumeList) new MutationObserver(function () { window.setTimeout(adoptCatRecentSnapshot, 0); }).observe(resumeList, { childList: true, subtree: true });
     new MutationObserver(syncCatMode).observe(document.body, { attributes: true, attributeFilter: ['data-cat-view', 'data-cat-source'] });
     syncCatMode();
-  }
-
-  /* Quick translation ----------------------------------------------------- */
-  function quickArchiveMarkup(source, translation) {
-    return '<article class="premium-archived-turn"><div class="premium-user-bubble">' + escapeHtml(source) + '</div>' +
-      '<div class="premium-answer-turn"><span class="premium-answer-avatar">Y</span><div><strong>' + escapeHtml(translation) + '</strong>' +
-      '<button type="button" class="premium-result-link" data-premium-copy="' + escapeHtml(translation) + '">コピー</button></div></div></article>';
-  }
-  function currentQuickTranslation() {
-    var main = one('#palette-result [data-yaku-main-text]');
-    if (main) return textOf(main);
-    var instant = one('#palette-tm-candidate .translation');
-    return textOf(instant);
-  }
-  function archivePreviousQuick() {
-    var history = el('premium-quick-history');
-    var source = premiumState.lastQuickSource;
-    var translation = currentQuickTranslation();
-    if (!history || !source || !translation || source === premiumState.lastQuickArchived) return;
-    history.insertAdjacentHTML('beforeend', quickArchiveMarkup(source, translation));
-    premiumState.lastQuickArchived = source;
-  }
-  function applyQuickPreferences() {
-    var result = el('palette-result');
-    if (!result || !one('[data-yaku-main-card]', result) || one('.job-loading,.alert', result)) return;
-    if (premiumState.quickTone === 'polite' && !premiumState.quickToneRequested && !premiumState.quickActionBusy) {
-      var chip = one('#palette-chips [data-yaku-chip="revise"]');
-      if (chip && !chip.disabled && !el('palette-chips').hidden) {
-        premiumState.quickToneRequested = true;
-        premiumState.quickActionBusy = true;
-        window.setTimeout(function () { chip.click(); premiumState.quickActionBusy = false; }, 0);
-        return;
-      }
-    }
-    var kind = textOf(one('[data-yaku-main-kind]', result));
-    var mainLooksBrief = /短|簡潔/.test(kind);
-    var alternate = one('.result-alt[data-yaku-swap]', result);
-    if (premiumState.quickLengthTouched && premiumState.quickLength === 'brief' && !mainLooksBrief && !premiumState.quickBriefApplied && alternate) {
-      premiumState.quickBriefApplied = true;
-      alternate.click();
-      return;
-    }
-    if (premiumState.quickLengthTouched && premiumState.quickLength === 'full' && mainLooksBrief && alternate) {
-      premiumState.quickBriefApplied = false;
-      alternate.click();
-    }
-  }
-  function resetQuickRequest(source) {
-    archivePreviousQuick();
-    premiumState.lastQuickSource = source;
-    premiumState.quickToneRequested = false;
-    premiumState.quickBriefApplied = false;
-    premiumState.quickActionBusy = false;
-    var current = el('premium-current-source');
-    if (current) { current.textContent = source; current.hidden = !source; }
-  }
-  function buildQuickLayout(main) {
-    if (!main || el('premium-quick-layout')) return;
-    var form = el('palette-form');
-    var result = el('palette-result');
-    var instant = el('palette-instant');
-    var chips = el('palette-chips');
-    var directionNote = el('palette-direction');
-    var footer = one('.palette-footer');
-    var contextField = one('.palette-context-field');
-    var fineprint = one('.palette-fineprint');
-
-    var layout = create('div', 'premium-quick-layout');
-    layout.id = 'premium-quick-layout';
-    var chat = create('section', 'premium-quick-chat');
-    chat.innerHTML = '<header class="premium-quick-head"><div><h1>チャット翻訳</h1><p>文章を貼ってすぐ訳します。用途に合う簡潔な訳を返します。</p></div>' +
-      '<div class="premium-current-preset"><span id="premium-length-label">標準</span><i>×</i><span id="premium-tone-label">ビジネス</span></div></header>' +
-      '<div class="premium-quick-thread"><div id="premium-quick-history"></div><div id="premium-current-source" class="premium-current-source" hidden></div>' +
-      '<div id="premium-live-result" class="premium-live-result"></div></div><div id="premium-quick-composer" class="premium-quick-composer"></div>';
-    var rail = create('aside', 'premium-quick-rail');
-    rail.innerHTML = '<section><h2>よく使う入力</h2><p>押すと入力欄へ入ります。</p><div class="premium-quick-prompts">' +
-      ['前期比で増加しました', '今後の成長に向けた取り組み', '製品の主な特長', 'グローバルな供給体制'].map(function (text) {
-        return '<button type="button" data-premium-prompt="' + escapeHtml(text) + '">' + escapeHtml(text) + '</button>';
-      }).join('') + '</div></section>' +
-      '<section><h2>今回の設定</h2><div class="premium-setting-row"><span>翻訳方向</span><strong id="premium-quick-direction">自動判定</strong></div>' +
-      '<div class="premium-setting-row"><span>長さ</span><strong id="premium-quick-length">標準</strong></div><div class="premium-setting-row"><span>文体</span><strong id="premium-quick-tone">ビジネス</strong></div><div id="premium-context-host"></div></section>' +
-      '<section class="premium-quick-transfer"><h2>Excelで仕上げる</h2><p>この文をセル幅に合わせる作業へ引き継ぎます。</p><button id="premium-quick-handoff" type="button">Excel翻訳へ</button></section>';
-    layout.appendChild(chat);
-    layout.appendChild(rail);
-    main.appendChild(layout);
-
-    var live = el('premium-live-result');
-    [fineprint, directionNote, instant, chips, result, footer].forEach(function (node) { if (node && live) live.appendChild(node); });
-    var composer = el('premium-quick-composer');
-    if (form && composer) { form.classList.add('premium-palette-form'); composer.appendChild(form); }
-    if (contextField && el('premium-context-host')) el('premium-context-host').appendChild(contextField);
-
-    var directionRow = one('.palette-direction-row', form);
-    if (form && directionRow) {
-      var toolbar = create('div', 'premium-compose-toolbar');
-      toolbar.innerHTML = '<span class="premium-control-label">長さ</span><div id="premium-length-mode" class="premium-segmented"><button type="button" data-length="brief">簡潔</button><button type="button" class="is-active" data-length="full">標準</button></div>' +
-        '<span class="premium-control-label">文体</span><div id="premium-tone-mode" class="premium-segmented"><button type="button" class="is-active" data-tone="business">ビジネス</button><button type="button" data-tone="polite">丁寧</button></div>' +
-        '<span class="premium-compose-hint">Enterで送信・Shift+Enterで改行</span>';
-      form.insertBefore(toolbar, directionRow);
-    }
-    var input = el('palette-input');
-    if (input) { input.placeholder = '翻訳したい文を入力…'; input.rows = 3; }
-    var handoff = el('palette-handoff');
-    var handoffProxy = el('premium-quick-handoff');
-    if (handoffProxy && handoff) {
-      handoffProxy.disabled = handoff.disabled;
-      handoffProxy.addEventListener('click', function () { if (!handoff.disabled) handoff.click(); });
-      new MutationObserver(function () { handoffProxy.disabled = handoff.disabled; }).observe(handoff, { attributes: true });
-    }
-    all('[data-premium-prompt]').forEach(function (button) {
-      button.addEventListener('click', function () {
-        if (!input) return;
-        input.value = button.getAttribute('data-premium-prompt') || '';
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.focus();
-      });
-    });
-    all('[data-length]').forEach(function (button) {
-      button.addEventListener('click', function () {
-        premiumState.quickLength = button.getAttribute('data-length') || 'full';
-        premiumState.quickLengthTouched = true;
-        all('[data-length]').forEach(function (item) { item.classList.toggle('is-active', item === button); });
-        var label = premiumState.quickLength === 'brief' ? '簡潔' : '標準';
-        if (el('premium-length-label')) el('premium-length-label').textContent = label;
-        if (el('premium-quick-length')) el('premium-quick-length').textContent = label;
-        premiumState.quickBriefApplied = false;
-        applyQuickPreferences();
-      });
-    });
-    all('[data-tone]').forEach(function (button) {
-      button.addEventListener('click', function () {
-        premiumState.quickTone = button.getAttribute('data-tone') || 'business';
-        all('[data-tone]').forEach(function (item) { item.classList.toggle('is-active', item === button); });
-        var label = premiumState.quickTone === 'polite' ? '丁寧' : 'ビジネス';
-        if (el('premium-tone-label')) el('premium-tone-label').textContent = label;
-        if (el('premium-quick-tone')) el('premium-quick-tone').textContent = label;
-      });
-    });
-    var direction = el('palette-direction-select');
-    function updateDirectionLabel() {
-      var label = !direction || !direction.value ? '自動判定' : direction.value === 'to_jp' ? '英語 → 日本語' : '日本語 → 英語';
-      if (el('premium-quick-direction')) el('premium-quick-direction').textContent = label;
-    }
-    if (direction) direction.addEventListener('change', updateDirectionLabel);
-    updateDirectionLabel();
-
-    function captureRequest() {
-      window.setTimeout(function () {
-        var source = input ? String(input.value || '').trim() : '';
-        if (source) resetQuickRequest(source);
-      }, 0);
-    }
-    if (form) form.addEventListener('submit', function () {
-      var source = input ? String(input.value || '').trim() : '';
-      if (source) resetQuickRequest(source);
-    }, true);
-    if (input) {
-      input.addEventListener('paste', captureRequest, true);
-      input.addEventListener('input', function () { if (!input.value.trim() && el('premium-current-source')) el('premium-current-source').hidden = true; });
-    }
-    if (result) {
-      new MutationObserver(function () {
-        window.setTimeout(applyQuickPreferences, 0);
-      }).observe(result, { childList: true, subtree: true, characterData: true });
-    }
-    document.addEventListener('click', function (event) {
-      var copy = event.target.closest('[data-premium-copy]');
-      if (copy && window.YakuCommon && YakuCommon.copyText) {
-        YakuCommon.copyText(copy.getAttribute('data-premium-copy') || '').then(function () { showToast('訳文をコピーしました。'); });
-      }
-    });
-  }
-  function setupQuickTopbar() {
-    setTopbar('チャット翻訳', '文章を貼ってすぐ訳す', { 'premium-new-chat': true });
-    var button = el('premium-new-chat');
-    if (button && button.getAttribute('data-bound') !== '1') {
-      button.setAttribute('data-bound', '1');
-      button.addEventListener('click', function () {
-        archivePreviousQuick();
-        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-        premiumState.lastQuickSource = '';
-        premiumState.lastQuickArchived = '';
-        if (el('premium-current-source')) { el('premium-current-source').textContent = ''; el('premium-current-source').hidden = true; }
-        if (el('premium-quick-history')) el('premium-quick-history').innerHTML = '';
-        showToast('新しい会話を始めました。');
-      });
-    }
-  }
-  function setupPalette() {
-    var shell = one('.palette-shell');
-    if (!shell || document.body.hasAttribute(PREMIUM_FLAG)) return;
-    document.body.setAttribute(PREMIUM_FLAG, '1');
-    mountPremiumFrame(shell, 'quick', 'premium-palette');
-    var main = one('.palette-main', shell);
-    buildQuickLayout(main);
-    setupQuickTopbar();
-    setActiveNav('quick');
-    document.title = 'チャット翻訳 - YakuLingo';
-    fetchRecent();
   }
 
   onReady(function () {
     try {
       if (document.body.classList.contains('app-cat')) setupCat();
-      else if (document.body.classList.contains('app-palette')) setupPalette();
     } catch (error) {
       /* Reveal the legacy route when a Premium enhancement cannot mount. */
       console.error('Premium UI setup failed', error);

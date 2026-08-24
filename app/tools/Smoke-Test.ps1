@@ -223,9 +223,9 @@ try {
 
 $catIndex = Get-Content -LiteralPath (Join-Path $root 'www\cat.html') -Raw -Encoding UTF8
 $catClient = Get-Content -LiteralPath (Join-Path $root 'www\assets\cat.js') -Raw -Encoding UTF8
-# 画面は一つになった。その場で訳す状態も cat.html の中にある。
-$quickIndex = $catIndex
-$quickClient = Get-Content -LiteralPath (Join-Path $root 'www\assets\quick.js') -Raw -Encoding UTF8
+# テキスト翻訳とExcel翻訳は別画面で、共有通信層だけを共用する。
+$quickIndex = Get-Content -LiteralPath (Join-Path $root 'www\quick.html') -Raw -Encoding UTF8
+$quickClient = Get-Content -LiteralPath (Join-Path $root 'www\assets\quick-page.js') -Raw -Encoding UTF8
 $commonClient = Get-Content -LiteralPath (Join-Path $root 'www\assets\common.js') -Raw -Encoding UTF8
 $premiumUiJs = Get-Content -LiteralPath (Join-Path $root 'www\assets\premium-ui.js') -Raw -Encoding UTF8
 # 2026-08-12: 全行確認を条件から外したので、出口を「確認済み訳文」とは呼べない。
@@ -262,9 +262,7 @@ Assert-Yaku -Condition (-not ($appJs -match "localStorage\.setItem\([^\r\n]*(job
 Assert-Yaku -Condition ($appJs -notmatch 'readAsDataURL|file_b64|application/x-www-form-urlencoded') -Message 'browser client must not Base64/urlencode file uploads'
 # 2026-08-21: 選ぶためだけの入口画面は置かず、通常の翻訳面をrootの左右画面へ一本化する。
 Assert-Yaku -Condition (-not (Test-Path -LiteralPath (Join-Path $root 'www\index.html')) -and -not (Test-Path -LiteralPath (Join-Path $root 'www\home.html'))) -Message 'the launcher must not present a translation choice screen'
-Assert-Yaku -Condition ($server.Contains("@('/', '/quick', '/cat', '/palette')") -and $server.Contains("PageName 'cat.html'") -and $server.Contains("ValidateSet('cat.html','palette.html')")) -Message 'root and legacy translation URLs must serve the same live translation screen'
-Assert-Yaku -Condition ($premiumUiJs.Contains('premium-combined-chat') -and $premiumUiJs.Contains('premium-combined-excel') -and $premiumUiJs.Contains('var combinedStart = !isWorkspace && !workMode && !importMode')) -Message 'the standard translation screen must place the live chat translator beside the live Excel importer'
-Assert-Yaku -Condition ($catClient.Contains("preserveWork ? '/cat?view=work' : '/')")) -Message 'leaving a project must return to the single combined translation screen'
+Assert-Yaku -Condition ($server.Contains("`$path -in @('/', '/quick', '/palette')") -and $server.Contains("PageName 'quick.html'") -and $server.Contains("`$path -eq '/cat'") -and $server.Contains("PageName 'cat.html'")) -Message 'text and Excel routes must remain separate'
 # 使い方・設定・ツアーのユーザー向け入口は退役した。
 # 開始画面から辿れるリンクや CAT の tour hook は残さない。
 Assert-Yaku -Condition (-not $catIndex.Contains('href="/tutorial') -and -not $catIndex.Contains('id="cat-help-links"') -and -not $catIndex.Contains('name="yaku-tour"') -and -not $catIndex.Contains('/assets/tour.js')) -Message 'the start screen must not expose retired tutorial/settings/tour entries'
@@ -350,9 +348,8 @@ Assert-Yaku -Condition ($catClient.Contains('data.review_blocked') -and $catClie
 Assert-Yaku -Condition ($catIndex -match 'id="cat-workspace"[^>]*\shidden(?:\s|>)' -and $catClient.Contains("el('cat-workspace').hidden = false") -and $catClient.Contains("el('cat-workspace').hidden = true")) -Message 'opening another project must hide the current workspace instead of mixing two work contexts'
 Assert-Yaku -Condition ($catClient.Contains("document.querySelectorAll('textarea[data-cat-input], input.revise-input')") -and $catClient.Contains('処理中は参考訳を挿入できません') -and $catClient.Contains('scopeIsCurrent(context.scope, true)')) -Message 'CAT job lock must survive redraws, shortcuts, candidate insertion, and defensive apply checks'
 # 2026-08-12: 左の絞り込み列を廃止し、帯を表の上へ移した（市販CATと同じ）。
-Assert-Yaku -Condition ($catIndex.Contains('id="cat-editor-toolbar"') -and $catIndex.Contains('id="cat-editor-pane"') -and $catIndex.Contains('id="cat-inspector-pane"') -and (-not $catIndex.Contains('id="cat-nav-pane"')) -and $catIndex.Contains('class="cat-toolbar-filters"') -and $stylesSource -match '(?s)\.cat-editor-toolbar\s*\{[^}]*position:\s*sticky') -Message 'CAT review must filter from a bar above the grid, not a permanent side column'
+Assert-Yaku -Condition ($catIndex.Contains('id="cat-editor-toolbar"') -and $catIndex.Contains('id="cat-editor-pane"') -and (-not $catIndex.Contains('id="cat-inspector-pane"')) -and (-not $catIndex.Contains('id="cat-nav-pane"')) -and $catIndex.Contains('class="cat-toolbar-filters"') -and $stylesSource -match '(?s)\.cat-editor-toolbar\s*\{[^}]*position:\s*sticky') -Message 'CAT review must filter from a bar above the grid without a permanent side column'
 Assert-Yaku -Condition ($catClient.Contains('activeSegmentId') -and $catClient.Contains('data-cat-segment-id') -and $catClient.Contains("esc(segment.location || '本文')") -and $catClient.Contains('function locationGroup(segment)')) -Message 'CAT active row and actual document location must survive redraw and drive navigation'
-Assert-Yaku -Condition ($catClient.Contains('cat-candidate-number') -and $catClient.Contains('itemIndex + 1') -and $catClient.Contains('data-cat-reference-id')) -Message 'CAT candidates must be visibly numbered without weakening explicit reference insertion'
 Assert-Yaku -Condition ($catClient.Contains('event.isComposing') -and $catClient.Contains("event.key === 'ArrowUp'") -and $catClient.Contains("event.key.toLowerCase() === 'f'")) -Message 'CAT keyboard workflow must be IME-safe and include row movement and local search'
 Assert-Yaku -Condition ($catIndex.Contains('id="cat-complete-state"') -and $catClient.Contains("currentFilter = 'all'")) -Message 'completed CAT work must show its reviewed rows instead of an empty actionable grid'
 Assert-Yaku -Condition ($catIndex.Contains('id="cat-export-dialog"') -and $catClient.Contains("post('preflight', {}, true, requestScope)") -and $catClient.Contains("String(data.project_id || '') !== requestScope.id") -and $catClient.Contains('Number(data.revision) !== requestScope.revision')) -Message 'CAT output dialog must consume server preflight for the exact project revision'

@@ -14,7 +14,6 @@
   /* 右の参考ペイン。19vw では実機（1380px）で262px＝日本語20字/行しかなく、
      過去訳の原文と訳文が細切れになって読めない。21vw まで広げて 23字/行にする。
      これ以上広げると主役（原文・訳文）が痩せるので、上限は 22rem で止める。 */
-  --pane-inspector: clamp(16rem, 21vw, 22rem);
   /* 資料の一覧の幅。既定で開くのは広い窓だけだが、狭い窓でも利用者は自分で開ける。
      そのとき原文・訳文が 2026-08-12 に却下された 321px を下回らない幅に収める。
      実測 2026-08-13: 1380px で 187px を渡すと 1列 313px（下回る）。12vw まで詰める。 */
@@ -186,13 +185,8 @@
 .quick-area.dragover { border-color: var(--accent); border-style: dashed; background: var(--accent-soft); }
 .quick-area.dragover .file-lane { background: var(--surface); }
 .quick-area-editor { position: relative; display: block; }
-.app-cat .quick-inline #quick-input {
-  display: block; min-height: 0; height: clamp(150px, calc(76vh - 480px), 320px);
-  background: transparent; border: 0; border-radius: 0; padding: 0;
-  font-size: 1.06rem; line-height: 1.75;
-  resize: none;
-}
-.app-cat .quick-inline #quick-input:focus { background: transparent; box-shadow: none; outline: none; }
+
+
 .quick-empty-guide {
   position: absolute; inset: 0 0 auto 0;
   pointer-events: none;
@@ -509,35 +503,26 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 
 .cat-editor-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--pane-inspector);
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   align-items: start;
   min-height: 62vh;
 }
 
-/* 右の脇ペインは、白い面と余白で十分に分かれている。角丸の枠で囲むと、箱が
-   並んだ見た目になる。枠を外し、主役（左の一覧）との境目だけ罫線1本で示す。 */
-.cat-inspector-pane {
-  overflow: auto;
-  border: 0;
-  border-radius: 0;
-  border-left: 1px solid var(--line);
-  background: var(--surface);
-}
+
+
+
 
 /* 器が窓に固定される幅では、ペイン自体は動かさない。左ナビは「資料内の場所」
    だけ、右ペインは開いているタブの中身だけが、溢れたときにスクロールする。
    場所の一覧は資料しだいで無制限、候補は最大16枚あるので、この2つは
    CSS では消せない。消せると言うのは嘘になる。 */
 @media (min-width: 1320px) {
-  .cat-editor-layout { align-items: stretch; min-height: 0; }
-  .cat-inspector-pane { min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+  .cat-editor-layout { align-items: stretch; min-height: 0; }\n
   /* 状態行の上下 17px は、器が固定の画面では一覧2行ぶんに相当する。 */
   .app-cat #cat-status { margin: var(--space-1) 0; }
   .cat-editor-pane { display: flex; flex-direction: column; min-height: 0; }
-  .cat-grid-wrap { flex: 1; min-height: 0; max-height: none; }
-  .cat-inspector-tabs { flex: 0 0 auto; position: static; }
-  .cat-inspector-pane [role="tabpanel"] { flex: 1; min-height: 0; overflow: auto; }
+  .cat-grid-wrap { flex: 1; min-height: 0; max-height: none; }\n\n
 }
 
 /* 絞り込みの帯（表の上）。市販CATと同じく、行を絞る道具は表の直前に置く。 */
@@ -648,10 +633,7 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 /* .muted は (0,1,0)。ここは (0,2,0) で足りる。ID は使わない。 */
 .cat-search-tools .is-error { color: var(--error); }
 
-/* 参考情報を畳む。閉じている間は主役（原文・訳文）が右端まで使う。 */
-.cat-inspector-toggle { margin-left: auto; font-size: var(--font-meta); }
-.cat-editor-layout.is-inspector-hidden { grid-template-columns: minmax(0, 1fr); }
-.cat-editor-layout.is-inspector-hidden .cat-inspector-pane { display: none; }
+
 
 /* 資料の一覧は既定で畳む。開閉の4通りを、列の指定だけで表す。
    実測 2026-08-13（原文/訳文 1列の幅）:
@@ -659,8 +641,7 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
      1920px 左欄なし 505px / 左欄240px 379px … 上回る
    よって既定で開くのは広い窓のときだけにする（下の @media）。 */
 .cat-docs-pane { display: none; }
-.cat-editor-layout.is-docs-open { grid-template-columns: var(--pane-docs) minmax(0, 1fr) var(--pane-inspector); }
-.cat-editor-layout.is-docs-open.is-inspector-hidden { grid-template-columns: var(--pane-docs) minmax(0, 1fr); }
+.cat-editor-layout.is-docs-open { grid-template-columns: var(--pane-docs) minmax(0, 1fr); }
 .cat-editor-layout.is-docs-open .cat-docs-pane { display: flex; flex-direction: column; min-height: 0; }
 .cat-docs-pane-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
 .cat-docs-pane-title { margin: 0; font-size: var(--font-meta); color: var(--muted); font-weight: 600; }
@@ -854,21 +835,6 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
   font-size: var(--font-meta);
 }
 
-/* 収まらない見込み（収まりの見える化）。プレビューの is-overflow-risk と
-   同じ琥珀色で揃える（同じ判定なので同じ色にする）。閉じている行でも出す
-   （未確認行数と同じ流儀で、押す前の画面に必ず出す）。 */
-.cat-fit-risk-badge {
-  display: inline-block;
-  margin-top: 3px;
-  margin-left: 6px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: rgba(201,121,0,.16);
-  color: #7a4a00;
-  font-size: var(--font-meta);
-  white-space: nowrap;
-}
-
 /* 同じ原文が資料の中に何行あるか。閉じている行でも出す。確定すると他の行にも
    訳が入るので、押す前に見えている必要がある（市販CATの反復表示に相当）。 */
 .cat-repetition {
@@ -898,18 +864,6 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 
 /* 開いていない行は従属。付随する印まで出すと一覧で目が滑る。 */
 .cat-grid tbody tr:not(.is-active) .cat-origin { display: none; }
-
-/* 一覧の一望性。実測（1380x900）で閉じた行は87px、1画面に8行しか入らなかった。
-   市販のCATは1画面に15〜25行を並べる。高さの内訳を測ると、場所（Sheet1, A2）と
-   種類（セル）が縦に積まれて54pxを使っていた。閉じている行では横に並べる。
-   開いている行はこれまでどおり縦積みのまま（主役なので情報量を優先）。 */
-.cat-grid tbody tr:not(.is-active) .cat-location-main,
-.cat-grid tbody tr:not(.is-active) .cat-location-kind,
-.cat-grid tbody tr:not(.is-active) .cat-repetition,
-.cat-grid tbody tr:not(.is-active) .cat-fit-risk-badge {
-  display: inline;
-  margin-top: 0;
-}
 .cat-grid tbody tr:not(.is-active) .cat-repetition { margin-left: 6px; }
 /* 閉じている行の高さを決めていたのは訳文欄ではなく、この列だった（実測 1380x900 で
    行 78px のうち 60px）。「本文 / 文 / 同じ原文×3」が 112px の中で2行に折れていた。
@@ -933,11 +887,11 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
    詰めたぶんが帳消しになる（実測 47px）。 */
 .cat-repetition { white-space: nowrap; }
 
-/* 過去訳を言葉で探す欄。原文と訳文を上下に置く（左右だと1列が短すぎる）。 */
-.cat-concordance-form { display: flex; gap: 6px; margin-bottom: 8px; }
-.cat-concordance-form input { flex: 1 1 auto; min-width: 0; }
-.cat-concordance-source { margin: 0 0 4px; }
-.cat-concordance-target { margin: 0; color: var(--accent-text); }
+
+
+
+
+
 
 /* 訳が空の行は、欄が空であることで分かる。「未翻訳」の札は左端の状態と重なる。 */
 
@@ -958,64 +912,26 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
   color: var(--muted);
 }
 
-.cat-inspector-tabs {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  display: flex;
-  background: var(--surface);
-  border-bottom: 1px solid var(--line);
-}
 
-.app-cat .cat-inspector-pane .cat-inspector-tabs button {
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 46px;
-  padding: 6px 4px;
-  border: 0;
-  border-bottom: 3px solid transparent;
-  border-radius: 0;
-  background: transparent;
-  color: var(--muted);
-  font-size: var(--font-meta);
-}
 
-.app-cat .cat-inspector-pane .cat-inspector-tabs button[aria-selected="true"] {
-  border-bottom-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent-text);
-  font-weight: 700;
-}
 
-.cat-inspector-pane [role="tabpanel"] {
-  padding: var(--space-2);
-}
 
-/* 行を選ぶ前の説明は脇役。幅を絞り、畳めるものは畳む。 */
-.cat-inspector-pane p.muted { max-width: 26em; }
-.cat-inspector-pane .pane-note { margin-top: var(--space-1); }
-.cat-inspector-pane .pane-note > summary { min-height: 2.75rem; color: var(--faint); font-size: var(--font-meta); }
 
-.cat-inspector-pane .cat-candidates {
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
 
-.cat-candidate-card {
-  position: relative;
-  padding-top: 42px;
-}
 
-.cat-candidates-title {
-  margin: 16px 0 8px;
-  padding-bottom: 6px;
-  border-bottom: 2px solid var(--line);
-  font-size: 1rem;
-  font-weight: 700;
-}
 
-.cat-candidates section:first-child .cat-candidates-title { margin-top: 0; }
+
+
+
+
+
+
+
+
+
+
+
+
 
 .cat-term-card {
   padding-top: 14px;
@@ -1023,7 +939,7 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
   background: var(--accent-soft);
 }
 
-.cat-term-card .cat-candidate-meta { margin-bottom: 4px; }
+
 
 .cat-term-trace {
   margin-top: 10px;
@@ -1055,36 +971,12 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
   min-height: 44px;
 }
 
-.cat-candidate-number {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: var(--accent);
-  color: #fff;
-  font-weight: 700;
-}
 
-.cat-candidate-shortcut {
-  position: absolute;
-  top: 13px;
-  right: 10px;
-  color: var(--muted);
-  font-size: var(--font-meta);
-}
 
-.cat-qc-card,
-.cat-context-card {
-  margin-bottom: 10px;
-  padding: 10px 12px;
-  border-radius: var(--radius-control);
-  background: var(--soft);
-}
+
+
+
+
 
 .cat-qc-card.is-error {
   border-left: 4px solid var(--error);
@@ -1110,19 +1002,11 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
   background: var(--accent-soft);
 }
 
-.cat-context-label {
-  color: var(--muted);
-  font-size: var(--font-meta);
-  font-weight: 700;
-}
 
-.cat-context-text {
-  margin: 5px 0 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
 
-.cat-review-notes-list { display: grid; gap: var(--space-1); }
+
+
+
 .cat-review-note {
   padding: 10px 12px;
   border: 1px solid var(--line-strong);
@@ -1135,9 +1019,9 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 .cat-review-note-time { flex: 0 0 auto; margin-left: auto; color: var(--muted); font-size: var(--font-meta); white-space: nowrap; }
 .cat-review-note-text { margin: 8px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .cat-review-note-meta { color: var(--muted); font-size: var(--font-meta); }
-.cat-review-notes-form { display: grid; gap: 8px; margin-top: var(--space-2); padding-top: var(--space-2); border-top: 1px solid var(--line); }
-.cat-review-notes-form label { font-weight: 700; }
-.cat-review-notes-form textarea { min-height: 6rem; resize: vertical; }
+
+
+
 .cat-review-note-badge {
   display: inline-block;
   margin-top: var(--space-0);
@@ -1207,76 +1091,32 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
    （色だけに頼らない）。 */
 .app-cat .cat-actions .cat-qa-has-blockers { border-color: var(--error); color: #7a271a; font-weight: 700; }
 
-/* 体裁で見る。Excel はセルの位置、Word と貼り付けた文章は段落の並びで出す。
-   書体や罫線は持っていないので再現しない。位置と流れだけを見るための画面。 */
-.cat-preview-dialog { width: min(72rem, 94vw); }
-.cat-preview-tabs { display: flex; gap: var(--space-1); margin-bottom: var(--space-2); border-bottom: 1px solid var(--line); }
-.cat-preview-tabs button { border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: transparent; color: var(--muted); }
-.cat-preview-tabs button[aria-selected="true"] { border-bottom-color: var(--accent); color: var(--text); font-weight: 700; }
-.cat-preview-pdf-actions { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
-#cat-preview-pdf-frame { width: 100%; height: 62vh; border: 1px solid var(--line); background: var(--surface); }
-.cat-placement-dialog { width: min(42rem, 92vw); }
-.cat-placement-slices { display: grid; gap: var(--space-2); max-height: 54vh; overflow: auto; }
-.cat-placement-slices label { display: grid; gap: var(--space-0); font-weight: 700; }
-.cat-placement-slices textarea { min-height: 5rem; resize: vertical; font: inherit; }
-.cat-placement-context {
-  margin-block: var(--space-1) var(--space-2);
-  padding: var(--space-1) var(--space-2);
-  border-left: 3px solid var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent-text);
-  font-weight: 700;
-}
-.cat-placement-field {
-  margin-top: var(--space-2);
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  background: var(--surface-subtle);
-}
-.cat-placement-field-label,
-.cat-placement-slices-heading {
-  display: block;
-  margin-bottom: var(--space-0);
-  color: var(--accent-text);
-  font-size: var(--font-meta);
-  font-weight: 700;
-}
-.cat-placement-field p {
-  margin: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.cat-placement-auto-note {
-  margin: var(--space-2) 0 0;
-  padding: var(--space-1) var(--space-2);
-  border-left: 3px solid var(--accent);
-  background: var(--accent-soft);
-}
-.cat-placement-advanced {
-  margin-top: var(--space-2);
-  border-top: 1px solid var(--line);
-}
-.cat-placement-advanced > summary {
-  padding: var(--space-1) 0;
-  color: var(--accent-text);
-  cursor: pointer;
-  font-weight: 700;
-}
-.cat-placement-advanced > p { margin: 0 0 var(--space-1); }
-.cat-placement-choice {
-  display: grid;
-  gap: var(--space-0);
-  margin-top: var(--space-2);
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  background: var(--surface-subtle);
-}
-.cat-placement-choice[hidden] { display: none; }
-.cat-placement-choice label { display: grid; gap: var(--space-0); font-weight: 700; }
-.cat-placement-choice-title, .cat-placement-slice-title { display: block; }
-.cat-placement-choice-note { margin: 0; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 .cat-source-update-dialog { width: min(70rem, 94vw); }
 .cat-source-update-list { display: grid; gap: var(--space-2); max-height: 58vh; overflow: auto; }
 .cat-source-update-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) minmax(0,1fr); gap: var(--space-1); border: 1px solid var(--line); padding: var(--space-1); }
@@ -1298,71 +1138,59 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 .cat-document-finding p { margin: var(--space-1) 0; }
 .cat-document-finding-status { color: var(--muted); font-size: var(--font-meta); white-space: nowrap; }
 .cat-document-finding-actions { display: flex; flex-wrap: wrap; gap: var(--space-1); }
-.cat-preview-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); margin-bottom: var(--space-1); }
-.cat-preview-body { max-height: 62vh; overflow: auto; border: 1px solid var(--line); background: var(--surface); padding: var(--space-1); }
-.cat-preview-sheet + .cat-preview-sheet, .cat-preview-flow { margin-top: var(--space-3); }
-.cat-preview-sheet h3 { margin-bottom: var(--space-0); font-size: var(--font-meta); color: var(--muted); }
-.cat-preview-grid { border-collapse: collapse; table-layout: fixed; }
-.cat-preview-grid th { border: 1px solid var(--line-strong); background: var(--soft); color: var(--muted); font-size: var(--font-meta); font-weight: 600; padding: 2px 6px; }
-.cat-preview-grid thead th { min-width: 8rem; }
-.cat-preview-grid tbody th { min-width: 2.4rem; text-align: right; }
-.cat-preview-grid td { border: 1px solid var(--line-strong); padding: 0; vertical-align: top; }
-.app-cat .cat-preview-cell,
-.app-cat .cat-preview-paragraph {
-  display: block;
-  width: 100%;
-  min-height: 1.9rem;
-  padding: 3px 6px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  font: inherit;
-  white-space: pre-wrap;
-}
-/* Excel と同じ見え方にする。折り返し OFF のセルは、幅を超えたら切って見せる
-   （はみ出しに気づけるのは、切れて見えるからである）。ON のセルは折り返す。 */
-.app-cat .cat-preview-cell { overflow: hidden; text-overflow: clip; white-space: nowrap; }
-.app-cat .cat-preview-cell.is-wrap { white-space: pre-wrap; }
-/* 見出しかどうかは、原本では太字で分かる。体裁で見るのだから、そこも写す。 */
-.app-cat .cat-preview-cell.is-bold { font-weight: 700; }
-.app-cat .cat-preview-cell.is-overflow-risk { box-shadow: inset 0 -3px 0 #c97900; background-image: linear-gradient(135deg, transparent 0 88%, rgba(201,121,0,.28) 88%); }
-/* 右隣空白へのはみ出し描き。Excel が左寄せ＋折返しOFF＋右隣空きで文字を罫線の上へ
-   流すのを、見た目だけ揃える。流せる幅（corridor）は実行時の計測からインラインで
-   与えるので、ここでは切り方だけを決める。右隣が占有のときは is-spill が付かず、
-   従来どおり自セルの中で切れる。pointer-events: none は、流れた先のセルの押し場を
-   奪わないため（奪うと右の狭いセルが押せなくなる。実機実測 2026-08-23）。
-   詳細度は基本ルールより1つ上の (0,3,0)。:not() は連ねない。 */
-.app-cat .cat-preview-cell.is-spill { position: relative; z-index: 1; overflow: visible; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 .cat-spill-flow { white-space: nowrap; overflow: hidden; text-overflow: clip; pointer-events: none; }
 .app-cat .cat-protected-prompt-preview { max-height: 55vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: .8rem; border: 1px solid var(--line); background: var(--surface-muted); font-size: .8rem; }
-/* 原本の行の高さが分かっているときは、押しやすさのための下限を外す。行の高さは
-   tr 側が持つ。詳細度は (0,3,0) で、上の (0,2,0) にだけ勝つ。基本ルールは上げない。 */
-.cat-preview-grid.is-measured .cat-preview-cell { min-height: 0; }
-.cat-preview-grid thead th { min-width: 0; }
 
-.app-cat .cat-preview-cell:hover,
-.app-cat .cat-preview-paragraph:hover { background: var(--accent-soft); }
-.app-cat .cat-preview-cell.is-active,
-.app-cat .cat-preview-paragraph.is-active { outline: 2px solid var(--accent); outline-offset: -2px; }
-/* 訳文がまだ無いところは原文を薄く出す。空白にすると、体裁の確認にならない。 */
-.app-cat .cat-preview-cell.is-missing,
-.app-cat .cat-preview-paragraph.is-missing { color: var(--faint); font-style: italic; }
-.cat-preview-flow { max-width: 42em; }
-/* Word の見出し。段の深さが見て分かればよいので、字の大きさと太さだけで出す。
-   段は4段までに丸める（それより深い見出しは、字の大きさでは区別がつかない）。 */
-.app-cat .cat-preview-paragraph.is-heading { font-weight: 700; margin-top: var(--space-3); }
-.app-cat .cat-preview-paragraph.is-heading-1 { font-size: 1.5em; }
-.app-cat .cat-preview-paragraph.is-heading-2 { font-size: 1.25em; }
-.app-cat .cat-preview-paragraph.is-heading-3 { font-size: 1.1em; }
-.app-cat .cat-preview-paragraph.is-heading-4 { font-size: 1em; }
-/* Word の表。原本と同じく格子で出す。列幅は Word 側の指定を読んでいないので
-   中身なりに配る（幅を偽って出すより、格子であることを示すほうが確か）。 */
-.cat-preview-doctable { border-collapse: collapse; width: 100%; margin: var(--space-2) 0; }
-.cat-preview-doctable td { border: 1px solid var(--line-strong); padding: 0; vertical-align: top; }
-.app-cat .cat-preview-paragraph.is-in-table { margin-bottom: 0; }
-.app-cat .cat-preview-paragraph { margin-bottom: var(--space-1); line-height: 1.9; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* 点検一覧。行へ飛ぶための一覧なので、1件が1つの押せる行になっている。
    止まる指摘（訳文が空・数字の点検）を先に、未確認をあとに置く。 */
@@ -1456,8 +1284,7 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
   .app-cat .premium-excel-surface,
   .app-cat .excel-screen,
   .app-cat #cat-workspace { display: block; }
-  .app-cat .workspace-heading { display: flex; }
-  .app-cat .cat-inspector-pane { overflow: auto; }
+  .app-cat .workspace-heading { display: flex; }\n
   .app-cat .cat-grid-wrap { max-height: calc(100dvh - var(--cat-toolbar-h) - 73px); }
 }
 
@@ -1466,16 +1293,7 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 @media (max-width: 1319px) {
   .cat-editor-layout {
     grid-template-columns: minmax(0, 1fr);
-  }
-  .cat-inspector-pane {
-    position: static;
-    grid-column: 1 / -1;
-    max-height: none;
-  }
-  .cat-inspector-pane [role="tabpanel"] {
-    max-height: max(45vh, 22rem);
-    overflow: auto;
-  }
+  }\n\n
 }
 
 @media (max-width: 900px) {
@@ -1500,10 +1318,7 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
   .cat-toolbar-search {
     grid-template-columns: 1fr;
   }
-  .cat-inspector-pane {
-    position: static;
-    max-height: none;
-  }
+
   .cat-state-filters,
   .cat-location-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1626,7 +1441,7 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 .cat-resume-row .cat-resume-drop { flex: 0 0 auto; align-self: center; color: var(--muted); }
 
 .cat-final-review-option{margin:1rem 0;padding:.8rem;border:1px solid var(--border,#cbd5e1);border-radius:.5rem}.cat-final-review-option label{display:block}.cat-final-review-option textarea{box-sizing:border-box;width:100%;margin-top:.35rem;resize:vertical}
-.cat-publication-dialog{width:min(68rem,calc(100vw - 2rem))}.cat-publication-compare{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.cat-publication-compare section,.cat-publication-candidate{border:1px solid var(--border,#d8dde6);border-radius:.65rem;padding:1rem;margin:.75rem 0}.cat-publication-compare h3,.cat-publication-candidate h3{margin-top:0}.cat-publication-text{font-size:1.05rem;white-space:pre-wrap}.cat-publication-candidate button{margin-top:.75rem}@media(max-width:760px){.cat-publication-compare{grid-template-columns:1fr}}
+@media(max-width:760px){}
 
 /* 原文の数字を訳文へ入れる一覧（Ctrl+D）。表の外に置いて、訳文欄の下へ寄せる。
    行は絞り込みや保存のたびに作り直されるので、表の中に置くと開いたそばから消える。 */
@@ -1659,79 +1474,41 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 .cat-placeable-key { color: var(--muted); font-variant-numeric: tabular-nums; }
 .cat-placeable-text { font-weight: 700; }
 
-/* 体裁の常設（2026-08-16）。格子の下に据え、訳しながら収まりを見る。
-   これまでは「体裁で見る」ダイアログの中だけにあり、訳しながら見られなかった。
-   Smartcat はプレビューを下部に常設し、細い仕切りで広げられ、選択に追随する
-   （実測。出典 _docs/対比_Smartcat_2026-08-16.md）。
 
-   高さは JS が --cat-dock-height に入れる。実内容（候補・点検の指摘など）が
-   入っているときは 280px、開いている行の参考情報が待機文だけのときは
-   180px（cat.js の syncDockHeightForContent、2026-08-18 利用者判断）。
-   ここの 180px はその値を静的な既定として合わせただけで、JS が万一走らな
-   かったときのフォールバックである。Smartcat も既定は狭く、必要なときだけ
-   大きくする作りだった。 */
-.cat-preview-dock {
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  height: var(--cat-dock-height, 180px);
-  border-top: 1px solid var(--line);
-  background: var(--surface);
-}
 
-/* 仕切り。Smartcat は 4px・全幅・row-resize だった（実測）。
-   4px は掴む的として小さいので、当たり判定だけ上下へ広げる
-   （見た目は 4px のまま。WCAG 2.2 SC 2.5.8 の的の大きさ）。 */
-.cat-preview-dock-splitter {
-  flex: 0 0 auto;
-  height: 4px;
-  margin: 4px 0;
-  cursor: row-resize;
-  background: var(--line);
-  border: 0;
-  position: relative;
-}
-.cat-preview-dock-splitter::before {
-  content: '';
-  position: absolute;
-  left: 0; right: 0; top: -6px; bottom: -6px;
-}
-.cat-preview-dock-splitter:hover,
-.cat-preview-dock-splitter:focus-visible { background: var(--accent); }
-.cat-preview-dock-splitter:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-/* 掴んでいるあいだ、行の選択が走ると文字が青く反転して読めなくなる。 */
-.cat-preview-dock.is-resizing { user-select: none; }
 
-.cat-preview-dock-head {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-2) var(--space-1);
-}
-.cat-preview-dock-title { font-weight: 700; font-size: var(--font-meta); }
-.cat-preview-dock-head #cat-preview-dock-close { margin-left: auto; }
 
-.cat-preview-dock-body {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  padding: 0 var(--space-2) var(--space-2);
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* ==== Smartcat-like editor density (2026-08-17) ============================
    Wide screens keep the bilingual grid as the only permanent canvas. Auxiliary
    information and preview share one bottom dock; the document list is an
    overlay when explicitly opened. */
 @media (min-width: 1320px) {
-  .cat-editor-layout,
-  .cat-editor-layout.is-docs-open,
-  .cat-editor-layout.is-docs-open.is-inspector-hidden {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0;
-    position: relative;
-  }
 
   .cat-editor-pane { min-width: 0; }
 
@@ -1764,100 +1541,41 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
   background: var(--surface);
 }
 
-.cat-bottom-dock-bar .cat-inspector-tabs {
-  position: static;
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow-x: auto;
-  border-bottom: 0;
-}
 
-.cat-bottom-dock-bar .cat-inspector-tabs button {
-  flex: 0 1 auto;
-  min-width: max-content;
-  min-height: 44px;
-  padding: 5px 13px;
-  white-space: nowrap;
-}
 
-.cat-bottom-dock-bar > #cat-preview-dock-close {
-  flex: 0 0 auto;
-  align-self: center;
-  min-height: 36px;
-  margin: 4px 8px 4px 4px;
-}
 
-.cat-preview-dock > .cat-inspector-pane {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
-  border: 0;
-  background: var(--surface);
-}
 
-.cat-preview-dock > .cat-inspector-pane > [role="tabpanel"] {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-  padding: var(--space-1) var(--space-2);
-  /* 2026-08-18（利用者指示）: 中身が枠より高いとき、いちばん下の行が
-     文字の途中で唐突に切れて見えていた（実測 #cat-panel-candidates で
-     scrollHeight 271 / clientHeight 232）。スクロールで続きへ行けること
-     自体は変えず、切れ目を背景色へのフェードにして「まだ続きがある」と
-     分かる形にする。中身が枠に収まっているときは、空白のまま薄くなる
-     だけで見た目に影響しない。 */
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent 100%);
-}
 
-.cat-preview-dock > .cat-inspector-pane > #cat-panel-preview {
-  display: flex;
-  flex-direction: column;
-  padding: 0;
-}
 
-.cat-preview-dock > .cat-inspector-pane > #cat-panel-preview[hidden] {
-  display: none;
-}
 
-.cat-preview-dock-head {
-  flex: 0 0 auto;
-  min-height: 36px;
-  padding: 4px var(--space-2);
-  /* 見出し・切替・釦・注記の総幅がdock幅を超えるため折り返す（issue #112実測）。 */
-  flex-wrap: wrap;
-  row-gap: 2px;
-  border-bottom: 1px solid var(--line);
-}
 
-.cat-preview-dock-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  padding: 0 var(--space-2) var(--space-1);
-}
 
-/* 未翻訳時の注記は見出し行に詰め込まれると潰れたため、全幅の2行目へ落とす（issue #112実測 69×81px）。 */
-#cat-preview-dock-note {
-  flex-basis: 100%;
-  min-width: 0;
-}
 
-/* スクロール可能なことが画面から分かるように。スクロールバーが不可視だと中身が
-   切れて見えるだけで続きがあると分からない（issue #112実測）。
-   標準のscrollbar-width/scrollbar-colorを併記するとChromiumはoverlay扱いになり
-   常時描画も7pxの空間占有もしないため、::-webkit-scrollbarだけをスタイルして
-   古典バーにする。 */
-.cat-bottom-dock-bar::-webkit-scrollbar,
-.cat-bottom-dock-bar .cat-inspector-tabs::-webkit-scrollbar,
-.cat-preview-dock-body::-webkit-scrollbar { height: 7px; width: 7px; }
-.cat-bottom-dock-bar::-webkit-scrollbar-thumb,
-.cat-bottom-dock-bar .cat-inspector-tabs::-webkit-scrollbar-thumb,
-.cat-preview-dock-body::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 4px; }
-.cat-bottom-dock-bar::-webkit-scrollbar-track,
-.cat-bottom-dock-bar .cat-inspector-tabs::-webkit-scrollbar-track,
-.cat-preview-dock-body::-webkit-scrollbar-track { background: transparent; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* The document list is an explicit overlay, never a permanent third column. */
 @media (min-width: 1320px) {
@@ -1946,8 +1664,8 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 }
 
 @media (max-width: 760px) {
-  .cat-bottom-dock-bar .cat-inspector-tabs button { padding-inline: 9px; }
-  .cat-bottom-dock-bar > #cat-preview-dock-close { margin-right: 4px; }
+
+
   .cat-grid .cat-col-confirm { width: 6.5rem; }
 }
 
@@ -1994,27 +1712,12 @@ body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) .cat-
   }
 }
 
-/* Tabs are text controls on a white dock.  Only the selected tab gets a soft
-   lavender surface and a slim purple edge. */
-body.app-cat[data-cat-view="workspace"] .cat-bottom-dock-bar .cat-inspector-tabs button {
-  background: transparent;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  color: var(--muted);
-  font-weight: 400;
-}
-body.app-cat[data-cat-view="workspace"] .cat-bottom-dock-bar .cat-inspector-tabs button:hover,
-body.app-cat[data-cat-view="workspace"] .cat-bottom-dock-bar .cat-inspector-tabs button:focus-visible {
-  background: var(--surface-subtle, #fafafa);
-  color: var(--text);
-}
-body.app-cat[data-cat-view="workspace"] .cat-bottom-dock-bar .cat-inspector-tabs button[aria-selected="true"] {
-  background: var(--accent-soft);
-  border-bottom-color: color-mix(in srgb, var(--accent) 72%, #6b4bb6);
-  color: var(--accent-text);
-  font-weight: 600;
-}
+
+
+
+
+
+
 
 /* The confirmation rail shows the state label ("未確認" / "確認済み") next to
    the check glyph, not just the glyph alone — a bare "–" read as a blank
@@ -2079,18 +1782,13 @@ body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) texta
   border-color: transparent;
 }
 
-/* Keep secondary toolbar controls neutral; the translation/export actions keep
-   their existing primary/eligibility styling. */
-body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .secondary-button,
-body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-more-actions > summary,
-body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-toolbar-menu > summary,
-body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar #cat-docs-toggle,
-body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar #cat-inspector-toggle {
-  border-color: var(--line);
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text);
-}
+
+
+
+
+
+
+
 
 /* Wide-screen table skeleton: keep the location cell in the DOM for names and
    assistive technology, but give the bilingual pair the two main columns. */
@@ -2246,15 +1944,7 @@ body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar #cat-inspector-toggl
     gap: 2px 4px;
     padding-top: 3px;
     border-top-color: #e6e4ea;
-  }
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-toolbar-filters .cat-state-filters button,
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-toolbar-menu > summary,
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar #cat-docs-toggle,
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar #cat-inspector-toggle {
-    min-height: 30px;
-    padding-block: 2px;
-    border-radius: 4px;
-  }
+  }\n
   body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-progress,
   body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-progress-row,
   body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-save-status {
@@ -2263,11 +1953,7 @@ body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar #cat-inspector-toggl
 
   body.app-cat[data-cat-view="workspace"] .cat-bottom-dock-bar {
     min-height: 36px;
-  }
-  body.app-cat[data-cat-view="workspace"] .cat-bottom-dock-bar .cat-inspector-tabs button {
-    min-height: 36px;
-    padding-block: 2px;
-  }
+  }\n
 }
 
 @media (min-width: 1320px) {
@@ -2331,7 +2017,7 @@ body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar #cat-inspector-toggl
     color: #9a94a8;
     opacity: 1;
   }
-  body.app-cat[data-cat-view="workspace"] #cat-preview-open[hidden] { display: none; }
+
   body.app-cat[data-cat-view="workspace"] #cat-docs-pane .cat-docs-pane-head > #cat-switch-project,
   body.app-cat[data-cat-view="workspace"] #cat-docs-pane .cat-docs-pane-head > #cat-source-update-open { display: block; margin-top: 4px; }
   body.app-cat[data-cat-view="workspace"] #cat-docs-pane .cat-docs-pane-head > #cat-danger-zone { display: block; margin-top: 8px; }
@@ -2345,11 +2031,7 @@ body.app-cat[data-cat-view="workspace"] .cat-bottom-dock {
 body.app-cat[data-cat-view="workspace"] .cat-bottom-dock-bar {
   border-bottom-color: #eceaf0;
 }
-body.app-cat[data-cat-view="workspace"] .cat-bottom-dock .cat-candidates-title {
-  border-bottom-width: 1px;
-  border-bottom-color: #eceaf0;
-  font-weight: 600;
-}
+
 body.app-cat[data-cat-view="workspace"] .cat-bottom-dock .cat-term-card {
   border-left-width: 2px;
   border-color: #d8d0e7;
@@ -2436,64 +2118,7 @@ body.app-cat[data-cat-view="workspace"] .cat-bottom-dock .cat-term-card {
     clip-path: inset(50%);
     white-space: nowrap;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-more-row > .cat-row-details { margin-top: 0; }
-
-  /* Candidate matches are a compact two-column list; details occupy the
-     right-hand 22% and update from the focused/selected match. */
-  body.app-cat[data-cat-view="workspace"] #cat-panel-candidates > .cat-candidates {
-    display: grid;
-    grid-template-columns: minmax(0, 78fr) minmax(15rem, 22fr);
-    gap: 0 12px;
-    align-items: start;
-  }
-  body.app-cat[data-cat-view="workspace"] #cat-panel-candidates > .cat-candidates > section { min-width: 0; }
-  body.app-cat[data-cat-view="workspace"] #cat-panel-candidates > .cat-candidates > section:nth-child(2) { grid-column: 1; }
-  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail {
-    grid-column: 2;
-    grid-row: 1 / span 2;
-    min-width: 0;
-    margin-top: 0;
-    padding: 8px 10px;
-    border-left: 1px solid #eceaf0;
-    background: #fff;
-  }
-  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail h3 {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 600;
-  }
-  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail-subtitle,
-  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail-diff { margin: 4px 0; font-size: var(--font-meta); }
-  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail-diff { overflow-wrap: anywhere; line-height: 1.35; }
-  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail-meta { margin: 8px 0 0; font-size: var(--font-meta); }
-  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail-meta > div { display: grid; grid-template-columns: 5.5em minmax(0, 1fr); gap: 6px; border-top: 1px solid #eceaf0; padding: 4px 0; }
-  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail-meta dt { color: var(--muted); }
-  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail-meta dd { margin: 0; overflow-wrap: anywhere; }
-  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    align-items: center;
-    margin-top: 10px;
-    padding-top: 8px;
-    border-top: 1px solid #eceaf0;
-  }
-  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail-actions button {
-    min-height: 34px;
-    padding: 5px 9px;
-    border: 1px solid #d8d0e7;
-    border-radius: 3px;
-    background: #fff;
-    color: var(--accent-text);
-    font: inherit;
-    font-size: var(--font-meta);
-    font-weight: 600;
-  }
-  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail-actions button:hover,
-  body.app-cat[data-cat-view="workspace"] .cat-candidate-detail-actions button:focus-visible {
-    background: #faf8ff;
-    border-color: #8160d1;
-  }
+  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-more-row > .cat-row-details { margin-top: 0; }\n\n\n\n\n\n\n\n\n\n\n
   body.app-cat[data-cat-view="workspace"] .cat-memory-candidate {
     display: grid;
     grid-template-columns: 26px minmax(0, 1fr) minmax(0, 1fr);
@@ -2509,28 +2134,16 @@ body.app-cat[data-cat-view="workspace"] .cat-bottom-dock .cat-term-card {
   }
   body.app-cat[data-cat-view="workspace"] .cat-memory-candidate:hover,
   body.app-cat[data-cat-view="workspace"] .cat-memory-candidate:focus-visible,
-  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate.is-selected { background: #faf8ff; }
-  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate .cat-candidate-number,
-  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate .cat-candidate-shortcut { position: static; }
-  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate .cat-candidate-number { width: 24px; height: 24px; font-size: 12px; background: transparent; color: var(--muted); }
-  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate .cat-candidate-shortcut { display: none; }
-  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate .cat-candidate-meta { grid-column: 2 / -1; display: flex; gap: 7px; align-items: center; min-width: 0; overflow: hidden; white-space: nowrap; font-size: var(--font-meta); }
-  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate .cat-candidate-meta > span { overflow: hidden; text-overflow: ellipsis; }
-  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate .cat-candidate-source,
-  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate .cat-candidate-target { min-width: 0; }
+  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate.is-selected { background: #faf8ff; }\n\n\n\n\n\n
   body.app-cat[data-cat-view="workspace"] .cat-memory-candidate strong,
   body.app-cat[data-cat-view="workspace"] .cat-term-card strong { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); clip-path: inset(50%); white-space: nowrap; }
   body.app-cat[data-cat-view="workspace"] .cat-memory-candidate .cat-cand-src,
-  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate .cat-cand-tgt { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 400; }
-  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate > .cat-candidate-source { grid-column: 2; }
-  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate > .cat-candidate-target { grid-column: 3; }
+  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate .cat-cand-tgt { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 400; }\n\n
   body.app-cat[data-cat-view="workspace"] .cat-memory-candidate > .muted,
   body.app-cat[data-cat-view="workspace"] .cat-memory-candidate > .cat-row-actions { grid-column: 2 / -1; margin: 0; }
   body.app-cat[data-cat-view="workspace"] .cat-memory-candidate > .muted { display: none; }
   body.app-cat[data-cat-view="workspace"] .cat-memory-candidate > .cat-row-actions { display: none; }
-  body.app-cat[data-cat-view="workspace"] .cat-term-card { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 12px; min-height: 36px; padding: 4px 6px; border: 0; border-bottom: 1px solid #eceaf0; border-left: 0; border-radius: 0; background: transparent; }
-  body.app-cat[data-cat-view="workspace"] .cat-term-card .cat-candidate-meta,
-  body.app-cat[data-cat-view="workspace"] .cat-term-card .cat-row-actions { grid-column: 1 / -1; }
+  body.app-cat[data-cat-view="workspace"] .cat-term-card { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 12px; min-height: 36px; padding: 4px 6px; border: 0; border-bottom: 1px solid #eceaf0; border-left: 0; border-radius: 0; background: transparent; }\n
   body.app-cat[data-cat-view="workspace"] .cat-term-card .cat-cand-src,
   body.app-cat[data-cat-view="workspace"] .cat-term-card .cat-cand-tgt { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
@@ -2728,49 +2341,7 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
     overflow: hidden;
     font-size: 0;
   }
-  body.app-cat[data-cat-view="workspace"] #cat-export-reviewed::after { content: '▾'; font-size: 14px; line-height: 1; }
-
-  /* Row B actions are icon buttons with accessible names retained in
-     title/aria-label and a visually hidden text span. */
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > .cat-segment-button,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-tm-pretranslate,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-dock-toggle,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-open,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-confirm-bulk,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > .cat-key-help > summary {
-    position: relative;
-    display: inline-flex;
-    flex: 0 0 30px;
-    width: 30px;
-    min-width: 30px;
-    max-width: 30px;
-    height: 30px;
-    min-height: 30px;
-    max-height: 30px;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    border: 1px solid #e6e4ea;
-    border-radius: 3px;
-    background: transparent;
-    color: var(--muted);
-    line-height: 1;
-  }
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > .cat-segment-button:hover,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > .cat-segment-button:focus-visible,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-tm-pretranslate:hover,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-tm-pretranslate:focus-visible,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-dock-toggle:hover,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-dock-toggle:focus-visible,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-open:hover,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-open:focus-visible,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-confirm-bulk:hover,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-confirm-bulk:focus-visible,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > .cat-key-help[open] > summary {
-    background: #faf8ff;
-    border-color: #d8d0e7;
-    color: var(--accent-text);
-  }
+  body.app-cat[data-cat-view="workspace"] #cat-export-reviewed::after { content: '▾'; font-size: 14px; line-height: 1; }\n\n
   body.app-cat[data-cat-view="workspace"] .cat-segment-actions .cat-key-help > summary {
     list-style: none;
   }
@@ -2780,22 +2351,7 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
     min-height: 34px;
     height: 34px;
     max-height: 36px;
-  }
-  body.app-cat[data-cat-view="workspace"] .cat-bottom-dock-bar .cat-inspector-tabs button {
-    min-height: 34px;
-    height: 34px;
-    max-height: 36px;
-    padding-block: 0;
-    color: #797389;
-    font-size: 14px;
-    font-weight: 600;
-  }
-  body.app-cat[data-cat-view="workspace"] .cat-bottom-dock-bar .cat-inspector-tabs button[aria-selected="true"] {
-    background: #f9f7fc;
-    border-bottom-color: #8160d1;
-    color: #8160d1;
-    font-weight: 600;
-  }
+  }\n\n
   body.app-cat[data-cat-view="workspace"] .cat-segment-actions .yaku-icon { width: 16px; height: 16px; }
   body.app-cat[data-cat-view="workspace"] .cat-segment-actions .cat-segment-button-label {
     position: absolute;
@@ -2806,46 +2362,7 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
     clip: rect(0, 0, 0, 0);
     clip-path: inset(50%);
     white-space: nowrap;
-  }
-  /* The static row-bar tools (TM pretranslate, preview toggle, full preview,
-     and — CoD審査 REWORK-1 BLOCKER-B1 — まとめて収める) keep their label
-     visible instead of icon-only — the ribbon has 1846px of room and used
-     only 272px of it (measured), and their glyphs otherwise repeat other
-     icon-only row controls. まとめて収める additionally needs its count
-     （「（N行）」）on screen, not just in title/aria-label: unlike the other
-     three, the number is the whole reason to look at the button before
-     pressing it (どれだけ Copilot を呼ぶかを見て確認する対象)。The
-     per-segment dynamic tools (copy/confirm/term) stay icon-only; their
-     accessible names remain in title/aria-label. */
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-tm-pretranslate,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-dock-toggle,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-open,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-fit-batch-open {
-    /* The shared rule's flex-basis (30px, fixed) wins over width regardless
-       of what width is set to, so the basis itself has to change too — a
-       width-only override left the label text rendered inside a still-30px
-       box (measured: overlapping glyphs). flex-shrink stays 0 so these
-       never get squeezed by their icon-only neighbors. */
-    flex: 0 0 auto;
-    width: auto;
-    max-width: none;
-    padding-inline: 8px;
-    gap: 6px;
-  }
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-tm-pretranslate .cat-segment-button-label,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-dock-toggle .cat-segment-button-label,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-preview-open .cat-segment-button-label,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions > #cat-fit-batch-open .cat-segment-button-label {
-    position: static;
-    width: auto;
-    height: auto;
-    margin: 0;
-    overflow: visible;
-    clip: auto;
-    clip-path: none;
-    white-space: nowrap;
-    font-size: var(--font-meta);
-  }
+  }\n\n
   body.app-cat[data-cat-view="workspace"] .cat-segment-actions .cat-segment-status {
     flex: 0 0 auto;
     font-size: var(--font-meta);
@@ -2912,32 +2429,6 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
   body.app-cat[data-cat-view="workspace"] .cat-grid tbody .cat-col-no .cat-change-badge,
 body.app-cat[data-cat-view="workspace"] .cat-grid tbody .cat-col-no .cat-review-note-badge {
     display: none;
-  }
-}
-
-/* Narrow workspaces keep the bilingual editor full width as well.  The
-   document list is an overlay so an explicitly restored open preference never
-   brings back an empty inspector track. */
-@media (max-width: 1319px) {
-  body.app-cat[data-cat-view="workspace"] .cat-editor-layout,
-  body.app-cat[data-cat-view="workspace"] .cat-editor-layout.is-docs-open,
-  body.app-cat[data-cat-view="workspace"] .cat-editor-layout.is-docs-open.is-inspector-hidden {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0;
-    position: relative;
-  }
-  body.app-cat[data-cat-view="workspace"] .cat-editor-layout.is-docs-open .cat-docs-pane {
-    display: flex;
-    position: absolute;
-    inset: 0 auto 0 0;
-    z-index: 12;
-    width: min(22rem, 86vw);
-    min-width: 0;
-    min-height: 0;
-    border-right: 1px solid var(--line-strong);
-    background: var(--surface);
-    box-shadow: 10px 0 28px rgba(24, 24, 27, .14);
-    padding: var(--space-2);
   }
 }
 
@@ -3069,17 +2560,9 @@ body.app-cat[data-cat-view="start"] .quick-area:focus-within {
   outline: 1px solid #d9d0ec;
   outline-offset: -2px;
 }
-body.app-cat[data-cat-view="start"] .quick-inline #quick-input:focus,
-body.app-cat[data-cat-view="start"] .quick-inline #quick-input:focus-visible {
-  outline: 2px solid #6f52bc;
-  outline-offset: 1px;
-  border-radius: 4px;
-  box-shadow: 0 0 0 2px rgba(129, 96, 209, .18);
-}
-body.app-cat[data-cat-view="start"] .quick-inline #quick-input {
-  box-sizing: border-box;
-  padding: 10px 12px;
-}
+
+
+
 body.app-cat[data-cat-view="start"] .quick-empty-guide {
   inset: 10px 12px auto 12px;
 }
@@ -3370,3 +2853,6 @@ body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr[data-cat-row] textare
     margin-top: 8px;
   }
 }
+
+
+

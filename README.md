@@ -27,7 +27,7 @@ Microsoft 365 Copilot の画面は Edge DevTools Protocol（CDP）で操作し�
 | --- | --- |
 | `Start-YakuLingo.ps1` | 起動エントリポイント |
 | `src/` | 本体（HTTPサーバー、Copilotクライアント、翻訳、ファイル処理など） |
-| `www/` | ローカルUI（HTML / CSS / JS、htmx） |
+| `www/` | ローカルUI（HTML / CSS / JS） |
 | `prompts/` | 翻訳プロンプト（方向別・テキスト／ファイル別） |
 | `config/` | `settings.template.json`、`build.txt`（バージョン識別子） |
 | `tools/` | エンコーディング検査・回帰テスト・パッケージ作成などの補助スクリプト |
@@ -39,7 +39,7 @@ Microsoft 365 Copilot の画面は Edge DevTools Protocol（CDP）で操作し�
 
 ## Excel翻訳と過去訳
 
-上部の「Excel翻訳」からExcel作業へ移動します。確認済みの過去訳を再適用し、未訳の補完、確認、点検を経て新しいファイルへ書き戻します。保存済み作業は従来の `/cat?project=...` URLから再開できます。
+上部の「Excel翻訳」からExcel作業へ移動します。Excel側は、確認済みの過去訳の決定的な再適用、未訳の補完、確認、点検、新しいファイルへの書き戻しに限定します。配置・体裁調整、publication版、プレビュー/PDF、一括収まり判定、inspectorは扱いません。保存済み作業は従来の `/cat?project=...` URLから再開できます。
 
 左側の「過去訳」から `/cat?import=1` を開くと、日本語PDFと英語PDFをブラウザ内で読み込み、ページ範囲の確認、文章貼り付けの代替、対応付け、グリッド上の見直しを行えます。対応を人が確認した後、「確認済みを過去訳として登録」を押した行だけを翻訳メモリへまとめて登録します。未確認・古い点検結果・空行は登録しません。
 

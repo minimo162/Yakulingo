@@ -1,4 +1,4 @@
-﻿# DESIGN.md — YakuLingo V91.62
+﻿# DESIGN.md — YakuLingo V91.63
 
 ## Product intent
 
@@ -42,14 +42,14 @@ Normal operation never persists source text, translated text, or full prompts. F
 - Text translation keeps language selection, source, target, copy, explicit translate, cancel, retry, and post-result rewrite actions in one focused surface.
 - Translation starts only from the button or `Ctrl+Enter`; no paste/input event and no completed first result triggers another Copilot request.
 - At 900px and below the source and target panes stack in source-to-target order. Keyboard focus has a visible outline, and disabled controls retain readable text.
-- The Excel workspace retains its cell list, selected-cell editor, status/live regions, output preflight, and non-destructive write workflow.
+- The Excel workspace retains its cell list, selected-cell editor, status/live regions, deterministic confirmed-bilingual reapply, unresolved-cell completion, output preflight, and non-destructive write workflow. Placement/layout controls, publication variants, preview/PDF, batch-fit evaluation, and the inspector are outside the Excel product surface.
 
 ## Visual principles
 
 - Quiet, text-first start screen with large adjacent source and target panes; a focused Excel workspace remains separate.
 - One indigo primary action; outlined secondary actions.
 - The same cell is never shown in multiple permanent lists.
-- Candidates, translation memory, terminology, history, preview, and advanced tools appear only on demand.
+- Candidates, translation memory, terminology, and history appear only on demand.
 - Diagnostics and settings never displace the main translation form.
 - Security and completeness warnings must remain visually prominent and must not use the normal-success treatment.
 
