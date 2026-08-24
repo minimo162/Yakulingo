@@ -41,7 +41,7 @@ expect(server.includes("PageName 'quick.html'"), 'Quick route must render quick.
 expect(premiumJs.includes("var shell = el('excel-app')"), 'Premium Excel must bind to the explicit Excel root');
 expect(!premiumJs.includes('function forcePreviewRail') && !premiumJs.includes('premium-legacy-hero'), 'Legacy mounting and forced inspector code must be removed');
 expect(premiumCss.includes('@media(max-width:1200px)') || premiumCss.includes('@media (max-width: 1200px)'), '1200px mode switch contract is missing');
-expect(design.includes('deliberately lightweight transient text translator'), 'Auxiliary quick translation intent is undocumented');
+expect(design.includes('two first-class responsibilities'), 'Translation pivot intent is undocumented');
 
 if (failures.length) {
   failures.forEach((failure) => console.error(`not ok - ${failure}`));

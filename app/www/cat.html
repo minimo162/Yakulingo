@@ -123,6 +123,7 @@
             <button type="button" class="is-active" aria-pressed="true" data-direction="to_en">日本語 → 英語</button>
             <button type="button" aria-pressed="false" data-direction="to_jp">英語 → 日本語</button>
           </div>
+          <div class="premium-start-secondary"><a id="cat-open-align-entry" class="secondary-button" href="/cat?import=1">過去の日英版から対訳を作る</a><p>Copilotで対応候補を作り、検証・確定した対訳だけを次のExcelへ再利用します。</p></div>
           <section class="premium-start-recent" aria-labelledby="premium-start-recent-title">
             <div><h2 id="premium-start-recent-title">最近の作業</h2><a href="/cat?view=work" data-premium-nav="work">すべて見る</a></div>
             <div id="premium-start-recent-list"><p class="premium-sidebar-loading">読み込んでいます…</p></div>
@@ -280,6 +281,7 @@
 
         <p id="cat-output-help" class="sr-only"></p><p id="cat-output-reason" class="sr-only" role="status"></p><p id="cat-export-blocked" class="cat-export-blocked" role="status"></p><p id="cat-mask-notice" class="cat-mask-notice" role="status"></p>
 
+        <section id="premium-apply-summary" class="premium-apply-summary" aria-labelledby="premium-apply-title"><div><span class="premium-eyebrow">確定済み対訳の適用結果</span><h2 id="premium-apply-title">過去訳を適用しました</h2><p id="premium-apply-context"></p></div><dl><div><dt>適用</dt><dd id="premium-applied-count">0件</dd></div><div><dt>未訳</dt><dd id="premium-unresolved-count">0件</dd></div><div><dt>要確認</dt><dd id="premium-conflict-count">0件</dd></div></dl><div class="premium-apply-actions"><button id="premium-summary-export" type="button">訳文入りExcelを作る</button><button id="premium-summary-unresolved" type="button" class="secondary-button">未訳・競合を見る</button></div></section>
         <div id="cat-editor-layout" class="cat-editor-layout">
 
           <aside id="premium-cell-list-pane" class="premium-cell-list-pane" aria-labelledby="premium-cell-list-title">

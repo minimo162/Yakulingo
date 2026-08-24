@@ -445,8 +445,9 @@
         });
       });
     }
-    moveRowActions();
-    preparePremiumRowActions();
+    moveRowActions(); preparePremiumRowActions();
+    var sx=el('premium-summary-export');if(sx&&sx.getAttribute('data-bound')!=='1'){sx.setAttribute('data-bound','1');sx.addEventListener('click',function(){var b=el('cat-export');if(b&&!b.disabled)b.click()})}
+    var su=el('premium-summary-unresolved');if(su&&su.getAttribute('data-bound')!=='1'){su.setAttribute('data-bound','1');su.addEventListener('click',function(){premiumState.catFilterTouched=true;premiumState.catFilter='untranslated';renderFitRows();var pane=el('premium-cell-list-pane');if(pane)pane.scrollIntoView({block:'start'})})}
   }
 
   function removeExcelWorkspaceUi() {
@@ -477,6 +478,7 @@
     primary.innerHTML = ''; detailContent.innerHTML = '';
     var primaryNodes = nodes.filter(function (node) { return node.hasAttribute('data-cat-confirm') || node.hasAttribute('data-cat-unconfirm') || node.getAttribute('data-cat-inspector') === 'qc' || node.hasAttribute('data-cat-placement-edit'); });
     var detailNodes = nodes.filter(function (node) { return primaryNodes.indexOf(node) < 0; });
+    if(model&&!one('[data-premium-quick-handoff]',primary)){var q=create('button','secondary-button');q.type='button';q.setAttribute('data-premium-quick-handoff','1');q.textContent='文章翻訳で補う';q.addEventListener('click',function(){var x={index:model.index,source:model.source,location:model.location,cell:model.location,return_url:location.pathname+location.search};if(model.row){x.column_width=model.row.getAttribute('data-cat-column-width')||'';x.row_height=model.row.getAttribute('data-cat-row-height')||'';x.font_name=model.row.getAttribute('data-cat-font-name')||'';x.font_size=model.row.getAttribute('data-cat-font-size')||'';x.wrap=model.row.getAttribute('data-cat-wrap')!=='0';x.merged=model.row.getAttribute('data-cat-merged')==='1'}try{sessionStorage.setItem('yakuQuickHandoff',JSON.stringify(x))}catch(_){}location.assign('/quick?from=excel')});primary.appendChild(q)}
     primaryNodes.forEach(function (node) {
       var label = one('.cat-segment-button-label', node);
       if (node.hasAttribute('data-cat-confirm')) {
@@ -621,13 +623,15 @@
     var models = premiumModels(), totalNode = one('[data-cat-count="all"]'), total = totalNode ? Number(totalNode.textContent || 0) : models.length;
     var reviewed = models.filter(function (model) { return model.reviewed; }).length, untranslated = models.filter(function (model) { return !model.target; }).length;
     var counts = { blockers: models.filter(function (model) { return model.blocking; }).length, recommended: models.filter(function (model) { return model.recommended; }).length, untranslated: untranslated, qc: models.filter(function (model) { return model.qcError; }).length, stale: models.filter(function (model) { return model.stale; }).length, saveFailed: models.filter(function (model) { return model.saveFailed; }).length };
+    var applied=models.filter(function(m){return!!m.target}).length;if(el('premium-applied-count'))el('premium-applied-count').textContent=applied+'件';if(el('premium-unresolved-count'))el('premium-unresolved-count').textContent=untranslated+'件';if(el('premium-conflict-count'))el('premium-conflict-count').textContent=counts.recommended+'件';if(el('premium-apply-context'))el('premium-apply-context').textContent=untranslated?'確定済み対訳がないセルは日本語のままです。必要なセルだけ文章翻訳で補えます。':'未訳はありません。要確認だけ確認してExcelを作れます。';var usb=el('premium-summary-unresolved');if(usb)usb.textContent='未訳・競合'+(untranslated+counts.recommended)+'件を見る';
     if (!premiumState.catFilterTouched) premiumState.catFilter = untranslated > 0 ? 'untranslated' : counts.recommended > 0 ? 'review' : 'all';
     if (el('premium-fit-count')) el('premium-fit-count').textContent = reviewed; if (el('premium-total-count')) el('premium-total-count').textContent = total; if (el('premium-fit-percent')) el('premium-fit-percent').textContent = (total ? Math.round(100 * reviewed / total) : 0) + '%'; if (el('premium-fit-progress')) el('premium-fit-progress').style.width = (total ? Math.round(100 * reviewed / total) : 0) + '%'; if (el('premium-fit-done')) el('premium-fit-done').textContent = reviewed; if (el('premium-fit-left')) el('premium-fit-left').textContent = counts.blockers; if (el('premium-recommended-count')) el('premium-recommended-count').textContent = counts.recommended; if (el('premium-untranslated')) el('premium-untranslated').textContent = untranslated;
     if (el('premium-fit-blockers')) el('premium-fit-blockers').textContent = counts.blockers; if (el('premium-fit-recommended')) el('premium-fit-recommended').textContent = counts.recommended; if (el('premium-fit-all')) el('premium-fit-all').textContent = total;
     var title = textOf(el('cat-toolbar-title')), direction = textOf(el('cat-toolbar-direction')); if (el('premium-summary-context')) el('premium-summary-context').textContent = [title, direction].filter(Boolean).join(' ・ ');
     var active = one('#cat-grid-body tr.is-active'); if (active) { var model = rowModel(active), cell = model.location.match(/(?:^|[,!\s])([A-Z]{1,3}\d+)$/i); if (el('premium-active-cell')) el('premium-active-cell').textContent = cell ? cell[1].toUpperCase() : ((Number(model.index) + 1) + '行目'); if (el('premium-active-location')) el('premium-active-location').textContent = model.location || '選択中のセル'; var riskBadge = el('premium-editor-risk'); if (riskBadge) { riskBadge.textContent = fitRowStatus(model); riskBadge.classList.toggle('is-fit', !model.blocking && !model.risk); riskBadge.classList.toggle('is-risk', !!model.risk); } }
-    updatePremiumStageState(total, counts, reviewed, untranslated); preparePremiumRowActions(); renderFitRows(); syncTopActionStates();
+    updatePremiumStageState(total, counts, reviewed, untranslated); preparePremiumRowActions(); renderFitRows(); syncTopActionStates(); consumeQuickReturn();
   }
+  function consumeQuickReturn(){var r='';try{r=sessionStorage.getItem('yakuQuickReturn')||''}catch(_){}if(!r)return;var d;try{d=JSON.parse(r)}catch(_){try{sessionStorage.removeItem('yakuQuickReturn')}catch(__){}return}var row=one('#cat-grid-body [data-cat-row="'+String(d.index||'')+'"]'),i=row&&one('textarea[data-cat-input]',row);if(!i)return;i.value=String(d.translation||'');i.dispatchEvent(new Event('input',{bubbles:true}));i.dispatchEvent(new Event('change',{bubbles:true}));try{sessionStorage.removeItem('yakuQuickReturn')}catch(_){}showToast('文章翻訳の訳文をExcel作業へ戻しました。')}
   function cancelPremiumRowWait() {
     if (!premiumRowWait) return;
     premiumRowWait.observer.disconnect();

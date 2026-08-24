@@ -1,78 +1,17 @@
-﻿(function(){
-'use strict';
-var input,output,direction,submit,copy,cancel,retry,progress,status,count,limitNote,directionNote;
-var ready=false,busy=false,currentJob='',timer=0,lastRequest=null,pending=false;
-function el(id){return document.getElementById(id)}
-function maxChars(){var n=document.querySelector('meta[name="yaku-max-batch-chars"]');return Math.max(1,Number(n&&n.content)||3000)}
-function setStatus(message,kind){status.textContent=message||'';status.className=kind?'is-'+kind:''}
-function update(){
- var text=input.value.trim(),len=text.length,tooLong=len>maxChars();
- count.textContent=len.toLocaleString('ja-JP')+'字';
- limitNote.textContent=tooLong?'1回で送れるのは '+maxChars().toLocaleString('ja-JP')+'字までです。':'';
- submit.disabled=!text||tooLong||busy;
- input.readOnly=busy;direction.disabled=busy;copy.disabled=!output.value;
- if(direction.value==='auto') directionNote.textContent='翻訳方向は自動で判定します';
- else directionNote.textContent=direction.value==='to_en'?'日本語から英語へ翻訳します':'英語などから日本語へ翻訳します';
-}
-function showProgress(data){
- var pct=Math.max(0,Math.min(100,Math.round(Number(data&&data.progress)||0)));
- progress.hidden=false;progress.textContent=(data&&data.label||'翻訳しています')+' '+pct+'%'+(data&&data.detail?'\n'+data.detail:'');
-}
-function resultText(data){
- var box=document.createElement('div');box.innerHTML=String(data&&data.html||'');
- var main=box.querySelector('[data-yaku-main-text]');
- return String(main?main.textContent:(data&&data.translation||'')).trim();
-}
-function finish(data){
- busy=false;currentJob='';window.clearTimeout(timer);progress.hidden=true;
- var text=resultText(data);output.value=text;
- if(text){setStatus('翻訳できました。コピーできます。','success');copy.focus()}
- else{setStatus('訳文を取得できませんでした。再試行してください。','error');retry.hidden=false}
- cancel.hidden=true;update();
-}
-function fail(message){
- busy=false;currentJob='';window.clearTimeout(timer);progress.hidden=true;cancel.hidden=true;retry.hidden=false;
- setStatus(message||'翻訳できませんでした。','error');update();
-}
-function poll(jobId){
- YakuCommon.json('/api/jobs/'+encodeURIComponent(jobId)).then(function(data){
-  if(jobId!==currentJob)return;
-  if(data.mode==='done'||data.mode==='completed_with_warnings'){finish(data);return}
-  if(data.mode==='cancelled'){fail('翻訳を中止しました。');return}
-  if(data.mode==='error'||data.mode==='failed'){fail(data.detail||'翻訳が途中で止まりました。');return}
-  showProgress(data);timer=window.setTimeout(function(){poll(jobId)},1000);
- }).catch(function(){if(jobId===currentJob){showProgress({label:'接続の回復を待っています',detail:'翻訳は続いています。'});timer=window.setTimeout(function(){poll(jobId)},2500)}});
-}
-function startRequest(request){
- lastRequest=request;retry.hidden=true;output.value='';busy=true;pending=false;setStatus('','');showProgress({label:'翻訳を準備しています',progress:0});cancel.hidden=true;update();
- YakuCommon.post('/api/palette/translate',request).then(function(data){
-  if(!data||!data.job_id)throw new Error('翻訳を開始できませんでした。');
-  currentJob=String(data.job_id);cancel.hidden=false;poll(currentJob);
- }).catch(function(error){
-  if(error&&error.status===409&&error.data&&error.data.code==='DIRECTION_CONFIRMATION_REQUIRED'){
-   direction.value=String(error.data.suggested_direction||'auto');update();fail('翻訳方向を確認しました。もう一度「翻訳」を押してください。');return;
-  }
-  fail(error&&error.message);
- });
-}
-function requestTranslation(){
- var text=input.value.trim();if(!text||busy||text.length>maxChars())return;
- var request={text:text,direction_intent:direction.value||'auto'};
- if(!ready){pending=true;lastRequest=request;setStatus('Copilotの準備ができ次第、翻訳を始めます。','');return}
- startRequest(request);
-}
-function boot(){
- input=el('quick-page-input');output=el('quick-page-output');direction=el('quick-page-direction');submit=el('quick-page-submit');copy=el('quick-page-copy');cancel=el('quick-page-cancel');retry=el('quick-page-retry');progress=el('quick-page-progress');status=el('quick-page-status');count=el('quick-page-count');limitNote=el('quick-page-limit');directionNote=el('quick-page-direction-note');
- YakuCommon.start();
- YakuCommon.onReady(function(value){ready=!!value;if(ready&&pending&&lastRequest)startRequest(lastRequest)});
- input.addEventListener('input',function(){if(!busy){setStatus('','');retry.hidden=true}update()});
- direction.addEventListener('change',update);
- el('quick-page-form').addEventListener('submit',function(event){event.preventDefault();requestTranslation()});
- input.addEventListener('keydown',function(event){if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();requestTranslation()}});
- copy.addEventListener('click',function(){YakuCommon.copyText(output.value).then(function(){setStatus('訳文をコピーしました。','success')}).catch(function(){setStatus('コピーできませんでした。','error')})});
- retry.addEventListener('click',function(){if(lastRequest&&ready)startRequest(lastRequest);else requestTranslation()});
- cancel.addEventListener('click',function(){if(!currentJob)return;var id=currentJob;cancel.disabled=true;YakuCommon.post('/api/cancel-translation',{job_id:id}).then(function(){if(id===currentJob)fail('翻訳を中止しました。')}).catch(function(error){cancel.disabled=false;setStatus(error.message||'中止できませんでした。','error')})});
- update();input.focus();
-}
-if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
-})();
+﻿(function(){'use strict';
+var input,output,direction,submit,copy,cancel,retry,progress,status,count,limitNote,directionNote,returnButton,ready=false,busy=false,currentJob='',timer=0,lastRequest=null,pending=false,lastMasked='',currentLabel='自然',handoff=null,history=[],variants=[];
+function el(id){return document.getElementById(id)}function maxChars(){var n=document.querySelector('meta[name="yaku-max-batch-chars"]');return Math.max(1,Number(n&&n.content)||3000)}function setStatus(m,k){status.textContent=m||'';status.className=k?'is-'+k:''}function val(id){var n=el(id);return n?String(n.value||'').trim():''}function num(id){var r=val(id),n=Number(r);return r&&isFinite(n)?n:null}
+function displayContext(){return{purpose:val('quick-purpose')||'body',length:val('quick-length')||'natural',font_name:val('quick-font'),font_size_pt:num('quick-font-size'),column_width:num('quick-column-width'),line_count:num('quick-lines'),wrap:!!el('quick-wrap').checked,merged:!!el('quick-merged').checked,target_chars:num('quick-target-chars'),shorten_percent:num('quick-percent'),preserve_terms:val('quick-preserve'),cell:handoff&&handoff.cell||'',row_height:handoff&&handoff.row_height||null}}
+function update(){var t=input.value.trim(),l=t.length,x=l>maxChars();count.textContent=l.toLocaleString('ja-JP')+'字';limitNote.textContent=x?'1回で送れるのは '+maxChars().toLocaleString('ja-JP')+'字までです。':'';submit.disabled=!t||x||busy;input.readOnly=busy;direction.disabled=busy;copy.disabled=!output.value;document.querySelectorAll('[data-quick-chip]').forEach(function(b){b.disabled=busy||!lastMasked});directionNote.textContent=direction.value==='auto'?'翻訳方向は自動で判定します':direction.value==='to_en'?'日本語から英語へ翻訳します':'英語などから日本語へ翻訳します'}
+function showProgress(d){var p=Math.max(0,Math.min(100,Math.round(Number(d&&d.progress)||0)));progress.hidden=false;progress.textContent=(d&&d.label||'翻訳しています')+' '+p+'%'+(d&&d.detail?'\n'+d.detail:'')}function resultText(d){var b=document.createElement('div');b.innerHTML=String(d&&d.html||'');var m=b.querySelector('[data-yaku-main-text]');return String(m?m.textContent:(d&&d.translation||'')).trim()}
+function estimate(t){var c=displayContext(),n=String(t||'').length,target=c.target_chars;if(!target&&c.column_width&&c.line_count)target=Math.max(1,Math.floor(c.column_width*Math.max(1,c.line_count)*(c.wrap?1.45:.9)*(10/(c.font_size_pt||10))));el('quick-result-count').textContent=n.toLocaleString('ja-JP')+'文字';el('quick-fit-estimate').textContent=!target?'表示条件を指定すると長さの目安を表示します':n<=target?'目安: 収まりやすい':n<=target*1.18?'目安: やや長い':'目安: 長い';el('quick-result-meta').hidden=false}
+function renderVariants(){var h=el('quick-variants');h.hidden=!variants.length;h.innerHTML=variants.map(function(v,i){return'<button type="button" data-quick-variant="'+i+'" class="'+(v.text===output.value?'is-active':'')+'"><strong>'+v.label+'</strong><span>'+v.text.length+'文字</span></button>'}).join('')}
+function adopt(t,m,l){if(output.value)history.push({text:output.value,masked:lastMasked,label:currentLabel});output.value=t;lastMasked=m||'';currentLabel=l||'翻訳案';variants.push({text:t,masked:lastMasked,label:currentLabel});renderVariants();estimate(t);el('quick-rewrite-actions').hidden=false;el('quick-page-undo').disabled=!history.length;returnButton.hidden=!handoff;update()}
+function finish(d){busy=false;currentJob='';clearTimeout(timer);progress.hidden=true;var t=resultText(d),m=String(d&&d.masked_translation||'').trim();if(t){adopt(t,m,currentLabel);setStatus('翻訳できました。案を選ぶか、そのままコピーできます。','success');copy.focus()}else{setStatus('訳文を取得できませんでした。再試行してください。','error');retry.hidden=false}cancel.hidden=true;update()}function fail(m){busy=false;currentJob='';clearTimeout(timer);progress.hidden=true;cancel.hidden=true;retry.hidden=false;setStatus(m||'翻訳できませんでした。','error');update()}
+function poll(id){YakuCommon.json('/api/jobs/'+encodeURIComponent(id)).then(function(d){if(id!==currentJob)return;if(d.mode==='done'||d.mode==='completed_with_warnings')return finish(d);if(d.mode==='cancelled')return fail('翻訳を中止しました。');if(d.mode==='error'||d.mode==='failed')return fail(d.detail||'翻訳が途中で止まりました。');showProgress(d);timer=setTimeout(function(){poll(id)},1000)}).catch(function(){if(id===currentJob){showProgress({label:'接続の回復を待っています',detail:'翻訳は続いています。'});timer=setTimeout(function(){poll(id)},2500)}})}
+function start(path,body,label){lastRequest={path:path,body:body,label:label};retry.hidden=true;busy=true;pending=false;currentLabel=label||'翻訳案';setStatus('','');showProgress({label:'翻訳を準備しています',progress:0});cancel.hidden=true;update();YakuCommon.post(path,body).then(function(d){if(!d||!d.job_id)throw new Error('翻訳を開始できませんでした。');currentJob=String(d.job_id);cancel.hidden=false;poll(currentJob)}).catch(function(e){if(e&&e.status===409&&e.data&&e.data.code==='DIRECTION_CONFIRMATION_REQUIRED'){direction.value=String(e.data.suggested_direction||'auto');update();fail('翻訳方向を確認しました。もう一度「翻訳」を押してください。')}else fail(e&&e.message)})}
+function translate(){var t=input.value.trim();if(!t||busy||t.length>maxChars())return;history=[];variants=[];lastMasked='';renderVariants();var r={text:t,direction_intent:direction.value||'auto',display_context:displayContext()};if(!ready){pending=true;lastRequest={path:'/api/palette/translate',body:r,label:'自然'};return setStatus('Copilotの準備ができ次第、翻訳を始めます。','')}start('/api/palette/translate',r,'自然')}
+function rewrite(chip){if(busy||!lastMasked)return setStatus('安全に短縮するための情報がありません。もう一度翻訳してください。','error');var labels={shorten:'短い',shorter:'最短',rephrase:'言い換え',heading:'見出し向け',table:'表・セル向け'};start('/api/palette/chip',{chip:chip,source_text:input.value.trim(),current_text:lastMasked,direction:direction.value==='to_jp'?'to_jp':'to_en',style:chip==='shorter'?'brief':'full',display_context:displayContext()},labels[chip]||'翻訳案')}
+function loadHandoff(){try{var r=sessionStorage.getItem('yakuQuickHandoff');if(r){handoff=JSON.parse(r);sessionStorage.removeItem('yakuQuickHandoff')}}catch(_){handoff=null}if(!handoff)return;input.value=String(handoff.source||'');el('quick-handoff-note').hidden=false;el('quick-handoff-cell').textContent=String(handoff.cell||handoff.location||'選択したセル');if(handoff.font_name)el('quick-font').value=handoff.font_name;if(handoff.font_size)el('quick-font-size').value=handoff.font_size;if(handoff.column_width)el('quick-column-width').value=handoff.column_width;if(handoff.wrap===false)el('quick-wrap').checked=false;if(handoff.merged)el('quick-merged').checked=true;el('quick-purpose').value='excel_cell';el('quick-display-details').open=true}
+function boot(){input=el('quick-page-input');output=el('quick-page-output');direction=el('quick-page-direction');submit=el('quick-page-submit');copy=el('quick-page-copy');cancel=el('quick-page-cancel');retry=el('quick-page-retry');progress=el('quick-page-progress');status=el('quick-page-status');count=el('quick-page-count');limitNote=el('quick-page-limit');directionNote=el('quick-page-direction-note');returnButton=el('quick-page-return');loadHandoff();YakuCommon.start();YakuCommon.onReady(function(v){ready=!!v;if(ready&&pending&&lastRequest)start(lastRequest.path,lastRequest.body,lastRequest.label)});input.addEventListener('input',function(){if(!busy){setStatus('','');retry.hidden=true}update()});direction.addEventListener('change',update);el('quick-page-form').addEventListener('submit',function(e){e.preventDefault();translate()});input.addEventListener('keydown',function(e){if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();translate()}});copy.addEventListener('click',function(){YakuCommon.copyText(output.value).then(function(){setStatus('訳文をコピーしました。','success')},function(){setStatus('コピーできませんでした。','error')})});retry.addEventListener('click',function(){lastRequest&&ready?start(lastRequest.path,lastRequest.body,lastRequest.label):translate()});cancel.addEventListener('click',function(){if(!currentJob)return;var id=currentJob;cancel.disabled=true;YakuCommon.post('/api/cancel-translation',{job_id:id}).then(function(){if(id===currentJob)fail('翻訳を中止しました。')},function(e){cancel.disabled=false;setStatus(e.message||'中止できませんでした。','error')})});document.addEventListener('click',function(e){var c=e.target.closest('[data-quick-chip]');if(c)return rewrite(c.getAttribute('data-quick-chip'));var b=e.target.closest('[data-quick-variant]');if(b){var v=variants[Number(b.getAttribute('data-quick-variant'))];if(v){output.value=v.text;lastMasked=v.masked;currentLabel=v.label;renderVariants();estimate(v.text);update()}}});el('quick-page-undo').addEventListener('click',function(){var v=history.pop();if(!v)return;output.value=v.text;lastMasked=v.masked;currentLabel=v.label;renderVariants();estimate(v.text);this.disabled=!history.length;update()});returnButton.addEventListener('click',function(){if(!handoff||!output.value)return;sessionStorage.setItem('yakuQuickReturn',JSON.stringify({index:handoff.index,translation:output.value}));location.assign(handoff.return_url||'/cat')});update();input.focus()}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot()})();
