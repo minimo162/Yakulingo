@@ -2245,19 +2245,19 @@ function Invoke-YakuRoute {
         Clear-YakuExpiredUploads
     }
 
-    # Excel翻訳を製品の既定面に保ち、文章翻訳は独立した一時利用面へ分ける。
-    # /quick と /cat は同じDOMを返さない。旧 /palette は軽量文章翻訳へ寄せる。
-    if ($method -eq 'GET' -and $path -in @('/', '/cat')) {
+    # テキスト翻訳を製品の既定面にする。Excel翻訳は独立した /cat で再開URLを保つ。
+    # 旧 /palette もテキスト翻訳へ寄せるが、両画面のDOMは混在させない。
+    if ($method -eq 'GET' -and $path -in @('/', '/quick', '/palette')) {
+        Serve-YakuAppPage -Context $Context -PageName 'quick.html'
+        return
+    }
+    if ($method -eq 'GET' -and $path -eq '/cat') {
         $wantedProject = ''
         try { $wantedProject = [string](Get-YakuQueryValue -Request $req -Name 'project') } catch {}
         $initialView = if ($wantedProject -match '^[a-f0-9]{32}$') { 'workspace' } else { '' }
         $wantsImport = $false
         try { $wantsImport = ([string](Get-YakuQueryValue -Request $req -Name 'import') -eq '1') } catch {}
         Serve-YakuAppPage -Context $Context -PageName 'cat.html' -InitialView $initialView -AllowWasm:$wantsImport
-        return
-    }
-    if ($method -eq 'GET' -and $path -in @('/quick', '/palette')) {
-        Serve-YakuAppPage -Context $Context -PageName 'quick.html'
         return
     }
     if ($method -eq 'GET' -and $path.StartsWith('/assets/')) {
@@ -2769,8 +2769,7 @@ function Invoke-YakuRoute {
             try { if (@('to_en','to_jp') -contains [string]$payload['direction']) { $direction = [string]$payload['direction'] } } catch {}
             $style = 'full'
             try { if ([string]$payload['style'] -eq 'brief') { $style = 'brief' } } catch {}
-            # 操作は固定語彙からだけ選ぶ。自由記述命令は受け付けず、表示条件は
-            # 上限を検証したメタデータとしてだけプロンプトへ追加する。
+            # 操作は固定語彙からだけ選ぶ。自由記述命令や表示条件は受け付けない。
             $instruction = switch ($chip) {
                 'shorten' { '意味を保ったまま短くしてください。' }
                 'shorter' { '意味保持の限界までさらに短くしてください。見出しまたは狭いセルで使える簡潔さを優先してください。' }
@@ -2780,32 +2779,6 @@ function Invoke-YakuRoute {
                 default { 'もう少し丁寧な言い回しにしてください。' }
             }
             $instruction += ' 数字、単位、日付、社名、製品名、その他の固有名詞を欠落・変更・追加しないでください。'
-            $display = $null
-            try { $display = $payload['display_context'] } catch {}
-            $conditions = New-Object System.Collections.Generic.List[string]
-            if ($null -ne $display) {
-                $purpose = [string]$display['purpose']
-                if (@('body','heading','table','excel_cell') -contains $purpose) { [void]$conditions.Add(('用途=' + $purpose)) }
-                $length = [string]$display['length']
-                if (@('natural','short','very_short','shortest') -contains $length) { [void]$conditions.Add(('短さ=' + $length)) }
-                $fontName = (([string]$display['font_name']) -replace '[\r\n\t]', ' ').Trim()
-                if ($fontName.Length -gt 80) { $fontName = $fontName.Substring(0,80) }
-                if ($fontName) { [void]$conditions.Add(('フォント=' + $fontName)) }
-                foreach ($pair in @(@('font_size_pt',6,72,'pt'),@('column_width',1,255,'列幅'),@('line_count',1,50,'行'),@('target_chars',1,3000,'文字'),@('shorten_percent',1,90,'%'))) {
-                    $number = 0.0
-                    if ([double]::TryParse(([string]$display[$pair[0]]), [ref]$number) -and $number -ge $pair[1] -and $number -le $pair[2]) {
-                        [void]$conditions.Add(($pair[3] + '=' + $number))
-                    }
-                }
-                [void]$conditions.Add(('折返し=' + $(if ([bool]$display['wrap']) { 'あり' } else { 'なし' })))
-                if ([bool]$display['merged']) { [void]$conditions.Add('結合セル=あり') }
-                $preserve = (([string]$display['preserve_terms']) -replace '[\r\n\t]', ' ').Trim()
-                if ($preserve.Length -gt 300) { $preserve = $preserve.Substring(0,300) }
-                if ($preserve) { [void]$conditions.Add(('維持する固有名詞=' + $preserve)) }
-            }
-            if ($conditions.Count -gt 0) {
-                $instruction += ' 次の表示条件は厳密な収まり保証ではなく、短さを調整する目安として使ってください: ' + (($conditions.ToArray()) -join ' / ')
-            }
             $reviseBody = [ordered]@{ source_text=$sourceText; current_text=$currentText; instruction=$instruction; direction=$direction; style=$style }
             $state = Start-YakuTranslationJob -InputText '' -Settings $settings -Kind 'revise' -ReviseJson ($reviseBody | ConvertTo-Json -Compress)
             Send-YakuTextResponse -Context $Context -Text ([ordered]@{ job_id=[string]$state['id'] } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'

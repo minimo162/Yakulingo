@@ -167,8 +167,11 @@ www/assets/pdf-extract.js	lf
 www/assets/pdf-review.js	lf
 www/assets/premium-ui.css	lf
 www/assets/premium-ui.js	lf
+www/assets/quick-page.css	lf
+www/assets/quick-page.js	lf
 www/assets/quick.js	lf
 www/assets/styles.css	crlf
 www/assets/ui-review.css	lf
 www/cat.html	lf
 www/palette.html	lf
+www/quick.html	lf
