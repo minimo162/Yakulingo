@@ -20,6 +20,9 @@
   --pane-docs: clamp(9rem, 12vw, 15rem);
 }
 
+/* #162: retain compatibility code while removing concepts outside the two spines. */
+#premium-tools,#cat-search-menu,#cat-danger-zone,#cat-source-update-open,.cat-toolbar-search,[data-cat-glossary],[data-cat-merge],[data-cat-split],[data-cat-split-at],[data-cat-term-open],[data-cat-term-insert],[data-cat-term-edit],[data-cat-term-deactivate],[data-cat-term-exception],.cat-term-trace{display:none!important}.cat-notation{display:inline-flex;align-items:center;gap:8px;margin:0;padding:4px 8px;border:1px solid var(--line,#cbd5e1);border-radius:999px}.cat-notation legend{position:absolute;inline-size:1px;block-size:1px;overflow:hidden;clip:rect(0 0 0 0)}.cat-notation label{display:inline-flex;align-items:center;gap:3px;font-size:12px}
+
 /* 起動画面の器。以前は .cat-picker / .cat-instant が max-width:920px で真ん中に
    立っており、1912px の窓では中身が 920px＝48.1%（実測 2026-08-16）しか使わず、
    残りの半分以上が空白だった。起動画面は器の幅をそのまま使う。

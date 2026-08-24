@@ -1,0 +1,5 @@
+﻿Readability review only. Request ID: {request_id}
+Inspect PipelineSelected as business writing in the target language. Do not compare facts or numbers; those are checked elsewhere. The amount notation `oku` is an intentional product term and is not a readability defect. If it is clear, natural, and easy to read, output PASS. Otherwise output REVIEW_REQUIRED: followed by concise issues only.
+For every item, begin the output line with its exact `[[ID:n]] n.` prefix. Return those lines only, then YAKULINGO_END:{request_id}.
+{pipeline_data}
+{source_list}
