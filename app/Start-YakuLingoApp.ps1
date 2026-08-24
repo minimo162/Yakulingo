@@ -36,6 +36,17 @@ function Get-YakuAppEdgePath {
     throw 'EDGE_NOT_FOUND: Microsoft Edgeが見つかりません。会社のPCでは、Edgeが利用可能かIT部門へ確認してください。'
 }
 
+function Test-YakuVisibleEdgeWindow {
+    try {
+        foreach ($process in @(Get-Process -Name 'msedge' -ErrorAction SilentlyContinue)) {
+            try {
+                if ([IntPtr]$process.MainWindowHandle -ne [IntPtr]::Zero) { return $true }
+            } catch {}
+        }
+    } catch {}
+    return $false
+}
+
 function Remove-YakuLegacyStartupShortcut {
     # Notification-area/background startup was removed. Delete only a shortcut
     # that can be proven to belong to a YakuLingo tree; leave same-name links
@@ -142,6 +153,8 @@ try {
     $deadline = (Get-Date).AddSeconds(30)
     $sawUiClient = $false
     $allClosingSince = $null
+    $noUiClientSince = $null
+    $noVisibleEdgeSince = $null
     $firstPoll = $true
     do {
         # 1回目は待たずに確かめる（D2-10）。以降は500msずつ空ける。
@@ -175,6 +188,19 @@ try {
             if ((Get-Date) -ge $deadline) { throw 'EDGE_TAB_START_TIMEOUT: YakuLingoのEdgeタブを確認できませんでした。' }
             continue
         }
+        # Edge can disappear without delivering pagehide/beforeunload (for example,
+        # after a crash or forced close). In that case an old "open" heartbeat can
+        # keep the lifecycle mutex forever and every later shortcut invocation exits
+        # without opening a window. Treat both an empty presence set and the absence
+        # of any visible Edge window as a closed UI after a short grace period.
+        if ($clientCount -le 0) {
+            if ($null -eq $noUiClientSince) { $noUiClientSince = Get-Date }
+            if (((Get-Date) - $noUiClientSince).TotalSeconds -ge 3) { break }
+        } else { $noUiClientSince = $null }
+        if (-not (Test-YakuVisibleEdgeWindow)) {
+            if ($null -eq $noVisibleEdgeSince) { $noVisibleEdgeSince = Get-Date }
+            if (((Get-Date) - $noVisibleEdgeSince).TotalSeconds -ge 3) { break }
+        } else { $noVisibleEdgeSince = $null }
         if ([bool]$instance.ui_all_closing) {
             if ($null -eq $allClosingSince) { $allClosingSince = Get-Date }
             if (((Get-Date) - $allClosingSince).TotalSeconds -ge 3) { break }
