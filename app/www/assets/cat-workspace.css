@@ -26,11 +26,11 @@
    残りの半分以上が空白だった。起動画面は器の幅をそのまま使う。
    data-cat-view は JavaScript が入れるので、それを待つ規則にすると1回目の描画で
    幅が飛ぶ。既定を起動画面の幅にして、確認作業のほうを広げる向きで書く。 */
-.app-cat .shell {
+.app-cat .premium-excel-surface {
   width: min(1440px, calc(100% - 32px));
   max-width: 1440px;
 }
-.app-cat[data-cat-view="workspace"] .shell {
+.app-cat[data-cat-view="workspace"] .premium-excel-surface {
   width: min(1600px, calc(100% - 32px));
   max-width: 1600px;
 }
@@ -39,7 +39,7 @@
    確認作業の画面だけに効かせる。読み物（貼り付け欄・チュートリアル）は
    1行が長くなりすぎるので、920px のままにする。 */
 @media (min-width: 1700px) {
-  .app-cat[data-cat-view="workspace"] .shell { width: calc(100% - 48px); max-width: 2200px; }
+  .app-cat[data-cat-view="workspace"] .premium-excel-surface { width: calc(100% - 48px); max-width: 2200px; }
 }
 
 /* 最初の画面は、白いカードで全体を囲まない（2026-08-12）。器そのものは只の枠にして、
@@ -80,7 +80,7 @@
   --radius-control: 8px;
 }
 
-.app-cat:not([data-cat-view="workspace"]) .shell {
+.app-cat:not([data-cat-view="workspace"]) .premium-excel-surface {
   width: min(1440px, calc(100% - 96px));
   padding-bottom: var(--space-2);
 }
@@ -106,7 +106,7 @@
   min-height: 30px; margin-top: 2px; padding: 0; text-align: right;
 }
 .app-cat:not([data-cat-view="workspace"]) .status-detail { max-width: none; text-align: right; }
-.app-cat:not([data-cat-view="workspace"]) .tab-panel { margin-top: 22px; }
+.app-cat:not([data-cat-view="workspace"]) .excel-screen { margin-top: 22px; }
 
 .entry-body { display: flex; align-items: stretch; gap: var(--yk-gutter); }
 .entry-rail { flex: 0 0 var(--yk-rail); min-width: 0; display: flex; flex-direction: column; }
@@ -388,10 +388,10 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
      動かせず「英訳の金額」の下端705pxが画面外）。帯を外し、確認作業では
      #cat-instant を出さないようにしたので、view だけで判定してよくなった。 */
   body.app-cat[data-cat-view="workspace"] { height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
-  .app-cat .shell { flex: 1; min-height: 0; display: flex; flex-direction: column; padding-bottom: 0; }
+  .app-cat .premium-excel-surface { flex: 1; min-height: 0; display: flex; flex-direction: column; padding-bottom: 0; }
   .app-cat .hero { flex: 0 0 auto; }
   /* 51px の余白が、そのまま一覧の半行ぶんだった。 */
-  .app-cat .tab-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; margin-top: var(--space-1); }
+  .app-cat .excel-screen { flex: 1; min-height: 0; display: flex; flex-direction: column; margin-top: var(--space-1); }
   .app-cat #cat-workspace { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   /* 取り出したあとに出る帯が一覧を押し潰さないよう、床を作る（実測で一覧が
      2px まで潰れた）。それでも入りきらないときだけ、この器がスクロールする。 */
@@ -1453,8 +1453,8 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 @media (min-width: 1320px) and (max-height: 620px) {
   html, body.app-cat { height: auto; }
   body.app-cat[data-cat-view="workspace"] { overflow: visible; display: block; }
-  .app-cat .shell,
-  .app-cat .tab-panel,
+  .app-cat .premium-excel-surface,
+  .app-cat .excel-screen,
   .app-cat #cat-workspace { display: block; }
   .app-cat .workspace-heading { display: flex; }
   .app-cat .cat-inspector-pane { overflow: auto; }
@@ -1482,7 +1482,7 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
   :root {
     --cat-toolbar-h: 0px;
   }
-  .app-cat .shell {
+  .app-cat .premium-excel-surface {
     width: min(100% - 24px, 920px);
   }
   .cat-editor-toolbar,
@@ -2600,7 +2600,7 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
   body.app-cat[data-cat-view="workspace"] #copilot-window-open { min-height: 28px; padding-block: 0; }
   body.app-cat[data-cat-view="workspace"] #copilot-prepare-retry { min-height: 28px; padding-block: 0; white-space: nowrap; }
 
-  body.app-cat[data-cat-view="workspace"] .tab-panel { margin-top: 4px; }
+  body.app-cat[data-cat-view="workspace"] .excel-screen { margin-top: 4px; }
   body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar {
     grid-template-columns: minmax(260px, 1fr) minmax(460px, 1.45fr) minmax(400px, auto);
     grid-template-rows: 36px 32px 38px;
@@ -2964,7 +2964,7 @@ body.app-cat[data-cat-view="start"] {
   --focus: #8160d1;
 }
 
-body.app-cat[data-cat-view="start"] .shell {
+body.app-cat[data-cat-view="start"] .premium-excel-surface {
   width: calc(100% - 48px);
   max-width: 2200px;
   padding-bottom: var(--space-2);
@@ -2998,7 +2998,7 @@ body.app-cat[data-cat-view="start"] .status-block {
 body.app-cat[data-cat-view="start"] #copilot-status { min-height: 28px; flex: 0 0 auto; white-space: nowrap; }
 body.app-cat[data-cat-view="start"] #copilot-window-open { min-height: 28px; padding-block: 0; }
 body.app-cat[data-cat-view="start"] #copilot-prepare-retry { min-height: 28px; padding-block: 0; white-space: nowrap; }
-body.app-cat[data-cat-view="start"] .tab-panel { margin-top: 4px; }
+body.app-cat[data-cat-view="start"] .excel-screen { margin-top: 4px; }
 body.app-cat[data-cat-view="start"] #cat-picker { width: 100%; }
 
 body.app-cat[data-cat-view="start"] .entry-body {
@@ -3335,7 +3335,7 @@ body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr[data-cat-row] textare
 }
 
 @media (max-width: 900px) {
-  body.app-cat[data-cat-view="start"] .shell { width: calc(100% - 24px); }
+  body.app-cat[data-cat-view="start"] .premium-excel-surface { width: calc(100% - 24px); }
   body.app-cat[data-cat-view="start"] .entry-body {
     grid-template-columns: minmax(0, 1fr);
   }
