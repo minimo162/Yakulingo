@@ -741,7 +741,7 @@ function Clear-YakuCompletedTranslationJobs {
 
         $keepIds = @{}
         $keepLimit = 5
-        try { $keepLimit = [Math]::Max(0, [int]$script:YakuTranslateJobKeepCompleted) } catch { $keepLimit = 5 }
+        try { $keepLimit = [Math]::Max(0, [int]$script:YakuTranslateJobKeepCompleted) } catch { $keepLimit = 0 }
         if ($keepLimit -gt 0) {
             foreach ($item in @($completed.ToArray() | Sort-Object CompletedAt -Descending | Select-Object -First $keepLimit)) {
                 try { $keepIds[[string]$item.Id] = $true } catch {}
