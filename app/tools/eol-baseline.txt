@@ -141,6 +141,7 @@ tools/Test-YakuV9186AbbreviationRoundTrip.ps1	crlf
 tools/Test-YakuV9187CompactionBudget.ps1	crlf
 tools/Test-YakuV9188EditorLanguage.ps1	crlf
 tools/Test-YakuV9189SearchReplaceUndo.ps1	crlf
+tools/Test-YakuV9190IssueBatch.ps1	lf
 tools/Test-YakuV9190StructuralUndo.ps1	crlf
 tools/Test-YakuV9191PairedDelimiterQa.ps1	crlf
 tools/Test-YakuV9192SegmentReviewNotes.ps1	lf
