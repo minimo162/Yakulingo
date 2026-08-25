@@ -2386,39 +2386,6 @@ function Invoke-YakuRoute {
     # 結局どちらになるのかが分からなかった（2026-08-13、利用者の指摘）。
     # 判定は Resolve-YakuDirectionDecision 1か所しか持たない決まりなので、
     # 画面側で当てにいかず、同じ関数へ聞く。
-    if ($method -eq 'POST' -and $path -eq '/api/direction-preview') {
-        try {
-            $payload = Read-YakuRequestJson -Request $req
-            $previewText = [string]$payload['text']
-            if ([string]::IsNullOrWhiteSpace($previewText)) {
-                Send-YakuTextResponse -Context $Context -Text '{"direction":"","confidence":"low"}' -ContentType 'application/json; charset=utf-8'
-                return
-            }
-            $decision = Resolve-YakuDirectionDecision -Text $previewText -Intent 'auto'
-            $response = [ordered]@{
-                direction = $(if ([bool]$decision.RequiresConfirmation) { '' } else { [string]$decision.Resolved })
-                confidence = [string]$decision.Confidence
-            }
-            Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
-        } catch {
-            Send-YakuTextResponse -Context $Context -Text '{"direction":"","confidence":"low"}' -ContentType 'application/json; charset=utf-8'
-        }
-        return
-    }
-    if ($method -eq 'POST' -and $path -eq '/api/settings/amount-notation') {
-        try {
-            $payload = Read-YakuRequestJson -Request $req -MaxBytes 2048
-            $value = [string]$payload['amount_notation']
-            if ($value -ne 'oku' -and $value -ne 'billion') { throw 'AMOUNT_NOTATION_INVALID: 金額の書き方は oku か billion のどちらかです。' }
-            $saved = @(Save-YakuUserSettings -Root $script:YakuRoot -Form @{ amount_notation = $value })
-            $applied = Get-YakuAmountNotation -Settings $saved[0]
-            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ amount_notation=$applied } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
-        } catch {
-            $safe = Convert-YakuExceptionToUserMessage $_
-            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ message=$safe } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
-        }
-        return
-    }
     if ($method -eq 'GET' -and $path -match '^/api/jobs/([a-f0-9]{32})$') {
         $jobId = [string]$Matches[1]
         Update-YakuTranslationJobs
@@ -2463,20 +2430,6 @@ function Invoke-YakuRoute {
             $payload = [ordered]@{ mode='error'; label='翻訳できませんでした'; class='warn'; detail=$safe; progress=100; html=(New-YakuAlertHtml -Kind error -Message $safe) }
             $statusCode = if ($safe -match '記録が見つかりません|JOB_NOT_FOUND') { 404 } else { 500 }
             Send-YakuTextResponse -Context $Context -Text ($payload | ConvertTo-Json -Depth 20 -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode $statusCode
-        }
-        return
-    }
-    if ($method -eq 'GET' -and $path -eq '/api/download') {
-        try {
-            $jobId = Get-YakuQueryValue -Request $req -Name 'job_id'
-            if ([string]::IsNullOrWhiteSpace($jobId)) { throw 'どの翻訳の結果か分かりませんでした。画面を読み込み直してから、もう一度お試しください。' }
-            Update-YakuTranslationJobs
-            if ([string]::IsNullOrWhiteSpace($jobId) -or -not $script:YakuTranslateJobs.ContainsKey($jobId)) { throw (Get-YakuTranslationJobMissingMessage -JobId $jobId) }
-            $output = Get-YakuJobOutputPath -State $script:YakuTranslateJobs[$jobId]
-            if ([string]::IsNullOrWhiteSpace($output)) { throw '出力ファイルが見つかりません。' }
-            Send-YakuDownloadResponse -Context $Context -Path $output
-        } catch {
-            Send-YakuTextResponse -Context $Context -Text (Convert-YakuExceptionToUserMessage $_) -ContentType 'text/plain; charset=utf-8' -StatusCode 404
         }
         return
     }
@@ -2552,51 +2505,6 @@ function Invoke-YakuRoute {
         }
         return
     }
-    if ($method -eq 'POST' -and $path -eq '/api/file-info') {
-        try {
-            $settings = Read-YakuSettings -Root $script:YakuRoot
-            $payload = Read-YakuRequestJson -Request $req
-            $incoming = Resolve-YakuIncomingFile -Payload $payload -Settings $settings
-            $info = Get-YakuFileInfo -Path ([string]$incoming.Path) -Settings $settings
-            $info | Add-Member -NotePropertyName FileHandle -NotePropertyValue ([string]$incoming.Handle) -Force
-            Send-YakuTextResponse -Context $Context -Text ($info | ConvertTo-Json -Depth 30 -Compress) -ContentType 'application/json; charset=utf-8'
-        } catch {
-            $payload = [ordered]@{ error=(Convert-YakuExceptionToUserMessage $_) }
-            Send-YakuTextResponse -Context $Context -Text ($payload | ConvertTo-Json -Depth 10 -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
-        }
-        return
-    }
-    # ---------------------------------------------------------------------
-    # パレット（お手軽翻訳）。貼ったら即訳が出る小窓画面 /palette 専用の口。
-    # 既存の /api/cat/* ・ /api/jobs/* とは独立させる——パレット自身は
-    # CAT作業(project)を一切作らない。
-    #
-    # ただし /api/palette/instant の文脈ポインタ(context_project_id)は
-    # 既存のCAT状態機械へ**読み取り目的で**触れる(CoD審査REWORK-1
-    # MINOR-3: この註が「状態機械には触れない」と言い切っていたのは実装と
-    # 食い違っていた——実装を採る、CLAUDE.md)。実際に起きる副作用:
-    #   - Get-YakuCatProject: 副作用なし(純粋な辞書引き)
-    #   - Restore-YakuCatProject: ディスクへ書く(旧transientのproject.json
-    #     移行)・$script:YakuCatProjectsへ登録・TM outboxの同期・batch
-    #     checkpointの取り込みを行う(CatProject.ps1、Restore実装内)。
-    #     いずれも「保存済みの資料を開き直す」という既存の意味の範囲内で
-    #     あり、パレット固有の新しい状態は増やさない。
-    # ---------------------------------------------------------------------
-    if ($method -eq 'GET' -and $path -eq '/api/palette/abbreviations') {
-        try { Send-YakuTextResponse -Context $Context -Text ((Get-YakuBriefAbbreviationPreferences) | ConvertTo-Json -Depth 8 -Compress) -ContentType 'application/json; charset=utf-8' }
-        catch { Send-YakuTextResponse -Context $Context -Text ([ordered]@{ error=(Convert-YakuExceptionToUserMessage $_) } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400 }
-        return
-    }
-    if ($method -eq 'POST' -and $path -eq '/api/palette/abbreviations') {
-        try {
-            $payload = Read-YakuRequestJson -Request $req -MaxBytes 65536
-            $entries = @(); try { $entries = @($payload['entries']) } catch { $entries = @() }
-            $preferences = Save-YakuBriefAbbreviationPreferences -Enabled ([bool]$payload['enabled']) -Entries $entries
-            Write-YakuLog "Quick abbreviation preferences saved. enabled=$([bool]$preferences.enabled) entries=$(@($preferences.entries).Count)" 'INFO'
-            Send-YakuTextResponse -Context $Context -Text ($preferences | ConvertTo-Json -Depth 8 -Compress) -ContentType 'application/json; charset=utf-8'
-        } catch { Send-YakuTextResponse -Context $Context -Text ([ordered]@{ error=(Convert-YakuExceptionToUserMessage $_) } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400 }
-        return
-    }
     if ($method -eq 'POST' -and $path -eq '/api/palette/metric') {
         try {
             $payload = Read-YakuRequestJson -Request $req -MaxBytes 8192
@@ -2621,136 +2529,6 @@ function Invoke-YakuRoute {
             Send-YakuTextResponse -Context $Context -Text ([ordered]@{ translation=$translated; notation=$notation } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
         } catch {
             Send-YakuTextResponse -Context $Context -Text ([ordered]@{ error=(Convert-YakuExceptionToUserMessage $_) } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
-        }
-        return
-    }
-    if ($method -eq 'POST' -and $path -eq '/api/palette/instant') {
-        # Copilot を呼ばない即答。手元(TM完全一致・個人用語集)だけを引く。
-        # 引けなくても翻訳は成立する（コーパス/TMは足しであって前提ではない）。
-        try {
-            $payload = Read-YakuRequestJson -Request $req -MaxBytes 65536
-            $text = [string]$payload['text']
-            if ([string]::IsNullOrWhiteSpace($text)) {
-                Send-YakuTextResponse -Context $Context -Text '{"direction":"","tm":null,"terms":[],"project_hit":null}' -ContentType 'application/json; charset=utf-8'
-                return
-            }
-            $directionIntent = 'auto'
-            try { if (@('auto','to_en','to_jp') -contains [string]$payload['direction_intent']) { $directionIntent = [string]$payload['direction_intent'] } } catch {}
-            $decision = Resolve-YakuDirectionDecision -Text $text -Intent $directionIntent
-            # 即答は参考情報であって関門ではない。曖昧でも 409 にはせず、
-            # 見込みの方向 (suggested_direction) のまま TM・用語を引く。
-            $direction = $(if ([bool]$decision.RequiresConfirmation) { [string]$decision.SuggestedDirection } else { [string]$decision.Resolved })
-            if ($direction -ne 'to_en' -and $direction -ne 'to_jp') { $direction = 'to_en' }
-
-            # パレットの文脈ポインタ(v1)。選ばれていれば /api/cat/recent 由来の
-            # プロジェクトIDが乗る(localStorageに置くのはid・表示名のみ、
-            # 本文は保存しない)。32桁16進以外・実在しない・読み込めない、
-            # いずれも黙って「文脈なし」へフォールバックする(壊れていても
-            # 翻訳自体は止めない、コーパスは足しであって前提ではない)。
-            # NIT: 判定は小文字16進限定([a-f0-9])。GUIDの生成側([guid]::
-            # NewGuid().ToString('N'))は常に小文字なので実害は無いが、
-            # Get-YakuCatProjectDiskRevision等の既存の姉妹関数は
-            # [a-fA-F0-9](大文字も許す)を使っており、判定条件がここだけ
-            # 非対称である。直さない(挙動を変える理由が無い)——記録だけ残す。
-            $contextProjectId = ''
-            try { $contextProjectId = [string]$payload['context_project_id'] } catch {}
-            $contextProject = $null
-            if ($contextProjectId -match '^[a-f0-9]{32}$') {
-                try {
-                    # まず稼働中(メモリ)を見る——CAT側で開いたままの資料が
-                    # 大半なので、貼り付けごとの通常経路はディスクへ触らない。
-                    # メモリに無ければ保存済みを読み込む(Restore、
-                    # /api/cat/resumeと同じ二段構え)が、この経路は直列の
-                    # 待ち受け1本を丸ごと止める(CoD審査REWORK-1 MINOR-4:
-                    # 実測600行で約1.9〜2.0秒)。件数はmanifest(project.json)
-                    # だけで安価に分かるので、大きい資料はここで諦める
-                    # ——「開いたまま」の通常経路(メモリ命中)は件数に
-                    # 関わらず常に効く。閾値300は実測の線形外挿(600行で
-                    # 約2000ms→300行で概算1000ms)を根拠にした値で、
-                    # 「貼り付けごとに1回、UIを丸ごと止めてよい上限」として
-                    # 選んだ——調整の余地がある1定数として置く。件数が
-                    # 読めない(manifestが無い・壊れている)ときは安全側
-                    # (復元しない)へ倒す。
-                    $contextProject = Get-YakuCatProject -Id $contextProjectId
-                    if ($null -eq $contextProject) {
-                        $diskSegmentCount = Get-YakuCatProjectDiskSegmentCount -Id $contextProjectId
-                        if ($null -ne $diskSegmentCount -and [int]$diskSegmentCount -le 300) {
-                            $contextProject = Restore-YakuCatProject -Id $contextProjectId
-                        }
-                    }
-                } catch { $contextProject = $null }
-            }
-
-            $tmBody = $null
-            try {
-                # 完全一致のみ。あいまい照合(Find-YakuTranslationMemory)は
-                # 3,000件規模で~25秒かかり、この経路で呼ぶとサーバー全体が
-                # 詰まる(TranslationMemory.ps1 実測)。ここでは絶対に呼ばない。
-                $tmHits = @(Find-YakuTranslationMemoryExact -Text $text -Direction $direction)
-                if ($tmHits.Count -gt 0) { $tmBody = [ordered]@{ source=[string]$tmHits[0].Source; target=[string]$tmHits[0].Target; exact=$true } }
-            } catch { $tmBody = $null }
-
-            $projectHitBody = $null
-            if ($null -ne $contextProject) {
-                try {
-                    # 向きの違う訳を候補1に出さない(設計判断3)。文脈プロジェクトの
-                    # directionと、この貼り付けの判定方向が食い違えば出さない。
-                    if ([string]$contextProject.Direction -eq $direction) {
-                        $needle = $text.Trim()
-                        # CoD審査REWORK-1 MAJOR-1: Get-YakuCatProject(メモリ命中)は
-                        # Initialize-YakuCatProjectStateを通らないので、用語スナップ
-                        # ショットが変わって点検が古くなったセグメントでも
-                        # .Confirmedがtrueのまま残り得る(CatProject.ps1の遅延評価――
-                        # 古さの検出はInitialize側にしか無い)。Restore経路は末尾で
-                        # Initialize-YakuCatProjectStateを通るため'stale'へ落ちて
-                        # 弾かれるのに、メモリ経路だけ食い違った結果になっていた
-                        # (実測: 同じ状態でmemory hit=true/restore hit=false)。
-                        # ここでは Initialize- を呼ばない(パレットは読み取り専用の
-                        # 経路であるべきで、CAT側の生きたprojectを書き換えてはならない)。
-                        # 代わりに Test-YakuCatSegmentQcCurrent で「今のスナップショット
-                        # に対して点検が最新か」をその場で判定するだけにする
-                        # (副作用なし、CLAUDE.mdのsegment-qc-not-currentと同じ基準を
-                        # 即答経路にも適用する)。TM登録(CatProject.ps1:5838)が
-                        # Confirmed AND QcCurrent を要求しているのと同じ強さに揃える
-                        # ——TM行より弱い保証の訳を候補1として出さない。
-                        $snapshotHash = Get-YakuCatTerminologySnapshotHash -Project $contextProject
-                        foreach ($seg in @($contextProject.Segments)) {
-                            if (-not [bool]$seg.Confirmed) { continue }
-                            if ([string]::IsNullOrWhiteSpace([string]$seg.Translation)) { continue }
-                            if (-not (Test-YakuCatSegmentQcCurrent -Segment $seg -TerminologySnapshotHash $snapshotHash)) { continue }
-                            # 完全一致(原文Ordinal、trim後)。あいまい照合はしない
-                            # (即答経路のO(1)原則、#63の決定を踏襲)。
-                            if ([string]::Equals((([string]$seg.Text).Trim()), $needle, [StringComparison]::Ordinal)) {
-                                $projectHitBody = [ordered]@{ source=[string]$seg.Text; target=[string]$seg.Translation; project_name=[string]$contextProject.FileName }
-                                break
-                            }
-                        }
-                    }
-                } catch { $projectHitBody = $null }
-            }
-
-            $termRows = New-Object System.Collections.Generic.List[object]
-            try {
-                # 文脈があれば、その資料の用語集(project scope)も混ぜる。
-                # Read-YakuPersonalTerminologyEntries -ProjectId は個人スコープに
-                # project scopeを足して返す既存の関数(CatProject.ps1が/api/cat/open
-                # で使うのと同じ呼び方)。重複時にprojectが勝つ規則も
-                # Find-YakuTerminologyMatches のScopeWeightに既にあるので、
-                # ここで統合ロジックを新たに書かない。
-                $termProjectId = if ($null -ne $contextProject) { [string]$contextProject.Id } else { '' }
-                $termEntries = if ($null -ne $contextProject) { @(Read-YakuPersonalTerminologyEntries -ProjectId $termProjectId) } else { @(Read-YakuPersonalTerminologyEntries) }
-                foreach ($hit in @(Find-YakuTerminologyMatches -Text $text -Direction $direction -Entries $termEntries -ProjectId $termProjectId)) {
-                    $preferred = [string]$hit.PreferredTarget
-                    if ([string]::IsNullOrWhiteSpace($preferred)) { continue }
-                    [void]$termRows.Add([ordered]@{ source=[string]$hit.SourceTerm; target=$preferred })
-                }
-            } catch { $termRows.Clear() }
-
-            $response = [ordered]@{ direction=$direction; tm=$tmBody; terms=@($termRows.ToArray()); project_hit=$projectHitBody }
-            Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Depth 6 -Compress) -ContentType 'application/json; charset=utf-8'
-        } catch {
-            # 即答は無くても翻訳自体は続けられる。ここで止めない。
-            Send-YakuTextResponse -Context $Context -Text '{"direction":"","tm":null,"terms":[],"project_hit":null}' -ContentType 'application/json; charset=utf-8'
         }
         return
     }
@@ -2851,126 +2629,6 @@ function Invoke-YakuRoute {
         }
         return
     }
-    if ($method -eq 'POST' -and $path -eq '/api/palette/term-learn') {
-        # 学習（用語登録先行）。パレットで得た訳を1クリックで個人用語集へ足す。
-        # プロジェクト非依存の Add-YakuTerminologyEntry(personal scope)を直接
-        # 呼ぶ——CATのterm-add操作(/api/cat/のアクションswitchにある'term-add')は
-        # CATプロジェクト必須の経路にあり、中身はproject非依存でもパレットからは
-        # 呼べない。検証の値(80字・改行不可)は同アクションとそのまま揃える
-        # (独自の上限は作らない)。行番号では引かない——このファイル内の別関数の
-        # 行は、この塊への追記だけで簡単にずれる(CoD審査 REWORK-1 NIT-A の実測:
-        # この塊を足す前は3418/3425/3439行だったterm-add側の行が、追記後は
-        # 3485/3492/3506行になっていた)。
-        try {
-            $payload = Read-YakuRequestJson -Request $req -MaxBytes 8192
-            $sourceTerm = ([string]$payload['source']).Trim()
-            $targetTerm = ([string]$payload['target']).Trim()
-            if ([string]::IsNullOrWhiteSpace($sourceTerm) -or [string]::IsNullOrWhiteSpace($targetTerm)) {
-                throw 'PALETTE_TERM_EMPTY: 原文と訳文の両方がないと覚えられません。'
-            }
-            if ($sourceTerm.Length -gt 80 -or $targetTerm.Length -gt 80 -or $sourceTerm -match "[`r`n]" -or $targetTerm -match "[`r`n]") {
-                throw 'PALETTE_TERM_TOO_LONG: 用語は改行を含まない80文字以内で登録してください。'
-            }
-            $direction = ''
-            if (@('to_en','to_jp') -contains [string]$payload['direction']) { $direction = [string]$payload['direction'] }
-            if ($direction -ne 'to_en' -and $direction -ne 'to_jp') {
-                # クライアントが方向を送れなかった/壊れていたときだけ、ここで
-                # 判定し直す(/api/palette/instantと同じ関数・同じ非確認の流儀。
-                # 用語登録は間違えると逆方向に登録される実害があるが、それでも
-                # ここを409で止めるとワンクリックの体験が壊れるので、見込みの
-                # 方向のまま進める——押し直しは分かればすぐできる)。
-                $decision = Resolve-YakuDirectionDecision -Text $sourceTerm
-                $direction = $(if ([bool]$decision.RequiresConfirmation) { [string]$decision.SuggestedDirection } else { [string]$decision.Resolved })
-                if ($direction -ne 'to_en' -and $direction -ne 'to_jp') { $direction = 'to_en' }
-            }
-            # 出典(origin_*)はCATセルに紐づかないので、パレット専用の固定値で
-            # 埋める。New-YakuTerminologyEntry は project_id/segment_id に
-            # 32桁16進を要求する(TERMINOLOGY_PROJECT_ID_REQUIRED/
-            # TERMINOLOGY_PROVENANCE_REQUIREDを投げる検証)ので、実在プロジェクトを
-            # 装わない固定ハッシュへ逃がす——原文ハッシュをsegment_idに使うのは、
-            # TMの回帰試験(Add-YakuTranslationMemoryEntryを種に仕込むテスト、
-            # Test-YakuV9195Palette.ps1)が同じ手口でsegment_idを作っているのと
-            # 同じ考え方。
-            $originProjectId = (Get-YakuTerminologyHash -Text 'yaku-palette-term-learn').Substring(0, 32)
-            $originSegmentId = (Get-YakuTerminologyHash -Text $sourceTerm).Substring(0, 32)
-            # 事前チェック(重複の見える化、CoD審査 REWORK-1 MAJOR-2): 同じ原文に
-            # 既に別の訳が登録されているかを、足す前に見ておく。個人用語集は
-            # 同一source+targetでない限り「上書き」ではなく「共存」する
-            # (Add-YakuTerminologyEntryの契約どおり)。しかも即答(Find-Yaku
-            # TerminologyMatches)がどちらを先に返すかは登録順で決まらない——
-            # 全候補が同点のときは並べ替えの決着が term_id(GUID)の大小になり、
-            # 実測(12組の重複ペア)でfirstWins=4/secondWins=8と、新しく登録した
-            # 方が勝つとは限らなかった。だから「次から同じ訳が出ます」は嘘に
-            # なりうる。ここで検出し、その場合だけ文言を変える(消さない・
-            # 拒まない——足すのが安全、データを失わない)。
-            $sourceField = if ($direction -eq 'to_en') { 'ja' } else { 'en' }
-            $targetField = if ($direction -eq 'to_en') { 'en' } else { 'ja' }
-            $sourceCompare = if ($sourceField -eq 'ja') { [StringComparison]::Ordinal } else { [StringComparison]::OrdinalIgnoreCase }
-            $targetCompare = if ($targetField -eq 'ja') { [StringComparison]::Ordinal } else { [StringComparison]::OrdinalIgnoreCase }
-            $existingConflict = @(Read-YakuPersonalTerminologyEntries | Where-Object {
-                [string]$_.scope -eq 'personal' -and [string]$_.kind -eq 'occurrence' -and [bool]$_.active -and
-                [string]::Equals([string]$_.$sourceField.preferred, $sourceTerm, $sourceCompare) -and
-                -not [string]::Equals([string]$_.$targetField.preferred, $targetTerm, $targetCompare)
-            })
-            $termParams = @{
-                Scope='personal'; Kind='occurrence'
-                # advisory: これが避けるのは terminology-missing=error だけ
-                # ————CATのterm-addアクション(Kind=occurrence)はEnforcement=
-                # required固定で、personal scopeのoccurrenceをrequiredにすると、
-                # その語を含む行はTest-YakuTerminologyCompliance(Terminology.ps1)
-                # の判定でterminology-missingがerrorになり出力を止める。advisory
-                # はそこをwarningへ留める(REWORK-2 NEW-1で訂正: CATのglossary-add
-                # アクション(Kind=cell_exact)は同じrequired固定ではなく、既に
-                # personal scope+advisoryを使っている。この経路のadvisoryは発明
-                # ではなく、glossary-addにある既存の製品内の先例に倣った)。
-                #
-                # advisoryで避けられるのはterminology-missing=errorだけである。
-                # personal用語集への書き込みは、advisory/requiredを問わず
-                # Get-YakuTerminologySnapshotHash(全エントリをscope/kind/
-                # enforcementで絞らずハッシュに混ぜる)を変える。かつてはこの
-                # ハッシュが動くたびに$Project.TerminologySnapshotHashが追従し、
-                # 語を含まない確認済み行までQcTerminologyHashの取り残しで
-                # segment-qc-not-currentになっていたが、CatProject.ps1の狭め込み
-                # (語を含む行だけstale化し、含まないpassed行は刻印を現行へ揃える)
-                # で収まるようになった。CATのterm-add/glossary-addも同じ書き込み
-                # 経路を通る。ハッシュ自体の粒度は粗いままである。この周辺を触る
-                # ときは _docs/欠陥記録_用語スナップショットの粒度_2026-08-19.md
-                # と回帰 tools/Test-YakuV9211TermSnapshotFreshness.ps1 を読むこと。
-                Enforcement='advisory'
-                Origin='palette-term-learn'
-                OriginProjectId=$originProjectId; OriginFileName='貼り付け資料'
-                OriginSegmentId=$originSegmentId; OriginLocation='パレット（お手軽翻訳）'
-                OriginRevision=0
-            }
-            if ($direction -eq 'to_en') {
-                $termParams.JapanesePreferred=$sourceTerm; $termParams.EnglishPreferred=$targetTerm
-            } else {
-                $termParams.EnglishPreferred=$sourceTerm; $termParams.JapanesePreferred=$targetTerm
-            }
-            $added = Add-YakuTerminologyEntry @termParams
-            # CoD審査 REWORK-2 NEW-4: 「すでに同じ内容で登録されています」だけを
-            # 返すと、$existingConflictが1件以上ある(別targetのエントリが今も
-            # activeのまま残っている)場合に、勝者が登録順で決まらない事実を
-            # 隠してしまう。$existingConflictはAddより前に、今回のtargetとは
-            # 一致しないエントリだけを集めているので、unchanged側でもそのまま
-            # 使える。
-            $status = if (-not [bool]$added.Added) { if ($existingConflict.Count -gt 0) { 'unchanged-conflict' } else { 'unchanged' } } elseif ($existingConflict.Count -gt 0) { 'conflict-added' } else { 'added' }
-            $message = switch ($status) {
-                'unchanged' { 'すでに同じ内容で登録されています。' }
-                'unchanged-conflict' { 'すでに同じ内容で登録されています。ただしこの語には別の訳も登録されており、どちらが即答に出るかは登録の順番では決まりません。古い方は用語一覧から削除してください。' }
-                'conflict-added' { '登録しました。ただしこの語には別の訳がすでに登録されており、どちらが即答に出るかは登録の順番では決まりません。古い方は用語一覧から削除してください。' }
-                default { '覚えました。次から同じ訳が出ます。' }
-            }
-            $response = [ordered]@{ ok=$true; status=$status; message=$message; term_id=[string]$added.Entry.term_id }
-            Send-YakuTextResponse -Context $Context -Text ($response | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
-        } catch {
-            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$false; error=(Convert-YakuExceptionToUserMessage $_) } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 400
-        }
-        return
-    }
-    # ---------------------------------------------------------------- CAT
-    # ファイル翻訳と同じことを、押した分だけ進む形にする。
-    # 段階ごとに口を分けているのは、途中を画面へ出すためである。
     if ($method -eq 'POST' -and $path.StartsWith('/api/cat/')) {
         $settings = Read-YakuSettings -Root $script:YakuRoot
         $project = $null
@@ -3402,19 +3060,6 @@ function Invoke-YakuRoute {
                     $body | Add-Member -NotePropertyName structure_undo_operation -NotePropertyValue ([string]$commit.Result.Operation) -Force
                     Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 8 -Compress) -ContentType 'application/json; charset=utf-8'
                 }
-                'review-note-add' {
-                    $index = -1
-                    try { $index = [int]$payload['index'] } catch { $index = -1 }
-                    $text = ''
-                    try { $text = [string]$payload['text'] } catch { $text = '' }
-                    $mutation = {
-                        param($candidate,$innerIndex,$innerText)
-                        return (Add-YakuCatSegmentReviewNote -Project $candidate -Index $innerIndex -Text $innerText)
-                    }
-                    $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($index,$text) -Action review-note-add
-                    $project = $commit.Project
-                    Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
-                }
                 'review-note-state' {
                     $index = -1
                     try { $index = [int]$payload['index'] } catch { $index = -1 }
@@ -3429,48 +3074,6 @@ function Invoke-YakuRoute {
                     $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($index,$noteId,$state) -Action review-note-state
                     $project = $commit.Project
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
-                }
-                'candidates' {
-                    # 現在行の候補。利用者が登録した用語、確認済みTM、当該
-                    # projectへ明示的に取り込んだ前回版だけを手元から引く。
-                    $index = -1
-                    try { $index = [int]$payload['index'] } catch { $index = -1 }
-                    $items = @(Get-YakuCatSegmentCandidates -Root $script:YakuRoot -Project $project -Index $index)
-                    $rows = @($items | ForEach-Object { [ordered]@{
-                        kind = [string]$_.Kind
-                        reference_id = [string]$_.ReferenceId
-                        source_name = [string]$_.SourceName
-                        location = [string]$_.Location
-                        page = [int]$_.Page
-                        source = [string]$_.Source
-                        translation = [string]$_.Target
-                        matched_terms = @($_.MatchedTerms)
-                        source_match_ratio = [double]$_.Ratio
-                        # 旧UI互換。新UIは上の正規化名を使う。
-                        target = [string]$_.Target
-                        exact = [bool]$_.Exact
-                        ratio = [double]$_.Ratio
-                        match_type = [string]$_.MatchType
-                        score = $(try { [double]$_.Score } catch { [double]$_.Ratio })
-                        saved = [string]$_.Saved
-                        database = [string]$_.Database
-                        verified = [bool]$_.Verified
-                        term_id = [string]$_.TermId
-                        term_version = $(try { [int]$_.TermVersion } catch { 0 })
-                        scope = [string]$_.Scope
-                        enforcement = [string]$_.Enforcement
-                        allowed_targets = @($_.AllowedTargets)
-                        forbidden_targets = @($_.ForbiddenTargets)
-                        origin_project_id = [string]$_.OriginProjectId
-                        origin_segment_id = [string]$_.OriginSegmentId
-                        review_revision = $(try { [int]$_.ReviewRevision } catch { 0 })
-                    } })
-                    $termRows = @($rows | Where-Object { [string]$_.kind -eq 'term' })
-                    $segmentRows = @($rows | Where-Object { [string]$_.kind -ne 'term' })
-                    Send-YakuTextResponse -Context $Context -Text (([ordered]@{
-                        index = $index; terms = @($termRows); segment_matches = @($segmentRows)
-                        candidates = @($rows) # 旧UI/テストの読取互換
-                    } | ConvertTo-Json -Depth 7 -Compress)) -ContentType 'application/json; charset=utf-8'
                 }
                 'placeables' {
                     # 現在行の原文にある数字。訳文欄でキーを押したときだけ数える。
@@ -3638,7 +3241,7 @@ function Invoke-YakuRoute {
                     $index = -1; try { $index = [int]$payload['index'] } catch {}
                     $text = [string]$payload['text']; $referenceId = [string]$payload['reference_id']
                     $matches = @(Get-YakuCatSegmentCandidates -Root $script:YakuRoot -Project $project -Index $index | Where-Object { [string]$_.ReferenceId -eq $referenceId -and [string]$_.Kind -eq 'term' })
-                    if ($matches.Count -ne 1) { throw 'CAT_TERM_REFERENCE_NOT_AVAILABLE' }
+                    if ($memoryMatches.Count -ne 1) { throw 'CAT_TERM_REFERENCE_NOT_AVAILABLE' }
                     $mutation = {
                         param($candidate,$innerIndex,$innerText,$innerCandidate)
                         $null = Set-YakuCatSegmentTranslation -Project $candidate -Index $innerIndex -Text $innerText
@@ -3663,11 +3266,11 @@ function Invoke-YakuRoute {
                     $referenceId = [string]$payload['reference_id']
                     if ($referenceId -notmatch '^[a-f0-9]{64}$') { throw 'TRANSLATION_MEMORY_REFERENCE_INVALID' }
                     $index=-1; try{$index=[int]$payload['index']}catch{}
-                    $matches=@(Get-YakuCatSegmentCandidates -Root $script:YakuRoot -Project $project -Index $index | Where-Object { [string]$_.Kind -eq 'memory' -and [string]$_.ReferenceId -eq $referenceId })
-                    if($matches.Count -ne 1){throw 'TRANSLATION_MEMORY_REFERENCE_NOT_AVAILABLE'}
+                    $memoryMatches=@(Get-YakuCatSegmentCandidates -Root $script:YakuRoot -Project $project -Index $index | Where-Object { [string]$_.Kind -eq 'memory' -and [string]$_.ReferenceId -eq $referenceId })
+                    if($memoryMatches.Count -ne 1){throw 'TRANSLATION_MEMORY_REFERENCE_NOT_AVAILABLE'}
                     $deleted = Add-YakuTranslationMemoryTombstone -Direction ([string]$project.Direction) `
-                        -OriginProjectId ([string]$matches[0].OriginProjectId) -OriginSegmentId ([string]$matches[0].OriginSegmentId) `
-                        -ReviewRevision ([int]$matches[0].ReviewRevision) -Reason 'withdrawn-by-user'
+                        -OriginProjectId ([string]$memoryMatches[0].OriginProjectId) -OriginSegmentId ([string]$memoryMatches[0].OriginSegmentId) `
+                        -ReviewRevision ([int]$memoryMatches[0].ReviewRevision) -Reason 'withdrawn-by-user'
                     Send-YakuTextResponse -Context $Context -Text (([ordered]@{ deleted=[bool]$deleted.Added; reason=[string]$deleted.Reason } | ConvertTo-Json -Compress)) -ContentType 'application/json; charset=utf-8'
                 }
                 'confirm' {
@@ -3916,7 +3519,7 @@ function Invoke-YakuRoute {
                         $null = Set-YakuCatSegmentTranslation -Project $candidate -Index $innerIndex -Text $innerText
                         if (-not [string]::IsNullOrWhiteSpace($innerReferenceId)) {
                             $matches = @(Get-YakuCatSegmentCandidates -Root $root -Project $candidate -Index $innerIndex | Where-Object { [string]$_.ReferenceId -eq $innerReferenceId })
-                            if ($matches.Count -ne 1) { throw 'CAT_REFERENCE_NOT_AVAILABLE' }
+                            if ($memoryMatches.Count -ne 1) { throw 'CAT_REFERENCE_NOT_AVAILABLE' }
                             if ([string]$matches[0].Kind -eq 'term') { throw 'CAT_TERM_CANNOT_REPLACE_SEGMENT' }
                             $null = Set-YakuCatSegmentReferenceUsage -Project $candidate -Index $innerIndex -Candidate $matches[0]
                         }
@@ -3925,39 +3528,6 @@ function Invoke-YakuRoute {
                     $commit = Invoke-YakuCatProjectMutation -ProjectId ([string]$project.Id) -ExpectedRevision $expectedRevision -Mutation $mutation -Arguments @($index,$text,$referenceId,$script:YakuRoot,$settings)
                     $project = $commit.Project
                     Send-YakuTextResponse -Context $Context -Text (ConvertTo-YakuCatProjectJson -Project $project) -ContentType 'application/json; charset=utf-8'
-                }
-                'concordance' {
-                    # 過去に確認した訳を言葉で探す（市販CATのコンコーダンス）。
-                    # 状態は変えないので revision は要求しない。
-                    $query = ''
-                    try { $query = [string]$payload['query'] } catch { $query = '' }
-                    $hits = @()
-                    try { $hits = @(Search-YakuTranslationMemoryConcordance -Query $query -Direction ([string]$project.Direction) -Limit 20) } catch { $hits = @() }
-                    $rows = New-Object System.Collections.Generic.List[object]
-                    foreach ($hit in $hits) {
-                        [void]$rows.Add([ordered]@{
-                            source = [string]$hit.Source
-                            target = [string]$hit.Target
-                            matched_in = [string]$hit.MatchedIn
-                            saved = [string]$hit.Saved
-                            file_name = [string]$hit.SourceName
-                            location = [string]$hit.Location
-                        })
-                    }
-                    $body = [ordered]@{ query = [string]$query; hits = @($rows.ToArray()) }
-                    Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Depth 6 -Compress) -ContentType 'application/json; charset=utf-8'
-                }
-                'estimate' {
-                    $usage = Get-YakuCatCopilotUsage -Root $script:YakuRoot -Project $project -Settings $settings
-                    $body = [ordered]@{
-                        unique_remaining = [int]$usage.UniqueRemaining
-                        cache_hits = [int]$usage.CacheHits
-                        pending = [int]$usage.Pending
-                        estimated_calls = [int]$usage.EstimatedCalls
-                        calls_last_3h = [int]$usage.CallsLast3h
-                        max_chars = [int]$usage.MaxChars
-                    }
-                    Send-YakuTextResponse -Context $Context -Text ($body | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
                 }
                 'translate' {
                     # Copilot への往復は他の翻訳と同じくジョブで行う（一度に1つ）。
