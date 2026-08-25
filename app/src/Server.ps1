@@ -814,7 +814,7 @@ function Update-YakuTranslationJobs {
                     }
                     try { Write-YakuLog "Translation runspace job failed: $($_.Exception.ToString())" 'ERROR' } catch {}
                 }
-                if ($cancelRequested) {
+                if ($cancelRequested -and [string]$state['mode'] -notin @('done','completed_with_warnings')) {
                     $state['mode']='cancelled'; $state['label']='中止しました'; $state['class']='idle'; $state['detail']='翻訳をキャンセルしました。'; $state['error_code']='JOB_CANCELLED'; $state['progress']=100; $state['completed_at']=(Get-Date).ToString('s'); $state['updated_at']=(Get-Date).ToString('s'); $state['output_path']=''; $state['result_json']=([pscustomobject]@{ Error='翻訳をキャンセルしました。'; Cancelled=$true } | ConvertTo-Json -Depth 10 -Compress)
                 }
                 Dispose-YakuTranslationJobHandle -JobId ([string]$id) -SkipEndInvoke
@@ -2461,7 +2461,8 @@ function Invoke-YakuRoute {
         } catch {
             $safe = Convert-YakuExceptionToUserMessage $_
             $payload = [ordered]@{ mode='error'; label='翻訳できませんでした'; class='warn'; detail=$safe; progress=100; html=(New-YakuAlertHtml -Kind error -Message $safe) }
-            Send-YakuTextResponse -Context $Context -Text ($payload | ConvertTo-Json -Depth 20 -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 404
+            $statusCode = if ($safe -match '記録が見つかりません|JOB_NOT_FOUND') { 404 } else { 500 }
+            Send-YakuTextResponse -Context $Context -Text ($payload | ConvertTo-Json -Depth 20 -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode $statusCode
         }
         return
     }
@@ -3202,7 +3203,7 @@ function Invoke-YakuRoute {
                     $segmentCount=@($project.Segments).Count
                     if($segmentCount -eq 0){throw 'CAT_REVIEW_TEXT_EMPTY'}
                     $previewCount=[Math]::Min(20,$segmentCount)
-                    $request=New-YakuCatProtectedDocumentReviewRequest -Root $Root -Project $project -StartIndex 0 -Count $previewCount
+                    $request=New-YakuCatProtectedDocumentReviewRequest -Root $script:YakuRoot -Project $project -StartIndex 0 -Count $previewCount
                     Send-YakuTextResponse -Context $Context -Text ([ordered]@{
                         contract_version=[string]$request.ContractVersion
                         dependency_fingerprint=[string]$request.DependencyFingerprint
@@ -3716,8 +3717,7 @@ function Invoke-YakuRoute {
                     # QC は Set-YakuCatSegmentConfirmed の内側にあるので、1行ずつと
                     # 同じ検査が全行で走る。通らなかった行は確定せずに数えて返し、
                     # 利用者が絞り込んで直せるようにする。
-                    $indexes = @()
-                    try { $indexes = @($payload['indexes'] | ForEach-Object { [int]$_ }) } catch { $indexes = @() }
+                    $indexes = @(ConvertTo-YakuCatValidIndexes -Indexes @($payload['indexes']) -Count @($project.Segments).Count)
                     if ($indexes.Count -eq 0) { throw 'CAT_BULK_CONFIRM_NO_TARGET: 対象の行がありません。' }
                     $mutation = {
                         param($candidate,$innerIndexes,$root,$innerSettings)
@@ -3753,8 +3753,7 @@ function Invoke-YakuRoute {
                     # 全部外しても回帰が緑だった（2026-08-15 の指摘）。原文は資料
                     # そのものなので、置換で触らないことは画面の親切ではなく決まりである。
                     Assert-YakuCatSearchReplaceScope -Scope ([string]$payload['scope'])
-                    $indexes = @()
-                    try { $indexes = @($payload['indexes'] | ForEach-Object { [int]$_ }) } catch { $indexes = @() }
+                    $indexes = @(ConvertTo-YakuCatValidIndexes -Indexes @($payload['indexes']) -Count @($project.Segments).Count)
                     $plan = Get-YakuCatSearchReplacePlan -Project $project -Indexes $indexes `
                         -Find ([string]$payload['find']) -Replace ([string]$payload['replace']) `
                         -UseRegex ([bool]$payload['use_regex']) -MatchCase ([bool]$payload['match_case'])
@@ -3777,8 +3776,7 @@ function Invoke-YakuRoute {
                     #
                     # 「探す場所」が原文だけなら、ここでも断る（replace-estimate と同じ）。
                     Assert-YakuCatSearchReplaceScope -Scope ([string]$payload['scope'])
-                    $indexes = @()
-                    try { $indexes = @($payload['indexes'] | ForEach-Object { [int]$_ }) } catch { $indexes = @() }
+                    $indexes = @(ConvertTo-YakuCatValidIndexes -Indexes @($payload['indexes']) -Count @($project.Segments).Count)
                     if ($indexes.Count -eq 0) { throw 'CAT_REPLACE_NO_TARGET: 対象の行がありません。絞り込みを見直してください。' }
                     $mutation = {
                         param($candidate,$innerIndexes,$innerFind,$innerReplace,$innerRegex,$innerCase,$root,$innerSettings)
@@ -4112,10 +4110,13 @@ function Invoke-YakuRoute {
                     $rows = @(Read-YakuPersonalTerminologyEntries |
                         Where-Object { [string]$_.scope -eq 'personal' -and [bool]$_.active } |
                         ForEach-Object {
+                            $entryDirection = $(try { [string]$_.direction } catch { '' })
+                            if ([string]::IsNullOrWhiteSpace($entryDirection)) { $entryDirection = $(try { [string]$_.origin_direction } catch { 'to_en' }) }
                             [ordered]@{
                                 term_id = [string]$_.term_id
-                                source = [string]$_.ja.preferred
-                                target = [string]$_.en.preferred
+                                direction = $entryDirection
+                                source = $(if ($entryDirection -eq 'to_jp') { [string]$_.en.preferred } else { [string]$_.ja.preferred })
+                                target = $(if ($entryDirection -eq 'to_jp') { [string]$_.ja.preferred } else { [string]$_.en.preferred })
                                 origin_file_name = [string]$_.origin_file_name
                                 origin_location = [string]$_.origin_location
                                 created = [string]$_.created
