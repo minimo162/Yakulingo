@@ -114,6 +114,7 @@ function New-YakuTerminologyEntry {
         [AllowNull()][string]$ProjectId,
         [ValidateSet('occurrence','cell_exact')][string]$Kind = 'occurrence',
         [ValidateSet('required','advisory')][string]$Enforcement = 'required',
+        [AllowEmptyString()][string]$Direction = '',
         [Parameter(Mandatory=$true)][string]$JapanesePreferred,
         [Parameter(Mandatory=$true)][string]$EnglishPreferred,
         [AllowNull()][object[]]$JapaneseAllowed,
@@ -136,6 +137,7 @@ function New-YakuTerminologyEntry {
     if ([string]::IsNullOrWhiteSpace($id)) { $id = [guid]::NewGuid().ToString('N') }
     if ($id -notmatch '^[a-f0-9]{32}$') { throw 'TERMINOLOGY_TERM_ID_INVALID' }
     if ($Version -lt 1) { throw 'TERMINOLOGY_VERSION_INVALID' }
+    if (-not [string]::IsNullOrWhiteSpace($Direction) -and $Direction -notin @('to_en','to_jp')) { throw 'TERMINOLOGY_DIRECTION_INVALID' }
     $project = ([string]$ProjectId).Trim().ToLowerInvariant()
     if ($Scope -eq 'project' -and $project -notmatch '^[a-f0-9]{32}$') { throw 'TERMINOLOGY_PROJECT_ID_REQUIRED' }
     if ($Scope -eq 'personal') { $project = '' }
@@ -157,6 +159,7 @@ function New-YakuTerminologyEntry {
         project_id = $project
         kind = $Kind
         enforcement = $Enforcement
+        direction = ([string]$Direction).Trim()
         ja = ConvertTo-YakuTerminologyLanguageRecord -Preferred $JapanesePreferred -Allowed $JapaneseAllowed -Forbidden $JapaneseForbidden
         en = ConvertTo-YakuTerminologyLanguageRecord -Preferred $EnglishPreferred -Allowed $EnglishAllowed -Forbidden $EnglishForbidden
         note = ([string]$Note).Trim()
@@ -240,6 +243,7 @@ function Add-YakuTerminologyEntry {
         [AllowNull()][string]$ProjectId,
         [ValidateSet('occurrence','cell_exact')][string]$Kind = 'occurrence',
         [ValidateSet('required','advisory')][string]$Enforcement = 'required',
+        [AllowEmptyString()][string]$Direction = '',
         [Parameter(Mandatory=$true)][string]$JapanesePreferred,
         [Parameter(Mandatory=$true)][string]$EnglishPreferred,
         [AllowNull()][object[]]$JapaneseAllowed,
@@ -260,6 +264,7 @@ function Add-YakuTerminologyEntry {
     if ([string]::IsNullOrWhiteSpace($TermId)) {
         $same = @(Read-YakuTerminologyEntries -Path $targetPath -ProjectId $ProjectId | Where-Object {
             [string]$_.scope -eq $Scope -and [string]$_.kind -eq $Kind -and
+            ([string]::IsNullOrWhiteSpace($Direction) -or [string]$_.direction -eq $Direction) -and
             [string]::Equals([string]$_.ja.preferred, $JapanesePreferred.Trim(), [StringComparison]::Ordinal) -and
             [string]::Equals([string]$_.en.preferred, $EnglishPreferred.Trim(), [StringComparison]::OrdinalIgnoreCase)
         })
@@ -279,6 +284,7 @@ function Update-YakuTerminologyEntry {
         [AllowNull()][string]$ProjectId,
         [ValidateSet('occurrence','cell_exact')][string]$Kind = 'occurrence',
         [ValidateSet('required','advisory')][string]$Enforcement = 'required',
+        [AllowEmptyString()][string]$Direction = '',
         [Parameter(Mandatory=$true)][string]$JapanesePreferred,
         [Parameter(Mandatory=$true)][string]$EnglishPreferred,
         [AllowNull()][object[]]$JapaneseAllowed,
