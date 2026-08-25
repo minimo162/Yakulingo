@@ -880,16 +880,12 @@ function Protect-YakuPromptField {
     )
     if ([string]::IsNullOrEmpty([string]$Text)) { return '' }
     $protected = [string]$Text
-    $numericResult = New-YakuNumericMaskMap -Text $protected -Root $Root -Direction $Direction -Location $Location -AllowExistingTokens:$AllowExistingTokens
+    # New tokens begin after the shared map. Existing [[N#]] values therefore
+    # never share a name with freshly masked numbers.
+    $numericResult = New-YakuNumericMaskMap -Text $protected -Root $Root -Direction $Direction -Location $Location -AllowExistingTokens:$AllowExistingTokens -StartIndex ([int]$NumericMap.Count + 1)
     $protected = [string]$numericResult.Text
-    $numericOffset = [int]$NumericMap.Count
-    # N1→N2 を先にすると元の N2 も後続置換の対象になる。同じ金額tokenへ
-    # 潰れないよう、元tokenの番号を使って後ろから一度だけ振り替える。
-    foreach ($token in @($numericResult.Map.Keys | Sort-Object { [int]([regex]::Match([string]$_, '\d+').Value) } -Descending)) {
-        $tokenIndex = [int]([regex]::Match([string]$token, '\d+').Value)
-        $newToken = '[[N' + [string]($numericOffset + $tokenIndex) + ']]'
-        $protected = $protected.Replace([string]$token, $newToken)
-        $NumericMap[$newToken] = [string]$numericResult.Map[$token]
+    foreach ($token in @($numericResult.Map.Keys)) {
+        $NumericMap[[string]$token] = [string]$numericResult.Map[$token]
     }
     return $protected
 }
@@ -969,7 +965,8 @@ function New-YakuNumericMaskMap {
         [AllowNull()][string]$Root,
         [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
         [string]$Location = 'unknown',
-        [switch]$AllowExistingTokens
+        [switch]$AllowExistingTokens,
+        [ValidateRange(1, 2147483647)][int]$StartIndex = 1
     )
     $source = [string]$Text
     $map = @{}
@@ -1149,11 +1146,11 @@ function New-YakuNumericMaskMap {
     # 番号は本文の出現順。置換は後ろから行い、前方の位置をずらさない。
     $ordered = @($targets.ToArray() | Sort-Object Start)
     for ($i = 0; $i -lt $ordered.Count; $i++) {
-        $map['[[N' + ($i + 1) + ']]'] = $source.Substring([int]$ordered[$i].Start, [int]$ordered[$i].Length)
+        $map['[[N' + ($StartIndex + $i) + ']]'] = $source.Substring([int]$ordered[$i].Start, [int]$ordered[$i].Length)
     }
     $result = $source
     for ($i = $ordered.Count - 1; $i -ge 0; $i--) {
-        $token = '[[N' + ($i + 1) + ']]'
+        $token = '[[N' + ($StartIndex + $i) + ']]'
         $result = $result.Remove([int]$ordered[$i].Start, [int]$ordered[$i].Length).Insert([int]$ordered[$i].Start, $token)
     }
     try { Write-YakuLog "Numeric masking. location=$Location masked=$($ordered.Count) kept=$kept" 'INFO' } catch {}
@@ -2497,16 +2494,11 @@ function Invoke-YakuTextTranslation {
                 $ProgressState['batch_progress_start'] = $startPct
                 $ProgressState['batch_progress_end'] = $endPct
                 $ProgressState['batch_input_length'] = [int]$batch.CharCount
-                # Kind-specific affine estimate: expected = base + input * ratio.
-                if ($Kind -eq 'text') {
-                    $ratio = 4.0; $base = 150.0
-                    try { if ($Settings.copilotAnswerRatioText) { $ratio = [double]$Settings.copilotAnswerRatioText } } catch {}
-                    try { if ($Settings.copilotAnswerBaseText)  { $base  = [double]$Settings.copilotAnswerBaseText } } catch {}
-                } else {
-                    $ratio = 1.7; $base = 0.0
-                    try { if ($Settings.copilotAnswerRatioFile) { $ratio = [double]$Settings.copilotAnswerRatioFile } } catch {}
-                    try { if ($Settings.copilotAnswerBaseFile)  { $base  = [double]$Settings.copilotAnswerBaseFile } } catch {}
-                }
+                # This function is the text-only path; use the text estimate
+                # directly instead of an undefined $Kind variable.
+                $ratio = 4.0; $base = 150.0
+                try { if ($Settings.copilotAnswerRatioText) { $ratio = [double]$Settings.copilotAnswerRatioText } } catch {}
+                try { if ($Settings.copilotAnswerBaseText)  { $base  = [double]$Settings.copilotAnswerBaseText } } catch {}
                 $ratioCount = 0; $ratioSum = 0.0
                 try { $ratioCount = [int]$ProgressState['answer_ratio_count']; $ratioSum = [double]$ProgressState['answer_ratio_sum'] } catch {}
                 if ($ratioCount -gt 0) {
