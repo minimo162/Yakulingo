@@ -6612,7 +6612,7 @@ function Export-YakuCatProject {
     # 訳す向きは出力書体を決める（英→和は和書体）。作業の向きをそのまま渡す。
     $writeResult = Write-YakuFileTranslations -InputPath ([string]$Project.Path) -OutputPath $OutputPath -Blocks @($writeBlocks) `
         -TranslationByBlockId $currentByBlock -Warnings $Warnings -Settings $Settings -Direction ([string]$Project.Direction) `
-        -ProgressState $ProgressState -FailOnIncomplete
+        -ProgressState $ProgressState -FailOnIncomplete -UnconfirmedCount ([int]$eligibility.UnconfirmedCount)
     return [pscustomobject]@{
         OutputPath = [string]$writeResult.PublishedPath
         OutputName = [System.IO.Path]::GetFileName([string]$writeResult.PublishedPath)
