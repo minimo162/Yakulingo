@@ -1120,8 +1120,8 @@ function Get-YakuXlsxNonPlainCells {
         }
         return $sheets.ToArray()
     } catch {
-        try { Write-YakuLog ('Non-plain cell read failed; writeback keeps its previous behaviour. reason=' + $_.Exception.Message) 'DEBUG' } catch {}
-        return @()
+        try { Write-YakuLog ('Non-plain cell read failed; bulk writeback must fall back. reason=' + $_.Exception.Message) 'WARN' } catch {}
+        throw
     } finally {
         if ($null -ne $zip) { try { $zip.Dispose() } catch {} }
     }
