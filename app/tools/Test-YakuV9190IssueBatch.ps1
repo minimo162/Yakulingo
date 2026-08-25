@@ -11,7 +11,7 @@ $changed = @(
     'src\Translation.ps1','src\Review.ps1','src\Publication.ps1','src\CatProject.ps1',
     'src\Server.ps1','src\SourceRebase.ps1','src\FileProcessors.ps1','src\SheetLayout.ps1',
     'src\ProductSpines.ps1','src\CopilotClient.ps1','src\CellAlign.ps1','src\EdgeLaunch.ps1',
-    'src\WordAdapter.ps1'
+    'src\WordAdapter.ps1','src\Terminology.ps1'
 )
 foreach ($relative in $changed) {
     $path = Join-Path $appRoot $relative
@@ -38,6 +38,8 @@ Assert-YakuBatch ($catProject -match "'fit-overflow'") 'fit-overflow warning cod
 Assert-YakuBatch ($catProject -match "'acronym-inconsistency'") 'acronym-inconsistency warning code missing'
 Assert-YakuBatch ($catProject -match 'ConvertTo-YakuCatValidIndexes') 'strict CAT index parser missing'
 Assert-YakuBatch ($catProject -notmatch "'segment-not-reviewed'\s*=") 'retired segment-not-reviewed message remains'
+$terminology = Get-Content -LiteralPath (Join-Path $appRoot 'src\Terminology.ps1') -Raw
+Assert-YakuBatch ($terminology -match 'direction = \(\[string\]\$Direction\)') 'terminology direction is not persisted'
 
 $server = Get-Content -LiteralPath (Join-Path $appRoot 'src\Server.ps1') -Raw
 Assert-YakuBatch ($server -match 'New-YakuCatProtectedDocumentReviewRequest -Root \$script:YakuRoot') 'review preview still depends on dynamic Root scope'
