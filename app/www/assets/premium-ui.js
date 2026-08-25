@@ -143,11 +143,16 @@
 
   function buildTopbar() {
     var topbar = create('header', 'premium-topbar');
+    topbar.id = 'premium-topbar';
     topbar.innerHTML =
+      '<a class="premium-brand premium-top-brand" href="/quick" aria-label="YakuLingo テキスト翻訳へ戻る">' +
+      '<span class="premium-logo" aria-hidden="true">Y</span>' +
+      '<span><strong>YakuLingo</strong><small>Excel翻訳</small></span></a>' +
       '<div class="premium-topbar-left"><span id="premium-top-product" class="premium-top-product"></span><span class="premium-top-separator"></span>' +
       '<strong id="premium-top-context" class="premium-top-context"></strong></div>' +
       '<nav class="translation-mode-nav" aria-label="翻訳モード">' +
       '<a href="/quick">テキスト翻訳</a><a href="/cat" aria-current="page">Excel翻訳</a></nav>' +
+      '<div id="premium-copilot-slot" class="premium-copilot-slot"></div>' +
       '<div class="premium-top-actions"><a href="/cat?view=work" data-premium-nav="work">作業一覧</a>' +
       '<button id="premium-translate" type="button" class="premium-top-action" hidden>未訳を翻訳</button>' +
       '<button id="premium-qa" type="button" class="premium-top-action" hidden>点検結果</button>' +

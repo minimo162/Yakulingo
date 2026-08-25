@@ -1,11 +1,11 @@
 ﻿#requires -Version 5.1
 $ErrorActionPreference = 'Stop'
 
-$root = Split-Path -Parent $PSScriptRoot
-$quickPath = Join-Path $root 'app\www\quick.html'
-$catPath = Join-Path $root 'app\www\cat.html'
-$premiumJsPath = Join-Path $root 'app\www\assets\premium-ui.js'
-$serverPath = Join-Path $root 'app\src\Server.ps1'
+$appRoot = Split-Path -Parent $PSScriptRoot
+$quickPath = Join-Path $appRoot 'www\quick.html'
+$catPath = Join-Path $appRoot 'www\cat.html'
+$premiumJsPath = Join-Path $appRoot 'www\assets\premium-ui.js'
+$serverPath = Join-Path $appRoot 'src\Server.ps1'
 
 function Assert-YakuContract {
     param([bool]$Condition, [string]$Message)
@@ -31,11 +31,17 @@ $buildStart = $premiumJs.IndexOf('function buildTopbar()')
 $buildEnd = $premiumJs.IndexOf('function setTopbar(', $buildStart)
 Assert-YakuContract ($buildStart -ge 0 -and $buildEnd -gt $buildStart) 'buildTopbar could not be inspected.'
 $fallbackTopbar = $premiumJs.Substring($buildStart, $buildEnd - $buildStart)
-Assert-YakuContract ($fallbackTopbar -match 'translation-mode-nav') 'The rebuilt top bar loses the mode navigation.'
+Assert-YakuContract ($fallbackTopbar -match "topbar\.id = 'premium-topbar'") 'The rebuilt top bar loses the static top bar identity.'
+$previousIndex = -1
+foreach ($marker in @('premium-top-brand', 'premium-topbar-left', 'translation-mode-nav', 'premium-copilot-slot', 'premium-top-actions')) {
+    $markerIndex = $fallbackTopbar.IndexOf($marker)
+    Assert-YakuContract ($markerIndex -gt $previousIndex) ('The rebuilt top bar structure is missing or out of order: ' + $marker)
+    $previousIndex = $markerIndex
+}
 Assert-YakuContract ($fallbackTopbar -match 'href="/quick"') 'The rebuilt top bar cannot open text translation.'
 Assert-YakuContract ($fallbackTopbar -match 'href="/cat"') 'The rebuilt top bar cannot open Excel translation.'
 
 Assert-YakuContract ($server -match '\$path -in @\(''/'', ''/quick'', ''/palette''\)') 'The /quick route is not connected to the app page.'
 Assert-YakuContract ($server -match '\$path -eq ''/cat''') 'The /cat route is not connected to the app page.'
 
-Write-Host 'ok - translation mode navigation remains connected in both directions'
+Write-Host 'ok - translation mode navigation and top bar structure remain connected'
