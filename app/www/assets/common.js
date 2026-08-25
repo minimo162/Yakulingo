@@ -1,15 +1,6 @@
 ﻿(function () {
   'use strict';
 
-  function ensureUiReviewStyles() {
-    if (document.querySelector('link[data-yaku-ui-review]')) return;
-    var link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = '/assets/ui-review.css?v=20260822c';
-    link.setAttribute('data-yaku-ui-review', '');
-    document.head.appendChild(link);
-  }
-  ensureUiReviewStyles();
 
   function meta(name) {
     var node = document.querySelector('meta[name="' + name + '"]');
@@ -291,7 +282,7 @@
   /* YakuLingoタブの×はYakuLingo全体の終了操作になる。通常時は確認を出さず、
      Copilotとの往復やファイル書き出しの途中だけブラウザー標準の確認を出す。 */
   window.addEventListener('beforeunload', function (event) {
-    if (!translationIsRunning()) return;
+    if (!translationIsRunning() && !(window.YakuCat && window.YakuCat.hasUnsavedChanges && window.YakuCat.hasUnsavedChanges())) return;
     event.preventDefault();
     event.returnValue = '';
   });
