@@ -3184,7 +3184,7 @@ function Invoke-YakuRoute {
                     $index = -1; try { $index = [int]$payload['index'] } catch {}
                     $text = [string]$payload['text']; $referenceId = [string]$payload['reference_id']
                     $matches = @(Get-YakuCatSegmentCandidates -Root $script:YakuRoot -Project $project -Index $index | Where-Object { [string]$_.ReferenceId -eq $referenceId -and [string]$_.Kind -eq 'term' })
-                    if ($memoryMatches.Count -ne 1) { throw 'CAT_TERM_REFERENCE_NOT_AVAILABLE' }
+                    if ($matches.Count -ne 1) { throw 'CAT_TERM_REFERENCE_NOT_AVAILABLE' }
                     $mutation = {
                         param($candidate,$innerIndex,$innerText,$innerCandidate)
                         $null = Set-YakuCatSegmentTranslation -Project $candidate -Index $innerIndex -Text $innerText
@@ -3462,7 +3462,7 @@ function Invoke-YakuRoute {
                         $null = Set-YakuCatSegmentTranslation -Project $candidate -Index $innerIndex -Text $innerText
                         if (-not [string]::IsNullOrWhiteSpace($innerReferenceId)) {
                             $matches = @(Get-YakuCatSegmentCandidates -Root $root -Project $candidate -Index $innerIndex | Where-Object { [string]$_.ReferenceId -eq $innerReferenceId })
-                            if ($memoryMatches.Count -ne 1) { throw 'CAT_REFERENCE_NOT_AVAILABLE' }
+                            if ($matches.Count -ne 1) { throw 'CAT_REFERENCE_NOT_AVAILABLE' }
                             if ([string]$matches[0].Kind -eq 'term') { throw 'CAT_TERM_CANNOT_REPLACE_SEGMENT' }
                             $null = Set-YakuCatSegmentReferenceUsage -Project $candidate -Index $innerIndex -Candidate $matches[0]
                         }
