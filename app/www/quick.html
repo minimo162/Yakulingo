@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/assets/styles.css">
   <link rel="stylesheet" href="/assets/translation-mode-nav.css">
   <link rel="stylesheet" href="/assets/quick-page.css">
+  <link rel="stylesheet" href="/assets/ui-review.css?v=20260825">
   <script src="/assets/common.js" defer></script>
   <script src="/assets/quick-page.js" defer></script>
 </head>
@@ -40,7 +41,7 @@
     <form id="quick-page-form" class="quick-translator">
       <div class="quick-language-bar" aria-label="翻訳する言語">
         <label for="quick-page-direction"><span>原文言語</span>
-          <select id="quick-page-direction" aria-label="原文と訳文の言語">
+          <select id="quick-page-direction">
             <option value="auto">自動判定</option>
             <option value="to_en">日本語 → 英語</option>
             <option value="to_jp">英語・その他 → 日本語</option>
@@ -67,7 +68,7 @@
             <button id="quick-page-copy" type="button" class="quick-secondary-button" disabled>コピー</button>
           </div>
           <div class="quick-output-wrap">
-            <textarea id="quick-page-output" rows="14" placeholder="短い訳がここに表示されます"></textarea>
+            <textarea id="quick-page-output" aria-labelledby="quick-target-title" rows="14" placeholder="短い訳がここに表示されます"></textarea>
             <div id="quick-page-progress" class="quick-progress" role="status" aria-live="polite" hidden></div>
           </div>
           <div id="quick-result-meta" class="quick-result-meta" hidden><span id="quick-result-count"></span><strong id="quick-review-badge"></strong></div>
@@ -92,7 +93,7 @@
         </div>
       </div>
     </form>
-    <div id="quick-shortcuts" class="quick-shortcuts" role="dialog" aria-modal="true" aria-labelledby="quick-shortcuts-title" hidden><div><button type="button" data-close-shortcuts aria-label="閉じる">×</button><h2 id="quick-shortcuts-title">キーボード操作</h2><dl><dt>Ctrl+Enter</dt><dd>翻訳</dd><dt>Ctrl+Shift+C</dt><dd>訳文をコピー</dd><dt>Ctrl+Z</dt><dd>直前の案へ戻す</dd><dt>?</dt><dd>この一覧を表示</dd></dl></div></div>
+    <dialog id="quick-shortcuts" class="quick-shortcuts" aria-labelledby="quick-shortcuts-title"><div><button type="button" data-close-shortcuts aria-label="閉じる">×</button><h2 id="quick-shortcuts-title">キーボード操作</h2><dl><dt>Ctrl+Enter</dt><dd>翻訳</dd><dt>Ctrl+Shift+C</dt><dd>訳文をコピー</dd><dt>Ctrl+Z</dt><dd>直前の案へ戻す</dd><dt>?</dt><dd>この一覧を表示</dd></dl></div></dialog>
     <p class="quick-privacy">数値は伏せて送ります。社名・人名と文章はMicrosoft 365 Copilotへそのまま送ります。</p>
   </main>
 </body>
