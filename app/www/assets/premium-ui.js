@@ -146,6 +146,8 @@
     topbar.innerHTML =
       '<div class="premium-topbar-left"><span id="premium-top-product" class="premium-top-product"></span><span class="premium-top-separator"></span>' +
       '<strong id="premium-top-context" class="premium-top-context"></strong></div>' +
+      '<nav class="translation-mode-nav" aria-label="翻訳モード">' +
+      '<a href="/quick">テキスト翻訳</a><a href="/cat" aria-current="page">Excel翻訳</a></nav>' +
       '<div class="premium-top-actions"><a href="/cat?view=work" data-premium-nav="work">作業一覧</a>' +
       '<button id="premium-translate" type="button" class="premium-top-action" hidden>未訳を翻訳</button>' +
       '<button id="premium-qa" type="button" class="premium-top-action" hidden>点検結果</button>' +
