@@ -1944,15 +1944,6 @@ function Send-YakuTextResponse {
     Send-YakuResponse -Context $Context -Bytes $bytes -ContentType $ContentType -StatusCode $StatusCode -AllowWasm:$AllowWasm
 }
 
-function Send-YakuRedirectResponse {
-    param(
-        [Parameter(Mandatory=$true)]$Context,
-        [Parameter(Mandatory=$true)][string]$Location
-    )
-    $Context.Response.RedirectLocation = $Location
-    Send-YakuTextResponse -Context $Context -Text ('Redirecting to ' + $Location) -ContentType 'text/plain; charset=utf-8' -StatusCode 302
-}
-
 function Get-YakuQueryValue {
     <#
       クエリ文字列の値を UTF-8 として取り出す。
@@ -2057,54 +2048,6 @@ function Send-YakuDownloadResponse {
     $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
     try { $stream.CopyTo($resp.OutputStream) }
     finally { $stream.Dispose(); $resp.OutputStream.Close() }
-}
-
-function Send-YakuInlinePdfResponse {
-    param(
-        [Parameter(Mandatory=$true)]$Context,
-        [Parameter(Mandatory=$true)][string]$Path,
-        [switch]$HeadOnly
-    )
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw 'CAT_RENDER_NOT_FOUND' }
-    $length = [int64](Get-Item -LiteralPath $Path).Length
-    $start = [int64]0; $end = [int64]([Math]::Max(0, $length - 1)); $partial = $false
-    $range = [string]$Context.Request.Headers['Range']
-    if (-not [string]::IsNullOrWhiteSpace($range)) {
-        if ($range -notmatch '^bytes=(\d+)-(\d*)$') {
-            $Context.Response.StatusCode = 416; $Context.Response.Headers['Content-Range'] = 'bytes */' + $length
-            $Context.Response.OutputStream.Close(); return
-        }
-        $start = [int64]$Matches[1]
-        if (-not [string]::IsNullOrWhiteSpace([string]$Matches[2])) { $end = [int64]$Matches[2] }
-        if ($start -lt 0 -or $start -ge $length -or $end -lt $start) {
-            $Context.Response.StatusCode = 416; $Context.Response.Headers['Content-Range'] = 'bytes */' + $length
-            $Context.Response.OutputStream.Close(); return
-        }
-        if ($end -ge $length) { $end = $length - 1 }
-        $partial = $true
-    }
-    $count = [int64]($end - $start + 1)
-    $response = $Context.Response
-    $response.StatusCode = $(if($partial){206}else{200})
-    $response.ContentType = 'application/pdf'
-    $response.ContentLength64 = $count
-    $response.Headers['Accept-Ranges'] = 'bytes'
-    $response.Headers['Cache-Control'] = 'no-store, no-cache, max-age=0'
-    $response.Headers['X-Content-Type-Options'] = 'nosniff'
-    if ($partial) { $response.Headers['Content-Range'] = "bytes $start-$end/$length" }
-    if ($HeadOnly) { $response.OutputStream.Close(); return }
-    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
-    try {
-        $stream.Position = $start
-        $buffer = New-Object byte[] 65536
-        $remaining = $count
-        while ($remaining -gt 0) {
-            $read = $stream.Read($buffer, 0, [int][Math]::Min($buffer.Length, $remaining))
-            if ($read -le 0) { break }
-            $response.OutputStream.Write($buffer, 0, $read)
-            $remaining -= $read
-        }
-    } finally { $stream.Dispose(); $response.OutputStream.Close() }
 }
 
 function Serve-YakuStaticFile {
