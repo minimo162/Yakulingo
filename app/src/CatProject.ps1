@@ -1476,7 +1476,9 @@ function Get-YakuCatQcWarningCodes {
         'currency-mismatch',
         'accounting-polarity-mismatch',
         'label-not-in-glossary',
-        'paired-delimiter-mismatch'
+        'paired-delimiter-mismatch',
+        'fit-overflow',
+        'acronym-inconsistency'
     )
 }
 
@@ -1613,7 +1615,6 @@ function Get-YakuCatOutputPreflight {
 
     $reasonText = [ordered]@{
         'project-empty' = '翻訳する行がありません。'
-        'segment-not-reviewed' = 'まだ確認していない行があります。左の「残り」を押すと、その行だけ表示できます。'
         # segment-qc-failed はここでは作らない。18種を1文に丸めると
         # 「用語で止まったのに数字を見に行かされる」ため、
         # Get-YakuCatQcBlockerMessages が種別ごとの文へ分ける。
@@ -1661,7 +1662,7 @@ function Get-YakuCatOutputPreflight {
         $sourceName = $(try { [IO.Path]::GetFileNameWithoutExtension([string]$Project.FileName) } catch { '' })
         if ([string]::IsNullOrWhiteSpace($sourceName)) { $sourceName = $(try { [IO.Path]::GetFileNameWithoutExtension([string]$Project.Path) } catch { 'translated' }) }
         if ([string]::IsNullOrWhiteSpace($sourceName)) { $sourceName = 'translated' }
-        $safeName = ($sourceName -replace '[\\/:*?"<>|]', '_').Trim()
+        $safeName = New-SafeFileName -FileName $sourceName
         if ([string]::IsNullOrWhiteSpace($safeName)) { $safeName = 'translated' }
         $extension = if ([string]::IsNullOrWhiteSpace($format)) { '' } else { '.' + $format }
         $outputName = 'DRAFT_' + $safeName + '_translated' + $extension
@@ -5559,6 +5560,1074 @@ function Undo-YakuCatSearchReplace {
     return [pscustomobject]@{ Restored = [int]$snapshot.affected_count }
 }
 
+function ConvertTo-YakuCatValidIndexes {
+    param([AllowNull()][object[]]$Indexes, [ValidateRange(0,2147483647)][int]$Count)
+    $valid = New-Object System.Collections.Generic.List[int]
+    $seen = New-Object 'System.Collections.Generic.HashSet[int]'
+    foreach ($one in @($Indexes)) {
+        if ($null -eq $one) { continue }
+        $raw = ([string]$one).Trim()
+        if ($raw -notmatch '^\d+    <#
+      一括置換の計画。**何も書き換えない。** 押す前に対象行数を告げるためと、
+      実際に置換するときの対象を決めるために、同じ1本をどちらからも呼ぶ。
+      （告げた数と実際が食い違わないのは、数える経路と書き換える経路が
+        同じだからである。別々に書くと必ずずれる。）
+
+      $Indexes は画面の絞り込み結果である。置換は**その中だけ**に掛かる。
+      渡されなかった行は読みもしない。
+
+      対象になるのは、訳文が実際に変わる行だけである。訳文が空の行、一致しない行、
+      置換しても同じ文字列になる行（例: 「A」を「A」へ）は数に入れない。
+      入れてしまうと、何も変わらないのに確認済みだけが落ちる。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [AllowNull()][object[]]$Indexes,
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$Find,
+        [AllowNull()][string]$Replace,
+        [bool]$UseRegex = $false,
+        [bool]$MatchCase = $false
+    )
+    $null = Initialize-YakuCatProjectState -Project $Project
+    $rx = New-YakuCatSearchMatcher -Find $Find -UseRegex $UseRegex -MatchCase $MatchCase
+    $replacement = ConvertTo-YakuCatSearchReplacement -Replace $Replace -UseRegex $UseRegex
+    $segs = @($Project.Segments)
+    $wanted = New-Object 'System.Collections.Generic.HashSet[int]'
+    foreach ($parsed in @(ConvertTo-YakuCatValidIndexes -Indexes $Indexes -Count $segs.Count)) {
+        $null = $wanted.Add([int]$parsed)
+    }
+    $rows = New-Object System.Collections.Generic.List[object]
+    $occurrences = 0
+    $confirmedRows = 0
+    for ($i = 0; $i -lt $segs.Count; $i++) {
+        if (-not $wanted.Contains($i)) { continue }
+        $before = [string]$segs[$i].Translation
+        if ([string]::IsNullOrEmpty($before)) { continue }
+        $hits = 0; $after = ''
+        try {
+            $hits = [int]$rx.Matches($before).Count
+            if ($hits -lt 1) { continue }
+            $after = [string]$rx.Replace($before, $replacement)
+        } catch [System.Text.RegularExpressions.RegexMatchTimeoutException] {
+            throw 'CAT_SEARCH_PATTERN_TIMEOUT: この式は照合に時間がかかりすぎます。別の書き方にしてください。'
+        }
+        if ([string]::Equals($after, $before, [StringComparison]::Ordinal)) { continue }
+        $occurrences += $hits
+        if ([bool]$segs[$i].Confirmed) { $confirmedRows++ }
+        [void]$rows.Add([pscustomobject]@{
+            Index = [int]$i
+            SegmentId = [string]$segs[$i].SegmentId
+            Before = $before
+            After = $after
+            Occurrences = [int]$hits
+            WasConfirmed = [bool]$segs[$i].Confirmed
+        })
+    }
+    return [pscustomobject]@{
+        Rows = @($rows.ToArray())
+        RowCount = [int]$rows.Count
+        Occurrences = [int]$occurrences
+        ConfirmedRows = [int]$confirmedRows
+        ScannedRows = [int]$wanted.Count
+    }
+}
+
+function Invoke-YakuCatSearchReplace {
+    <#
+      一括置換。市販CAT（memoQ / Phrase / Trados / XTM）はどれも Ctrl+H を持つ。
+      用語をあとから統一するとき、手で1行ずつ直す以外の道が要る。
+
+      決まりごとは3つ。
+        1. **原文は触らない。** 変えるのは訳文だけである。原文は資料そのもので、
+           SourceIntegrityHash から書き戻しまでが原文に乗っている
+        2. **絞り込み結果の中だけに掛ける。** 対象は $Indexes で受ける
+        3. **訳文が変わった行の確認済みは落ちる。** 書き込みは手で直したときと
+           同じ Set-YakuCatSegmentTranslationRecord を通すので、Confirmed は
+           $false・QcStatus は not_run へ戻る。次に確認済みにするとき必ず
+           数字の点検を通り、落ちれば確定できず書き出しも止まる
+           （「数値が抜けた訳は警告ではなく欠陥」）
+
+      置換の記録は1行ごとに追記専用の人手判断イベントとして残す。source_hash /
+      target_hash 付きで、既にある reviewed / review_cancelled と同じ形である。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [AllowNull()][object[]]$Indexes,
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$Find,
+        [AllowNull()][string]$Replace,
+        [bool]$UseRegex = $false,
+        [bool]$MatchCase = $false
+    )
+    # 計画側が Initialize-YakuCatProjectState を1回だけ呼ぶ。ここから先は
+    # 行ごとに Project 全体を初期化し直さない（資料の大きさの2乗になる）。
+    $plan = Get-YakuCatSearchReplacePlan -Project $Project -Indexes $Indexes -Find $Find `
+        -Replace $Replace -UseRegex $UseRegex -MatchCase $MatchCase
+    # 一致が無い replace は以前から成功扱いの no-op である。ここで復元券を
+    # 作ると「戻すものが無い」要求が既存の券を上書きしてしまうため、snapshot・
+    # event・segment のいずれにも触れず、従来の集計だけを返す。
+    if ([int]$plan.RowCount -eq 0) {
+        return [pscustomobject]@{
+            Replaced = 0
+            Occurrences = 0
+            Unconfirmed = 0
+            ScannedRows = [int]$plan.ScannedRows
+            NoMutation = $true
+        }
+    }
+    $segs = @($Project.Segments)
+    # 成功した置換だけに復元券を発行する。計画・全行の復元前状態・上限を、訳文を
+    # 1文字も変える前に確認するので、復元できない大きな置換を成功扱いにしない。
+    $undoSnapshot = New-YakuCatBulkReplaceUndoSnapshot -Project $Project -Plan $plan
+    $replaced = 0
+    # 記録の追記も行ごとに全走査させない。Initialize を外へ出したのと同じ理由で、
+    # ここに残っていたもう1つの2乗である（実測は New-YakuCatHumanDecisionEventBatch の注記）。
+    $batch = New-YakuCatHumanDecisionEventBatch -Project $Project
+    foreach ($row in @($plan.Rows)) {
+        $i = [int]$row.Index
+        if ($i -lt 0 -or $i -ge $segs.Count) { continue }
+        $null = Set-YakuCatSegmentTranslationRecord -Segment $segs[$i] -Text ([string]$row.After)
+        $null = Add-YakuCatHumanDecisionEvent -Project $Project -Scope 'translation' -Action 'search_replaced' -Segment $segs[$i] -ReasonCode 'bulk-replace' -Batch $batch
+        $replaced++
+    }
+    $null = Complete-YakuCatHumanDecisionEventBatch -Project $Project -Batch $batch
+    foreach ($row in @($undoSnapshot.rows)) {
+        $segment = $segs | Where-Object { [string]$_.SegmentId -ceq [string]$row.segment_id } | Select-Object -First 1
+        if ($null -eq $segment) { throw 'CAT_REPLACE_UNDO_TARGET_CONFLICT: 置換対象の行を安全に確認できません。' }
+        $row.after_state_hash = Get-YakuCatBulkReplaceUndoStateHash -State (Get-YakuCatBulkReplaceUndoSegmentState -Segment $segment)
+    }
+    $undoJson = $undoSnapshot | ConvertTo-Json -Depth 28 -Compress
+    if ([Text.Encoding]::UTF8.GetByteCount($undoJson) -gt 1048576) { throw 'CAT_REPLACE_UNDO_SNAPSHOT_TOO_LARGE: 元に戻すための記録が1 MiBを超えるため、一括置換は実行しません。絞り込みを分けてください。' }
+    $Project.PendingBulkReplaceUndo = $undoSnapshot
+    return [pscustomobject]@{
+        Replaced = [int]$replaced
+        Occurrences = [int]$plan.Occurrences
+        Unconfirmed = [int]$plan.ConfirmedRows
+        ScannedRows = [int]$plan.ScannedRows
+    }
+}
+
+function Set-YakuCatSegmentReferenceUsageRecord {
+    <#
+      「どの候補から挿したか」を1行へ書く。**Project 全体の初期化はしない。**
+
+      Initialize-YakuCatProjectState は全行を舐めて SHA-256 を取り直すので、
+      行の数だけ呼ぶと資料の大きさの2乗になる。事前翻訳は当たった行の数だけ
+      出典を書くため、そこで実際に踏んだ（実測 2026-08-14、200行・TM 123件:
+      引く費用は 961ms なのに全体は 10,991ms。Initialize を100回呼ぶ費用が
+      9,935ms を占めていた）。初期化は呼び出し側で1回だけ行う。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Segment,
+        [Parameter(Mandatory=$true)]$Candidate,
+        [int]$ProjectRevision = 0
+    )
+    if ([string]$Candidate.ReferenceId -notmatch '^[a-f0-9]{16,64}$') { throw 'CAT_REFERENCE_ID_INVALID' }
+    if (-not [string]::Equals([string]$Segment.Translation, [string]$Candidate.Target, [StringComparison]::Ordinal)) {
+        throw 'CAT_REFERENCE_TARGET_MISMATCH'
+    }
+    $targetHash = Get-YakuCatSourceIntegrityHash -Text ([string]$Segment.Translation)
+    $Segment | Add-Member -NotePropertyName ReferenceUsage -NotePropertyValue ([pscustomobject]@{
+        id = [string]$Candidate.ReferenceId
+        kind = [string]$Candidate.Kind
+        action = 'inserted'
+        target_hash = $targetHash
+        edited_after_insert = $false
+        source_name = [string]$Candidate.SourceName
+        location = [string]$Candidate.Location
+        page = [int]$Candidate.Page
+        source = [string]$Candidate.Source
+        translation = [string]$Candidate.Target
+    }) -Force
+    $events = New-Object System.Collections.Generic.List[object]
+    foreach ($existing in @($Segment.ReferenceEvents)) { $events.Add($existing) | Out-Null }
+    $events.Add([pscustomobject]@{
+        event_id=[guid]::NewGuid().ToString('N'); reference_id=[string]$Candidate.ReferenceId
+        kind=[string]$Candidate.Kind; action='inserted'; source_name=[string]$Candidate.SourceName
+        location=[string]$Candidate.Location; page=[int]$Candidate.Page
+        source=[string]$Candidate.Source; translation=[string]$Candidate.Target
+        match_score=$(try { [double]$Candidate.Score } catch { [double]$Candidate.Ratio })
+        target_hash=$targetHash
+        project_revision=[int]$ProjectRevision; created=(Get-Date).ToString('s'); edited_after_insert=$false
+    }) | Out-Null
+    $Segment | Add-Member -NotePropertyName ReferenceEvents -NotePropertyValue @($events.ToArray()) -Force
+    return $Segment
+}
+
+function Set-YakuCatSegmentReferenceUsage {
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [Parameter(Mandatory=$true)][int]$Index,
+        [Parameter(Mandatory=$true)]$Candidate
+    )
+    $null = Initialize-YakuCatProjectState -Project $Project
+    $segs = @($Project.Segments)
+    if ($Index -lt 0 -or $Index -ge $segs.Count) { throw 'CAT_REFERENCE_SEGMENT_NOT_FOUND' }
+    return (Set-YakuCatSegmentReferenceUsageRecord -Segment $segs[$Index] -Candidate $Candidate -ProjectRevision ([int]$Project.Revision))
+}
+
+function Set-YakuCatSegmentTerminologyUsage {
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [Parameter(Mandatory=$true)][int]$Index,
+        [Parameter(Mandatory=$true)]$Candidate
+    )
+    $null = Initialize-YakuCatProjectState -Project $Project
+    $segs = @($Project.Segments)
+    if ($Index -lt 0 -or $Index -ge $segs.Count) { throw 'CAT_TERM_SEGMENT_NOT_FOUND' }
+    if ([string]$Candidate.Kind -notin @('term','glossary')) { throw 'CAT_TERM_REFERENCE_KIND_INVALID' }
+    $target = [string]$Candidate.Target
+    if ([string]::IsNullOrWhiteSpace($target) -or ([string]$segs[$Index].Translation).IndexOf($target, [StringComparison]::Ordinal) -lt 0) {
+        throw 'CAT_TERM_TARGET_NOT_PRESENT'
+    }
+    $usages = New-Object System.Collections.Generic.List[object]
+    foreach ($usage in @($segs[$Index].TerminologyUsages)) { $usages.Add($usage) | Out-Null }
+    $usages.Add([pscustomobject]@{
+        reference_id=[string]$Candidate.ReferenceId; term_id=$(try { [string]$Candidate.TermId } catch { '' })
+        term_version=$(try { [int]$Candidate.TermVersion } catch { 0 }); source=[string]$Candidate.Source
+        preferred_target=$target; source_name=[string]$Candidate.SourceName; action='inserted'
+        target_hash=Get-YakuCatSourceIntegrityHash -Text ([string]$segs[$Index].Translation)
+        edited_after_insert=$false; created=(Get-Date).ToString('s')
+    }) | Out-Null
+    $segs[$Index].TerminologyUsages = @($usages.ToArray())
+    return $segs[$Index]
+}
+
+function Add-YakuCatTerminologyException {
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [Parameter(Mandatory=$true)][int]$Index,
+        [Parameter(Mandatory=$true)][string]$TermId,
+        [Parameter(Mandatory=$true)][int]$TermVersion,
+        [ValidateSet('not-applicable','approved-alternative')][string]$ReasonCode='not-applicable',
+        [AllowNull()][string]$Alternative,
+        [AllowNull()][string]$Note
+    )
+    $null = Initialize-YakuCatProjectState -Project $Project
+    $segs = @($Project.Segments)
+    if ($Index -lt 0 -or $Index -ge $segs.Count) { throw 'CAT_TERM_SEGMENT_NOT_FOUND' }
+    $entries = @(Get-YakuCatTerminologyEntries -Project $Project | Where-Object { [string]$_.term_id -eq $TermId -and [int]$_.version -eq $TermVersion })
+    if ($entries.Count -ne 1) { throw 'CAT_TERM_REFERENCE_NOT_AVAILABLE' }
+    $alternativeText = ([string]$Alternative).Trim()
+    if ($ReasonCode -eq 'approved-alternative') {
+        if ([string]::IsNullOrWhiteSpace($alternativeText)) { throw 'CAT_TERM_ALTERNATIVE_REQUIRED' }
+        if (([string]$segs[$Index].Translation).IndexOf($alternativeText, [StringComparison]::OrdinalIgnoreCase) -lt 0) { throw 'CAT_TERM_ALTERNATIVE_NOT_PRESENT' }
+    }
+    $exceptions = New-Object System.Collections.Generic.List[object]
+    foreach ($exception in @($segs[$Index].TerminologyExceptions)) { $exceptions.Add($exception) | Out-Null }
+    $exceptions.Add([pscustomobject]@{
+        term_id=$TermId; term_version=$TermVersion; reference_id=[string]$entries[0].reference_id
+        source_hash=Get-YakuTerminologyHash -Text ([string]$segs[$Index].Text)
+        target_hash=Get-YakuTerminologyHash -Text ([string]$segs[$Index].Translation)
+        reason_code=$ReasonCode; alternative=$alternativeText; note=([string]$Note).Trim()
+        active=$true; created=(Get-Date).ToString('s')
+    }) | Out-Null
+    $segs[$Index].TerminologyExceptions = @($exceptions.ToArray())
+    Reset-YakuCatSegmentQc -Segment $segs[$Index] -KeepState
+    return $segs[$Index]
+}
+
+function New-YakuCatHumanDecisionEventBatch {
+    <#
+      一括操作（置換など）のための追記口。**追記そのものの性質は変えない。**
+
+      Add-YakuCatHumanDecisionEvent は1件ごとに、既にある event_id 全件を
+      Where-Object で走査し、続けて全件を新しい List へ写して配列へ戻していた。
+      1行ずつ呼ぶかぎり正しいが、行の数だけ呼ぶと行数の2乗になる。
+      実測（2026-08-15、全行が対象の資料。1回目の置換）:
+        100行 2,096ms / 200行 4,017ms / 400行 13,368ms / 800行 44,570ms
+      800行の 44.6秒 のうち 37秒（83%）がこの1行だった。同じ関数のコメントが
+      「行ごとに Initialize を呼ぶと2乗になる」と書いてそれを避けた、その中で
+      別の2乗を作っていたことになる。
+
+      ここで既存の event_id を1度だけ Hashtable（HashSet）へ入れ、追記は List へ
+      足すだけにする。書き戻しは Complete-… で1回。追記専用であること・
+      同じ内容なら足さない（冪等）こと・source_hash / target_hash を持つことは
+      いずれもそのままである。
+    #>
+    param([Parameter(Mandatory=$true)]$Project)
+    $ids = New-Object 'System.Collections.Generic.HashSet[string]'
+    $events = New-Object System.Collections.Generic.List[object]
+    foreach ($event in @($Project.ReviewEvents)) {
+        [void]$events.Add($event)
+        [void]$ids.Add([string]$event.event_id)
+    }
+    return [pscustomobject]@{ Ids = $ids; Events = $events }
+}
+
+function Complete-YakuCatHumanDecisionEventBatch {
+    <# 溜めた追記を1回だけ書き戻す。呼ばなければ何も残らない。 #>
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [Parameter(Mandatory=$true)]$Batch
+    )
+    $Project.ReviewEvents = $Batch.Events.ToArray()
+    return [int]$Batch.Events.Count
+}
+
+function Add-YakuCatHumanDecisionEvent {
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [ValidateSet('translation','translation_memory','project_lifecycle','placement','publication','abbreviation','rebase','render','document','final')][string]$Scope,
+        [Parameter(Mandatory=$true)][string]$Action,
+        [AllowNull()]$Segment,
+        [string]$ReasonCode = '',
+        [string]$DependencyFingerprint = '',
+        [string]$FindingId = '',
+        [int]$FindingRevision = 0,
+        [string]$FindingFingerprint = '',
+        [string]$CoverageItemId = '',
+        # New-YakuCatHumanDecisionEventBatch が返したもの。渡されたときは
+        # Project へ直接書かず、そこへ溜める。渡さなければ従来どおり。
+        [AllowNull()]$Batch = $null
+    )
+    $segmentId = $(if ($null -ne $Segment) { [string]$Segment.SegmentId } else { '' })
+    $sourceHash = $(if ($null -ne $Segment) { [string]$Segment.SourceIntegrityHash } else { '' })
+    $targetHash = $(if ($null -ne $Segment) { Get-YakuCatSourceIntegrityHash -Text ([string]$Segment.Translation) } else { '' })
+    if ([string]::IsNullOrWhiteSpace($DependencyFingerprint)) {
+        $DependencyFingerprint = Get-YakuCatSourceIntegrityHash -Text ($sourceHash + '|' + $targetHash + '|' + [string]$Project.TerminologySnapshotHash)
+    }
+    $eventId = Get-YakuCatSourceIntegrityHash -Text ('human-decision-v2|' + [string]$Project.Id + '|' + ([int]$Project.Revision + 1) + '|' + $Scope + '|' + $Action + '|' + $segmentId + '|' + $sourceHash + '|' + $targetHash + '|' + $DependencyFingerprint + '|' + $FindingId + '|' + $FindingRevision + '|' + $FindingFingerprint + '|' + $CoverageItemId)
+    $record = [pscustomobject]@{
+        event_id=$eventId; occurred_at=(Get-Date).ToString('o'); project_id=[string]$Project.Id
+        project_revision=[int]$Project.Revision + 1; decision_scope=$Scope; action=$Action
+        segment_id=$segmentId; reason_code=$ReasonCode; source_hash=$sourceHash; target_hash=$targetHash
+        dependency_fingerprint=$DependencyFingerprint
+        finding_id=$FindingId; finding_revision=$FindingRevision; finding_fingerprint=$FindingFingerprint; coverage_item_id=$CoverageItemId
+    }
+    if ($null -ne $Batch) {
+        # 一括の追記。重複判定は index 済みの HashSet で、配列の作り直しはしない。
+        # 足すか足さないかの結果は、下の1件ずつの経路と同じである。
+        if ($Batch.Ids.Contains($eventId)) { return $eventId }
+        [void]$Batch.Ids.Add($eventId)
+        [void]$Batch.Events.Add($record)
+        return $eventId
+    }
+    if (@($Project.ReviewEvents | Where-Object { [string]$_.event_id -eq $eventId }).Count -gt 0) { return $eventId }
+    $events = New-Object System.Collections.Generic.List[object]
+    foreach ($event in @($Project.ReviewEvents)) { $events.Add($event) | Out-Null }
+    $events.Add($record) | Out-Null
+    $Project.ReviewEvents = @($events.ToArray())
+    return $eventId
+}
+
+function Set-YakuCatProjectSaved {
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [string]$Reason = 'user-requested'
+    )
+    $null = Initialize-YakuCatProjectState -Project $Project
+    if ([string]$Project.Lifecycle -in @('deleting','deleted')) { throw 'CAT_PROJECT_LIFECYCLE_INVALID' }
+    if ([string]$Project.Lifecycle -eq 'saved') { return '' }
+    $Project.Lifecycle = 'saved'
+    $Project.RetentionUntil = ''
+    $Project.PromotedAt = (Get-Date).ToString('o')
+    return (Add-YakuCatHumanDecisionEvent -Project $Project -Scope 'project_lifecycle' -Action 'saved' -ReasonCode $Reason)
+}
+
+function Add-YakuCatTranslationMemoryOutboxEvent {
+    param([Parameter(Mandatory=$true)]$Project, [Parameter(Mandatory=$true)]$Segment)
+    # PDFの表は、列を再現するための連続空白を文中に持つ。対訳確認の画面では
+    # HTMLが畳むため気づきにくいが、そのままTMへ入れると候補を挿入したtextareaに
+    # 桁合わせの空白まで戻る。公表対訳の突き合わせだけは、文として再利用できる形へ
+    # 空白を1つにする。通常の翻訳は、利用者が入力した空白を変えない。
+    $memorySource = [string]$Segment.Text
+    $memoryTarget = [string]$Segment.Translation
+    if ([string]$Project.Source -eq 'align') {
+        $memorySource = ($memorySource -replace '\s+', ' ').Trim()
+        $memoryTarget = ($memoryTarget -replace '\s+', ' ').Trim()
+    }
+    $eventId = Get-YakuCatSourceIntegrityHash -Text ('tm-outbox-v1|' + [string]$Project.Id + '|' + [string]$Segment.SegmentId + '|' + [string]$Project.Revision + '|' + [string]$Segment.SourceIntegrityHash + '|' + (Get-YakuCatSourceIntegrityHash -Text ([string]$Segment.Translation)))
+    if (@($Project.TmOutbox | Where-Object { [string]$_.event_id -eq $eventId }).Count -gt 0) { return $eventId }
+    $outbox = New-Object System.Collections.Generic.List[object]
+    foreach ($event in @($Project.TmOutbox)) { $outbox.Add($event) | Out-Null }
+    $outbox.Add([pscustomobject]@{
+        event_id=$eventId; source=$memorySource; target=$memoryTarget
+        direction=[string]$Project.Direction; origin_project_id=[string]$Project.Id
+        origin_file_name=[string]$Project.FileName; origin_segment_id=[string]$Segment.SegmentId
+        origin_location=[string]$Segment.Location; origin_page=Get-YakuCatSegmentOriginPage -Project $Project -Segment $Segment
+        review_revision=[int]$Project.Revision + 1; created=(Get-Date).ToString('s')
+    }) | Out-Null
+    $Project.TmOutbox = @($outbox.ToArray())
+    return $eventId
+}
+
+function Register-YakuCatSegmentTranslationMemory {
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [Parameter(Mandatory=$true)][int]$Index
+    )
+    $null = Initialize-YakuCatProjectState -Project $Project
+    $segments = @($Project.Segments)
+    if ($Index -lt 0 -or $Index -ge $segments.Count) { throw 'CAT_TM_SEGMENT_NOT_FOUND' }
+    $segment = $segments[$Index]
+    if (-not [bool]$segment.Confirmed -or -not (Test-YakuCatSegmentQcCurrent -Segment $segment -TerminologySnapshotHash ([string]$Project.TerminologySnapshotHash))) {
+        throw 'CAT_TM_REQUIRES_CURRENT_REVIEW: 原文と訳文を確認してから翻訳メモリへ追加してください。'
+    }
+    $outboxEventId = Add-YakuCatTranslationMemoryOutboxEvent -Project $Project -Segment $segment
+    $segment.TmRegistered = $true
+    $segment.TmRegistrationEventId = [string]$outboxEventId
+    $null = Add-YakuCatHumanDecisionEvent -Project $Project -Scope 'translation_memory' -Action 'registered' -Segment $segment
+    return [string]$outboxEventId
+}
+
+function Register-YakuCatAlignmentTranslationMemoryBulk {
+    <#
+      対訳確認で人が確定した行だけを、既存のTM outboxへまとめて積む。
+      ここはCATの翻訳結果や通常の作業を対象にしない。Source=alignを明示的に
+      要求し、各行の確定・現在のQC・原文/訳文の実在・未登録を確認してから
+      outboxへ渡す。登録しなかった行も理由を返すので、画面は未確認や古い点検を
+      「登録済み」と誤って表示しない。
+    #>
+    param([Parameter(Mandatory=$true)]$Project)
+    # Initialization clears a confirmed state when it notices stale QC. Keep
+    # that distinction for the bulk response instead of reporting stale rows
+    # as if they had never been confirmed.
+    $staleBeforeInitialize = @{}
+    foreach ($before in @($Project.Segments)) {
+        if ([bool]$before.TmRegistered -or -not [bool]$before.Confirmed -or
+            [string]::IsNullOrWhiteSpace([string]$before.Text) -or
+            [string]::IsNullOrWhiteSpace([string]$before.Translation)) { continue }
+        if (-not (Test-YakuCatSegmentQcCurrent -Segment $before -TerminologySnapshotHash ([string]$Project.TerminologySnapshotHash))) {
+            $staleBeforeInitialize[[string]$before.SegmentId] = $true
+        }
+    }
+    $null = Initialize-YakuCatProjectState -Project $Project
+    if ([string]$Project.Source -cne 'align') {
+        throw 'CAT_TM_BULK_REQUIRES_ALIGN: 過去訳の対応確認でのみ一括登録できます。'
+    }
+    $registered = New-Object System.Collections.Generic.List[object]
+    $skipped = New-Object System.Collections.Generic.List[object]
+    $terminologyHash = [string]$Project.TerminologySnapshotHash
+    $segments = @($Project.Segments)
+    for ($index = 0; $index -lt $segments.Count; $index++) {
+        $segment = $segments[$index]
+        $reason = ''
+        if ([bool]$segment.TmRegistered) {
+            $reason = 'already-registered'
+        } elseif ([string]::IsNullOrWhiteSpace([string]$segment.Text) -or
+                  [string]::IsNullOrWhiteSpace([string]$segment.Translation)) {
+            $reason = 'empty'
+        } elseif ($staleBeforeInitialize.ContainsKey([string]$segment.SegmentId)) {
+            $reason = 'stale-qc'
+        } elseif (-not [bool]$segment.Confirmed) {
+            $reason = 'unconfirmed'
+        } elseif (-not (Test-YakuCatSegmentQcCurrent -Segment $segment -TerminologySnapshotHash $terminologyHash)) {
+            $reason = 'stale-qc'
+        }
+        if (-not [string]::IsNullOrWhiteSpace($reason)) {
+            [void]$skipped.Add([pscustomobject]@{ index = $index; segment_id = [string]$segment.SegmentId; reason = $reason })
+            continue
+        }
+        $eventId = Add-YakuCatTranslationMemoryOutboxEvent -Project $Project -Segment $segment
+        $segment.TmRegistered = $true
+        $segment.TmRegistrationEventId = [string]$eventId
+        $null = Add-YakuCatHumanDecisionEvent -Project $Project -Scope 'translation_memory' -Action 'registered' -Segment $segment
+        [void]$registered.Add([pscustomobject]@{ index = $index; segment_id = [string]$segment.SegmentId; event_id = [string]$eventId })
+    }
+    return [pscustomobject]@{
+        RegisteredCount = [int]$registered.Count
+        SkippedCount = [int]$skipped.Count
+        Registered = @($registered.ToArray())
+        Skipped = @($skipped.ToArray())
+        NoMutation = ($registered.Count -eq 0)
+    }
+}
+
+function Get-YakuCatAlignmentTranslationMemoryBulkEligibleSegments {
+    param([Parameter(Mandatory=$true)]$Project)
+    if ([string]$Project.Source -cne 'align') { return @() }
+    $terminologyHash = [string]$Project.TerminologySnapshotHash
+    return @($Project.Segments | Where-Object {
+        -not [bool]$_.TmRegistered -and [bool]$_.Confirmed -and
+        -not [string]::IsNullOrWhiteSpace([string]$_.Text) -and
+        -not [string]::IsNullOrWhiteSpace([string]$_.Translation) -and
+        (Test-YakuCatSegmentQcCurrent -Segment $_ -TerminologySnapshotHash $terminologyHash)
+    })
+}
+
+function Get-YakuCatTranslationMemoryRegistrationsForRevocation {
+    <#
+      TM登録後に訳文を編集すると、現在のsegmentはTmRegistered=falseへ戻る。
+      過去に同期したTM unitの取消対象は、現在フラグではなくdurableな
+      registered decision eventを正本として列挙する。
+      eventを持たない旧projectだけTmRegisteredをfallbackにする。
+    #>
+    param([Parameter(Mandatory=$true)]$Project)
+    $null = Initialize-YakuCatProjectState -Project $Project
+    $latestBySegment = @{}
+    foreach ($event in @($Project.ReviewEvents | Where-Object {
+        [string]$_.decision_scope -eq 'translation_memory' -and
+        [string]$_.action -eq 'registered' -and
+        [string]$_.segment_id -match '^[a-fA-F0-9]{32}$' -and
+        [int]$_.project_revision -gt 0
+    } | Sort-Object project_revision)) {
+        $latestBySegment[[string]$event.segment_id] = [int]$event.project_revision
+    }
+    foreach ($segment in @($Project.Segments | Where-Object { [bool]$_.TmRegistered })) {
+        $segmentId = [string]$segment.SegmentId
+        if (-not $latestBySegment.ContainsKey($segmentId)) {
+            $latestBySegment[$segmentId] = [Math]::Max(1, [int]$Project.Revision)
+        }
+    }
+    return @($latestBySegment.GetEnumerator() | Sort-Object Name | ForEach-Object {
+        [pscustomobject]@{
+            origin_project_id = [string]$Project.Id
+            origin_segment_id = [string]$_.Key
+            review_revision = [int]$_.Value
+        }
+    })
+}
+
+function Revoke-YakuCatTranslationMemoryRegistrations {
+    param([Parameter(Mandatory=$true)]$Project,[string]$Reason='project-deleted-by-user')
+    $results = New-Object System.Collections.Generic.List[object]
+    foreach ($registration in @(Get-YakuCatTranslationMemoryRegistrationsForRevocation -Project $Project)) {
+        $result = Add-YakuTranslationMemoryTombstone -Direction ([string]$Project.Direction) `
+            -OriginProjectId ([string]$registration.origin_project_id) `
+            -OriginSegmentId ([string]$registration.origin_segment_id) `
+            -ReviewRevision ([int]$registration.review_revision) -Reason $Reason
+        if (-not [bool]$result.Added -and [string]$result.Reason -notin @('same','missing')) {
+            throw ('CAT_PROJECT_TM_REVOCATION_FAILED: ' + [string]$result.Reason)
+        }
+        $results.Add($result) | Out-Null
+    }
+    return @($results.ToArray())
+}
+
+function Sync-YakuCatTranslationMemoryOutbox {
+    param([Parameter(Mandatory=$true)]$Project)
+    $pendingEvents=New-Object System.Collections.Generic.List[object]
+    foreach ($event in @($Project.TmOutbox)) {
+        try {
+            $result = Add-YakuTranslationMemoryEntry -Source ([string]$event.source) -Target ([string]$event.target) `
+                -Direction ([string]$event.direction) -Origin 'cat-reviewed-qc-v1' `
+                -OriginProjectId ([string]$event.origin_project_id) -OriginFileName ([string]$event.origin_file_name) `
+                -OriginSegmentId ([string]$event.origin_segment_id) -OriginLocation ([string]$event.origin_location) `
+                -OriginPage ([int]$event.origin_page) -ReviewRevision ([int]$event.review_revision)
+            if ($null -eq $result) { $pendingEvents.Add($event)|Out-Null }
+        } catch {
+            $pendingEvents.Add($event)|Out-Null
+            try { Write-YakuLog ('Translation memory outbox pending. event=' + [string]$event.event_id + ' error=' + $_.Exception.Message) 'WARN' } catch {}
+        }
+    }
+    # 成功済みeventは外部TM側がevent identityで冪等に保持する。outboxには
+    # 未同期だけを残し、通常の作業削除を永久に妨げない。
+    $Project.TmOutbox=@($pendingEvents.ToArray())
+    $pending=@($Project.TmOutbox).Count
+    $Project | Add-Member -NotePropertyName TmPendingCount -NotePropertyValue ([int]$pending) -Force
+    return [int]$pending
+}
+
+function Update-YakuCatProjectForTerminologyChange {
+    param([Parameter(Mandatory=$true)]$Project, [Parameter(Mandatory=$true)]$Entry)
+    $affected = 0
+    # Initialize-YakuCatProjectState の狭め込みと同じく、語を含まない passed 行は Reset せず
+    # 刻印だけ新スナップショットへ揃える。用語の変化で古くなり得ない行まで「点検が古い」に
+    # なるのを避けるためである。
+    $newSnapshotHash = Get-YakuCatTerminologySnapshotHash -Project $Project
+    foreach ($segment in @($Project.Segments)) {
+        $matches = @(Find-YakuTerminologyMatches -Text ([string]$segment.Text) -Direction ([string]$Project.Direction) -Entries @($Entry) -ProjectId ([string]$Project.Id))
+        if ($matches.Count -gt 0) {
+            $affected++
+            if ([bool]$segment.Confirmed -or [string]$segment.QcStatus -eq 'passed') {
+                Reset-YakuCatSegmentQc -Segment $segment
+                $segment.State = 'stale'
+            }
+        } elseif ([string]$segment.QcStatus -eq 'passed') {
+            $segment | Add-Member -NotePropertyName QcTerminologyHash -NotePropertyValue $newSnapshotHash -Force
+        }
+    }
+    $Project.TerminologySnapshotHash = $newSnapshotHash
+    return $affected
+}
+
+function Set-YakuCatSegmentConfirmed {
+    <#
+      「この行は見た」を記録する。訳文が変わっていなくても押せる。
+
+      市販の CAT ツールで Ctrl+Enter が担っている役目である。機械訳を読んで
+      「これで良い」と判断したことは、直したことと同じくらい記録に値する。
+      記録が無いと、翌日再開したときに「どこまで見たか」が分からない。
+
+      訳文が空の行は確定できない。読むものが無いのに見たとは言えない。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        [Parameter(Mandatory=$true)][int]$Index,
+        [bool]$Confirmed = $true
+    )
+    $null = Initialize-YakuCatProjectState -Project $Project
+    $segs = @($Project.Segments)
+    if ($Index -lt 0 -or $Index -ge $segs.Count) { throw ('セグメントが見つかりません: ' + $Index) }
+    if ($Confirmed -and [string]::IsNullOrWhiteSpace([string]$segs[$Index].Translation)) {
+        throw '訳文が空の行は確定できません。'
+    }
+    if (-not $Confirmed) {
+        $fallback = if ([string]$segs[$Index].Origin -eq 'manual') { 'human_edited' } elseif ([string]::IsNullOrWhiteSpace([string]$segs[$Index].Translation)) { 'untranslated' } else { 'machine_draft' }
+        $segs[$Index].State = $fallback
+        $segs[$Index].Confirmed = $false
+        $null = Add-YakuCatHumanDecisionEvent -Project $Project -Scope 'translation' -Action 'review_cancelled' -Segment $segs[$Index]
+        return $segs[$Index]
+    }
+    $validation = Invoke-YakuCatSegmentValidation -Project $Project -Segment $segs[$Index]
+    if (-not [bool]$validation.Passed) {
+        $segs[$Index].Confirmed = $false
+        throw ('CAT_REVIEW_QC_FAILED: ' + (@($validation.Findings | ForEach-Object { [string]$_.Code }) -join ','))
+    }
+    $segs[$Index].State = 'reviewed'
+    $segs[$Index].Confirmed = $true
+    $null = Add-YakuCatHumanDecisionEvent -Project $Project -Scope 'translation' -Action 'reviewed' -Segment $segs[$Index]
+    return $segs[$Index]
+}
+
+function ConvertTo-YakuCatBlockMatchKey {
+    <# 同じ原文ブロックかを比べる鍵。番地は意図的に含めない。 #>
+    param([AllowNull()]$Block)
+    if ($null -eq $Block) { return '' }
+    $kind = ''; $text = ''
+    try { $kind = [string]$Block.Meta.Kind } catch { $kind = '' }
+    try { $text = [string]$Block.Text } catch { $text = '' }
+    if ([string]::IsNullOrWhiteSpace($text)) { return '' }
+    try { $text = $text.Normalize([Text.NormalizationForm]::FormKC) } catch {}
+    $text = [regex]::Replace($text.Trim(), '\s+', ' ').ToLowerInvariant()
+    return ($kind.ToLowerInvariant() + [char]31 + $text)
+}
+
+function Get-YakuCatBlockSheet {
+    param([AllowNull()]$Block)
+    try { return [string]$Block.Meta.Sheet } catch { return '' }
+}
+
+function Get-YakuCatSheetCodeName {
+    param([AllowNull()][object[]]$Blocks, [AllowNull()][string]$Sheet)
+    foreach ($block in @($Blocks)) {
+        if ((Get-YakuCatBlockSheet $block) -ne [string]$Sheet) { continue }
+        try {
+            $code = [string]$block.Meta.SheetCodeName
+            if (-not [string]::IsNullOrWhiteSpace($code)) { return $code }
+        } catch {}
+    }
+    return ''
+}
+
+function Test-YakuCatSourceTextExact {
+    param([AllowNull()][string]$Left, [AllowNull()][string]$Right)
+    # Excelの改行表現だけを揃える。大小文字・全半角・空白は意味を変え得るので
+    # NFKCやTrimをせず、保存時と現在値のOrdinal一致を最終門にする。
+    $a = ([string]$Left).Replace("`r`n", "`n").Replace("`r", "`n")
+    $b = ([string]$Right).Replace("`r`n", "`n").Replace("`r", "`n")
+    return [string]::Equals($a, $b, [StringComparison]::Ordinal)
+}
+
+function Get-YakuCatUniqueBlockPairs {
+    <# 両側で一度だけ現れる原文を錨候補にする。 #>
+    param([AllowNull()][object[]]$Left, [AllowNull()][object[]]$Right)
+    $l = @($Left); $r = @($Right)
+    $lc = @{}; $rc = @{}; $li = @{}; $ri = @{}
+    for ($i = 0; $i -lt $l.Count; $i++) {
+        $k = ConvertTo-YakuCatBlockMatchKey -Block $l[$i]
+        if ([string]::IsNullOrWhiteSpace($k)) { continue }
+        if (-not $lc.ContainsKey($k)) { $lc[$k] = 0 }
+        $lc[$k]++; $li[$k] = $i
+    }
+    for ($i = 0; $i -lt $r.Count; $i++) {
+        $k = ConvertTo-YakuCatBlockMatchKey -Block $r[$i]
+        if ([string]::IsNullOrWhiteSpace($k)) { continue }
+        if (-not $rc.ContainsKey($k)) { $rc[$k] = 0 }
+        $rc[$k]++; $ri[$k] = $i
+    }
+    $pairs = New-Object System.Collections.Generic.List[object]
+    foreach ($k in $lc.Keys) {
+        if ([int]$lc[$k] -ne 1 -or -not $rc.ContainsKey($k) -or [int]$rc[$k] -ne 1) { continue }
+        [void]$pairs.Add([pscustomobject]@{ Key = $k; L = [int]$li[$k]; R = [int]$ri[$k] })
+    }
+    return @(@($pairs.ToArray()) | Sort-Object -Property L)
+}
+
+function Resolve-YakuCatExportBlocks {
+    <#
+      取り込み時と現在の原文ブロックを対応付ける純粋関数。
+
+      一意な原文を錨にし、CellAlign.ps1 と同じ最長増加部分列で順序が
+      保たれる錨だけを採る。重複原文は錨に挟まれた区間内で一意な場合だけ
+      対応付ける。決められないものを旧番地で推測することはしない。
+    #>
+    param(
+        [AllowNull()][object[]]$OriginalBlocks,
+        [AllowNull()][object[]]$CurrentBlocks,
+        [AllowNull()][string[]]$RequiredBlockIds
+    )
+    if (-not (Get-Command Get-YakuLongestIncreasingPairs -ErrorAction SilentlyContinue)) {
+        throw 'CAT_EXPORT_ALIGN_UNAVAILABLE: 原文再対応付けの部品を読み込めませんでした。'
+    }
+    $old = @($OriginalBlocks); $cur = @($CurrentBlocks)
+    $required = @{}
+    foreach ($id in @($RequiredBlockIds)) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$id)) { $required[[string]$id] = $true }
+    }
+    $errors = New-Object System.Collections.Generic.List[string]
+    $map = @{}; $usedCurrent = @{}; $sheetMatches = @{}
+    $oldSheets = New-Object System.Collections.Generic.List[string]
+    $curSheets = New-Object System.Collections.Generic.List[string]
+    foreach ($b in $old) { $s = Get-YakuCatBlockSheet $b; if (-not $oldSheets.Contains($s)) { [void]$oldSheets.Add($s) } }
+    foreach ($b in $cur) { $s = Get-YakuCatBlockSheet $b; if (-not $curSheets.Contains($s)) { [void]$curSheets.Add($s) } }
+    $usedSheets = @{}
+
+    # 同名シートを先に確定する。
+    foreach ($s in @($oldSheets.ToArray())) {
+        if (-not $curSheets.Contains($s)) { continue }
+        $oldCode = Get-YakuCatSheetCodeName -Blocks $old -Sheet $s
+        $newCode = Get-YakuCatSheetCodeName -Blocks $cur -Sheet $s
+        if (-not [string]::IsNullOrWhiteSpace($oldCode) -and -not [string]::IsNullOrWhiteSpace($newCode) -and $oldCode -ne $newCode) { continue }
+        $sheetMatches[$s] = $s; $usedSheets[$s] = $true
+    }
+    # 改名されたシートはまず Worksheet.CodeName で追う。Excel環境によって
+    # CodeNameが空の場合だけ、両側のほぼ全原文が同じ順序にある候補へ限定する。
+    foreach ($s in @($oldSheets.ToArray())) {
+        if ($sheetMatches.ContainsKey($s)) { continue }
+        $oldCode = Get-YakuCatSheetCodeName -Blocks $old -Sheet $s
+        if (-not [string]::IsNullOrWhiteSpace($oldCode)) {
+            $matches = New-Object System.Collections.Generic.List[string]
+            foreach ($t in @($curSheets.ToArray())) {
+                if ($usedSheets.ContainsKey($t)) { continue }
+                if ((Get-YakuCatSheetCodeName -Blocks $cur -Sheet $t) -eq $oldCode) { [void]$matches.Add($t) }
+            }
+            if ($matches.Count -eq 1) {
+                $sheetMatches[$s] = [string]$matches[0]; $usedSheets[[string]$matches[0]] = $true
+            }
+            continue
+        }
+        $left = @($old | Where-Object { (Get-YakuCatBlockSheet $_) -eq $s })
+        $fallback = New-Object System.Collections.Generic.List[object]
+        foreach ($t in @($curSheets.ToArray())) {
+            if ($usedSheets.ContainsKey($t)) { continue }
+            $right = @($cur | Where-Object { (Get-YakuCatBlockSheet $_) -eq $t })
+            $ordered = @(Get-YakuLongestIncreasingPairs -Pairs @(Get-YakuCatUniqueBlockPairs -Left $left -Right $right))
+            $leftCoverage = $ordered.Count / [double][Math]::Max(1, $left.Count)
+            $rightCoverage = $ordered.Count / [double][Math]::Max(1, $right.Count)
+            if ($ordered.Count -ge 3 -and $leftCoverage -ge 0.8 -and $rightCoverage -ge 0.8) {
+                [void]$fallback.Add([pscustomobject]@{ Sheet=$t; Score=$ordered.Count })
+            }
+        }
+        $ranked = @($fallback.ToArray() | Sort-Object -Property Score -Descending)
+        if ($ranked.Count -eq 1 -or ($ranked.Count -gt 1 -and [int]$ranked[0].Score -gt [int]$ranked[1].Score)) {
+            $picked = [string]$ranked[0].Sheet
+            $sheetMatches[$s] = $picked; $usedSheets[$picked] = $true
+        }
+    }
+
+    foreach ($s in @($oldSheets.ToArray())) {
+        $leftAll = @($old | Where-Object { (Get-YakuCatBlockSheet $_) -eq $s })
+        $neededHere = @($leftAll | Where-Object { $required.ContainsKey([string]$_.Id) })
+        if ($neededHere.Count -eq 0) { continue }
+        if (-not $sheetMatches.ContainsKey($s)) {
+            foreach ($b in $neededHere) { [void]$errors.Add(('sheet-missing-or-ambiguous: ' + [string]$b.Id + ' / ' + $s)) }
+            continue
+        }
+        $targetSheet = [string]$sheetMatches[$s]
+        $rightAll = @($cur | Where-Object { (Get-YakuCatBlockSheet $_) -eq $targetSheet })
+        $candidates = @(Get-YakuCatUniqueBlockPairs -Left $leftAll -Right $rightAll)
+        $anchors = @(Get-YakuLongestIncreasingPairs -Pairs $candidates)
+        $anchorByLeft = @{}
+        foreach ($a in $anchors) { $anchorByLeft[[int]$a.L] = $a }
+
+        foreach ($b in $neededHere) {
+            $oldIndex = [array]::IndexOf($leftAll, $b)
+            if ($oldIndex -lt 0) { [void]$errors.Add(('source-missing: ' + [string]$b.Id)); continue }
+            $newIndex = -1
+            if ($anchorByLeft.ContainsKey($oldIndex)) {
+                $newIndex = [int]$anchorByLeft[$oldIndex].R
+            } else {
+                $prevL = -1; $prevR = -1; $nextL = $leftAll.Count; $nextR = $rightAll.Count
+                foreach ($a in $anchors) {
+                    if ([int]$a.L -lt $oldIndex) { $prevL = [int]$a.L; $prevR = [int]$a.R; continue }
+                    if ([int]$a.L -gt $oldIndex) { $nextL = [int]$a.L; $nextR = [int]$a.R; break }
+                }
+                $key = ConvertTo-YakuCatBlockMatchKey -Block $b
+                $oldHits = @(); $newHits = @()
+                for ($i = $prevL + 1; $i -lt $nextL; $i++) {
+                    if ((ConvertTo-YakuCatBlockMatchKey -Block $leftAll[$i]) -eq $key) { $oldHits += $i }
+                }
+                for ($i = $prevR + 1; $i -lt $nextR; $i++) {
+                    if ((ConvertTo-YakuCatBlockMatchKey -Block $rightAll[$i]) -eq $key) { $newHits += $i }
+                }
+                if ($oldHits.Count -eq 1 -and $newHits.Count -eq 1) { $newIndex = [int]$newHits[0] }
+            }
+            if ($newIndex -lt 0 -or $newIndex -ge $rightAll.Count) {
+                [void]$errors.Add(('source-missing-or-ambiguous: ' + [string]$b.Id + ' / ' + [string]$b.Location))
+                continue
+            }
+            $currentBlock = $rightAll[$newIndex]
+            $currentId = [string]$currentBlock.Id
+            if ($usedCurrent.ContainsKey($currentId)) {
+                [void]$errors.Add(('current-block-reused: ' + [string]$b.Id + ' -> ' + $currentId))
+                continue
+            }
+            # 書込直前の最後の門。対応付け結果でも原文が一致しなければ使わない。
+            if (-not (Test-YakuCatSourceTextExact -Left ([string]$b.Text) -Right ([string]$currentBlock.Text))) {
+                [void]$errors.Add(('source-changed: ' + [string]$b.Id))
+                continue
+            }
+            $usedCurrent[$currentId] = $true
+            $map[[string]$b.Id] = $currentBlock
+        }
+    }
+    foreach ($id in $required.Keys) {
+        if (-not $map.ContainsKey($id) -and @($errors | Where-Object { $_ -match ('(^|: )' + [regex]::Escape($id) + '( /| ->|$)') }).Count -eq 0) {
+            [void]$errors.Add(('snapshot-missing: ' + $id))
+        }
+    }
+    return [pscustomobject]@{
+        Success = ($errors.Count -eq 0)
+        Map = $map
+        Errors = @($errors.ToArray())
+        SheetMatches = $sheetMatches
+    }
+}
+
+function Assert-YakuCatExcelPlacementStructureSafe {
+    <# 書込み可否へ影響するCOM値は、推測せず全項目を明示確認する。 #>
+    param(
+        [Parameter(Mandatory=$true)]$Structure,
+        [string]$BlockId = ''
+    )
+    $target=$(if([string]::IsNullOrWhiteSpace($BlockId)){''}else{' 対象: '+$BlockId})
+    if([string]$Structure.contract_version -ne 'excel-cell-structure-v2'){
+        throw ('CAT_PLACEMENT_PRECONDITION_FAILED: 配置先セルの構造契約を確認できません。'+$target)
+    }
+    $mergeKind=[string]$Structure.merge_kind
+    if($mergeKind -notin @('none','anchor','non_anchor')){
+        throw ('CAT_PLACEMENT_PRECONDITION_FAILED: 配置先セルの結合状態を確認できません。'+$target)
+    }
+    if($mergeKind -eq 'non_anchor'){
+        throw ('CAT_PLACEMENT_PRECONDITION_FAILED: 結合セルの左上以外には書き込めません。'+$target)
+    }
+    if($mergeKind -eq 'anchor' -and ([string]::IsNullOrWhiteSpace([string]$Structure.merge_area) -or [string]$Structure.merge_area -eq 'unknown')){
+        throw ('CAT_PLACEMENT_PRECONDITION_FAILED: 結合セル範囲を確認できません。'+$target)
+    }
+    foreach($field in @('has_formula','has_array','has_spill')){
+        $value=[string]$Structure.$field
+        if($value -notin @('True','False')){
+            throw ('CAT_PLACEMENT_PRECONDITION_FAILED: 数式・配列・スピル状態を確認できません。'+$target)
+        }
+        if($value -eq 'True'){
+            throw ('CAT_PLACEMENT_PRECONDITION_FAILED: 数式・配列・スピルを含むセルには書き込めません。'+$target)
+        }
+    }
+    $protected=[string]$Structure.worksheet_protect_contents;$locked=[string]$Structure.cell_locked
+    if($protected -notin @('True','False') -or $locked -notin @('True','False')){
+        throw ('CAT_PLACEMENT_PRECONDITION_FAILED: 配置先セルの保護状態を確認できません。'+$target)
+    }
+    if($protected -eq 'True' -and $locked -eq 'True'){
+        throw ('CAT_PLACEMENT_PRECONDITION_FAILED: 保護されたロックセルには書き込めません。'+$target)
+    }
+    $validationType=[string]$Structure.validation_type
+    if([string]::IsNullOrWhiteSpace($validationType) -or $validationType -eq 'unknown'){
+        throw ('CAT_PLACEMENT_PRECONDITION_FAILED: 配置先セルの入力規則を確認できません。'+$target)
+    }
+    if($validationType -ne 'none'){
+        throw ('CAT_PLACEMENT_PRECONDITION_FAILED: 入力規則のあるセルには自動で書き込めません。'+$target)
+    }
+    return $true
+}
+
+function Export-YakuCatReviewedSegments {
+    <#
+      確認済みの行だけを取り出す。
+
+      全行を確認し終えるまで何も取り出せないと、10分の細切れで使う利用者は
+      成果ゼロで終わる。ここは「途中の成果を持ち帰る」ための経路であり、
+      元ファイルへの書き戻し（Export-YakuCatProject）とは別物である。
+
+      渡すのは reviewed の行だけ。未確認・未翻訳・自動点検が古い行は含めない。
+      含めなかった行数を必ず返し、画面で「一部である」と言えるようにする。
+    #>
+    param([Parameter(Mandatory=$true)]$Project)
+    $null = Initialize-YakuCatProjectState -Project $Project
+    $segments = @($Project.Segments)
+    if ($segments.Count -eq 0) { throw 'CAT_REVIEWED_EXPORT_EMPTY: 翻訳する行がありません。' }
+
+    $snapshotHash = [string]$Project.TerminologySnapshotHash
+    $included = New-Object System.Collections.Generic.List[object]
+    $skipped = 0
+    foreach ($segment in $segments) {
+        $ok = ([string]$segment.State -eq 'reviewed') -and
+              (-not [string]::IsNullOrWhiteSpace([string]$segment.Translation)) -and
+              (Test-YakuCatSegmentQcCurrent -Segment $segment -TerminologySnapshotHash $snapshotHash)
+        if ($ok) { $included.Add($segment) | Out-Null } else { $skipped++ }
+    }
+    if ($included.Count -eq 0) {
+        throw 'CAT_REVIEWED_EXPORT_NONE: まだ確認済みの行がありません。行を「確認済みにする」と、その行だけ取り出せます。'
+    }
+
+    $lines = @($included | ForEach-Object { [string]$_.Translation })
+    $locations = @($included | ForEach-Object { [string]$_.Location })
+    return [pscustomobject]@{
+        Text      = (@($lines) -join "`n")
+        Written   = [int]$included.Count
+        Skipped   = [int]$skipped
+        Total     = [int]$segments.Count
+        Locations = @($locations)
+        Partial   = ([int]$skipped -gt 0)
+    }
+}
+
+function Export-YakuCatProject {
+    <#
+      元の Excel をコピーし、そこへ訳文を書き戻す。
+
+      繋いだセグメントは元のセルの長さを重みにして割り振る。
+      訳の無いセグメントは書かない。既存の書き戻しは
+      「訳文が原文と同じなら触らない」を守るので、原文のまま残る。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Project,
+        # 貼り付けたテキストのときは空。書き戻す元のファイルが無い。
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$OutputPath,
+        [AllowNull()]$Settings,
+        [AllowNull()]$Warnings,
+        [AllowNull()]$ProgressState
+    )
+    if ($null -eq $Warnings) { $Warnings = New-Object System.Collections.Generic.List[object] }
+    $eligibility = Get-YakuCatOutputEligibility -Project $Project
+    if (-not [bool]$eligibility.TranslationListEligible) {
+        throw ('CAT_TRANSLATION_LIST_BLOCKED: 確認済み訳文一覧を出力できません。' + (@($eligibility.Reasons) -join ','))
+    }
+    $segs = @($Project.Segments)
+    # 貼り付けたテキストは書き戻す元のファイルが無い。訳文を繋いで返すだけ。
+    # 簡易翻訳と同じ終わり方（画面でコピーする）にして、覚えることを増やさない。
+    if ([string]$Project.Source -in @('text','align','prior_version')) {
+        $outputText = Get-YakuCatTextOutput -Project $Project
+        return [pscustomobject]@{
+            OutputPath = ''
+            OutputName = ''
+            Text       = $outputText
+            Written    = @($segs | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.Translation) }).Count
+            Skipped    = @($segs | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.Translation) }).Count
+        }
+    }
+    $documentFormat = $(try { [string]$Project.DocumentFormat } catch { '' })
+    if ($documentFormat -eq 'docx') {
+        if (-not [bool]$eligibility.WordDraftEligible) {
+            # 体裁を保証できないWordは、ファイルを作らず全訳文を返す。
+            # 「一部だけ書けたWord」を完成物らしく見せないための縮退経路。
+            $lines = @($segs | ForEach-Object { [string]$_.Translation })
+            $unconfirmedCount = @($segs | Where-Object { -not [bool]$_.Confirmed }).Count
+            if ($unconfirmedCount -gt 0) { $lines = @('【YakuLingo: 未確認 ' + $unconfirmedCount + ' 行】') + $lines }
+            return [pscustomobject]@{
+                OutputPath=''; OutputName=''; Text=(@($lines) -join "`n")
+                Written=@($segs).Count; Skipped=0
+            }
+        }
+        $writeResult = Export-YakuWordDraft -Project $Project -OutputPath $OutputPath
+        return [pscustomobject]@{
+            OutputPath = [string]$writeResult.PublishedPath
+            OutputName = [IO.Path]::GetFileName([string]$writeResult.PublishedPath)
+            Written = [int]$writeResult.WrittenCount
+            Skipped = [int]$writeResult.SkippedCount
+        }
+    }
+    if (-not [bool]$eligibility.ExcelDraftEligible) {
+        throw ('CAT_EXCEL_DRAFT_BLOCKED: DRAFT Excelを安全に出力できません。' + (@($eligibility.Reasons) -join ','))
+    }
+    $bySegment = @{}
+    for ($i = 0; $i -lt $segs.Count; $i++) {
+        $t = [string]$segs[$i].Translation
+        if ([string]::IsNullOrWhiteSpace($t)) { continue }
+        $bySegment[$i] = $t
+    }
+    $byBlock = Get-YakuCatPlacementTranslationByBlockId -Project $Project -TranslationBySegmentIndex $bySegment
+    if (-not (Test-Path -LiteralPath ([string]$Project.Path) -PathType Leaf)) {
+        throw 'CAT_EXPORT_SOURCE_MISSING: 元の Excel が見つかりません。移動または削除されていないか確認してください。'
+    }
+    $expectedSourceHash=[string]$Project.SourceArtifactSha256
+    if($expectedSourceHash -notmatch '^[a-fA-F0-9]{64}$'){throw 'CAT_EXPORT_SOURCE_HASH_REQUIRED: 原本の識別情報を確認できません。'}
+    $originalBlocks = @($Project.Blocks)
+    if ($originalBlocks.Count -eq 0) {
+        $originalBlocks = @(ConvertFrom-YakuCatSavedSegmentsToBlocks -Segments $segs)
+    }
+    $hashBefore = (Get-YakuFileSha256Hex -Path ([string]$Project.Path)).ToUpperInvariant()
+    if($hashBefore -cne $expectedSourceHash.ToUpperInvariant()){
+        throw 'CAT_EXPORT_SOURCE_ARTIFACT_CONFLICT: 原本が作業開始後に変更されています。「原文ファイルを差し替える」から新版として取り込んでください。'
+    }
+    $currentExtract = Get-YakuExcelTextBlocks -Path ([string]$Project.Path) -Direction ([string]$Project.Direction) `
+        -Settings $Settings -ProgressState $ProgressState
+    $hashAfter = (Get-YakuFileSha256Hex -Path ([string]$Project.Path)).ToUpperInvariant()
+    if ($hashBefore -ne $hashAfter) {
+        throw 'CAT_EXPORT_SOURCE_CHANGED_DURING_READ: 原文を確認している間に元の Excel が変更されました。もう一度出力してください。'
+    }
+    foreach ($w in @($currentExtract.Warnings)) { try { [void]$Warnings.Add($w) } catch {} }
+    $resolved = Resolve-YakuCatExportBlocks -OriginalBlocks $originalBlocks -CurrentBlocks @($currentExtract.Blocks) `
+        -RequiredBlockIds @($byBlock.Keys)
+    if (-not [bool]$resolved.Success) {
+        throw ('CAT_EXPORT_SOURCE_MISMATCH: 元の Excel で行・シートの対応を一意に確認できませんでした。誤ったセルへの書き込みを防ぐため出力を中止しました。' + `
+            ' 詳細: ' + (@($resolved.Errors) -join '; '))
+    }
+    # 配置計画が確認した原文セルと、今回実際に読み取ったセルが同一であることを
+    # 全件先に検査する。1件でも違えば一切書き込まずに停止する。
+    $placementDestinationByBlock = @{}
+    foreach ($plan in @($Project.PlacementPlans)) {
+        foreach ($destination in @($plan.destinations)) {
+            if([string]$(try{$destination.mode}catch{'replace_source_block'}) -eq 'use_confirmed_empty'){continue}
+            if($placementDestinationByBlock.ContainsKey([string]$destination.block_id)){throw ('CAT_PLACEMENT_PRECONDITION_FAILED: 同じ原文blockが複数の配置先に指定されています。対象: '+[string]$destination.block_id)}
+            $placementDestinationByBlock[[string]$destination.block_id] = $destination
+        }
+    }
+    foreach ($oldId in @($byBlock.Keys)) {
+        $destination = $placementDestinationByBlock[[string]$oldId]
+        $newBlock = $resolved.Map[[string]$oldId]
+        if ($null -eq $destination -or $null -eq $newBlock) {
+            throw 'CAT_PLACEMENT_PRECONDITION_FAILED: 配置先の対応情報がありません。'
+        }
+        $actualSourceHash = Get-YakuCatSourceIntegrityHash -Text ([string]$newBlock.Text)
+        if ($actualSourceHash -ne [string]$destination.expected_source_hash) {
+            throw ('CAT_PLACEMENT_PRECONDITION_FAILED: 原文セルが配置計画の確認後に変わりました。対象: ' + [string]$oldId)
+        }
+        $actualSheet=$(try{[string]$newBlock.Meta.Sheet}catch{''});$actualAddress=$(try{[string]$newBlock.Meta.A1}catch{''});$actualCodeName=$(try{[string]$newBlock.Meta.SheetCodeName}catch{''})
+        if($actualSheet -cne [string]$destination.sheet -or $actualAddress -cne [string]$destination.address){throw ('CAT_PLACEMENT_PRECONDITION_FAILED: 配置先のシートまたはセル番地が一致しません。対象: '+[string]$oldId)}
+        $expectedCodeName=$(try{[string]$destination.expected_sheet_code_name}catch{''});if(-not [string]::IsNullOrWhiteSpace($expectedCodeName) -and $expectedCodeName -cne $actualCodeName){throw ('CAT_PLACEMENT_PRECONDITION_FAILED: 配置先シートの識別子が一致しません。対象: '+[string]$oldId)}
+        $actualStructure=$(try{$newBlock.Meta.StructureContract}catch{$null});$actualStructureHash=$(try{[string]$newBlock.Meta.StructureFingerprint}catch{''});$expectedStructureHash=$(try{[string]$destination.expected_structure_fingerprint}catch{''})
+        if($null -eq $actualStructure -or [string]::IsNullOrWhiteSpace($actualStructureHash)){throw ('CAT_PLACEMENT_PRECONDITION_FAILED: 配置先セルの構造を確認できません。対象: '+[string]$oldId)}
+        if(-not [string]::IsNullOrWhiteSpace($expectedStructureHash) -and $expectedStructureHash -ne $actualStructureHash){throw ('CAT_PLACEMENT_PRECONDITION_FAILED: 配置先セルの結合・保護・書式等が計画作成後に変わりました。対象: '+[string]$oldId)}
+        $null=Assert-YakuCatExcelPlacementStructureSafe -Structure $actualStructure -BlockId ([string]$oldId)
+    }
+    # 追加する空白下セルも、値・数式・結合・配列・スピル・保護・入力規則・
+    # 非表示・図形重なりを実Workbookで全件確認し終えるまで、一文字も書かない。
+    $confirmedEmptyBlocks=@(Get-YakuCatConfirmedEmptyWriteTargets -Project $Project)
+    $currentByBlock = @{}
+    foreach ($oldId in @($byBlock.Keys)) {
+        $newBlock = $resolved.Map[[string]$oldId]
+        $currentByBlock[[string]$newBlock.Id] = [string]$byBlock[$oldId]
+    }
+    foreach($plan in @($Project.PlacementPlans)){
+        foreach($destination in @($plan.destinations|Where-Object{[string]$(try{$_.mode}catch{''}) -eq 'use_confirmed_empty'})){
+            $currentByBlock[[string]$destination.block_id]=[string]$destination.text
+        }
+    }
+    $writeBlocks=@($currentExtract.Blocks)+@($confirmedEmptyBlocks)
+    $sourceHashBeforeWrite = (Get-YakuFileSha256Hex -Path ([string]$Project.Path)).ToUpperInvariant()
+    if ($sourceHashBeforeWrite -ne $hashAfter) {
+        throw 'CAT_EXPORT_SOURCE_CHANGED_BEFORE_COPY: 元の Excel が出力直前に変更されました。訳文はまだ書き込んでいません。もう一度出力してください。'
+    }
+    # 訳す向きは出力書体を決める（英→和は和書体）。作業の向きをそのまま渡す。
+    $writeResult = Write-YakuFileTranslations -InputPath ([string]$Project.Path) -OutputPath $OutputPath -Blocks @($writeBlocks) `
+        -TranslationByBlockId $currentByBlock -Warnings $Warnings -Settings $Settings -Direction ([string]$Project.Direction) `
+        -ProgressState $ProgressState -FailOnIncomplete
+    return [pscustomobject]@{
+        OutputPath = [string]$writeResult.PublishedPath
+        OutputName = [System.IO.Path]::GetFileName([string]$writeResult.PublishedPath)
+        Written    = [int]$writeResult.WrittenCount
+        Skipped    = [int]$writeResult.SkippedCount
+    }
+}
+) { continue }
+        $parsed = 0
+        if (-not [int]::TryParse($raw, [ref]$parsed)) { continue }
+        if ($parsed -ge 0 -and $parsed -lt $Count -and $seen.Add($parsed)) { $valid.Add($parsed) }
+    }
+    return [int[]]$valid.ToArray()
+}
+
 function Get-YakuCatSearchReplacePlan {
     <#
       一括置換の計画。**何も書き換えない。** 押す前に対象行数を告げるためと、
@@ -5586,10 +6655,8 @@ function Get-YakuCatSearchReplacePlan {
     $replacement = ConvertTo-YakuCatSearchReplacement -Replace $Replace -UseRegex $UseRegex
     $segs = @($Project.Segments)
     $wanted = New-Object 'System.Collections.Generic.HashSet[int]'
-    foreach ($one in @($Indexes)) {
-        $parsed = -1
-        try { $parsed = [int]$one } catch { $parsed = -1 }
-        if ($parsed -ge 0 -and $parsed -lt $segs.Count) { $null = $wanted.Add($parsed) }
+    foreach ($parsed in @(ConvertTo-YakuCatValidIndexes -Indexes $Indexes -Count $segs.Count)) {
+        $null = $wanted.Add([int]$parsed)
     }
     $rows = New-Object System.Collections.Generic.List[object]
     $occurrences = 0
