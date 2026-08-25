@@ -887,8 +887,7 @@ function Get-YakuExcelSheetTextBlocksFallback {
         # shared, array, and dynamic-array formula representation.
         try { $formulas = $UsedRange.Formula } catch {
             Add-YakuWarning -Warnings $Warnings -Category 'formula-mask-read-failed' -Location $sheetName -Message "数式マスクの一括読取に失敗しました。セル単位HasFormula確認へ切り替えます。error=$($_.Exception.Message)"
-            $formulas = $null
-        }
+            }
         $isScalarUsed = ($rowCount -eq 1 -and $colCount -eq 1)
         $columnLetters = New-YakuColumnLetterCache -StartColumn $startCol -ColumnCount $colCount
         $mergeState = $false
@@ -2431,7 +2430,6 @@ function New-YakuExcelBulkRangeWritePlan {
         if ($null -ne $sw) { Add-YakuExcelMetricElapsed -Metrics $Metrics -Key 'bulk_read_ms' -Stopwatch $sw; $sw = $null }
 
         $fontAddresses = New-Object System.Collections.Generic.List[string]
-        if (-not $hasFormulaCells) {
             if ($RowCount -eq 1 -and $ColCount -eq 1) {
                 $first = @($Items)[0]
                 $payload = [string]$first.Translation
@@ -2504,116 +2502,6 @@ function New-YakuExcelBulkRangeWritePlan {
                 }
             }
             return [pscustomobject]@{ Kind='bulk'; Range=$Range; Property='Value2'; Payload=$values; Written=[int]$bulkTargetWritten; FontAddresses=[string[]]@($fontAddresses.ToArray()); Address=$Address; Area=$Area; Mode='value2'; SingleItems=@($singleItems.ToArray()); RiskyConstantRestores=@($riskyRestores.ToArray()); ErrorValueRestores=@($errorRestores.ToArray()); RiskyTranslationSingles=[int]$singleItems.Count; FormulaCellCount=0; Rectangles=0; Items=[object[]]@($Items); BulkItems=[object[]]@($bulkItems.ToArray()); StartRow=$MinRow; EndRow=([int]($MinRow + $RowCount - 1)) }
-        }
-
-        $valuesIsArray = ($values -is [System.Array] -and $values.Rank -eq 2)
-        $formulasIsArray = ($formulas -is [System.Array] -and $formulas.Rank -eq 2)
-        if (($RowCount -gt 1 -or $ColCount -gt 1) -and (-not $valuesIsArray -or ($hasFormulaCells -and -not $formulasIsArray))) {
-            try { Write-YakuLog "Excel writeback bulk box fallback. sheet=$SheetName address=$Address reason=shape-mismatch target=formula-patch valuesArray=$valuesIsArray formulasArray=$formulasIsArray formulaCells=$formulaCellCount targets=$($Items.Count)" 'DEBUG' } catch {}
-            return $null
-        }
-        $valueRowBase = 0
-        $valueColBase = 0
-        $formulaRowBase = 0
-        $formulaColBase = 0
-        if ($valuesIsArray) {
-            $valueRowBase = [int]$values.GetLowerBound(0)
-            $valueColBase = [int]$values.GetLowerBound(1)
-            $valueRows = [int]($values.GetUpperBound(0) - $valueRowBase + 1)
-            $valueCols = [int]($values.GetUpperBound(1) - $valueColBase + 1)
-            if ($valueRows -ne $RowCount -or $valueCols -ne $ColCount) {
-                try { Write-YakuLog "Excel writeback bulk box fallback. sheet=$SheetName address=$Address reason=shape-mismatch target=Value2 rows=$valueRows cols=$valueCols expectedRows=$RowCount expectedCols=$ColCount" 'DEBUG' } catch {}
-                return $null
-            }
-        }
-        if ($formulasIsArray) {
-            $formulaRowBase = [int]$formulas.GetLowerBound(0)
-            $formulaColBase = [int]$formulas.GetLowerBound(1)
-            $formulaRows = [int]($formulas.GetUpperBound(0) - $formulaRowBase + 1)
-            $formulaCols = [int]($formulas.GetUpperBound(1) - $formulaColBase + 1)
-            if ($formulaRows -ne $RowCount -or $formulaCols -ne $ColCount) {
-                try { Write-YakuLog "Excel writeback bulk box fallback. sheet=$SheetName address=$Address reason=shape-mismatch target=Formula rows=$formulaRows cols=$formulaCols expectedRows=$RowCount expectedCols=$ColCount" 'DEBUG' } catch {}
-                return $null
-            }
-        }
-
-        $out = [System.Array]::CreateInstance([object], $RowCount, $ColCount)
-        $singleItems = New-Object System.Collections.Generic.List[object]
-        $bulkItems = New-Object System.Collections.Generic.List[object]
-        $riskyRestores = New-Object System.Collections.Generic.List[object]
-        $errorRestores = New-Object System.Collections.Generic.List[object]
-        $bulkTargetWritten = 0
-        for ($ri = 0; $ri -lt $RowCount; $ri++) {
-            $absRow = [int]($MinRow + $ri)
-            for ($ci = 0; $ci -lt $ColCount; $ci++) {
-                $absCol = [int]($MinCol + $ci)
-                $key = ([string]$absRow) + ',' + ([string]$absCol)
-                $valueIndexRow = [int]($valueRowBase + $ri)
-                $valueIndexCol = [int]($valueColBase + $ci)
-                $formulaIndexRow = [int]($formulaRowBase + $ri)
-                $formulaIndexCol = [int]($formulaColBase + $ci)
-                $cellValue = Get-YakuExcelBulkArrayValue -Source $values -IsArray $valuesIsArray -RowIndex $valueIndexRow -ColIndex $valueIndexCol
-
-                if ($null -ne $FormulaSet -and $FormulaSet.ContainsKey($key)) {
-                    $formulaValue = Get-YakuExcelBulkArrayValue -Source $formulas -IsArray $formulasIsArray -RowIndex $formulaIndexRow -ColIndex $formulaIndexCol
-                    if ($null -eq $formulaValue -or -not ($formulaValue -is [string])) {
-                        $typeName = if ($null -eq $formulaValue) { '<null>' } else { try { $formulaValue.GetType().FullName } catch { '' } }
-                        try { Write-YakuLog "Excel writeback bulk box fallback. sheet=$SheetName address=$Address reason=shape-mismatch cell=$key formulaType=$typeName mode=formula-patch targets=$($Items.Count)" 'DEBUG' } catch {}
-                        return $null
-                    }
-                    $out.SetValue([string]$formulaValue, $ri, $ci)
-                    continue
-                }
-
-                if ($targetMap.ContainsKey($key)) {
-                    $targetItem = $targetMap[$key]
-                    $translation = [string]$targetItem.Translation
-                    if (Test-YakuExcelCoercionRiskString -Value $translation) {
-                        if (($cellValue -is [string]) -and (Test-YakuExcelCoercionRiskString -Value ([string]$cellValue))) {
-                            $out.SetValue($null, $ri, $ci)
-                        } elseif (-not (Test-YakuExcelFormulaPatchSafeConstantValue -Value $cellValue)) {
-                            $out.SetValue($null, $ri, $ci)
-                        } else {
-                            $out.SetValue($cellValue, $ri, $ci)
-                        }
-                        $singleItems.Add($targetItem) | Out-Null
-                    } else {
-                        $out.SetValue($translation, $ri, $ci)
-                        $bulkTargetWritten++
-                        try { $bulkItems.Add($targetItem) | Out-Null } catch {}
-                        if (-not [string]::IsNullOrWhiteSpace([string]$OutputFontName)) {
-                            try { $fontAddresses.Add((Get-YakuExcelRangeAddress -StartRow $absRow -StartCol $absCol -EndRow $absRow -EndCol $absCol)) | Out-Null } catch {}
-                        }
-                    }
-                    continue
-                }
-
-                if (($cellValue -is [string]) -and (Test-YakuExcelCoercionRiskString -Value ([string]$cellValue))) {
-                    $out.SetValue($null, $ri, $ci)
-                    $riskyRestores.Add([pscustomobject]@{ Row=$absRow; Col=$absCol; Value=$cellValue }) | Out-Null
-                    if (($riskyRestores.Count + $errorRestores.Count) -gt $MaxRestoreCount) { try { Write-YakuLog "Excel bulk plan aborted early. sheet=$SheetName address=$Address reason=restore-limit restores=$($riskyRestores.Count + $errorRestores.Count) maxRestores=$MaxRestoreCount" 'DEBUG' } catch {}; return $null }
-                    continue
-                }
-                if (-not (Test-YakuExcelFormulaPatchSafeConstantValue -Value $cellValue)) {
-                    $restore = New-YakuExcelErrorValueRestoreRecord -Row $absRow -Col $absCol -Value $cellValue
-                    if ($null -eq $restore) {
-                        $typeName = if ($null -eq $cellValue) { '<null>' } else { try { $cellValue.GetType().FullName } catch { '' } }
-                        $codeText = ''
-                        try { if (Test-YakuExcelFormulaPatchCvErrValue -Value $cellValue) { $codeText = ' code=' + ([string]([int]$cellValue)) } } catch {}
-                        $reasonName = 'error-value'
-                        try { if (Test-YakuExcelFormulaPatchCvErrValue -Value $cellValue) { $reasonName = 'unknown-cverr' } } catch {}
-                        try { Write-YakuLog "Excel writeback bulk box fallback. sheet=$SheetName address=$Address reason=$reasonName cell=$key type=$typeName$codeText mode=formula-patch targets=$($Items.Count)" 'DEBUG' } catch {}
-                        return $null
-                    }
-                    $out.SetValue($null, $ri, $ci)
-                    $errorRestores.Add($restore) | Out-Null
-                    if (($riskyRestores.Count + $errorRestores.Count) -gt $MaxRestoreCount) { try { Write-YakuLog "Excel bulk plan aborted early. sheet=$SheetName address=$Address reason=restore-limit restores=$($riskyRestores.Count + $errorRestores.Count) maxRestores=$MaxRestoreCount" 'DEBUG' } catch {}; return $null }
-                    continue
-                }
-                $out.SetValue($cellValue, $ri, $ci)
-            }
-        }
-        return [pscustomobject]@{ Kind='bulk'; Range=$Range; Property='Formula'; Payload=$out; Written=[int]$bulkTargetWritten; FontAddresses=[string[]]@($fontAddresses.ToArray()); Address=$Address; Area=$Area; Mode='formula-patch'; SingleItems=@($singleItems.ToArray()); RiskyConstantRestores=@($riskyRestores.ToArray()); ErrorValueRestores=@($errorRestores.ToArray()); RiskyTranslationSingles=[int]$singleItems.Count; FormulaCellCount=[int]$formulaCellCount; Rectangles=0; Items=[object[]]@($Items); BulkItems=[object[]]@($bulkItems.ToArray()); StartRow=$MinRow; EndRow=([int]($MinRow + $RowCount - 1)) }
     } catch {
         if ($null -ne $sw) { try { Add-YakuExcelMetricElapsed -Metrics $Metrics -Key 'bulk_read_ms' -Stopwatch $sw } catch {} }
         try { Write-YakuLog "Excel writeback bulk box fallback. sheet=$SheetName address=$Address reason=exception-plan error=$($_.Exception.Message)" 'DEBUG' } catch {}
