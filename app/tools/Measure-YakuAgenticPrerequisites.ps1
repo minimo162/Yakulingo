@@ -2,7 +2,10 @@
     [string[]]$WorkerCounts = @('1','2','4'),
     [int]$ConcurrencyRequests = 4,
     [int]$TimeoutMinutes = 20,
-    [switch]$SkipConcurrency
+    [switch]$SkipConcurrency,
+    [ValidateSet('blind','translation')][string]$JudgeEvidence = 'translation',
+    [ValidateSet('binary','clause_map')][string]$JudgeOutput = 'clause_map',
+    [ValidateRange(1,12)][int]$JudgeBatchSize = 1
 )
 
 $ErrorActionPreference = 'Stop'
@@ -36,7 +39,7 @@ foreach ($case in $cases) {
     $final[$index] = [string]$case.Translation
 }
 $warnings = New-Object System.Collections.Generic.List[object]
-$context = @{Workflow='measure-agentic-catch';AmountNotation='oku';BatchOrdinal=0;TotalBatches=2;TranslatedSoFar=0;UniqueTotal=($items.Count*2);CopilotCalls=0;CompletedMap=@{};JobId=('measure-'+[guid]::NewGuid().ToString('N'))}
+$context = @{Workflow='measure-agentic-catch';AmountNotation='oku';BatchOrdinal=0;TotalBatches=2;TranslatedSoFar=0;UniqueTotal=($items.Count*2);CopilotCalls=0;CompletedMap=@{};JobId=('measure-'+[guid]::NewGuid().ToString('N'));FitBackJudgeEvidence=$JudgeEvidence;FitBackJudgeOutput=$JudgeOutput;FitBackJudgeBatchSize=$JudgeBatchSize}
 $retry = @{}
 $allItems = @($items.ToArray())
 for ($offset=0; $offset -lt $allItems.Count; $offset+=3) {
@@ -82,6 +85,7 @@ $result = [pscustomobject]@{
     misses=@($errorRows | Where-Object {-not $_.detected} | ForEach-Object id)
     false_positive_rate=$falsePositiveRate; false_positives=@($correctRows | Where-Object detected | ForEach-Object id)
     badge=$(if($catchRate -ge 0.9 -and $falsePositiveRate -le 0.1){'意味・数字・読みやすさを点検'}else{'機械とAIの点検を通過'})
+    judge_condition=[ordered]@{evidence=$JudgeEvidence;output=$JudgeOutput;batch_size=$JudgeBatchSize}
     parallel_floor=$parallelFloor
     cases=@($rows.ToArray())
     concurrency=$concurrency
