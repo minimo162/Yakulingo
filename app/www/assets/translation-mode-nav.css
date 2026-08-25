@@ -1,0 +1,30 @@
+﻿/* Shared product switch for the text and Excel translation surfaces. */
+.translation-mode-nav{
+  position:relative;
+  z-index:1;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:4px;
+  padding:4px;
+  border:1px solid #dce1ea;
+  border-radius:11px;
+  background:#eef0f6;
+}
+.translation-mode-nav a{
+  padding:8px 14px;
+  border-radius:8px;
+  color:#596174;
+  text-decoration:none;
+  font-weight:700;
+  white-space:nowrap;
+}
+.translation-mode-nav a[aria-current="page"]{
+  background:#fff;
+  color:#4338ca;
+  box-shadow:0 1px 3px rgba(16,24,40,.12);
+}
+.translation-mode-nav a:focus-visible{
+  outline:3px solid #2563eb;
+  outline-offset:3px;
+}
