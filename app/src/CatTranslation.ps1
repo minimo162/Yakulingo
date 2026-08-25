@@ -737,8 +737,9 @@ function Invoke-YakuCatFitSelection {
 }
 function Invoke-YakuCatFitBackCheck {
     param($Root,[object[]]$Items,[hashtable]$Final,$Settings,[int]$MaxChars,$Warnings,$ProgressState,[hashtable]$Context)
-    # Production defaults are the strongest measured condition. The measurement
-    # tool can override each axis independently to reproduce the old blind design.
+    # Production defaults use the fail-closed candidate condition selected for
+    # issue #169. The measurement tool can override each axis independently to
+    # reproduce the old blind design and record the real-Copilot comparison.
     $judgeEvidence=$(if($Context.ContainsKey('FitBackJudgeEvidence') -and [string]$Context.FitBackJudgeEvidence -eq 'blind'){'blind'}else{'translation'})
     $judgeOutput=$(if($Context.ContainsKey('FitBackJudgeOutput') -and [string]$Context.FitBackJudgeOutput -eq 'binary'){'binary'}else{'clause_map'})
     $judgeBatchSize=$(if($Context.ContainsKey('FitBackJudgeBatchSize')){[Math]::Max(1,[int]$Context.FitBackJudgeBatchSize)}else{1})
