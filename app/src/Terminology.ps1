@@ -325,7 +325,7 @@ function Disable-YakuTerminologyEntry {
     if (-not [bool]$current[0].active) { return [pscustomobject]@{ Added=$false; Reason='already-inactive'; Entry=$current[0] } }
     $entry = New-YakuTerminologyEntry -TermId $TermId -Version ([int]$current[0].version + 1) -Active $false `
         -Scope ([string]$current[0].scope) -ProjectId ([string]$current[0].project_id) -Kind ([string]$current[0].kind) `
-        -Enforcement ([string]$current[0].enforcement) -JapanesePreferred ([string]$current[0].ja.preferred) `
+        -Enforcement ([string]$current[0].enforcement) -Direction ([string]$current[0].direction) -JapanesePreferred ([string]$current[0].ja.preferred) `
         -EnglishPreferred ([string]$current[0].en.preferred) -JapaneseAllowed @($current[0].ja.allowed) `
         -JapaneseForbidden @($current[0].ja.forbidden) -EnglishAllowed @($current[0].en.allowed) `
         -EnglishForbidden @($current[0].en.forbidden) -Note ([string]$current[0].note) -Origin 'cat-term-deactivate' `
