@@ -887,7 +887,8 @@ function Get-YakuExcelSheetTextBlocksFallback {
         # shared, array, and dynamic-array formula representation.
         try { $formulas = $UsedRange.Formula } catch {
             Add-YakuWarning -Warnings $Warnings -Category 'formula-mask-read-failed' -Location $sheetName -Message "数式マスクの一括読取に失敗しました。セル単位HasFormula確認へ切り替えます。error=$($_.Exception.Message)"
-            }
+            $formulas = $null
+        }
         $isScalarUsed = ($rowCount -eq 1 -and $colCount -eq 1)
         $columnLetters = New-YakuColumnLetterCache -StartColumn $startCol -ColumnCount $colCount
         $mergeState = $false
@@ -2424,7 +2425,6 @@ function New-YakuExcelBulkRangeWritePlan {
             return $null
         }
         $values = $null
-        $formulas = $null
         if ($null -ne $Metrics) { $sw = [System.Diagnostics.Stopwatch]::StartNew() }
         $values = $Range.Value2
         if ($null -ne $sw) { Add-YakuExcelMetricElapsed -Metrics $Metrics -Key 'bulk_read_ms' -Stopwatch $sw; $sw = $null }
