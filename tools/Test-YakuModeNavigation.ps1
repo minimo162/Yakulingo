@@ -35,7 +35,7 @@ Assert-YakuContract ($fallbackTopbar -match 'translation-mode-nav') 'The rebuilt
 Assert-YakuContract ($fallbackTopbar -match 'href="/quick"') 'The rebuilt top bar cannot open text translation.'
 Assert-YakuContract ($fallbackTopbar -match 'href="/cat"') 'The rebuilt top bar cannot open Excel translation.'
 
-Assert-YakuContract ($server -match "\$path -in @\('/', '/quick', '/palette'\)") 'The /quick route is not connected to the app page.'
-Assert-YakuContract ($server -match "\$path -eq '/cat'") 'The /cat route is not connected to the app page.'
+Assert-YakuContract ($server -match '\$path -in @\(''/'', ''/quick'', ''/palette''\)') 'The /quick route is not connected to the app page.'
+Assert-YakuContract ($server -match '\$path -eq ''/cat''') 'The /cat route is not connected to the app page.'
 
 Write-Host 'ok - translation mode navigation remains connected in both directions'
