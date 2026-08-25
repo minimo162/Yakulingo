@@ -384,7 +384,7 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
      貼り付け側が断ち切られていた（実測 2026-08-13、窓700px: 中身733px が
      動かせず「英訳の金額」の下端705pxが画面外）。帯を外し、確認作業では
      #cat-instant を出さないようにしたので、view だけで判定してよくなった。 */
-  body.app-cat[data-cat-view="workspace"] { height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] { height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
   .app-cat .premium-excel-surface { flex: 1; min-height: 0; display: flex; flex-direction: column; padding-bottom: 0; }
   .app-cat .hero { flex: 0 0 auto; }
   /* 51px の余白が、そのまま一覧の半行ぶんだった。 */
@@ -528,11 +528,11 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
    場所の一覧は資料しだいで無制限、候補は最大16枚あるので、この2つは
    CSS では消せない。消せると言うのは嘘になる。 */
 @media (min-width: 1320px) {
-  .cat-editor-layout { align-items: stretch; min-height: 0; }\n
+  .cat-editor-layout { align-items: stretch; min-height: 0; }
   /* 状態行の上下 17px は、器が固定の画面では一覧2行ぶんに相当する。 */
   .app-cat #cat-status { margin: var(--space-1) 0; }
   .cat-editor-pane { display: flex; flex-direction: column; min-height: 0; }
-  .cat-grid-wrap { flex: 1; min-height: 0; max-height: none; }\n\n
+  .cat-grid-wrap { flex: 1; min-height: 0; max-height: none; }
 }
 
 /* 絞り込みの帯（表の上）。市販CATと同じく、行を絞る道具は表の直前に置く。 */
@@ -1290,11 +1290,11 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
    従来どおりページが動くほうがよい。 */
 @media (min-width: 1320px) and (max-height: 620px) {
   html, body.app-cat { height: auto; }
-  body.app-cat[data-cat-view="workspace"] { overflow: visible; display: block; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] { overflow: visible; display: block; }
   .app-cat .premium-excel-surface,
   .app-cat .excel-screen,
   .app-cat #cat-workspace { display: block; }
-  .app-cat .workspace-heading { display: flex; }\n
+  .app-cat .workspace-heading { display: flex; }
   .app-cat .cat-grid-wrap { max-height: calc(100dvh - var(--cat-toolbar-h) - 73px); }
 }
 
@@ -1303,7 +1303,7 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 @media (max-width: 1319px) {
   .cat-editor-layout {
     grid-template-columns: minmax(0, 1fr);
-  }\n\n
+  }
 }
 
 @media (max-width: 900px) {
@@ -1682,25 +1682,25 @@ body[data-cat-view="workspace"] #cat-picker { display: none; }
 /* Smartcat-like visual tokens for the wide CAT workspace.  Keep the existing
    controls and contracts, but let the canvas read as a light table rather than
    a stack of dark cards. */
-body.app-cat[data-cat-view="workspace"],
-body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar,
-body.app-cat[data-cat-view="workspace"] .cat-grid,
-body.app-cat[data-cat-view="workspace"] .cat-bottom-dock {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"],
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar,
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid,
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-bottom-dock {
   font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
-body.app-cat[data-cat-view="workspace"] .cat-grid {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid {
   font-size: 16px;
   font-weight: 400;
 }
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody {
   font-weight: 400;
 }
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody .cat-state {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody .cat-state {
   font-weight: 500;
 }
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) .cat-location-main,
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) .cat-state > span {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) .cat-location-main,
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) .cat-state > span {
   font-weight: 400;
 }
 
@@ -1708,7 +1708,7 @@ body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) .cat-
    At this width the toolbar already communicates direction and language, so a
    visible header row would spend a full line repeating that information. */
 @media (min-width: 1320px) {
-  body.app-cat[data-cat-view="workspace"] .cat-grid thead {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid thead {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -1733,14 +1733,14 @@ body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) .cat-
    the check glyph, not just the glyph alone — a bare "–" read as a blank
    control in first-look testing. Column width sizes to fit the longer
    label ("確認済み") in one line without wrapping. */
-body.app-cat[data-cat-view="workspace"] .cat-grid .cat-col-confirm {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid .cat-col-confirm {
   width: 7.25rem;
 }
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody .cat-col-confirm {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody .cat-col-confirm {
   padding-inline: 4px;
   text-align: center;
 }
-body.app-cat[data-cat-view="workspace"] .cat-confirm-control {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-confirm-control {
   width: 100%;
   min-width: 0;
   max-width: none;
@@ -1758,36 +1758,36 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control {
   text-align: left;
   white-space: nowrap;
 }
-body.app-cat[data-cat-view="workspace"] .cat-confirm-control .cat-confirm-mark {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-confirm-control .cat-confirm-mark {
   width: auto;
   font-size: 1.05em;
   line-height: 1;
 }
-body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-confirm-control.is-confirmed {
   border-color: color-mix(in srgb, var(--success) 55%, var(--line-strong));
   background: color-mix(in srgb, var(--surface) 94%, var(--success) 6%);
   color: var(--success);
 }
-body.app-cat[data-cat-view="workspace"] .cat-confirm-control:focus-visible {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-confirm-control:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
   outline-offset: 2px;
 }
 
 /* A selected row is a quiet lavender surface with a one-pixel edge. */
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active {
   outline: 1px solid color-mix(in srgb, var(--accent) 34%, var(--line));
   outline-offset: -1px;
 }
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active > td {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active > td {
   border-top: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
   border-bottom: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
   background: color-mix(in srgb, var(--accent-soft) 72%, var(--surface));
 }
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active textarea[data-cat-input] {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active textarea[data-cat-input] {
   background: var(--surface);
   border-color: var(--line-strong);
 }
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) textarea[data-cat-input] {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) textarea[data-cat-input] {
   background: transparent;
   border-color: transparent;
 }
@@ -1803,31 +1803,31 @@ body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) texta
 /* Wide-screen table skeleton: keep the location cell in the DOM for names and
    assistive technology, but give the bilingual pair the two main columns. */
 @media (min-width: 1320px) {
-  body.app-cat[data-cat-view="workspace"] .cat-workspace {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-workspace {
     margin-top: 0;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid {
     table-layout: fixed;
     width: 100%;
     background: #fff;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid col.cat-col-no {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid col.cat-col-no {
     width: 5.5rem;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid col.cat-col-loc {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid col.cat-col-loc {
     width: 1px;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid col.cat-col-source,
-  body.app-cat[data-cat-view="workspace"] .cat-grid col.cat-col-target {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid col.cat-col-source,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid col.cat-col-target {
     width: calc((100% - 12.75rem - 1px) / 2);
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid col.cat-col-confirm {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid col.cat-col-confirm {
     width: 7.25rem;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid .cat-col-no {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid .cat-col-no {
     width: 5.5rem;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid .cat-col-loc {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid .cat-col-loc {
     width: 1px;
     min-width: 1px;
     max-width: 1px;
@@ -1835,7 +1835,7 @@ body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) texta
     overflow: hidden;
     white-space: nowrap;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid .cat-col-loc > * {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid .cat-col-loc > * {
     display: block;
     width: 1px;
     max-width: 1px;
@@ -1846,44 +1846,44 @@ body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) texta
     font-size: 1px;
     line-height: 1px;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid .cat-col-loc > .cat-card-label {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid .cat-col-loc > .cat-card-label {
     display: none;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid .cat-col-confirm {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid .cat-col-confirm {
     width: 7.25rem;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr > td {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr > td {
     border-bottom: 1px solid #eceaf0;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) > td {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) > td {
     padding-block: 6px;
     background: #fff;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active > td {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active > td {
     padding-block: 0;
     border-top-color: #eceaf0;
     border-bottom-color: #eceaf0;
     border-radius: 0;
     background: #faf8ff;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active > td:first-child,
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active > td:last-child {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active > td:first-child,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active > td:last-child {
     border-radius: 0;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active textarea[data-cat-input] {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active textarea[data-cat-input] {
     min-height: 30px;
     padding-block: 1px;
     background: #fff;
     outline: none;
     box-shadow: 0 0 0 2px rgba(98, 57, 198, .30);
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-target {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-target {
     position: relative;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active textarea[data-cat-input] {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active textarea[data-cat-input] {
     padding-right: 12rem;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-row-flag {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-row-flag {
     position: absolute;
     top: 3px;
     right: 6px;
@@ -1891,12 +1891,12 @@ body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) texta
     margin: 0;
     pointer-events: none;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) textarea[data-cat-input]:focus {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) textarea[data-cat-input]:focus {
     background: #fff;
     outline: none;
     box-shadow: 0 0 0 2px rgba(98, 57, 198, .30);
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-more-row > summary {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-more-row > summary {
     height: 22px;
     min-height: 22px;
     line-height: 20px;
@@ -1908,11 +1908,11 @@ body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) texta
     font-size: var(--font-meta);
     font-weight: 400;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-more-row[open] > summary {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-more-row[open] > summary {
     border-color: #d8d0e7;
     background: #faf8ff;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-row-flag {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-row-flag {
     margin-top: 1px;
     padding: 2px 6px;
     border: 1px solid #e6e4ea;
@@ -1925,24 +1925,24 @@ body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) texta
 
   /* Compact two-line chrome: keep all existing controls, with the filter row
      as a short second line so the editor begins near the Smartcat reference. */
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar {
     gap: 6px;
     padding: 4px 8px;
     border-color: #e6e4ea;
     border-radius: 4px;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-actions {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar .cat-actions {
     gap: 4px;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-actions button,
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-more-actions > summary,
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-doc-switch {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar .cat-actions button,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar .cat-more-actions > summary,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar .cat-doc-switch {
     min-height: 34px;
     padding-block: 3px;
     border-radius: 4px;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar #cat-search,
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar input[type="search"] {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar #cat-search,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar input[type="search"] {
     min-height: 34px;
     height: 34px;
     padding-block: 3px;
@@ -1950,29 +1950,29 @@ body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) texta
     border-radius: 4px;
     background: #f7f6f9;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-toolbar-filters {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar .cat-toolbar-filters {
     gap: 2px 4px;
     padding-top: 3px;
     border-top-color: #e6e4ea;
-  }\n
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-progress,
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-progress-row,
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-save-status {
+  }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar .cat-progress,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar .cat-progress-row,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar .cat-save-status {
     font-size: var(--font-meta);
   }
 
-  body.app-cat[data-cat-view="workspace"] .cat-bottom-dock-bar {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-bottom-dock-bar {
     min-height: 36px;
-  }\n
+  }
 }
 
 @media (min-width: 1320px) {
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar {
     align-items: center;
     gap: 0;
     padding: 0 6px;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar > .cat-actions {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar > .cat-actions {
     align-self: center;
     align-items: center;
     flex-wrap: nowrap;
@@ -1980,13 +1980,13 @@ body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) texta
     max-height: 40px;
     overflow: visible;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar > .cat-actions > *,
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar > .cat-actions > details > summary {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar > .cat-actions > *,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar > .cat-actions > details > summary {
     align-self: center;
     flex: 0 0 auto;
     max-height: 36px;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar > .cat-segment-actions {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar > .cat-segment-actions {
     grid-column: 1 / -1;
     grid-row: auto;
     width: 100%;
@@ -1996,9 +1996,9 @@ body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) texta
     overflow-x: auto;
     overflow-y: hidden;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions .cat-segment-button,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions .cat-segment-revise > summary { min-height: 26px; max-height: 26px; padding-block: 0; }
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar > .cat-toolbar-filters {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-segment-actions .cat-segment-button,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-segment-actions .cat-segment-revise > summary { min-height: 26px; max-height: 26px; padding-block: 0; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar > .cat-toolbar-filters {
     min-height: 28px;
     height: 28px;
     max-height: 28px;
@@ -2007,11 +2007,11 @@ body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) texta
     overflow: hidden;
     padding-block: 0;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar > .cat-toolbar-filters > * { flex: 0 0 auto; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar > .cat-toolbar-filters > * { flex: 0 0 auto; }
 }
 
 @media (min-width: 1320px) {
-  body.app-cat[data-cat-view="workspace"] #cat-export-reviewed {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] #cat-export-reviewed {
     width: 30px;
     min-width: 30px;
     max-width: 30px;
@@ -2019,30 +2019,30 @@ body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active) texta
     overflow: hidden;
     font-size: 0;
   }
-  body.app-cat[data-cat-view="workspace"] #cat-export-reviewed::after { content: '▾'; font-size: 14px; line-height: 1; }
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-actions .secondary-button:disabled,
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar #cat-translate:disabled {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] #cat-export-reviewed::after { content: '▾'; font-size: 14px; line-height: 1; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar .cat-actions .secondary-button:disabled,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar #cat-translate:disabled {
     border-color: #e6e4ea;
     background: #f7f6f9;
-    color: #9a94a8;
+    color: #3c3d45;
     opacity: 1;
   }
 
-  body.app-cat[data-cat-view="workspace"] #cat-docs-pane .cat-docs-pane-head > #cat-switch-project,
-  body.app-cat[data-cat-view="workspace"] #cat-docs-pane .cat-docs-pane-head > #cat-source-update-open { display: block; margin-top: 4px; }
-  body.app-cat[data-cat-view="workspace"] #cat-docs-pane .cat-docs-pane-head > #cat-danger-zone { display: block; margin-top: 8px; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] #cat-docs-pane .cat-docs-pane-head > #cat-switch-project,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] #cat-docs-pane .cat-docs-pane-head > #cat-source-update-open { display: block; margin-top: 4px; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] #cat-docs-pane .cat-docs-pane-head > #cat-danger-zone { display: block; margin-top: 8px; }
 }
 
 /* Auxiliary dock separators/cards stay hairline and quiet too. */
-body.app-cat[data-cat-view="workspace"] .cat-bottom-dock {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-bottom-dock {
   border-color: #e6e4ea;
   border-radius: 4px;
 }
-body.app-cat[data-cat-view="workspace"] .cat-bottom-dock-bar {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-bottom-dock-bar {
   border-bottom-color: #eceaf0;
 }
 
-body.app-cat[data-cat-view="workspace"] .cat-bottom-dock .cat-term-card {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-bottom-dock .cat-term-card {
   border-left-width: 2px;
   border-color: #d8d0e7;
   background: #fff;
@@ -2077,21 +2077,21 @@ body.app-cat[data-cat-view="workspace"] .cat-bottom-dock .cat-term-card {
 .cat-segment-revise { position: relative; }
 .cat-segment-revise[open] > form { position: absolute; z-index: 31; top: 100%; right: 0; min-width: 300px; padding: 8px; border: 1px solid var(--line-strong); background: var(--surface); box-shadow: 0 8px 20px rgba(24,24,27,.12); }
 @media (min-width: 1320px) {
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-actions { gap: 3px; flex-wrap: nowrap; min-width: 0; overflow: hidden; }
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-actions > button,
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar .cat-actions > details > summary { min-height: 32px; padding-block: 2px; }
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions { flex: 1 1 100%; order: 20; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar .cat-actions { gap: 3px; flex-wrap: nowrap; min-width: 0; overflow: hidden; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar .cat-actions > button,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar .cat-actions > details > summary { min-height: 32px; padding-block: 2px; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-segment-actions { flex: 1 1 100%; order: 20; }
 }
 
 /* Final wide-screen density pass: keep the row skeleton close to
    number | source | target | state, without hiding its accessible names. */
 @media (min-width: 1320px) {
-  body.app-cat[data-cat-view="workspace"] .hero { padding-block: 0; }
-  body.app-cat[data-cat-view="workspace"] .cat-grid col.cat-col-no,
-  body.app-cat[data-cat-view="workspace"] .cat-grid .cat-col-no { width: 3.5rem; }
-  body.app-cat[data-cat-view="workspace"] .cat-grid col.cat-col-source { width: 44%; }
-  body.app-cat[data-cat-view="workspace"] .cat-grid col.cat-col-target { width: calc(100% - 3.5rem - 1px - 7.25rem - 44%); }
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-more-row > summary {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .hero { padding-block: 0; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid col.cat-col-no,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid .cat-col-no { width: 3.5rem; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid col.cat-col-source { width: 44%; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid col.cat-col-target { width: calc(100% - 3.5rem - 1px - 7.25rem - 44%); }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-more-row > summary {
     width: 28px;
     min-width: 28px;
     height: 18px;
@@ -2103,13 +2103,13 @@ body.app-cat[data-cat-view="workspace"] .cat-bottom-dock .cat-term-card {
     line-height: 16px;
     justify-content: center;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-more-row > summary::after {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-more-row > summary::after {
     content: '⋯';
     color: var(--muted);
     font-size: 16px;
     line-height: 16px;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-row-flag {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-row-flag {
     max-width: 7rem;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2117,8 +2117,8 @@ body.app-cat[data-cat-view="workspace"] .cat-bottom-dock .cat-term-card {
     padding: 1px 4px;
     font-size: var(--font-meta);
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-more-row[open] > summary::after { color: var(--accent-text); }
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-state > span {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-more-row[open] > summary::after { color: var(--accent-text); }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-state > span {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -2128,8 +2128,8 @@ body.app-cat[data-cat-view="workspace"] .cat-bottom-dock .cat-term-card {
     clip-path: inset(50%);
     white-space: nowrap;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-more-row > .cat-row-details { margin-top: 0; }\n\n\n\n\n\n\n\n\n\n\n
-  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active .cat-more-row > .cat-row-details { margin-top: 0; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-memory-candidate {
     display: grid;
     grid-template-columns: 26px minmax(0, 1fr) minmax(0, 1fr);
     align-items: center;
@@ -2142,28 +2142,28 @@ body.app-cat[data-cat-view="workspace"] .cat-bottom-dock .cat-term-card {
     border-radius: 0;
     background: transparent;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate:hover,
-  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate:focus-visible,
-  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate.is-selected { background: #faf8ff; }\n\n\n\n\n\n
-  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate strong,
-  body.app-cat[data-cat-view="workspace"] .cat-term-card strong { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); clip-path: inset(50%); white-space: nowrap; }
-  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate .cat-cand-src,
-  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate .cat-cand-tgt { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 400; }\n\n
-  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate > .muted,
-  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate > .cat-row-actions { grid-column: 2 / -1; margin: 0; }
-  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate > .muted { display: none; }
-  body.app-cat[data-cat-view="workspace"] .cat-memory-candidate > .cat-row-actions { display: none; }
-  body.app-cat[data-cat-view="workspace"] .cat-term-card { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 12px; min-height: 36px; padding: 4px 6px; border: 0; border-bottom: 1px solid #eceaf0; border-left: 0; border-radius: 0; background: transparent; }\n
-  body.app-cat[data-cat-view="workspace"] .cat-term-card .cat-cand-src,
-  body.app-cat[data-cat-view="workspace"] .cat-term-card .cat-cand-tgt { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-memory-candidate:hover,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-memory-candidate:focus-visible,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-memory-candidate.is-selected { background: #faf8ff; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-memory-candidate strong,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-term-card strong { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); clip-path: inset(50%); white-space: nowrap; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-memory-candidate .cat-cand-src,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-memory-candidate .cat-cand-tgt { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 400; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-memory-candidate > .muted,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-memory-candidate > .cat-row-actions { grid-column: 2 / -1; margin: 0; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-memory-candidate > .muted { display: none; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-memory-candidate > .cat-row-actions { display: none; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-term-card { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 12px; min-height: 36px; padding: 4px 6px; border: 0; border-bottom: 1px solid #eceaf0; border-left: 0; border-radius: 0; background: transparent; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-term-card .cat-cand-src,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-term-card .cat-cand-tgt { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 
 /* Final confirmation token override. */
-body.app-cat[data-cat-view="workspace"] .cat-confirm-control { border-color: #dedbe5; background: #fff; color: #9a94a8; }
-body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { border-color: #00a98f; background: #eefaf7; color: #007a68; }
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-confirm-control { border-color: #dedbe5; background: #fff; color: #3c3d45; }
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { border-color: #00a98f; background: #eefaf7; color: #007a68; }
 
 @media (min-width: 1320px) {
-  body.app-cat[data-cat-view="workspace"] #cat-search-menu > div { min-width: 360px; width: min(380px, 38vw); }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] #cat-search-menu > div { min-width: 360px; width: min(380px, 38vw); }
 }
 .cat-search-title { margin: 0; font-size: 15px; font-weight: 600; }
 .cat-search-section-label { color: var(--muted); font-size: var(--font-meta); font-weight: 600; }
@@ -2174,13 +2174,13 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
 .cat-search-tools .cat-search-replace { margin-top: 2px; font-weight: 600; }
 
 @media (min-width: 1320px) {
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active > td {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active > td {
     border-top-width: 1px;
     border-bottom-width: 1px;
     vertical-align: middle;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr > td { height: 56px; }
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody .cat-state > span {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr > td { height: 56px; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody .cat-state > span {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -2190,7 +2190,7 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
     clip-path: inset(50%);
     white-space: nowrap;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active textarea[data-cat-input] {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active textarea[data-cat-input] {
     min-height: 36px;
     height: auto;
     max-height: none;
@@ -2205,26 +2205,26 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
    segment's icon ribbon, and Row C owns search/filter plus the three primary
    actions. Existing IDs stay in place even when JS moves low-frequency tools. */
 @media (min-width: 1320px) {
-  body.app-cat[data-cat-view="workspace"] .hero {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .hero {
     height: 44px;
     min-height: 44px;
     padding-block: 0;
   }
-  body.app-cat[data-cat-view="workspace"] .brand-block,
-  body.app-cat[data-cat-view="workspace"] .header-actions {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .brand-block,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .header-actions {
     min-height: 44px;
     align-items: center;
   }
-  body.app-cat[data-cat-view="workspace"] .brand-block { gap: 8px; }
-  body.app-cat[data-cat-view="workspace"] .brand { font-size: 1rem; font-weight: 600; }
-  body.app-cat[data-cat-view="workspace"] .version-label { font-size: var(--font-meta); }
-  body.app-cat[data-cat-view="workspace"] .header-actions { gap: 8px; }
-  body.app-cat[data-cat-view="workspace"] .status-block { flex-direction: row; align-items: center; gap: 8px; }
-  body.app-cat[data-cat-view="workspace"] #copilot-window-open { min-height: 28px; padding-block: 0; }
-  body.app-cat[data-cat-view="workspace"] #copilot-prepare-retry { min-height: 28px; padding-block: 0; white-space: nowrap; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .brand-block { gap: 8px; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .brand { font-size: 1rem; font-weight: 600; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .version-label { font-size: var(--font-meta); }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .header-actions { gap: 8px; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .status-block { flex-direction: row; align-items: center; gap: 8px; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] #copilot-window-open { min-height: 28px; padding-block: 0; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] #copilot-prepare-retry { min-height: 28px; padding-block: 0; white-space: nowrap; }
 
-  body.app-cat[data-cat-view="workspace"] .excel-screen { margin-top: 4px; }
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .excel-screen { margin-top: 4px; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar {
     grid-template-columns: minmax(260px, 1fr) minmax(460px, 1.45fr) minmax(400px, auto);
     grid-template-rows: 36px 32px 38px;
     column-gap: 8px;
@@ -2235,7 +2235,7 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
     padding: 0 8px;
     overflow: visible;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-toolbar-document {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-toolbar-document {
     grid-column: 1;
     grid-row: 1;
     min-width: 0;
@@ -2243,22 +2243,22 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
     align-items: center;
     flex-wrap: nowrap;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-toolbar-document .cat-doc-switch {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-toolbar-document .cat-doc-switch {
     min-height: 32px;
     max-height: 32px;
     width: 100%;
     padding-block: 2px;
     border-radius: 3px;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-toolbar-progress {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-toolbar-progress {
     grid-column: 2;
     grid-row: 1;
     min-width: 0;
     height: 32px;
     justify-content: flex-start;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-toolbar-progress .cat-progress-row { min-width: 220px; }
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar > .cat-segment-actions {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-toolbar-progress .cat-progress-row { min-width: 220px; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar > .cat-segment-actions {
     grid-column: 1 / -1;
     grid-row: 2;
     width: 100%;
@@ -2272,7 +2272,7 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
     border-top: 1px solid #eceaf0;
     border-bottom: 1px solid #eceaf0;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-toolbar-search {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-toolbar-search {
     grid-column: 1;
     grid-row: 3;
     width: 100%;
@@ -2281,14 +2281,14 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
     grid-template-columns: auto minmax(0, 1fr);
     gap: 6px;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-toolbar-search input,
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar #cat-search {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-toolbar-search input,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar #cat-search {
     height: 30px;
     min-height: 30px;
     border-radius: 3px;
     background: #f7f6f9;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-toolbar-filters {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-toolbar-filters {
     grid-column: 2;
     grid-row: 3;
     width: 100%;
@@ -2301,17 +2301,17 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
     gap: 2px 4px;
     overflow: hidden;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-toolbar-filters .cat-state-filters { flex-wrap: nowrap; gap: 2px; min-width: 0; }
-  body.app-cat[data-cat-view="workspace"] .cat-toolbar-filters .cat-state-filters button,
-  body.app-cat[data-cat-view="workspace"] .cat-toolbar-menu > summary,
-  body.app-cat[data-cat-view="workspace"] .cat-toolbar-filters > .link-button {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-toolbar-filters .cat-state-filters { flex-wrap: nowrap; gap: 2px; min-width: 0; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-toolbar-filters .cat-state-filters button,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-toolbar-menu > summary,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-toolbar-filters > .link-button {
     min-height: 30px;
     max-height: 30px;
     padding-block: 1px;
     border-radius: 3px;
     white-space: nowrap;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar > .cat-actions {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar > .cat-actions {
     grid-column: 3;
     grid-row: 3;
     display: flex;
@@ -2327,8 +2327,8 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
     flex-wrap: nowrap;
     overflow: visible;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar > .cat-actions > button,
-  body.app-cat[data-cat-view="workspace"] .cat-editor-toolbar > .cat-actions > details > summary {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar > .cat-actions > button,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-editor-toolbar > .cat-actions > details > summary {
     flex: 0 0 auto;
     min-height: 32px;
     max-height: 34px;
@@ -2336,14 +2336,14 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
     border-radius: 3px;
     white-space: nowrap;
   }
-  body.app-cat[data-cat-view="workspace"] #cat-translate {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] #cat-translate {
     min-width: 188px;
     padding-inline: 12px;
     white-space: nowrap;
   }
-  body.app-cat[data-cat-view="workspace"] #cat-export { min-width: 112px; }
-  body.app-cat[data-cat-view="workspace"] #cat-qa-open { min-width: 86px; }
-  body.app-cat[data-cat-view="workspace"] #cat-export-reviewed {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] #cat-export { min-width: 112px; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] #cat-qa-open { min-width: 86px; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] #cat-export-reviewed {
     width: 30px;
     min-width: 30px;
     max-width: 30px;
@@ -2351,19 +2351,19 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
     overflow: hidden;
     font-size: 0;
   }
-  body.app-cat[data-cat-view="workspace"] #cat-export-reviewed::after { content: '▾'; font-size: 14px; line-height: 1; }\n\n
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions .cat-key-help > summary {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] #cat-export-reviewed::after { content: '▾'; font-size: 14px; line-height: 1; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-segment-actions .cat-key-help > summary {
     list-style: none;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions .cat-key-help > summary::-webkit-details-marker { display: none; }
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions .cat-key-help > summary::marker { content: ''; }
-  body.app-cat[data-cat-view="workspace"] .cat-bottom-dock-bar {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-segment-actions .cat-key-help > summary::-webkit-details-marker { display: none; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-segment-actions .cat-key-help > summary::marker { content: ''; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-bottom-dock-bar {
     min-height: 34px;
     height: 34px;
     max-height: 36px;
-  }\n\n
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions .yaku-icon { width: 16px; height: 16px; }
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions .cat-segment-button-label {
+  }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-segment-actions .yaku-icon { width: 16px; height: 16px; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-segment-actions .cat-segment-button-label {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -2372,14 +2372,14 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
     clip: rect(0, 0, 0, 0);
     clip-path: inset(50%);
     white-space: nowrap;
-  }\n\n
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions .cat-segment-status {
+  }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-segment-actions .cat-segment-status {
     flex: 0 0 auto;
     font-size: var(--font-meta);
     white-space: nowrap;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions-dynamic { display: contents; }
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions-dynamic > .cat-segment-button {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-segment-actions-dynamic { display: contents; }
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-segment-actions-dynamic > .cat-segment-button {
     position: relative;
     display: inline-flex;
     flex: 0 0 30px;
@@ -2398,13 +2398,13 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
     color: var(--muted);
     line-height: 1;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions-dynamic > .cat-segment-button:hover,
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions-dynamic > .cat-segment-button:focus-visible {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-segment-actions-dynamic > .cat-segment-button:hover,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-segment-actions-dynamic > .cat-segment-button:focus-visible {
     background: #faf8ff;
     border-color: #d8d0e7;
     color: var(--accent-text);
   }
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions .cat-key-help {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-segment-actions .cat-key-help {
     position: relative;
     display: flex;
     align-items: center;
@@ -2417,7 +2417,7 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
     border-top: 0;
     padding-top: 0;
   }
-  body.app-cat[data-cat-view="workspace"] .cat-segment-actions .cat-key-help > dl {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-segment-actions .cat-key-help > dl {
     position: absolute;
     z-index: 40;
     top: 34px;
@@ -2435,9 +2435,9 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed { bord
   /* The number cell is a locator, not a second state rail. State text and
      exception badges remain in the DOM/title contracts but do not compete with
      the single far-right confirmation control in the wide table. */
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody .cat-col-no .cat-state,
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody .cat-col-no .cat-change-badge,
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody .cat-col-no .cat-review-note-badge {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody .cat-col-no .cat-state,
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody .cat-col-no .cat-change-badge,
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody .cat-col-no .cat-review-note-badge {
     display: none;
   }
 }
@@ -2458,11 +2458,11 @@ body.app-cat[data-cat-view="start"] {
   --yk-r-card: 5px;
   --yk-r-lane: 5px;
   --radius-control: 5px;
-  --accent: #8160d1;
-  --accent-hover: #6f52bc;
-  --accent-text: #6543a9;
+  --accent: #1F3A5F;
+  --accent-hover: #162C48;
+  --accent-text: #1B3455;
   --accent-soft: #faf8ff;
-  --focus: #8160d1;
+  --focus: #1F3A5F;
 }
 
 body.app-cat[data-cat-view="start"] .premium-excel-surface {
@@ -2676,7 +2676,7 @@ body.app-cat[data-cat-view="start"] .quick-inline #quick-submit[disabled] {
 /* The existing table headings retain role/language text for assistive
    technology, but the dense editor does not spend a row on a repeated band. */
 @media (min-width: 901px) {
-  body.app-cat[data-cat-view="workspace"] .cat-grid thead {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid thead {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -2692,72 +2692,72 @@ body.app-cat[data-cat-view="start"] .quick-inline #quick-submit[disabled] {
 
 /* Ordinary rows are one quiet white surface.  The target column is identified
    by the editable control and a one-pixel neutral gutter, not a boxed grid. */
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody td.cat-source,
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody td.cat-target {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody td.cat-source,
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody td.cat-target {
   background: #ffffff;
 }
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody td.cat-target {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody td.cat-target {
   border-left: 1px solid #f0eef3;
 }
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody td.cat-source,
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody td.cat-target {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody td.cat-source,
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody td.cat-target {
   vertical-align: middle;
 }
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody .cat-source-text,
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody textarea[data-cat-input] {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody .cat-source-text,
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody textarea[data-cat-input] {
   font-size: 16px;
   line-height: 20px;
 }
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr > td {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr > td {
   transition: background-color 120ms ease;
 }
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active):hover > td {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active):hover > td {
   background: #fcfbfe;
 }
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active):hover > td.cat-target {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr:not(.is-active):hover > td.cat-target {
   background: #ffffff;
 }
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active {
   outline: 1px solid #e7e0f3;
   outline-offset: -1px;
 }
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active > td {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active > td {
   border-top: 0;
   border-bottom: 0;
   background: #f9f7fc;
 }
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active > td.cat-target {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active > td.cat-target {
   border-left-color: #ece8f2;
 }
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody textarea[data-cat-input] {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody textarea[data-cat-input] {
   border-color: transparent;
   border-radius: 4px;
   background: #ffffff;
   box-shadow: none;
   cursor: text;
 }
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody textarea[data-cat-input]:focus,
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody textarea[data-cat-input]:focus-visible {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody textarea[data-cat-input]:focus,
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody textarea[data-cat-input]:focus-visible {
   border-color: #d7cbea;
   outline: 2px solid #6f52bc;
   outline-offset: 1px;
   box-shadow: 0 0 0 2px rgba(129, 96, 209, .28);
 }
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active textarea[data-cat-input]:focus,
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.is-active textarea[data-cat-input]:focus-visible {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active textarea[data-cat-input]:focus,
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.is-active textarea[data-cat-input]:focus-visible {
   border-color: #d7cbea;
   outline: 2px solid #6f52bc;
   outline-offset: 1px;
   box-shadow: 0 0 0 2px rgba(129, 96, 209, .28);
 }
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody textarea[data-cat-input][aria-invalid="true"] {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody textarea[data-cat-input][aria-invalid="true"] {
   border: 2px solid #b42318;
   border-radius: 4px;
   background: #ffffff;
   padding-left: 4px;
 }
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody textarea[data-cat-input][aria-invalid="true"]:focus,
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody textarea[data-cat-input][aria-invalid="true"]:focus-visible {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody textarea[data-cat-input][aria-invalid="true"]:focus,
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody textarea[data-cat-input][aria-invalid="true"]:focus-visible {
   border-color: #b42318;
   outline: 2px solid #6f52bc;
   outline-offset: 1px;
@@ -2769,7 +2769,7 @@ body.app-cat[data-cat-view="workspace"] .cat-grid tbody textarea[data-cat-input]
    ここでは tr.cat-partial-preview を1つ足して確実に勝たせる。途中は表示のみで
    正本はまだ確定していない（設計判断1）ことを示す控えめな縁だけで、
    aria-invalid（実在する点検指摘）の赤とは別の色にする。 */
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.cat-partial-preview textarea[data-cat-input] {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr.cat-partial-preview textarea[data-cat-input] {
   border-color: var(--accent);
   background: var(--accent-soft);
 }
@@ -2777,13 +2777,13 @@ body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr.cat-partial-preview t
 /* The single far-right confirmation control keeps the original check glyph
    and accessible names.  Unconfirmed is a faint light square; confirmed is
    the same geometry with the established teal treatment. */
-body.app-cat[data-cat-view="workspace"] .cat-confirm-control {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-confirm-control {
   border-style: solid;
   border-color: #dedbe5;
   background: #ffffff;
   color: #5c5668;
 }
-body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-confirm-control.is-confirmed {
   border-style: solid;
   border-color: #00a98f;
   background: #eefaf7;
@@ -2794,27 +2794,27 @@ body.app-cat[data-cat-view="workspace"] .cat-confirm-control.is-confirmed {
      old color rendered. */
   color: #007a68;
 }
-body.app-cat[data-cat-view="workspace"] .cat-confirm-control:focus,
-body.app-cat[data-cat-view="workspace"] .cat-confirm-control:focus-visible {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-confirm-control:focus,
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-confirm-control:focus-visible {
   outline: 2px solid #6f52bc;
   outline-offset: 2px;
   box-shadow: 0 0 0 2px rgba(129, 96, 209, .18);
 }
-body.app-cat[data-cat-view="workspace"] .cat-confirm-control:hover {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-confirm-control:hover {
   border-color: #cfc3e6;
   background: #faf8ff;
 }
 
 /* Keep the blocking boundary ahead of the ordinary-row transparent border
    rule without introducing an icon or a separate issue marker. */
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr[data-cat-row] textarea[data-cat-input][aria-invalid="true"] {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr[data-cat-row] textarea[data-cat-input][aria-invalid="true"] {
   border: 2px solid #b42318;
   border-radius: 4px;
   background: #ffffff;
   padding-left: 4px;
 }
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr[data-cat-row] textarea[data-cat-input][aria-invalid="true"]:focus,
-body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr[data-cat-row] textarea[data-cat-input][aria-invalid="true"]:focus-visible {
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr[data-cat-row] textarea[data-cat-input][aria-invalid="true"]:focus,
+body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr[data-cat-row] textarea[data-cat-input][aria-invalid="true"]:focus-visible {
   border-color: #b42318;
   outline: 2px solid #6f52bc;
   outline-offset: 1px;
@@ -2822,7 +2822,7 @@ body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr[data-cat-row] textare
 }
 
 @media (prefers-reduced-motion: reduce) {
-  body.app-cat[data-cat-view="workspace"] .cat-grid tbody tr > td {
+  body.app-cat:not(.premium-cat)[data-cat-view="workspace"] .cat-grid tbody tr > td {
     transition: none;
   }
 }

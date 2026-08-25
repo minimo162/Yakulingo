@@ -17,6 +17,7 @@
   <link rel="stylesheet" href="/assets/translation-mode-nav.css">
   <link rel="stylesheet" href="/assets/cat-workspace.css">
   <link rel="stylesheet" href="/assets/premium-ui.css">
+  <link rel="stylesheet" href="/assets/ui-review.css?v=20260825">
   <script src="/assets/common.js" defer></script>
   <script src="/assets/cat.js" defer></script>
   <script src="/assets/premium-ui.js" defer></script>
@@ -82,7 +83,7 @@
       <!-- 「最初の画面へ戻る」は外した。起動して最初に出るのがこの画面になったので、
            押すと同じ画面を読み直すだけになる。資料の切り替えは道具の帯の
            「ほかの資料に切り替える」で行う。 -->
-      <div class="workspace-heading"><div><h1 id="cat-page-title">翻訳</h1></div></div>
+      <div class="workspace-heading"><div><h2 id="cat-page-title">翻訳</h2></div></div>
 
       <section id="cat-current-summary" class="sr-only" hidden aria-live="polite">
         <h2 id="cat-current-title"></h2><p id="cat-current-progress"></p><span id="cat-current-save">保存済み</span>
@@ -106,7 +107,7 @@
                枠が1つになったぶんの場所を、その説明に使う（T17 の3点）。
            DeepL も入口は1つで、空の入力領域の中に資料の取り込みを書いている
            （実測 2026-08-16 1912x987: 入力欄の器は角丸16px・内側24px・影 none）。 -->
-      <section id="cat-picker" class="cat-picker" aria-labelledby="cat-page-title">
+      <section id="cat-picker" class="cat-picker" aria-labelledby="premium-start-title">
         <section id="premium-cat-start" class="premium-cat-start" aria-labelledby="premium-start-title">
           <header class="premium-excel-start-heading">
             <span class="premium-eyebrow">Excelレイアウト翻訳</span>
@@ -141,8 +142,8 @@
           <p class="muted">同じ資料の日本語版と英語版を読み込み、対応する文を確認します。確認済みにしただけでは候補にならず、翻訳メモリへ登録した訳だけが次の資料から候補として出ます。</p>
           <p class="muted">PDFファイル自体は送らず、選んだページから取り出した日本語と英語の文をCopilotへ送って対応を探します。</p>
           <div class="align-file-row">
-            <div class="field-label">日本語版（PDF / Excel）<button type="button" id="cat-align-source-file-open" class="secondary-button" aria-label="日本語版（PDF / Excel）を選ぶ">ファイルを選ぶ<input id="cat-align-source-file" type="file" accept=".pdf,.xlsx,.xlsm" hidden></button><span id="cat-align-source-file-name" class="align-file-name muted"></span></div>
-            <div class="field-label">英語版（PDF / Excel）<button type="button" id="cat-align-target-file-open" class="secondary-button" aria-label="英語版（PDF / Excel）を選ぶ">ファイルを選ぶ<input id="cat-align-target-file" type="file" accept=".pdf,.xlsx,.xlsm" hidden></button><span id="cat-align-target-file-name" class="align-file-name muted"></span></div>
+            <div class="field-label">日本語版（PDF / Excel）<button type="button" id="cat-align-source-file-open" class="secondary-button" aria-label="日本語版（PDF / Excel）を選ぶ">ファイルを選ぶ</button><input id="cat-align-source-file" type="file" accept=".pdf,.xlsx,.xlsm" hidden><span id="cat-align-source-file-name" class="align-file-name muted"></span></div>
+            <div class="field-label">英語版（PDF / Excel）<button type="button" id="cat-align-target-file-open" class="secondary-button" aria-label="英語版（PDF / Excel）を選ぶ">ファイルを選ぶ</button><input id="cat-align-target-file" type="file" accept=".pdf,.xlsx,.xlsm" hidden><span id="cat-align-target-file-name" class="align-file-name muted"></span></div>
           </div>
           <p id="cat-align-file-status" class="muted" role="status" aria-live="polite"></p>
           <!-- 範囲を選べるようにする。資料まるごとは Copilot への往復が3桁になり
@@ -184,7 +185,7 @@
                した。押しても作業画面は畳まない。 -->
           <div class="cat-toolbar-document">
             <span id="cat-current-kicker" class="cat-current-kicker">現在の確認作業</span>
-            <button type="button" id="cat-doc-switch" class="cat-doc-switch" aria-haspopup="dialog" title="ほかの資料に切り替える（F7）" aria-keyshortcuts="F7">
+            <button type="button" id="cat-doc-switch" class="cat-doc-switch" title="ほかの資料に切り替える（F7）" aria-keyshortcuts="F7">
               <strong id="cat-toolbar-title"></strong>
               <span id="cat-toolbar-direction" class="muted"></span>
               <span class="cat-doc-switch-caret" aria-hidden="true">▾</span>
@@ -353,7 +354,7 @@
        Excel はセルの位置、Word・貼り付けた文章は段落の順で並べる。
        元のファイルは開かないし、作らない。画面が既に持っている行だけで組む。 -->
   <!-- 資料の切り替え。作業画面に居たまま開き、選ぶとその場で入れ替わる。
-       一覧へ戻ってから選び直す往復をなくすためのもの。 -->\n  
+       一覧へ戻ってから選び直す往復をなくすためのもの。 -->  
   <dialog id="cat-source-update-dialog" class="confirm-dialog cat-source-update-dialog" aria-labelledby="cat-source-update-title">
     <h2 id="cat-source-update-title">原文ファイルの差し替え内容</h2>
     <p id="cat-source-update-summary" class="muted" role="status"></p>

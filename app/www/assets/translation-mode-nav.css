@@ -21,10 +21,10 @@
 }
 .translation-mode-nav a[aria-current="page"]{
   background:#fff;
-  color:#4338ca;
+  color:#1f3a5f;
   box-shadow:0 1px 3px rgba(16,24,40,.12);
 }
 .translation-mode-nav a:focus-visible{
-  outline:3px solid #2563eb;
+  outline:3px solid #1f3a5f;
   outline-offset:3px;
 }

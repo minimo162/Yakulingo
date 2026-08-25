@@ -412,6 +412,7 @@
   }
   function deleteSavedWork(id) {
     var item = premiumState.recent.filter(function (row) { return row.id === id; })[0];
+    if (item && window.YakuCat && typeof YakuCat.requestDelete === 'function') { YakuCat.requestDelete(id, item.fileName, item.revision); return; }
     var confirmMessage = item && item.source === 'align'
       ? '「' + item.fileName + '」の過去訳の対応確認を削除します。元のPDFは削除しません。'
       : item ? '「' + item.fileName + '」の途中保存を削除します。元のExcelは削除しません。' : '';
@@ -481,7 +482,7 @@
     primary.innerHTML = ''; detailContent.innerHTML = '';
     var primaryNodes = nodes.filter(function (node) { return node.hasAttribute('data-cat-confirm') || node.hasAttribute('data-cat-unconfirm'); });
     var detailNodes = nodes.filter(function (node) { return primaryNodes.indexOf(node) < 0; });
-    if(model&&!one('[data-premium-quick-handoff]',primary)){var q=create('button','secondary-button');q.type='button';q.setAttribute('data-premium-quick-handoff','1');q.textContent='文章翻訳で補う';q.addEventListener('click',function(){var x={index:model.index,source:model.source,location:model.location,cell:model.location,return_url:location.pathname+location.search};try{sessionStorage.setItem('yakuQuickHandoff',JSON.stringify(x))}catch(_){}location.assign('/quick?from=excel')});primary.appendChild(q)}
+    if(model&&!one('[data-premium-quick-handoff]',primary)){var q=create('button','secondary-button');q.type='button';q.setAttribute('data-premium-quick-handoff','1');q.textContent='文章翻訳で補う';q.addEventListener('click',function(){var x={index:model.index,project_id:model.row?(one('textarea[data-cat-input]',model.row).getAttribute('data-cat-project-id')||''):'',source:model.source,location:model.location,cell:model.location,return_url:location.pathname+location.search};try{sessionStorage.setItem('yakuQuickHandoff',JSON.stringify(x))}catch(_){}location.assign('/quick?from=excel')});primary.appendChild(q)}
     primaryNodes.forEach(function (node) {
       var label = one('.cat-segment-button-label', node);
       if (node.hasAttribute('data-cat-confirm')) {
@@ -624,7 +625,7 @@
     var active = one('#cat-grid-body tr.is-active'); if (active) { var model = rowModel(active), cell = model.location.match(/(?:^|[,!\s])([A-Z]{1,3}\d+)$/i); if (el('premium-active-cell')) el('premium-active-cell').textContent = cell ? cell[1].toUpperCase() : ((Number(model.index) + 1) + '行目'); if (el('premium-active-location')) el('premium-active-location').textContent = model.location || '選択中のセル'; var stateBadge = el('premium-editor-risk'); if (stateBadge) { stateBadge.textContent = fitRowStatus(model); stateBadge.classList.toggle('is-fit', !model.blocking && model.reviewed); stateBadge.classList.toggle('is-risk', !!model.blocking); } }
     updatePremiumStageState(total, counts, reviewed, untranslated); preparePremiumRowActions(); renderFitRows(); syncTopActionStates(); consumeQuickReturn();
   }
-  function consumeQuickReturn(){var r='';try{r=sessionStorage.getItem('yakuQuickReturn')||''}catch(_){}if(!r)return;var d;try{d=JSON.parse(r)}catch(_){try{sessionStorage.removeItem('yakuQuickReturn')}catch(__){}return}var row=one('#cat-grid-body [data-cat-row="'+String(d.index||'')+'"]'),i=row&&one('textarea[data-cat-input]',row);if(!i)return;i.value=String(d.translation||'');i.dispatchEvent(new Event('input',{bubbles:true}));i.dispatchEvent(new Event('change',{bubbles:true}));try{sessionStorage.removeItem('yakuQuickReturn')}catch(_){}showToast('文章翻訳の訳文をExcel作業へ戻しました。')}
+  function consumeQuickReturn(){var r='';try{r=sessionStorage.getItem('yakuQuickReturn')||''}catch(_){}if(!r)return;var d;try{d=JSON.parse(r)}catch(_){try{sessionStorage.removeItem('yakuQuickReturn')}catch(__){}return}var row=one('#cat-grid-body [data-cat-row="'+String(d.index||'')+'"]'),i=row&&one('textarea[data-cat-input]',row),source=row&&textOf(one('.cat-source-text',row));if(!i)return;var sameProject=String(i.getAttribute('data-cat-project-id')||'')===String(d.project_id||''),sameSource=String(source||'').trim()===String(d.source||'').trim(),empty=!String(i.value||'').trim();try{sessionStorage.removeItem('yakuQuickReturn')}catch(_){}if(!sameProject||!sameSource){showToast('元のExcel作業または原文が変わったため、訳文は戻しませんでした。','error');return}if(!empty){showToast('訳文がすでに入力されているため、上書きしませんでした。','error');return}i.value=String(d.translation||'');i.dispatchEvent(new Event('input',{bubbles:true}));i.dispatchEvent(new Event('change',{bubbles:true}));showToast('文章翻訳の訳文をExcel作業へ戻しました。')}
   function cancelPremiumRowWait() {
     if (!premiumRowWait) return;
     premiumRowWait.observer.disconnect();
@@ -848,7 +849,7 @@
        the premium summary/list mutations produced by refreshWorkspaceUi(),
        causing a self-sustaining redraw loop. */
     [el('cat-grid-body'), el('cat-editor-toolbar')].forEach(function (node) {
-      if (node) new MutationObserver(refresh).observe(node, { childList: true, subtree: true, attributes: true, characterData: true });
+      if (node) new MutationObserver(refresh).observe(node, { childList: true, subtree: true });
     });
     new MutationObserver(syncCatMode).observe(document.body, { attributes: true, attributeFilter: ['data-cat-view', 'data-cat-source'] });
     syncCatMode();

@@ -3,7 +3,8 @@
   var ready = false, busy = false, project = null, pendingDirection = null, uploaded = null, directFilePath = '';
   var alignExcelHandles = { source: '', target: '' };
   var recentSnapshot = null, recentRequest = null, recentRequestOwner = false;
-  var dirty = new Map(), saveChain = Promise.resolve(), jobTimer = null, jobContext = null, candidateSeq = 0;
+  var dirty = new Map(), saveChain = Promise.resolve(), jobTimer = null, jobContext = null, candidateSeq = 0, cancelRequestedJobId = '';
+  var alignReadEpoch = { source: 0, target: 0, pair: 0 };
   var deleteTarget = null, preflightScope = null, jobSerial = 0, viewEpoch = 0, outputScope = null;
   var fileLoadingOwner = 0;
   var activeSegmentId = '', activeIndex = -1, currentFilter = 'actionable', currentLocation = 'all', currentChange = 'all';
@@ -52,7 +53,7 @@
     var node = el('cat-status');
     node.textContent = error ? humanMessage(text) : (text || '');
     node.classList.toggle('alert-inline', !!error);
-    if (error && text) YakuCommon.focus(node);
+    /* aria-live announces asynchronous failures without stealing the editor caret. */
   }
   /* 保存できているのは既定の状態なので、毎回言わない。言うのは、まだ保存できて
      いないときだけにする（2026-08-12）。読み上げ用の要約には従来どおり入れる。 */
@@ -213,7 +214,7 @@
     closeTextOutput(); el('cat-text-output').removeAttribute('data-cat-output-project');
     el('cat-output-name').textContent = ''; el('cat-text-output-value').value = ''; el('cat-text-output-note').textContent = '';
   }
-  function post(action, body, mutate, scope) {
+  function post(action, body, mutate, scope, keepalive) {
     body = Object.assign({}, body || {});
     var requestScope = scope || currentScope();
     if (requestScope && !body.id && ['resume','recent','open','from-prior-version'].indexOf(action) < 0) body.id = requestScope.id;
@@ -231,7 +232,7 @@
       }
       body.idempotency_key = pendingMutationKeys[requestKey];
     }
-    return YakuCommon.post('/api/cat/' + action, body).then(function (result) {
+    return YakuCommon.json('/api/cat/' + action, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), keepalive: !!keepalive }).then(function (result) {
       if (requestKey) delete pendingMutationKeys[requestKey];
       return result;
     });
@@ -1309,7 +1310,7 @@
   }
   function resume(id) { var epoch = ++viewEpoch; setBusy(true); status('続きの作業を開いています…'); return post('resume', { project_id: id }, false, null).then(function (data) { if (epoch === viewEpoch) render(data, true); }).catch(function (error) { if (epoch !== viewEpoch) return; setBusy(false); status(error.message, true); }); }
 
-  function commit(input) {
+  function commit(input, keepalive) {
     if (!input) return Promise.resolve();
     var index = Number(input.getAttribute('data-cat-input')), value = input.value;
     var projectId = input.getAttribute('data-cat-project-id') || '';
@@ -1319,7 +1320,7 @@
     saveChain = saveChain.catch(function () {}).then(function () {
       if (!project || String(project.id || '') !== projectId) return { stale: true };
       var requestScope = currentScope();
-      return post('segment', { index: index, text: value }, true, requestScope).then(function (data) { return { data: data, scope: requestScope }; });
+      return post('segment', { index: index, text: value }, true, requestScope, keepalive).then(function (data) { return { data: data, scope: requestScope }; });
     }).then(function (packet) {
       if (!packet || packet.stale || !scopeIsCurrent(packet.scope, true) || !packet.data || String(packet.data.id || '') !== projectId) return packet && packet.data;
       project = packet.data;
@@ -1344,7 +1345,7 @@
     });
     return saveChain;
   }
-  function flush() { var inputs = Array.from(document.querySelectorAll('[data-cat-input]')).filter(function (input) { return dirty.has(dirtyKey(input.getAttribute('data-cat-project-id'), Number(input.getAttribute('data-cat-input')))); }); var chain = Promise.resolve(); inputs.forEach(function (input) { chain = chain.then(function () { return commit(input); }); }); return chain; }
+  function flush(keepalive) { var inputs = Array.from(document.querySelectorAll('[data-cat-input]')).filter(function (input) { return dirty.has(dirtyKey(input.getAttribute('data-cat-project-id'), Number(input.getAttribute('data-cat-input')))); }); var chain = Promise.resolve(); inputs.forEach(function (input) { chain = chain.then(function () { return commit(input, keepalive); }); }); return chain; }
   function mutate(action, body, message) {
     var requestScope = null;
     return flush().then(function () {
@@ -1358,7 +1359,7 @@
 
   function startJobHtml(html, context) {
     el('cat-job').innerHTML = html; var node = el('cat-job').querySelector('[data-yaku-job-id]'); if (!node) throw new Error('翻訳を始められませんでした。1分ほど待ってから、もう一度お試しください。');
-    context = context || {}; context.token = ++jobSerial; context.startedAt = Date.now();
+    context = context || {}; context.token = ++jobSerial; context.startedAt = Date.now(); cancelRequestedJobId = '';
     /* 部分結果先出し。受け取った checkpoint 行を、差分カーソルの分母として
        ここへ積む(サーバの partial_rows は毎回「N件目以降」だけを返す)。
        プロジェクト状態は変えない・表示のみ(設計判断1・2)。 */
@@ -1450,7 +1451,7 @@
       workerLine +
       '<div class="job-bottomline"><div class="job-meta">' + (detail ? esc(detail) : 'Copilotの返事を待っています。') +
       '<br><span class="job-elapsed">' + esc(elapsedLabel(startedAt)) + '</span>' + partialLine + '</div>' +
-      '<button type="button" class="secondary-button job-cancel" data-yaku-cancel-job="' + esc(id) + '">翻訳をやめる</button></div>' +
+      '<button type="button" class="secondary-button job-cancel" data-yaku-cancel-job="' + esc(id) + '"' + (cancelRequestedJobId === String(id) ? ' disabled' : '') + '>' + (cancelRequestedJobId === String(id) ? 'やめています…' : '翻訳をやめる') + '</button></div>' +
       '</div></div>';
   }
   /* 別のアプリで仕事をしていても、終わったことに気づけるようにする。
@@ -1482,8 +1483,8 @@
         if (jobContext && jobContext.type === 'translate' && String(data.kind || '') === 'cat') jobContext.maskedCount = Number(data.masked_count || 0);
         setJobTitle('✔ 翻訳が終わりました'); finishJob(id, token); return;
       }
-      if (data.mode === 'cancelled') { setJobTitle(''); setBusy(false); el('cat-job').innerHTML = ''; status('翻訳をやめました。ここまでにできた訳文は保存されています。「Copilotで未訳を翻訳」を押すと続きから再開できます。'); return; }
-      if (['error','failed','interrupted'].indexOf(data.mode) >= 0) { setJobTitle(''); setBusy(false); status(data.detail || '翻訳が途中で止まりました。ここまでにできた訳文は保存されています。もう一度「Copilotで未訳を翻訳」を押すと、続きから再開します。', true); return; }
+      if (data.mode === 'cancelled') { cancelRequestedJobId = ''; setJobTitle(''); setBusy(false); el('cat-job').innerHTML = ''; status('翻訳をやめました。ここまでにできた訳文は保存されています。「Copilotで未訳を翻訳」を押すと続きから再開できます。'); return; }
+      if (['error','failed','interrupted'].indexOf(data.mode) >= 0) { cancelRequestedJobId = ''; setJobTitle(''); setBusy(false); status(data.detail || '翻訳が途中で止まりました。ここまでにできた訳文は保存されています。もう一度「Copilotで未訳を翻訳」を押すと、続きから再開します。', true); return; }
       try {
         el('cat-job').innerHTML = jobHtml(id, data, startedAt);
         setJobTitle(Math.round(Number(data.progress) || 0) + '% 翻訳中');
@@ -2189,7 +2190,7 @@
     var host = el('cat-placeable-picker');
     if (!host) return;
     host.innerHTML = items.map(function (item, position) {
-      return '<button type="button" class="cat-placeable" data-cat-placeable="' + position + '" data-cat-placeable-text="' + esc(item.text) + '">' +
+      return '<button type="button" role="option" aria-selected="false" class="cat-placeable" data-cat-placeable="' + position + '" data-cat-placeable-text="' + esc(item.text) + '">' +
         '<span class="cat-placeable-key" aria-hidden="true">' + (position + 1) + '</span>' +
         '<span class="cat-placeable-text">' + esc(item.text) + '</span></button>';
     }).join('');
@@ -2953,7 +2954,7 @@
     /* 通常の終了では確認を出さない。画面が隠れる直前に打ちかけを保存し、
        翻訳中の終了確認だけはcommon.jsが担当する。 */
     document.addEventListener('visibilitychange', function () {
-      if (document.visibilityState === 'hidden' && !busy) { try { flush(); } catch (_) {} }
+      if (document.visibilityState === 'hidden' && !busy) { try { flush(true); } catch (_) {} }
     });
     document.querySelectorAll('[data-cat-direction]').forEach(function (button) { button.addEventListener('click', function () { el('cat-direction-choice').hidden = true; if (pendingDirection) pendingDirection(button.getAttribute('data-cat-direction')); }); });
     /* 過去の日英資料の入口。PDF を読むには WebAssembly が要り、それは
@@ -2970,11 +2971,13 @@
     function readPdfInto(input, side, label) {
       var file = input.files && input.files[0];
       if (!file) return;
+      var selectionEpoch = ++alignReadEpoch[side]; alignReadEpoch.pair++; alignExcelHandles[side] = '';
       if (/\.(xlsx|xlsm)$/i.test(String(file.name || ''))) {
         var statusNode = el('cat-align-file-status');
         statusNode.hidden = false; statusNode.textContent = label + 'のExcelを読み込んでいます…';
         el('cat-align-ranges').hidden = true;
         YakuCommon.upload('/api/upload', file).then(function (data) {
+          if (selectionEpoch !== alignReadEpoch[side]) return null;
           if (!data || !data.file_handle) throw new Error('Excelを受け付けられませんでした。');
           alignExcelHandles[side] = String(data.file_handle);
           el('cat-align-' + side + '-file-name').textContent = file.name;
@@ -2983,14 +2986,17 @@
             statusNode.textContent = 'もう一方のExcelファイルを選んでください。'; updateAlignEstimate(); return null;
           }
           statusNode.textContent = '2つのExcelから対訳候補を抽出しています…';
-          return YakuCommon.post('/api/cat/align-files', { source_file_handle:alignExcelHandles.source, target_file_handle:alignExcelHandles.target });
+          var pairEpoch = ++alignReadEpoch.pair, sourceHandle = alignExcelHandles.source, targetHandle = alignExcelHandles.target;
+          return YakuCommon.post('/api/cat/align-files', { source_file_handle:sourceHandle, target_file_handle:targetHandle }).then(function (result) { return { result: result, pairEpoch: pairEpoch, sourceHandle: sourceHandle, targetHandle: targetHandle }; });
         }).then(function (data) {
-          if (!data) return;
+          if (!data || data.pairEpoch !== alignReadEpoch.pair || data.sourceHandle !== alignExcelHandles.source || data.targetHandle !== alignExcelHandles.target) return;
+          data = data.result;
           el('cat-align-source').value = String(data.source_text || '');
           el('cat-align-target').value = String(data.target_text || '');
           statusNode.textContent = '日本語 ' + Number(data.source_count || 0) + '件 / 英語 ' + Number(data.target_count || 0) + '件を取得しました。';
           updateAlignEstimate();
         }).catch(function (error) {
+          if (selectionEpoch !== alignReadEpoch[side]) return;
           alignExcelHandles[side] = '';
           statusNode.textContent = label + 'を読めませんでした。' + (error && error.message ? error.message : '');
           updateAlignEstimate();
@@ -3165,8 +3171,9 @@
         });
       }
       if (button.hasAttribute('data-yaku-cancel-job')) {
+        if (cancelRequestedJobId === String(button.getAttribute('data-yaku-cancel-job') || '')) return;
         if (!window.confirm('翻訳をやめますか？\n\nここまでにできあがった訳文は保存されています。\nあとで「Copilotで未訳を翻訳」を押すと、続きから再開できます。')) return;
-        button.disabled = true; button.textContent = 'やめています…';
+        cancelRequestedJobId = String(button.getAttribute('data-yaku-cancel-job') || ''); button.disabled = true; button.textContent = 'やめています…';
         return YakuCommon.post('/api/cancel-translation', { job_id: button.getAttribute('data-yaku-cancel-job') })
           .catch(function (error) { status(error.message, true); });
       }
@@ -3405,6 +3412,13 @@
   /* 貼り付け欄は最初の画面の中にある（cat.html）。中身は quick-page.js が持つ。
      状態としては出し入れしないので、ここで受けるのは「最初の画面へ戻して
      入力欄を使えるようにする」ことだけ。 */
+  function requestDelete(id, name, expectedRevision) {
+    if (busy || !id) return;
+    deleteTarget = { id: String(id), revision: Number(expectedRevision) || 0, name: String(name || 'この翻訳作業'), fromList: true };
+    el('cat-delete-name').textContent = deleteTarget.name;
+    var dialog = el('cat-delete-dialog'); dialog.returnValue = 'cancel'; dialog.showModal();
+  }
+
   function bindInstant() {
     window.addEventListener('yaku-instant-open', function () {
       if (el('cat-workspace').hidden) return;
@@ -3480,6 +3494,8 @@
     navigateStart: navigateStart,
     getPremiumSnapshot: getPremiumSnapshot,
     resave: function () { return flush(); },
+    requestDelete: requestDelete,
+    hasUnsavedChanges: function () { return dirty.size > 0; },
     explainOutput: function () { var message = outputGuidance(); if (message) status(message, true); return message; }
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
