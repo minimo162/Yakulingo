@@ -100,6 +100,9 @@ function New-YakuCatProtectedDocumentReviewRequest {
         $records.Add([ordered]@{segment_alias=$alias;source=[string]$segment.Text;target=[string]$publication.Text})|Out-Null
     }
     $original=@($records.ToArray())|ConvertTo-Json -Depth 4 -Compress
+    # Windows PowerShell 5.1 escapes these characters as \uXXXX. Decode them
+    # before numeric masking so the hexadecimal digits cannot become tokens.
+    $original=$original.Replace('\u0027',"'").Replace('\u0026','&').Replace('\u003c','<').Replace('\u003C','<').Replace('\u003e','>').Replace('\u003E','>')
     if([string]::IsNullOrWhiteSpace($original)){throw 'CAT_REVIEW_TEXT_EMPTY'}
     $mask=New-YakuNumericMaskMap -Text $original -Root $Root -Direction ([string]$Project.Direction) -Location 'document-review'
     $field=[pscustomobject]@{Name='review_sidecar';OriginalText=$original;ProtectedText=[string]$mask.Text;NumericMaskMaps=@($mask.Map)}
