@@ -2310,7 +2310,7 @@
     if (!window.confirm('この候補を、今後は出さないようにしますか？\n\nすでにこの候補を使った行の訳文は、そのまま残ります。')) return Promise.resolve();
     var requestScope=currentScope(), index=Number(button.getAttribute('data-cat-index'));
     if(!requestScope)return Promise.resolve(); setBusy(true); status('この候補を今後は出さない設定にしています…');
-    return post('tm-delete',{index:index,reference_id:button.getAttribute('data-cat-tm-delete')||''},true,requestScope).then(function(){setBusy(false);status('この候補は、今後は出しません。');candidates(index);}).catch(function(error){setBusy(false);status(error.message,true);});
+    return post('tm-delete',{index:index,reference_id:button.getAttribute('data-cat-tm-delete')||''},true,requestScope).then(function(){setBusy(false);button.disabled=true;button.hidden=true;status('この候補は、今後は出しません。');}).catch(function(error){setBusy(false);status(error.message,true);});
   }
   function exportProject() {
     var requestScope = null, finalRequested = !!el('cat-export-final-review').checked, finalReason = String(el('cat-export-final-reason').value || '').trim();
