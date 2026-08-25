@@ -4392,7 +4392,8 @@ function Write-YakuExcelTranslations {
         # 書込先を読む（Excel が開く前なので、まだ原本と同じバイト列である）。
         [AllowNull()][string]$SourcePath = $null,
         # 出力書体の判断に要る。既定は従来どおり to_en。
-        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en'
+        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
+        [ValidateRange(0,2147483647)][int]$UnconfirmedCount = 0
     )
     $ctx = $null
     $excel = $null
@@ -4641,10 +4642,12 @@ function Write-YakuExcelTranslations {
             }
         }
         try { Write-YakuLog "Writeback write phase done. sheets=$applySheetTotal seconds=$([Math]::Round(((Get-Date) - $writeStarted).TotalSeconds, 2))" 'INFO' } catch {}
-        # ブックの中へ見えない定義名を1つ足して下書きの印にしていたが、
-        # 2026-08-13 に利用者判断で外した（「そもそもその機能自体いらない」）。
-        # 下書きであることは、ファイル名の DRAFT_ が示す。原本に無いものを
-        # ブックへ足さないほうが、資料として素直である。
+        # Keep the required unconfirmed count inside the workbook without
+        # changing sheets, cells, formulas, or print layout.
+        if ($UnconfirmedCount -gt 0) {
+            try { $workbook.BuiltinDocumentProperties.Item('Comments').Value = ('YakuLingo: 未確認 ' + $UnconfirmedCount + ' 行') }
+            catch { Add-YakuWarning -Warnings $Warnings -Category 'unconfirmed-notice-unavailable' -Location 'workbook' -Message '未確認件数をファイル情報へ書き込めませんでした。' }
+        }
         Set-YakuExcelWritebackProgress -ProgressState $ProgressState -SheetDone $applySheetTotal -SheetTotal $applySheetTotal -DetailPrefix '保存中'
         $saveStarted = Get-Date
         Set-YakuExcelAutomaticCalculationForOutput -Application $excel -Workbook $workbook
@@ -5119,7 +5122,8 @@ function Write-YakuFileTranslations {
         # 無音の欠陥に戻る（これがこの直しの発端である）。
         [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
         [AllowNull()]$ProgressState = $null,
-        [switch]$FailOnIncomplete
+        [switch]$FailOnIncomplete,
+        [ValidateRange(0,2147483647)][int]$UnconfirmedCount = 0
     )
     $kind = Get-YakuSupportedFileKind -Path $InputPath
     Add-YakuInputReadOnlyNotice -Path $InputPath -Warnings $Warnings
@@ -5144,7 +5148,7 @@ function Write-YakuFileTranslations {
             if ($hasWriteTargets) {
                 # run（セル内部分書式）は**原本から**読む。書込先の複写は、この先で
                 # Excel が握る。原本は CAT の書き出しが直前に SHA-256 を照合している。
-                $writeResult = Write-YakuExcelTranslations -OutputPath $candidatePath -Blocks $Blocks -TranslationByBlockId $TranslationByBlockId -Warnings $Warnings -Settings $Settings -BaselinePath $baselinePath -ProgressState $ProgressState -SourcePath $InputPath -Direction $Direction
+                $writeResult = Write-YakuExcelTranslations -OutputPath $candidatePath -Blocks $Blocks -TranslationByBlockId $TranslationByBlockId -Warnings $Warnings -Settings $Settings -BaselinePath $baselinePath -ProgressState $ProgressState -SourcePath $InputPath -Direction $Direction -UnconfirmedCount $UnconfirmedCount
             } else {
                 try { Write-YakuLog "Writeback skipped; no translated blocks. jobId=$jobId" 'INFO' } catch {}
                 $writeResult = [pscustomobject]@{ WriteTargetCount=0; WrittenCount=0; SkippedCount=0 }
