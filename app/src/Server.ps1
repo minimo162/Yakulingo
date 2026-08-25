@@ -3044,7 +3044,7 @@ function Invoke-YakuRoute {
                     $originLocation = ([string]$segment.Location).Trim()
                     if ([string]::IsNullOrWhiteSpace($originLocation)) { $originLocation = '行 ' + [string]($index + 1) }
                     $termParams = @{
-                        Scope='personal'; Kind='cell_exact'; Enforcement='advisory'; Origin='cat-cell-exact-editor'
+                        Scope='personal'; Kind='cell_exact'; Enforcement='advisory'; Direction=[string]$project.Direction; Origin='cat-cell-exact-editor'
                         OriginProjectId=[string]$project.Id; OriginFileName=$originFile; OriginSegmentId=[string]$segment.SegmentId
                         OriginLocation=$originLocation; OriginRevision=[int]$project.Revision
                     }
