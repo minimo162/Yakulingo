@@ -1476,7 +1476,9 @@ function Get-YakuCatQcWarningCodes {
         'currency-mismatch',
         'accounting-polarity-mismatch',
         'label-not-in-glossary',
-        'paired-delimiter-mismatch'
+        'paired-delimiter-mismatch',
+        'fit-overflow',
+        'acronym-inconsistency'
     )
 }
 
@@ -1613,7 +1615,6 @@ function Get-YakuCatOutputPreflight {
 
     $reasonText = [ordered]@{
         'project-empty' = '翻訳する行がありません。'
-        'segment-not-reviewed' = 'まだ確認していない行があります。左の「残り」を押すと、その行だけ表示できます。'
         # segment-qc-failed はここでは作らない。18種を1文に丸めると
         # 「用語で止まったのに数字を見に行かされる」ため、
         # Get-YakuCatQcBlockerMessages が種別ごとの文へ分ける。
@@ -1661,7 +1662,7 @@ function Get-YakuCatOutputPreflight {
         $sourceName = $(try { [IO.Path]::GetFileNameWithoutExtension([string]$Project.FileName) } catch { '' })
         if ([string]::IsNullOrWhiteSpace($sourceName)) { $sourceName = $(try { [IO.Path]::GetFileNameWithoutExtension([string]$Project.Path) } catch { 'translated' }) }
         if ([string]::IsNullOrWhiteSpace($sourceName)) { $sourceName = 'translated' }
-        $safeName = ($sourceName -replace '[\\/:*?"<>|]', '_').Trim()
+        $safeName = New-SafeFileName -FileName $sourceName
         if ([string]::IsNullOrWhiteSpace($safeName)) { $safeName = 'translated' }
         $extension = if ([string]::IsNullOrWhiteSpace($format)) { '' } else { '.' + $format }
         $outputName = 'DRAFT_' + $safeName + '_translated' + $extension
@@ -5559,6 +5560,21 @@ function Undo-YakuCatSearchReplace {
     return [pscustomobject]@{ Restored = [int]$snapshot.affected_count }
 }
 
+function ConvertTo-YakuCatValidIndexes {
+    param([AllowNull()][object[]]$Indexes, [ValidateRange(0,2147483647)][int]$Count)
+    $valid = New-Object System.Collections.Generic.List[int]
+    $seen = New-Object 'System.Collections.Generic.HashSet[int]'
+    foreach ($one in @($Indexes)) {
+        if ($null -eq $one) { continue }
+        $raw = ([string]$one).Trim()
+        if ($raw -notmatch '^\d+$') { continue }
+        $parsed = 0
+        if (-not [int]::TryParse($raw, [ref]$parsed)) { continue }
+        if ($parsed -ge 0 -and $parsed -lt $Count -and $seen.Add($parsed)) { $valid.Add($parsed) }
+    }
+    return [int[]]$valid.ToArray()
+}
+
 function Get-YakuCatSearchReplacePlan {
     <#
       一括置換の計画。**何も書き換えない。** 押す前に対象行数を告げるためと、
@@ -5586,10 +5602,8 @@ function Get-YakuCatSearchReplacePlan {
     $replacement = ConvertTo-YakuCatSearchReplacement -Replace $Replace -UseRegex $UseRegex
     $segs = @($Project.Segments)
     $wanted = New-Object 'System.Collections.Generic.HashSet[int]'
-    foreach ($one in @($Indexes)) {
-        $parsed = -1
-        try { $parsed = [int]$one } catch { $parsed = -1 }
-        if ($parsed -ge 0 -and $parsed -lt $segs.Count) { $null = $wanted.Add($parsed) }
+    foreach ($parsed in @(ConvertTo-YakuCatValidIndexes -Indexes $Indexes -Count $segs.Count)) {
+        $null = $wanted.Add([int]$parsed)
     }
     $rows = New-Object System.Collections.Generic.List[object]
     $occurrences = 0
@@ -6504,9 +6518,11 @@ function Export-YakuCatProject {
     $documentFormat = $(try { [string]$Project.DocumentFormat } catch { '' })
     if ($documentFormat -eq 'docx') {
         if (-not [bool]$eligibility.WordDraftEligible) {
-            # 体裁を保証できないWordは、ファイルを作らず確認済み訳文だけを返す。
+            # 体裁を保証できないWordは、ファイルを作らず全訳文を返す。
             # 「一部だけ書けたWord」を完成物らしく見せないための縮退経路。
             $lines = @($segs | ForEach-Object { [string]$_.Translation })
+            $unconfirmedCount = @($segs | Where-Object { -not [bool]$_.Confirmed }).Count
+            if ($unconfirmedCount -gt 0) { $lines = @('【YakuLingo: 未確認 ' + $unconfirmedCount + ' 行】') + $lines }
             return [pscustomobject]@{
                 OutputPath=''; OutputName=''; Text=(@($lines) -join "`n")
                 Written=@($segs).Count; Skipped=0
@@ -6605,7 +6621,7 @@ function Export-YakuCatProject {
     # 訳す向きは出力書体を決める（英→和は和書体）。作業の向きをそのまま渡す。
     $writeResult = Write-YakuFileTranslations -InputPath ([string]$Project.Path) -OutputPath $OutputPath -Blocks @($writeBlocks) `
         -TranslationByBlockId $currentByBlock -Warnings $Warnings -Settings $Settings -Direction ([string]$Project.Direction) `
-        -ProgressState $ProgressState -FailOnIncomplete
+        -ProgressState $ProgressState -FailOnIncomplete -UnconfirmedCount ([int]$eligibility.UnconfirmedCount)
     return [pscustomobject]@{
         OutputPath = [string]$writeResult.PublishedPath
         OutputName = [System.IO.Path]::GetFileName([string]$writeResult.PublishedPath)

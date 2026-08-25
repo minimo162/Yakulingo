@@ -115,8 +115,14 @@ function Invoke-YakuTextAgenticReview {
     # 短さは既定の brief にだけ適用する軸。「全文で」は完全性を選んだ結果なので、
     # full であること自体を不合格にしない（空の結果だけは共通で不合格）。
     $brevityApplicable = ($Direction -eq 'to_en' -and [string]$Option.Style -eq 'brief')
-    $short = (-not [string]::IsNullOrWhiteSpace([string]$Option.Translation) -and
-        (-not $brevityApplicable -or [string]$Option.Style -eq 'brief'))
+    $translationText = [string]$Option.Translation
+    $short = -not [string]::IsNullOrWhiteSpace($translationText)
+    if ($short -and $brevityApplicable) {
+        # A brief result must meet an actual size bound; checking Style again
+        # makes this axis tautological. Keep enough room for short source text.
+        $briefLimit = [Math]::Max(80, [int][Math]::Ceiling(([string]$SourceText).Length * 2.4))
+        $short = ($translationText.Length -le $briefLimit)
+    }
     Set-YakuTranslationProgress -ProgressState $ProgressState -Mode 'working' -Label '意味を照合しています' -Progress 72 -Detail '意味と読みやすさを別の文脈で同時に点検しています' -Phase 'agent_review'
     $warnings = New-Object System.Collections.Generic.List[object]
     $readItem = Copy-YakuCatPipelineItem $item

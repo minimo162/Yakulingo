@@ -87,7 +87,11 @@ function New-YakuCatProtectedPublicationCandidateRequest {
     $safeBudget=[ordered]@{};foreach($property in @($PlacementBudget.PSObject.Properties)){$safeBudget[[string]$property.Name]=[string]$property.Value}
     $context=Get-YakuCatPublicationCandidateContext -Project $Project -Segment $segment
     $payload=[ordered]@{segment_id=[string]$segment.SegmentId;source=[string]$segment.Text;canonical_translation=[string]$segment.Translation;allowed_abbreviations=$allowed;required_terms=@($context.Value.required_terms);protected_facts=@($context.Value.protected_facts);placement_budget=$safeBudget;surrounding_context=$context.Value.surrounding_context}
-    $original=$payload|ConvertTo-Json -Depth 8 -Compress;$mask=New-YakuNumericMaskMap -Text $original -Root $Root -Direction ([string]$Project.Direction) -Location 'publication-candidate'
+    $original=$payload|ConvertTo-Json -Depth 8 -Compress
+    # PowerShell 5.1 emits \uXXXX for apostrophes and a few punctuation
+    # characters. Decode them before masking so their hex digits remain JSON.
+    $original=$original.Replace('\u0027',"'").Replace('\u0026','&').Replace('\u003c','<').Replace('\u003C','<').Replace('\u003e','>').Replace('\u003E','>')
+    $mask=New-YakuNumericMaskMap -Text $original -Root $Root -Direction ([string]$Project.Direction) -Location 'publication-candidate'
     $field=[pscustomobject]@{Name='publication_sidecar';OriginalText=$original;ProtectedText=[string]$mask.Text;NumericMaskMaps=@($mask.Map)}
     # max_chars はクライアントが現訳の長さから作る概算目標であり、実際のセル幅ではない。
     # 数字を含むsidecarは必ずマスクしたままにし、固定プロンプト用には安全な2桁だけを

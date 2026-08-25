@@ -64,6 +64,7 @@ function Get-YakuWorkbookCellSequence {
     )
     $sheets = @{}
     $order = New-Object System.Collections.Generic.List[string]
+    $skippedSheets = New-Object System.Collections.Generic.List[object]
     foreach ($ws in $Workbook.Worksheets) {
         $name = ''
         try { $name = [string]$ws.Name } catch { $name = '' }
@@ -81,7 +82,12 @@ function Get-YakuWorkbookCellSequence {
                 $firstCol = [int]$used.Column
                 $values = $used.Value2
             } catch { $values = $null }
-            if ($null -ne $values -and ($rows * $cols) -le $MaxCellsPerSheet) {
+            $sheetCellCount = [int64]$rows * [int64]$cols
+            if ($sheetCellCount -gt $MaxCellsPerSheet) {
+                $skippedSheets.Add([pscustomobject]@{ Name=$name; Reason='max-cells-exceeded'; Cells=$sheetCellCount; Limit=$MaxCellsPerSheet }) | Out-Null
+                try { Write-YakuLog "Cell alignment sheet skipped. sheet=$name cells=$sheetCellCount limit=$MaxCellsPerSheet" 'WARN' } catch {}
+            }
+            if ($null -ne $values -and $sheetCellCount -le $MaxCellsPerSheet) {
                 for ($rr = 1; $rr -le $rows; $rr++) {
                     for ($cc = 1; $cc -le $cols; $cc++) {
                         $v = Get-YakuRangeArrayValue -Values $values -RowOffset $rr -ColOffset $cc
@@ -101,7 +107,7 @@ function Get-YakuWorkbookCellSequence {
         $sheets[$name] = @($cells.ToArray())
         [void]$order.Add($name)
     }
-    return [pscustomobject]@{ Sheets = $sheets; Order = @($order.ToArray()) }
+    return [pscustomobject]@{ Sheets = $sheets; Order = @($order.ToArray()); SkippedSheets = @($skippedSheets.ToArray()) }
 }
 
 function Get-YakuSheetMatches {

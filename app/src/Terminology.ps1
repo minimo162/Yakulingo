@@ -114,6 +114,7 @@ function New-YakuTerminologyEntry {
         [AllowNull()][string]$ProjectId,
         [ValidateSet('occurrence','cell_exact')][string]$Kind = 'occurrence',
         [ValidateSet('required','advisory')][string]$Enforcement = 'required',
+        [AllowEmptyString()][string]$Direction = '',
         [Parameter(Mandatory=$true)][string]$JapanesePreferred,
         [Parameter(Mandatory=$true)][string]$EnglishPreferred,
         [AllowNull()][object[]]$JapaneseAllowed,
@@ -136,6 +137,7 @@ function New-YakuTerminologyEntry {
     if ([string]::IsNullOrWhiteSpace($id)) { $id = [guid]::NewGuid().ToString('N') }
     if ($id -notmatch '^[a-f0-9]{32}$') { throw 'TERMINOLOGY_TERM_ID_INVALID' }
     if ($Version -lt 1) { throw 'TERMINOLOGY_VERSION_INVALID' }
+    if (-not [string]::IsNullOrWhiteSpace($Direction) -and $Direction -notin @('to_en','to_jp')) { throw 'TERMINOLOGY_DIRECTION_INVALID' }
     $project = ([string]$ProjectId).Trim().ToLowerInvariant()
     if ($Scope -eq 'project' -and $project -notmatch '^[a-f0-9]{32}$') { throw 'TERMINOLOGY_PROJECT_ID_REQUIRED' }
     if ($Scope -eq 'personal') { $project = '' }
@@ -157,6 +159,7 @@ function New-YakuTerminologyEntry {
         project_id = $project
         kind = $Kind
         enforcement = $Enforcement
+        direction = ([string]$Direction).Trim()
         ja = ConvertTo-YakuTerminologyLanguageRecord -Preferred $JapanesePreferred -Allowed $JapaneseAllowed -Forbidden $JapaneseForbidden
         en = ConvertTo-YakuTerminologyLanguageRecord -Preferred $EnglishPreferred -Allowed $EnglishAllowed -Forbidden $EnglishForbidden
         note = ([string]$Note).Trim()
@@ -240,6 +243,7 @@ function Add-YakuTerminologyEntry {
         [AllowNull()][string]$ProjectId,
         [ValidateSet('occurrence','cell_exact')][string]$Kind = 'occurrence',
         [ValidateSet('required','advisory')][string]$Enforcement = 'required',
+        [AllowEmptyString()][string]$Direction = '',
         [Parameter(Mandatory=$true)][string]$JapanesePreferred,
         [Parameter(Mandatory=$true)][string]$EnglishPreferred,
         [AllowNull()][object[]]$JapaneseAllowed,
@@ -260,6 +264,7 @@ function Add-YakuTerminologyEntry {
     if ([string]::IsNullOrWhiteSpace($TermId)) {
         $same = @(Read-YakuTerminologyEntries -Path $targetPath -ProjectId $ProjectId | Where-Object {
             [string]$_.scope -eq $Scope -and [string]$_.kind -eq $Kind -and
+            ([string]::IsNullOrWhiteSpace($Direction) -or [string]$_.direction -eq $Direction) -and
             [string]::Equals([string]$_.ja.preferred, $JapanesePreferred.Trim(), [StringComparison]::Ordinal) -and
             [string]::Equals([string]$_.en.preferred, $EnglishPreferred.Trim(), [StringComparison]::OrdinalIgnoreCase)
         })
@@ -279,6 +284,7 @@ function Update-YakuTerminologyEntry {
         [AllowNull()][string]$ProjectId,
         [ValidateSet('occurrence','cell_exact')][string]$Kind = 'occurrence',
         [ValidateSet('required','advisory')][string]$Enforcement = 'required',
+        [AllowEmptyString()][string]$Direction = '',
         [Parameter(Mandatory=$true)][string]$JapanesePreferred,
         [Parameter(Mandatory=$true)][string]$EnglishPreferred,
         [AllowNull()][object[]]$JapaneseAllowed,
@@ -319,7 +325,7 @@ function Disable-YakuTerminologyEntry {
     if (-not [bool]$current[0].active) { return [pscustomobject]@{ Added=$false; Reason='already-inactive'; Entry=$current[0] } }
     $entry = New-YakuTerminologyEntry -TermId $TermId -Version ([int]$current[0].version + 1) -Active $false `
         -Scope ([string]$current[0].scope) -ProjectId ([string]$current[0].project_id) -Kind ([string]$current[0].kind) `
-        -Enforcement ([string]$current[0].enforcement) -JapanesePreferred ([string]$current[0].ja.preferred) `
+        -Enforcement ([string]$current[0].enforcement) -Direction ([string]$current[0].direction) -JapanesePreferred ([string]$current[0].ja.preferred) `
         -EnglishPreferred ([string]$current[0].en.preferred) -JapaneseAllowed @($current[0].ja.allowed) `
         -JapaneseForbidden @($current[0].ja.forbidden) -EnglishAllowed @($current[0].en.allowed) `
         -EnglishForbidden @($current[0].en.forbidden) -Note ([string]$current[0].note) -Origin 'cat-term-deactivate' `

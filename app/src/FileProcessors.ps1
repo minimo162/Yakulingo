@@ -2404,7 +2404,6 @@ function New-YakuExcelBulkRangeWritePlan {
         [AllowNull()][string]$OutputFontName,
         [AllowNull()][string]$SheetName = '',
         [AllowNull()][hashtable]$Metrics = $null,
-        [switch]$ForceFormulaPatch,
         [int]$MaxRestoreCount = 200
     )
     $sw = $null
@@ -2422,17 +2421,15 @@ function New-YakuExcelBulkRangeWritePlan {
         # V91.3: never read and reassign Range.Formula. Excel can rewrite shared/array/dynamic
         # formula representation. Returning null routes the caller to target-only rectangle/single-cell writes.
         if ($hasFormulaCells) {
-            try { Write-YakuLog "Excel bulk range avoided to preserve formulas. sheet=$SheetName address=$Address formulaCells=$formulaCellCount force=$([bool]$ForceFormulaPatch)" 'DEBUG' } catch {}
+            try { Write-YakuLog "Excel bulk range avoided to preserve formulas. sheet=$SheetName address=$Address formulaCells=$formulaCellCount" 'DEBUG' } catch {}
             return $null
         }
         $values = $null
-        $formulas = $null
         if ($null -ne $Metrics) { $sw = [System.Diagnostics.Stopwatch]::StartNew() }
         $values = $Range.Value2
         if ($null -ne $sw) { Add-YakuExcelMetricElapsed -Metrics $Metrics -Key 'bulk_read_ms' -Stopwatch $sw; $sw = $null }
 
         $fontAddresses = New-Object System.Collections.Generic.List[string]
-        if (-not $hasFormulaCells) {
             if ($RowCount -eq 1 -and $ColCount -eq 1) {
                 $first = @($Items)[0]
                 $payload = [string]$first.Translation
@@ -2505,116 +2502,6 @@ function New-YakuExcelBulkRangeWritePlan {
                 }
             }
             return [pscustomobject]@{ Kind='bulk'; Range=$Range; Property='Value2'; Payload=$values; Written=[int]$bulkTargetWritten; FontAddresses=[string[]]@($fontAddresses.ToArray()); Address=$Address; Area=$Area; Mode='value2'; SingleItems=@($singleItems.ToArray()); RiskyConstantRestores=@($riskyRestores.ToArray()); ErrorValueRestores=@($errorRestores.ToArray()); RiskyTranslationSingles=[int]$singleItems.Count; FormulaCellCount=0; Rectangles=0; Items=[object[]]@($Items); BulkItems=[object[]]@($bulkItems.ToArray()); StartRow=$MinRow; EndRow=([int]($MinRow + $RowCount - 1)) }
-        }
-
-        $valuesIsArray = ($values -is [System.Array] -and $values.Rank -eq 2)
-        $formulasIsArray = ($formulas -is [System.Array] -and $formulas.Rank -eq 2)
-        if (($RowCount -gt 1 -or $ColCount -gt 1) -and (-not $valuesIsArray -or ($hasFormulaCells -and -not $formulasIsArray))) {
-            try { Write-YakuLog "Excel writeback bulk box fallback. sheet=$SheetName address=$Address reason=shape-mismatch target=formula-patch valuesArray=$valuesIsArray formulasArray=$formulasIsArray formulaCells=$formulaCellCount targets=$($Items.Count)" 'DEBUG' } catch {}
-            return $null
-        }
-        $valueRowBase = 0
-        $valueColBase = 0
-        $formulaRowBase = 0
-        $formulaColBase = 0
-        if ($valuesIsArray) {
-            $valueRowBase = [int]$values.GetLowerBound(0)
-            $valueColBase = [int]$values.GetLowerBound(1)
-            $valueRows = [int]($values.GetUpperBound(0) - $valueRowBase + 1)
-            $valueCols = [int]($values.GetUpperBound(1) - $valueColBase + 1)
-            if ($valueRows -ne $RowCount -or $valueCols -ne $ColCount) {
-                try { Write-YakuLog "Excel writeback bulk box fallback. sheet=$SheetName address=$Address reason=shape-mismatch target=Value2 rows=$valueRows cols=$valueCols expectedRows=$RowCount expectedCols=$ColCount" 'DEBUG' } catch {}
-                return $null
-            }
-        }
-        if ($formulasIsArray) {
-            $formulaRowBase = [int]$formulas.GetLowerBound(0)
-            $formulaColBase = [int]$formulas.GetLowerBound(1)
-            $formulaRows = [int]($formulas.GetUpperBound(0) - $formulaRowBase + 1)
-            $formulaCols = [int]($formulas.GetUpperBound(1) - $formulaColBase + 1)
-            if ($formulaRows -ne $RowCount -or $formulaCols -ne $ColCount) {
-                try { Write-YakuLog "Excel writeback bulk box fallback. sheet=$SheetName address=$Address reason=shape-mismatch target=Formula rows=$formulaRows cols=$formulaCols expectedRows=$RowCount expectedCols=$ColCount" 'DEBUG' } catch {}
-                return $null
-            }
-        }
-
-        $out = [System.Array]::CreateInstance([object], $RowCount, $ColCount)
-        $singleItems = New-Object System.Collections.Generic.List[object]
-        $bulkItems = New-Object System.Collections.Generic.List[object]
-        $riskyRestores = New-Object System.Collections.Generic.List[object]
-        $errorRestores = New-Object System.Collections.Generic.List[object]
-        $bulkTargetWritten = 0
-        for ($ri = 0; $ri -lt $RowCount; $ri++) {
-            $absRow = [int]($MinRow + $ri)
-            for ($ci = 0; $ci -lt $ColCount; $ci++) {
-                $absCol = [int]($MinCol + $ci)
-                $key = ([string]$absRow) + ',' + ([string]$absCol)
-                $valueIndexRow = [int]($valueRowBase + $ri)
-                $valueIndexCol = [int]($valueColBase + $ci)
-                $formulaIndexRow = [int]($formulaRowBase + $ri)
-                $formulaIndexCol = [int]($formulaColBase + $ci)
-                $cellValue = Get-YakuExcelBulkArrayValue -Source $values -IsArray $valuesIsArray -RowIndex $valueIndexRow -ColIndex $valueIndexCol
-
-                if ($null -ne $FormulaSet -and $FormulaSet.ContainsKey($key)) {
-                    $formulaValue = Get-YakuExcelBulkArrayValue -Source $formulas -IsArray $formulasIsArray -RowIndex $formulaIndexRow -ColIndex $formulaIndexCol
-                    if ($null -eq $formulaValue -or -not ($formulaValue -is [string])) {
-                        $typeName = if ($null -eq $formulaValue) { '<null>' } else { try { $formulaValue.GetType().FullName } catch { '' } }
-                        try { Write-YakuLog "Excel writeback bulk box fallback. sheet=$SheetName address=$Address reason=shape-mismatch cell=$key formulaType=$typeName mode=formula-patch targets=$($Items.Count)" 'DEBUG' } catch {}
-                        return $null
-                    }
-                    $out.SetValue([string]$formulaValue, $ri, $ci)
-                    continue
-                }
-
-                if ($targetMap.ContainsKey($key)) {
-                    $targetItem = $targetMap[$key]
-                    $translation = [string]$targetItem.Translation
-                    if (Test-YakuExcelCoercionRiskString -Value $translation) {
-                        if (($cellValue -is [string]) -and (Test-YakuExcelCoercionRiskString -Value ([string]$cellValue))) {
-                            $out.SetValue($null, $ri, $ci)
-                        } elseif (-not (Test-YakuExcelFormulaPatchSafeConstantValue -Value $cellValue)) {
-                            $out.SetValue($null, $ri, $ci)
-                        } else {
-                            $out.SetValue($cellValue, $ri, $ci)
-                        }
-                        $singleItems.Add($targetItem) | Out-Null
-                    } else {
-                        $out.SetValue($translation, $ri, $ci)
-                        $bulkTargetWritten++
-                        try { $bulkItems.Add($targetItem) | Out-Null } catch {}
-                        if (-not [string]::IsNullOrWhiteSpace([string]$OutputFontName)) {
-                            try { $fontAddresses.Add((Get-YakuExcelRangeAddress -StartRow $absRow -StartCol $absCol -EndRow $absRow -EndCol $absCol)) | Out-Null } catch {}
-                        }
-                    }
-                    continue
-                }
-
-                if (($cellValue -is [string]) -and (Test-YakuExcelCoercionRiskString -Value ([string]$cellValue))) {
-                    $out.SetValue($null, $ri, $ci)
-                    $riskyRestores.Add([pscustomobject]@{ Row=$absRow; Col=$absCol; Value=$cellValue }) | Out-Null
-                    if (($riskyRestores.Count + $errorRestores.Count) -gt $MaxRestoreCount) { try { Write-YakuLog "Excel bulk plan aborted early. sheet=$SheetName address=$Address reason=restore-limit restores=$($riskyRestores.Count + $errorRestores.Count) maxRestores=$MaxRestoreCount" 'DEBUG' } catch {}; return $null }
-                    continue
-                }
-                if (-not (Test-YakuExcelFormulaPatchSafeConstantValue -Value $cellValue)) {
-                    $restore = New-YakuExcelErrorValueRestoreRecord -Row $absRow -Col $absCol -Value $cellValue
-                    if ($null -eq $restore) {
-                        $typeName = if ($null -eq $cellValue) { '<null>' } else { try { $cellValue.GetType().FullName } catch { '' } }
-                        $codeText = ''
-                        try { if (Test-YakuExcelFormulaPatchCvErrValue -Value $cellValue) { $codeText = ' code=' + ([string]([int]$cellValue)) } } catch {}
-                        $reasonName = 'error-value'
-                        try { if (Test-YakuExcelFormulaPatchCvErrValue -Value $cellValue) { $reasonName = 'unknown-cverr' } } catch {}
-                        try { Write-YakuLog "Excel writeback bulk box fallback. sheet=$SheetName address=$Address reason=$reasonName cell=$key type=$typeName$codeText mode=formula-patch targets=$($Items.Count)" 'DEBUG' } catch {}
-                        return $null
-                    }
-                    $out.SetValue($null, $ri, $ci)
-                    $errorRestores.Add($restore) | Out-Null
-                    if (($riskyRestores.Count + $errorRestores.Count) -gt $MaxRestoreCount) { try { Write-YakuLog "Excel bulk plan aborted early. sheet=$SheetName address=$Address reason=restore-limit restores=$($riskyRestores.Count + $errorRestores.Count) maxRestores=$MaxRestoreCount" 'DEBUG' } catch {}; return $null }
-                    continue
-                }
-                $out.SetValue($cellValue, $ri, $ci)
-            }
-        }
-        return [pscustomobject]@{ Kind='bulk'; Range=$Range; Property='Formula'; Payload=$out; Written=[int]$bulkTargetWritten; FontAddresses=[string[]]@($fontAddresses.ToArray()); Address=$Address; Area=$Area; Mode='formula-patch'; SingleItems=@($singleItems.ToArray()); RiskyConstantRestores=@($riskyRestores.ToArray()); ErrorValueRestores=@($errorRestores.ToArray()); RiskyTranslationSingles=[int]$singleItems.Count; FormulaCellCount=[int]$formulaCellCount; Rectangles=0; Items=[object[]]@($Items); BulkItems=[object[]]@($bulkItems.ToArray()); StartRow=$MinRow; EndRow=([int]($MinRow + $RowCount - 1)) }
     } catch {
         if ($null -ne $sw) { try { Add-YakuExcelMetricElapsed -Metrics $Metrics -Key 'bulk_read_ms' -Stopwatch $sw } catch {} }
         try { Write-YakuLog "Excel writeback bulk box fallback. sheet=$SheetName address=$Address reason=exception-plan error=$($_.Exception.Message)" 'DEBUG' } catch {}
@@ -2889,7 +2776,7 @@ function Add-YakuExcelFormulaFreeColumnBandPlans {
                 if ($null -ne $rangeSw) { Add-YakuExcelMetricElapsed -Metrics $Metrics -Key 'range_ms' -Stopwatch $rangeSw }
                 $segmentRows = [int]($EndRow - $StartRow + 1)
                 $segmentCols = [int]($segmentEnd - [int]$segmentStart + 1)
-                $segmentPlan = New-YakuExcelBulkRangeWritePlan -Range $segmentRange -Items ([object[]]$segmentItems) -FormulaSet $FormulaSet -MinRow $StartRow -MinCol ([int]$segmentStart) -RowCount $segmentRows -ColCount $segmentCols -Address $segmentAddress -Area (([int64]$segmentRows) * ([int64]$segmentCols)) -OutputFontName $OutputFontName -SheetName $SheetName -Metrics $Metrics -ForceFormulaPatch
+                $segmentPlan = New-YakuExcelBulkRangeWritePlan -Range $segmentRange -Items ([object[]]$segmentItems) -FormulaSet $FormulaSet -MinRow $StartRow -MinCol ([int]$segmentStart) -RowCount $segmentRows -ColCount $segmentCols -Address $segmentAddress -Area (([int64]$segmentRows) * ([int64]$segmentCols)) -OutputFontName $OutputFontName -SheetName $SheetName -Metrics $Metrics
                 if ($null -ne $segmentPlan) {
                     try { $segmentPlan.Mode = 'value2-banded' } catch {}
                     $Plans.Add($segmentPlan) | Out-Null
@@ -2957,7 +2844,7 @@ function Add-YakuExcelBulkBandPlansRecursive {
         if ($null -ne $rangeSw) { Add-YakuExcelMetricElapsed -Metrics $Metrics -Key 'range_ms' -Stopwatch $rangeSw }
 
         if ($probeLimitReached) {
-            $plan = New-YakuExcelBulkRangeWritePlan -Range $bandRange -Items $Items -FormulaSet $FormulaSet -MinRow $StartRow -MinCol ([int]$Bounds.MinCol) -RowCount $bandRows -ColCount $bandCols -Address $bandAddress -Area $bandArea -OutputFontName $OutputFontName -SheetName $SheetName -Metrics $Metrics -ForceFormulaPatch
+            $plan = New-YakuExcelBulkRangeWritePlan -Range $bandRange -Items $Items -FormulaSet $FormulaSet -MinRow $StartRow -MinCol ([int]$Bounds.MinCol) -RowCount $bandRows -ColCount $bandCols -Address $bandAddress -Area $bandArea -OutputFontName $OutputFontName -SheetName $SheetName -Metrics $Metrics
             if ($null -ne $plan) {
                 try { $plan.Mode = 'value2-optimistic' } catch {}
                 try { Write-YakuLog "Excel writeback bulk band optimistic. sheet=$SheetName address=$bandAddress reason=band-probe-limit targets=$($Items.Count) depth=$Depth probes=$($Counters['Probes'])" 'DEBUG' } catch {}
@@ -2999,7 +2886,7 @@ function Add-YakuExcelBulkBandPlansRecursive {
         }
 
         $isTerminal = ([int]$Depth -ge [int]$MaxDepth -or [int]$bandRows -le 2)
-        $optimisticPlan = New-YakuExcelBulkRangeWritePlan -Range $bandRange -Items $Items -FormulaSet $FormulaSet -MinRow $StartRow -MinCol ([int]$Bounds.MinCol) -RowCount $bandRows -ColCount $bandCols -Address $bandAddress -Area $bandArea -OutputFontName $OutputFontName -SheetName $SheetName -Metrics $Metrics -ForceFormulaPatch
+        $optimisticPlan = New-YakuExcelBulkRangeWritePlan -Range $bandRange -Items $Items -FormulaSet $FormulaSet -MinRow $StartRow -MinCol ([int]$Bounds.MinCol) -RowCount $bandRows -ColCount $bandCols -Address $bandAddress -Area $bandArea -OutputFontName $OutputFontName -SheetName $SheetName -Metrics $Metrics
         if ($null -ne $optimisticPlan) {
             try { $optimisticPlan.Mode = 'value2-optimistic' } catch {}
             $splitOnFail = (-not $isTerminal)
@@ -3337,7 +3224,7 @@ function Get-YakuExcelNonPlainCellsBySheet {
     if ([string]::IsNullOrWhiteSpace([string]$Path)) { return $bySheet }
     # SheetLayout.ps1 は SrcModules.ps1 の並びで FileProcessors.ps1 より後に読まれる。
     # 呼ぶのは実行時なので届くが、単体で dot-source された経路のために確かめる。
-    if (-not (Get-Command Get-YakuXlsxNonPlainCells -ErrorAction SilentlyContinue)) { return $bySheet }
+    if (-not (Get-Command Get-YakuXlsxNonPlainCells -ErrorAction SilentlyContinue)) { return @{ '__YAKU_READ_FAILED__' = $true } }
     $started = Get-Date
     $total = 0
     try {
@@ -3352,8 +3239,8 @@ function Get-YakuExcelNonPlainCellsBySheet {
         }
         try { Write-YakuLog "Excel writeback non-plain cells read. sheets=$($bySheet.Count) nonPlainCells=$total ms=$([Math]::Round(((Get-Date) - $started).TotalMilliseconds, 0))" 'DEBUG' } catch {}
     } catch {
-        try { Write-YakuLog "Excel writeback non-plain cell read failed; the rich text guard is skipped. error=$($_.Exception.Message)" 'DEBUG' } catch {}
-        return @{}
+        try { Write-YakuLog "Excel writeback non-plain cell read failed; all bulk boxes use the target-only fallback. error=$($_.Exception.Message)" 'WARN' } catch {}
+        return @{ '__YAKU_READ_FAILED__' = $true }
     }
     return $bySheet
 }
@@ -3364,7 +3251,8 @@ function Get-YakuExcelSheetNonPlainCells {
         [AllowNull()][hashtable]$NonPlainCellsBySheet,
         [AllowNull()][string]$SheetName
     )
-    if ($null -eq $NonPlainCellsBySheet) { return @() }
+    if ($null -eq $NonPlainCellsBySheet) { return @([pscustomobject]@{ address='*'; scope='sheet' }) }
+    if ($NonPlainCellsBySheet.ContainsKey('__YAKU_READ_FAILED__')) { return @([pscustomobject]@{ address='*'; scope='sheet' }) }
     $key = [string]$SheetName
     if ([string]::IsNullOrEmpty($key)) { return @() }
     if (-not $NonPlainCellsBySheet.ContainsKey($key)) { return @() }
@@ -3680,7 +3568,7 @@ function Invoke-YakuExcelBulkBoundingBoxWrite {
         try { $mergeCells = $box.MergeCells } catch { $mergeCells = $null }
         if (-not (Test-YakuExcelComFalse -Value $mergeCells)) {
             try { Write-YakuLog "Excel writeback bulk box optimistic. sheet=$SheetName address=$address reason=merged mergeCells=$mergeCells targets=$($Items.Count)" 'DEBUG' } catch {}
-            $optimisticPlan = New-YakuExcelBulkRangeWritePlan -Range $box -Items $Items -FormulaSet $formulaSet -MinRow ([int]$bounds.MinRow) -MinCol ([int]$bounds.MinCol) -RowCount ([int]$bounds.RowCount) -ColCount ([int]$bounds.ColCount) -Address $address -Area ([int64]$bounds.Area) -OutputFontName $OutputFontName -SheetName $SheetName -Metrics $Metrics -ForceFormulaPatch
+            $optimisticPlan = New-YakuExcelBulkRangeWritePlan -Range $box -Items $Items -FormulaSet $formulaSet -MinRow ([int]$bounds.MinRow) -MinCol ([int]$bounds.MinCol) -RowCount ([int]$bounds.RowCount) -ColCount ([int]$bounds.ColCount) -Address $address -Area ([int64]$bounds.Area) -OutputFontName $OutputFontName -SheetName $SheetName -Metrics $Metrics
             if ($null -ne $optimisticPlan) {
                 $restoreTotal = Get-YakuExcelBulkPlanRestoreCount -Plan $optimisticPlan
                 if ([int]$restoreTotal -le 200) {
@@ -4392,7 +4280,8 @@ function Write-YakuExcelTranslations {
         # 書込先を読む（Excel が開く前なので、まだ原本と同じバイト列である）。
         [AllowNull()][string]$SourcePath = $null,
         # 出力書体の判断に要る。既定は従来どおり to_en。
-        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en'
+        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
+        [ValidateRange(0,2147483647)][int]$UnconfirmedCount = 0
     )
     $ctx = $null
     $excel = $null
@@ -4641,10 +4530,12 @@ function Write-YakuExcelTranslations {
             }
         }
         try { Write-YakuLog "Writeback write phase done. sheets=$applySheetTotal seconds=$([Math]::Round(((Get-Date) - $writeStarted).TotalSeconds, 2))" 'INFO' } catch {}
-        # ブックの中へ見えない定義名を1つ足して下書きの印にしていたが、
-        # 2026-08-13 に利用者判断で外した（「そもそもその機能自体いらない」）。
-        # 下書きであることは、ファイル名の DRAFT_ が示す。原本に無いものを
-        # ブックへ足さないほうが、資料として素直である。
+        # Keep the required unconfirmed count inside the workbook without
+        # changing sheets, cells, formulas, or print layout.
+        if ($UnconfirmedCount -gt 0) {
+            try { $workbook.BuiltinDocumentProperties.Item('Comments').Value = ('YakuLingo: 未確認 ' + $UnconfirmedCount + ' 行') }
+            catch { Add-YakuWarning -Warnings $Warnings -Category 'unconfirmed-notice-unavailable' -Location 'workbook' -Message '未確認件数をファイル情報へ書き込めませんでした。' }
+        }
         Set-YakuExcelWritebackProgress -ProgressState $ProgressState -SheetDone $applySheetTotal -SheetTotal $applySheetTotal -DetailPrefix '保存中'
         $saveStarted = Get-Date
         Set-YakuExcelAutomaticCalculationForOutput -Application $excel -Workbook $workbook
@@ -5119,7 +5010,8 @@ function Write-YakuFileTranslations {
         # 無音の欠陥に戻る（これがこの直しの発端である）。
         [Parameter(Mandatory=$true)][ValidateSet('to_en','to_jp')][string]$Direction,
         [AllowNull()]$ProgressState = $null,
-        [switch]$FailOnIncomplete
+        [switch]$FailOnIncomplete,
+        [ValidateRange(0,2147483647)][int]$UnconfirmedCount = 0
     )
     $kind = Get-YakuSupportedFileKind -Path $InputPath
     Add-YakuInputReadOnlyNotice -Path $InputPath -Warnings $Warnings
@@ -5144,7 +5036,7 @@ function Write-YakuFileTranslations {
             if ($hasWriteTargets) {
                 # run（セル内部分書式）は**原本から**読む。書込先の複写は、この先で
                 # Excel が握る。原本は CAT の書き出しが直前に SHA-256 を照合している。
-                $writeResult = Write-YakuExcelTranslations -OutputPath $candidatePath -Blocks $Blocks -TranslationByBlockId $TranslationByBlockId -Warnings $Warnings -Settings $Settings -BaselinePath $baselinePath -ProgressState $ProgressState -SourcePath $InputPath -Direction $Direction
+                $writeResult = Write-YakuExcelTranslations -OutputPath $candidatePath -Blocks $Blocks -TranslationByBlockId $TranslationByBlockId -Warnings $Warnings -Settings $Settings -BaselinePath $baselinePath -ProgressState $ProgressState -SourcePath $InputPath -Direction $Direction -UnconfirmedCount $UnconfirmedCount
             } else {
                 try { Write-YakuLog "Writeback skipped; no translated blocks. jobId=$jobId" 'INFO' } catch {}
                 $writeResult = [pscustomobject]@{ WriteTargetCount=0; WrittenCount=0; SkippedCount=0 }
@@ -5238,55 +5130,4 @@ function Get-YakuFileInfo {
 
     # V64: file-info must never invoke Excel COM on the HTTP server thread.
     return (Get-YakuOpenXmlFileInfo -Path $Path)
-
-    $ctx = $null
-    $excel = $null
-    $workbook = $null
-    $sheets = New-Object System.Collections.Generic.List[object]
-    $sampleText = New-Object System.Text.StringBuilder
-    try {
-        $ctx = New-YakuExcelApplication
-        $excel = $ctx.Application
-        $workbook = Open-YakuWorkbookWithManualCalc -Context $ctx -Path $Path -ReadOnly $true
-        $sheetCount = [int]$workbook.Worksheets.Count
-        for ($i = 1; $i -le $sheetCount; $i++) {
-            $ws = $null
-            $used = $null
-            $shapes = $null
-            $chartObjects = $null
-            try {
-                $ws = $workbook.Worksheets.Item($i)
-                $used = $ws.UsedRange
-                $rows = [int]$used.Rows.Count
-                $cols = [int]$used.Columns.Count
-                $shapeCount = 0
-                try { $shapes = $ws.Shapes; $shapeCount = [int]$shapes.Count } catch {}
-                $chartCount = 0
-                try { $chartObjects = $ws.ChartObjects(); $chartCount = [int]$chartObjects.Count } catch {}
-                $sheets.Add([pscustomobject]@{ Name=[string]$ws.Name; Rows=$rows; Columns=$cols; UsedRange=($rows.ToString() + ' x ' + $cols.ToString()); Shapes=$shapeCount; ShapeCount=$shapeCount; Charts=$chartCount; ChartCount=$chartCount }) | Out-Null
-                if ($sampleText.Length -lt 8000) {
-                    try {
-                        $values = $used.Value2
-                        $sampleRows = [Math]::Min(20, $rows)
-                        $sampleCols = [Math]::Min(12, $cols)
-                        for ($r = 1; $r -le $sampleRows; $r++) {
-                            for ($c = 1; $c -le $sampleCols; $c++) {
-                                $v = Get-YakuRangeArrayValue -Values $values -RowOffset $r -ColOffset $c
-                                if ($v -is [string] -and -not [string]::IsNullOrWhiteSpace([string]$v)) { [void]$sampleText.AppendLine([string]$v) }
-                            }
-                        }
-                    } catch {}
-                }
-            } finally {
-                Release-YakuComObject $chartObjects
-                Release-YakuComObject $shapes
-                Release-YakuComObject $used
-                Release-YakuComObject $ws
-            }
-        }
-    } finally {
-        Close-YakuExcelObjects -Workbook $workbook -Application $excel -Save:$false -OldCalculation $ctx.OldCalculation -OldCalculateBeforeSave $ctx.OldCalculateBeforeSave -OldScreenUpdating $ctx.OldScreenUpdating -OldEnableEvents $ctx.OldEnableEvents -OldDisplayStatusBar $ctx.OldDisplayStatusBar -OldFormatConditionsCalc $ctx.OldFormatConditionsCalc -OldBackgroundChecking $ctx.OldBackgroundChecking
-    }
-    $direction = if (Get-Command Get-YakuDirection -ErrorAction SilentlyContinue) { Get-YakuDirection -Text ([string]$sampleText.ToString()) } else { 'to_en' }
-    return [pscustomobject]@{ Kind='excel'; Name=$name; FileName=$name; Extension=([System.IO.Path]::GetExtension($Path)); ExcelAvailable=(Test-YakuExcelAvailable); Direction=$direction; DetectedDirection=$direction; Sheets=@($sheets.ToArray()) }
 }

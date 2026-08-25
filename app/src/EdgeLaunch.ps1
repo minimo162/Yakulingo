@@ -244,15 +244,15 @@ function Stop-YakuCopilotEdgeProfile {
     $survivors = @()
     try {
         if ($env:OS -and $env:OS -notlike '*Windows*') { return [pscustomobject]@{ Stopped = 0; Survivors = @() } }
-        $matches = @(Get-YakuCopilotEdgeProfileProcesses -UserDataDir $UserDataDir)
-        foreach ($proc in $matches) {
+        $profileProcesses = @(Get-YakuCopilotEdgeProfileProcesses -UserDataDir $UserDataDir)
+        foreach ($proc in $profileProcesses) {
             try {
                 Write-YakuEdgeLaunchLog "Stopping stale YakuLingo Edge process. pid=$($proc.ProcessId)" 'INFO'
                 Stop-Process -Id $proc.ProcessId -Force -ErrorAction Stop
                 $stopped++
             } catch {}
         }
-        if ($matches.Count -gt 0) {
+        if ($profileProcesses.Count -gt 0) {
             # kill を投げただけで消えたとみなさない（D2-3）。実際に消えたかを
             # 再列挙で確かめてから先へ進む。生き残りは呼び出し元へPID付きで返す。
             $deadline = (Get-Date).AddMilliseconds(1500)

@@ -204,6 +204,7 @@ function New-YakuCatRebasePlan {
     $mergeBySourceStart = @{}
     # 1対N / N対1は、連続する最大4単位を連結して一意な場合だけ構造競合として検出する。
     for ($sourceIndex = 0; $sourceIndex -lt $sourceSegments.Count; $sourceIndex++) {
+        $provenance = $null
         $sourceText = ConvertTo-YakuRebaseComparableText -Text ([string]$sourceSegments[$sourceIndex].Text)
         $splitCandidates = New-Object System.Collections.Generic.List[object]
         for ($targetStart = 0; $targetStart -lt $targetSegments.Count; $targetStart++) {

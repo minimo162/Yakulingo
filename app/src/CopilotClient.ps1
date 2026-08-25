@@ -4461,9 +4461,14 @@ function Get-YakuNumberedMainTailSalvageText {
         }
     } catch {}
     $tail = $tail.Replace("`r`n", "`n").Replace("`r", "`n")
-    foreach ($marker in @('SOURCE_END','===END_INPUT_TEXT===','SOURCE_ITEMS_END')) {
+    foreach ($marker in @('SOURCE_END')) {
         $idx = $tail.LastIndexOf($marker, [System.StringComparison]::Ordinal)
         if ($idx -ge 0) { $tail = $tail.Substring($idx + $marker.Length) }
+    }
+    $inputMarkers = [regex]::Matches($tail, '===END_INPUT_TEXT(?::[^=\r\n]+)?===')
+    if ($inputMarkers.Count -gt 0) {
+        $lastInputMarker = $inputMarkers[$inputMarkers.Count - 1]
+        $tail = $tail.Substring($lastInputMarker.Index + $lastInputMarker.Length)
     }
 
     $candidate = ''
@@ -4499,7 +4504,7 @@ function Get-YakuNumberedMainTailSalvageText {
     }
 
     if ([string]::IsNullOrWhiteSpace($candidate)) { return '' }
-    if ($candidate -match '(?i)<\s*translation\s+for\s+item') { return '' }
+    if ($candidate -match '(?i)[<{]\s*translation\s+for\s+item') { return '' }
     return $candidate
 }
 
