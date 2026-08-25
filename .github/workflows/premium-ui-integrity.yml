@@ -28,3 +28,7 @@ jobs:
       - name: Test premium specialized UI
         shell: powershell
         run: .\app\tools\Test-YakuPremiumUi.ps1
+
+      - name: Test issues 175-188 contracts
+        shell: powershell
+        run: node .\app\tools\Test-YakuIssues175To188.mjs
