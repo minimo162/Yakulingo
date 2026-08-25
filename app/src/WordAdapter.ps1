@@ -353,6 +353,23 @@ function Export-YakuWordDraft {
                 $storyWriter=New-Object IO.StreamWriter($newStoryEntry.Open(),(New-Object Text.UTF8Encoding($false)))
                 try{$story.Save($storyWriter)}finally{$storyWriter.Dispose()}
             }
+            $unconfirmedCount = @($Project.Segments | Where-Object { -not [bool]$_.Confirmed }).Count
+            if ($unconfirmedCount -gt 0) {
+                $coreName='docProps/core.xml'
+                $coreEntry=$package.Archive.GetEntry($coreName)
+                if($null -eq $coreEntry){throw 'CAT_WORD_UNCONFIRMED_NOTICE_UNAVAILABLE'}
+                $core=Read-YakuWordXmlEntry -Archive $package.Archive -Name $coreName
+                $description=$core.GetElementsByTagName('description','http://purl.org/dc/elements/1.1/') | Select-Object -First 1
+                if($null -eq $description){
+                    $description=$core.CreateElement('dc','description','http://purl.org/dc/elements/1.1/')
+                    $null=$core.DocumentElement.AppendChild($description)
+                }
+                $description.InnerText='YakuLingo: 未確認 '+$unconfirmedCount+' 行'
+                $coreEntry.Delete()
+                $newCoreEntry=$package.Archive.CreateEntry($coreName,[IO.Compression.CompressionLevel]::Optimal)
+                $coreWriter=New-Object IO.StreamWriter($newCoreEntry.Open(),(New-Object Text.UTF8Encoding($false)))
+                try{$core.Save($coreWriter)}finally{$coreWriter.Dispose()}
+            }
         } finally { Close-YakuWordPackage -Package $package }
         $verify=Get-YakuWordDocumentInventory -Path $temp
         if ([string]$verify.StructureHash -ne [string]$inventory.StructureHash) { throw 'CAT_WORD_DRAFT_ROUNDTRIP_STRUCTURE_FAILED' }
