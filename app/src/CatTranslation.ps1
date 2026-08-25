@@ -615,8 +615,17 @@ function Test-YakuCatBackJudgeRequiresRetry {
     return [bool]($Text -match '(?i)^\s*RETRY_REQUIRED\s*:')
 }
 function Test-YakuCatBackJudgePassed {
-    param([string]$Text)
-    return [bool]($Text -match '(?i)^\s*PASS\s*$')
+    param(
+        [string]$Text,
+        [ValidateSet('binary','clause_map')][string]$Mode='clause_map'
+    )
+    if($Mode -eq 'binary'){return [bool]($Text -match '(?i)^\s*PASS\s*$')}
+    # A bare PASS recreates the failure mode measured in issue #169. Production
+    # acceptance requires visible clause evidence before the final verdict.
+    return [bool](
+        $Text -match '(?is)^\s*CLAUSES\s*:\s*.+\|\s*VERDICT\s*:\s*PASS\s*$' -and
+        $Text -notmatch '(?i)\[(?:MISSING|CHANGED|EXTRA|CONTRADICTED)\]'
+    )
 }
 function Write-YakuCatFitMetrics {
     param([string]$Root,[hashtable]$Context,[ValidateSet('baseline','completed')][string]$Status)
@@ -647,6 +656,18 @@ function New-YakuCatPrompt {
     $stage=Get-YakuCatPipelineStage $Items
     $templateName=if($stage -eq 'readability'){'text_readability_review.txt'}elseif($Direction -eq 'to_jp' -and $stage -eq 'back_reconstruct'){'cat_fit_back_reconstruct.txt'}elseif($Direction -eq 'to_en' -and $stage -in @('compress','retry')){'cat_fit_compress_to_en.txt'}elseif($Direction -eq 'to_en' -and $stage -eq 'abbreviate'){'cat_fit_abbreviate_to_en.txt'}elseif($Direction -eq 'to_en' -and $stage -eq 'select'){'cat_fit_select_to_en.txt'}elseif($Direction -eq 'to_en' -and $stage -eq 'back_judge'){'cat_fit_back_judge_to_en.txt'}elseif($Direction -eq 'to_en'){'cat_translate_to_en.txt'}else{'cat_translate_to_jp.txt'}
     $template = Get-YakuPromptTemplate -Root $Root -Name $templateName
+    $judgeOutput='clause_map'
+    if($stage -eq 'back_judge'){
+        try{
+            $requested=[string]$Items[0].PipelineJudgeOutput
+            if($requested -eq 'binary'){$judgeOutput='binary'}
+        }catch{}
+    }
+    $judgeContract=$(if($judgeOutput -eq 'binary'){
+        'For every item output only PASS when faithful; otherwise output RETRY_REQUIRED: followed by concise differences.'
+    }else{
+        'For every item output exactly one line in this order: CLAUSES: <one source-clause => English-evidence mapping per clause, each ending [MATCH], [MISSING], [CHANGED], [EXTRA], or [CONTRADICTED]> | VERDICT: PASS or RETRY_REQUIRED. VERDICT must be PASS only when every source clause is [MATCH]. Do not output a bare PASS.'
+    })
     $vars = @{
         source_list = $sourceList
         # ここが書き方を受け取っていなかった（2026-08-12）。原文は
@@ -658,6 +679,7 @@ function New-YakuCatPrompt {
         terminology_rules = New-YakuCatTerminologyRules -Items $Items -Direction $Direction
         character_targets=New-YakuCatCharacterTargets -Items $Items
         pipeline_data=New-YakuCatPipelineData $Items
+        judge_contract=$judgeContract
         request_id=$RequestId
     }
     $prompt = Expand-YakuTemplate -Template $template -Variables $vars
@@ -715,6 +737,12 @@ function Invoke-YakuCatFitSelection {
 }
 function Invoke-YakuCatFitBackCheck {
     param($Root,[object[]]$Items,[hashtable]$Final,$Settings,[int]$MaxChars,$Warnings,$ProgressState,[hashtable]$Context)
+    # Production defaults use the fail-closed candidate condition selected for
+    # issue #169. The measurement tool can override each axis independently to
+    # reproduce the old blind design and record the real-Copilot comparison.
+    $judgeEvidence=$(if($Context.ContainsKey('FitBackJudgeEvidence') -and [string]$Context.FitBackJudgeEvidence -eq 'blind'){'blind'}else{'translation'})
+    $judgeOutput=$(if($Context.ContainsKey('FitBackJudgeOutput') -and [string]$Context.FitBackJudgeOutput -eq 'binary'){'binary'}else{'clause_map'})
+    $judgeBatchSize=$(if($Context.ContainsKey('FitBackJudgeBatchSize')){[Math]::Max(1,[int]$Context.FitBackJudgeBatchSize)}else{1})
     $reconstruct=New-Object System.Collections.Generic.List[object]
     foreach($item in @($Items)){
         $id=[int]$item.Index
@@ -736,13 +764,23 @@ function Invoke-YakuCatFitBackCheck {
         $copy=Copy-YakuCatPipelineItem $item
         $copy|Add-Member -NotePropertyName PipelineStage -NotePropertyValue 'back_judge' -Force
         $copy|Add-Member -NotePropertyName PipelineClaims -NotePropertyValue ([string]$claims[$id]) -Force
-        # 判定役へ英訳を見せない。原文と、英訳だけから逆構成した意味との差だけを渡す。
-        $copy.PSObject.Properties.Remove('PipelineSelected')
+        $copy|Add-Member -NotePropertyName PipelineJudgeOutput -NotePropertyValue $judgeOutput -Force
+        if($judgeEvidence -eq 'translation'){
+            # Final contains the protected translation; numeric values remain tokens.
+            $copy|Add-Member -NotePropertyName PipelineSelected -NotePropertyValue ([string]$Final[$id]) -Force
+        }else{$copy.PSObject.Properties.Remove('PipelineSelected')}
         $judge.Add($copy)|Out-Null
     }
-    $results=$(if($judge.Count){Invoke-YakuCatPipelineBatch $Root $judge.ToArray() $Settings 'to_en' $MaxChars $Warnings $ProgressState $Context}else{@{}})
-    # 逆構成または判定の応答が欠けた行は「通過」ではない。全行を再確認対象で
-    # 初期化し、明示的な PASS を受け取った行だけ外す。
+    $results=@{}
+    $judgeItems=@($judge.ToArray())
+    for($offset=0;$offset -lt $judgeItems.Count;$offset+=$judgeBatchSize){
+        $last=[Math]::Min($judgeItems.Count-1,$offset+$judgeBatchSize-1)
+        $batch=@($judgeItems[$offset..$last])
+        $batchResults=Invoke-YakuCatPipelineBatch $Root $batch $Settings 'to_en' $MaxChars $Warnings $ProgressState $Context
+        foreach($id in @($batchResults.Keys)){$results[[int]$id]=[string]$batchResults[$id]}
+    }
+    # Missing reconstruction/judge output, a malformed evidence map, and any
+    # explicit semantic difference all fail closed into retry.
     $retry=@{}
     if(-not $Context.ContainsKey('FitBackCheckStatus')){$Context.FitBackCheckStatus=@{}}
     foreach($item in @($Items)){
@@ -753,7 +791,7 @@ function Invoke-YakuCatFitBackCheck {
     }
     foreach($id in @($results.Keys)){
         $numericId=[int]$id
-        if(-not (Test-YakuCatBackJudgePassed ([string]$results[$id]))){continue}
+        if(-not (Test-YakuCatBackJudgePassed -Text ([string]$results[$id]) -Mode $judgeOutput)){continue}
         $retry.Remove($numericId)
         $Context.FitBackCheckStatus[$numericId]='passed'
     }

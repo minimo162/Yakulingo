@@ -12,9 +12,11 @@ Check ($parsed.Translation -eq 'Chosen' -and $parsed.Dropped -eq 'scope' -and $p
 $missing=Split-YakuCatCompressionResult 'Markerless'
 Check ($missing.Translation -eq 'Markerless' -and $missing.Dropped -eq 'unreported') 'markerless response stays usable and is marked unreported'
 Check (Test-YakuCatBackJudgeRequiresRetry '  RETRY_REQUIRED: chosen') 'retry prefix survives leading whitespace from numbered parsing'
-Check (Test-YakuCatBackJudgePassed ' PASS ') 'back judge accepts explicit PASS'
-Check (-not (Test-YakuCatBackJudgePassed 'REVIEW_REQUIRED: missing output')) 'back judge rejects non-PASS review output'
-Check (-not (Test-YakuCatBackJudgePassed 'looks good')) 'back judge rejects malformed output'
+Check (Test-YakuCatBackJudgePassed -Text 'CLAUSES: source => candidate [MATCH] | VERDICT: PASS') 'back judge accepts PASS only with clause evidence'
+Check (-not (Test-YakuCatBackJudgePassed -Text 'PASS')) 'back judge rejects a bare PASS in clause-map mode'
+Check (Test-YakuCatBackJudgePassed -Text ' PASS ' -Mode binary) 'binary A/B mode accepts explicit PASS'
+Check (-not (Test-YakuCatBackJudgePassed -Text 'CLAUSES: source => candidate [MISSING] | VERDICT: PASS')) 'back judge rejects contradictory clause evidence'
+Check (-not (Test-YakuCatBackJudgePassed -Text 'looks good')) 'back judge rejects malformed output'
 
 function New-YakuNumericMaskMap {
     param([string]$Text,[string]$Direction,[string]$Location,[switch]$AllowExistingTokens)
@@ -73,6 +75,7 @@ $alt=' '+[char]0x27E6+'YAKU_ALT'+[char]0x27E7+' '
 $script:compressRound=0
 $script:backJudgeRound=0
 $script:backJudgeSawEnglish=$false
+$script:backJudgeMaxBatch=0
 $script:stageCounts=@{}
 function Invoke-YakuTranslationBatchItems {
     param($Root,$Items,$Settings,$Direction,$MaxChars,$Warnings,$ProgressState,$Context,$Depth,$Reason)
@@ -81,6 +84,7 @@ function Invoke-YakuTranslationBatchItems {
     $stage=Get-YakuCatPipelineStage $Items
     if(-not $script:stageCounts.ContainsKey($stage)){$script:stageCounts[$stage]=0}
     $script:stageCounts[$stage]=[int]$script:stageCounts[$stage]+1
+    if($stage -eq 'back_judge'){$script:backJudgeMaxBatch=[Math]::Max($script:backJudgeMaxBatch,@($Items).Count)}
     $map=@{}
     foreach($item in @($Items)){
         if($stage -eq 'back_judge' -and $item.PSObject.Properties.Name -contains 'PipelineSelected'){$script:backJudgeSawEnglish=$true}
@@ -93,7 +97,7 @@ function Invoke-YakuTranslationBatchItems {
             'retry' {'Retry [[N1]]'+$marker+'dropped=retry; need_chars=0'}
             'select' {'Best [[N1]]'}
             'back_reconstruct' {'claim [[N1]]'}
-            'back_judge' {$script:backJudgeRound++;if($script:backJudgeRound -eq 1){'  RETRY_REQUIRED: Best [[N1]]'}else{'PASS'}}
+            'back_judge' {$script:backJudgeRound++;if($script:backJudgeRound -eq 1){'CLAUSES: source => candidate [CHANGED] | VERDICT: RETRY_REQUIRED'}else{'CLAUSES: source => candidate [MATCH] | VERDICT: PASS'}}
         }
         $map[[int]$item.Index]=[string]$value
     }
@@ -107,7 +111,8 @@ $pipelineResult=Invoke-YakuCatTranslationItems -Root $root -Items @($pipelineIte
 Check ($pipelineResult[1] -eq 'Retry [[N1]]') 'full pipeline accepts numbered retry prefix and replaces the selected candidate once'
 Check ($script:compressRound -eq 1 -and $script:stageCounts['select'] -eq 1 -and $script:stageCounts['retry'] -eq 1) 'candidate alternatives use one compression call and one selection call'
 Check ($script:backJudgeRound -eq 2 -and $pipelineContext.FitBackCheckStatus[1] -eq 'retry-passed') 'retry replacement is back-checked again before acceptance'
-Check (-not $script:backJudgeSawEnglish) 'difference judge never receives the English candidate'
+Check ($script:backJudgeSawEnglish) 'difference judge receives the numeric-masked English candidate'
+Check ($script:backJudgeMaxBatch -eq 1) 'difference judge evaluates one item per call'
 Check (@($pipelineWarnings|Where-Object{$_.Category -in @('fit-backcheck-unverified','fit-backcheck-failed')}).Count -eq 0) 'verified retry does not leave a stale back-check warning'
 $oneList=New-Object System.Collections.Generic.List[string];$oneList.Add('Only [[N1]]')|Out-Null
 $oneCandidates=[pscustomobject]@{Lists=@{1=$oneList};Metadata=@{1=@{'Only [[N1]]'=[pscustomobject]@{Dropped='none'}}}}
