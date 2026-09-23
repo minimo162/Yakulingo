@@ -8,10 +8,14 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Root = (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)),
+    [string]$Root = '',
     [switch]$WhatIfOnly
 )
 $ErrorActionPreference = 'Stop'
+# [CmdletBinding()] 付きのスクリプトを -File で起動すると、5.1 は param の既定値の中で
+# $MyInvocation.MyCommand.Path / $PSCommandPath / $PSScriptRoot をすべて空にする。
+# 本文では取れるので、既定のルートはここで決める。
+if ([string]::IsNullOrWhiteSpace($Root)) { $Root = Split-Path -Parent $PSScriptRoot }
 $rootPath = (Resolve-Path -LiteralPath $Root).Path
 
 $targets = New-Object System.Collections.Generic.List[string]
