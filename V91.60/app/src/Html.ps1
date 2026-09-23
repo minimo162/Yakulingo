@@ -196,7 +196,7 @@ function Convert-YakuFileWarningsToGroupedHtml {
     }
     $kindCount = [int]$groups.Count
     $totalCount = [int]$warnings.Count
-    $html = "<details class='file-warning-groups'><summary>警告 $kindCount種 · $totalCount件</summary><div class='warning-group-stack'>"
+    $html = "<details class='file-warning-groups'><summary>警告 ${kindCount}種 · ${totalCount}件</summary><div class='warning-group-stack'>"
     foreach ($category in $groups.Keys) {
         $items = @($groups[$category].ToArray())
         $label = Get-YakuWarningCategoryLabel -Category $category
@@ -333,8 +333,8 @@ function Convert-YakuFileResultToHtml {
       <span>Batch $(ConvertTo-YakuHtml $Result.BatchCount)</span>
       <span>途中切れ $truncated/$batchTotal ($truncatedRateText)</span>
       <span>最大リトライ深さ $maxRetryDepth</span>
-      <span>数式セル $formula件</span>
-      <span>SmartArt $smartart件</span>
+      <span>数式セル ${formula}件</span>
+      <span>SmartArt ${smartart}件</span>
       $validationText
     </div>
     <p class='hint'>元ファイルは変更していません。翻訳を書き込んだセル・図形・グラフタイトルだけに設定フォントを適用します（既定 Arial、CSVは対象外）。原文保持セルには触れません。Excel図形内の部分書式は、Excel COM の制約により先頭ランの書式に均される場合があります。文字溢れの自動調整は行いません。</p>

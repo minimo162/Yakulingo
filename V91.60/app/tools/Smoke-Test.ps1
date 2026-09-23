@@ -141,12 +141,12 @@ $textRaw = "FULL_TEXT:`nThis is a test.`nBRIEF_TEXT:`nTest.`nYAKULINGO_END:$requ
 $textResult = @(Parse-YakuTextTranslationResponse -Raw $textRaw -Direction 'to_en' -RequestId $requestId)
 Assert-Yaku -Condition ($textResult.Count -eq 2) -Message 'valid two-style text response must parse'
 Assert-YakuThrows -Action { Parse-YakuTextTranslationResponse -Raw $textRaw -Direction 'to_en' -RequestId ('f' * 32) } -Pattern 'RESPONSE_END_MARKER_MISSING' -Message 'wrong text contract ID must fail'
-$inlineResult = @(Parse-YakuTextTranslationResponse -Raw ("FULL_TEXT:`nA`nBRIEF_TEXT:`nB YAKULINGO_END:$requestIdこの会話を停止しました。") -Direction 'to_en' -RequestId $requestId)
+$inlineResult = @(Parse-YakuTextTranslationResponse -Raw ("FULL_TEXT:`nA`nBRIEF_TEXT:`nB YAKULINGO_END:${requestId}この会話を停止しました。") -Direction 'to_en' -RequestId $requestId)
 Assert-Yaku -Condition ($inlineResult.Count -eq 2 -and [string]$inlineResult[1].Translation -eq 'B') -Message 'inline marker and trailing stopped UI text must normalize and parse'
 Assert-YakuThrows -Action { Parse-YakuTextTranslationResponse -Raw ("FULL_TEXT:`nA`nBRIEF_TEXT:`nB`nYAKULINGO_END:$requestId`nYAKULINGO_END:$requestId") -Direction 'to_en' -RequestId $requestId } -Pattern 'RESPONSE_END_MARKER_DUPLICATE' -Message 'duplicate exact request marker must remain invalid'
 Assert-YakuThrows -Action { Parse-YakuTextTranslationResponse -Raw ("FULL_TEXT:`nA`nFULL_TEXT:`nB`nBRIEF_TEXT:`nC`nYAKULINGO_END:$requestId") -Direction 'to_en' -RequestId $requestId } -Pattern 'RESPONSE_LABEL_COUNT_INVALID' -Message 'duplicate style must fail'
 
-$actualV85Raw = ([char]0x200C) + "JAPANESE_TEXT：完全な翻訳です。 YAKULINGO_END:$requestIdこの会話を停止しました。"
+$actualV85Raw = ([char]0x200C) + "JAPANESE_TEXT：完全な翻訳です。 YAKULINGO_END:${requestId}この会話を停止しました。"
 $actualV85Result = @(Parse-YakuTextTranslationResponse -Raw $actualV85Raw -Direction 'to_jp' -RequestId $requestId)
 Assert-Yaku -Condition ($actualV85Result.Count -eq 1 -and [string]$actualV85Result[0].Translation -eq '完全な翻訳です。') -Message 'V85 invisible-prefix/fullwidth-colon/inline-marker response must parse'
 $decoratedRaw = "**FULL_TEXT:** Full.`n**BRIEF_TEXT**： Brief. **YAKULINGO_END:$requestId**"

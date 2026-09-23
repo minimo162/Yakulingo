@@ -111,7 +111,7 @@ Assert-YakuTrue -Condition ($flexOptions.Count -eq 2) -Message 'common bold-labe
 Assert-YakuTrue -Condition ([string]$flexOptions[0].Translation -eq 'Full text on the label line.') -Message 'same-line FULL_TEXT extraction failed'
 
 $actualRequestId = [guid]::NewGuid().ToString('N')
-$actualRaw = ([char]0x200C) + "JAPANESE_TEXT：限定プレビューに続き、完全な翻訳です。 YAKULINGO_END:$actualRequestIdこの会話を停止しました。"
+$actualRaw = ([char]0x200C) + "JAPANESE_TEXT：限定プレビューに続き、完全な翻訳です。 YAKULINGO_END:${actualRequestId}この会話を停止しました。"
 $actualOptions = @(Parse-YakuTextTranslationResponse -Raw $actualRaw -Direction 'to_jp' -RequestId $actualRequestId)
 Assert-YakuTrue -Condition ($actualOptions.Count -eq 1 -and [string]$actualOptions[0].Translation -match '完全な翻訳') -Message 'actual V85 response shape must be normalized and accepted'
 
