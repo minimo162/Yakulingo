@@ -4398,7 +4398,7 @@ function Invoke-YakuCopilotPrompt {
     $promptCharLimit = 0
     try { if ($Settings.copilotPromptCharLimit) { $promptCharLimit = [int]$Settings.copilotPromptCharLimit } } catch {}
     if ($promptCharLimit -gt 0 -and $Prompt.Length -gt $promptCharLimit) {
-        throw "PROMPT_TRUNCATED_BY_INPUT_LIMIT: Copilot入力欄でプロンプトが切り詰められる可能性があります（貼付$($Prompt.Length)字→設定上限$promptCharLimit字）。この環境の入力上限を超えています。M365 Copilotライセンスの有無・入力上限をご確認ください。"
+        throw "PROMPT_TRUNCATED_BY_INPUT_LIMIT: Copilot入力欄でプロンプトが切り詰められる可能性があります（貼付$($Prompt.Length)字→設定上限${promptCharLimit}字）。この環境の入力上限を超えています。M365 Copilotライセンスの有無・入力上限をご確認ください。"
     }
     try {
         if ($Settings -and ($Settings.PSObject.Properties.Name -contains 'copilot_cdp_socket_cache_enabled')) { Set-YakuCdpSocketCacheEnabled -Enabled $Settings.copilot_cdp_socket_cache_enabled }
@@ -4627,10 +4627,10 @@ function Invoke-YakuCopilotPrompt {
     $fillBeforeLength = -1
     try { $fillBeforeLength = [int](Get-YakuObjectPropertyValue -Object $fillResult -Name 'beforeInputTextLength' -Default -1) } catch {}
     if ($filledExpectedLength -gt 0 -and (($fillBeforeLength -gt 0) -or ($filledActualLength -gt $filledExpectedLength))) {
-        throw "INPUT_RESIDUAL_CONFLICT: 入力欄に前回の残存テキストがありクリアに失敗しました。Copilotの画面を一度更新して再実行してください。（入力前$fillBeforeLength字、貼付$filledExpectedLength字→実$filledActualLength字）"
+        throw "INPUT_RESIDUAL_CONFLICT: 入力欄に前回の残存テキストがありクリアに失敗しました。Copilotの画面を一度更新して再実行してください。（入力前${fillBeforeLength}字、貼付${filledExpectedLength}字→実${filledActualLength}字）"
     }
     if ($filledExpectedLength -gt 0 -and $fillBeforeLength -le 0 -and $filledActualLength -lt ($filledExpectedLength - 1)) {
-        throw "PROMPT_TRUNCATED_BY_INPUT_LIMIT: Copilot入力欄でプロンプトが切り詰められました（貼付$filledExpectedLength字→実$filledActualLength字）。この環境の入力上限を超えています。M365 Copilotライセンスの有無・入力上限をご確認ください。"
+        throw "PROMPT_TRUNCATED_BY_INPUT_LIMIT: Copilot入力欄でプロンプトが切り詰められました（貼付${filledExpectedLength}字→実${filledActualLength}字）。この環境の入力上限を超えています。M365 Copilotライセンスの有無・入力上限をご確認ください。"
     }
     if ((Get-YakuObjectPropertyValue -Object $fillResult -Name 'ok' -Default $false) -ne $true) {
         Invoke-YakuCdpBringToFront -Page $page
@@ -4668,7 +4668,7 @@ return YakuCopilotDom.sendButtonCandidates().map(c => ({
         $candidateCount = @($candidateMetadata).Count
         Write-YakuLog "Copilot send button missing immediately after fill. candidateCount=$candidateCount candidates=$(ConvertTo-YakuCompactJson $candidateMetadata)" 'WARN'
         $script:YakuCopilotNeedsSendRecovery = $true
-        throw "COPILOT_SEND_NOT_CONFIRMED: 送信ボタン検出: 0件（ページ内候補 $candidateCount件）。Copilot画面のチャット入力欄とダイアログ表示を確認してください。"
+        throw "COPILOT_SEND_NOT_CONFIRMED: 送信ボタン検出: 0件（ページ内候補 ${candidateCount}件）。Copilot画面のチャット入力欄とダイアログ表示を確認してください。"
     }
     $sendResult = ConvertTo-YakuCdpResultObject -Value (Invoke-YakuCopilotSendPrompt -Page $page -BaselineState $sendBaseline -Prompt $promptWithId) -Context 'Invoke-YakuCopilotSendPrompt'
     $phaseSw.Stop(); Write-YakuLog "Copilot phase send elapsedMs=$($phaseSw.ElapsedMilliseconds)" 'INFO'
@@ -4688,7 +4688,7 @@ return YakuCopilotDom.sendButtonCandidates().map(c => ({
         $sendCandidates = @(Get-YakuObjectPropertyValue -Object $sendResult -Name 'sendButtonCandidates' -Default @())
         $clickedSendButton = Get-YakuObjectPropertyValue -Object $sendResult -Name 'clickedSendButton' -Default $null
         $detectedSendCount = if ($clickedSendButton) { 1 } else { $sendCandidates.Count }
-        $sendCandidateDetail = "送信ボタン検出: $detectedSendCount件（クリック後候補: $($sendCandidates.Count)件）"
+        $sendCandidateDetail = "送信ボタン検出: ${detectedSendCount}件（クリック後候補: $($sendCandidates.Count)件）"
         $ctx = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $sendResult -Name 'context' -Default 'Invoke-YakuCopilotSendPrompt')
         $err = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $sendResult -Name 'error' -Default '')
         throw "COPILOT_SEND_NOT_CONFIRMED: Copilotへの送信を確認できませんでした。$sendCandidateDetail。Copilot画面に表示されているダイアログをキャンセルまたは×で閉じ、「新しいチャット」を開いてから再実行してください。Log=$logPath Reason=$reason Context=$ctx Error=$err"
