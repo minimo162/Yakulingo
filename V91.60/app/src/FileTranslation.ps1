@@ -1910,6 +1910,8 @@ function Invoke-YakuFileTranslation {
         $item | Add-Member -NotePropertyName NumericMaskMap -NotePropertyValue $maskResult.Map -Force
         $item | Add-Member -NotePropertyName MaskedText -NotePropertyValue ([string]$maskResult.Text) -Force
         $item.Text = [string]$maskResult.Text
+        # V91.60b: 送る前の検査。伏せ残しがあればジョブごと止める。
+        Assert-YakuNumericMaskClean -Text ([string]$item.Text) -Root $Root -Direction $Direction -Location ("file-ID-" + [string]$item.Index)
         if ([int]$maskResult.MaskedCount -gt 0) { $maskedItemCount++; $maskedTokenCount += [int]$maskResult.MaskedCount }
     }
     try { Write-YakuLog "File numeric masking. jobId=$JobId items=$($items.Count) maskedItems=$maskedItemCount maskedTokens=$maskedTokenCount" 'INFO' } catch {}
@@ -1977,7 +1979,7 @@ function Invoke-YakuFileTranslation {
     }
 
     # V91.36 final numeric audit also covers cache/glossary/fallback routes.
-    # V91.60: to_jp では 【N1】 oku が 【N1】億円 へ訳されるため
+    # V91.60: to_jp では ⟦#ABC⟧ oku が ⟦#ABC⟧億円 へ訳されるため
     # 「数値+単位」トークンの照合が成立しない(§6)。プレースホルダーの
     # 過不足は下の復元ループで確認する。
     if ($Direction -eq 'to_en') {
