@@ -9,12 +9,16 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Root = (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)),
+    [string]$Root = '',
     # 改行コードを意図して変えたときだけ渡す。基準値を書き直して終了する。
     [switch]$UpdateEolBaseline
 )
 
 $ErrorActionPreference = 'Stop'
+# [CmdletBinding()] 付きのスクリプトを -File で起動すると、5.1 は param の既定値の中で
+# $MyInvocation.MyCommand.Path / $PSCommandPath / $PSScriptRoot をすべて空にする。
+# 本文では取れるので、既定のルートはここで決める。
+if ([string]::IsNullOrWhiteSpace($Root)) { $Root = Split-Path -Parent $PSScriptRoot }
 
 function Get-YakuCheckRelativePath {
     param(
