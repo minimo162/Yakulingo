@@ -16,11 +16,8 @@ Microsoft 365 Copilot の画面を Edge DevTools Protocol（CDP）で操作し�
 ├── current.txt            # 現行バージョン名（1行）。切替はこのファイルの書き換えのみ
 ├── 共有フォルダ配置手順.md  # 共有フォルダへの配置・更新・ロールバック手順
 ├── _docs/                 # 修正指示書・実装記録（バージョン横断で集約）
-├── V91.59/                # 現行版
-│   ├── YakuLingo起動.cmd  # 保守用。共有フォルダ上で直接起動する
-│   ├── YakuLingo起動.vbs
-│   └── app/
-└── V91.58/                # N-1（1世代前）
+└── V91.60/                # 現行版
+    ├── YakuLingo起動.cmd  # 保守用。共有フォルダ上で直接起動する
     ├── YakuLingo起動.vbs
     └── app/
 ```
@@ -67,6 +64,6 @@ Windows + PowerShell 5.1 + Microsoft Edge が前提です。CSV 以外のファ�
 
 - `*.ps1`、`prompts/*.txt`、`www/` 配下の HTML/CSS/JS、`config/settings.template.json` は **UTF-8 BOM付き・CRLF** で保存します。
 - Markdown は UTF-8（BOMなし）です。`.vscode/settings.json` に既定を設定しています。
-- コミット・配布前に `powershell -ExecutionPolicy Bypass -File .\V91.59\app\tools\Check-Encoding.ps1` を実行します。
-- BOM違反は `V91.59\app\tools\Repair-YakuEncoding.ps1 -WhatIfOnly` で確認し、引数なし実行で一括修復できます。
+- コミット・配布前に `powershell -ExecutionPolicy Bypass -File .\V91.60\app\tools\Check-Encoding.ps1` を実行します。
+- BOM違反は `V91.60\app\tools\Repair-YakuEncoding.ps1 -WhatIfOnly` で確認し、引数なし実行で一括修復できます。
 - 本リポジトリの `.gitattributes` で改行コードの自動変換を無効化しています。配布物のバイト列をそのまま保持してください。
