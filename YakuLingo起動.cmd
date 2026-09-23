@@ -34,7 +34,8 @@ set "CODE=%ERRORLEVEL%"
 echo.
 if not "%CODE%"=="0" (
   echo YakuLingo stopped with an error. Please check the message above.
-  echo.
-  pause
+) else (
+  echo YakuLingo stopped.
 )
+pause
 exit /b %CODE%

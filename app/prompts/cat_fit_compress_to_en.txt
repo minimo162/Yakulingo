@@ -1,8 +1,0 @@
-﻿Translation only. Request ID: {request_id}
-Compress each PipelineDraft to max_chars without losing meaning, numeric tokens, or required terms. Return PipelineCandidateCount distinct alternatives in one numbered item when possible. Separate alternatives with exactly:  ⟦YAKU_ALT⟧  Append to every alternative:  ⟦YAKU_FIT⟧ dropped=<none or description>; need_chars=<0 or required count>
-Return numbered items then YAKULINGO_END:{request_id}.
-{numeric_rules}
-{terminology_rules}
-{character_targets}
-{pipeline_data}
-{source_list}
