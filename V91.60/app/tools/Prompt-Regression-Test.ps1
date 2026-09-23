@@ -153,8 +153,8 @@ Assert-YakuTrue -Condition ([bool]$numberedEightRepair.Restored -and ([string]$n
 $numberedMismatch = Repair-YakuNumberedHeadingSequence -SourceText $numberedSource -TranslatedText "1. Funding`n1. Acctg." -Style 'brief'
 Assert-YakuTrue -Condition (-not [bool]$numberedMismatch.Restored) -Message 'V91.23 heading restoration must not run when heading counts differ'
 # V91.60: 手動マスク(【…非開示】)は廃止した。数値プレースホルダーの整合検証へ置き換える。
-$maskOk = Test-YakuNumericMaskIntegrity -MaskedSource '対象は【N1】 oku および【N2】 oku。' -Translated 'Covered: 【N1】 oku and 【N2】 oku.' -Location 'regression'
-$maskMissing = Test-YakuNumericMaskIntegrity -MaskedSource '対象は【N1】 oku。' -Translated 'The item covered is.' -Location 'regression'
+$maskOk = Test-YakuNumericMaskIntegrity -MaskedSource '対象は⟦#KQF⟧ oku および⟦#MRT⟧ oku。' -Translated 'Covered: ⟦#KQF⟧ oku and ⟦#MRT⟧ oku.' -Location 'regression'
+$maskMissing = Test-YakuNumericMaskIntegrity -MaskedSource '対象は⟦#KQF⟧ oku。' -Translated 'The item covered is.' -Location 'regression'
 Assert-YakuTrue -Condition ([bool]$maskOk.Ok -and -not [bool]$maskMissing.Ok -and $maskMissing.Missing.Count -eq 1) -Message 'V91.60 numeric placeholder validation must detect an omission'
 
 
