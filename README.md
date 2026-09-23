@@ -63,7 +63,6 @@ Windows + PowerShell 5.1 + Microsoft Edge が前提です。CSV 以外のファ�
 ## 開発時のエンコーディング
 
 - `*.ps1`、`prompts/*.txt`、`www/` 配下の HTML/CSS/JS、`config/settings.template.json` は **UTF-8 BOM付き・CRLF** で保存します。
-- Markdown は UTF-8（BOMなし）です。`.vscode/settings.json` に既定を設定しています。
 - コミット・配布前に `powershell -ExecutionPolicy Bypass -File .\V91.60\app\tools\Check-Encoding.ps1` を実行します。
 - BOM違反は `V91.60\app\tools\Repair-YakuEncoding.ps1 -WhatIfOnly` で確認し、引数なし実行で一括修復できます。
 - 本リポジトリの `.gitattributes` で改行コードの自動変換を無効化しています。配布物のバイト列をそのまま保持してください。
