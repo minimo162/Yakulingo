@@ -92,10 +92,7 @@ if (Test-Path -LiteralPath $wwwDir -PathType Container) {
 $extraBomTargets = @(
     'glossary.csv',
     'prompt_glossary.csv',
-    'config\settings.template.json',
-    'docs\UI_REDESIGN_V33.md',
-    'docs\WRITEBACK_FIX_V34.md',
-    'docs\MD_ESCAPE_FIX_V35.md'
+    'config\settings.template.json'
 )
 foreach ($rel in $extraBomTargets) {
     $path = Join-Path $rootPath $rel
