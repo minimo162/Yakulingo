@@ -9,20 +9,3 @@ manifest.json
 *.log
 *.tmp
 ~$*
-# 実資料は追跡しない。検証用に置くだけで、リポジトリへ入れない。
-_docs/*.pdf
-_docs/*.xlsx
-_docs/*.docx
-_docs/*.pptx
-output/
-outputs/
-tmp/
-# デスクトップ shell のビルド成果物。csc が毎回異なる build stamp を埋めるので、
-# 追跡するとビルドのたびに差分が出て pull やブランチ切り替えが止まる。
-# 無ければ tools/Test-YakuV9165DesktopShell.ps1 が作る。
-
-# エージェントの設定ディレクトリ。作業成果ではない。
-.codex/
-
-# 画面の床を測る診断具の依存（開発用）。配布物には入らない。
-node_modules/

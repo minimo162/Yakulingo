@@ -1,3 +1,0 @@
-﻿Mozilla PDF.js / pdfjs-dist 5.7.284
-Source: verified npm package tarball
-Files: pdf.min.mjs, pdf.worker.min.mjs

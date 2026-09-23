@@ -1,10 +1,6 @@
-# YakuLingo（テキスト翻訳 / Excel翻訳）
+# YakuLingo（ECM資料英訳ツール）
 
-YakuLingoは、Microsoft 365 Copilotを使うローカル翻訳ツールです。起動すると、日常の短文をすぐに「貼る → 翻訳 → 必要なら短くする → コピー」できる**テキスト翻訳**が開きます。翻訳開始は明示的な「翻訳」または `Ctrl+Enter` だけで、入力中に自動送信しません。
-
-**Excel翻訳**は上部の切替から1操作で開ける補助機能です。確認済みの過去訳を同じセル表現へ決定的に再適用し、未訳だけを補い、新しいExcelファイルへ書き出します。原文セルの数値マスク、翻訳メモリ、QC、非破壊出力の安全契約は維持します。
-
-Microsoft 365 Copilot の画面は Edge DevTools Protocol（CDP）で操作します。数値は送信前にマスクし、保存型の作業では原文と訳文に結び付いたQCと人の確認を行います。
+Microsoft 365 Copilot の画面を Edge DevTools Protocol（CDP）で操作し、テキストおよび Excel/CSV 資料を翻訳するローカル業務ツールです。
 
 このリポジトリは、共有フォルダ `ECM資料英訳ツール/` に配置される配布物一式をそのままの構成で管理します。
 
@@ -13,12 +9,20 @@ Microsoft 365 Copilot の画面は Edge DevTools Protocol（CDP）で操作し�
 ```
 .
 ├── YakuLingo起動.cmd      # 利用者が起動するランチャー。bootstrap.ps1 を呼ぶ
+├── YakuLingo起動.vbs      # .cmd へ転送する互換シム（VBScript廃止予定のため将来削除）
 ├── bootstrap.ps1          # 配布物をローカルへ複製・検証してから起動する
-├── アップロード用フォルダ作成.cmd  # 共有フォルダへ上げる用のフォルダを作る
+├── アップロード用フォルダ作成.cmd  # 共有フォルダへ上げる用のフォルダを作る（管理者用）
 ├── New-YakuUploadFolder.ps1        # 同上の本体。作業ツリーは変更しない
+├── current.txt            # 現行バージョン名（1行）。切替はこのファイルの書き換えのみ
 ├── 共有フォルダ配置手順.md  # 共有フォルダへの配置・更新・ロールバック手順
 ├── _docs/                 # 修正指示書・実装記録（バージョン横断で集約）
-└── app/                   # アプリ本体
+├── V91.59/                # 現行版
+│   ├── YakuLingo起動.cmd  # 保守用。共有フォルダ上で直接起動する
+│   ├── YakuLingo起動.vbs
+│   └── app/
+└── V91.58/                # N-1（1世代前）
+    ├── YakuLingo起動.vbs
+    └── app/
 ```
 
 `app/` の中身:
@@ -27,39 +31,35 @@ Microsoft 365 Copilot の画面は Edge DevTools Protocol（CDP）で操作し�
 | --- | --- |
 | `Start-YakuLingo.ps1` | 起動エントリポイント |
 | `src/` | 本体（HTTPサーバー、Copilotクライアント、翻訳、ファイル処理など） |
-| `www/` | ローカルUI（HTML / CSS / JS） |
+| `www/` | ローカルUI（HTML / CSS / JS、htmx） |
 | `prompts/` | 翻訳プロンプト（方向別・テキスト／ファイル別） |
 | `config/` | `settings.template.json`、`build.txt`（バージョン識別子） |
+| `glossary.csv` | 表ラベルの完全一致置換用の用語集 |
+| `prompt_glossary.csv` | Copilotプロンプト注入用の用語集 |
 | `tools/` | エンコーディング検査・回帰テスト・パッケージ作成などの補助スクリプト |
 | `README.md` / `DESIGN.md` | 利用者・保守者向けドキュメント |
 
 利用者設定（`user_settings.json`）、出力、ログ、履歴はアプリフォルダではなく `%USERPROFILE%\.yakulingo-ps\` 配下に保存されます（V91.59以降）。
 
-配布物に会社・資料固有の用語集、翻訳メモリ、固有名詞一覧は同梱しません。資料翻訳で利用者が登録した用語と、利用者が確認済みにした訳文だけが、その端末の `%USERPROFILE%\.yakulingo-ps\` 配下に蓄積されます。アプリの更新はこれらの利用者データを削除・初期化しません。配布時の検査は、旧参照資産や管理者用ランチャーが混入していないことも確認します。
+## バージョン運用
 
-## Excel翻訳と過去訳
-
-上部の「Excel翻訳」からExcel作業へ移動します。Excel側は、確認済みの過去訳の決定的な再適用、未訳の補完、確認、点検、新しいファイルへの書き戻しに限定します。配置・体裁調整、publication版、プレビュー/PDF、一括収まり判定、inspectorは扱いません。保存済み作業は従来の `/cat?project=...` URLから再開できます。
-
-左側の「過去訳」から `/cat?import=1` を開くと、日本語PDFと英語PDFをブラウザ内で読み込み、ページ範囲の確認、文章貼り付けの代替、対応付け、グリッド上の見直しを行えます。対応を人が確認した後、「確認済みを過去訳として登録」を押した行だけを翻訳メモリへまとめて登録します。未確認・古い点検結果・空行は登録しません。
-
-## 配布・更新運用
-
-- 共有フォルダも作業ツリーと同じフラット構成にし、ルート直下の `app/` を現行アプリとして扱います。版名フォルダと `current.txt` は使いません。
-- `app/config/build.txt` は manifest とローカルキャッシュを識別する build ID として維持します。フォルダ選択には使いません。
-- `app/tools/New-YakuPackage.ps1` は共有ルート直下に `manifest.json`（全配布ファイルのサイズとSHA-256）を生成し、`app/tools/Test-YakuPackage.ps1` がZIPと突合して検証します。`manifest.json` は派生物のためリポジトリには含めません。
-- 共有フォルダへ上げるときは `アップロード用フォルダ作成.cmd` を実行します。作業ツリーを変更せず、`app/` と必要なルートファイルだけを複製し、`manifest.json` を実体に合わせて作り直します。`.git`、`_docs`、リポジトリ用の `README.md`、利用者設定、作業ファイルは複製されません。
-- 更新時は生成済みフォルダの内容を共有ルートへ配置し、`manifest.json` を最後に更新します。ロールバックは、以前に保管した検査済みのフラット配布物へ同じ手順で戻します。
+- 新版は必ず別フォルダへ展開し、使用中のバージョンフォルダを上書きしません。
+- 切替は `current.txt` の1行を書き換えるだけです。ロールバックは1世代前のフォルダ名へ戻します。
+- パッケージ作成時は `current.txt` と `app/config/build.txt` の両方を新バージョンへ更新します。
+- `tools/New-YakuPackage.ps1` はバージョンフォルダ直下に `manifest.json`（全ファイルのサイズとSHA-256）を生成し、`tools/Test-YakuPackage.ps1` がZIPと突合して検証します。`manifest.json` は派生物のためリポジトリには含めません。
+- ルートの `bootstrap.ps1` はバージョンフォルダの外にあるため、パッケージ更新とは別に配置します。
+- 共有フォルダへ上げるときは `アップロード用フォルダ作成.cmd` を実行します。作業ツリーを変更せず、上げてよいものだけを複製した新しいフォルダを作り、`manifest.json` を実体に合わせて作り直します。`.git` やリポジトリ用の `README.md`、利用者設定、作業ファイルは複製されません。
 - 詳細は `共有フォルダ配置手順.md` を参照してください。
+- 共有フォルダには現行版と N-1 だけを保持します。詳細は `共有フォルダ配置手順.md` を参照してください。
 
 ## 起動
 
 1. ルートの `YakuLingo起動.cmd` をダブルクリックします。
-2. PowerShellサーバーが起動し、YakuLingoが普段のEdgeの通常タブで開きます。独自EXEとWebView2は使いません。
-3. 画面右上が「Copilot：準備完了」になったら翻訳できます。サインインを求められた場合は「Copilot画面を開く」を押します。
-4. YakuLingoのタブを閉じると、PowerShellサーバーとYakuLingo専用Copilot Edgeを含めて完全に終了します。確認は翻訳中だけ表示され、ほかのEdgeタブは閉じません。
+2. Edge で Microsoft 365 Copilot へサインインします。
+3. 画面右上が Ready になったら翻訳できます。
+4. 停止は起動中の PowerShell 画面で `Ctrl+C` を押します。
 
-初回起動時、`bootstrap.ps1` が共有ルートの配布物を `%LOCALAPPDATA%\YakuLingo\versions\<build ID>-<manifestハッシュ>` へ複製し、`manifest.json` で全ファイルの SHA-256 を照合してからローカルで起動します。以降アプリは共有フォルダを参照しないため、**利用者が作業中でも共有フォルダを更新できます**（反映は次回起動時）。共有フォルダへ到達できないときは導入済みのローカル版で起動します。
+初回起動時、`bootstrap.ps1` が現行版を `%LOCALAPPDATA%\YakuLingo\versions\<版>-<manifestハッシュ>` へ複製し、`manifest.json` で全ファイルの SHA-256 を照合してからローカルで起動します。以降アプリは共有フォルダを参照しないため、**利用者が作業中でも共有フォルダのバージョンを更新できます**（反映は次回起動時）。共有フォルダへ到達できないときは導入済みのローカル版で起動します。
 
 Windows + PowerShell 5.1 + Microsoft Edge が前提です。CSV 以外のファイル処理には Microsoft Excel が必要です。出力は `%USERPROFILE%\.yakulingo-ps\outputs` に作成され、元ファイルは更新しません。
 
@@ -67,13 +67,6 @@ Windows + PowerShell 5.1 + Microsoft Edge が前提です。CSV 以外のファ�
 
 - `*.ps1`、`prompts/*.txt`、`www/` 配下の HTML/CSS/JS、`config/settings.template.json` は **UTF-8 BOM付き・CRLF** で保存します。
 - Markdown は UTF-8（BOMなし）です。`.vscode/settings.json` に既定を設定しています。
-- コミット・配布前に `powershell -ExecutionPolicy Bypass -File .\app\tools\Check-Encoding.ps1` を実行します。
-- BOM違反は `app\tools\Repair-YakuEncoding.ps1 -WhatIfOnly` で確認し、引数なし実行で一括修復できます。
+- コミット・配布前に `powershell -ExecutionPolicy Bypass -File .\V91.59\app\tools\Check-Encoding.ps1` を実行します。
+- BOM違反は `V91.59\app\tools\Repair-YakuEncoding.ps1 -WhatIfOnly` で確認し、引数なし実行で一括修復できます。
 - 本リポジトリの `.gitattributes` で改行コードの自動変換を無効化しています。配布物のバイト列をそのまま保持してください。
-
-
-## テキスト翻訳とExcel再適用
-
-テキスト翻訳は、原文と訳文の2ペインで翻訳し、結果を見てから「短くする」「さらに短く」「意味を保って言い換える」「見出し向け」「表・セル向け」を1回ずつ明示的に実行できます。用途、フォント、文字サイズ、列幅、行数、目標文字数などの事前条件は扱いません。
-
-Excel翻訳は、過去の日英版からCopilot支援で作成し、人が確定した対訳だけを決定的に再適用します。一意な完全一致または安全な正規化一致だけを入れ、未登録・競合・変更された原文は日本語のまま残します。未訳はテキスト翻訳へ送り、採用訳をExcel作業へ戻せます。

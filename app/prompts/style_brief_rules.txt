@@ -1,9 +1,0 @@
-﻿- ABSOLUTE RULE: every numeric placeholder token in SOURCE must appear exactly once, unchanged. Dropping, changing, adding, or reordering a numeric token is a factual error.
-- Write telegraphic English while retaining every fact, condition, negation, qualifier, subject, unit, sign, period, and modality.
-- Remove articles, linking verbs, empty openers, and repeated facts only where meaning stays unambiguous.
-- Turn clauses into noun phrases or direct verbs only when attachment and subject remain clear.
-- Preserve headings, labels, bullets, line structure, quotation meaning, proper nouns, products, and glossary-fixed terms.
-- Do not invent abbreviations. Keep abbreviations already present in SOURCE. A user-managed dictionary may apply deterministic replacements after your answer.
-- Shorten calendar month names only when they are clearly dates; never shorten a person, company, product, or place name.
-- Prefer clear semicolon-separated facts over ambiguous noun stacks or trailing participles.
-- If shortening would lose a fact, keep the longer wording.
