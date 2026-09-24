@@ -181,9 +181,33 @@
       return;
     }
     gate.hidden = false;
-    if (data && data.mode === 'login') gate.textContent = 'Copilotにログインしてください。ログイン後、自動で翻訳ボタンが有効になります。';
-    else if (data && (data.mode === 'error' || data.mode === 'timeout')) gate.textContent = (data.label || 'エラー') + (data.detail ? '：' + data.detail : '');
-    else gate.textContent = 'Copilotを準備しています';
+    if (data && data.mode === 'login') { gate.textContent = 'Copilotにログインしてください。ログイン後、自動で翻訳ボタンが有効になります。'; return; }
+    if (data && (data.mode === 'error' || data.mode === 'timeout')) {
+      var text = data.mode === 'timeout'
+        ? 'Copilotの準備が時間内に終わりませんでした。Edgeの画面（ログインやダイアログ）を確認してから、再接続してください。'
+        : 'Copilotの準備に失敗しました。Edgeの画面を確認してから、再接続してください。';
+      if (gate.getAttribute('data-yaku-gate') === data.mode) return;
+      gate.setAttribute('data-yaku-gate', data.mode);
+      gate.innerHTML = '<span>' + yakuEscape(text) + '</span> <button type="button" class="secondary-button" data-yaku-reconnect>Copilotに再接続</button><span class="reconnect-result" aria-live="polite"></span>';
+      return;
+    }
+    gate.removeAttribute('data-yaku-gate');
+    gate.textContent = 'Copilotを準備しています';
+  }
+
+  function yakuReconnectCopilot(button) {
+    var gate = document.getElementById('startup-gate');
+    var result = gate ? gate.querySelector('.reconnect-result') : null;
+    button.disabled = true;
+    yakuJsonPost('/api/copilot/reconnect', {}).then(function (response) {
+      return response.json().catch(function () { return {}; }).then(function (data) { return { ok: response.ok, data: data }; });
+    }).then(function (res) {
+      if (result) result.textContent = (res.data && res.data.message) || '';
+      if (res.ok && gate) gate.removeAttribute('data-yaku-gate');
+      yakuPollReadyState();
+    }).catch(function (error) {
+      if (result) result.textContent = error.message;
+    }).finally(function () { button.disabled = false; });
   }
 
   function yakuApplyReadyState(data) {
@@ -805,6 +829,7 @@
         yakuUpdateFileButton();
         return;
       }
+      if (element.matches('[data-yaku-reconnect]')) { yakuReconnectCopilot(element); return; }
       if (element.matches('.copy-button')) { yakuCopy(element); return; }
       if (element.matches('.cancel-button')) {
         var cancelId = element.getAttribute('data-yaku-job-id') || yakuActiveJobId;

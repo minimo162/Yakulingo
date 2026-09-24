@@ -208,12 +208,56 @@ function Start-YakuCopilotWarmup {
         if (!(Test-Path -LiteralPath $psExe)) { $psExe = 'powershell.exe' }
         $quote = { param([string]$v) '"' + ($v -replace '"','\"') + '"' }
         $argLine = '-NoProfile -ExecutionPolicy Bypass -File {0} -Root {1} -StatusPath {2} -TimeoutSeconds 900' -f (& $quote $worker), (& $quote $script:YakuRoot), (& $quote $statusPath)
-        Start-Process -FilePath $psExe -ArgumentList $argLine -WindowStyle Hidden | Out-Null
+        $script:YakuWarmupProcess = Start-Process -FilePath $psExe -ArgumentList $argLine -WindowStyle Hidden -PassThru
         Write-YakuLog "Copilot warmup worker started. status=$statusPath worker=$worker" 'INFO'
     } catch {
         $null = Write-YakuCopilotWarmupStatus -Mode 'error' -Label 'Copilot preparation failed' -Class 'warn' -Detail $_.Exception.Message -Ready $false
         Write-YakuLog "Failed to start Copilot warmup worker: $($_.Exception.Message)" 'ERROR'
     }
+}
+
+function Test-YakuCopilotWarmupRunning {
+    try {
+        $proc = $script:YakuWarmupProcess
+        if ($null -ne $proc -and -not $proc.HasExited) { return $true }
+    } catch {}
+    return $false
+}
+
+function Restart-YakuCopilotWarmup {
+    <#
+      Copilot の準備をやり直す。準備の時間切れ・失敗のあとや、翻訳中に
+      ログイン切れ・入力欄の消失が起きたあとに使う。ツールの再起動を不要にする。
+    #>
+    param([string]$Reason = 'manual')
+    if (Test-YakuCopilotWarmupRunning) {
+        try { Write-YakuLog "Copilot warmup restart skipped; worker still running. reason=$Reason" 'INFO' } catch {}
+        return $false
+    }
+    try { Write-YakuLog "Copilot warmup restart requested. reason=$Reason" 'INFO' } catch {}
+    Start-YakuCopilotWarmup
+    return $true
+}
+
+function Test-YakuCopilotConnectionLostMessage {
+    # 翻訳の失敗理由のうち、Copilot の画面側の問題（ログイン切れ・入力欄が無い・
+    # 拒否/ログイン要求の応答）だけを拾う。訳文の形式エラー等は含めない。
+    param([AllowNull()][string]$Message)
+    $text = [string]$Message
+    if ([string]::IsNullOrWhiteSpace($text)) { return $false }
+    return ($text -match 'Reason=login-required|COPILOT_REFUSAL_OR_LOGIN|Copilot入力欄が見つかりません|login\.microsoftonline|Edge のログイン状態')
+}
+
+function Invoke-YakuCopilotRecoveryForFailedJob {
+    param([AllowNull()][string]$JobId, [AllowNull()][string]$Detail)
+    if ([string]::IsNullOrWhiteSpace($JobId)) { return }
+    if (-not (Test-YakuCopilotConnectionLostMessage -Message $Detail)) { return }
+    if ($null -eq $script:YakuRecoveredJobIds) { $script:YakuRecoveredJobIds = @{} }
+    if ($script:YakuRecoveredJobIds.ContainsKey($JobId)) { return }
+    $script:YakuRecoveredJobIds[$JobId] = $true
+    $loginLost = ([string]$Detail -match 'login-required|login\.microsoftonline|COPILOT_REFUSAL_OR_LOGIN')
+    try { Write-YakuLog "Copilot connection lost during job; restarting warmup. jobId=$JobId login=$loginLost" 'WARN' } catch {}
+    $null = Restart-YakuCopilotWarmup -Reason ('job-failed:' + $JobId)
 }
 
 function Get-YakuCopilotBadgeState {
@@ -251,6 +295,11 @@ function Get-YakuTranslateReadinessState {
             return [pscustomobject]@{ ready=$ready; canTranslate=$ready; mode=$jobMode; label=[string]$badge.label; class=[string]$job['class']; detail=$detail; updated_at=(Get-Date).ToString('s'); jobId=$jobId; progress=100; kind=$kind; phase=$phase; jobLabel=[string]$job['label'] }
         }
         if ($jobMode -in @('error','failed','interrupted')) {
+            # ログイン切れ等で失敗したら、準備をやり直して「準備完了」のまま
+            # 放置しない。準備が終わるまで翻訳ボタンは押せない。
+            Invoke-YakuCopilotRecoveryForFailedJob -JobId $jobId -Detail $detail
+            $badge = Get-YakuCopilotBadgeState
+            try { $ready = [bool]$badge.ready } catch { $ready = $false }
             return [pscustomobject]@{ ready=$ready; canTranslate=$ready; mode='error'; label=[string]$badge.label; class=[string]$badge.class; detail=$detail; updated_at=(Get-Date).ToString('s'); jobId=$jobId; progress=100; kind=$kind; phase=$phase; jobLabel=[string]$job['label'] }
         }
         if ($jobMode -eq 'cancelled') {
@@ -1652,6 +1701,21 @@ function Invoke-YakuRoute {
     if ($method -eq 'GET' -and $path -eq '/api/ready-state') {
         $state = Get-YakuTranslateReadinessState
         Send-YakuTextResponse -Context $Context -Text (Convert-YakuReadinessStateToJson -State $state) -ContentType 'application/json; charset=utf-8'
+        return
+    }
+    if ($method -eq 'POST' -and $path -eq '/api/copilot/reconnect') {
+        try {
+            $active = Get-YakuActiveTranslationJobState
+            if ($active -and (Test-YakuTranslationJobRunning -State $active)) {
+                Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$false; message='翻訳中は再接続できません。翻訳が終わってから押してください。' } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 409
+                return
+            }
+            $started = Restart-YakuCopilotWarmup -Reason 'user'
+            $message = if ($started) { 'Copilotに接続し直しています。' } else { 'Copilotを準備中です。Edgeの画面を確認してください。' }
+            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$true; started=[bool]$started; message=$message } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8'
+        } catch {
+            Send-YakuTextResponse -Context $Context -Text ([ordered]@{ ok=$false; message=(Convert-YakuExceptionToUserMessage $_) } | ConvertTo-Json -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 500
+        }
         return
     }
     if ($method -eq 'GET' -and $path -eq '/api/settings-form') {
