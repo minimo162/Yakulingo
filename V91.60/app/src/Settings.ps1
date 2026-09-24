@@ -380,6 +380,29 @@ function Convert-YakuSettingsFormToHtml {
     $diagFullSelected = if ($diagnosticsLevel -eq 'full') { 'selected' } else { '' }
     return @"
 <form class='settings-grid' data-yaku-json-post='/api/settings' data-yaku-target='#settings-result' data-yaku-settings-form='true' data-yaku-dirty='false' data-yaku-saved-diagnostics='$diagnosticsValue'>
+  <input type='hidden' name='browser_display_mode' value='foreground'>
+  <input type='hidden' name='use_bundled_glossary' value='false'>
+  <input type='hidden' name='csv_translate_header' value='false'>
+  <input type='hidden' name='translate_shapes' value='false'>
+  <input type='hidden' name='translate_charts' value='false'>
+  <input type='hidden' name='translation_cache_enabled' value='false'>
+  <input type='hidden' name='full_text_diagnostics_enabled' value='false'>
+  <label class='check'><input type='checkbox' name='translate_shapes' value='true' $shapes> Excel図形・テキストボックスを翻訳</label>
+  <label class='check'><input type='checkbox' name='translate_charts' value='true' $charts> グラフタイトル・軸タイトルを翻訳</label>
+  <label class='check'><input type='checkbox' name='csv_translate_header' value='true' $csvHeader> CSVヘッダー行も翻訳</label>
+  <label class='check'><input type='checkbox' name='translation_cache_enabled' value='true' $cache> 同じ文は前の訳を使い回す（翻訳キャッシュ）</label>
+  <label>ログ診断レベル
+    <select name='diagnostics_level'>
+      <option value='minimal' $diagMinimalSelected>minimal（診断メッセージも秘匿）</option>
+      <option value='standard' $diagStandardSelected>standard（既定・例外メッセージを表示）</option>
+      <option value='full' $diagFullSelected>full（原文・翻訳文・プロンプトを記録）</option>
+    </select>
+  </label>
+  <div class='settings-save-state $diagnosticsClass' data-yaku-settings-state aria-live='polite'>$diagnosticsLabel</div>
+  <label>診断保持日数 <input type='number' min='1' max='7' name='diagnostic_retention_days' value='$(ConvertTo-YakuHtml $Settings.diagnostic_retention_days)'></label>
+  <details class='settings-advanced'>
+  <summary>詳細設定（通常は変更不要。Edgeのポート・ウィンドウサイズは次回起動から反映）</summary>
+  <div class='settings-grid'>
   <label>Copilot接続先 <select name='copilot_url'><option value='https://m365.cloud.microsoft/chat/' selected>Microsoft 365 Copilot</option></select></label>
   <label>Copilotモデル優先度(カンマ区切り・上から順に試行、空欄=変更しない) <input name='copilot_model' value='$(ConvertTo-YakuHtml $Settings.copilot_model)' placeholder='GPT 5.6 Think deeper,Opus,Think Deeper'></label>
   <label>Edgeウィンドウサイズ（幅,高さ／noneで無効） <input name='edge_window_size' value='$(ConvertTo-YakuHtml $Settings.edge_window_size)' placeholder='1280,900'></label>
@@ -392,27 +415,9 @@ function Convert-YakuSettingsFormToHtml {
   <label>ファイルアップロード上限MB <input type='number' min='1' max='200' name='file_upload_max_mb' value='$(ConvertTo-YakuHtml $Settings.file_upload_max_mb)'></label>
   <label>出力フォント名（空欄=変更しない） <input name='output_font_name' value='$(ConvertTo-YakuHtml $Settings.output_font_name)' placeholder='Arial'></label>
   <label>最大リトライ <input type='number' min='0' max='10' name='max_retries' value='$(ConvertTo-YakuHtml $Settings.max_retries)'></label>
-  <input type='hidden' name='browser_display_mode' value='foreground'>
-  <input type='hidden' name='use_bundled_glossary' value='false'>
-  <input type='hidden' name='csv_translate_header' value='false'>
-  <input type='hidden' name='translate_shapes' value='false'>
-  <input type='hidden' name='translate_charts' value='false'>
-  <input type='hidden' name='translation_cache_enabled' value='false'>
   <label class='check'><input type='checkbox' name='use_bundled_glossary' value='true' $bundled> glossary.csv を参照</label>
-  <label class='check'><input type='checkbox' name='csv_translate_header' value='true' $csvHeader> CSVヘッダー行も翻訳</label>
-  <label class='check'><input type='checkbox' name='translate_shapes' value='true' $shapes> Excel図形・テキストボックスを翻訳</label>
-  <label class='check'><input type='checkbox' name='translate_charts' value='true' $charts> グラフタイトル・軸タイトルを翻訳</label>
-  <label class='check'><input type='checkbox' name='translation_cache_enabled' value='true' $cache> 翻訳キャッシュを使用</label>
-  <input type='hidden' name='full_text_diagnostics_enabled' value='false'>
-  <label>ログ診断レベル
-    <select name='diagnostics_level'>
-      <option value='minimal' $diagMinimalSelected>minimal（診断メッセージも秘匿）</option>
-      <option value='standard' $diagStandardSelected>standard（既定・例外メッセージを表示）</option>
-      <option value='full' $diagFullSelected>full（原文・翻訳文・プロンプトを記録）</option>
-    </select>
-  </label>
-  <div class='settings-save-state $diagnosticsClass' data-yaku-settings-state aria-live='polite'>$diagnosticsLabel</div>
-  <label>診断保持日数 <input type='number' min='1' max='7' name='diagnostic_retention_days' value='$(ConvertTo-YakuHtml $Settings.diagnostic_retention_days)'></label>
+  </div>
+  </details>
   <div class='form-actions'><button type='submit'>保存</button></div>
 </form>
 <div id='settings-result'></div>

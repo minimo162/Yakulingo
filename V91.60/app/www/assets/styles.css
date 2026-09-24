@@ -213,3 +213,9 @@ summary { cursor: pointer; color: var(--muted); font-size: var(--font-meta); }
   .result-card header, .result-card-header, .job-bottomline { align-items: stretch; flex-direction: column; }
   .command-bar, .result-actions { justify-content: flex-start; }
 }
+.hero-actions { display: flex; align-items: center; gap: var(--space-2); }
+.quit-button { min-height: 30px; padding: 0 12px; }
+.settings-advanced { grid-column: 1 / -1; }
+.settings-grid { display: grid; gap: var(--space-2); }
+.settings-grid label.check { display: flex; align-items: center; gap: 6px; }
+.settings-advanced > summary { cursor: pointer; color: var(--muted); font-size: var(--font-meta); margin: var(--space-2) 0; }
