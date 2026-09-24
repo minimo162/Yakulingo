@@ -39,6 +39,7 @@ tools/Stop-YakuLingo.ps1	crlf
 tools/Test-Copilot.ps1	crlf
 tools/Test-CopilotAutomation.ps1	crlf
 tools/Test-YakuBootstrap.ps1	crlf
+tools/Test-YakuCopilotReconnect.ps1	crlf
 tools/Test-YakuPackage.ps1	crlf
 tools/Test-YakuUserGlossary.ps1	crlf
 tools/Test-YakuV9110BulkFormulaGuard.ps1	lf

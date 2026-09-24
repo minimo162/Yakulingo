@@ -27,6 +27,8 @@
       <button id="tab-file" type="button" role="tab" class="tab-button" data-yaku-tab="file" aria-selected="false" aria-controls="panel-file" tabindex="-1">ファイル翻訳</button>
     </nav>
 
+    <div id="startup-gate" class="startup-message" aria-live="polite">Copilotを準備しています</div>
+
     <section id="panel-text" role="tabpanel" aria-labelledby="tab-text" class="translator tab-panel is-active" data-yaku-panel="text" aria-label="テキスト翻訳">
       <form id="text-form" class="translate-form">
         <div class="section-title-row">
@@ -55,7 +57,6 @@
         </div>
       </form>
 
-      <div id="startup-gate" class="startup-message" aria-live="polite">Copilotを準備しています</div>
     </section>
 
     <section id="panel-file" role="tabpanel" aria-labelledby="tab-file" class="file-translator tab-panel" data-yaku-panel="file" aria-label="ファイル翻訳" hidden>
