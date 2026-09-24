@@ -10,6 +10,7 @@
   var yakuActiveJobId = null;
   var yakuRestoredJobId = null;
   var yakuUploadedFile = null;
+  var yakuFileInfoSeq = 0;
   var yakuPrivacyStatus = null;
   var yakuSheetSelection = null;
   var yakuFileDirectionTouched = false;
@@ -87,9 +88,28 @@
     });
   }
 
+  // サーバーはエラーも <div class='alert alert-…'> のHTMLで返す。そのまま Error にすると、
+  // 呼び出し側がエスケープして画面にタグが文字として出るため、本文と種類に分けて渡す。
+  function yakuAlertFromHtml(text) {
+    var trimmed = String(text || '').trim();
+    if (!/^<div[^>]*class=["'][^"']*\balert\b/i.test(trimmed)) return null;
+    var holder = document.createElement('div');
+    holder.innerHTML = trimmed;
+    var alert = holder.querySelector('.alert');
+    if (!alert) return null;
+    var kindMatch = /\balert-(error|warning|info|success)\b/.exec(alert.className || '');
+    return { message: (alert.textContent || '').trim(), kind: kindMatch ? kindMatch[1] : 'error' };
+  }
+
   function yakuResponseText(response) {
     return response.text().then(function (text) {
-      if (!response.ok) throw new Error(text || ('HTTP ' + response.status));
+      if (!response.ok) {
+        var alert = yakuAlertFromHtml(text);
+        var error = new Error(alert ? alert.message : (text || ('HTTP ' + response.status)));
+        error.status = response.status;
+        error.kind = alert ? alert.kind : 'error';
+        throw error;
+      }
       return text;
     });
   }
@@ -272,7 +292,8 @@
     var selected = checked ? checked.value : 'auto';
     var analysis = yakuAnalyzeDirection(value);
     if (direction) {
-      if (!value.trim()) direction.textContent = '-';
+      direction.classList.remove('meta-alert');
+      if (!value.trim()) direction.textContent = '未入力';
       else if (selected !== 'auto') direction.textContent = (selected === 'to_en' ? '日→英' : '英他→日') + '（手動）';
       else direction.textContent = analysis.dir === 'to_en' ? '日→英' : '英他→日';
     }
@@ -293,7 +314,7 @@
     var selectedName = row ? row.querySelector('.file-selected-name') : null;
     var selectedSize = row ? row.querySelector('.file-selected-size') : null;
     var hasFile = !!(fileInput && fileInput.files && fileInput.files.length);
-    if (name) name.textContent = hasFile ? '選択済み' : 'ローカルパス指定も利用できます';
+    if (name) name.textContent = hasFile ? '別のファイルに替えるときは、もう一度ドロップまたはクリック' : 'ローカルパス指定も利用できます';
     if (row) row.hidden = !hasFile;
     if (hasFile && selectedName) selectedName.textContent = fileInput.files[0].name;
     if (hasFile && selectedSize) selectedSize.textContent = yakuFormatBytes(fileInput.files[0].size);
@@ -436,7 +457,8 @@
     var result = yakuGetResultTarget();
     if (result) {
       result.removeAttribute('aria-busy');
-      var errorHtml = '<div class="alert alert-error">' + yakuEscape(error && error.message ? error.message : fallback) + '</div>';
+      var kind = error && error.kind === 'warning' ? 'warning' : 'error';
+      var errorHtml = '<div class="alert alert-' + kind + '">' + yakuEscape(error && error.message ? error.message : fallback) + '</div>';
       result.innerHTML = errorHtml;
       yakuResultByTab[yakuActiveJobKind] = errorHtml;
       window.setTimeout(function () { yakuScrollCompletionIntoView(result); }, 0);
@@ -451,7 +473,12 @@
     event.preventDefault();
     var input = document.getElementById('input-text');
     var text = input ? input.value : '';
-    if (!text.trim()) return;
+    if (!text.trim()) {
+      var direction = document.getElementById('direction-indicator');
+      if (direction) { direction.textContent = '翻訳するテキストを入力してください'; direction.classList.add('meta-alert'); }
+      if (input) input.focus();
+      return;
+    }
     if (!yakuReady || yakuTranslating) { yakuPollReadyState(); return; }
     if (!yakuConfirmUnsavedSettings()) return;
     yakuTranslating = true;
@@ -477,9 +504,12 @@
       if (!file.size) return Promise.reject(new Error('空のファイルはアップロードできません。'));
       if (file.size > fileMaxBytes) return Promise.reject(new Error('ファイルサイズが上限 ' + yakuFormatBytes(fileMaxBytes) + ' を超えています。'));
       var fingerprint = yakuFileFingerprint(file);
-      if (yakuUploadedFile && yakuUploadedFile.fingerprint === fingerprint) return Promise.resolve({ file_handle: yakuUploadedFile.handle });
+      if (yakuUploadedFile && yakuUploadedFile.fingerprint === fingerprint) {
+        if (yakuUploadedFile.handle) return Promise.resolve({ file_handle: yakuUploadedFile.handle });
+        if (yakuUploadedFile.pending) return yakuUploadedFile.pending;
+      }
       yakuUpdateFileMeta('ファイルを安全にアップロードしています（' + yakuFormatBytes(file.size) + '）');
-      return yakuFetch('/api/upload', {
+      var pending = yakuFetch('/api/upload', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/octet-stream',
@@ -488,9 +518,14 @@
         body: file
       }).then(yakuResponseJson).then(function (data) {
         if (!data.file_handle) throw new Error('アップロードハンドルを取得できませんでした。');
-        yakuUploadedFile = { fingerprint: fingerprint, handle: data.file_handle };
+        if (yakuUploadedFile && yakuUploadedFile.pending === pending) yakuUploadedFile = { fingerprint: fingerprint, handle: data.file_handle };
         return { file_handle: data.file_handle };
+      }, function (error) {
+        if (yakuUploadedFile && yakuUploadedFile.pending === pending) yakuUploadedFile = null;
+        throw error;
       });
+      yakuUploadedFile = { fingerprint: fingerprint, handle: '', pending: pending };
+      return pending;
     }
     if (pathInput && pathInput.value.trim()) return Promise.resolve({ file_path: pathInput.value.trim() });
     return Promise.reject(new Error('翻訳するファイルを選択してください。'));
@@ -514,10 +549,14 @@
 
   function yakuSubmitFileInfo() {
     if (!yakuHasFileSource() || yakuTranslating) return;
-    yakuUpdateFileMeta('ファイル内容を確認しています');
+    var seq = ++yakuFileInfoSeq;
+    yakuUpdateFileMeta('ファイル内容を確認しています（翻訳方向と対象シートを調べます）');
     yakuBuildFilePayload().then(function (payload) {
       return yakuJsonPost('/api/file-info', payload).then(yakuResponseJson);
     }).then(function (data) {
+      // 確認中に別のファイルへ選び直したり、翻訳を始めたりしたときは、古い結果で上書きしない。
+      if (seq !== yakuFileInfoSeq) return;
+      if (yakuTranslating) { yakuResetFileInfoMessage(); return; }
       var sheets = data.Sheets || [];
       var chips = sheets.map(function (sheet) {
         var name = sheet.Name || '';
@@ -531,13 +570,17 @@
         if (detectedRadio) { detectedRadio.checked = true; reflected = true; }
       }
       var sheetInput = document.getElementById('file-sheets');
-      yakuSheetSelection = sheets.map(function (sheet) { return String(sheet.Name || ''); }).filter(Boolean);
-      if (sheetInput) sheetInput.value = yakuSheetSelection.join(', ');
+      var sheetNames = sheets.map(function (sheet) { return String(sheet.Name || ''); }).filter(Boolean);
+      // CSV などシートの無いファイルは、選択の対象が無いだけなので「全シート未選択」と扱わない。
+      yakuSheetSelection = sheetNames.length ? sheetNames : null;
+      if (sheetInput) sheetInput.value = sheetNames.join(', ');
       var reflectedText = reflected ? ' / 推定方向を反映しました' : '';
       var warning = '<div id="sheet-selection-warning" class="alert-inline" hidden>対象シートが選択されていません。チップを選択するか、対象シート欄を空欄に戻すと全シートが対象になります。</div>';
       yakuUpdateFileMeta('<strong>確認OK</strong>：' + yakuEscape(data.FileName || '') + ' / 推定方向 ' + detected + reflectedText + (chips ? '<div class="sheet-chip-row" aria-label="対象シート">' + chips + '</div>' + warning : ''));
       yakuUpdateFileButton();
     }).catch(function (error) {
+      if (seq !== yakuFileInfoSeq) return;
+      if (yakuTranslating) { yakuResetFileInfoMessage(); return; }
       yakuUpdateFileMeta('<span class="alert-inline">' + yakuEscape(error.message || 'ファイル確認に失敗しました。') + '</span>');
     });
   }
@@ -748,14 +791,21 @@
       yakuSheetSelection = null;
       yakuFileDirectionTouched = false;
       if (fileInput.files.length && filePath) filePath.value = '';
+      yakuFileInfoSeq += 1;
       yakuResetFileInfoMessage();
+      // 選んだらすぐ確認し、翻訳方向と対象シートを反映する（ボタンは確認し直す用に残す）。
+      if (fileInput.files.length) yakuSubmitFileInfo();
     });
     if (filePath) filePath.addEventListener('input', function () {
       if (filePath.value.trim() && fileInput) fileInput.value = '';
       yakuUploadedFile = null;
       yakuSheetSelection = null;
       yakuFileDirectionTouched = false;
+      yakuFileInfoSeq += 1;
       yakuResetFileInfoMessage();
+    });
+    if (filePath) filePath.addEventListener('change', function () {
+      if (filePath.value.trim()) yakuSubmitFileInfo();
     });
     if (fileInfoButton) fileInfoButton.addEventListener('click', yakuSubmitFileInfo);
     if (fileSheets) fileSheets.addEventListener('input', function () { yakuSheetSelection = null; yakuUpdateFileButton(); });
@@ -764,6 +814,7 @@
     });
     if (fileClearButton) fileClearButton.addEventListener('click', function () {
       if (fileInput) fileInput.value = '';
+      yakuFileInfoSeq += 1;
       yakuUploadedFile = null;
       yakuSheetSelection = null;
       yakuFileDirectionTouched = false;

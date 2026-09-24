@@ -14,6 +14,20 @@ function ConvertTo-YakuUtf8Base64 {
     return [Convert]::ToBase64String($bytes)
 }
 
+function Get-YakuResultOptionDisplay {
+    <#
+      テキスト翻訳の結果カードの見出し。FULL/BRIEF だけでは違いが分からないため、
+      何に使う訳かを短く添える。
+    #>
+    param([string]$Style, [string]$Label)
+    switch ($Style) {
+        'full'  { return [pscustomobject]@{ Title='FULL'; Hint='全文訳（略語を使わず、原文の情報をすべて訳す）' } }
+        'brief' { return [pscustomobject]@{ Title='BRIEF'; Hint='短縮訳（表や見出し向けに、承認済みの略語を使う）' } }
+        'jp'    { return [pscustomobject]@{ Title='日本語訳'; Hint='' } }
+    }
+    return [pscustomobject]@{ Title=$Label; Hint='' }
+}
+
 function New-YakuAlertHtml {
     param(
         [Parameter(Mandatory=$true)][string]$Message,
@@ -105,7 +119,7 @@ function Convert-YakuTextResultToHtml {
 
     $inputLength = 0
     try { $inputLength = [int]$Result.InputLength } catch { $inputLength = 0 }
-    if ($inputLength -gt 0) { $html += "<div class='batch-note'>ユーザー入力: $(ConvertTo-YakuHtml $inputLength)字</div>" }
+    if ($inputLength -gt 0) { $html += "<div class='batch-note'>入力: $(ConvertTo-YakuHtml $inputLength)字</div>" }
 
     # V91.60 §9: 何件マスクして送ったかを示す。伏せた件数が見えないと、
     # 利用者は「送信されたのか」を推測するしかない。
@@ -134,7 +148,7 @@ function Convert-YakuTextResultToHtml {
     $batchCount = 0
     try { $batchCount = [int]$Result.BatchCount } catch { $batchCount = 0 }
     if ($batchCount -gt 1) {
-        $html += "<div class='batch-note'>長文を $batchCount バッチに分割し、前バッチの訳をSTYLE_REFERENCEとして引き継ぎました。</div>"
+        $html += "<div class='batch-note'>長文のため $batchCount 回に分けて翻訳しました。用語と言い回しは前の部分の訳にそろえています。</div>"
     }
 
     $html += "<section class='result-stack' data-yaku-state='done'>"
@@ -150,12 +164,15 @@ function Convert-YakuTextResultToHtml {
     }
 
     foreach ($opt in $options) {
-        $title = ConvertTo-YakuHtml $opt.Label
+        # Label（FULL/BRIEF/JAPANESE）は検査や警告でも使う内部名なので変えず、画面の見出しだけ言い換える。
+        $display = Get-YakuResultOptionDisplay -Style ([string]$opt.Style) -Label ([string]$opt.Label)
+        $title = ConvertTo-YakuHtml $display.Title
+        $hint = if ([string]::IsNullOrWhiteSpace($display.Hint)) { '' } else { " <span class='eyebrow-hint'>$(ConvertTo-YakuHtml $display.Hint)</span>" }
         $translation = ConvertTo-YakuHtml $opt.Translation
         $html += @"
 <article class='result-card result-card-translation'>
   <header>
-    <div class='eyebrow'>$title</div>
+    <div class='eyebrow'>$title$hint</div>
     $(New-YakuCopyButtonHtml -Text ([string]$opt.Translation) -Label 'コピー')
   </header>
   <pre class='translation'>$translation</pre>

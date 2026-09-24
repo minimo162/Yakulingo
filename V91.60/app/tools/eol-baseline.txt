@@ -43,6 +43,7 @@ tools/Test-YakuCopilotReconnect.ps1	crlf
 tools/Test-YakuFriendlyMessages.ps1	crlf
 tools/Test-YakuPackage.ps1	crlf
 tools/Test-YakuStartupExperience.ps1	crlf
+tools/Test-YakuUsabilityFixes.ps1	crlf
 tools/Test-YakuUserGlossary.ps1	crlf
 tools/Test-YakuV9110BulkFormulaGuard.ps1	lf
 tools/Test-YakuV9117BandedFormulaFree.ps1	lf

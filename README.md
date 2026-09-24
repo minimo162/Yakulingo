@@ -53,8 +53,8 @@ Microsoft 365 Copilot の画面を Edge DevTools Protocol（CDP）で操作し�
 
 1. ルートの `YakuLingo起動.cmd` をダブルクリックします。
 2. Edge で Microsoft 365 Copilot へサインインします。
-3. 画面右上が Ready になったら翻訳できます。
-4. 停止は起動中の PowerShell 画面で `Ctrl+C` を押します。
+3. 画面右上が「準備完了」になったら翻訳できます。
+4. 終了は画面右上の「終了」ボタンを押します。起動中の PowerShell 画面を閉じるか `Ctrl+C` を押しても終了します。
 
 初回起動時、`bootstrap.ps1` が現行版を `%LOCALAPPDATA%\YakuLingo\versions\<版>-<manifestハッシュ>` へ複製し、`manifest.json` で全ファイルの SHA-256 を照合してからローカルで起動します。以降アプリは共有フォルダを参照しないため、**利用者が作業中でも共有フォルダのバージョンを更新できます**（反映は次回起動時）。共有フォルダへ到達できないときは導入済みのローカル版で起動します。
 
