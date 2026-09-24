@@ -645,7 +645,8 @@ function Test-YakuNumericMaskIntegrity {
     $missing = New-Object System.Collections.Generic.List[string]
     $duplicated = New-Object System.Collections.Generic.List[string]
     $unexpected = New-Object System.Collections.Generic.List[string]
-    foreach ($key in @($sourceCounts.Keys)) {
+    # 原文に出てくる順で並べる。警告に数値を並べたとき原文と見比べやすい。
+    foreach ($key in @(Get-YakuNumericMaskTokens -Text $MaskedSource | Select-Object -Unique)) {
         $actual = if ($targetCounts.ContainsKey($key)) { [int]$targetCounts[$key] } else { 0 }
         if ($actual -lt [int]$sourceCounts[$key]) { $missing.Add($key) | Out-Null }
         elseif ($actual -gt [int]$sourceCounts[$key]) { $duplicated.Add($key) | Out-Null }
@@ -667,6 +668,57 @@ function Test-YakuNumericMaskIntegrity {
         Ok = [bool]$ok; Detail = $detail
         Missing = @($missing.ToArray()); Duplicated = @($duplicated.ToArray()); Unexpected = @($unexpected.ToArray())
     }
+}
+
+function Format-YakuNumericMaskIssueMessage {
+    <#
+      伏せ字の崩れを、利用者が確かめられる言葉にする。
+      内部の伏せ字名(⟦#ABC⟧)ではなく実際の数値を示す。どの数値が落ちたか
+      分からないと、原文と突き合わせようがないため。
+      この平文は画面表示のみ。ログ・診断ファイルへは出さない(§8)。
+    #>
+    param(
+        [Parameter(Mandatory=$true)]$Integrity,
+        [AllowNull()][hashtable]$Map
+    )
+    $toValues = {
+        param($tokens)
+        return @(@($tokens) | ForEach-Object {
+            $tok = [string]$_
+            $value = ''
+            if ($null -ne $Map -and $Map.ContainsKey($tok)) { $value = [string]$Map[$tok] }
+            if ([string]::IsNullOrEmpty($value)) { '（値不明）' } else { $value }
+        })
+    }
+    $parts = New-Object System.Collections.Generic.List[string]
+    $missing = @($Integrity.Missing)
+    $duplicated = @($Integrity.Duplicated)
+    $unexpected = @($Integrity.Unexpected)
+    if ($missing.Count -gt 0) {
+        $parts.Add('訳文に次の数値がありません: ' + ((& $toValues $missing) -join '、') + '。原文を見て訳文に書き足してください。') | Out-Null
+    }
+    if ($duplicated.Count -gt 0) {
+        $parts.Add('次の数値が原文より多く訳文に出ています: ' + ((& $toValues $duplicated) -join '、') + '。重複していないか確認してください。') | Out-Null
+    }
+    if ($unexpected.Count -gt 0) {
+        $parts.Add('原文にない数値の目印が訳文にあったため取り除きました。前後の文を確認してください。') | Out-Null
+    }
+    if ($parts.Count -eq 0) { return '数値が原文と一致しない可能性があります。数値を確認してください。' }
+    return (@($parts.ToArray()) -join ' ')
+}
+
+function New-YakuNumericMaskCorrectionInstruction {
+    <#
+      ファイル翻訳で伏せ字が落ちた項目を1件だけ送り直すときの追記。
+      伏せ字名は送信済みの原文にあるものなので、新たな情報は出さない。
+    #>
+    param([Parameter(Mandatory=$true)]$Integrity)
+    $tokens = @(@($Integrity.Missing) + @($Integrity.Unexpected) + @($Integrity.Duplicated) | Select-Object -Unique)
+    $list = (@($tokens) -join ', ')
+    return @"
+IMPORTANT CORRECTION: Your previous translation did not keep the numeric placeholders intact ($list).
+Every placeholder of the form ⟦#ABC⟧ in the source must appear in the translation exactly as many times as in the source, unchanged, and no other placeholder may be added.
+"@
 }
 
 function Restore-YakuMaskedTranslationOptions {
@@ -721,7 +773,7 @@ function Restore-YakuMaskedTranslationOptions {
                 })
                 Add-YakuWarning -Warnings $Warnings -Category 'numeric-placeholder-dropped-brief' -Location $label -Details $details -Message ("BRIEF は要約のため、次の数値が省略されました: " + (@($dropped) -join '、') + "。意図した省略か確認してください。")
             } else {
-                Add-YakuWarning -Warnings $Warnings -Category 'numeric-placeholder-unresolved' -Location $label -Details $details -Message "数値プレースホルダーの個数が原文と一致しません。該当箇所の数値を必ずご確認ください。($([string]$integrity.Detail))"
+                Add-YakuWarning -Warnings $Warnings -Category 'numeric-placeholder-unresolved' -Location $label -Details $details -Message ("${label}: " + (Format-YakuNumericMaskIssueMessage -Integrity $integrity -Map $Map))
             }
         } catch {}
     }

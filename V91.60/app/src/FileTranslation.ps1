@@ -2018,6 +2018,20 @@ function Invoke-YakuFileTranslation {
     # マスクを残したままにできない。復元前に1対1を確認し、崩れていれば
     # 警告を立てる。無言で数値が消えるのを避けるのが目的。
     $maskIntegrityFailures = 0
+    $maskRetryCount = 0
+    $maskRetryLimit = 5
+    # 警告に「どのセルか」を出すため、原文テキストから場所を引けるようにする。
+    # 同じ文字列のセルはまとめて1回翻訳しているので、場所は複数あり得る。
+    $locationsByIndex = @{}
+    foreach ($block in $blocks) {
+        try {
+            $owner = $unique.ByText[[string]$block.Text]
+            if ($null -eq $owner) { continue }
+            $key = [int]$owner.Index
+            if (-not $locationsByIndex.ContainsKey($key)) { $locationsByIndex[$key] = New-Object System.Collections.Generic.List[string] }
+            $locationsByIndex[$key].Add([string]$block.Location) | Out-Null
+        } catch {}
+    }
     foreach ($item in $items) {
         $idx = [int]$item.Index
         if (-not $translationByIndex.ContainsKey($idx)) { continue }
@@ -2029,13 +2043,49 @@ function Invoke-YakuFileTranslation {
         # プレースホルダーが無いのは当然なので、二重に警告しない。
         if ($translated -eq (Get-YakuFileItemOriginalText -Item $item)) { continue }
         $maskIntegrity = Test-YakuNumericMaskIntegrity -MaskedSource ([string]$item.MaskedText) -Translated $translated -Location ("file-ID-" + [string]$idx)
+        # テキスト翻訳と同じく、伏せ字が崩れた項目は1件ずつ送り直す。
+        # 時間が延びすぎないよう件数に上限を置き、失敗しても止めずに警告へ回す。
+        if (-not [bool]$maskIntegrity.Ok -and $maskRetryCount -lt $maskRetryLimit) {
+            $maskRetryCount++
+            try {
+                $maskRequestId = [guid]::NewGuid().ToString('N')
+                $maskPrompt = New-YakuFilePrompt -Root $Root -Items @($item) -Settings $Settings -Direction $Direction -RequestId $maskRequestId
+                $maskPrompt += "`n`n" + (New-YakuNumericMaskCorrectionInstruction -Integrity $maskIntegrity)
+                $context['CopilotCalls'] = [int]$context['CopilotCalls'] + 1
+                $maskRaw = Invoke-YakuCopilotPrompt -Prompt $maskPrompt -Settings $Settings -SkipFreshChatWait -AnswerFormat numbered -PreserveEndMarker -Warnings $warnings -ProgressState $ProgressState
+                $maskParsed = Parse-YakuNumberedBatchResponse -Raw $maskRaw -ExpectedIds @(1) -RequestId $maskRequestId
+                if ($maskParsed.Items.ContainsKey(1)) {
+                    $retried = Convert-YakuFileItemTranslationForOutput -Item $item -Translation ([string]$maskParsed.Items[1])
+                    $retriedIntegrity = Test-YakuNumericMaskIntegrity -MaskedSource ([string]$item.MaskedText) -Translated $retried -Location ("file-ID-" + [string]$idx + '-retry')
+                    if ([bool]$retriedIntegrity.Ok -or (@($retriedIntegrity.Missing).Count -lt @($maskIntegrity.Missing).Count)) {
+                        $translated = $retried
+                        $translationByIndex[$idx] = $retried
+                        $maskIntegrity = $retriedIntegrity
+                    }
+                }
+                try { Write-YakuLog "File numeric mask retry. jobId=$JobId id=$idx ok=$([bool]$maskIntegrity.Ok)" 'INFO' } catch {}
+            } catch {
+                try { Write-YakuLog "File numeric mask retry failed. jobId=$JobId id=$idx error=$($_.Exception.Message)" 'WARN' } catch {}
+            }
+        }
         if (-not [bool]$maskIntegrity.Ok) {
             $maskIntegrityFailures++
+            $where = "ID $idx"
             try {
-                Add-YakuWarning -Warnings $warnings -Category 'numeric-mask-integrity' -Location ("ID $idx") -Details @{ Detail=[string]$maskIntegrity.Detail; Missing=@($maskIntegrity.Missing); Duplicated=@($maskIntegrity.Duplicated); Unexpected=@($maskIntegrity.Unexpected) } -Message "数値プレースホルダーの個数が原文と一致しません。該当箇所の数値を必ずご確認ください。($([string]$maskIntegrity.Detail))"
+                if ($locationsByIndex.ContainsKey($idx)) {
+                    $locs = @($locationsByIndex[$idx].ToArray())
+                    $where = (@($locs | Select-Object -First 3) -join '／')
+                    if ($locs.Count -gt 3) { $where += " ほか$($locs.Count - 3)か所" }
+                }
+            } catch {}
+            try {
+                Add-YakuWarning -Warnings $warnings -Category 'numeric-mask-integrity' -Location $where -Details @{ Detail=[string]$maskIntegrity.Detail; Missing=@($maskIntegrity.Missing); Duplicated=@($maskIntegrity.Duplicated); Unexpected=@($maskIntegrity.Unexpected) } -Message ("${where}: " + (Format-YakuNumericMaskIssueMessage -Integrity $maskIntegrity -Map $map))
             } catch {}
         }
-        $translationByIndex[$idx] = Restore-YakuNumericMask -Text $translated -Map $map
+        $restoredText = Restore-YakuNumericMask -Text $translated -Map $map
+        # 原文に無い番号は実値が無い。残すと出力ファイルへ内部トークンが出る。
+        foreach ($token in @(Get-YakuNumericMaskTokens -Text $restoredText | Select-Object -Unique)) { $restoredText = $restoredText.Replace([string]$token, '') }
+        $translationByIndex[$idx] = $restoredText
     }
     if ($maskIntegrityFailures -gt 0) {
         try { Write-YakuLog "File numeric mask integrity. jobId=$JobId failures=$maskIntegrityFailures" 'WARN' } catch {}

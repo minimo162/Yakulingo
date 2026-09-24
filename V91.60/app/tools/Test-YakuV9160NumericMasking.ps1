@@ -378,6 +378,9 @@ $fullOptions = @([pscustomobject]@{ Style='full'; Label='FULL'; Translation=(L '
 $fullWarnings = New-Object System.Collections.Generic.List[object]
 $null = @(Restore-YakuMaskedTranslationOptions -Options $fullOptions -MaskedSource $briefSource -Map $briefMap -Warnings $fullWarnings -Location 'test')
 Assert-YakuMask (@($fullWarnings.ToArray() | Where-Object { [string]$_.Category -eq 'numeric-placeholder-unresolved' }).Count -eq 1) 'FULL の欠落は unresolved 警告'
+$fullMessage = [string](@($fullWarnings.ToArray())[0].Message)
+Assert-YakuMask ($fullMessage -like '*296*') ('FULL の欠落は実際の数値で示す: ' + $fullMessage)
+Assert-YakuMask (-not ($fullMessage -match (Get-YakuMaskTokenPattern))) 'FULL の欠落警告に伏せ字名を出さない'
 
 # 原文に無い番号を作られた場合は取り除く
 $inventedOptions = @([pscustomobject]@{ Style='brief'; Label='BRIEF'; Translation=(L 'Net sales 【N1】 oku and 【N9】 oku.'); Explanation='' })
@@ -611,6 +614,14 @@ foreach ($c in @(
 }
 $bareParen = Invoke-YakuMaskPipeline -Text '貸倒引当金 (7261) を計上'
 Assert-YakuMask (-not ([string]$bareParen.Masked.Text -like '*7261*')) ('年が続かない括弧の4桁は伏せる: ' + $bareParen.Masked.Text)
+
+Write-Host 'CASE 28: 伏せ字崩れの案内文（実値で示す・送り直し指示）'
+$issueMap = @{}; $issueMap[(L '【N1】')] = '1,234'; $issueMap[(L '【N2】')] = '56'
+$issueMsg = Format-YakuNumericMaskIssueMessage -Integrity ([pscustomobject]@{ Missing=@((L '【N1】')); Duplicated=@((L '【N2】')); Unexpected=@((L '【N9】')) }) -Map $issueMap
+Assert-YakuMask ($issueMsg -like '*1,234*' -and $issueMsg -like '*56*' -and $issueMsg -like '*取り除きました*') ('欠落・重複・混入をまとめて示す: ' + $issueMsg)
+Assert-YakuMask (-not ($issueMsg -match (Get-YakuMaskTokenPattern))) '案内文に伏せ字名を出さない'
+$fixText = New-YakuNumericMaskCorrectionInstruction -Integrity ([pscustomobject]@{ Missing=@((L '【N1】')); Duplicated=@(); Unexpected=@() })
+Assert-YakuMask ($fixText -like ('*' + (L '【N1】') + '*') -and -not ($fixText -like '*1,234*')) '送り直しの指示は伏せ字名だけを使い、実値を送らない'
 
 if ($script:Failures -gt 0) {
     Write-Host "V91.60 numeric masking test failed. failures=$script:Failures" -ForegroundColor Red
