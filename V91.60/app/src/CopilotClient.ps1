@@ -3956,6 +3956,17 @@ function Invoke-YakuMockCopilotPrompt {
         $out.Add($endMarker) | Out-Null
         return (ConvertTo-YakuMockMarkdownEscapedResponse -Text (($out.ToArray()) -join "`n"))
     }
+    # テキスト翻訳のプロンプト。原文を返し、伏せ字（数値マスク）もそのまま戻す。
+    $sourceMatch = [regex]::Match($Prompt, '(?s)SOURCE_BEGIN:[a-fA-F0-9]{32}\r?\n(.*?)\r?\nSOURCE_END:[a-fA-F0-9]{32}')
+    if ($sourceMatch.Success) {
+        $source = ([string]$sourceMatch.Groups[1].Value).Replace("`r`n", "`n").Replace("`r", "`n")
+        if ($Prompt -match '(?m)^FULL_TEXT:\s*$' -and $Prompt -match '(?m)^BRIEF_TEXT:\s*$') {
+            return (ConvertTo-YakuMockMarkdownEscapedResponse -Text ("FULL_TEXT:`n[EN] " + $source + "`nBRIEF_TEXT:`n[EN] " + $source + "`n" + $endMarker))
+        }
+        if ($Prompt -match '(?m)^JAPANESE_TEXT:\s*$') {
+            return (ConvertTo-YakuMockMarkdownEscapedResponse -Text ("JAPANESE_TEXT:`n[JP] " + $source + "`n" + $endMarker))
+        }
+    }
     if ($Prompt -match 'Task:\s*Japanese to English') {
         return (ConvertTo-YakuMockMarkdownEscapedResponse -Text ("FULL_TEXT:`nHello.`nBRIEF_TEXT:`nHello.`n" + $endMarker))
     }

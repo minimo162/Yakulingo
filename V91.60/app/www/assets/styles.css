@@ -122,6 +122,7 @@ input[type="text"], select { width: 100%; min-height: 34px; border: 0; border-ra
 .file-meta { font-size: var(--font-meta); }
 .file-info-list { margin: 8px 0 0 18px; padding: 0; color: var(--muted); font-size: var(--font-meta); }
 .alert-inline { color: var(--error); }
+.meta-alert { color: var(--warning); font-weight: 600; }
 
 .shared-result-section { margin-top: var(--space-5); }
 .result-target { min-height: 28px; }
@@ -139,6 +140,7 @@ input[type="text"], select { width: 100%; min-height: 34px; border: 0; border-ra
 .result-card { padding: 20px 24px; }
 .result-card header, .result-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-2); }
 .eyebrow { color: var(--faint); font-size: var(--font-meta); font-weight: 600; letter-spacing: .06em; }
+.eyebrow-hint { margin-left: 6px; font-weight: 400; letter-spacing: 0; color: var(--muted); }
 .result-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .translation { margin: 0; white-space: pre-wrap; font-size: var(--font-input); line-height: 1.65; font-family: inherit; color: var(--text); background: var(--soft); border-radius: var(--radius-control); padding: 14px; }
 .stat-pills { display: flex; flex-wrap: wrap; gap: 8px; margin: var(--space-2) 0; }

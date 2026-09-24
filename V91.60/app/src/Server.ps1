@@ -1512,13 +1512,13 @@ function Resolve-YakuIncomingFile {
     }
     $directPath = if ($Payload.ContainsKey('file_path')) { [string]$Payload['file_path'] } else { '' }
     if ([string]::IsNullOrWhiteSpace($directPath)) { throw '翻訳するファイルを選択してください。' }
-    if (-not [bool]$Settings.allow_direct_local_path) { throw '直接パス指定は無効です。' }
+    if (-not [bool]$Settings.allow_direct_local_path) { throw 'パスの直接指定は設定で無効になっています。ファイルを選択するか、ドロップしてください。' }
     $trimmed = $directPath.Trim().Trim('"')
     if ($trimmed.StartsWith('\\?\') -or $trimmed.StartsWith('\\.\')) { throw 'デバイスパスは使用できません。' }
     if ($trimmed.StartsWith('\\') -and -not [bool]$Settings.allow_network_paths) { throw 'UNCパスは既定で許可されていません。ファイル選択を使用してください。' }
-    if (-not [System.IO.Path]::IsPathRooted($trimmed)) { throw '相対パスは使用できません。' }
+    if (-not [System.IO.Path]::IsPathRooted($trimmed)) { throw 'ファイルの場所は、C:\ などのドライブ名から始まるパスで入力してください（エクスプローラーでファイルを Shift+右クリックし、「パスとしてコピー」を選ぶとコピーできます）。' }
     $full = [System.IO.Path]::GetFullPath($trimmed)
-    if (!(Test-Path -LiteralPath $full -PathType Leaf)) { throw '指定されたファイルパスが見つかりません。' }
+    if (!(Test-Path -LiteralPath $full -PathType Leaf)) { throw 'そのパスにファイルが見つかりません。パスが正しいか、ファイルが移動・削除されていないか確認してください。' }
     [void](Get-YakuSupportedFileKind -Path $full)
     return [pscustomobject]@{ Handle=''; Path=$full; OriginalName=[System.IO.Path]::GetFileName($full); Size=(Get-Item -LiteralPath $full).Length; ExpiresAt=[datetime]::MaxValue; Uploaded=$false }
 }
