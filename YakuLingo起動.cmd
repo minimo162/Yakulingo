@@ -31,11 +31,9 @@ if not exist "%PS%" set "PS=powershell.exe"
 "%PS%" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%BOOT%" -SharedRoot "%SHARED%."
 set "CODE=%ERRORLEVEL%"
 
+rem Close the console on a normal stop. Keep it open on errors so the message stays readable.
+if "%CODE%"=="0" exit /b 0
 echo.
-if not "%CODE%"=="0" (
-  echo YakuLingo stopped with an error. Please check the message above.
-) else (
-  echo YakuLingo stopped.
-)
+echo YakuLingo stopped with an error. Please check the message above.
 pause
 exit /b %CODE%

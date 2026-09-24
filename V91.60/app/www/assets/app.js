@@ -181,7 +181,7 @@
       return;
     }
     gate.hidden = false;
-    if (data && data.mode === 'login') { gate.textContent = 'Copilotにログインしてください。ログイン後、自動で翻訳ボタンが有効になります。'; return; }
+    if (data && data.mode === 'login') { gate.removeAttribute('data-yaku-gate'); gate.textContent = 'YakuLingoが開いたEdgeでCopilotにサインインしてください（普段のEdgeとは別なので、初回はサインインが必要です）。サインインすると自動で翻訳できるようになります。'; return; }
     if (data && (data.mode === 'error' || data.mode === 'timeout')) {
       var text = data.mode === 'timeout'
         ? 'Copilotの準備が時間内に終わりませんでした。Edgeの画面（ログインやダイアログ）を確認してから、再接続してください。'
@@ -830,6 +830,7 @@
         return;
       }
       if (element.matches('[data-yaku-reconnect]')) { yakuReconnectCopilot(element); return; }
+      if (element.matches('[data-yaku-quit]')) { yakuQuit(element); return; }
       if (element.matches('.copy-button')) { yakuCopy(element); return; }
       if (element.matches('.cancel-button')) {
         var cancelId = element.getAttribute('data-yaku-job-id') || yakuActiveJobId;
@@ -939,6 +940,18 @@
         var details = document.getElementById(id);
         if (details) details.open = !!yakuDetailsOpen[id];
       });
+    });
+  }
+
+  function yakuQuit(button) {
+    var question = yakuTranslating ? '翻訳中です。中断してYakuLingoを終了しますか？' : 'YakuLingoを終了しますか？';
+    if (!window.confirm(question)) return;
+    button.disabled = true;
+    window.clearTimeout(yakuPollTimer);
+    window.clearTimeout(yakuJobTimer);
+    yakuJsonPost('/shutdown', {}).catch(function () { return null; }).then(function () {
+      document.body.innerHTML = '<main class="shell"><div class="alert alert-info">YakuLingoを終了しました。このタブは閉じてかまいません。もう一度使うときは「YakuLingo起動」から起動してください。</div></main>';
+      try { window.close(); } catch (e) { /* 開いたのがスクリプトでなければ閉じられない */ }
     });
   }
 

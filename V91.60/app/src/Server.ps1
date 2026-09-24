@@ -1922,7 +1922,7 @@ function Invoke-YakuRoute {
             }
             Write-YakuLog "Settings saved. rawType=$rawDiagnosticsType diagnosticsLevelRequested=$requestedDiagnosticsLevel diagnosticsLevelEffective=$effectiveDiagnosticsLevel verified=True verificationSource=disk-readback buildId=$($script:YakuBuildId)" 'INFO'
             Clear-YakuTranslationCache
-            Send-YakuTextResponse -Context $Context -Text "<div class='alert alert-success' data-yaku-settings-saved='true' data-yaku-diagnostics-level='$effectiveDiagnosticsLevel'>設定を保存しました。ログ診断レベル：$effectiveDiagnosticsLevel</div>"
+            Send-YakuTextResponse -Context $Context -Text "<div class='alert alert-success' data-yaku-settings-saved='true' data-yaku-diagnostics-level='$effectiveDiagnosticsLevel'>設定を保存しました。次の翻訳から使われます（Edgeのポート・ウィンドウサイズは次回起動から）。ログ診断レベル：$effectiveDiagnosticsLevel</div>"
         } catch {
             try {
                 $errorText = ([string]$_.Exception.Message) -replace '[\r\n\t]+', ' '

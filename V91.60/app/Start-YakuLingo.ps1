@@ -81,14 +81,51 @@ function Test-YakuPowerShellSyntax {
     }
 }
 
+function Get-YakuStartupCheckStampPath {
+    <#
+      検査済みの印。対象ファイルの相対パス・サイズ・更新日時から作るので、
+      1つでも変われば印が合わず、検査をやり直す。印は利用者のローカルに置き、
+      共有フォルダへは書かない。作れないときは空を返し、毎回検査する。
+    #>
+    param([Parameter(Mandatory=$true)][string]$Root)
+    try {
+        $parts = New-Object System.Collections.Generic.List[string]
+        $files = @(Get-ChildItem -LiteralPath $Root -Recurse -Filter '*.ps1' -ErrorAction Stop)
+        $promptDir = Join-Path $Root 'prompts'
+        if (Test-Path -LiteralPath $promptDir -PathType Container) { $files += @(Get-ChildItem -LiteralPath $promptDir -Filter '*.txt' -ErrorAction Stop) }
+        foreach ($file in @($files | Sort-Object FullName)) {
+            $parts.Add(((Get-YakuRelativePathForStartup -Root $Root -Path $file.FullName) + '|' + $file.Length + '|' + $file.LastWriteTimeUtc.Ticks)) | Out-Null
+        }
+        $parts.Add('root|' + [System.IO.Path]::GetFullPath($Root).ToLowerInvariant()) | Out-Null
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try { $hash = [BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes(($parts.ToArray() -join "`n")))).Replace('-', '').Substring(0, 32).ToLowerInvariant() } finally { $sha.Dispose() }
+        $base = [Environment]::GetFolderPath('LocalApplicationData')
+        if ([string]::IsNullOrWhiteSpace($base)) { return '' }
+        return (Join-Path (Join-Path (Join-Path $base 'YakuLingo') 'startup-check') ($hash + '.ok'))
+    } catch { return '' }
+}
+
 if ($UseMockTranslator) {
     $env:YAKULINGO_MOCK = '1'
 } elseif ($env:YAKULINGO_MOCK -eq '1') {
     Remove-Item Env:YAKULINGO_MOCK -ErrorAction SilentlyContinue
 }
 
-Test-YakuUtf8BomForStartup -Root $root
-Test-YakuPowerShellSyntax -Root $root
+# 文字コードと構文の検査は、前回から中身が変わっていなければ省く。
+# 全 .ps1 の構文解析は起動のたびに数秒かかるため。変わっていれば従来どおり検査する。
+$startupCheckStamp = Get-YakuStartupCheckStampPath -Root $root
+if ([string]::IsNullOrWhiteSpace($startupCheckStamp) -or -not (Test-Path -LiteralPath $startupCheckStamp -PathType Leaf)) {
+    Test-YakuUtf8BomForStartup -Root $root
+    Test-YakuPowerShellSyntax -Root $root
+    if (-not [string]::IsNullOrWhiteSpace($startupCheckStamp)) {
+        try {
+            $stampDir = Split-Path -Parent $startupCheckStamp
+            if (!(Test-Path -LiteralPath $stampDir)) { New-Item -ItemType Directory -Path $stampDir -Force | Out-Null }
+            Get-ChildItem -LiteralPath $stampDir -Filter '*.ok' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+            [System.IO.File]::WriteAllText($startupCheckStamp, (Get-Date).ToString('s'))
+        } catch {}
+    }
+}
 
 . (Join-Path $root 'src\JobObject.ps1')
 $jobObjectEnabled = Initialize-YakuJobObject
