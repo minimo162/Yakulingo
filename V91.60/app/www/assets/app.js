@@ -864,6 +864,47 @@
       }
     });
 
+    // 用語の追加（自分の用語集へ保存。版を更新しても残る）
+    document.addEventListener('submit', function (event) {
+      var form = event.target;
+      if (!form || !form.matches || !form.matches('[data-yaku-glossary-add]')) return;
+      event.preventDefault();
+      var panel = document.getElementById('glossary-panel');
+      var result = form.querySelector('.glossary-add-result');
+      var button = form.querySelector('button[type="submit"]');
+      var data = {
+        source: (form.elements.source && form.elements.source.value) || '',
+        target: (form.elements.target && form.elements.target.value) || '',
+        kind: (form.elements.kind && form.elements.kind.value) || 'prompt'
+      };
+      if (button) button.disabled = true;
+      yakuJsonPost('/api/glossary/add', data).then(function (response) {
+        return response.text().then(function (html) { return { ok: response.ok, html: html }; });
+      }).then(function (res) {
+        if (res.ok && panel) {
+          panel.innerHTML = res.html;
+          var next = panel.querySelector('[data-yaku-glossary-add] input[name="source"]');
+          if (next) next.focus();
+        } else if (result) {
+          result.innerHTML = res.html;
+        }
+      }).catch(function (error) {
+        if (result) result.innerHTML = '<div class="alert alert-error">' + yakuEscape(error.message) + '</div>';
+      }).finally(function () { if (button) button.disabled = false; });
+    });
+    document.addEventListener('click', function (event) {
+      var opener = event.target.closest && event.target.closest('[data-yaku-open-glossary-folder]');
+      if (!opener) return;
+      var form = opener.closest('form');
+      var result = form ? form.querySelector('.glossary-add-result') : null;
+      opener.disabled = true;
+      yakuJsonPost('/api/glossary/open-folder', {}).then(yakuResponseText).then(function (html) {
+        if (result) result.innerHTML = html;
+      }).catch(function (error) {
+        if (result) result.innerHTML = '<div class="alert alert-error">' + yakuEscape(error.message) + '</div>';
+      }).finally(function () { opener.disabled = false; });
+    });
+
     Array.prototype.forEach.call(document.querySelectorAll('details[id]'), function (details) {
       yakuDetailsOpen[details.id] = details.open;
       details.addEventListener('toggle', function () { yakuDetailsOpen[details.id] = details.open; });

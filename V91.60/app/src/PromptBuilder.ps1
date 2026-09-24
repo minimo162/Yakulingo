@@ -140,7 +140,98 @@ function Get-YakuPromptGlossaryPath {
     return (Get-YakuGlossaryPath -Root $Root)
 }
 
+function Get-YakuUserGlossaryPath {
+    <#
+      利用者が追加する用語集。版フォルダ(%LOCALAPPDATA%\YakuLingo\versions\...)は
+      版の更新で丸ごと入れ替わるため、利用者設定と同じ %USERPROFILE%\.yakulingo-ps へ置く。
+    #>
+    param([Parameter(Mandatory=$true)][ValidateSet('glossary.csv','prompt_glossary.csv')][string]$Name)
+    return (Join-Path (Get-YakuSubDir 'glossary') $Name)
+}
+
+function Get-YakuUserGlossaryPaths {
+    return @((Get-YakuUserGlossaryPath -Name 'prompt_glossary.csv'), (Get-YakuUserGlossaryPath -Name 'glossary.csv'))
+}
+
+function Initialize-YakuUserGlossaryFile {
+    param([Parameter(Mandatory=$true)][ValidateSet('glossary.csv','prompt_glossary.csv')][string]$Name)
+    $path = Get-YakuUserGlossaryPath -Name $Name
+    if (Test-Path -LiteralPath $path -PathType Leaf) { return $path }
+    $purpose = if ($Name -eq 'glossary.csv') { '表ラベル用: Excel/CSVのセルが完全一致したとき、この訳で置き換えます。' } else { '文章用: 翻訳のときCopilotへ参考訳語として渡します。' }
+    $lines = @(
+        "# YakuLingo - 自分の用語集（$Name）",
+        "# $purpose",
+        '# 同じ原語が同梱の用語集にあれば、こちらが優先されます。版を更新しても消えません。',
+        '# 書き方: 原語,訳語（言い換えは | で区切る）',
+        ''
+    )
+    $utf8Bom = New-Object System.Text.UTF8Encoding($true)
+    [System.IO.File]::WriteAllText($path, ($lines -join "`r`n"), $utf8Bom)
+    return $path
+}
+
+function ConvertTo-YakuCsvField {
+    param([AllowNull()][string]$Value)
+    $v = [string]$Value
+    if ($v -match '[",\r\n]') { return '"' + $v.Replace('"', '""') + '"' }
+    return $v
+}
+
+function Add-YakuUserGlossaryEntry {
+    param(
+        [Parameter(Mandatory=$true)][ValidateSet('glossary.csv','prompt_glossary.csv')][string]$Name,
+        [AllowNull()][string]$Source,
+        [AllowNull()][string]$Target
+    )
+    $src = ([string]$Source).Trim()
+    $dst = ([string]$Target).Trim()
+    if ([string]::IsNullOrWhiteSpace($src) -or [string]::IsNullOrWhiteSpace($dst)) { throw 'GLOSSARY_ENTRY_EMPTY: 原語と訳語の両方を入力してください。' }
+    if ($src -match '[\r\n]' -or $dst -match '[\r\n]') { throw 'GLOSSARY_ENTRY_MULTILINE: 原語・訳語は1行で入力してください。' }
+    if ($src.Length -gt 200 -or $dst.Length -gt 400) { throw 'GLOSSARY_ENTRY_TOO_LONG: 原語は200字、訳語は400字までです。' }
+    if ($src.StartsWith('#')) { throw 'GLOSSARY_ENTRY_COMMENT: 原語を # で始めることはできません（コメント行として扱われます）。' }
+    $path = Initialize-YakuUserGlossaryFile -Name $Name
+    $existing = [System.IO.File]::ReadAllText($path)
+    $prefix = if ($existing.Length -gt 0 -and -not $existing.EndsWith("`n")) { "`r`n" } else { '' }
+    $line = $prefix + (ConvertTo-YakuCsvField $src) + ',' + (ConvertTo-YakuCsvField $dst) + "`r`n"
+    [System.IO.File]::AppendAllText($path, $line, (New-Object System.Text.UTF8Encoding($false)))
+    return $path
+}
+
 function Get-YakuGlossaryEntries {
+    <#
+      同梱の用語集に、利用者の用語集を重ねて返す。同じ原語は利用者側を優先する。
+      同梱の glossary.csv / prompt_glossary.csv を読むときだけ重ねる。
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Root,
+        [AllowNull()][string]$Path,
+        [switch]$IncludeDuplicates
+    )
+    $bundledPath = if ([string]::IsNullOrWhiteSpace($Path)) { Get-YakuGlossaryPath -Root $Root } else { [string]$Path }
+    $bundled = @(Read-YakuGlossaryFileEntries -Root $Root -Path $bundledPath -IncludeDuplicates:$IncludeDuplicates)
+    $userPath = ''
+    try {
+        $name = [System.IO.Path]::GetFileName($bundledPath)
+        $dir = [System.IO.Path]::GetFullPath((Split-Path -Parent $bundledPath)).TrimEnd('\','/')
+        $rootFull = [System.IO.Path]::GetFullPath($Root).TrimEnd('\','/')
+        if ($name -in @('glossary.csv','prompt_glossary.csv') -and [string]::Equals($dir, $rootFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $userPath = Get-YakuUserGlossaryPath -Name $name
+        }
+    } catch { $userPath = '' }
+    if ([string]::IsNullOrWhiteSpace($userPath) -or -not (Test-Path -LiteralPath $userPath -PathType Leaf)) { return $bundled }
+    $user = @(Read-YakuGlossaryFileEntries -Root $Root -Path $userPath -IncludeDuplicates:$IncludeDuplicates)
+    if ($user.Count -eq 0) { return $bundled }
+    $userKeys = @{}
+    foreach ($entry in $user) { $userKeys[[string]$entry.SourceKey] = $true }
+    $merged = New-Object System.Collections.Generic.List[object]
+    foreach ($entry in $bundled) { if (-not $userKeys.ContainsKey([string]$entry.SourceKey)) { $merged.Add($entry) | Out-Null } }
+    foreach ($entry in $user) { $merged.Add($entry) | Out-Null }
+    if ($IncludeDuplicates) { return @($merged.ToArray()) }
+    # 読込側と同じ並び(長い語が先)にそろえる。最長一致の前提を崩さない。
+    return @($merged.ToArray() | Sort-Object -Property @{ Expression = { '{0:D10}|{1:D10}|{2:D10}' -f (999999 - [int]$_.MaxLength), (999999 - [int]$_.SourceLength), [int]$_.Row } })
+}
+
+function Read-YakuGlossaryFileEntries {
     param(
         [Parameter(Mandatory=$true)][string]$Root,
         [AllowNull()][string]$Path,
@@ -714,27 +805,66 @@ function Convert-YakuGlossarySectionToHtml {
 }
 
 function Convert-YakuGlossaryManagerToHtml {
-    param([Parameter(Mandatory=$true)][string]$Root)
+    param([Parameter(Mandatory=$true)][string]$Root, [AllowNull()][string]$NoticeHtml = '')
+    # 同梱の用語集は版の更新で置き換わる。表示は同梱分だけを読む。
     $machinePath = Get-YakuGlossaryPath -Root $Root
-    $machineEntries = @(Get-YakuGlossaryEntries -Root $Root -Path $machinePath)
-    $machineAllEntries = @(Get-YakuGlossaryEntries -Root $Root -Path $machinePath -IncludeDuplicates)
+    $machineEntries = @(Read-YakuGlossaryFileEntries -Root $Root -Path $machinePath)
+    $machineAllEntries = @(Read-YakuGlossaryFileEntries -Root $Root -Path $machinePath -IncludeDuplicates)
     $machineStatus = if (Test-Path -LiteralPath $machinePath -PathType Leaf) { '' } else { '未作成' }
 
     $promptDisplayPath = Join-Path $Root 'prompt_glossary.csv'
     $promptExists = Test-Path -LiteralPath $promptDisplayPath -PathType Leaf
     $promptReadPath = Get-YakuPromptGlossaryPath -Root $Root
-    $promptEntries = @(Get-YakuGlossaryEntries -Root $Root -Path $promptReadPath)
-    $promptAllEntries = @(Get-YakuGlossaryEntries -Root $Root -Path $promptReadPath -IncludeDuplicates)
+    $promptEntries = @(Read-YakuGlossaryFileEntries -Root $Root -Path $promptReadPath)
+    $promptAllEntries = @(Read-YakuGlossaryFileEntries -Root $Root -Path $promptReadPath -IncludeDuplicates)
     $promptStatus = if ($promptExists) { '' } else { "未作成(glossary.csv にフォールバック中): $promptReadPath" }
+
+    # 自分の用語集（版フォルダの外。版を更新しても残る）
+    $userPromptPath = Get-YakuUserGlossaryPath -Name 'prompt_glossary.csv'
+    $userMachinePath = Get-YakuUserGlossaryPath -Name 'glossary.csv'
+    $userPromptEntries = @(); $userPromptAll = @(); $userMachineEntries = @(); $userMachineAll = @()
+    if (Test-Path -LiteralPath $userPromptPath -PathType Leaf) {
+        $userPromptEntries = @(Read-YakuGlossaryFileEntries -Root $Root -Path $userPromptPath)
+        $userPromptAll = @(Read-YakuGlossaryFileEntries -Root $Root -Path $userPromptPath -IncludeDuplicates)
+    }
+    if (Test-Path -LiteralPath $userMachinePath -PathType Leaf) {
+        $userMachineEntries = @(Read-YakuGlossaryFileEntries -Root $Root -Path $userMachinePath)
+        $userMachineAll = @(Read-YakuGlossaryFileEntries -Root $Root -Path $userMachinePath -IncludeDuplicates)
+    }
+    $userPromptHtml = Convert-YakuGlossarySectionToHtml -Title '自分の用語集 — 文章用' -Description '翻訳のときCopilotへ参考訳語として渡します。同梱の用語集に同じ原語があれば、こちらを優先します。' -DisplayPath $userPromptPath -Entries $userPromptEntries -AllEntries $userPromptAll
+    $userMachineHtml = Convert-YakuGlossarySectionToHtml -Title '自分の用語集 — 表ラベル用' -Description 'Excel/CSVのセルが完全一致したとき、Copilotを使わずこの訳で置き換えます。' -DisplayPath $userMachinePath -Entries $userMachineEntries -AllEntries $userMachineAll
 
     $machineHtml = Convert-YakuGlossarySectionToHtml -Title '表ラベル置換用 — glossary.csv' -Description 'Excel/CSVのセルが完全一致したときCopilotを使わず直接置換。表の正式表記で登録。' -DisplayPath $machinePath -Entries $machineEntries -AllEntries $machineAllEntries -Status $machineStatus
     $promptHtml = Convert-YakuGlossarySectionToHtml -Title 'Copilot翻訳用 — prompt_glossary.csv' -Description '翻訳プロンプトに参考訳語として注入。文中の形(一般語は小文字)で登録。' -DisplayPath $promptDisplayPath -Entries $promptEntries -AllEntries $promptAllEntries -Status $promptStatus
     $html = @"
 <div class='glossary-manager'>
-  <div class='alert alert-info glossary-readonly-note'>編集は各CSVファイルを直接編集してください(UTF-8 BOM付き・カンマ区切り)。保存後は次回の翻訳から自動反映されます。</div>
+  <form class='glossary-add-form' data-yaku-glossary-add>
+    <h3>用語を追加</h3>
+    <p class='muted'>追加した語は「自分の用語集」に保存され、版を更新しても残ります。次の翻訳から使われます。</p>
+    <div class='glossary-add-fields'>
+      <label>原語 <input type='text' name='source' maxlength='200' required placeholder='例: 台当り変動利益'></label>
+      <label>訳語 <input type='text' name='target' maxlength='400' required placeholder='例: variable profit per unit'></label>
+      <label>使いみち
+        <select name='kind'>
+          <option value='prompt' selected>文章用（翻訳のときCopilotへ渡す）</option>
+          <option value='label'>表ラベル用（セルが完全一致したら置き換える）</option>
+        </select>
+      </label>
+    </div>
+    <div class='glossary-add-actions'>
+      <button type='submit' class='secondary-button'>追加</button>
+      <button type='button' class='secondary-button' data-yaku-open-glossary-folder>用語集のフォルダを開く</button>
+    </div>
+    <div class='glossary-add-result' aria-live='polite'>$NoticeHtml</div>
+  </form>
   <div class='alert alert-warning glossary-masking-note'>用語集に登録した語は、数字を含む部分もそのままCopilotへ送信されます（訳語が崩れるのを防ぐため、マスクの対象外にしています）。機密の数値を用語集に登録しないでください。</div>
-  $machineHtml
-  $promptHtml
+  $userPromptHtml
+  $userMachineHtml
+  <details class='glossary-bundled'>
+    <summary>同梱の用語集（読取専用・版の更新で置き換わります）</summary>
+    $machineHtml
+    $promptHtml
+  </details>
 </div>
 "@
     return $html

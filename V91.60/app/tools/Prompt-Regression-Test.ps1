@@ -197,8 +197,8 @@ try {
 
 $glossaryPanel = Convert-YakuGlossaryManagerToHtml -Root $root
 $lastMachineEntry = @(Get-YakuGlossaryEntries -Root $root | Sort-Object Row | Select-Object -Last 1)[0]
-Assert-YakuTrue -Condition ($glossaryPanel.Contains('表ラベル置換用 — glossary.csv') -and $glossaryPanel.Contains('Copilot翻訳用 — prompt_glossary.csv') -and $glossaryPanel.Contains('編集は各CSVファイルを直接編集してください') -and $glossaryPanel.Contains((ConvertTo-YakuHtml ([string]$lastMachineEntry.Source)))) -Message 'read-only glossary panel must show both complete glossary sections and direct-edit guidance'
-Assert-YakuTrue -Condition (-not $glossaryPanel.Contains('<form') -and -not $glossaryPanel.Contains('glossary-delete') -and -not $glossaryPanel.Contains('>追加<') -and -not $glossaryPanel.Contains('>削除<')) -Message 'read-only glossary panel must not render edit controls'
+Assert-YakuTrue -Condition ($glossaryPanel.Contains('表ラベル置換用 — glossary.csv') -and $glossaryPanel.Contains('Copilot翻訳用 — prompt_glossary.csv') -and $glossaryPanel.Contains('自分の用語集') -and $glossaryPanel.Contains((ConvertTo-YakuHtml ([string]$lastMachineEntry.Source)))) -Message 'read-only glossary panel must show both complete glossary sections and direct-edit guidance'
+Assert-YakuTrue -Condition ($glossaryPanel.Contains('data-yaku-glossary-add') -and -not $glossaryPanel.Contains('glossary-delete') -and -not $glossaryPanel.Contains('>削除<')) -Message 'glossary panel adds only to the user glossary; bundled glossary stays read-only (no delete controls)'
 $duplicateHtml = Get-YakuGlossaryDuplicateSummaryHtml -Entries @(
     [pscustomobject]@{ Source='A'; Target='Alpha'; Row=1 },
     [pscustomobject]@{ Source='A'; Target='Alpha'; Row=2 },

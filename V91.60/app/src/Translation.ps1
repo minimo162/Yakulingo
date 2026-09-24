@@ -94,6 +94,16 @@ function Get-YakuTranslationContractFingerprint {
             $fileSignatureParts.Add($name + '|' + $item.Length + '|' + $item.LastWriteTimeUtc.Ticks) | Out-Null
         } catch { $fileSignatureParts.Add($name + '|missing') | Out-Null }
     }
+    # 利用者の用語集（版フォルダの外）も契約に含める。追加した語が
+    # 前の訳のキャッシュに埋もれないようにする。
+    $userGlossaryPaths = @()
+    try { $userGlossaryPaths = @(Get-YakuUserGlossaryPaths) } catch { $userGlossaryPaths = @() }
+    foreach ($userPath in $userGlossaryPaths) {
+        try {
+            $item = Get-Item -LiteralPath $userPath -ErrorAction Stop
+            $fileSignatureParts.Add('user:' + $item.Name + '|' + $item.Length + '|' + $item.LastWriteTimeUtc.Ticks) | Out-Null
+        } catch { $fileSignatureParts.Add('user:' + [System.IO.Path]::GetFileName($userPath) + '|missing') | Out-Null }
+    }
     $fileSignature = ($fileSignatureParts.ToArray()) -join '|'
     try {
         $cached = $script:YakuTranslationContractFingerprintCache
@@ -112,6 +122,13 @@ function Get-YakuTranslationContractFingerprint {
                 $parts.Add((Get-YakuTextSha256 -Text (Get-Content -LiteralPath $path -Raw -Encoding UTF8))) | Out-Null
             }
         } catch { $parts.Add('missing') | Out-Null }
+    }
+    foreach ($userPath in $userGlossaryPaths) {
+        try {
+            if (Test-Path -LiteralPath $userPath -PathType Leaf) {
+                $parts.Add('user:' + (Get-YakuTextSha256 -Text (Get-Content -LiteralPath $userPath -Raw -Encoding UTF8))) | Out-Null
+            }
+        } catch { $parts.Add('user:missing') | Out-Null }
     }
     foreach ($setting in $settingParts.ToArray()) { $parts.Add([string]$setting) | Out-Null }
     $fingerprint = Get-YakuTextSha256 -Text (($parts.ToArray()) -join '|')

@@ -1805,6 +1805,31 @@ function Invoke-YakuRoute {
         Send-YakuTextResponse -Context $Context -Text (Convert-YakuGlossaryManagerToHtml -Root $script:YakuRoot)
         return
     }
+    if ($method -eq 'POST' -and $path -eq '/api/glossary/add') {
+        try {
+            $payload = Read-YakuRequestJson -Request $req -MaxBytes 65536
+            $name = if ([string]$payload['kind'] -eq 'label') { 'glossary.csv' } else { 'prompt_glossary.csv' }
+            $null = Add-YakuUserGlossaryEntry -Name $name -Source ([string]$payload['source']) -Target ([string]$payload['target'])
+            Clear-YakuTranslationCache
+            $kindLabel = if ($name -eq 'glossary.csv') { '表ラベル用' } else { '文章用' }
+            $notice = New-YakuAlertHtml -Kind success -Message ("「" + ([string]$payload['source']).Trim() + "」を自分の用語集（$kindLabel）に追加しました。")
+            Send-YakuTextResponse -Context $Context -Text (Convert-YakuGlossaryManagerToHtml -Root $script:YakuRoot -NoticeHtml $notice)
+        } catch {
+            Send-YakuTextResponse -Context $Context -Text (New-YakuAlertHtml -Kind error -Message (Convert-YakuExceptionToUserMessage $_)) -StatusCode 400
+        }
+        return
+    }
+    if ($method -eq 'POST' -and $path -eq '/api/glossary/open-folder') {
+        try {
+            $null = Initialize-YakuUserGlossaryFile -Name 'prompt_glossary.csv'
+            $null = Initialize-YakuUserGlossaryFile -Name 'glossary.csv'
+            Start-Process -FilePath (Get-YakuSubDir 'glossary') | Out-Null
+            Send-YakuTextResponse -Context $Context -Text (New-YakuAlertHtml -Kind success -Message '用語集のフォルダを開きました。CSVを編集して保存すると、次の翻訳から使われます。')
+        } catch {
+            Send-YakuTextResponse -Context $Context -Text (New-YakuAlertHtml -Kind error -Message (Convert-YakuExceptionToUserMessage $_)) -StatusCode 400
+        }
+        return
+    }
     if ($method -eq 'POST' -and $path -eq '/api/settings') {
         try {
             $payload = Read-YakuRequestJson -Request $req
