@@ -165,7 +165,7 @@ function Write-YakuCopilotWarmupStatus {
 
 function Read-YakuCopilotWarmupStatus {
     if ($env:YAKULINGO_MOCK -eq '1') {
-        return [pscustomobject]@{ ready=$true; mode='mock'; label='Mock mode'; class='warn'; detail='Copilot is not called.'; updated_at=(Get-Date).ToString('s') }
+        return [pscustomobject]@{ ready=$true; mode='mock'; label='テストモード'; class='warn'; detail='Copilotは呼び出しません。'; updated_at=(Get-Date).ToString('s') }
     }
     $path = Get-YakuCopilotWarmupStatusPath
     try {
@@ -188,19 +188,19 @@ function Read-YakuCopilotWarmupStatus {
         try { Write-YakuLog "Failed to read Copilot warmup status: $($_.Exception.Message)" 'WARN' } catch {}
     }
     if ($null -ne $script:YakuWarmupLastGood) { return $script:YakuWarmupLastGood }
-    return [pscustomobject]@{ ready=$false; mode='not-started'; label='Preparing Copilot'; class='idle'; detail='Copilot preparation has not started yet.'; updated_at='' }
+    return [pscustomobject]@{ ready=$false; mode='not-started'; label='準備中'; class='idle'; detail='Copilotの準備をまだ始めていません。'; updated_at='' }
 }
 
 function Start-YakuCopilotWarmup {
     if ($env:YAKULINGO_MOCK -eq '1') {
-        $null = Write-YakuCopilotWarmupStatus -Mode 'mock' -Label 'Mock mode' -Class 'warn' -Detail 'Copilot is not called.' -Ready $true
+        $null = Write-YakuCopilotWarmupStatus -Mode 'mock' -Label 'テストモード' -Class 'warn' -Detail 'Copilotは呼び出しません。' -Ready $true
         return
     }
     $statusPath = Get-YakuCopilotWarmupStatusPath
-    $null = Write-YakuCopilotWarmupStatus -Mode 'starting' -Label 'Preparing Copilot' -Class 'warn' -Detail 'Opening Microsoft Edge and M365 Copilot.' -Ready $false
+    $null = Write-YakuCopilotWarmupStatus -Mode 'starting' -Label '準備中' -Class 'warn' -Detail 'EdgeでM365 Copilotを開いています。' -Ready $false
     $worker = Join-Path $script:YakuRoot 'tools\Prepare-Copilot.ps1'
     if (!(Test-Path -LiteralPath $worker -PathType Leaf)) {
-        $null = Write-YakuCopilotWarmupStatus -Mode 'error' -Label 'Copilot preparation failed' -Class 'warn' -Detail 'Prepare-Copilot.ps1 was not found.' -Ready $false
+        $null = Write-YakuCopilotWarmupStatus -Mode 'error' -Label '準備に失敗' -Class 'warn' -Detail '準備用のファイル（Prepare-Copilot.ps1）が見つかりません。' -Ready $false
         return
     }
     try {
@@ -211,7 +211,7 @@ function Start-YakuCopilotWarmup {
         $script:YakuWarmupProcess = Start-Process -FilePath $psExe -ArgumentList $argLine -WindowStyle Hidden -PassThru
         Write-YakuLog "Copilot warmup worker started. status=$statusPath worker=$worker" 'INFO'
     } catch {
-        $null = Write-YakuCopilotWarmupStatus -Mode 'error' -Label 'Copilot preparation failed' -Class 'warn' -Detail $_.Exception.Message -Ready $false
+        $null = Write-YakuCopilotWarmupStatus -Mode 'error' -Label '準備に失敗' -Class 'warn' -Detail $_.Exception.Message -Ready $false
         Write-YakuLog "Failed to start Copilot warmup worker: $($_.Exception.Message)" 'ERROR'
     }
 }
@@ -264,7 +264,7 @@ function Get-YakuCopilotBadgeState {
     $warmup = Read-YakuCopilotWarmupStatus
     $ready = $false
     try { $ready = [bool]$warmup.ready } catch { $ready = $false }
-    $label = if ($ready) { 'Ready' } elseif ($warmup.label) { [string]$warmup.label } else { 'Preparing Copilot' }
+    $label = if ($ready) { '準備完了' } elseif ($warmup.label) { [string]$warmup.label } else { '準備中' }
     $class = if ($ready) { 'ok' } elseif ($warmup.class) { [string]$warmup.class } else { 'idle' }
     $mode = if ($warmup.mode) { [string]$warmup.mode } else { 'not-started' }
     $detail = if ($warmup.detail) { [string]$warmup.detail } else { '' }
@@ -368,26 +368,26 @@ function Get-YakuUiJobStatusHtml {
     if ($null -eq $state) { return $null }
     $mode = [string]$state.Mode
     if ($mode -eq 'preparing') {
-        return "<span class='status-dot warn'></span><span>Preparing</span>"
+        return "<span class='status-dot warn'></span><span>準備中</span>"
     }
     if ($mode -eq 'ready') {
-        return "<span class='status-dot ok'></span><span>Ready</span>"
+        return "<span class='status-dot ok'></span><span>準備完了</span>"
     }
     if ($mode -eq 'login') {
-        return "<span class='status-dot warn'></span><span>Login required</span>"
+        return "<span class='status-dot warn'></span><span>ログインが必要</span>"
     }
     if ($mode -eq 'not-ready') {
-        return "<span class='status-dot warn'></span><span>Not ready</span>"
+        return "<span class='status-dot warn'></span><span>準備できず</span>"
     }
     if ($mode -eq 'working') { return $null }
     if ($mode -eq 'done') {
-        return "<span class='status-dot ok'></span><span>Done</span>"
+        return "<span class='status-dot ok'></span><span>完了</span>"
     }
     if ($mode -eq 'error') {
-        return "<span class='status-dot warn'></span><span>Translation error</span>"
+        return "<span class='status-dot warn'></span><span>翻訳エラー</span>"
     }
     if ($mode -eq 'cancelled') {
-        return "<span class='status-dot idle'></span><span>Cancelled</span>"
+        return "<span class='status-dot idle'></span><span>キャンセル済み</span>"
     }
     return $null
 }
@@ -400,12 +400,9 @@ function Convert-YakuExceptionToUserMessage {
         elseif ($ErrorRecord) { $message = [string]$ErrorRecord }
     } catch { $message = '不明なエラーが発生しました。' }
     if ([string]::IsNullOrWhiteSpace($message)) { return '不明なエラーが発生しました。' }
-    $message = $message -replace '[\r\n\t]+', ' '
-    $message = $message.Trim()
-    # Do not push huge CDP diagnostic JSON into the UI. Full text is retained
-    # only when the user has explicitly enabled full-text diagnostics.
-    if ($message.Length -gt 520) { $message = $message.Substring(0, 520) + ' ... 詳細はログを確認してください。' }
-    return $message
+    # 技術的な本文(CDP の診断 JSON など)は画面に出さず、次にすべきことを示す。
+    # 元の本文はログに残る。
+    return [string](Get-YakuFriendlyError -Message $message).Message
 }
 
 function Get-YakuTranslationJobStateValue {
@@ -835,7 +832,7 @@ function Update-YakuTranslationJobs {
                 $cancelRequested = $false
                 try { $cancelRequested = [bool]$state['cancel_requested'] } catch { $cancelRequested = $false }
                 if ($cancelRequested) {
-                    $state['mode']='cancelling'; $state['label']='Cancelling'; $state['class']='warn'; $state['detail']='専用ワーカーを停止しています。'; $state['output_path']=''
+                    $state['mode']='cancelling'; $state['label']='キャンセル中'; $state['class']='warn'; $state['detail']='専用ワーカーを停止しています。'; $state['output_path']=''
                 }
                 $heartbeatTimeout = 180
                 try {
@@ -848,7 +845,7 @@ function Update-YakuTranslationJobs {
                 } catch {}
                 $updated = Get-YakuTranslationJobStateDate -State $state -Keys @('updated_at')
                 if ($updated -ne [datetime]::MinValue -and ((Get-Date) - $updated).TotalSeconds -gt $heartbeatTimeout -and (Test-YakuTranslationJobRunning -State $state)) {
-                    $state['mode']='failed'; $state['label']='Translation error'; $state['class']='warn'; $state['detail']='Excelワーカーの進捗が停止したため終了しました。'; $state['error_code']='WORKER_HEARTBEAT_TIMEOUT'; $state['progress']=100; $state['completed_at']=(Get-Date).ToString('s'); $state['updated_at']=(Get-Date).ToString('s'); $state['output_path']=''
+                    $state['mode']='failed'; $state['label']='翻訳エラー'; $state['class']='warn'; $state['detail']='Excelワーカーの進捗が停止したため終了しました。'; $state['error_code']='WORKER_HEARTBEAT_TIMEOUT'; $state['progress']=100; $state['completed_at']=(Get-Date).ToString('s'); $state['updated_at']=(Get-Date).ToString('s'); $state['output_path']=''
                     Dispose-YakuTranslationJobHandle -JobId ([string]$id) -Stop -SkipEndInvoke
                     continue
                 }
@@ -860,7 +857,7 @@ function Update-YakuTranslationJobs {
                         try { $state['result_json'] = Get-Content -LiteralPath ([string]$handle.ResultPath) -Raw -Encoding UTF8 } catch {}
                     }
                     if ($cancelRequested) {
-                        $state['mode']='cancelled'; $state['label']='Cancelled'; $state['class']='idle'; $state['detail']='翻訳をキャンセルしました。'; $state['error_code']='JOB_CANCELLED'; $state['progress']=100; $state['completed_at']=(Get-Date).ToString('s'); $state['updated_at']=(Get-Date).ToString('s'); $state['output_path']=''; $state['output_name']=''; $state['result_json']=([pscustomobject]@{ Error='翻訳をキャンセルしました。'; Cancelled=$true } | ConvertTo-Json -Depth 10 -Compress)
+                        $state['mode']='cancelled'; $state['label']='キャンセル済み'; $state['class']='idle'; $state['detail']='翻訳をキャンセルしました。'; $state['error_code']='JOB_CANCELLED'; $state['progress']=100; $state['completed_at']=(Get-Date).ToString('s'); $state['updated_at']=(Get-Date).ToString('s'); $state['output_path']=''; $state['output_name']=''; $state['result_json']=([pscustomobject]@{ Error='翻訳をキャンセルしました。'; Cancelled=$true } | ConvertTo-Json -Depth 10 -Compress)
                     } elseif (Test-YakuTranslationJobRunning -State $state) {
                         $state['mode']='interrupted'; $state['label']='Interrupted'; $state['class']='warn'; $state['detail']='ファイル翻訳ワーカーが予期せず終了しました。'; $state['error_code']='WORKER_EXITED'; $state['progress']=100; $state['completed_at']=(Get-Date).ToString('s'); $state['updated_at']=(Get-Date).ToString('s'); $state['output_path']=''
                     }
@@ -881,7 +878,7 @@ function Update-YakuTranslationJobs {
                     if (-not $cancelRequested -and $state -and [string]$state['mode'] -ne 'error' -and [string]$state['mode'] -ne 'cancelled') {
                         $safe = Convert-YakuExceptionToUserMessage $_
                         $state['mode'] = 'error'
-                        $state['label'] = 'Translation error'
+                        $state['label'] = '翻訳エラー'
                         $state['class'] = 'warn'
                         $state['detail'] = $safe
                         $state['progress'] = 100
@@ -892,7 +889,7 @@ function Update-YakuTranslationJobs {
                     try { Write-YakuLog "Translation runspace job failed: $($_.Exception.ToString())" 'ERROR' } catch {}
                 }
                 if ($cancelRequested) {
-                    $state['mode']='cancelled'; $state['label']='Cancelled'; $state['class']='idle'; $state['detail']='翻訳をキャンセルしました。'; $state['error_code']='JOB_CANCELLED'; $state['progress']=100; $state['completed_at']=(Get-Date).ToString('s'); $state['updated_at']=(Get-Date).ToString('s'); $state['output_path']=''; $state['result_json']=([pscustomobject]@{ Error='翻訳をキャンセルしました。'; Cancelled=$true } | ConvertTo-Json -Depth 10 -Compress)
+                    $state['mode']='cancelled'; $state['label']='キャンセル済み'; $state['class']='idle'; $state['detail']='翻訳をキャンセルしました。'; $state['error_code']='JOB_CANCELLED'; $state['progress']=100; $state['completed_at']=(Get-Date).ToString('s'); $state['updated_at']=(Get-Date).ToString('s'); $state['output_path']=''; $state['result_json']=([pscustomobject]@{ Error='翻訳をキャンセルしました。'; Cancelled=$true } | ConvertTo-Json -Depth 10 -Compress)
                 }
                 Dispose-YakuTranslationJobHandle -JobId ([string]$id) -SkipEndInvoke
                 Start-YakuWarmTranslationRunspaceBuild -Root $script:YakuRoot
@@ -930,14 +927,14 @@ function Stop-YakuTranslationJob {
     $state = $script:YakuTranslateJobs[$JobId]
     try {
         if ([bool]$state['cancel_requested'] -and (Test-YakuTranslationJobRunning -State $state)) {
-            $state['mode']='cancelling'; $state['label']='Cancelling'; $state['class']='warn'; $state['detail']='専用ワーカーを停止しています。'; $state['output_path']=''
+            $state['mode']='cancelling'; $state['label']='キャンセル中'; $state['class']='warn'; $state['detail']='専用ワーカーを停止しています。'; $state['output_path']=''
             return $state
         }
     } catch {}
     if (Test-YakuTranslationJobRunning -State $state) {
         $message = 'キャンセル処理を開始しました。'
         $state['mode'] = 'cancelling'
-        $state['label'] = 'Cancelling'
+        $state['label'] = 'キャンセル中'
         $state['class'] = 'warn'
         $state['detail'] = $message
         $state['updated_at'] = (Get-Date).ToString('s')
@@ -1038,7 +1035,7 @@ function Start-YakuFileProcessJob {
     } catch {
         try { if ($process -and -not $process.HasExited) { $process.Kill() } } catch {}
         try { if ($process) { $process.Dispose() } } catch {}
-        $state['mode']='failed'; $state['label']='Translation error'; $state['class']='warn'; $state['detail']=$_.Exception.Message; $state['error_code']='WORKER_START_FAILED'; $state['completed_at']=(Get-Date).ToString('s'); $state['updated_at']=(Get-Date).ToString('s')
+        $state['mode']='failed'; $state['label']='翻訳エラー'; $state['class']='warn'; $state['detail']=$_.Exception.Message; $state['error_code']='WORKER_START_FAILED'; $state['completed_at']=(Get-Date).ToString('s'); $state['updated_at']=(Get-Date).ToString('s')
         try { Write-YakuProgressStateFile -ProgressState $state } catch {}
         try { if ($UploadedInput -and $uploadDir -and (Test-Path -LiteralPath $uploadDir)) { Remove-Item -LiteralPath $uploadDir -Recurse -Force -ErrorAction SilentlyContinue } } catch {}
         try { if (Test-Path -LiteralPath $jobDir) { Remove-Item -LiteralPath $jobDir -Recurse -Force -ErrorAction SilentlyContinue } } catch {}
@@ -1175,7 +1172,7 @@ function Start-YakuTranslationJob {
             $terminalMode = 'done'
             if ($result -and ($result.PSObject.Properties.Name -contains 'Error') -and $result.Error) {
                 $terminalMode = 'error'
-                $JobState['label'] = 'Translation error'
+                $JobState['label'] = '翻訳エラー'
                 $JobState['class'] = 'warn'
                 $JobState['detail'] = [string]$result.Error
                 $JobState['progress'] = 100
@@ -1186,9 +1183,9 @@ function Start-YakuTranslationJob {
                 try { $resultCompletionDetail = [string]$result.CompletionDetail } catch {}
                 $completedWithWarnings = ($Kind -eq 'file' -and $resultCompletionStatus -eq 'completed_with_warnings')
                 $terminalMode = if ($completedWithWarnings) { 'completed_with_warnings' } else { 'done' }
-                $JobState['label'] = if ($completedWithWarnings) { 'Completed with warnings' } else { 'Done' }
+                $JobState['label'] = if ($completedWithWarnings) { '完了（要確認あり）' } else { '完了' }
                 $JobState['class'] = if ($completedWithWarnings) { 'warn' } else { 'ok' }
-                $JobState['detail'] = if (-not [string]::IsNullOrWhiteSpace($resultCompletionDetail)) { $resultCompletionDetail } elseif ($Kind -eq 'file') { 'File translation completed.' } else { 'Translation completed.' }
+                $JobState['detail'] = if (-not [string]::IsNullOrWhiteSpace($resultCompletionDetail)) { $resultCompletionDetail } elseif ($Kind -eq 'file') { 'ファイル翻訳が完了しました。' } else { '翻訳が完了しました。' }
                 $JobState['progress'] = 100
                 try {
                     if ($Kind -eq 'file') {
@@ -1217,7 +1214,7 @@ function Start-YakuTranslationJob {
             $message = $_.Exception.Message
             try { Write-YakuLog "Translation job exception: $($_.Exception.ToString())" 'ERROR' } catch {}
             $JobState['result_json'] = ([pscustomobject]@{ Error=$message; Kind=$Kind } | ConvertTo-Json -Depth 10 -Compress)
-            $JobState['label'] = 'Translation error'
+            $JobState['label'] = '翻訳エラー'
             $JobState['class'] = 'warn'
             $JobState['detail'] = $message
             $JobState['progress'] = 100
@@ -1741,7 +1738,7 @@ function Invoke-YakuRoute {
             Send-YakuTextResponse -Context $Context -Text (Convert-YakuTranslationJobResultJson -State $state) -ContentType 'application/json; charset=utf-8' -StatusCode 202
         } catch {
             $safe = Convert-YakuExceptionToUserMessage $_
-            $payload = [ordered]@{ mode='error'; label='Translation error'; class='warn'; detail=$safe; progress=100; html=(New-YakuAlertHtml -Kind error -Message $safe) }
+            $payload = [ordered]@{ mode='error'; label='翻訳エラー'; class='warn'; detail=$safe; progress=100; html=(New-YakuAlertHtml -Kind error -Message $safe) }
             Send-YakuTextResponse -Context $Context -Text ($payload | ConvertTo-Json -Depth 20 -Compress) -ContentType 'application/json; charset=utf-8' -StatusCode 404
         }
         return
@@ -1818,7 +1815,7 @@ function Invoke-YakuRoute {
             $readyState = Get-YakuTranslateReadinessState
             if (-not [bool]$readyState.canTranslate) {
                 $label = [string]$readyState.label
-                if ([string]::IsNullOrWhiteSpace($label)) { $label = 'Preparing Copilot' }
+                if ([string]::IsNullOrWhiteSpace($label)) { $label = '準備中' }
                 $klass = [string]$readyState.class
                 if ([string]::IsNullOrWhiteSpace($klass)) { $klass = 'warn' }
                 $message = if ([string]$readyState.mode -eq 'working') { '翻訳ジョブが実行中です。完了してから再実行してください。' } else { 'Copilotの準備が完了してからファイル翻訳できます。' }
@@ -1954,7 +1951,7 @@ function Invoke-YakuRoute {
         $readyState = Get-YakuTranslateReadinessState
         if (-not [bool]$readyState.canTranslate) {
             $label = [string]$readyState.label
-            if ([string]::IsNullOrWhiteSpace($label)) { $label = 'Preparing Copilot' }
+            if ([string]::IsNullOrWhiteSpace($label)) { $label = '準備中' }
             $klass = [string]$readyState.class
             if ([string]::IsNullOrWhiteSpace($klass)) { $klass = 'warn' }
             $message = if ([string]$readyState.mode -eq 'working') { '翻訳ジョブが実行中です。ステータスが完了になるまでお待ちください。' } else { 'Copilotの準備が完了してから翻訳できます。EdgeでCopilotが開いている場合は、ログインと読み込み完了を待ってください。' }

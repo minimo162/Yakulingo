@@ -95,18 +95,16 @@ $jobObjectEnabled = Initialize-YakuJobObject
 
 $openBrowser = -not $NoBrowser.IsPresent
 
-Write-Host "YakuLingo HTMX + PowerShell edition" -ForegroundColor Cyan
-Write-Host "App Root      : $root"
-Write-Host "Preferred URL : http://127.0.0.1:$Port/"
-Write-Host "Port fallback : enabled. If $Port is busy, the next available port will be used." -ForegroundColor Yellow
+Write-Host "YakuLingo" -ForegroundColor Cyan
+Write-Host "画面          : http://127.0.0.1:$Port/ （使用中なら次の空き番号を使います）"
 if ($env:YAKULINGO_MOCK -eq '1') {
-    Write-Host "Translator    : mock mode (Copilot is not called)" -ForegroundColor Yellow
+    Write-Host "翻訳          : テストモード（Copilotは呼び出しません）" -ForegroundColor Yellow
 } else {
-    Write-Host "Translator    : Microsoft Edge + M365 Copilot automation"
-    Write-Host "Startup      : opens Copilot and enables Translate after the input box is ready."
+    Write-Host "翻訳          : Edge の M365 Copilot を使います。準備ができると翻訳ボタンが押せるようになります。"
 }
-Write-Host "Stop          : Ctrl+C or close this console."
-if ($jobObjectEnabled) { Write-Host "Process guard : enabled (child processes stop with this console)." -ForegroundColor Green }
+Write-Host "終了          : この画面を閉じるか、Ctrl+C を押してください。" -ForegroundColor Yellow
+Write-Host "アプリの場所  : $root" -ForegroundColor DarkGray
+if ($jobObjectEnabled) { Write-Host "子プロセス    : この画面を閉じると一緒に終了します。" -ForegroundColor DarkGray }
 Write-Host ''
 
 & (Join-Path $root 'src\Server.ps1') -Port $Port -OpenBrowser:$openBrowser

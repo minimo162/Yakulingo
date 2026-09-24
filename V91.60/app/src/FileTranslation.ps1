@@ -1874,7 +1874,7 @@ function Invoke-YakuFileTranslation {
         $publishedPath = [string]$writeResult.PublishedPath
         $completionStatus = [string]$writeResult.CompletionStatus
         $completionDetail = '翻訳対象テキストがなかったため、原本のコピーを出力しました。'
-        Set-YakuFileTranslationProgress -ProgressState $ProgressState -Phase $completionStatus -Label 'Done' -Progress 100 -Detail $completionDetail -Fields @{ output_path=$publishedPath; output_name=[System.IO.Path]::GetFileName($publishedPath); completion_status=$completionStatus; blocks_total=0; blocks_translated=0; blocks_written=0; blocks_write_target=0 }
+        Set-YakuFileTranslationProgress -ProgressState $ProgressState -Phase $completionStatus -Label '完了' -Progress 100 -Detail $completionDetail -Fields @{ output_path=$publishedPath; output_name=[System.IO.Path]::GetFileName($publishedPath); completion_status=$completionStatus; blocks_total=0; blocks_translated=0; blocks_written=0; blocks_write_target=0 }
         return [pscustomobject]@{
             Kind='file'; JobId=$JobId; Direction=$Direction; DirectionLabel=$directionLabel; InputName=[System.IO.Path]::GetFileName($InputPath); OutputPath=$publishedPath; OutputName=[System.IO.Path]::GetFileName($publishedPath); CompletionStatus=$completionStatus; CompletionDetail=$completionDetail; Validation=$writeResult.Validation; MaskedCount=0; MaskedItemCount=0;
             BlocksTotal=0; BlocksTranslated=0; BlocksWriteTarget=0; BlocksWritten=0; OriginalKept=0; BlocksRetained=0; BlocksRetainedOriginal=0; UniqueTextCount=0; CacheHits=0; GlossaryExactHits=0; AppliedGlossary=@(); BatchCount=0; BatchTotal=0; TruncatedBatches=0; TruncatedBatchRate=0; MaxRetryDepthReached=0; Stats=$stats; Warnings=@($warnings.ToArray()); ExtractSeconds=$extractSeconds; ApplySeconds=$applySeconds; DurationSeconds=[int]((Get-Date) - $started).TotalSeconds; Timestamp=(Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
@@ -1952,7 +1952,7 @@ function Invoke-YakuFileTranslation {
     $initialBatches = @(Split-YakuFileTranslationItems -Items $copilotPending -MaxChars $maxChars)
     $context['TotalBatches'] = [Math]::Max(1, $initialBatches.Count)
     $initialDone = [int]$context['TranslatedSoFar']
-    Set-YakuFileTranslationProgress -ProgressState $ProgressState -Phase 'translate' -Label '翻訳中' -Progress (Get-YakuFileUniqueProgressPercent -Context $context) -Detail "ユニーク翻訳 $initialDone/$($items.Count) 件（用語完全一致 $glossaryExactHits, キャッシュ $cacheHits, bracket glossary $preBatchBracketResolved）" -Fields ((Get-YakuFileUniqueProgressFields -Context $context -BatchCurrent 0 -BatchTotal ([int]$context['TotalBatches'])) + @{ glossary_exact_hits=$glossaryExactHits; bracket_glossary_hits=$preBatchBracketResolved })
+    Set-YakuFileTranslationProgress -ProgressState $ProgressState -Phase 'translate' -Label '翻訳中' -Progress (Get-YakuFileUniqueProgressPercent -Context $context) -Detail "翻訳済み $initialDone/$($items.Count) 件（用語集で置換 $($glossaryExactHits + $preBatchBracketResolved) 件、過去の訳を再利用 $cacheHits 件）" -Fields ((Get-YakuFileUniqueProgressFields -Context $context -BatchCurrent 0 -BatchTotal ([int]$context['TotalBatches'])) + @{ glossary_exact_hits=$glossaryExactHits; bracket_glossary_hits=$preBatchBracketResolved })
     if ($copilotPending.Count -gt 0) {
         $translatedPending = Invoke-YakuFileTranslationItems -Root $Root -Items $copilotPending -Settings $Settings -Direction $Direction -MaxChars $maxChars -Warnings $warnings -ProgressState $ProgressState -Context $context -Depth 0
         foreach ($k in @($translatedPending.Keys)) { $translationByIndex[[int]$k] = [string]$translatedPending[$k] }
@@ -2143,7 +2143,7 @@ function Invoke-YakuFileTranslation {
 
     $publishedPath = [string]$writeResult.PublishedPath
     $completionStatus = [string]$writeResult.CompletionStatus
-    $completionLabel = if ($completionStatus -eq 'completed_with_warnings') { 'Completed with warnings' } else { 'Done' }
+    $completionLabel = if ($completionStatus -eq 'completed_with_warnings') { '完了（要確認あり）' } else { '完了' }
     $completionDetail = if ($completionStatus -eq 'completed_with_warnings') { '不完全な項目があります。警告を確認してください。' } else { 'ファイル翻訳が完了しました。' }
     Set-YakuFileTranslationProgress -ProgressState $ProgressState -Phase $completionStatus -Label $completionLabel -Progress 100 -Detail $completionDetail -Fields @{ output_path=$publishedPath; output_name=[System.IO.Path]::GetFileName($publishedPath); completion_status=$completionStatus; blocks_total=$blocks.Count; blocks_translated=$blocksTranslated; blocks_written=$blocksWritten; blocks_write_target=$blocksWriteTarget; original_kept=$blocksOriginalKept; unique_done=$items.Count; unique_total=$items.Count }
     return [pscustomobject]@{

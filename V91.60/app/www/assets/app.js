@@ -126,7 +126,7 @@
   function yakuSetStatus(label, klass) {
     var status = document.getElementById('copilot-status');
     if (!status) return;
-    status.innerHTML = '<span class="status-dot ' + yakuStatusClass(klass) + '"></span><span>' + yakuEscape(label || 'Preparing') + '</span>';
+    status.innerHTML = '<span class="status-dot ' + yakuStatusClass(klass) + '"></span><span>' + yakuEscape(label || '準備中') + '</span>';
   }
 
   function yakuHasFileSource() {
@@ -223,7 +223,7 @@
       yakuApplyReadyState(data);
       yakuPollTimer = window.setTimeout(yakuPollReadyState, data.canTranslate ? 5000 : 1500);
     }).catch(function () {
-      yakuSetStatus('Preparing', 'warn');
+      yakuSetStatus('準備中', 'warn');
       yakuSetButtonEnabled(false);
       yakuPollTimer = window.setTimeout(yakuPollReadyState, 2500);
     });

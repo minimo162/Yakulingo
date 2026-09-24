@@ -97,7 +97,7 @@ try {
     $freshPrepared = $false
     $lastLog = [datetime]'2000-01-01'
 
-    $null = Write-YakuWarmupStatus -Mode 'starting' -Label 'Preparing' -Class 'warn' -Detail 'Starting Microsoft Edge and opening M365 Copilot.' -Ready $false
+    $null = Write-YakuWarmupStatus -Mode 'starting' -Label '準備中' -Class 'warn' -Detail 'EdgeでM365 Copilotを開いています。' -Ready $false
     Write-YakuEdgeLaunchLog "Copilot warmup started. port=$port timeout=$timeout" 'INFO'
 
     # W2: fire Edge before loading the large Copilot automation module so the
@@ -112,7 +112,7 @@ try {
     Write-YakuLog "Copilot warmup startup timings. early-edge-launch elapsedMs=$($earlyLaunchSw.ElapsedMilliseconds) copilot-module-load elapsedMs=$($moduleLoadSw.ElapsedMilliseconds) edgeStarted=$([bool]$earlyLaunch.Started) edgeAlreadyReachable=$([bool]$earlyLaunch.AlreadyReachable)" 'INFO'
 
     $port = Start-YakuCopilotEdge -Port $port -DisplayMode ([string]$settings.browser_display_mode) -Url $copilotUrl -WindowSize ([string]$settings.edge_window_size)
-    $null = Write-YakuWarmupStatus -Mode 'loading' -Label 'Loading' -Class 'warn' -Detail 'Waiting for the Copilot input box.' -Ready $false
+    $null = Write-YakuWarmupStatus -Mode 'loading' -Label '読み込み中' -Class 'warn' -Detail 'Copilotの入力欄が表示されるのを待っています。' -Ready $false
 
     while ((Get-Date) -lt $deadline) {
         try {
@@ -130,7 +130,7 @@ try {
                             Write-YakuLog "Surplus Copilot tab cleanup failed; continuing. error=$($_.Exception.Message)" 'WARN'
                         }
                     }
-                    $null = Write-YakuWarmupStatus -Mode 'fresh-chat' -Label 'Preparing' -Class 'warn' -Detail 'Opening a fresh Copilot chat.' -Ready $false
+                    $null = Write-YakuWarmupStatus -Mode 'fresh-chat' -Label '準備中' -Class 'warn' -Detail 'Copilotの新しいチャットを開いています。' -Ready $false
                     $fresh = $null
                     try {
                         $fresh = Invoke-YakuWarmupFreshChatWithRetry -Page $page -Url $copilotUrl -Port $port
@@ -146,7 +146,7 @@ try {
                     $freshOk = ($fresh -and (Get-YakuObjectPropertyValue -Object $fresh -Name 'ok' -Default $false) -eq $true)
                     if ($freshOk -and $freshAfterReady -and -not [string]::IsNullOrWhiteSpace($freshAfterUrl) -and $freshAfterUrl -notmatch '/(?:chat/)?conversation/') {
                         $freshAfterTitle = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $freshAfter -Name 'title' -Default '')
-                        if (Write-YakuWarmupStatus -Mode 'ready' -Label 'Ready' -Class 'ok' -Detail $freshAfterUrl -Ready $true) {
+                        if (Write-YakuWarmupStatus -Mode 'ready' -Label '準備完了' -Class 'ok' -Detail $freshAfterUrl -Ready $true) {
                             Write-YakuLog "Copilot warmup ready from fresh-chat after state. url=$freshAfterUrl title=$freshAfterTitle" 'INFO'
                             exit 0
                         }
@@ -159,7 +159,7 @@ try {
                     continue
                 }
 
-                if (Write-YakuWarmupStatus -Mode 'ready' -Label 'Ready' -Class 'ok' -Detail $url -Ready $true) {
+                if (Write-YakuWarmupStatus -Mode 'ready' -Label '準備完了' -Class 'ok' -Detail $url -Ready $true) {
                     Write-YakuLog "Copilot warmup ready. url=$url title=$title" 'INFO'
                     exit 0
                 }
@@ -169,11 +169,11 @@ try {
             }
 
             if ($state.loginDetected -eq $true) {
-                $null = Write-YakuWarmupStatus -Mode 'login' -Label 'Login required' -Class 'warn' -Detail 'Please sign in to M365 Copilot in the opened Edge window.' -Ready $false
+                $null = Write-YakuWarmupStatus -Mode 'login' -Label 'ログインが必要' -Class 'warn' -Detail '開いたEdgeでM365 Copilotにサインインしてください。' -Ready $false
             } elseif ($state.generating -eq $true) {
-                $null = Write-YakuWarmupStatus -Mode 'busy' -Label 'Copilot busy' -Class 'warn' -Detail 'Waiting for Copilot to stop generating.' -Ready $false
+                $null = Write-YakuWarmupStatus -Mode 'busy' -Label 'Copilot応答中' -Class 'warn' -Detail 'Copilotの応答が終わるのを待っています。' -Ready $false
             } else {
-                $null = Write-YakuWarmupStatus -Mode 'loading' -Label 'Loading' -Class 'warn' -Detail 'Waiting for the Copilot input box.' -Ready $false
+                $null = Write-YakuWarmupStatus -Mode 'loading' -Label '読み込み中' -Class 'warn' -Detail 'Copilotの入力欄が表示されるのを待っています。' -Ready $false
             }
 
             if (((Get-Date) - $lastLog).TotalSeconds -ge 8) {
@@ -181,7 +181,7 @@ try {
                 $lastLog = Get-Date
             }
         } catch {
-            $null = Write-YakuWarmupStatus -Mode 'loading' -Label 'Loading' -Class 'warn' -Detail $_.Exception.Message -Ready $false
+            $null = Write-YakuWarmupStatus -Mode 'loading' -Label '読み込み中' -Class 'warn' -Detail 'Copilotの画面を確認しています。' -Ready $false
             if (((Get-Date) - $lastLog).TotalSeconds -ge 8) {
                 Write-YakuLog "Copilot warmup polling error: $($_.Exception.Message)" 'DEBUG'
                 $lastLog = Get-Date
@@ -190,11 +190,11 @@ try {
         Start-Sleep -Milliseconds 1200
     }
 
-    $null = Write-YakuWarmupStatus -Mode 'timeout' -Label 'Not ready' -Class 'warn' -Detail "Copilot was not ready within $timeout seconds." -Ready $false
+    $null = Write-YakuWarmupStatus -Mode 'timeout' -Label '準備できず' -Class 'warn' -Detail ("Copilotの準備が{0}分以内に終わりませんでした。" -f [int][Math]::Ceiling($timeout / 60)) -Ready $false
     Write-YakuLog "Copilot warmup timeout after $timeout seconds." 'WARN'
     exit 2
 } catch {
-    $null = Write-YakuWarmupStatus -Mode 'error' -Label 'Copilot preparation failed' -Class 'warn' -Detail $_.Exception.Message -Ready $false
+    $null = Write-YakuWarmupStatus -Mode 'error' -Label '準備に失敗' -Class 'warn' -Detail 'Copilotの準備中に問題が起きました。詳しくはログを確認してください。' -Ready $false
     try { Write-YakuLog "Copilot warmup exception: $($_.Exception.ToString())" 'ERROR' } catch {}
     exit 1
 }

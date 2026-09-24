@@ -32,7 +32,7 @@ $state['worker_pid'] = $PID
 $state['worker_started_at'] = Get-YakuProcessStartTimeIso -Id $PID
 $state['mode'] = 'opening'
 $state['phase'] = 'opening'
-$state['label'] = 'Opening file'
+$state['label'] = 'ファイルを開いています'
 $state['started_at'] = (Get-Date).ToString('s')
 $state['updated_at'] = (Get-Date).ToString('s')
 $script:YakuWorkerProgressState = $state
@@ -56,9 +56,9 @@ try {
     if ([string]::IsNullOrWhiteSpace($completion)) { $completion = 'done' }
     $state['completion_status'] = $completion
     $state['mode'] = $completion
-    $state['label'] = if ($completion -eq 'completed_with_warnings') { 'Completed with warnings' } else { 'Done' }
+    $state['label'] = if ($completion -eq 'completed_with_warnings') { '完了（要確認あり）' } else { '完了' }
     $state['class'] = if ($completion -eq 'completed_with_warnings') { 'warn' } else { 'ok' }
-    $state['detail'] = if ($completion -eq 'completed_with_warnings') { '不完全な項目があります。警告を確認してください。' } else { 'File translation completed.' }
+    $state['detail'] = if ($completion -eq 'completed_with_warnings') { '不完全な項目があります。警告を確認してください。' } else { 'ファイル翻訳が完了しました。' }
     $state['progress'] = 100
     $state['output_path'] = [string]$result.OutputPath
     $state['output_name'] = [string]$result.OutputName
@@ -79,7 +79,7 @@ try {
         }
     } catch { try { Write-YakuLog "Cancelled output cleanup failed. error=$($_.Exception.Message)" 'WARN' } catch {} }
     $state['mode'] = 'cancelled'
-    $state['label'] = 'Cancelled'
+    $state['label'] = 'キャンセル済み'
     $state['class'] = 'idle'
     $state['detail'] = '翻訳をキャンセルしました。'
     $state['progress'] = 100
@@ -92,7 +92,7 @@ try {
     $errorResult = [pscustomobject]@{ Error=$safeMessage; ErrorCode='FILE_WORKER_FAILED'; Kind='file'; JobId=[string]$state['id'] }
     Write-YakuJsonAtomic -Path $ResultPath -Value $errorResult -Depth 12
     $state['mode'] = 'failed'
-    $state['label'] = 'Translation error'
+    $state['label'] = '翻訳エラー'
     $state['class'] = 'warn'
     $state['detail'] = $safeMessage
     $state['progress'] = 100

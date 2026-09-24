@@ -22,6 +22,50 @@ function New-YakuAlertHtml {
     return "<div class='alert alert-$Kind'>$(ConvertTo-YakuHtml $Message)</div>"
 }
 
+function Get-YakuFriendlyError {
+    <#
+      例外の本文を、利用者が次に何をすればよいか分かる言葉に置き換える。
+      元の本文は Detail に残し、画面では「詳細」を開いたときだけ見せる。
+    #>
+    param([AllowNull()][string]$Message)
+    $raw = ([string]$Message -replace '[\r\n\t]+', ' ').Trim()
+    if ([string]::IsNullOrWhiteSpace($raw)) { return [pscustomobject]@{ Message='不明なエラーが発生しました。'; Detail='' } }
+    $detail = if ($raw.Length -gt 520) { $raw.Substring(0, 520) + ' ...' } else { $raw }
+    $friendly = $null
+    if ($raw -match 'Reason=login-required|login\.microsoftonline|COPILOT_REFUSAL_OR_LOGIN|Edge のログイン状態') {
+        $friendly = 'Copilotのログインが切れているようです。開いているEdgeでサインインし直してから、もう一度翻訳してください。'
+    } elseif ($raw -match 'Copilot入力欄が見つかりません') {
+        $friendly = 'Copilotの画面が使える状態になっていません。Edgeの画面（ダイアログなど）を確認してから、もう一度翻訳してください。'
+    } elseif ($raw -match '^RESPONSE_|FILE_RESPONSE_') {
+        $friendly = 'Copilotの回答を読み取れませんでした。もう一度翻訳してください。'
+    } elseif ($raw -match '(?i)CDP|DevTools|WebSocket|JavaScript evaluation|timed out|COPILOT_SILENT_START_TIMEOUT') {
+        $friendly = 'Copilotから応答がありませんでした。少し待ってから、もう一度翻訳してください。'
+    }
+    if ($null -eq $friendly) {
+        # 先頭の「ERROR_CODE: 」は利用者には意味が無いので外す。本文が日本語ならそのまま使う。
+        $body = [regex]::Replace($raw, '^[A-Z][A-Z0-9_]{3,}:\s*', '')
+        $technical = ($body -match '[A-Za-z]+=\S' -or $body -notmatch '[぀-ヿ一-鿿]')
+        if ($technical) {
+            $friendly = 'エラーが発生しました。もう一度試しても直らない場合は、管理者に連絡してください。'
+        } else {
+            if ($body.Length -gt 520) { $body = $body.Substring(0, 520) + ' ...' }
+            $friendly = $body
+            if ($body -eq $raw) { $detail = '' }
+        }
+    }
+    return [pscustomobject]@{ Message=$friendly; Detail=$detail }
+}
+
+function New-YakuErrorAlertHtml {
+    param([AllowNull()][string]$Raw)
+    $err = Get-YakuFriendlyError -Message $Raw
+    $html = "<div class='alert alert-error'>$(ConvertTo-YakuHtml $err.Message)"
+    if (-not [string]::IsNullOrWhiteSpace([string]$err.Detail)) {
+        $html += "<details class='error-details'><summary>詳細</summary><pre>$(ConvertTo-YakuHtml $err.Detail)</pre></details>"
+    }
+    return $html + '</div>'
+}
+
 function New-YakuSpinnerHtml {
     param([string]$Text = '処理中です...')
     return "<div class='spinner-row'><span class='spinner'></span><span>$(ConvertTo-YakuHtml $Text)</span></div>"
@@ -36,7 +80,7 @@ function New-YakuCopyButtonHtml {
 }
 function Convert-YakuStatusOobHtml {
     param(
-        [string]$Label = 'Done',
+        [string]$Label = '完了',
         [string]$Class = 'ok'
     )
     return "<div id='copilot-status' class='status' hx-swap-oob='outerHTML' aria-live='polite'><span class='status-dot $Class'></span><span>$(ConvertTo-YakuHtml $Label)</span></div>"
@@ -50,7 +94,7 @@ function Convert-YakuTextResultToHtml {
 
     if ($Result -and ($Result.PSObject.Properties.Name -contains 'Error') -and $Result.Error) {
         $html = ''
-        $html += New-YakuAlertHtml -Kind error -Message $Result.Error
+        $html += New-YakuErrorAlertHtml -Raw ([string]$Result.Error)
         if ($Result.Prompt) {
             $html += "<details class='prompt-details'><summary>Copilotへ手動送信用のプロンプト</summary><textarea readonly rows='12'>$(ConvertTo-YakuHtml $Result.Prompt)</textarea></details>"
         }
@@ -223,7 +267,7 @@ function Convert-YakuFileResultToHtml {
     )
     if ($Result -and ($Result.PSObject.Properties.Name -contains 'Error') -and $Result.Error) {
         $html = ''
-        $html += New-YakuAlertHtml -Kind error -Message $Result.Error
+        $html += New-YakuErrorAlertHtml -Raw ([string]$Result.Error)
         return $html
     }
 
