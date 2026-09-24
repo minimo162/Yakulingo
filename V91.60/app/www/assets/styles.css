@@ -163,6 +163,9 @@ summary { cursor: pointer; color: var(--muted); font-size: var(--font-meta); }
 .diag-table th { color: var(--muted); font-weight: 500; width: 160px; }
 .alert { padding: 12px 14px; color: var(--muted); font-size: var(--font-meta); }
 .alert-error { color: var(--error); border-color: rgba(180,35,24,.25); }
+.error-details { margin-top: 6px; color: var(--muted); font-size: var(--font-meta); }
+.error-details summary { cursor: pointer; }
+.error-details pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0 0; max-height: 240px; overflow: auto; }
 .alert-warning { color: var(--warning); border-color: rgba(161,92,0,.25); }
 .alert-success { color: var(--success); border-color: rgba(15,123,85,.25); }
 .persistent-warning { background: #fff8e8; border-width: 2px; }
