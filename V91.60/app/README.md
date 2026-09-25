@@ -1,62 +1,65 @@
-﻿# YakuLingo V91.2
+﻿# YakuLingo V91.60
 
-Microsoft 365 Copilotの画面をEdge DevTools Protocol（CDP）で操作し、テキストおよびExcel/CSV資料を翻訳するローカル業務ツールです。V77では、CDP所有権確認の安全なキャッシュ化、翻訳Runspaceの完全ウォーム化、入力・モデル・送信ベースラインの重複処理削減、応答検知間隔の短縮により、翻訳品質契約を維持したまま処理を高速化しました。V76では、用語監査を実際に用語が出現した項目へ限定し、「タイ→タイミング」「半期→四半期」の偽陽性を修正しています。
+Microsoft 365 Copilotの画面をEdge DevTools Protocol（CDP）で操作し、テキストおよびExcel/CSV資料を翻訳するローカル業務ツールです。Copilotへ送る前に数値を伏せ字へ置き換え、受け取った訳文で元の数値へ戻します。
 
-V85では、テキスト翻訳の既定バッチ上限を1,000字から3,000字へ変更しました。保存済み設定が旧既定値1,000字のままの場合は、初回読込時に3,000字へ一度だけ移行します。明示的に別の値を設定している場合は変更しません。複数バッチの進捗はジョブ全体の範囲へ配分し、バッチ番号と入力文字数を表示したまま単調に進みます。
+## 使い方
 
-V86では、和訳（`to_jp`）の必須ラベル配列がPowerShellによって文字列へ展開され、正しい `JAPANESE_TEXT` 応答を全件誤拒否していた契約検証バグを修正しました。英訳・和訳の両方向を直接検証する回帰テストと配列型ガードを追加し、契約エラーによる再試行も進捗画面へ表示します。
-
-V87では、日本語・中国語・英語の方向判定を強化し、低確度表示と手動方向指定を追加しました。テキスト用プロンプトを方向別に分割し、数値規則を必要時だけ挿入して送信量も削減しています。
-
-V87.1では、新規プロンプトのUTF-8 BOM欠落を修正しました。エンコーディング違反の一括表示、修復ツール、VS Code設定も追加しています。
-
-V88では、指定シートの不存在を検出して空の翻訳処理を防止し、対象0件時の書き戻しと完全性検証を軽量化しました。方向セグメントの罫線、シート全解除、ファイル方向推定反映などのUI/UXも改善しています。
-
-V89では、テキスト入力欄が空の状態でも「日→英」「英他→日」を先に選択できるよう、方向メタ更新時の「自動」強制リセットを削除しました。
-
-V90では、BRIEF英訳の目標長をFULL訳比20〜30%へ引き上げ、全文への電文体適用、財務略語、冗長句の短縮、意味保全ルールを強化しました。
-
-V90.1では、BRIEFがFULLの半分を超えた場合の自己書き直し、FULL→BRIEF模範例、3段階の圧縮手順を追加し、増減表記を誤読しにくい `up X / down X` に統一しました。
-
-V90.2では、事実完全性を最優先に固定し、BRIEFを5つの機械的変換だけで短縮する方式へ変更しました。長さは診断指標とし、限定・条件・原因・モダリティを保持する3種類の模範例と文単位の最終照合を追加しています。
-
-V90.3では、Copilot準備状態の書き込みをアトミック化し、最大5回のリトライを追加しました。Ready状態の保存成功時のみ準備ワーカーを終了し、読み取り側は共有モードと最後の正常状態を使って一過性の競合を吸収します。
-
-V90.4では、BRIEFの略語を見出し・ラベルにも適用し、符号付き寄与額、四半期トークン、数値間の矢印表記を原文に合わせて保持するよう調整しました。用語集は訳語の同一性を維持しつつ、一般語の大文字小文字を本文と見出しの文脈に適応させます。
-
-V90.5では、符号付き内訳項目の項目名と数値を1スペースで結び、原文にない `impact`、`of`、コロンの挿入を禁止しました。増減動詞に付く数値は符号なしの大きさに統一し、文中の内訳項目はラベルでなく小文字の本文として扱います。FULLとBRIEFの両方で原文の期間トークンと数値間矢印も保持します。
-
-V90.6では、増益・減益等の方向語が原文の `+` / `▲` を吸収し、数値を符号なしの大きさに統一しました。内訳のトップレベル区切りをセミコロン、括弧内をカンマに固定し、同一原語は回答全体で同一表記にします。四半期表記は原文固定ではなく用語集を優先し、全大文字の頭字語と一般語の短縮形を区別してcasingを適用します。
-
-V90.8では、長文翻訳の見出し・箇条書きの構造自己検査、万台の `k units` 変換、同一の前置詞・限定語に支配される `and` の保持を追加しました。
-
-V90.9では、表ラベルの完全一致置換用 `glossary.csv` と、Copilotプロンプト注入用 `prompt_glossary.csv` を分離しました。プロンプト用語集は文中表記を前提とし、一般語を小文字で管理します。`prompt_glossary.csv` がない場合は従来の `glossary.csv` へ自動的にフォールバックします。プロンプト用語集は当面 `prompt_glossary.csv` を直接編集してください。
-
-V90.9.1では、アプリ内の用語追加・削除を廃止し、用語集パネルを読取専用の2セクション表示に変更しました。編集は `glossary.csv` と `prompt_glossary.csv` の直接編集に一本化し、件数、パス、重複・競合警告、全エントリをパネルで確認できます。
-
-現行版では、画面の「用語集」から語を追加できます。追加した語は版フォルダではなく `%USERPROFILE%\.yakulingo-ps\glossary\` の「自分の用語集」（`prompt_glossary.csv` / `glossary.csv`）に保存されるため、版を更新しても消えません。同梱の用語集に同じ原語があれば、自分の用語集が優先されます。同梱の用語集は読取専用のままです。
-
-V91では、テキスト英訳の原文とFULL/BRIEFの見出し・箇条書き数をコード側で照合します。不一致は従来の応答再試行に組み込み、上限後も翻訳結果を返しつつ確認警告を表示します。
-
-V91.1では、Copilotのレンダラーが半角山括弧見出しをHTMLタグとして隠す問題を修正しました。モデル応答では全角 `＜＞` を使い、受信後に半角 `<>` へ復元してから構造照合します。
-
-V91.2では、M365 Copilotの新しい `loading-message` 思考表示と停止ボタンを生成活動として検知し、生成中の回答をsilent-start-timeoutで誤停止する問題を修正しました。初動待機は従来どおり10秒を既定とし、必要な場合のみ設定で変更できます。
-
-## 開発時のエンコーディング
-
-- `*.ps1`、`prompts/*.txt`、`www/` 配下のHTML/CSS/JS、`config/settings.template.json` はUTF-8 BOM付き・CRLFで保存します。
-- 新規ファイルは `$utf8Bom = New-Object System.Text.UTF8Encoding($true)` と `[System.IO.File]::WriteAllText($path, $text, $utf8Bom)` を使って明示的に保存します。
-- コミット・配布前に `powershell -ExecutionPolicy Bypass -File .\tools\Check-Encoding.ps1` を実行します。
-- BOM違反は `tools\Repair-YakuEncoding.ps1 -WhatIfOnly` で確認し、同スクリプトを引数なしで実行して一括修復できます。
-
-## 起動と停止
+### 起動と終了
 
 1. 共有ルートの `YakuLingo起動.cmd` をダブルクリックします（V91.59以降。`.vbs` も転送シムとして動作します）。
-2. EdgeでMicrosoft 365 Copilotへサインインします。
+2. YakuLingoが開いたEdgeでMicrosoft 365 Copilotへサインインします。普段使うEdgeとは別の専用プロファイルなので、初回はサインインが必要です。
 3. 画面右上が「準備完了」になったら翻訳できます。
-4. 終了は画面右上の「終了」ボタンを押します。起動中のPowerShell画面を閉じるか `Ctrl+C` を押しても終了します。
+4. 終了は画面右上の「終了」ボタンを押します。翻訳中は確認してから終了し、正常に終了すると起動用のコンソールも閉じます。起動中のPowerShell画面を閉じるか `Ctrl+C` を押しても終了します。
 
 二重起動時は新しいサーバーを作らず、既存プロセスのPID・開始時刻・インスタンスIDを確認して既存画面を開きます。
+
+起動時の文字コード・構文検査は、前回から `.ps1` と `prompts/*.txt` の中身が変わっていなければ省きます。検査済みの印は `%LOCALAPPDATA%\YakuLingo\startup-check` に置き、共有フォルダには書きません。
+
+### Copilotにつながらないとき
+
+- 準備が時間切れになったり失敗したりしたときは、画面に「Copilotに再接続」ボタンが出ます。Edgeの画面（ログインやダイアログ）を確認してから押してください。ツールを再起動する必要はありません。
+- 翻訳の途中でログインが切れたり入力欄が見つからなくなったりしたときは、自動で準備をやり直します（1ジョブにつき1回）。
+- エラーは、次にすべきことを日本語で表示します。技術的な元の本文は「詳細」を開いたときだけ表示します。
+
+### テキスト翻訳
+
+- 翻訳方向は「自動」「日→英」「英他→日」から選びます。自動判定の確度が低いときは ⚠ を表示します。
+- 日→英は2つの訳を作ります。
+  - FULL（全文訳）: 略語を使わず、原文の情報をすべて訳します。
+  - BRIEF（短縮訳）: 表や見出し向けに、承認済みの略語を使って短くします。
+- 英他→日は日本語訳を作ります。
+- `Ctrl`+`Enter` で翻訳を始められます。長文は分割して翻訳し、用語と言い回しは前の部分の訳にそろえます。
+- 訳文から数値が落ちたときは、実際の数値を挙げて警告します。
+
+### ファイル翻訳
+
+1. `.xlsx` / `.xlsm` / `.csv` をドロップするか、クリックして選びます。ローカルパスを直接入力することもできます（`C:\` などドライブ名から始まるパス）。
+2. ファイルを選ぶと自動で内容を確認し、推定した翻訳方向と対象シートを反映します。「ファイル確認」ボタンは確認し直すときに使います。
+3. 必要なら方向と対象シート（チップ）を変えて「翻訳」を押します。
+
+- 出力は `%USERPROFILE%\.yakulingo-ps\outputs` に別ファイルとして作成し、元ファイルは更新しません。
+- 数値の伏せ字が崩れた項目は、1件ずつ送り直します（最大5件）。それでも数値が落ちた項目は、セル番地（例: `Sheet1, C12`）で警告します。
+- CSV以外のファイル処理にはMicrosoft Excelが必要です。
+
+### 用語集
+
+- 画面の「用語集」から語を追加できます。追加した語は `%USERPROFILE%\.yakulingo-ps\glossary\` の「自分の用語集」に保存されるため、版を更新しても消えません。
+  - `prompt_glossary.csv`（文章用）: 翻訳のときCopilotへ参考訳語として渡します。
+  - `glossary.csv`（表ラベル用）: Excel/CSVのセルが完全一致したとき、Copilotを使わずこの訳で置き換えます。
+- 同梱の用語集に重ねて読み、同じ原語があれば自分の用語集を優先します。同梱の用語集は読取専用です。
+- 「用語集のフォルダを開く」でCSVを直接編集することもできます。保存すると次の翻訳から使われます。
+- 用語集に登録した語は、数字を含む部分もそのままCopilotへ送信されます。機密の数値は登録しないでください。
+
+### 数値の伏せ字（V91.60）
+
+- Copilotへ送る前に、数値の大きさを `⟦#ABC⟧` の形の伏せ字へ置き換えます。符号と単位は送信します。
+- 年度・決算期（`2026年3月期`、`FY26/3` など）、証券コード、用語集に登録された語は伏せずに送ります。
+- 送る直前にもう一度検査し、伏せ残しがあれば送信を中止します。
+- 以前の手動マスク `【…非開示】` は廃止しました。資料に残っている場合は通常の語として訳されます。
+
+### 設定
+
+「設定とデータ管理」には、よく使う項目（図形・グラフの翻訳、CSVヘッダー行、翻訳キャッシュ、ログ診断）だけを表示します。CDPポートやバッチ文字数などは「詳細設定」にたたんであり、通常は変更不要です。保存メッセージに、いつから反映されるかを表示します。
 
 ## 対応機能
 
@@ -64,8 +67,6 @@ V91.2では、M365 Copilotの新しい `loading-message` 思考表示と停止�
 - ファイル: `.xlsx`、`.xlsm`、`.csv`
 - Excel対象: 文字列セル、図形テキスト、グラフタイトル・軸タイトル
 - 対象外: `.xls`、数式セル、SmartArt、パスワード保護ブック、データラベル、凡例、系列名
-
-元ファイルは更新しません。出力は `%USERPROFILE%\.yakulingo-ps\outputs` に作成します。CSV以外のファイル処理にはMicrosoft Excelが必要です。
 
 ## V64の安全設計
 
@@ -105,14 +106,13 @@ Excel/CSV出力はジョブ専用一時ディレクトリへ書き、書込件�
 | 通常ログ | 原文・訳文・プロンプト全文を含めず、5MBでローテーション、既定30日 |
 | 全文診断 | 既定無効。設定で明示的に有効化した場合のみ保存、保持1～7日（既定1日） |
 | ジョブ状態 | 完了後30分。アップロード原本の寿命とは分離 |
+| `glossary\` | 自分の用語集。利用者が消すまで残る |
 
 「設定とデータ管理」には対象件数と保存先が表示されます。「履歴を消去」「診断データを消去」は確認後に実行します。履歴消去時はプロセス内キャッシュも消去します。
 
-Copilotへは翻訳対象本文、該当する用語集、翻訳指示を送ります。ECM資料を扱う前に、組織のMicrosoft 365利用規程と情報管理規程を確認してください。
+Copilotへは翻訳対象本文（数値は伏せ字）、該当する用語集、翻訳指示を送ります。ECM資料を扱う前に、組織のMicrosoft 365利用規程と情報管理規程を確認してください。
 
-V73への更新前に保存された日英混在訳を残さないため、設定画面で「保存」を1回実行して翻訳キャッシュをクリアしてください。設定保存時に翻訳キャッシュは自動的に消去されます。
-
-## 設定
+## 設定ファイル
 
 設定は `%USERPROFILE%\.yakulingo-ps\config\user_settings.json` へ原子的に保存されます（V91.59以降。旧版の `<アプリ>\config\user_settings.json` は初回起動時に一度だけ引き継ぎ、旧ファイルは削除しません）。型、範囲、列挙値はサーバー側でも検証します。不正JSONは日時付きバックアップへ移し、既定値へ復旧します。主な既定値は次のとおりです。
 
@@ -127,21 +127,39 @@ V73への更新前に保存された日英混在訳を残さないため、設�
 
 ## テスト
 
-Windows PowerShellで次を実行します。
+Windows PowerShellで、アプリフォルダ（`V91.60\app`）から次を実行します。
 
 ```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\Check-Encoding.ps1
 powershell -ExecutionPolicy Bypass -File .\tools\Smoke-Test.ps1
 powershell -ExecutionPolicy Bypass -File .\tools\Prompt-Regression-Test.ps1
+powershell -ExecutionPolicy Bypass -File .\tools\Test-YakuV9160NumericMasking.ps1
+powershell -ExecutionPolicy Bypass -File .\tools\Test-YakuUserGlossary.ps1
+powershell -ExecutionPolicy Bypass -File .\tools\Test-YakuCopilotReconnect.ps1
+powershell -ExecutionPolicy Bypass -File .\tools\Test-YakuFriendlyMessages.ps1
+powershell -ExecutionPolicy Bypass -File .\tools\Test-YakuStartupExperience.ps1
+powershell -ExecutionPolicy Bypass -File .\tools\Test-YakuUsabilityFixes.ps1
 powershell -ExecutionPolicy Bypass -File .\tools\Wait-YakuCopilotResponse-Watcher-Test.ps1
 powershell -ExecutionPolicy Bypass -File .\tools\V64-HTTP-Boundary-Test.ps1
 powershell -ExecutionPolicy Bypass -File .\tools\V65-Saving-Validation-Test.ps1
 ```
 
-V69のCopilot実機確認では `tools\Test-CopilotAutomation.ps1` を実行し、入力・送信・回答取得が成功することを確認してください。通常ログの `Copilot fresh chat diagnostic` と `Copilot fresh chat accepted` で、新規チャット操作前後の応答件数・入力状態・採用理由を確認できます。用語集については `Glossary occurrence audit` または `Text glossary occurrence audit` を確認してください。設定で全文診断を有効にした場合、違反した原語、指定訳、対象位置、原文、実訳を `copilot-glossary-diagnostic-*.jsonl` に保存します。
-
 HTTP境界試験はYakuLingo本体を停止した状態で実行してください。
 
-起動時にも全 `.ps1` のPowerShell構文とUTF-8 BOMを検査します。配布前には `docs\V64_TEST_RESULTS.md` のWindows/Excel/Edge実機試験を完了してください。
+Copilotを呼ばずに画面を確かめるときは、テストモードで起動します。テキスト翻訳は原文に `[EN]` / `[JP]` を付けて返します。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Start-YakuLingo.ps1 -UseMockTranslator
+```
+
+Copilot実機確認では `tools\Test-CopilotAutomation.ps1` を実行し、入力・送信・回答取得が成功することを確認してください。通常ログの `Copilot fresh chat diagnostic` と `Copilot fresh chat accepted` で、新規チャット操作前後の応答件数・入力状態・採用理由を確認できます。用語集については `Glossary occurrence audit` または `Text glossary occurrence audit` を確認してください。設定で全文診断を有効にした場合、違反した原語、指定訳、対象位置、原文、実訳を `copilot-glossary-diagnostic-*.jsonl` に保存します。
+
+## 開発時のエンコーディング
+
+- `*.ps1`、`prompts/*.txt`、`www/` 配下のHTML/CSS/JS、`config/settings.template.json` はUTF-8 BOM付きで保存します。改行コードは `tools\eol-baseline.txt` に記録したファイルごとの形式を保ちます。
+- 新規ファイルは `$utf8Bom = New-Object System.Text.UTF8Encoding($true)` と `[System.IO.File]::WriteAllText($path, $text, $utf8Bom)` を使って明示的に保存します。
+- コミット・配布前に `powershell -ExecutionPolicy Bypass -File .\tools\Check-Encoding.ps1` を実行します。
+- BOM違反は `tools\Repair-YakuEncoding.ps1 -WhatIfOnly` で確認し、同スクリプトを引数なしで実行して一括修復できます。
 
 ## 制約
 
@@ -149,41 +167,103 @@ HTTP境界試験はYakuLingo本体を停止した状態で実行してくださ�
 - 図形内の部分書式はExcel COMの制約で先頭ランの書式へ均される場合があります。
 - 文字溢れの自動縮小・図形リサイズは行いません。
 - `completed_with_warnings` は完成品ではありません。必ず警告一覧と原本を照合してください。
-## V91.32 progress calibration
+
+## 変更履歴
+
+### 2026-09（V91.60のまま）
+
+- 数値が訳文から落ちたとき、実際の値と場所（ファイル翻訳はセル番地）で警告する。ファイル翻訳では1件ずつ送り直す（#211）
+- 自分の用語集を追加し、版を更新しても消えないようにした（#213）
+- Copilotの準備が失敗したときの「再接続」ボタンと、ログイン切れ時の自動再接続（#214）
+- 状態表示とエラー文を日本語にし、技術的な本文は「詳細」にしまった（#215）
+- 設定を「詳細設定」に整理、「終了」ボタン、起動時検査の省略（#216）
+- エラーがHTMLのまま出る不具合の修正、ファイル確認の自動化、結果の見出しの説明、テストモードの修正（#217）
+
+### V91.60
+
+- Copilotへ送る前に数値を伏せ字へ置き換え、受信後に復元する。詳細は `_docs/V91.60_修正指示書_数値プレースホルダー化_外部送信前マスキング.md`
+
+### V91.59以前
+
+V77では、CDP所有権確認の安全なキャッシュ化、翻訳Runspaceの完全ウォーム化、入力・モデル・送信ベースラインの重複処理削減、応答検知間隔の短縮により、翻訳品質契約を維持したまま処理を高速化しました。V76では、用語監査を実際に用語が出現した項目へ限定し、「タイ→タイミング」「半期→四半期」の偽陽性を修正しています。
+
+V85では、テキスト翻訳の既定バッチ上限を1,000字から3,000字へ変更しました。保存済み設定が旧既定値1,000字のままの場合は、初回読込時に3,000字へ一度だけ移行します。明示的に別の値を設定している場合は変更しません。複数バッチの進捗はジョブ全体の範囲へ配分し、バッチ番号と入力文字数を表示したまま単調に進みます。
+
+V86では、和訳（`to_jp`）の必須ラベル配列がPowerShellによって文字列へ展開され、正しい `JAPANESE_TEXT` 応答を全件誤拒否していた契約検証バグを修正しました。英訳・和訳の両方向を直接検証する回帰テストと配列型ガードを追加し、契約エラーによる再試行も進捗画面へ表示します。
+
+V87では、日本語・中国語・英語の方向判定を強化し、低確度表示と手動方向指定を追加しました。テキスト用プロンプトを方向別に分割し、数値規則を必要時だけ挿入して送信量も削減しています。
+
+V87.1では、新規プロンプトのUTF-8 BOM欠落を修正しました。エンコーディング違反の一括表示、修復ツール、VS Code設定も追加しています。
+
+V88では、指定シートの不存在を検出して空の翻訳処理を防止し、対象0件時の書き戻しと完全性検証を軽量化しました。方向セグメントの罫線、シート全解除、ファイル方向推定反映などのUI/UXも改善しています。
+
+V89では、テキスト入力欄が空の状態でも「日→英」「英他→日」を先に選択できるよう、方向メタ更新時の「自動」強制リセットを削除しました。
+
+V90では、BRIEF英訳の目標長をFULL訳比20〜30%へ引き上げ、全文への電文体適用、財務略語、冗長句の短縮、意味保全ルールを強化しました。
+
+V90.1では、BRIEFがFULLの半分を超えた場合の自己書き直し、FULL→BRIEF模範例、3段階の圧縮手順を追加し、増減表記を誤読しにくい `up X / down X` に統一しました。
+
+V90.2では、事実完全性を最優先に固定し、BRIEFを5つの機械的変換だけで短縮する方式へ変更しました。長さは診断指標とし、限定・条件・原因・モダリティを保持する3種類の模範例と文単位の最終照合を追加しています。
+
+V90.3では、Copilot準備状態の書き込みをアトミック化し、最大5回のリトライを追加しました。Ready状態の保存成功時のみ準備ワーカーを終了し、読み取り側は共有モードと最後の正常状態を使って一過性の競合を吸収します。
+
+V90.4では、BRIEFの略語を見出し・ラベルにも適用し、符号付き寄与額、四半期トークン、数値間の矢印表記を原文に合わせて保持するよう調整しました。用語集は訳語の同一性を維持しつつ、一般語の大文字小文字を本文と見出しの文脈に適応させます。
+
+V90.5では、符号付き内訳項目の項目名と数値を1スペースで結び、原文にない `impact`、`of`、コロンの挿入を禁止しました。増減動詞に付く数値は符号なしの大きさに統一し、文中の内訳項目はラベルでなく小文字の本文として扱います。FULLとBRIEFの両方で原文の期間トークンと数値間矢印も保持します。
+
+V90.6では、増益・減益等の方向語が原文の `+` / `▲` を吸収し、数値を符号なしの大きさに統一しました。内訳のトップレベル区切りをセミコロン、括弧内をカンマに固定し、同一原語は回答全体で同一表記にします。四半期表記は原文固定ではなく用語集を優先し、全大文字の頭字語と一般語の短縮形を区別してcasingを適用します。
+
+V90.8では、長文翻訳の見出し・箇条書きの構造自己検査、万台の `k units` 変換、同一の前置詞・限定語に支配される `and` の保持を追加しました。
+
+V90.9では、表ラベルの完全一致置換用 `glossary.csv` と、Copilotプロンプト注入用 `prompt_glossary.csv` を分離しました。プロンプト用語集は文中表記を前提とし、一般語を小文字で管理します。`prompt_glossary.csv` がない場合は従来の `glossary.csv` へ自動的にフォールバックします。プロンプト用語集は当面 `prompt_glossary.csv` を直接編集してください。
+
+V90.9.1では、アプリ内の用語追加・削除を廃止し、用語集パネルを読取専用の2セクション表示に変更しました。編集は `glossary.csv` と `prompt_glossary.csv` の直接編集に一本化し、件数、パス、重複・競合警告、全エントリをパネルで確認できます。
+
+V91では、テキスト英訳の原文とFULL/BRIEFの見出し・箇条書き数をコード側で照合します。不一致は従来の応答再試行に組み込み、上限後も翻訳結果を返しつつ確認警告を表示します。
+
+V91.1では、Copilotのレンダラーが半角山括弧見出しをHTMLタグとして隠す問題を修正しました。モデル応答では全角 `＜＞` を使い、受信後に半角 `<>` へ復元してから構造照合します。
+
+V91.2では、M365 Copilotの新しい `loading-message` 思考表示と停止ボタンを生成活動として検知し、生成中の回答をsilent-start-timeoutで誤停止する問題を修正しました。初動待機は従来どおり10秒を既定とし、必要な場合のみ設定で変更できます。
+
+## 開発時のエンコーディング
+
+V73への更新前に保存された日英混在訳を残さないため、V73へ更新したときは設定画面で「保存」を1回実行して翻訳キャッシュをクリアしてください（設定保存時に翻訳キャッシュは自動的に消去されます）。
+
+### V91.32 progress calibration
 
 Expected Copilot answer length is estimated separately for text and file translation. The legacy `copilotAnswerRatio` setting is ignored; use `copilotAnswerRatioText`, `copilotAnswerBaseText`, `copilotAnswerRatioFile`, and `copilotAnswerBaseFile`.
 
 
-## V91.33 progress numerator and file calibration
+### V91.33 progress numerator and file calibration
 
 Progress now measures only the response text after the echoed-input end marker, so the displayed numerator starts at zero and is no longer capped by the 2,000-character diagnostic tail. File translation now sets its own expected answer length and logs per-batch actual answer ratios for calibration.
 
 
-## V91.34 input-length guard and progress display
+### V91.34 input-length guard and progress display
 
 YakuLingo assumes an M365 Copilot licensed environment. The fixed prompt portion is approximately 9,300 characters, so an environment limited to about 8,000 input characters is not supported. After filling the Copilot input, YakuLingo compares the requested and actual character counts and stops with `PROMPT_TRUNCATED_BY_INPUT_LIMIT` instead of sending a silently truncated prompt.
 
 Set `copilotPromptCharLimit` to a known input limit when required. The default is `0` (disabled). When enabled, prompts exceeding the configured limit stop before submission. File-translation generation now uses the same live answer-character progress path as text translation.
 
 
-## V91.37
+### V91.37
 - 億円の数値は桁を変換せず、そのまま `oku` として転記します。
 - Edgeウィンドウ閉鎖後は余剰Copilotタブを整理し、短いCDP pingと再接続で凍結タブの回復を試みます。
 - 入力欄の残存テキストを送信前に消去し、残存競合と入力上限による切詰めを別エラーで通知します。
 
-## V91.37 numeric-unit preprocessing
+### V91.37 numeric-unit preprocessing
 
 Japanese numeric units are converted deterministically before batching: 億円/兆円 to `oku`, 千台/万台 to `k units`, and 千円/万円 to `k yen`. Numeric integrity checks now verify the generated English tokens. `oku yen` is no longer used. Masked values that require arithmetic, such as `xxx万台`, are left unchanged with a warning.
 
 
-## V91.38 ratio recalibration and full-width numeric preprocessing
+### V91.38 ratio recalibration and full-width numeric preprocessing
 
 - Text expected-answer ratio default is recalibrated from 4.5 to 4.0.
 - `単価改善` is fixed as `per-unit price improvement` in both glossaries.
 - Numeric-unit preprocessing accepts full-width digits, commas, decimal points, and x/X masks, normalizing them to ASCII before token generation.
 - `品質関連費用` occurrence translations are aligned to `warranty exp.`.
 
-## V91.56 changes
+### V91.56 changes
 
 - Separated FULL and BRIEF terminology more strictly: FULL spells out ordinary/internal shorthand, while BRIEF consistently uses approved abbreviations.
 - Added FC, VC, VP, and VP (Veh.) mode-specific glossary variants and BRIEF rules.
@@ -191,7 +271,7 @@ Japanese numeric units are converted deterministically before batching: 億円/�
 - Added regression checks for glossary candidate order, prompt injection, and abbreviation consistency.
 
 
-## V91.57 changes
+### V91.57 changes
 
 - Standardized promotion-cost terminology: FULL uses `sales promotion costs` / `fixed sales promotion costs`; BRIEF uses `Promo. Costs` / `Fixed Promo. Costs`.
 - Removed `MKT`, `Fixed MKT`, and `Fixed Marketing` as renderings of promotion costs while preserving genuine marketing terminology.
@@ -199,13 +279,13 @@ Japanese numeric units are converted deterministically before batching: 億円/�
 - Updated `販売奨励金/固定販促費` -> `VM / Fixed Promo. Costs` and added regression checks.
 
 
-## V91.58
+### V91.58
 - Shortened file-translation exact-match table labels: `固定販促費` -> `Fixed Promo.`, subsidiary variants -> `Subs. Fixed Promo.`, and `販売奨励金/固定販促費` -> `VM / Fixed Promo.`.
 - Added `国内その他` -> `Dom. Oth.` and shortened `連結調整他` -> `Cons. Adj.`.
 - FULL/BRIEF prose terminology rules remain unchanged.
 
 
-## V91.59
+### V91.59
 - Moved `user_settings.json` out of the app folder into `%USERPROFILE%\.yakulingo-ps\config\`, so settings are per user and survive version updates.
 - Legacy settings inside the app folder are migrated once on first read. The legacy file is never modified or deleted, so users still on an older version are unaffected.
 - Added the `YAKULINGO_DATA_DIR` override so regression tests can redirect the data directory instead of touching real user data.

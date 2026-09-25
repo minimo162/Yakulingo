@@ -36,7 +36,7 @@ Microsoft 365 Copilot の画面を Edge DevTools Protocol（CDP）で操作し�
 | `tools/` | エンコーディング検査・回帰テスト・パッケージ作成などの補助スクリプト |
 | `README.md` / `DESIGN.md` | 利用者・保守者向けドキュメント |
 
-利用者設定（`user_settings.json`）、出力、ログ、履歴はアプリフォルダではなく `%USERPROFILE%\.yakulingo-ps\` 配下に保存されます（V91.59以降）。
+利用者設定（`user_settings.json`）、自分の用語集（`glossary\`）、出力、ログ、履歴はアプリフォルダではなく `%USERPROFILE%\.yakulingo-ps\` 配下に保存されます（V91.59以降）。版を更新しても消えません。
 
 ## バージョン運用
 
@@ -52,17 +52,20 @@ Microsoft 365 Copilot の画面を Edge DevTools Protocol（CDP）で操作し�
 ## 起動
 
 1. ルートの `YakuLingo起動.cmd` をダブルクリックします。
-2. Edge で Microsoft 365 Copilot へサインインします。
+2. YakuLingo が開いた Edge で Microsoft 365 Copilot へサインインします（普段の Edge とは別の専用プロファイルなので、初回はサインインが必要です）。
 3. 画面右上が「準備完了」になったら翻訳できます。
 4. 終了は画面右上の「終了」ボタンを押します。起動中の PowerShell 画面を閉じるか `Ctrl+C` を押しても終了します。
 
 初回起動時、`bootstrap.ps1` が現行版を `%LOCALAPPDATA%\YakuLingo\versions\<版>-<manifestハッシュ>` へ複製し、`manifest.json` で全ファイルの SHA-256 を照合してからローカルで起動します。以降アプリは共有フォルダを参照しないため、**利用者が作業中でも共有フォルダのバージョンを更新できます**（反映は次回起動時）。共有フォルダへ到達できないときは導入済みのローカル版で起動します。
 
+画面の使い方（テキスト翻訳、ファイル翻訳、用語集、設定、Copilotにつながらないとき）は `V91.60/app/README.md` を参照してください。
+
 Windows + PowerShell 5.1 + Microsoft Edge が前提です。CSV 以外のファイル処理には Microsoft Excel が必要です。出力は `%USERPROFILE%\.yakulingo-ps\outputs` に作成され、元ファイルは更新しません。
 
 ## 開発時のエンコーディング
 
-- `*.ps1`、`prompts/*.txt`、`www/` 配下の HTML/CSS/JS、`config/settings.template.json` は **UTF-8 BOM付き・CRLF** で保存します。
+- `*.ps1`、`prompts/*.txt`、`www/` 配下の HTML/CSS/JS、`config/settings.template.json` は **UTF-8 BOM付き** で保存します。改行コードは `V91.60\app\tools\eol-baseline.txt` に記録したファイルごとの形式（CRLF / LF）を保ちます。
 - コミット・配布前に `powershell -ExecutionPolicy Bypass -File .\V91.60\app\tools\Check-Encoding.ps1` を実行します。
+- 回帰テストの一覧は `V91.60/app/README.md` の「テスト」にあります。
 - BOM違反は `V91.60\app\tools\Repair-YakuEncoding.ps1 -WhatIfOnly` で確認し、引数なし実行で一括修復できます。
 - 本リポジトリの `.gitattributes` で改行コードの自動変換を無効化しています。配布物のバイト列をそのまま保持してください。
