@@ -102,7 +102,7 @@ function Get-YakuSettingsSchema {
         edge_window_size                  = @{ Type='string'; Default='1280,900'; MaxLength=24 }
         edge_debug_port                   = @{ Type='int';  Default=9433; Min=1024; Max=65535 }
         copilot_url                       = @{ Type='enum'; Default='https://m365.cloud.microsoft/chat/'; Values=(Get-YakuApprovedCopilotUrls) }
-        copilot_model                     = @{ Type='string'; Default='GPT 6.0 Sol,GPT 5.6 Sol Think Deeper,自動'; MaxLength=300 }
+        copilot_model                     = @{ Type='string'; Default='GPT:latest,自動'; MaxLength=300 }
         copilot_cdp_socket_cache_enabled  = @{ Type='bool'; Default=$true }
         copilotFirstActivityTimeoutMs     = @{ Type='int';  Default=10000; Min=5000; Max=120000 }
         copilotAnswerRatioText            = @{ Type='double'; Default=4.0; Min=0.1; Max=20.0 }
@@ -257,7 +257,7 @@ function Read-YakuSettings {
                 $legacyBatchMigrated = $true
             }
             if ($user.Contains('copilot_model') -and ([string]$merged['copilot_model'] -replace '\s+', ' ').Trim() -eq 'GPT 5.6 Think deeper,Opus,Think Deeper') {
-                $merged['copilot_model'] = 'GPT 6.0 Sol,GPT 5.6 Sol Think Deeper,自動'
+                $merged['copilot_model'] = 'GPT:latest,自動'
                 $legacyModelMigrated = $true
             }
             if ($invalidKeys.Count -gt 0 -or $legacyBatchMigrated -or $legacyCdpPortMigrated -or $legacyDiagnosticsMigrated -or $legacyModelMigrated) {
@@ -276,7 +276,7 @@ function Read-YakuSettings {
                     try { if (Get-Command Write-YakuLog -ErrorAction SilentlyContinue) { Write-YakuLog 'edge_debug_port migrated 9333 -> 9433 (conflict with yakulingom365copilot)' 'INFO' } } catch {}
                 }
                 if ($legacyModelMigrated) {
-                    try { if (Get-Command Write-YakuLog -ErrorAction SilentlyContinue) { Write-YakuLog 'Legacy copilot_model default migrated. -> GPT 6.0 Sol,GPT 5.6 Sol Think Deeper,自動' 'INFO' } } catch {}
+                    try { if (Get-Command Write-YakuLog -ErrorAction SilentlyContinue) { Write-YakuLog 'Legacy copilot_model default migrated. -> GPT:latest,自動' 'INFO' } } catch {}
                 }
                 if ($legacyDiagnosticsMigrated) {
                     try { if (Get-Command Write-YakuLog -ErrorAction SilentlyContinue) { Write-YakuLog 'Legacy full-text diagnostics setting migrated. diagnosticsLevel=full' 'INFO' } } catch {}
@@ -412,7 +412,7 @@ function Convert-YakuSettingsFormToHtml {
   <summary>詳細設定（通常は変更不要。Edgeのポート・ウィンドウサイズは次回起動から反映）</summary>
   <div class='settings-grid'>
   <label>Copilot接続先 <select name='copilot_url'><option value='https://m365.cloud.microsoft/chat/' selected>Microsoft 365 Copilot</option></select></label>
-  <label>Copilotモデル優先度(カンマ区切り・上から順に試行、空欄=変更しない) <input name='copilot_model' value='$(ConvertTo-YakuHtml $Settings.copilot_model)' placeholder='GPT 6.0 Sol,GPT 5.6 Sol Think Deeper,自動'></label>
+  <label>Copilotモデル優先度(カンマ区切り・上から順に試行、GPT:latest=最新GPTを自動選択、空欄=変更しない) <input name='copilot_model' value='$(ConvertTo-YakuHtml $Settings.copilot_model)' placeholder='GPT:latest,自動'></label>
   <label>Edgeウィンドウサイズ（幅,高さ／noneで無効） <input name='edge_window_size' value='$(ConvertTo-YakuHtml $Settings.edge_window_size)' placeholder='1280,900'></label>
   <label>Edge CDPポート <input type='number' min='1024' max='65535' name='edge_debug_port' value='$(ConvertTo-YakuHtml $Settings.edge_debug_port)'></label>
   <label>タイムアウト秒 <input type='number' min='30' max='1800' name='request_timeout' value='$(ConvertTo-YakuHtml $Settings.request_timeout)'></label>

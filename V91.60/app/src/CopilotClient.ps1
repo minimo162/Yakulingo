@@ -4118,11 +4118,22 @@ return { ok:freshVerified, reason:freshVerified ? 'fresh-state-confirmed' : 'fre
     }
 }
 
+# 'GPT:latest'（別名 'GPT最新'）は、GPTサブメニュー内でバージョン番号が最大のモデル
+# （クイック応答系は除外、同一バージョンなら Think Deeper 系を優先）を選ぶ特殊指定。
+$script:YakuCopilotResolvedLatestModel = ''
+
+function Test-YakuCopilotLatestModelToken {
+    param([AllowNull()][string]$Value)
+    return (([string]$Value).Trim() -match '^(?i)gpt\s*[:：]\s*latest$|^(?i)gpt\s*最新$')
+}
+
 function Test-YakuCopilotModelLabelMatch {
     param([AllowNull()][string]$Label, [AllowNull()][string[]]$ModelPriority)
     $shown = ([string]$Label -replace '\s+', ' ').Trim() -replace '[…‥]|\.{3}$', ''
     if ([string]::IsNullOrWhiteSpace($shown)) { return $false }
     foreach ($candidate in @($ModelPriority)) {
+        # 最新指定はメニューで解決済みのモデル名でのみ照合する（未解決なら一致扱いしない）
+        if (Test-YakuCopilotLatestModelToken -Value $candidate) { $candidate = [string]$script:YakuCopilotResolvedLatestModel }
         $wanted = ([string]$candidate -replace '\s+', ' ').Trim()
         if ([string]::IsNullOrWhiteSpace($wanted)) { continue }
         if ($shown.Equals($wanted, [System.StringComparison]::OrdinalIgnoreCase) -or
@@ -4229,6 +4240,22 @@ const subTextOf = (el) => {
 const eq = (a, b) => a.toLowerCase() === b.toLowerCase();
 const has = (a, b) => a.toLowerCase().indexOf(b.toLowerCase()) !== -1;
 const stripTail = (s) => norm((s || '').replace(/[…‥]|\.{3}$/g, ''));
+const isLatest = (c) => /^gpt\s*[:：]\s*latest$|^gpt\s*最新$/i.test(norm(c));
+const verOf = (s) => { const m = /(\d+(?:\.\d+)*)/.exec(s || ''); return m ? m[1].split('.').map(Number) : null; };
+const cmpVer = (a, b) => { for (let i = 0; i < Math.max(a.length, b.length); i++) { const d = (a[i] || 0) - (b[i] || 0); if (d) return d; } return 0; };
+const isQuick = (s) => /クイック|quick/i.test(s || '');
+const deepScore = (s) => /think\s*deeper/i.test(s || '') ? 1 : 0;
+const pickLatest = (xs) => {
+  let best = null;
+  for (const x of xs) {
+    if (isQuick(x.label)) continue;
+    const v = verOf(x.label);
+    if (!v) continue;
+    const c = best ? cmpVer(v, best.v) : 1;
+    if (c > 0 || (c === 0 && deepScore(x.label) > deepScore(best.x.label))) best = { x, v };
+  }
+  return best ? best.x : null;
+};
 const matchesModel = (shown, cand, picked) => {
   const a = stripTail(shown);
   if (!a) return false;
@@ -4267,7 +4294,7 @@ if (!btn) {
 }
 if (!btn) return { ok:true, changed:false, reason:'switcher_not_found', switcherWaitedMs };
 const current = norm(btn.innerText);
-if (candidates.length && matchesModel(current, candidates[0], '')) {
+if (candidates.length && !isLatest(candidates[0]) && matchesModel(current, candidates[0], '')) {
   return { ok:true, changed:false, reason:'already_selected', current, picked:candidates[0], priorityIndex:0 };
 }
 fireClick(btn);
@@ -4308,7 +4335,15 @@ const clickAndConfirm = async (hit, cand) => {
       const sub = newItems.map(el => ({ el, label: primaryLabel(el) })).filter(x => x.label);
       subMenuItems = sub.map(x => x.label).slice(0, 16);
       const suffix = cand.replace(/^GPT[\s-]*[\d.]*\s*/i, '');
-      const subHit = sub.find(x => eq(x.label, cand))
+      if (isLatest(cand)) {
+        const latestHit = pickLatest(sub);
+        if (!latestHit) return { applied:false, reason:'submenu_no_latest', after:'', picked, waitedMs:0, subMenuItems };
+        if (latestHit.el.getAttribute('aria-checked') === 'true') {
+          pressEscape(); await sleep(150); pressEscape();
+          return { applied:true, alreadySelected:true, after:current, picked:latestHit.label, waitedMs:0, subMenuItems, confirmSamples:[], menuStillOpen:false, clickMethod:'none' };
+        }
+      }
+      const subHit = isLatest(cand) ? pickLatest(sub) : sub.find(x => eq(x.label, cand))
         || sub.find(x => has(x.label, cand))
         || sub.find(x => eq(x.label, suffix))
         || sub.find(x => suffix && has(x.label, suffix))
@@ -4354,6 +4389,7 @@ for (let pi = 0; pi < candidates.length; pi++) {
   }
   const r = await clickAndConfirm(hit, cand);
   if (r.subMenuItems && r.subMenuItems.length) observedSubMenuItems = r.subMenuItems;
+  if (r.alreadySelected) return { ok:true, changed:false, reason:'already_selected', current, picked:r.picked, priorityIndex:pi, menuItems, skipped, subMenuItems:observedSubMenuItems };
   if (r.applied) return { ok:true, changed:true, reason:'selected', before:current, after:r.after, picked:r.picked, priorityIndex:pi, waitedMs:r.waitedMs, menuItems, skipped, subMenuItems:observedSubMenuItems, confirmSamples:r.confirmSamples, menuStillOpen:r.menuStillOpen, clickMethod:r.clickMethod };
   pressEscape(); await sleep(150); pressEscape();
   await sleep(700);
@@ -4563,7 +4599,7 @@ function Invoke-YakuCopilotPrompt {
     # Only a verified Cancel/Close control is clicked; submit/send is never used.
     $state = Close-YakuCopilotBlockingDialog -Page $page -State $state -Warnings $Warnings -Stage 'before-model-selection'
 
-    # V58: モデルセレクターを優先度リスト（既定: GPT 6.0 Sol → GPT 5.6 Sol Think Deeper → 自動）で切替。
+    # V58: モデルセレクターを優先度リスト（既定: GPT:latest（最新GPT）→ 自動）で切替。
     #      どのモデルも見つからない場合は変更せず続行。失敗しても翻訳は続行する。
     $copilotModel = ''
     try { $copilotModel = [string]$Settings.copilot_model } catch { $copilotModel = '' }
@@ -4575,12 +4611,19 @@ function Invoke-YakuCopilotPrompt {
         try {
             $currentModelLabel = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $state -Name 'modelSwitcherLabel' -Default '')
             # 第1候補が選択済みの場合のみスキップ（下位候補の選択中は上位への切替を試みる）
+            # 最新GPT指定は、このセッションで解決済みのモデル名が表示されている場合のみスキップ
             if (Test-YakuCopilotModelLabelMatch -Label $currentModelLabel -ModelPriority @($modelPriority[0])) {
                 $modelResult = [pscustomobject]@{ ok=$true; changed=$false; reason='already_selected_from_ready_state'; current=$currentModelLabel }
                 Write-YakuLog "Copilot model selection skipped from ready state. current=$currentModelLabel" 'DEBUG'
             } else {
                 Write-YakuLog "Copilot model selection not skipped from ready state. currentModelLabel=$currentModelLabel targets=$(($modelPriority -join ' | '))" 'DEBUG'
                 $modelResult = ConvertTo-YakuCdpResultObject -Value (Set-YakuCopilotModel -Page $page -ModelPriority $modelPriority) -Context 'Set-YakuCopilotModel'
+                $pickedIndex = ConvertTo-YakuSafeInt -Value (Get-YakuObjectPropertyValue -Object $modelResult -Name 'priorityIndex' -Default -1) -Default -1
+                $pickedLabel = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $modelResult -Name 'picked' -Default '')
+                if ($pickedIndex -ge 0 -and $pickedIndex -lt $modelPriority.Count -and (Test-YakuCopilotLatestModelToken -Value $modelPriority[$pickedIndex]) -and -not [string]::IsNullOrWhiteSpace($pickedLabel)) {
+                    $script:YakuCopilotResolvedLatestModel = $pickedLabel
+                    Write-YakuLog "Copilot latest GPT model resolved. model=$pickedLabel" 'DEBUG'
+                }
             }
             Write-YakuLog "Copilot model selection summary. picked=$(ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $modelResult -Name 'picked' -Default '')) before=$(ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $modelResult -Name 'before' -Default $currentModelLabel)) after=$(ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $modelResult -Name 'after' -Default '')) reason=$(ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $modelResult -Name 'reason' -Default ''))" 'DEBUG'
             if ((Get-YakuObjectPropertyValue -Object $modelResult -Name 'changed' -Default $false) -eq $true) {
