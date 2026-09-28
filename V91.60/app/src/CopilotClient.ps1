@@ -4348,7 +4348,7 @@ for (let pi = 0; pi < candidates.length; pi++) {
   const cand = candidates[pi];
   const hit = findHit(labeled, cand);
   if (!hit) { skipped.push({ cand, reason:'not_matched' }); continue; }
-  if (hit.el.getAttribute('aria-checked') === 'true') {
+  if (!hit.submenu && hit.el.getAttribute('aria-checked') === 'true') {
     pressEscape();
     return { ok:true, changed:false, reason:'already_selected', current, picked:hit.label, priorityIndex:pi, menuItems, skipped };
   }
@@ -4563,7 +4563,7 @@ function Invoke-YakuCopilotPrompt {
     # Only a verified Cancel/Close control is clicked; submit/send is never used.
     $state = Close-YakuCopilotBlockingDialog -Page $page -State $state -Warnings $Warnings -Stage 'before-model-selection'
 
-    # V58: モデルセレクターを優先度リスト（既定: GPT 5.6 Think deeper → Opus → Think Deeper）で切替。
+    # V58: モデルセレクターを優先度リスト（既定: GPT 6.0 Sol → GPT 5.6 Sol Think Deeper → 自動）で切替。
     #      どのモデルも見つからない場合は変更せず続行。失敗しても翻訳は続行する。
     $copilotModel = ''
     try { $copilotModel = [string]$Settings.copilot_model } catch { $copilotModel = '' }
@@ -4574,7 +4574,8 @@ function Invoke-YakuCopilotPrompt {
     if ($modelPriority.Count -gt 0) {
         try {
             $currentModelLabel = ConvertTo-YakuSafeString -Value (Get-YakuObjectPropertyValue -Object $state -Name 'modelSwitcherLabel' -Default '')
-            if (Test-YakuCopilotModelLabelMatch -Label $currentModelLabel -ModelPriority $modelPriority) {
+            # 第1候補が選択済みの場合のみスキップ（下位候補の選択中は上位への切替を試みる）
+            if (Test-YakuCopilotModelLabelMatch -Label $currentModelLabel -ModelPriority @($modelPriority[0])) {
                 $modelResult = [pscustomobject]@{ ok=$true; changed=$false; reason='already_selected_from_ready_state'; current=$currentModelLabel }
                 Write-YakuLog "Copilot model selection skipped from ready state. current=$currentModelLabel" 'DEBUG'
             } else {

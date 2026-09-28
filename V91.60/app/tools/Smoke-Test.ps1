@@ -119,6 +119,8 @@ Assert-Yaku -Condition (-not (Test-YakuCopilotUrl -Url 'https://m365.cloud.micro
 Assert-Yaku -Condition (-not (Test-YakuCopilotUrl -Url 'https://m365.cloud.microsoft/chat/?next=https://evil.example')) -Message 'query string must fail'
 Assert-Yaku -Condition (Test-YakuCopilotModelLabelMatch -Label 'GPT 5.6 Think deeper' -ModelPriority @('GPT 5.6 Think deeper','Opus')) -Message 'ready-state model label must match the configured primary model'
 Assert-Yaku -Condition (-not (Test-YakuCopilotModelLabelMatch -Label '' -ModelPriority @('GPT 5.6 Think deeper'))) -Message 'missing model label must fall back to the full selector path'
+Assert-Yaku -Condition (Test-YakuCopilotModelLabelMatch -Label 'GPT 6.0 Sol' -ModelPriority @('GPT 6.0 Sol')) -Message 'GPT 6.0 Sol label must match the new primary model'
+Assert-Yaku -Condition (-not (Test-YakuCopilotModelLabelMatch -Label '自動' -ModelPriority @('GPT 6.0 Sol'))) -Message 'auto mode must not be treated as the primary model'
 
 $originalGetCopilotState = (Get-Item Function:\Get-YakuCopilotState).ScriptBlock
 try {
