@@ -1905,7 +1905,16 @@ function Invoke-YakuFileTranslation {
     # 各監査・補完再依頼がすべてマスク後で動く。復元は最後にまとめて行う。
     $maskedItemCount = 0
     $maskedTokenCount = 0
+    # 項目が多いとここに時間がかかる。進捗を書かないとサーバーの心拍監視
+    # (worker_heartbeat_timeout_seconds) に止められ、画面も「バッチ準備中」のまま動かない。
+    $maskDone = 0
+    $maskProgressAt = Get-Date
     foreach ($item in $items) {
+        $maskDone++
+        if (((Get-Date) - $maskProgressAt).TotalSeconds -ge 2) {
+            $maskProgressAt = Get-Date
+            Set-YakuFileTranslationProgress -ProgressState $ProgressState -Phase 'dedupe' -Label 'バッチ準備中' -Progress 10 -Detail "数値を確認中 $maskDone/$($items.Count) 件"
+        }
         $maskResult = New-YakuNumericMaskMap -Text ([string]$item.Text) -Root $Root -Direction $Direction -Location ("file-ID-" + [string]$item.Index)
         $item | Add-Member -NotePropertyName NumericMaskMap -NotePropertyValue $maskResult.Map -Force
         $item | Add-Member -NotePropertyName MaskedText -NotePropertyValue ([string]$maskResult.Text) -Force
