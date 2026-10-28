@@ -3178,6 +3178,73 @@ function Split-YakuExcelRangeAddressChunks {
     return @($chunks.ToArray())
 }
 
+function Compress-YakuExcelCellAddresses {
+    # フォント一括適用の前処理（純関数）。単一セル "B3" の羅列を、同じセル集合を覆う
+    # 最小限の矩形 "B3:D9" にまとめる。union 文字列の分割数＝Range/Font.Name の COM 呼び出し数が減る。
+    # 矩形アドレスや解釈できない文字列はそのまま残す（覆うセルは変えない）。
+    param([AllowNull()][object[]]$Addresses)
+    $passthrough = New-Object System.Collections.Generic.List[string]
+    $seenPassthrough = @{}
+    $colsByRow = @{}
+    foreach ($addrValue in @($Addresses)) {
+        $addr = [string]$addrValue
+        if ([string]::IsNullOrWhiteSpace($addr)) { continue }
+        $m = [regex]::Match($addr, '^\$?([A-Za-z]{1,3})\$?([0-9]{1,7})$')
+        if (-not $m.Success) {
+            if (-not $seenPassthrough.ContainsKey($addr)) { $seenPassthrough[$addr] = $true; $passthrough.Add($addr) | Out-Null }
+            continue
+        }
+        $col = 0
+        foreach ($ch in $m.Groups[1].Value.ToUpperInvariant().ToCharArray()) { $col = ($col * 26) + ([int]$ch - 64) }
+        $row = [int]$m.Groups[2].Value
+        if (-not $colsByRow.ContainsKey($row)) { $colsByRow[$row] = New-Object 'System.Collections.Generic.HashSet[int]' }
+        [void]$colsByRow[$row].Add($col)
+    }
+    # 行ごとに連続列の Run を作り、上下に同じ列幅で連続する Run を矩形へ伸ばす。
+    $open = @{}
+    $rects = New-Object System.Collections.Generic.List[object]
+    $prevRow = $null
+    foreach ($row in @($colsByRow.Keys | Sort-Object)) {
+        $row = [int]$row
+        if ($null -ne $prevRow -and $row -ne ([int]$prevRow + 1)) {
+            foreach ($rect in @($open.Values)) { $rects.Add($rect) | Out-Null }
+            $open = @{}
+        }
+        $cols = @($colsByRow[$row] | Sort-Object)
+        $runs = New-Object System.Collections.Generic.List[object]
+        $runStart = [int]$cols[0]; $runEnd = [int]$cols[0]
+        for ($i = 1; $i -lt $cols.Count; $i++) {
+            $c = [int]$cols[$i]
+            if ($c -eq $runEnd + 1) { $runEnd = $c; continue }
+            $runs.Add(@($runStart, $runEnd)) | Out-Null
+            $runStart = $c; $runEnd = $c
+        }
+        $runs.Add(@($runStart, $runEnd)) | Out-Null
+        $nextOpen = @{}
+        foreach ($run in $runs) {
+            $key = [string]$run[0] + ':' + [string]$run[1]
+            if ($open.ContainsKey($key)) {
+                $rect = $open[$key]
+                $rect.EndRow = $row
+                $open.Remove($key)
+            } else {
+                $rect = [pscustomobject]@{ StartRow=$row; EndRow=$row; StartCol=[int]$run[0]; EndCol=[int]$run[1] }
+            }
+            $nextOpen[$key] = $rect
+        }
+        foreach ($rect in @($open.Values)) { $rects.Add($rect) | Out-Null }
+        $open = $nextOpen
+        $prevRow = $row
+    }
+    foreach ($rect in @($open.Values)) { $rects.Add($rect) | Out-Null }
+    $result = New-Object System.Collections.Generic.List[string]
+    foreach ($rect in @($rects.ToArray() | Sort-Object StartRow, StartCol)) {
+        $result.Add((Get-YakuExcelRangeAddress -StartRow ([int]$rect.StartRow) -StartCol ([int]$rect.StartCol) -EndRow ([int]$rect.EndRow) -EndCol ([int]$rect.EndCol))) | Out-Null
+    }
+    foreach ($addr in $passthrough) { $result.Add($addr) | Out-Null }
+    return [string[]]@($result.ToArray())
+}
+
 function Invoke-YakuExcelFontUnionApply {
     param(
         [Parameter(Mandatory=$true)]$Worksheet,
@@ -3194,7 +3261,13 @@ function Invoke-YakuExcelFontUnionApply {
     $sw = $null
     if ($null -ne $Metrics) { $sw = [System.Diagnostics.Stopwatch]::StartNew() }
     try {
-        foreach ($chunk in @(Split-YakuExcelRangeAddressChunks -Addresses @($allAddresses.ToArray()) -MaxLength 200)) {
+        $compressed = @($allAddresses.ToArray())
+        try { $compressed = @(Compress-YakuExcelCellAddresses -Addresses @($allAddresses.ToArray())) } catch { $compressed = @($allAddresses.ToArray()) }
+        $chunks = @(Split-YakuExcelRangeAddressChunks -Addresses $compressed -MaxLength 200)
+        if ($null -ne $Metrics) {
+            try { $Metrics['font_addresses'] = [int]$allAddresses.Count; $Metrics['font_areas'] = [int]$compressed.Count; $Metrics['font_calls'] = [int]$chunks.Count } catch {}
+        }
+        foreach ($chunk in $chunks) {
             $joined = ''
             try { $joined = [string]$chunk.Joined } catch { $joined = '' }
             if ([string]::IsNullOrWhiteSpace($joined)) { continue }
