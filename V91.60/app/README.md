@@ -134,6 +134,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\Check-Encoding.ps1
 powershell -ExecutionPolicy Bypass -File .\tools\Smoke-Test.ps1
 powershell -ExecutionPolicy Bypass -File .\tools\Prompt-Regression-Test.ps1
 powershell -ExecutionPolicy Bypass -File .\tools\Test-YakuV9160NumericMasking.ps1
+powershell -ExecutionPolicy Bypass -File .\tools\Test-YakuExcelWritebackLoad.ps1
 powershell -ExecutionPolicy Bypass -File .\tools\Test-YakuUserGlossary.ps1
 powershell -ExecutionPolicy Bypass -File .\tools\Test-YakuCopilotReconnect.ps1
 powershell -ExecutionPolicy Bypass -File .\tools\Test-YakuFriendlyMessages.ps1
