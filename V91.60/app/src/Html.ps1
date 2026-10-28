@@ -50,6 +50,8 @@ function Get-YakuFriendlyError {
         $friendly = 'Copilotのログインが切れているようです。開いているEdgeでサインインし直してから、もう一度翻訳してください。'
     } elseif ($raw -match 'Copilot入力欄が見つかりません') {
         $friendly = 'Copilotの画面が使える状態になっていません。Edgeの画面（ダイアログなど）を確認してから、もう一度翻訳してください。'
+    } elseif ($raw -match '(?i)0x800706BA|0x800706BE|0x800706BF|0x80010108|RPC サーバーを利用できません|RPC server is unavailable') {
+        $friendly = 'Excelとの接続が切れました（Excelが異常終了した可能性があります）。開いているExcelを保存して閉じてから、もう一度翻訳してください。'
     } elseif ($raw -match '^RESPONSE_|FILE_RESPONSE_') {
         $friendly = 'Copilotの回答を読み取れませんでした。もう一度翻訳してください。'
     } elseif ($raw -match '(?i)CDP|DevTools|WebSocket|JavaScript evaluation|timed out|COPILOT_SILENT_START_TIMEOUT') {

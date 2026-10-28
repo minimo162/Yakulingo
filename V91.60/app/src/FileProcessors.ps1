@@ -176,6 +176,68 @@ function Release-YakuComObject {
     try { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($Object) } catch {}
 }
 
+# Excel のプロセスが落ちた・切断されたときに COM 呼び出しが返す HRESULT。
+# 0x800706BA RPC_S_SERVER_UNAVAILABLE / 0x800706BE RPC_S_CALL_FAILED /
+# 0x800706BF RPC_S_CALL_FAILED_DNE / 0x80010108 RPC_E_DISCONNECTED
+$script:YakuExcelRpcLostHResults = @(-2147023174, -2147023170, -2147023169, -2147417848)
+# 直近に起動した専用 Excel。接続が切れたとき、この Excel だけを止める。
+$script:YakuLastExcelProcess = $null
+
+function Test-YakuExcelRpcLostError {
+    param([AllowNull()]$ErrorRecord)
+    $ex = $ErrorRecord
+    if ($ErrorRecord -is [System.Management.Automation.ErrorRecord]) { $ex = $ErrorRecord.Exception }
+    for ($depth = 0; $ex -is [System.Exception] -and $depth -lt 8; $depth++) {
+        if ($script:YakuExcelRpcLostHResults -contains [int]$ex.HResult) { return $true }
+        if ([string]$ex.Message -match '0x800706BA|0x800706BE|0x800706BF|0x80010108') { return $true }
+        $ex = $ex.InnerException
+    }
+    return $false
+}
+
+function Stop-YakuLostExcelProcess {
+    # 落ちかけの Excel（エラー報告の待機中など）が残ると、次の起動を妨げる。
+    # この処理で起動した Excel だけを、起動時刻まで照合してから止める。
+    $last = $script:YakuLastExcelProcess
+    $script:YakuLastExcelProcess = $null
+    if ($null -eq $last) { return }
+    try {
+        if (Test-YakuProcessIdentity -Id ([int]$last.Id) -StartTimeUtc ([string]$last.StartedAt)) {
+            Stop-Process -Id ([int]$last.Id) -Force -ErrorAction Stop
+            try { Write-YakuLog "Lost Excel process stopped. pid=$($last.Id)" 'WARN' } catch {}
+        }
+    } catch { try { Write-YakuLog "Lost Excel process stop failed. pid=$($last.Id) error=$($_.Exception.Message)" 'WARN' } catch {} }
+}
+
+function Invoke-YakuExcelWithRpcRecovery {
+    # Excel が途中で落ちると、以後の COM 呼び出しはすべて 0x800706BA などで失敗する。
+    # 落ちた Excel を片付け、新しい Excel で最初からやり直す（既定は1回まで）。
+    # やり直しで状態を戻す必要がある呼び出し側は BeforeRetry で戻す。
+    param(
+        [Parameter(Mandatory=$true)][string]$Stage,
+        [Parameter(Mandatory=$true)][scriptblock]$Action,
+        [AllowNull()][scriptblock]$BeforeRetry = $null,
+        [AllowNull()]$ProgressState = $null,
+        [int]$MaxAttempts = 2
+    )
+    for ($attempt = 1; ; $attempt++) {
+        try { return (& $Action) }
+        catch [System.OperationCanceledException] { throw }
+        catch {
+            $err = $_
+            if (-not (Test-YakuExcelRpcLostError -ErrorRecord $err)) { throw }
+            try { Write-YakuLog "Excel COM connection lost. stage=$Stage attempt=$attempt/$MaxAttempts error=$($err.Exception.Message)" 'WARN' } catch {}
+            Stop-YakuLostExcelProcess
+            if ($attempt -ge $MaxAttempts) {
+                throw 'EXCEL_RPC_UNAVAILABLE: Excelとの接続が切れたため、処理を中断しました（Excelが異常終了した可能性があります）。開いているExcelを保存して閉じてから、もう一度翻訳してください。繰り返す場合は、シートを分けて翻訳してください。'
+            }
+            Assert-YakuJobNotCancelled -ProgressState $ProgressState
+            Start-Sleep -Seconds 2
+            if ($null -ne $BeforeRetry) { & $BeforeRetry }
+        }
+    }
+}
+
 
 function Close-YakuExcelObjects {
     param(
@@ -242,6 +304,7 @@ function New-YakuExcelApplication {
         $nativePid = [uint32]0
         $null = [YakuLingoNativeMethods]::GetWindowThreadProcessId([IntPtr]([int64]$excel.Hwnd), [ref]$nativePid)
         $excelPid = [int]$nativePid
+        if ($excelPid -gt 0) { $script:YakuLastExcelProcess = [pscustomobject]@{ Id=$excelPid; StartedAt=(Get-YakuProcessStartTimeIso -Id $excelPid) } }
         if ($script:YakuWorkerProgressState -and $excelPid -gt 0) {
             $script:YakuWorkerProgressState['excel_pid'] = $excelPid
             $script:YakuWorkerProgressState['excel_started_at'] = Get-YakuProcessStartTimeIso -Id $excelPid
@@ -1314,7 +1377,12 @@ function Get-YakuFileTextBlocks {
         [AllowNull()]$ProgressState = $null
     )
     $kind = Get-YakuSupportedFileKind -Path $Path
-    if ($kind -eq 'excel') { return Get-YakuExcelTextBlocks -Path $Path -Direction $Direction -Settings $Settings -Sheets $Sheets -OnProgress $OnProgress -ProgressState $ProgressState }
+    if ($kind -eq 'excel') {
+        # 抽出は読み取り専用で開くため、Excel が落ちても新しい Excel でそのままやり直せる。
+        return Invoke-YakuExcelWithRpcRecovery -Stage 'extract' -ProgressState $ProgressState -Action {
+            Get-YakuExcelTextBlocks -Path $Path -Direction $Direction -Settings $Settings -Sheets $Sheets -OnProgress $OnProgress -ProgressState $ProgressState
+        }
+    }
     if ($kind -eq 'csv') { return Get-YakuCsvTextBlocks -Path $Path -Direction $Direction -Settings $Settings }
     throw '対応しているファイル形式は .xlsx / .xlsm / .csv です。'
 }
@@ -4248,7 +4316,16 @@ function Write-YakuFileTranslations {
             Clear-YakuOutputReadOnlyAttribute -Path $candidatePath | Out-Null
             try { Write-YakuLog "Writeback copy done. seconds=$([Math]::Round(((Get-Date) - $copyStarted).TotalSeconds, 2)) jobId=$jobId" 'INFO' } catch {}
             if ($hasWriteTargets) {
-                $writeResult = Write-YakuExcelTranslations -OutputPath $candidatePath -Blocks $Blocks -TranslationByBlockId $TranslationByBlockId -Warnings $Warnings -Settings $Settings -BaselinePath $baselinePath -ProgressState $ProgressState
+                $warningCountBeforeWrite = $Warnings.Count
+                $writeResult = Invoke-YakuExcelWithRpcRecovery -Stage 'writeback' -ProgressState $ProgressState -Action {
+                    Write-YakuExcelTranslations -OutputPath $candidatePath -Blocks $Blocks -TranslationByBlockId $TranslationByBlockId -Warnings $Warnings -Settings $Settings -BaselinePath $baselinePath -ProgressState $ProgressState
+                } -BeforeRetry {
+                    # 途中まで書いた候補ファイルと、その間の警告を捨てて原本のコピーからやり直す。
+                    while ($Warnings.Count -gt $warningCountBeforeWrite) { $Warnings.RemoveAt($Warnings.Count - 1) }
+                    if (Test-Path -LiteralPath $baselinePath -PathType Leaf) { Remove-Item -LiteralPath $baselinePath -Force }
+                    Copy-Item -LiteralPath $InputPath -Destination $candidatePath -Force
+                    Clear-YakuOutputReadOnlyAttribute -Path $candidatePath | Out-Null
+                }
             } else {
                 try { Write-YakuLog "Writeback skipped; no translated blocks. jobId=$jobId" 'INFO' } catch {}
                 $writeResult = [pscustomobject]@{ WriteTargetCount=0; WrittenCount=0; SkippedCount=0 }
