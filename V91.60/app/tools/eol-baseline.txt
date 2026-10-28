@@ -41,6 +41,7 @@ tools/Test-CopilotAutomation.ps1	crlf
 tools/Test-YakuBootstrap.ps1	crlf
 tools/Test-YakuCopilotReconnect.ps1	crlf
 tools/Test-YakuExcelRpcRecovery.ps1	crlf
+tools/Test-YakuExcelWritebackLoad.ps1	crlf
 tools/Test-YakuFriendlyMessages.ps1	crlf
 tools/Test-YakuPackage.ps1	crlf
 tools/Test-YakuStartupExperience.ps1	crlf
