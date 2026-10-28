@@ -3423,6 +3423,55 @@ function New-YakuExcelCellWritePlan {
     return [pscustomobject]@{ Rows=$rows; CellItems=$cellItems; MergedCellBlocks=$mergedCellBlocks; SingleCellBlocks=$mergedCellBlocks }
 }
 
+function Split-YakuExcelCellItemsByArea {
+    # 純関数。セル項目を行順に並べ、外接矩形の面積が MaxArea 以下になる行区画に分ける。
+    # 外接矩形が MaxArea を超えるシートは従来、一括書込を諦めて矩形ごとの書込（COM 呼び出しが
+    # 矩形数に比例）になっていた。区画ごとなら既存の一括書込の上限内に収まる。
+    param(
+        [AllowNull()][object[]]$Items,
+        [int]$MaxArea = 50000
+    )
+    $chunks = New-Object System.Collections.Generic.List[object]
+    $all = @($Items | Where-Object { $null -ne $_ })
+    if ($all.Count -le 0) { return @() }
+    if ($MaxArea -le 0) { $MaxArea = 50000 }
+    $byRow = @{}
+    foreach ($item in $all) {
+        $row = [int]$item.Row
+        if (-not $byRow.ContainsKey($row)) { $byRow[$row] = New-Object System.Collections.Generic.List[object] }
+        $byRow[$row].Add($item) | Out-Null
+    }
+    $current = New-Object System.Collections.Generic.List[object]
+    $chunkMinRow = 0; $chunkMinCol = 0; $chunkMaxCol = 0
+    foreach ($rowKey in @($byRow.Keys | Sort-Object)) {
+        $row = [int]$rowKey
+        $rowItems = $byRow[$row]
+        $rowMinCol = [int]::MaxValue; $rowMaxCol = 0
+        foreach ($item in $rowItems) {
+            $col = [int]$item.Col
+            if ($col -lt $rowMinCol) { $rowMinCol = $col }
+            if ($col -gt $rowMaxCol) { $rowMaxCol = $col }
+        }
+        if ($current.Count -gt 0) {
+            $newMinCol = [Math]::Min($chunkMinCol, $rowMinCol)
+            $newMaxCol = [Math]::Max($chunkMaxCol, $rowMaxCol)
+            $area = ([int64]($row - $chunkMinRow + 1)) * ([int64]($newMaxCol - $newMinCol + 1))
+            if ($area -le [int64]$MaxArea) {
+                $chunkMinCol = $newMinCol; $chunkMaxCol = $newMaxCol
+                foreach ($item in $rowItems) { $current.Add($item) | Out-Null }
+                continue
+            }
+            $chunks.Add([object[]]@($current.ToArray())) | Out-Null
+            $current = New-Object System.Collections.Generic.List[object]
+        }
+        $chunkMinRow = $row; $chunkMinCol = $rowMinCol; $chunkMaxCol = $rowMaxCol
+        foreach ($item in $rowItems) { $current.Add($item) | Out-Null }
+    }
+    if ($current.Count -gt 0) { $chunks.Add([object[]]@($current.ToArray())) | Out-Null }
+    # 呼び出し側は @(...) で受ける。各区画は object[] のまま1要素として流れる。
+    return $chunks.ToArray()
+}
+
 function Write-YakuExcelCellTranslationsForSheet {
     param(
         [Parameter(Mandatory=$true)]$Worksheet,
@@ -3430,7 +3479,10 @@ function Write-YakuExcelCellTranslationsForSheet {
         [Parameter(Mandatory=$true)][hashtable]$TranslationByBlockId,
         [AllowNull()][string]$OutputFontName,
         [Parameter(Mandatory=$true)]$Warnings,
-        [AllowNull()][hashtable]$Metrics = $null
+        [AllowNull()][hashtable]$Metrics = $null,
+        [int]$MaxBulkArea = 50000,
+        # 区画を1つ書き終えるたびに (done, total) で呼ばれる。進捗の心拍とキャンセル確認に使う。
+        [AllowNull()][scriptblock]$OnChunkDone = $null
     )
     if ($null -ne $Metrics) {
         try {
@@ -3452,7 +3504,6 @@ function Write-YakuExcelCellTranslationsForSheet {
         } catch {}
     }
     $plan = New-YakuExcelCellWritePlan -Blocks $Blocks -TranslationByBlockId $TranslationByBlockId
-    $rows = $plan.Rows
     $cellItems = @($plan.CellItems.ToArray())
     $mergedCellBlocks = $plan.MergedCellBlocks
     $mergedCellCount = 0
@@ -3461,62 +3512,50 @@ function Write-YakuExcelCellTranslationsForSheet {
     $sheetName = ''
     try { $sheetName = [string]$Worksheet.Name } catch {}
     $written = 0
-    $rectangles = @()
     $fontAddresses = New-Object System.Collections.Generic.List[string]
     $usedBulkBox = $false
     $bulkSingleCells = 0
     $bulkRectangles = 0
     $mergedAnchorRectangles = 0
 
+    $chunkCount = 0
+    $chunkFallbacks = 0
+    $chunkModes = New-Object System.Collections.Generic.List[string]
     if ($cellItems.Count -gt 0) {
-        $bulkResult = Invoke-YakuExcelBulkBoundingBoxWrite -Worksheet $Worksheet -Items $cellItems -OutputFontName $OutputFontName -Warnings $Warnings -SheetName $sheetName -Metrics $Metrics
-        if ($null -ne $bulkResult -and ([bool]$bulkResult.Used)) {
-            $usedBulkBox = $true
-            $written += [int]$bulkResult.Written
-            try { if ($bulkResult.PSObject.Properties.Name -contains 'SingleCells') { $bulkSingleCells = [int]$bulkResult.SingleCells } } catch { $bulkSingleCells = 0 }
-            try { if ($bulkResult.PSObject.Properties.Name -contains 'Rectangles') { $bulkRectangles = [int]$bulkResult.Rectangles } } catch { $bulkRectangles = 0 }
-            if (-not [string]::IsNullOrWhiteSpace([string]$OutputFontName)) {
-                foreach ($addr in @($bulkResult.FontAddresses)) {
+        # 外接矩形が MaxBulkArea を超えるシートも、行区画に分けて区画ごとに一括書込する。
+        # 1区画に収まるシートの動きは従来と同じ（一括書込 → 使えなければ矩形書込）。
+        $chunks = @(Split-YakuExcelCellItemsByArea -Items $cellItems -MaxArea $MaxBulkArea)
+        $chunkCount = [int]$chunks.Count
+        if ($chunkCount -gt 1) {
+            try { Write-YakuLog "Excel writeback sheet chunked. sheet=$sheetName targets=$($cellItems.Count) chunks=$chunkCount maxArea=$MaxBulkArea" 'INFO' } catch {}
+        }
+        $chunkIndex = 0
+        foreach ($chunkItems in $chunks) {
+            $chunkItems = [object[]]@($chunkItems)
+            $bulkResult = Invoke-YakuExcelBulkBoundingBoxWrite -Worksheet $Worksheet -Items $chunkItems -OutputFontName $OutputFontName -Warnings $Warnings -SheetName $sheetName -Metrics $Metrics -MaxArea $MaxBulkArea
+            if ($null -ne $bulkResult -and ([bool]$bulkResult.Used)) {
+                $usedBulkBox = $true
+                $written += [int]$bulkResult.Written
+                try { if ($bulkResult.PSObject.Properties.Name -contains 'SingleCells') { $bulkSingleCells += [int]$bulkResult.SingleCells } } catch {}
+                try { if ($bulkResult.PSObject.Properties.Name -contains 'Rectangles') { $bulkRectangles += [int]$bulkResult.Rectangles } } catch {}
+                try { $chunkModes.Add([string]$bulkResult.Mode) | Out-Null } catch {}
+                if (-not [string]::IsNullOrWhiteSpace([string]$OutputFontName)) {
+                    foreach ($addr in @($bulkResult.FontAddresses)) {
+                        if (-not [string]::IsNullOrWhiteSpace([string]$addr)) { $fontAddresses.Add([string]$addr) | Out-Null }
+                    }
+                }
+            } else {
+                $chunkFallbacks++
+                $chunkModes.Add('fallback') | Out-Null
+                $fallbackResult = Invoke-YakuExcelCellItemsRectangleWrite -Worksheet $Worksheet -Items $chunkItems -OutputFontName $OutputFontName -Warnings $Warnings -SheetName $sheetName -Metrics $Metrics
+                $written += [int]$fallbackResult.Written
+                $bulkRectangles += [int]$fallbackResult.Rectangles
+                foreach ($addr in @($fallbackResult.FontAddresses)) {
                     if (-not [string]::IsNullOrWhiteSpace([string]$addr)) { $fontAddresses.Add([string]$addr) | Out-Null }
                 }
             }
-        } else {
-            $runs = New-Object System.Collections.Generic.List[object]
-            foreach ($rowKey in @($rows.Keys | Sort-Object {[int]$_})) {
-                $row = [int]$rowKey
-                $items = @($rows[$row].ToArray() | Sort-Object Col)
-                $run = New-Object System.Collections.Generic.List[object]
-                $prevCol = $null
-                foreach ($item in $items) {
-                    $col = [int]$item.Col
-                    if ($null -ne $prevCol -and $col -ne ([int]$prevCol + 1)) {
-                        $runItems = @($run.ToArray())
-                        if ($runItems.Count -gt 0) {
-                            $values = New-Object System.Collections.Generic.List[string]
-                            foreach ($ri in $runItems) { $values.Add([string]$ri.Translation) | Out-Null }
-                            $runs.Add([pscustomobject]@{ Row=$row; StartCol=[int]$runItems[0].Col; EndCol=[int]$runItems[$runItems.Count - 1].Col; Values=[string[]]@($values.ToArray()) }) | Out-Null
-                        }
-                        $run = New-Object System.Collections.Generic.List[object]
-                    }
-                    $run.Add($item) | Out-Null
-                    $prevCol = $col
-                }
-                if ($run.Count -gt 0) {
-                    $runItems = @($run.ToArray())
-                    $values = New-Object System.Collections.Generic.List[string]
-                    foreach ($ri in $runItems) { $values.Add([string]$ri.Translation) | Out-Null }
-                    $runs.Add([pscustomobject]@{ Row=$row; StartCol=[int]$runItems[0].Col; EndCol=[int]$runItems[$runItems.Count - 1].Col; Values=[string[]]@($values.ToArray()) }) | Out-Null
-                }
-            }
-
-            $rectangles = @(Merge-YakuCellRunsToRects -Runs @($runs.ToArray()))
-            foreach ($rect in $rectangles) {
-                $rectWritten = [int](Add-YakuExcelCellRectangle -Worksheet $Worksheet -Rectangle $rect -OutputFontName $OutputFontName -Warnings $Warnings -SheetName $sheetName -Metrics $Metrics -SkipFont)
-                $written += $rectWritten
-                if ($rectWritten -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$OutputFontName)) {
-                    try { $fontAddresses.Add((Get-YakuExcelRangeAddress -StartRow ([int]$rect.StartRow) -StartCol ([int]$rect.StartCol) -EndRow ([int]$rect.EndRow) -EndCol ([int]$rect.EndCol))) | Out-Null } catch {}
-                }
-            }
+            $chunkIndex++
+            if ($null -ne $OnChunkDone) { & $OnChunkDone $chunkIndex $chunkCount }
         }
     }
 
@@ -3546,9 +3585,12 @@ function Write-YakuExcelCellTranslationsForSheet {
     }
     if ($null -ne $Metrics) {
         try {
-            $Metrics['rectangles'] = if ($usedBulkBox) { [int]$bulkRectangles } else { [int]$rectangles.Count }
+            $Metrics['rectangles'] = [int]$bulkRectangles
             $Metrics['single_cells'] = if ($usedBulkBox) { [int]$bulkSingleCells } else { 0 }
             if (-not $usedBulkBox) { $Metrics['bulk_mode'] = 'fallback' }
+            elseif ($chunkCount -gt 1) { $Metrics['bulk_mode'] = 'chunked:' + ((@($chunkModes.ToArray()) | Sort-Object -Unique) -join '+') }
+            $Metrics['chunks'] = [int]$chunkCount
+            $Metrics['chunk_fallbacks'] = [int]$chunkFallbacks
             $Metrics['merged_cells'] = [int]$mergedCellCount
             $Metrics['merged_anchor_rectangles'] = [int]$mergedAnchorRectangles
             $Metrics['written'] = [int]$written
@@ -3720,7 +3762,9 @@ function Set-YakuExcelWritebackProgress {
         [int]$SheetDone,
         [int]$SheetTotal,
         [AllowNull()][string]$SheetName = '',
-        [AllowNull()][string]$DetailPrefix = '書き戻し中'
+        [AllowNull()][string]$DetailPrefix = '書き戻し中',
+        [int]$ChunkDone = 0,
+        [int]$ChunkTotal = 0
     )
     if ($null -eq $ProgressState) { return }
     Assert-YakuJobNotCancelled -ProgressState $ProgressState
@@ -3730,6 +3774,7 @@ function Set-YakuExcelWritebackProgress {
         $progress = [int](92 + [Math]::Floor(($done / [double]$total) * 7))
         $label = if ($DetailPrefix -eq '保存中') { '保存中' } else { '書き戻し中' }
         $detail = if ($DetailPrefix -eq '保存中') { '保存中' } else { "訳文を書込中（$done/$total シート目: $SheetName）" }
+        if ($DetailPrefix -ne '保存中' -and $ChunkTotal -gt 1) { $detail = "訳文を書込中（$done/$total シート目: $SheetName 区画 $ChunkDone/$ChunkTotal）" }
         if (Get-Command Set-YakuFileTranslationProgress -ErrorAction SilentlyContinue) {
             Set-YakuFileTranslationProgress -ProgressState $ProgressState -Phase 'apply' -Label $label -Progress $progress -Detail $detail -Fields @{ apply_sheet_done=$done; apply_sheet_total=$total; apply_sheet=$SheetName }
         } else {
@@ -3859,8 +3904,19 @@ function Write-YakuExcelTranslations {
             try { Write-YakuLog "Excel writeback sheet pagebreaks. displayPageBreaks=$oldDisplayPageBreaks" 'DEBUG' } catch {}
             try { $ws.DisplayPageBreaks = $false } catch {}
             try {
-                $sheetWritten = [int](Write-YakuExcelCellTranslationsForSheet -Worksheet $ws -Blocks @($cellBlocksBySheet[$sheetName].ToArray()) -TranslationByBlockId $TranslationByBlockId -OutputFontName $fontName -Warnings $Warnings -Metrics $metrics)
+                $chunkSheetDone = $applySheetDone
+                $chunkSheetName = [string]$sheetName
+                # GetNewClosure は使わない（動的モジュールになり、ドットソースされた関数が見えなくなる）。
+                # 呼び出し元のこのスコープの変数を動的スコープで参照する。
+                $onChunkDone = {
+                    param($chunkDone, $chunkTotal)
+                    # 大きなシートでも区画ごとに updated_at を進め、apply フェーズの心拍監視に止められないようにする。
+                    if ([int]$chunkTotal -gt 1) { Set-YakuExcelWritebackProgress -ProgressState $ProgressState -SheetDone $chunkSheetDone -SheetTotal $applySheetTotal -SheetName $chunkSheetName -ChunkDone ([int]$chunkDone) -ChunkTotal ([int]$chunkTotal) }
+                }
+                $sheetWritten = [int](Write-YakuExcelCellTranslationsForSheet -Worksheet $ws -Blocks @($cellBlocksBySheet[$sheetName].ToArray()) -TranslationByBlockId $TranslationByBlockId -OutputFontName $fontName -Warnings $Warnings -Metrics $metrics -OnChunkDone $onChunkDone)
                 $writtenCount += [int]$sheetWritten
+            } catch [System.OperationCanceledException] {
+                throw
             } catch {
                 $diag = Get-YakuExceptionDetailObject -ErrorRecord $_
                 $typeName = [string]$diag.ExceptionType
@@ -3888,6 +3944,10 @@ function Write-YakuExcelTranslations {
                 $mergedCells = 0
                 $mergedAnchors = 0
                 $optimisticFailed = 0
+                $chunks = 0
+                $chunkFallbacks = 0
+                $fontAreas = 0
+                $fontCalls = 0
                 try { if ($metrics.ContainsKey('range_ms')) { $rangeMs = [Math]::Round([double]$metrics['range_ms'], 0) } } catch {}
                 try { if ($metrics.ContainsKey('value2_ms')) { $value2Ms = [Math]::Round([double]$metrics['value2_ms'], 0) } } catch {}
                 try { if ($metrics.ContainsKey('font_ms')) { $fontMs = [Math]::Round([double]$metrics['font_ms'], 0) } } catch {}
@@ -3904,8 +3964,12 @@ function Write-YakuExcelTranslations {
                 try { if ($metrics.ContainsKey('merged_cells')) { $mergedCells = [int]$metrics['merged_cells'] } } catch {}
                 try { if ($metrics.ContainsKey('merged_anchor_rectangles')) { $mergedAnchors = [int]$metrics['merged_anchor_rectangles'] } } catch {}
                 try { if ($metrics.ContainsKey('optimistic_failed')) { $optimisticFailed = [int]$metrics['optimistic_failed'] } } catch {}
+                try { if ($metrics.ContainsKey('chunks')) { $chunks = [int]$metrics['chunks'] } } catch {}
+                try { if ($metrics.ContainsKey('chunk_fallbacks')) { $chunkFallbacks = [int]$metrics['chunk_fallbacks'] } } catch {}
+                try { if ($metrics.ContainsKey('font_areas')) { $fontAreas = [int]$metrics['font_areas'] } } catch {}
+                try { if ($metrics.ContainsKey('font_calls')) { $fontCalls = [int]$metrics['font_calls'] } } catch {}
                 $msPerCell = if ($sheetWritten -gt 0) { [Math]::Round(($seconds * 1000.0) / [double]$sheetWritten, 2) } else { 0 }
-                try { Write-YakuLog "Excel writeback sheet '$sheetName': rectangles=$rectangles singleCells=$singleCells writtenCells=$sheetWritten seconds=$seconds msPerCell=$msPerCell rangeMs=$rangeMs value2Ms=$value2Ms fontMs=$fontMs bulk_box=$bulkBox bulk_mode=$bulkMode bulk_read_ms=$bulkReadMs bulk_write_ms=$bulkWriteMs riskyConstantRestores=$riskyConstantRestores errorValueRestores=$errorValueRestores bands=$bands bandFallbacks=$bandFallbacks bandProbes=$bandProbes bandDepthMax=$bandDepthMax mergedCells=$mergedCells mergedAnchors=$mergedAnchors optimisticFailed=$optimisticFailed" 'INFO' } catch {}
+                try { Write-YakuLog "Excel writeback sheet '$sheetName': rectangles=$rectangles singleCells=$singleCells writtenCells=$sheetWritten seconds=$seconds msPerCell=$msPerCell rangeMs=$rangeMs value2Ms=$value2Ms fontMs=$fontMs bulk_box=$bulkBox bulk_mode=$bulkMode bulk_read_ms=$bulkReadMs bulk_write_ms=$bulkWriteMs riskyConstantRestores=$riskyConstantRestores errorValueRestores=$errorValueRestores bands=$bands bandFallbacks=$bandFallbacks bandProbes=$bandProbes bandDepthMax=$bandDepthMax mergedCells=$mergedCells mergedAnchors=$mergedAnchors optimisticFailed=$optimisticFailed chunks=$chunks chunkFallbacks=$chunkFallbacks fontAreas=$fontAreas fontCalls=$fontCalls" 'INFO' } catch {}
                 try { if ($metrics.ContainsKey('value2_put_probe_done') -and [bool]$metrics['value2_put_probe_done']) { $value2PutProbeDone = $true } } catch {}
                 try { if ($oldDisplayPageBreaks -eq $true) { $ws.DisplayPageBreaks = $true } } catch {}
                 Release-YakuComObject $ws
