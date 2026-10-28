@@ -2120,10 +2120,10 @@ function New-YakuExcelBulkRangeWritePlan {
                 $first = @($Items)[0]
                 $payload = [string]$first.Translation
                 if (Test-YakuExcelCoercionRiskString -Value $payload) {
-                    return [pscustomobject]@{ Kind='bulk'; Range=$Range; Property='Value2'; Payload=$values; Written=0; FontAddresses=[string[]]@(); Address=$Address; Area=$Area; Mode='value2'; SingleItems=@($first); RiskyConstantRestores=@(); ErrorValueRestores=@(); RiskyTranslationSingles=1; FormulaCellCount=0; Rectangles=0; Items=[object[]]@($Items); BulkItems=[object[]]@(); StartRow=$MinRow; EndRow=([int]($MinRow + $RowCount - 1)) }
+                    return [pscustomobject]@{ Kind='bulk'; Range=$Range; Property='Value2'; Payload=$values; Written=0; FontAddresses=[string[]]@(); Address=$Address; Area=$Area; Mode='value2'; SingleItems=@($first); RiskyConstantRestores=@(); ErrorValueRestores=@(); RiskyTranslationSingles=1; FormulaCellCount=0; Rectangles=0; Items=[object[]]@($Items); BulkItems=[object[]]@(); StartRow=$MinRow; EndRow=([int]($MinRow + $RowCount - 1)); MinCol=$MinCol; RowCount=$RowCount; ColCount=$ColCount }
                 }
                 if (-not [string]::IsNullOrWhiteSpace([string]$OutputFontName)) { $fontAddresses.Add($Address) | Out-Null }
-                return [pscustomobject]@{ Kind='bulk'; Range=$Range; Property='Value2'; Payload=$payload; Written=[int]$Items.Count; FontAddresses=[string[]]@($fontAddresses.ToArray()); Address=$Address; Area=$Area; Mode='value2'; SingleItems=@(); RiskyConstantRestores=@(); ErrorValueRestores=@(); RiskyTranslationSingles=0; FormulaCellCount=0; Rectangles=0; Items=[object[]]@($Items); BulkItems=[object[]]@($Items); StartRow=$MinRow; EndRow=([int]($MinRow + $RowCount - 1)) }
+                return [pscustomobject]@{ Kind='bulk'; Range=$Range; Property='Value2'; Payload=$payload; Written=[int]$Items.Count; FontAddresses=[string[]]@($fontAddresses.ToArray()); Address=$Address; Area=$Area; Mode='value2'; SingleItems=@(); RiskyConstantRestores=@(); ErrorValueRestores=@(); RiskyTranslationSingles=0; FormulaCellCount=0; Rectangles=0; Items=[object[]]@($Items); BulkItems=[object[]]@($Items); StartRow=$MinRow; EndRow=([int]($MinRow + $RowCount - 1)); MinCol=$MinCol; RowCount=$RowCount; ColCount=$ColCount }
             }
             if (-not ($values -is [System.Array]) -or $values.Rank -ne 2) {
                 try { Write-YakuLog "Excel writeback bulk box fallback. sheet=$SheetName address=$Address reason=shape-mismatch target=Value2 targets=$($Items.Count)" 'DEBUG' } catch {}
@@ -2187,7 +2187,7 @@ function New-YakuExcelBulkRangeWritePlan {
                     try { $fontAddresses.Add((Get-YakuExcelRangeAddress -StartRow $row -StartCol $col -EndRow $row -EndCol $col)) | Out-Null } catch {}
                 }
             }
-            return [pscustomobject]@{ Kind='bulk'; Range=$Range; Property='Value2'; Payload=$values; Written=[int]$bulkTargetWritten; FontAddresses=[string[]]@($fontAddresses.ToArray()); Address=$Address; Area=$Area; Mode='value2'; SingleItems=@($singleItems.ToArray()); RiskyConstantRestores=@($riskyRestores.ToArray()); ErrorValueRestores=@($errorRestores.ToArray()); RiskyTranslationSingles=[int]$singleItems.Count; FormulaCellCount=0; Rectangles=0; Items=[object[]]@($Items); BulkItems=[object[]]@($bulkItems.ToArray()); StartRow=$MinRow; EndRow=([int]($MinRow + $RowCount - 1)) }
+            return [pscustomobject]@{ Kind='bulk'; Range=$Range; Property='Value2'; Payload=$values; Written=[int]$bulkTargetWritten; FontAddresses=[string[]]@($fontAddresses.ToArray()); Address=$Address; Area=$Area; Mode='value2'; SingleItems=@($singleItems.ToArray()); RiskyConstantRestores=@($riskyRestores.ToArray()); ErrorValueRestores=@($errorRestores.ToArray()); RiskyTranslationSingles=[int]$singleItems.Count; FormulaCellCount=0; Rectangles=0; Items=[object[]]@($Items); BulkItems=[object[]]@($bulkItems.ToArray()); StartRow=$MinRow; EndRow=([int]($MinRow + $RowCount - 1)); MinCol=$MinCol; RowCount=$RowCount; ColCount=$ColCount }
         }
 
         $valuesIsArray = ($values -is [System.Array] -and $values.Rank -eq 2)
@@ -2297,7 +2297,7 @@ function New-YakuExcelBulkRangeWritePlan {
                 $out.SetValue($cellValue, $ri, $ci)
             }
         }
-        return [pscustomobject]@{ Kind='bulk'; Range=$Range; Property='Formula'; Payload=$out; Written=[int]$bulkTargetWritten; FontAddresses=[string[]]@($fontAddresses.ToArray()); Address=$Address; Area=$Area; Mode='formula-patch'; SingleItems=@($singleItems.ToArray()); RiskyConstantRestores=@($riskyRestores.ToArray()); ErrorValueRestores=@($errorRestores.ToArray()); RiskyTranslationSingles=[int]$singleItems.Count; FormulaCellCount=[int]$formulaCellCount; Rectangles=0; Items=[object[]]@($Items); BulkItems=[object[]]@($bulkItems.ToArray()); StartRow=$MinRow; EndRow=([int]($MinRow + $RowCount - 1)) }
+        return [pscustomobject]@{ Kind='bulk'; Range=$Range; Property='Formula'; Payload=$out; Written=[int]$bulkTargetWritten; FontAddresses=[string[]]@($fontAddresses.ToArray()); Address=$Address; Area=$Area; Mode='formula-patch'; SingleItems=@($singleItems.ToArray()); RiskyConstantRestores=@($riskyRestores.ToArray()); ErrorValueRestores=@($errorRestores.ToArray()); RiskyTranslationSingles=[int]$singleItems.Count; FormulaCellCount=[int]$formulaCellCount; Rectangles=0; Items=[object[]]@($Items); BulkItems=[object[]]@($bulkItems.ToArray()); StartRow=$MinRow; EndRow=([int]($MinRow + $RowCount - 1)); MinCol=$MinCol; RowCount=$RowCount; ColCount=$ColCount }
     } catch {
         if ($null -ne $sw) { try { Add-YakuExcelMetricElapsed -Metrics $Metrics -Key 'bulk_read_ms' -Stopwatch $sw } catch {} }
         try { Write-YakuLog "Excel writeback bulk box fallback. sheet=$SheetName address=$Address reason=exception-plan error=$($_.Exception.Message)" 'DEBUG' } catch {}
@@ -2444,6 +2444,29 @@ function Get-YakuExcelBulkPlanRestoreCount {
     return [int]$count
 }
 
+function Get-YakuExcelBulkPlanReadback {
+    # 楽観書込の検証用に、計画範囲の Value2 を1回の COM 呼び出しで読み戻す。
+    # 形状が計画と合わない・読めないときは $null を返し、呼び出し側はセル単位の照合に戻る。
+    param([Parameter(Mandatory=$true)]$Plan)
+    try {
+        $names = @($Plan.PSObject.Properties.Name)
+        if ($names -notcontains 'MinCol' -or $names -notcontains 'RowCount' -or $names -notcontains 'ColCount' -or $names -notcontains 'StartRow') { return $null }
+        $rowCount = [int]$Plan.RowCount
+        $colCount = [int]$Plan.ColCount
+        if ($rowCount -le 0 -or $colCount -le 0) { return $null }
+        $values = $Plan.Range.Value2
+        if ($rowCount -eq 1 -and $colCount -eq 1) {
+            if ($values -is [System.Array]) { return $null }
+            return [pscustomobject]@{ IsArray=$false; Values=$values; MinRow=[int]$Plan.StartRow; MinCol=[int]$Plan.MinCol; RowBase=0; ColBase=0 }
+        }
+        if (-not ($values -is [System.Array]) -or $values.Rank -ne 2) { return $null }
+        $rowBase = [int]$values.GetLowerBound(0)
+        $colBase = [int]$values.GetLowerBound(1)
+        if (([int]($values.GetUpperBound(0) - $rowBase + 1)) -ne $rowCount -or ([int]($values.GetUpperBound(1) - $colBase + 1)) -ne $colCount) { return $null }
+        return [pscustomobject]@{ IsArray=$true; Values=$values; MinRow=[int]$Plan.StartRow; MinCol=[int]$Plan.MinCol; RowBase=$rowBase; ColBase=$colBase }
+    } catch { return $null }
+}
+
 function Test-YakuExcelBulkWriteFirstTarget {
     param(
         [Parameter(Mandatory=$true)]$Worksheet,
@@ -2454,11 +2477,18 @@ function Test-YakuExcelBulkWriteFirstTarget {
         $bulkItems = @()
         try { $bulkItems = @($Plan.BulkItems) } catch { $bulkItems = @() }
         if ($bulkItems.Count -le 0) { return $true }
+        # 全ターゲットをセルごとに Cells.Item().Value2 で読むと、書いたセル数の2倍以上の
+        # COM 往復になり、大きなシートでは Excel が落ちる原因になる。範囲を1回で読み戻して照合する。
+        $readback = Get-YakuExcelBulkPlanReadback -Plan $Plan
         foreach ($item in $bulkItems) {
             $cell = $null
             try {
                 $row = [int]$item.Row; $col = [int]$item.Col; $expected = [string]$item.Translation
-                $cell = $Worksheet.Cells.Item($row, $col); $actual = $cell.Value2
+                if ($null -ne $readback) {
+                    $actual = if ($readback.IsArray) { $readback.Values.GetValue([int]($readback.RowBase + $row - $readback.MinRow), [int]($readback.ColBase + $col - $readback.MinCol)) } else { $readback.Values }
+                } else {
+                    $cell = $Worksheet.Cells.Item($row, $col); $actual = $cell.Value2
+                }
                 $actualText = if ($null -eq $actual) { '' } else { [string]$actual }
                 if ((Normalize-YakuExcelComparisonText -Text $actualText) -cne (Normalize-YakuExcelComparisonText -Text $expected)) {
                     try { Write-YakuLog "Excel writeback optimistic verify failed. sheet=$SheetName address=$($Plan.Address) cell=R${row}C${col} expectedLen=$($expected.Length) actualLen=$($actualText.Length)" 'DEBUG' } catch {}
