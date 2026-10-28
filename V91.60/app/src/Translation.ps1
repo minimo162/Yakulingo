@@ -506,7 +506,8 @@ function Get-YakuNumericMaskProtectedSpans {
     param(
         [AllowNull()][string]$Text,
         [AllowNull()][string]$Root,
-        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en'
+        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en',
+        [switch]$SkipGlossary
     )
     $spans = New-Object System.Collections.Generic.List[object]
     $normalized = ConvertTo-YakuMaskNormalizedText -Text $Text
@@ -533,9 +534,25 @@ function Get-YakuNumericMaskProtectedSpans {
         if ($m.Length -gt 0) { $spans.Add([pscustomobject]@{ Start = [int]$m.Index; End = [int]($m.Index + $m.Length) }) | Out-Null }
     }
 
+    if (-not $SkipGlossary) {
+        foreach ($sp in @(Get-YakuNumericMaskGlossarySpans -Text $Text -Root $Root -Direction $Direction)) { $spans.Add($sp) | Out-Null }
+    }
+    return @($spans.ToArray())
+}
+
+function Get-YakuNumericMaskGlossarySpans {
     # 用語集に一致した範囲。数字を含む語(FY26/3 1Q、AAT 営業利益(50%)、
     # MTMUS製(CX-50) 等)を壊さないため、マスク前のテキストから求める。
     # 件数制限は掛けない。制限すると上限を超えた用語が保護されない。
+    # 用語集2本を全件照合するため重い。ファイル翻訳では項目ごとに呼ばれるので、
+    # 呼び出し側は他の保護範囲で済まない数値があるときだけ呼ぶ。
+    param(
+        [AllowNull()][string]$Text,
+        [AllowNull()][string]$Root,
+        [ValidateSet('to_en','to_jp')][string]$Direction = 'to_en'
+    )
+    $spans = New-Object System.Collections.Generic.List[object]
+    if ([string]::IsNullOrEmpty($Text)) { return @() }
     if (-not [string]::IsNullOrWhiteSpace($Root) -and (Get-Command Get-YakuRelevantGlossaryMatches -ErrorAction SilentlyContinue)) {
         foreach ($path in @((Get-YakuGlossaryPath -Root $Root), (Get-YakuPromptGlossaryPath -Root $Root))) {
             if ([string]::IsNullOrWhiteSpace($path)) { continue }
@@ -570,12 +587,22 @@ function New-YakuNumericMaskMap {
         return [pscustomobject]@{ Text = $source; Map = $map; MaskedCount = 0; KeptCount = 0 }
     }
 
-    $protected = @(Get-YakuNumericMaskProtectedSpans -Text $source -Root $Root -Direction $Direction)
     $normalized = ConvertTo-YakuMaskNormalizedText -Text $source
+    $candidates = @([regex]::Matches($normalized, '\d[\d,]*(?:\.\d+)?'))
+    # 数字のない文は伏せるものがない。ファイル翻訳では大半の項目がこれに当たるため、
+    # 保護範囲（特に用語集の全件照合）を求めずに返す。結果は求めた場合と同じ。
+    if ($candidates.Count -eq 0) {
+        return [pscustomobject]@{ Text = $source; Map = $map; MaskedCount = 0; KeptCount = 0 }
+    }
+    $protected = @(Get-YakuNumericMaskProtectedSpans -Text $source -Root $Root -Direction $Direction -SkipGlossary)
+    $uncovered = @($candidates | Where-Object { -not (Test-YakuMaskSpanCovered -Spans $protected -Start $_.Index -End ($_.Index + $_.Length)) })
+    if ($uncovered.Count -gt 0) {
+        $protected = @($protected) + @(Get-YakuNumericMaskGlossarySpans -Text $source -Root $Root -Direction $Direction)
+    }
 
     $targets = New-Object System.Collections.Generic.List[object]
     $kept = 0
-    foreach ($m in [regex]::Matches($normalized, '\d[\d,]*(?:\.\d+)?')) {
+    foreach ($m in $candidates) {
         if (Test-YakuMaskSpanCovered -Spans $protected -Start $m.Index -End ($m.Index + $m.Length)) { $kept++; continue }
         $targets.Add([pscustomobject]@{ Start = $m.Index; Length = $m.Length }) | Out-Null
     }
